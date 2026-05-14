@@ -18,9 +18,9 @@ pub fn getCPUTime(this: *ResourceUsage, globalObject: *JSGlobalObject) bun.JSErr
     const usrTime = try JSValue.fromTimevalNoTruncate(globalObject, rusage.utime.usec, rusage.utime.sec);
     const sysTime = try JSValue.fromTimevalNoTruncate(globalObject, rusage.stime.usec, rusage.stime.sec);
 
-    cpu.put(globalObject, jsc.ZigString.static("user"), usrTime);
-    cpu.put(globalObject, jsc.ZigString.static("system"), sysTime);
-    cpu.put(globalObject, jsc.ZigString.static("total"), JSValue.bigIntSum(globalObject, usrTime, sysTime));
+    cpu.put(globalObject, jsc.RustString.static("user"), usrTime);
+    cpu.put(globalObject, jsc.RustString.static("system"), sysTime);
+    cpu.put(globalObject, jsc.RustString.static("total"), JSValue.bigIntSum(globalObject, usrTime, sysTime));
 
     return cpu;
 }
@@ -39,15 +39,15 @@ pub fn getSwapCount(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
 
 pub fn getOps(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
     var ops = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
-    ops.put(globalObject, jsc.ZigString.static("in"), jsc.JSValue.jsNumber(this.rusage.inblock));
-    ops.put(globalObject, jsc.ZigString.static("out"), jsc.JSValue.jsNumber(this.rusage.oublock));
+    ops.put(globalObject, jsc.RustString.static("in"), jsc.JSValue.jsNumber(this.rusage.inblock));
+    ops.put(globalObject, jsc.RustString.static("out"), jsc.JSValue.jsNumber(this.rusage.oublock));
     return ops;
 }
 
 pub fn getMessages(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
     var msgs = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
-    msgs.put(globalObject, jsc.ZigString.static("sent"), jsc.JSValue.jsNumber(this.rusage.msgsnd));
-    msgs.put(globalObject, jsc.ZigString.static("received"), jsc.JSValue.jsNumber(this.rusage.msgrcv));
+    msgs.put(globalObject, jsc.RustString.static("sent"), jsc.JSValue.jsNumber(this.rusage.msgsnd));
+    msgs.put(globalObject, jsc.RustString.static("received"), jsc.JSValue.jsNumber(this.rusage.msgrcv));
     return msgs;
 }
 
@@ -57,8 +57,8 @@ pub fn getSignalCount(this: *ResourceUsage, _: *JSGlobalObject) JSValue {
 
 pub fn getContextSwitches(this: *ResourceUsage, globalObject: *JSGlobalObject) JSValue {
     var ctx = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
-    ctx.put(globalObject, jsc.ZigString.static("voluntary"), jsc.JSValue.jsNumber(this.rusage.nvcsw));
-    ctx.put(globalObject, jsc.ZigString.static("involuntary"), jsc.JSValue.jsNumber(this.rusage.nivcsw));
+    ctx.put(globalObject, jsc.RustString.static("voluntary"), jsc.JSValue.jsNumber(this.rusage.nvcsw));
+    ctx.put(globalObject, jsc.RustString.static("involuntary"), jsc.JSValue.jsNumber(this.rusage.nivcsw));
     return ctx;
 }
 

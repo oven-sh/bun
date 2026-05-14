@@ -41,7 +41,7 @@ pub const Kind = enum(u8) {
 };
 
 // Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
+// https://github.com/rustlang/rust/issues/15715
 pub const Loc = struct {
     start: i32 = -1,
 
@@ -400,8 +400,8 @@ pub const Msg = struct {
         return cost;
     }
 
-    pub const fromJS = @import("../logger_jsc/logger_jsc.zig").msgFromJS;
-    pub const toJS = @import("../logger_jsc/logger_jsc.zig").msgToJS;
+    pub const fromJS = @import("../logger_jsc/logger_jsc.rust").msgFromJS;
+    pub const toJS = @import("../logger_jsc/logger_jsc.rust").msgToJS;
 
     pub fn count(this: *const Msg, builder: *StringBuilder) void {
         this.data.count(builder);
@@ -542,7 +542,7 @@ pub const Msg = struct {
 };
 
 // Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
+// https://github.com/rustlang/rust/issues/15715
 pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
@@ -652,7 +652,7 @@ pub const Log = struct {
             .{ "error", Level.err },
         });
 
-        pub const fromJS = @import("../logger_jsc/logger_jsc.zig").levelFromJS;
+        pub const fromJS = @import("../logger_jsc/logger_jsc.rust").levelFromJS;
     };
 
     pub fn init(allocator: std.mem.Allocator) Log {
@@ -683,9 +683,9 @@ pub const Log = struct {
         }
     }
 
-    pub const toJS = @import("../logger_jsc/logger_jsc.zig").logToJS;
-    pub const toJSAggregateError = @import("../logger_jsc/logger_jsc.zig").logToJSAggregateError;
-    pub const toJSArray = @import("../logger_jsc/logger_jsc.zig").logToJSArray;
+    pub const toJS = @import("../logger_jsc/logger_jsc.rust").logToJS;
+    pub const toJSAggregateError = @import("../logger_jsc/logger_jsc.rust").logToJSAggregateError;
+    pub const toJSArray = @import("../logger_jsc/logger_jsc.rust").logToJSArray;
 
     pub fn cloneTo(self: *Log, other: *Log) OOM!void {
         var notes_count: usize = 0;
@@ -938,7 +938,7 @@ pub const Log = struct {
         );
     }
 
-    pub fn addZigErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) OOM!void {
+    pub fn addRustErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) OOM!void {
         @branchHint(.cold);
         log.errors += 1;
 
@@ -1280,7 +1280,7 @@ pub const Source = struct {
     }
 
     pub fn rangeOfIdentifier(this: *const Source, loc: Loc) Range {
-        const js_lexer = @import("../js_parser/lexer.zig");
+        const js_lexer = @import("../js_parser/lexer.rust");
         return js_lexer.rangeOfIdentifier(this, loc);
     }
 
@@ -1507,9 +1507,9 @@ pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
 
 const string = []const u8;
 
-const fs = @import("../resolver/fs.zig");
+const fs = @import("../resolver/fs.rust");
 const std = @import("std");
-const ImportKind = @import("../options_types/import_record.zig").ImportKind;
+const ImportKind = @import("../options_types/import_record.rust").ImportKind;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

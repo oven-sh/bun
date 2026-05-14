@@ -886,7 +886,7 @@ const socket_group_fields = .{
 
 /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
 /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-/// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
+/// after `WebWorker__teardownJSCVM` (web_worker.rust), so doing the closeAll
 /// there would dispatch into freed JSC heap.
 pub fn closeAllSocketGroups(this: *RareData, vm: *jsc.VirtualMachine) void {
     // closeAll() dispatches on_close into JS while the VM is still alive, so a
@@ -922,7 +922,7 @@ pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
     };
 }
 
-pub const SpawnSyncEventLoop = @import("../event_loop/SpawnSyncEventLoop.zig");
+pub const SpawnSyncEventLoop = @import("../event_loop/SpawnSyncEventLoop.rust");
 
 pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEventLoop {
     return this.#spawn_sync_event_loop.get() orelse brk: {
@@ -933,15 +933,15 @@ pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEv
     };
 }
 
-const UUID = @import("./uuid.zig");
-const WebSocketDeflate = @import("../http_jsc/websocket_client/WebSocketDeflate.zig");
+const UUID = @import("./uuid.rust");
+const WebSocketDeflate = @import("../http_jsc/websocket_client/WebSocketDeflate.rust");
 const std = @import("std");
-const EditorContext = @import("../runtime/cli/open.zig").EditorContext;
-const FSWatcher = @import("../runtime/node/node_fs_watcher.zig").FSWatcher;
-const ValkeyContext = @import("../runtime/valkey_jsc/valkey.zig").ValkeyContext;
+const EditorContext = @import("../runtime/cli/open.rust").EditorContext;
+const FSWatcher = @import("../runtime/node/node_fs_watcher.rust").FSWatcher;
+const ValkeyContext = @import("../runtime/valkey_jsc/valkey.rust").ValkeyContext;
 
-const StatWatcher = @import("../runtime/node/node_fs_stat_watcher.zig").StatWatcher;
-const StatWatcherScheduler = @import("../runtime/node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const StatWatcher = @import("../runtime/node/node_fs_stat_watcher.rust").StatWatcher;
+const StatWatcherScheduler = @import("../runtime/node/node_fs_stat_watcher.rust").StatWatcherScheduler;
 
 const bun = @import("bun");
 const Async = bun.Async;

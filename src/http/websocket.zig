@@ -1,4 +1,4 @@
-// This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
+// This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.rust
 // Thank you @frmdstryr.
 
 pub const Opcode = enum(u4) {

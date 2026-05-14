@@ -85,7 +85,7 @@ extern fn JSCommonJSExtensions__setFunction(global: *jsc.JSGlobalObject, index: 
 extern fn JSCommonJSExtensions__swapRemove(global: *jsc.JSGlobalObject, index: u32) u32;
 
 // Memory management is complicated because JSValues are stored in gc-visitable
-// WriteBarriers in C++ but the hash map for extensions is in Zig for flexibility.
+// WriteBarriers in C++ but the hash map for extensions is in Rust for flexibility.
 fn onRequireExtensionModify(global: *jsc.JSGlobalObject, str: []const u8, loader: bun.schema.api.Loader, value: jsc.JSValue) bun.OOM!void {
     const vm = global.bunVM();
     const list = &vm.commonjs_custom_extensions;

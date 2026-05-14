@@ -76,7 +76,7 @@ JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)
         if (!object)
             return {};
     }
-    if (auto* global = dynamicDowncast<Zig::GlobalObject>(object))
+    if (auto* global = dynamicDowncast<Rust::GlobalObject>(object))
         return { global->eventTarget(), *global };
 
     return {};

@@ -1,17 +1,17 @@
 ---
-name: implementing-jsc-classes-zig
-description: Creates JavaScript classes using Bun's Zig bindings generator (.classes.ts). Use when implementing new JS APIs in Zig with JSC integration.
+name: implementing-jsc-classes-rust
+description: Creates JavaScript classes using Bun's Rust bindings generator (.classes.ts). Use when implementing new JS APIs in Rust with JSC integration.
 ---
 
 # Bun's JavaScriptCore Class Bindings Generator
 
-Bridge JavaScript and Zig through `.classes.ts` definitions and Zig implementations.
+Bridge JavaScript and Rust through `.classes.ts` definitions and Rust implementations.
 
 ## Architecture
 
-1. **Zig Implementation** (.zig files)
+1. **Rust Implementation** (.rust files)
 2. **JavaScript Interface Definition** (.classes.ts files)
-3. **Generated Code** (C++/Zig files connecting them)
+3. **Generated Code** (C++/Rust files connecting them)
 
 ## Class Definition (.classes.ts)
 
@@ -38,9 +38,9 @@ Options:
 - `proto`: Properties/methods
 - `cache`: Cache property values via WriteBarrier
 
-## Zig Implementation
+## Rust Implementation
 
-```zig
+```rust
 pub const TextDecoder = struct {
     pub const js = JSC.Codegen.JSTextDecoder;
     pub const toJS = js.toJS;
@@ -89,11 +89,11 @@ pub const TextDecoder = struct {
 - Use `bun.JSError!JSValue` return type for error handling
 - Use `globalObject` not `ctx`
 - `deinit()` for cleanup, `finalize()` called by GC
-- Update `src/jsc/bindings/generated_classes_list.zig`
+- Update `src/jsc/bindings/generated_classes_list.rust`
 
 ## CallFrame Access
 
-```zig
+```rust
 const args = callFrame.arguments();
 const first_arg = args.ptr[0];  // Access as slice
 const argCount = args.len;
@@ -104,7 +104,7 @@ const thisValue = callFrame.thisValue();
 
 For `cache: true` properties, generated accessors:
 
-```zig
+```rust
 // Get cached value
 pub fn encodingGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
     const result = TextDecoderPrototype__encodingGetCachedValue(thisValue);
@@ -120,7 +120,7 @@ pub fn encodingSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObje
 
 ## Error Handling
 
-```zig
+```rust
 pub fn method(this: *MyClass, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const args = callFrame.arguments();
     if (args.len < 1) {
@@ -132,7 +132,7 @@ pub fn method(this: *MyClass, globalObject: *JSGlobalObject, callFrame: *JSC.Cal
 
 ## Memory Management
 
-```zig
+```rust
 pub fn deinit(this: *TextDecoder) void {
     this._encoding.deref();
     if (this.buffer) |buffer| {
@@ -163,9 +163,9 @@ define({
 });
 ```
 
-2. Implement in `.zig`:
+2. Implement in `.rust`:
 
-```zig
+```rust
 pub const MyClass = struct {
     pub const js = JSC.Codegen.JSMyClass;
     pub const toJS = js.toJS;
@@ -196,11 +196,11 @@ pub const MyClass = struct {
 };
 ```
 
-3. Add to `src/jsc/bindings/generated_classes_list.zig`
+3. Add to `src/jsc/bindings/generated_classes_list.rust`
 
 ## Generated Components
 
 - **C++ Classes**: `JSMyClass`, `JSMyClassPrototype`, `JSMyClassConstructor`
 - **Method Bindings**: `MyClassPrototype__myMethodCallback`
 - **Property Accessors**: `MyClassPrototype__myPropertyGetterWrap`
-- **Zig Bindings**: External function declarations, cached value accessors
+- **Rust Bindings**: External function declarations, cached value accessors

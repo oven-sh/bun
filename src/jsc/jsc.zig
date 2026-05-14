@@ -1,5 +1,5 @@
 //! Bindings to JavaScriptCore and other JavaScript primatives such as
-//! VirtualMachine, JSGlobalObject (Zig::GlobalObject), and the event loop.
+//! VirtualMachine, JSGlobalObject (Rust::GlobalObject), and the event loop.
 //!
 //! Web and runtime-specific APIs should go in `bun.webcore` and `bun.api`.
 //!
@@ -12,26 +12,26 @@ else
     .c;
 
 /// Web Template Framework
-pub const wtf = @import("./WTF.zig").WTF;
+pub const wtf = @import("./WTF.rust").WTF;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
+/// Binding for JSCInitialize in RustGlobalObject.cpp
 pub fn initialize(eval_mode: bool) void {
     markBinding(@src());
     bun.analytics.Features.jsc += 1;
     // `one_shot_startup` is wired up by the Rust runtime (`bun_jsc::initialize`);
-    // the legacy Zig entry point keeps the default multi-threaded configuration.
+    // the legacy Rust entry point keeps the default multi-threaded configuration.
     JSCInitialize(std.os.environ.ptr, std.os.environ.len, onJSCInvalidEnvVar, eval_mode, false);
 }
 
-pub const JSValue = @import("./JSValue.zig").JSValue;
+pub const JSValue = @import("./JSValue.rust").JSValue;
 
 // Host functions are the native function pointer type that can be used by a
 // JSC::JSFunction to call native code from JavaScript. To allow usage of `try`
-// for error handling, Bun provides toJSHostFn to wrap JSHostFnZig into JSHostFn.
-pub const host_fn = @import("./host_fn.zig");
+// for error handling, Bun provides toJSHostFn to wrap JSHostFnRust into JSHostFn.
+pub const host_fn = @import("./host_fn.rust");
 pub const JSHostFn = host_fn.JSHostFn;
-pub const JSHostFnZig = host_fn.JSHostFnZig;
-pub const JSHostFnZigWithContext = host_fn.JSHostFnZigWithContext;
+pub const JSHostFnRust = host_fn.JSHostFnRust;
+pub const JSHostFnRustWithContext = host_fn.JSHostFnRustWithContext;
 pub const JSHostFunctionTypeWithContext = host_fn.JSHostFunctionTypeWithContext;
 pub const toJSHostFn = host_fn.toJSHostFn;
 pub const toJSHostFnResult = host_fn.toJSHostFnResult;
@@ -41,94 +41,94 @@ pub const fromJSHostCall = host_fn.fromJSHostCall;
 pub const fromJSHostCallGeneric = host_fn.fromJSHostCallGeneric;
 
 // JSC Classes Bindings
-pub const AnyPromise = @import("./AnyPromise.zig").AnyPromise;
-pub const array_buffer = @import("./array_buffer.zig");
+pub const AnyPromise = @import("./AnyPromise.rust").AnyPromise;
+pub const array_buffer = @import("./array_buffer.rust");
 pub const ArrayBuffer = array_buffer.ArrayBuffer;
 pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
 pub const JSCArrayBuffer = array_buffer.JSCArrayBuffer;
-pub const CachedBytecode = @import("./CachedBytecode.zig").CachedBytecode;
-pub const CallFrame = @import("./CallFrame.zig").CallFrame;
-pub const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
-pub const CommonStrings = @import("./CommonStrings.zig").CommonStrings;
-pub const CustomGetterSetter = @import("./CustomGetterSetter.zig").CustomGetterSetter;
-pub const DOMFormData = @import("./DOMFormData.zig").DOMFormData;
-pub const DOMURL = @import("./DOMURL.zig").DOMURL;
-pub const DecodedJSValue = @import("./DecodedJSValue.zig").DecodedJSValue;
-pub const DeferredError = @import("./DeferredError.zig").DeferredError;
-pub const GetterSetter = @import("./GetterSetter.zig").GetterSetter;
-pub const JSArray = @import("./JSArray.zig").JSArray;
-pub const JSArrayIterator = @import("./JSArrayIterator.zig").JSArrayIterator;
-pub const JSCell = @import("./JSCell.zig").JSCell;
-pub const JSFunction = @import("./JSFunction.zig").JSFunction;
-pub const JSGlobalObject = @import("./JSGlobalObject.zig").JSGlobalObject;
-pub const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
-pub const JSMap = @import("./JSMap.zig").JSMap;
-pub const JSModuleLoader = @import("./JSModuleLoader.zig").JSModuleLoader;
-pub const JSObject = @import("./JSObject.zig").JSObject;
-pub const JSPromise = @import("./JSPromise.zig").JSPromise;
-pub const JSPromiseRejectionOperation = @import("./JSPromiseRejectionOperation.zig").JSPromiseRejectionOperation;
-pub const JSRef = @import("./JSRef.zig").JSRef;
-pub const JSString = @import("./JSString.zig").JSString;
-pub const JSUint8Array = @import("./JSUint8Array.zig").JSUint8Array;
-pub const JSBigInt = @import("./JSBigInt.zig").JSBigInt;
-pub const RefString = @import("./RefString.zig");
-pub const ScriptExecutionStatus = @import("./ScriptExecutionStatus.zig").ScriptExecutionStatus;
-pub const SourceType = @import("./SourceType.zig").SourceType;
-pub const Strong = @import("./Strong.zig");
-pub const SystemError = @import("./SystemError.zig").SystemError;
-pub const URL = @import("./URL.zig").URL;
-pub const URLSearchParams = @import("./URLSearchParams.zig").URLSearchParams;
-pub const VM = @import("./VM.zig").VM;
-pub const Weak = @import("./Weak.zig").Weak;
-pub const WeakRefType = @import("./Weak.zig").WeakRefType;
-pub const Exception = @import("./Exception.zig").Exception;
-pub const SourceProvider = @import("./SourceProvider.zig").SourceProvider;
-pub const TopExceptionScope = @import("./TopExceptionScope.zig").TopExceptionScope;
-pub const ExceptionValidationScope = @import("./TopExceptionScope.zig").ExceptionValidationScope;
-pub const MarkedArgumentBuffer = @import("./MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
-pub const RegularExpression = @import("./RegularExpression.zig").RegularExpression;
+pub const CachedBytecode = @import("./CachedBytecode.rust").CachedBytecode;
+pub const CallFrame = @import("./CallFrame.rust").CallFrame;
+pub const CommonAbortReason = @import("./CommonAbortReason.rust").CommonAbortReason;
+pub const CommonStrings = @import("./CommonStrings.rust").CommonStrings;
+pub const CustomGetterSetter = @import("./CustomGetterSetter.rust").CustomGetterSetter;
+pub const DOMFormData = @import("./DOMFormData.rust").DOMFormData;
+pub const DOMURL = @import("./DOMURL.rust").DOMURL;
+pub const DecodedJSValue = @import("./DecodedJSValue.rust").DecodedJSValue;
+pub const DeferredError = @import("./DeferredError.rust").DeferredError;
+pub const GetterSetter = @import("./GetterSetter.rust").GetterSetter;
+pub const JSArray = @import("./JSArray.rust").JSArray;
+pub const JSArrayIterator = @import("./JSArrayIterator.rust").JSArrayIterator;
+pub const JSCell = @import("./JSCell.rust").JSCell;
+pub const JSFunction = @import("./JSFunction.rust").JSFunction;
+pub const JSGlobalObject = @import("./JSGlobalObject.rust").JSGlobalObject;
+pub const JSInternalPromise = @import("./JSInternalPromise.rust").JSInternalPromise;
+pub const JSMap = @import("./JSMap.rust").JSMap;
+pub const JSModuleLoader = @import("./JSModuleLoader.rust").JSModuleLoader;
+pub const JSObject = @import("./JSObject.rust").JSObject;
+pub const JSPromise = @import("./JSPromise.rust").JSPromise;
+pub const JSPromiseRejectionOperation = @import("./JSPromiseRejectionOperation.rust").JSPromiseRejectionOperation;
+pub const JSRef = @import("./JSRef.rust").JSRef;
+pub const JSString = @import("./JSString.rust").JSString;
+pub const JSUint8Array = @import("./JSUint8Array.rust").JSUint8Array;
+pub const JSBigInt = @import("./JSBigInt.rust").JSBigInt;
+pub const RefString = @import("./RefString.rust");
+pub const ScriptExecutionStatus = @import("./ScriptExecutionStatus.rust").ScriptExecutionStatus;
+pub const SourceType = @import("./SourceType.rust").SourceType;
+pub const Strong = @import("./Strong.rust");
+pub const SystemError = @import("./SystemError.rust").SystemError;
+pub const URL = @import("./URL.rust").URL;
+pub const URLSearchParams = @import("./URLSearchParams.rust").URLSearchParams;
+pub const VM = @import("./VM.rust").VM;
+pub const Weak = @import("./Weak.rust").Weak;
+pub const WeakRefType = @import("./Weak.rust").WeakRefType;
+pub const Exception = @import("./Exception.rust").Exception;
+pub const SourceProvider = @import("./SourceProvider.rust").SourceProvider;
+pub const TopExceptionScope = @import("./TopExceptionScope.rust").TopExceptionScope;
+pub const ExceptionValidationScope = @import("./TopExceptionScope.rust").ExceptionValidationScope;
+pub const MarkedArgumentBuffer = @import("./MarkedArgumentBuffer.rust").MarkedArgumentBuffer;
+pub const RegularExpression = @import("./RegularExpression.rust").RegularExpression;
 
 // JavaScript-related
-pub const Errorable = @import("./Errorable.zig").Errorable;
-pub const ResolvedSource = @import("./ResolvedSource.zig").ResolvedSource;
-pub const ErrorCode = @import("./ErrorCode.zig").ErrorCode;
-pub const JSErrorCode = @import("./JSErrorCode.zig").JSErrorCode;
-pub const ZigErrorType = @import("./ZigErrorType.zig").ZigErrorType;
-pub const Debugger = @import("./Debugger.zig");
-pub const SavedSourceMap = @import("./SavedSourceMap.zig");
-pub const VirtualMachine = @import("./VirtualMachine.zig");
-pub const ModuleLoader = @import("./ModuleLoader.zig");
-pub const RareData = @import("./rare_data.zig");
-pub const EventType = @import("./EventType.zig").EventType;
-pub const JSRuntimeType = @import("./JSRuntimeType.zig").JSRuntimeType;
-pub const ZigStackFrameCode = @import("./ZigStackFrameCode.zig").ZigStackFrameCode;
+pub const Errorable = @import("./Errorable.rust").Errorable;
+pub const ResolvedSource = @import("./ResolvedSource.rust").ResolvedSource;
+pub const ErrorCode = @import("./ErrorCode.rust").ErrorCode;
+pub const JSErrorCode = @import("./JSErrorCode.rust").JSErrorCode;
+pub const RustErrorType = @import("./RustErrorType.rust").RustErrorType;
+pub const Debugger = @import("./Debugger.rust");
+pub const SavedSourceMap = @import("./SavedSourceMap.rust");
+pub const VirtualMachine = @import("./VirtualMachine.rust");
+pub const ModuleLoader = @import("./ModuleLoader.rust");
+pub const RareData = @import("./rare_data.rust");
+pub const EventType = @import("./EventType.rust").EventType;
+pub const JSRuntimeType = @import("./JSRuntimeType.rust").JSRuntimeType;
+pub const RustStackFrameCode = @import("./RustStackFrameCode.rust").RustStackFrameCode;
 
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);
-pub const ErrorableZigString = Errorable(ZigString);
+pub const ErrorableRustString = Errorable(RustString);
 pub const ErrorableJSValue = Errorable(JSValue);
 pub const ErrorableString = Errorable(bun.String);
 
-pub const ZigStackTrace = @import("./ZigStackTrace.zig").ZigStackTrace;
-pub const ZigStackFrame = @import("./ZigStackFrame.zig").ZigStackFrame;
-pub const ZigStackFramePosition = @import("./ZigStackFramePosition.zig").ZigStackFramePosition;
-pub const ZigException = @import("./ZigException.zig").ZigException;
+pub const RustStackTrace = @import("./RustStackTrace.rust").RustStackTrace;
+pub const RustStackFrame = @import("./RustStackFrame.rust").RustStackFrame;
+pub const RustStackFramePosition = @import("./RustStackFramePosition.rust").RustStackFramePosition;
+pub const RustException = @import("./RustException.rust").RustException;
 
-pub const ConsoleObject = @import("./ConsoleObject.zig");
+pub const ConsoleObject = @import("./ConsoleObject.rust");
 pub const Formatter = ConsoleObject.Formatter;
 
-pub const hot_reloader = @import("./hot_reloader.zig");
+pub const hot_reloader = @import("./hot_reloader.rust");
 
 // TODO: move into bun.api
-pub const Jest = @import("../runtime/test_runner/jest.zig");
-pub const TestScope = @import("../runtime/test_runner/jest.zig").TestScope;
-pub const Expect = @import("../runtime/test_runner/expect.zig");
-pub const Snapshot = @import("../runtime/test_runner/snapshot.zig");
+pub const Jest = @import("../runtime/test_runner/jest.rust");
+pub const TestScope = @import("../runtime/test_runner/jest.rust").TestScope;
+pub const Expect = @import("../runtime/test_runner/expect.rust");
+pub const Snapshot = @import("../runtime/test_runner/snapshot.rust");
 
-pub const js_property_iterator = @import("./JSPropertyIterator.zig");
+pub const js_property_iterator = @import("./JSPropertyIterator.rust");
 pub const JSPropertyIterator = js_property_iterator.JSPropertyIterator;
 pub const JSPropertyIteratorOptions = js_property_iterator.JSPropertyIteratorOptions;
 
-pub const EventLoop = @import("./event_loop.zig");
+pub const EventLoop = @import("./event_loop.rust");
 pub const AbstractVM = EventLoop.AbstractVM;
 pub const AnyEventLoop = EventLoop.AnyEventLoop;
 pub const AnyTask = EventLoop.AnyTask;
@@ -156,11 +156,11 @@ pub const WorkPoolTask = EventLoop.WorkPoolTask;
 pub const WorkTask = EventLoop.WorkTask;
 
 /// Deprecated: Avoid using this in new code.
-pub const C = @import("./javascript_core_c_api.zig");
+pub const C = @import("./javascript_core_c_api.rust");
 /// Deprecated: Remove all of these please.
-pub const Sizes = @import("./sizes.zig");
+pub const Sizes = @import("./sizes.rust");
 /// Deprecated: Use `bun.String`
-pub const ZigString = @import("./ZigString.zig").ZigString;
+pub const RustString = @import("./RustString.rust").RustString;
 /// Deprecated: Use `bun.webcore`
 pub const WebCore = bun.webcore;
 /// Deprecated: Use `bun.api`
@@ -187,12 +187,12 @@ pub const Subprocess = bun.api.Subprocess;
 ///  1. `bun src/codegen/generate-classes.ts`
 ///  2. Scan for **/*.classes.ts files in src/
 ///  3. Generate a JS wrapper for each class in:
-///     - Zig: generated_classes.zig
-///     - C++: ZigGeneratedClasses.h, ZigGeneratedClasses.cpp
-///  4. For the Zig code to successfully compile:
-///     - Add it to generated_classes_list.zig
+///     - Rust: generated_classes.rust
+///     - C++: RustGeneratedClasses.h, RustGeneratedClasses.cpp
+///  4. For the Rust code to successfully compile:
+///     - Add it to generated_classes_list.rust
 ///     - Expose the generated methods:
-///       ```zig
+///       ```rust
 ///       pub const js = JSC.Codegen.JSMyClassName;
 ///       pub const toJS = js.toJS;
 ///       pub const fromJS = js.fromJS;
@@ -200,10 +200,10 @@ pub const Subprocess = bun.api.Subprocess;
 ///       ```
 ///  5. `bun run build`
 ///
-pub const Codegen = @import("ZigGeneratedClasses");
-pub const GeneratedClassesList = @import("./generated_classes_list.zig").Classes;
+pub const Codegen = @import("RustGeneratedClasses");
+pub const GeneratedClassesList = @import("./generated_classes_list.rust").Classes;
 
-pub const RuntimeTranspilerCache = @import("./RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
+pub const RuntimeTranspilerCache = @import("./RuntimeTranspilerCache.rust").RuntimeTranspilerCache;
 
 /// Track whether an object should keep the event loop alive
 pub const Ref = struct {

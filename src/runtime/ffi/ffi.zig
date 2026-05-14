@@ -12,7 +12,7 @@ fn getDlError(allocator: std.mem.Allocator) ![]const u8 {
         const err = bun.windows.GetLastError();
         const err_int = @intFromEnum(err);
 
-        // For now, just return the error code as we'd need to implement FormatMessageW in Zig
+        // For now, just return the error code as we'd need to implement FormatMessageW in Rust
         // This is still better than a generic message
         return try std.fmt.allocPrint(allocator, "error code {d}", .{err_int});
     } else {
@@ -577,7 +577,7 @@ pub const FFI = struct {
                     items.deinit();
                     return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
                 }
-                const str = try val.getZigString(globalThis);
+                const str = try val.getRustString(globalThis);
                 if (str.isEmpty()) continue;
                 bun.handleOom(items.append(bun.handleOom(str.toOwnedSliceZ(bun.default_allocator))));
             }
@@ -590,7 +590,7 @@ pub const FFI = struct {
             if (!value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
             }
-            const str = try value.getZigString(globalThis);
+            const str = try value.getRustString(globalThis);
             if (str.isEmpty()) return .{};
             var items = std.array_list.Managed([:0]const u8).init(bun.default_allocator);
             bun.handleOom(items.append(bun.handleOom(str.toOwnedSliceZ(bun.default_allocator))));
@@ -680,7 +680,7 @@ pub const FFI = struct {
                     return globalThis.throwInvalidArgumentTypeValue("flags", "string", flags_value);
                 }
 
-                const str = try flags_value.getZigString(globalThis);
+                const str = try flags_value.getRustString(globalThis);
                 if (!str.isEmpty()) {
                     compile_c.flags = bun.handleOom(str.toOwnedSliceZ(allocator));
                 }
@@ -701,7 +701,7 @@ pub const FFI = struct {
                     var owned_value: [:0]const u8 = "";
                     if (!iter.value.isUndefinedOrNull()) {
                         if (iter.value.isString()) {
-                            const value = try iter.value.getZigString(globalThis);
+                            const value = try iter.value.getRustString(globalThis);
                             if (value.len > 0) {
                                 owned_value = bun.handleOom(value.toOwnedSliceZ(allocator));
                             }
@@ -737,12 +737,12 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
                     }
-                    try compile_c.source.files.append(bun.default_allocator, try (try value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator));
+                    try compile_c.source.files.append(bun.default_allocator, try (try value.getRustString(globalThis)).toOwnedSliceZ(bun.default_allocator));
                 }
             } else if (!source_value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue("source", "string", source_value);
             } else {
-                const source_path = try (try source_value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator);
+                const source_path = try (try source_value.getRustString(globalThis)).toOwnedSliceZ(bun.default_allocator);
                 compile_c.source.file = source_path;
             }
         }
@@ -793,14 +793,14 @@ pub const FFI = struct {
             };
             switch (function.step) {
                 .failed => |err| {
-                    const res = ZigString.init(err.msg).toErrorInstance(globalThis);
+                    const res = RustString.init(err.msg).toErrorInstance(globalThis);
                     return globalThis.throwValue(res);
                 },
                 .pending => {
                     return globalThis.throw("Failed to compile (nothing happend!)", .{});
                 },
                 .compiled => |*compiled| {
-                    const str = ZigString.init(bun.asByteSlice(function_name));
+                    const str = RustString.init(bun.asByteSlice(function_name));
                     const cb = jsc.host_fn.NewRuntimeFunction(
                         globalThis,
                         &str,
@@ -853,7 +853,7 @@ pub const FFI = struct {
         var function: Function = .{ .allocator = allocator };
         var func = &function;
 
-        if (generateSymbolForFunction(globalThis, allocator, interface, func) catch ZigString.init("Out of memory").toErrorInstance(globalThis)) |val| {
+        if (generateSymbolForFunction(globalThis, allocator, interface, func) catch RustString.init("Out of memory").toErrorInstance(globalThis)) |val| {
             return val;
         }
 
@@ -861,10 +861,10 @@ pub const FFI = struct {
         func.base_name = "";
         js_callback.ensureStillAlive();
 
-        func.compileCallback(globalThis, js_callback, func.threadsafe) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
+        func.compileCallback(globalThis, js_callback, func.threadsafe) catch return RustString.init("Out of memory").toErrorInstance(globalThis);
         switch (func.step) {
             .failed => |err| {
-                const message = ZigString.init(err.msg).toErrorInstance(globalThis);
+                const message = RustString.init(err.msg).toErrorInstance(globalThis);
 
                 func.deinit(globalThis);
 
@@ -872,15 +872,15 @@ pub const FFI = struct {
             },
             .pending => {
                 func.deinit(globalThis);
-                return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
+                return RustString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
             .compiled => {
                 const function_ = bun.default_allocator.create(Function) catch unreachable;
                 function_.* = func.*;
                 return JSValue.createObject2(
                     globalThis,
-                    ZigString.static("ptr"),
-                    ZigString.static("ctx"),
+                    RustString.static("ptr"),
+                    RustString.static("ctx"),
                     jsc.JSValue.fromPtrAddress(@intFromPtr(function_.step.compiled.ptr)),
                     jsc.JSValue.fromPtrAddress(@intFromPtr(function_)),
                 );
@@ -927,7 +927,7 @@ pub const FFI = struct {
         }
 
         var function: Function = .{ .allocator = allocator };
-        if (generateSymbolForFunction(global, allocator, object, &function) catch ZigString.init("Out of memory").toErrorInstance(global)) |val| {
+        if (generateSymbolForFunction(global, allocator, object, &function) catch RustString.init("Out of memory").toErrorInstance(global)) |val| {
             return val;
         }
 
@@ -938,9 +938,9 @@ pub const FFI = struct {
         function.base_name = "my_callback_function";
 
         function.printCallbackSourceCode(null, null, &writer) catch {
-            return ZigString.init("Error while printing code").toErrorInstance(global);
+            return RustString.init("Error while printing code").toErrorInstance(global);
         };
-        return ZigString.init(arraylist.items).toJS(global);
+        return RustString.init(arraylist.items).toJS(global);
     }
 
     pub fn print(global: *JSGlobalObject, object: jsc.JSValue, is_callback_val: ?jsc.JSValue) bun.JSError!JSValue {
@@ -987,7 +987,7 @@ pub const FFI = struct {
                 }
 
                 symbols.clearAndFree(allocator);
-                return ZigString.init("Error while printing code").toErrorInstance(global);
+                return RustString.init("Error while printing code").toErrorInstance(global);
             };
             strs.appendAssumeCapacity(bun.String.cloneUTF8(arraylist.items));
         }
@@ -1011,7 +1011,7 @@ pub const FFI = struct {
         return global.toInvalidArguments("Expected an options object with symbol names", .{});
     }
 
-    pub fn open(global: *JSGlobalObject, name_str: ZigString, object_value: jsc.JSValue) jsc.JSValue {
+    pub fn open(global: *JSGlobalObject, name_str: RustString, object_value: jsc.JSValue) jsc.JSValue {
         if (comptime !Environment.enable_tinycc) {
             global.throw("bun:ffi dlopen() is not available in this build (TinyCC is disabled)", .{}) catch {};
             return .zero;
@@ -1140,7 +1140,7 @@ pub const FFI = struct {
                         other_function.deinit(global);
                     };
 
-                    const res = ZigString.init(err.msg).toErrorInstance(global);
+                    const res = RustString.init(err.msg).toErrorInstance(global);
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return res;
@@ -1151,10 +1151,10 @@ pub const FFI = struct {
                     }
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
-                    return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
+                    return RustString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
-                    const str = ZigString.init(bun.asByteSlice(function_name));
+                    const str = RustString.init(bun.asByteSlice(function_name));
                     const cb = jsc.host_fn.NewRuntimeFunction(
                         global,
                         &str,
@@ -1248,7 +1248,7 @@ pub const FFI = struct {
                         value.arg_types.clearAndFree(allocator);
                     }
 
-                    const res = ZigString.init(err.msg).toErrorInstance(global);
+                    const res = RustString.init(err.msg).toErrorInstance(global);
                     function.deinit(global);
                     symbols.clearAndFree(allocator);
                     return res;
@@ -1259,10 +1259,10 @@ pub const FFI = struct {
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
-                    return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);
+                    return RustString.static("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
-                    const name = &ZigString.init(bun.asByteSlice(function_name));
+                    const name = &RustString.init(bun.asByteSlice(function_name));
 
                     const cb = jsc.host_fn.NewRuntimeFunction(
                         global,
@@ -1295,7 +1295,7 @@ pub const FFI = struct {
 
         if (try value.getOwn(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
-                return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
+                return RustString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
 
             var array = try args.arrayIterator(global);
@@ -1304,7 +1304,7 @@ pub const FFI = struct {
             while (try array.next()) |val| {
                 if (val.isEmptyOrUndefinedOrNull()) {
                     abi_types.clearAndFree(allocator);
-                    return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
+                    return RustString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
                 if (val.isAnyInt()) {
@@ -1316,14 +1316,14 @@ pub const FFI = struct {
                         },
                         else => {
                             abi_types.clearAndFree(allocator);
-                            return ZigString.static("invalid ABI type").toErrorInstance(global);
+                            return RustString.static("invalid ABI type").toErrorInstance(global);
                         },
                     }
                 }
 
                 if (!val.jsType().isStringLike()) {
                     abi_types.clearAndFree(allocator);
-                    return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
+                    return RustString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
                 var type_name = try val.toSlice(global, allocator);
@@ -1353,7 +1353,7 @@ pub const FFI = struct {
                     },
                     else => {
                         abi_types.clearAndFree(allocator);
-                        return ZigString.static("invalid ABI type").toErrorInstance(global);
+                        return RustString.static("invalid ABI type").toErrorInstance(global);
                     },
                 }
             }
@@ -1368,17 +1368,17 @@ pub const FFI = struct {
 
         if (return_type == ABIType.napi_env) {
             abi_types.clearAndFree(allocator);
-            return ZigString.static("Cannot return napi_env to JavaScript").toErrorInstance(global);
+            return RustString.static("Cannot return napi_env to JavaScript").toErrorInstance(global);
         }
 
         if (return_type == .buffer) {
             abi_types.clearAndFree(allocator);
-            return ZigString.static("Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)").toErrorInstance(global);
+            return RustString.static("Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)").toErrorInstance(global);
         }
 
         if (function.threadsafe and return_type != ABIType.void) {
             abi_types.clearAndFree(allocator);
-            return ZigString.static("Threadsafe functions must return void").toErrorInstance(global);
+            return RustString.static("Threadsafe functions must return void").toErrorInstance(global);
         }
 
         function.* = Function{
@@ -1741,7 +1741,7 @@ pub const FFI = struct {
                 \\);
                 \\
                 \\/* ---- Your Wrapper Function ---- */
-                \\ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
+                \\RUST_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
                 \\
             );
 
@@ -1868,9 +1868,9 @@ pub const FFI = struct {
             try writer.writeAll("return ");
 
             if (!(this.return_type == .void)) {
-                try writer.print("{f}.asZigRepr", .{this.return_type.toJS("return_value")});
+                try writer.print("{f}.asRustRepr", .{this.return_type.toJS("return_value")});
             } else {
-                try writer.writeAll("ValueUndefined.asZigRepr");
+                try writer.writeAll("ValueUndefined.asRustRepr");
             }
 
             try writer.writeAll(";\n}\n\n");
@@ -1946,13 +1946,13 @@ pub const FFI = struct {
 
             if (this.arg_types.items.len > 0) {
                 var arg_buf: [512]u8 = undefined;
-                try writer.print(" ZIG_REPR_TYPE arguments[{d}];\n", .{this.arg_types.items.len});
+                try writer.print(" RUST_REPR_TYPE arguments[{d}];\n", .{this.arg_types.items.len});
 
                 arg_buf[0.."arg".len].* = "arg".*;
                 for (this.arg_types.items, 0..) |arg, i| {
                     const printed = std.fmt.printInt(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed];
-                    try writer.print("arguments[{d}] = {f}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
+                    try writer.print("arguments[{d}] = {f}.asRustRepr;\n", .{ i, arg.toJS(arg_name) });
                 }
             }
 
@@ -1973,7 +1973,7 @@ pub const FFI = struct {
                 } else {
                     inner_buf = try std.fmt.bufPrint(
                         inner_buf_[1..],
-                        "FFI_Callback_call((void*)0x{f}ULL, 0, (ZIG_REPR_TYPE*)0)",
+                        "FFI_Callback_call((void*)0x{f}ULL, 0, (RUST_REPR_TYPE*)0)",
                         .{fmt},
                     );
                 }
@@ -2401,7 +2401,7 @@ const CompilerRT = struct {
             };
         }
 
-        const Sizes = @import("../../jsc/sizes.zig");
+        const Sizes = @import("../../jsc/sizes.rust");
         const offsets = Offsets.get();
         state.defineSymbolsComptime(.{
             .Bun_FFI_PointerOffsetToArgumentsList = Sizes.Bun_FFI_PointerOffsetToArgumentsList,
@@ -2440,15 +2440,15 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
 
 const string = []const u8;
 
-const TCC = if (Environment.enable_tinycc) @import("../../tcc_sys/tcc.zig") else struct {
+const TCC = if (Environment.enable_tinycc) @import("../../tcc_sys/tcc.rust") else struct {
     pub const State = struct {
         pub fn deinit(_: *State) void {}
     };
 };
 
-const Fs = @import("../../resolver/fs.zig");
-const napi = @import("../napi/napi.zig");
-const options = @import("../../bundler/options.zig");
+const Fs = @import("../../resolver/fs.rust");
+const napi = @import("../napi/napi.rust");
+const options = @import("../../bundler/options.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -2462,4 +2462,4 @@ const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const VM = bun.jsc.VM;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;

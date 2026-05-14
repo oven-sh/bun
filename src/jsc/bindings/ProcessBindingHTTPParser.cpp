@@ -1,5 +1,5 @@
 #include "ProcessBindingHTTPParser.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "llhttp/llhttp.h"
 
 namespace Bun {

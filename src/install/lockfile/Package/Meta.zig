@@ -69,7 +69,7 @@ pub const Meta = extern struct {
     }
 };
 
-const Integrity = @import("../../integrity.zig").Integrity;
+const Integrity = @import("../../integrity.rust").Integrity;
 
 const bun = @import("bun");
 const String = bun.Semver.String;

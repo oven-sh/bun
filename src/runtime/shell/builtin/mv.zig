@@ -504,7 +504,7 @@ const debug = bun.Output.scoped(.ShellCat, .hidden);
 
 const std = @import("std");
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const Interpreter = interpreter.Interpreter;
 const ParseError = interpreter.ParseError;
 const ShellSyscall = interpreter.ShellSyscall;

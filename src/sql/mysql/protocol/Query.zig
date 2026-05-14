@@ -62,9 +62,9 @@ const debug = bun.Output.scoped(.MySQLQuery, .visible);
 
 const bun = @import("bun");
 const std = @import("std");
-const CommandType = @import("./CommandType.zig").CommandType;
-const Data = @import("../../shared/Data.zig").Data;
-const Param = @import("../MySQLParam.zig").Param;
+const CommandType = @import("./CommandType.rust").CommandType;
+const Data = @import("../../shared/Data.rust").Data;
+const Param = @import("../MySQLParam.rust").Param;
 
-const NewWriter = @import("./NewWriter.zig").NewWriter;
-const writeWrap = @import("./NewWriter.zig").writeWrap;
+const NewWriter = @import("./NewWriter.rust").NewWriter;
+const writeWrap = @import("./NewWriter.rust").writeWrap;

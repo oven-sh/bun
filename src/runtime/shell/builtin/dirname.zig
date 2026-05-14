@@ -64,7 +64,7 @@ pub inline fn bltn(this: *@This()) *Builtin {
 
 // --
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const std = @import("std");
 
 const Interpreter = interpreter.Interpreter;

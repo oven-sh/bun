@@ -77,7 +77,7 @@ pub fn enqueueDependencyList(
             if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
                 this.log.addWarningWithNote(null, .{}, this.allocator, @errorName(err), note.fmt, note.args) catch unreachable
             else
-                this.log.addZigErrorWithNote(this.allocator, err, note.fmt, note.args) catch unreachable;
+                this.log.addRustErrorWithNote(this.allocator, err, note.fmt, note.args) catch unreachable;
 
             continue;
         };
@@ -339,7 +339,7 @@ pub fn enqueueDependencyToRoot(
             this.drainDependencyList();
 
             const Closure = struct {
-                // https://github.com/ziglang/zig/issues/19586
+                // https://github.com/rustlang/rust/issues/19586
                 pub fn issue_19586_workaround() type {
                     return struct {
                         err: ?anyerror = null,

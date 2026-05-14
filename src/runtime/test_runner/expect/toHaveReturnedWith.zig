@@ -144,7 +144,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
 }
 
 const std = @import("std");
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("../diff_format.rust").DiffFormatter;
 
 const bun = @import("bun");
 const Output = bun.Output;

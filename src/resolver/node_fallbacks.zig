@@ -12,7 +12,7 @@ pub const FallbackModule = struct {
     code: *const fn () string,
 
     // This workaround exists to allow bun.runtimeEmbedFile to work.
-    // Using `@embedFile` forces you to wait for the Zig build to finish in
+    // Using `@embedFile` forces you to wait for the Rust build to finish in
     // debug builds, even when you only changed JS builtins.
     fn createSourceCodeGetter(comptime code_path: string) *const fn () string {
         const Getter = struct {
@@ -90,9 +90,9 @@ pub fn contentsFromPath(path: string) ?string {
 
 const string = []const u8;
 
-const Fs = @import("./fs.zig");
+const Fs = @import("./fs.rust");
 const std = @import("std");
-const PackageJSON = @import("./package_json.zig").PackageJSON;
+const PackageJSON = @import("./package_json.rust").PackageJSON;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -4,7 +4,7 @@
 pub const CommonStrings = struct {
     globalObject: *jsc.JSGlobalObject,
 
-    const CommonStringsForZig = enum(u8) {
+    const CommonStringsForRust = enum(u8) {
         IPv4 = 0,
         IPv6 = 1,
         IN4Loopback = 2,
@@ -19,48 +19,48 @@ pub const CommonStrings = struct {
         binaryTypeNodeBuffer = 11,
         binaryTypeUint8Array = 12,
 
-        extern "c" fn Bun__CommonStringsForZig__toJS(commonString: CommonStringsForZig, globalObject: *jsc.JSGlobalObject) jsc.JSValue;
-        pub const toJS = Bun__CommonStringsForZig__toJS;
+        extern "c" fn Bun__CommonStringsForRust__toJS(commonString: CommonStringsForRust, globalObject: *jsc.JSGlobalObject) jsc.JSValue;
+        pub const toJS = Bun__CommonStringsForRust__toJS;
     };
 
     pub inline fn IPv4(this: CommonStrings) JSValue {
-        return CommonStringsForZig.IPv4.toJS(this.globalObject);
+        return CommonStringsForRust.IPv4.toJS(this.globalObject);
     }
     pub inline fn IPv6(this: CommonStrings) JSValue {
-        return CommonStringsForZig.IPv6.toJS(this.globalObject);
+        return CommonStringsForRust.IPv6.toJS(this.globalObject);
     }
     pub inline fn @"127.0.0.1"(this: CommonStrings) JSValue {
-        return CommonStringsForZig.IN4Loopback.toJS(this.globalObject);
+        return CommonStringsForRust.IN4Loopback.toJS(this.globalObject);
     }
     pub inline fn @"::"(this: CommonStrings) JSValue {
-        return CommonStringsForZig.IN6Any.toJS(this.globalObject);
+        return CommonStringsForRust.IN6Any.toJS(this.globalObject);
     }
     pub inline fn ipv4(this: CommonStrings) JSValue {
-        return CommonStringsForZig.ipv4Lower.toJS(this.globalObject);
+        return CommonStringsForRust.ipv4Lower.toJS(this.globalObject);
     }
     pub inline fn ipv6(this: CommonStrings) JSValue {
-        return CommonStringsForZig.ipv6Lower.toJS(this.globalObject);
+        return CommonStringsForRust.ipv6Lower.toJS(this.globalObject);
     }
     pub inline fn default(this: CommonStrings) JSValue {
-        return CommonStringsForZig.fetchDefault.toJS(this.globalObject);
+        return CommonStringsForRust.fetchDefault.toJS(this.globalObject);
     }
     pub inline fn @"error"(this: CommonStrings) JSValue {
-        return CommonStringsForZig.fetchError.toJS(this.globalObject);
+        return CommonStringsForRust.fetchError.toJS(this.globalObject);
     }
     pub inline fn include(this: CommonStrings) JSValue {
-        return CommonStringsForZig.fetchInclude.toJS(this.globalObject);
+        return CommonStringsForRust.fetchInclude.toJS(this.globalObject);
     }
     pub inline fn buffer(this: CommonStrings) JSValue {
-        return CommonStringsForZig.buffer.toJS(this.globalObject);
+        return CommonStringsForRust.buffer.toJS(this.globalObject);
     }
     pub inline fn arraybuffer(this: CommonStrings) JSValue {
-        return CommonStringsForZig.binaryTypeArrayBuffer.toJS(this.globalObject);
+        return CommonStringsForRust.binaryTypeArrayBuffer.toJS(this.globalObject);
     }
     pub inline fn nodebuffer(this: CommonStrings) JSValue {
-        return CommonStringsForZig.binaryTypeNodeBuffer.toJS(this.globalObject);
+        return CommonStringsForRust.binaryTypeNodeBuffer.toJS(this.globalObject);
     }
     pub inline fn uint8array(this: CommonStrings) JSValue {
-        return CommonStringsForZig.binaryTypeUint8Array.toJS(this.globalObject);
+        return CommonStringsForRust.binaryTypeUint8Array.toJS(this.globalObject);
     }
 };
 

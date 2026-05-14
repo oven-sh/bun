@@ -110,8 +110,8 @@ pub const Decompressor = union(enum) {
     }
 };
 
-const Zlib = @import("../zlib/zlib.zig");
-const Encoding = @import("../http_types/Encoding.zig").Encoding;
+const Zlib = @import("../zlib/zlib.rust");
+const Encoding = @import("../http_types/Encoding.rust").Encoding;
 
 const bun = @import("bun");
 const Brotli = bun.brotli;

@@ -2419,7 +2419,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.request_body != null) {
                 var body = this.request_body.?;
 
-                // The up-front maxRequestBodySize check in server.zig only
+                // The up-front maxRequestBodySize check in server.rust only
                 // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
                 // omit it, so cap accumulated bytes here too — otherwise a
                 // single CL-less stream can grow request_body_buf without
@@ -2700,7 +2700,7 @@ const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
 const std = @import("std");
-const Fallback = @import("../../js_parser/runtime.zig").Fallback;
+const Fallback = @import("../../js_parser/runtime.rust").Fallback;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

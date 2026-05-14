@@ -8,5 +8,5 @@ pub fn decodeInternal(this: *ResultSetHeader, comptime Context: type, reader: Ne
 
 pub const decode = decoderWrap(ResultSetHeader, decodeInternal).decode;
 
-const NewReader = @import("./NewReader.zig").NewReader;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const decoderWrap = @import("./NewReader.rust").decoderWrap;

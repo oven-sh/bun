@@ -106,9 +106,9 @@
 #include <wtf/Vector.h>
 #include <wtf/threads/BinarySemaphore.h>
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "blob.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
 #include "JSKeyObject.h"
@@ -2688,7 +2688,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // a DataCloneError.
             // NapiPrototype is allowed because napi_create_object should behave
             // like a plain object from JS's perspective (matches Node.js).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info())
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Rust::NapiPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

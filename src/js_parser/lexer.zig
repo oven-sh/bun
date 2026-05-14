@@ -3381,9 +3381,9 @@ const InvalidEscapeSequenceFormatter = struct {
 
 const string = []const u8;
 
-const FeatureFlags = @import("../bun_core/feature_flags.zig");
-const JSIdentifier = @import("./lexer/identifier.zig");
-const tables = @import("./lexer_tables.zig");
+const FeatureFlags = @import("../bun_core/feature_flags.rust");
+const JSIdentifier = @import("./lexer/identifier.rust");
+const tables = @import("./lexer_tables.rust");
 
 const bun = @import("bun");
 const CodePoint = bun.CodePoint;

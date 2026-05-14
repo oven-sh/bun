@@ -50,7 +50,7 @@ pub const UpgradeClientUnion = union(enum) {
     }
 };
 
-const WebSocketClient = @import("../websocket_client.zig").NewWebSocketClient(false);
+const WebSocketClient = @import("../websocket_client.rust").NewWebSocketClient(false);
 
 ref_count: RefCount,
 /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
@@ -360,9 +360,9 @@ pub export fn WebSocketProxyTunnel__setConnectedWebSocket(tunnel: *WebSocketProx
 
 const log = bun.Output.scoped(.WebSocketProxyTunnel, .visible);
 
-const ErrorCode = @import("../websocket_client.zig").ErrorCode;
-const NewHTTPUpgradeClient = @import("./WebSocketUpgradeClient.zig").NewHTTPUpgradeClient;
-const SSLWrapper = @import("../../runtime/socket/ssl_wrapper.zig").SSLWrapper;
+const ErrorCode = @import("../websocket_client.rust").ErrorCode;
+const NewHTTPUpgradeClient = @import("./WebSocketUpgradeClient.rust").NewHTTPUpgradeClient;
+const SSLWrapper = @import("../../runtime/socket/ssl_wrapper.rust").SSLWrapper;
 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;

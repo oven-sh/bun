@@ -37,7 +37,7 @@ pub fn write(
                 return .{ .done = {} };
             }
 
-            return .{ .err = bun.errnoToZigErr(errcode) };
+            return .{ .err = bun.errnoToRustErr(errcode) };
         }
     } else if (Environment.isFreeBSD) {
         var sbytes: std.posix.off_t = 0;
@@ -59,7 +59,7 @@ pub fn write(
             if (errcode == .SUCCESS) {
                 return .{ .done = {} };
             }
-            return .{ .err = bun.errnoToZigErr(errcode) };
+            return .{ .err = bun.errnoToRustErr(errcode) };
         }
     } else if (Environment.isPosix) {
         var sbytes: std.posix.off_t = adjusted_count;
@@ -80,7 +80,7 @@ pub fn write(
                 return .{ .done = {} };
             }
 
-            return .{ .err = bun.errnoToZigErr(errcode) };
+            return .{ .err = bun.errnoToRustErr(errcode) };
         }
     }
 

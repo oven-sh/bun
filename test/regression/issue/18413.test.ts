@@ -7,7 +7,7 @@ import { createGzip } from "node:zlib";
  * Regression test for issue #18413
  * "Decompression error: ShortRead - empty chunked gzip response breaks fetch()"
  *
- * The issue was in Bun's zlib.zig implementation, which was incorrectly returning
+ * The issue was in Bun's zlib.rust implementation, which was incorrectly returning
  * error.ShortRead when encountering empty gzip streams (when avail_in == 0).
  *
  * The fix is to call inflate() even when avail_in == 0, as this could be a valid

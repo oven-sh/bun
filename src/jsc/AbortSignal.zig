@@ -248,7 +248,7 @@ pub const AbortSignal = opaque {
 };
 
 const bun = @import("bun");
-const CommonAbortReason = @import("./CommonAbortReason.zig").CommonAbortReason;
+const CommonAbortReason = @import("./CommonAbortReason.rust").CommonAbortReason;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

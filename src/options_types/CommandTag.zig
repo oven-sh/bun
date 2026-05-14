@@ -3,7 +3,7 @@
 //! switch on which command is running without importing `cli/`.
 //!
 //! Heavy methods that reference `Arguments`/`HelpCommand`/`clap` (`params()`,
-//! `printHelp()`) live in `src/cli/cli.zig` as free fns; only the pure enum,
+//! `printHelp()`) live in `src/cli/cli.rust` as free fns; only the pure enum,
 //! `char()`, classifier predicates, and the `EnumArray` flag tables are here.
 
 pub const Tag = enum {
@@ -174,12 +174,12 @@ pub const Tag = enum {
         .UpdateCommand = false,
     });
 
-    /// Heavy methods that pull in `Arguments` / help text live in `cli/cli.zig`.
+    /// Heavy methods that pull in `Arguments` / help text live in `cli/cli.rust`.
     /// Aliased here so existing `cmd.params()` / `cmd.printHelp()` call sites
-    /// keep working; Zig's lazy decl resolution means `options_types/` does
+    /// keep working; Rust's lazy decl resolution means `options_types/` does
     /// not compile-depend on `cli/` unless one of these is actually invoked.
-    pub const params = @import("../runtime/cli/cli.zig").Command.tagParams;
-    pub const printHelp = @import("../runtime/cli/cli.zig").Command.tagPrintHelp;
+    pub const params = @import("../runtime/cli/cli.rust").Command.tagParams;
+    pub const printHelp = @import("../runtime/cli/cli.rust").Command.tagPrintHelp;
 };
 
 const std = @import("std");

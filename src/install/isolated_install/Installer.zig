@@ -2007,10 +2007,10 @@ const string = []const u8;
 
 const debug = Output.scoped(.IsolatedInstaller, .hidden);
 
-const FileCloner = @import("./FileCloner.zig");
-const Hardlinker = @import("./Hardlinker.zig");
+const FileCloner = @import("./FileCloner.rust");
+const Hardlinker = @import("./Hardlinker.rust");
 const std = @import("std");
-const Symlinker = @import("./Symlinker.zig").Symlinker;
+const Symlinker = @import("./Symlinker.rust").Symlinker;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

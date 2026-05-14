@@ -45,5 +45,5 @@ comptime {
 }
 
 const bun = @import("bun");
-const ffi = @import("./FFI.zig");
+const ffi = @import("./FFI.rust");
 const jsc = bun.bun_js.jsc;

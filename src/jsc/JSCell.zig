@@ -56,8 +56,8 @@ pub const JSCell = opaque {
 
 const bun = @import("bun");
 const std = @import("std");
-const CustomGetterSetter = @import("./CustomGetterSetter.zig").CustomGetterSetter;
-const GetterSetter = @import("./GetterSetter.zig").GetterSetter;
+const CustomGetterSetter = @import("./CustomGetterSetter.rust").CustomGetterSetter;
+const GetterSetter = @import("./GetterSetter.rust").GetterSetter;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

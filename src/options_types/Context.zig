@@ -1,9 +1,9 @@
 //! `Command.ContextData` and its option-carrying nested structs, lifted out of
-//! `cli/cli.zig` so subsystems (install, bundler, bake, shell) can reference
+//! `cli/cli.rust` so subsystems (install, bundler, bake, shell) can reference
 //! the parsed-options shape without importing the CLI itself.
 //!
 //! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
-//! `context_data` storage stay in `cli.zig`; they are forward-aliased onto
+//! `context_data` storage stay in `cli.rust`; they are forward-aliased onto
 //! `ContextData` below so call sites that write `Command.ContextData.create()`
 //! keep working.
 
@@ -110,7 +110,7 @@ pub const DebugOptions = struct {
 
 pub const MacroOptions = union(enum) { unspecified: void, disable: void, map: MacroMap };
 
-/// Re-declared from `resolver/package_json.zig` (plain hashmap aliases) so this
+/// Re-declared from `resolver/package_json.rust` (plain hashmap aliases) so this
 /// file does not depend on `resolver/`.
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
@@ -225,12 +225,12 @@ pub const RuntimeOptions = struct {
 
 const string = []const u8;
 
-const BundleEnums = @import("./BundleEnums.zig");
-const CompileTarget = @import("./CompileTarget.zig");
+const BundleEnums = @import("./BundleEnums.rust");
+const CompileTarget = @import("./CompileTarget.rust");
 const std = @import("std");
-const CodeCoverageOptions = @import("./CodeCoverageOptions.zig").CodeCoverageOptions;
-const GlobalCache = @import("./GlobalCache.zig").GlobalCache;
-const OfflineMode = @import("./OfflineMode.zig").OfflineMode;
+const CodeCoverageOptions = @import("./CodeCoverageOptions.rust").CodeCoverageOptions;
+const GlobalCache = @import("./GlobalCache.rust").GlobalCache;
+const OfflineMode = @import("./OfflineMode.rust").OfflineMode;
 
 const bun = @import("bun");
 const logger = bun.logger;

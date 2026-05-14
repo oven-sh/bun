@@ -4,7 +4,7 @@
 //
 // # Memory management
 //
-// Zig is not a managed language, so we have to be careful about memory management.
+// Rust is not a managed language, so we have to be careful about memory management.
 // Manually freeing memory is error-prone and tedious, but garbage collection
 // is slow and reference counting incurs a performance penalty.
 //
@@ -45,7 +45,7 @@
 pub const logPartDependencyTree = Output.scoped(.part_dep_tree, .visible);
 
 pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
-pub const PathToSourceIndexMap = @import("./PathToSourceIndexMap.zig");
+pub const PathToSourceIndexMap = @import("./PathToSourceIndexMap.rust");
 
 pub const Watcher = bun.jsc.hot_reloader.NewHotReloader(BundleV2, EventLoop, true);
 
@@ -157,7 +157,7 @@ pub const BundleV2 = struct {
     /// deduplication is free.
     requested_exports: std.AutoArrayHashMapUnmanaged(u32, barrel_imports.RequestedExports) = .{},
 
-    const barrel_imports = @import("./barrel_imports.zig");
+    const barrel_imports = @import("./barrel_imports.rust");
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -229,7 +229,7 @@ pub const BundleV2 = struct {
         client_transpiler.setAllocator(alloc);
         client_transpiler.linker.resolver = &client_transpiler.resolver;
         client_transpiler.macro_context = js_ast.Macro.MacroContext.init(client_transpiler);
-        const CacheSet = @import("./cache.zig");
+        const CacheSet = @import("./cache.rust");
         client_transpiler.resolver.caches = CacheSet.Set.init(alloc);
 
         try client_transpiler.configureDefines();
@@ -1613,7 +1613,7 @@ pub const BundleV2 = struct {
 
         const output_files = try this.linker.generateChunksInParallel(chunks, false);
 
-        // Generate metafile if requested (CLI writes files in build_command.zig)
+        // Generate metafile if requested (CLI writes files in build_command.rust)
         const metafile: ?[]const u8 = if (this.linker.options.metafile)
             LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
                 bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
@@ -1622,7 +1622,7 @@ pub const BundleV2 = struct {
         else
             null;
 
-        // Markdown is generated later in build_command.zig for CLI
+        // Markdown is generated later in build_command.rust for CLI
         return .{
             .output_files = output_files,
             .metafile = metafile,
@@ -1837,9 +1837,9 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub const JSBundleThread = @import("../bundler_jsc/JSBundleCompletionTask.zig").JSBundleThread;
-    pub const createAndScheduleCompletionTask = @import("../bundler_jsc/JSBundleCompletionTask.zig").createAndScheduleCompletionTask;
-    pub const generateFromJavaScript = @import("../bundler_jsc/JSBundleCompletionTask.zig").generateFromJavaScript;
+    pub const JSBundleThread = @import("../bundler_jsc/JSBundleCompletionTask.rust").JSBundleThread;
+    pub const createAndScheduleCompletionTask = @import("../bundler_jsc/JSBundleCompletionTask.rust").createAndScheduleCompletionTask;
+    pub const generateFromJavaScript = @import("../bundler_jsc/JSBundleCompletionTask.rust").generateFromJavaScript;
 
     pub const BuildResult = struct {
         output_files: std.array_list.Managed(options.OutputFile),
@@ -1880,7 +1880,7 @@ pub const BundleV2 = struct {
         }
     };
 
-    pub const JSBundleCompletionTask = @import("../bundler_jsc/JSBundleCompletionTask.zig").JSBundleCompletionTask;
+    pub const JSBundleCompletionTask = @import("../bundler_jsc/JSBundleCompletionTask.rust").JSBundleCompletionTask;
 
     pub fn onLoadAsync(this: *BundleV2, load: *bun.jsc.API.JSBundler.Load) void {
         switch (this.loop().*) {
@@ -2823,7 +2823,7 @@ pub const BundleV2 = struct {
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
     }
 
-    /// See barrel_imports.zig for barrel optimization implementation.
+    /// See barrel_imports.rust for barrel optimization implementation.
     const applyBarrelOptimization = barrel_imports.applyBarrelOptimization;
     const scheduleBarrelDeferredImports = barrel_imports.scheduleBarrelDeferredImports;
 
@@ -3814,11 +3814,11 @@ pub const BundleV2 = struct {
     }
 };
 
-pub const BundleThread = @import("./BundleThread.zig").BundleThread;
+pub const BundleThread = @import("./BundleThread.rust").BundleThread;
 
 pub const UseDirective = js_ast.UseDirective;
 pub const ServerComponentBoundary = js_ast.ServerComponentBoundary;
-pub const ServerComponentParseTask = @import("./ServerComponentParseTask.zig").ServerComponentParseTask;
+pub const ServerComponentParseTask = @import("./ServerComponentParseTask.rust").ServerComponentParseTask;
 
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
 pub const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
@@ -4106,8 +4106,8 @@ pub const ImportTracker = struct {
 
 pub const PathTemplate = options.PathTemplate;
 
-pub const Chunk = @import("./Chunk.zig").Chunk;
-pub const ChunkImport = @import("./Chunk.zig").ChunkImport;
+pub const Chunk = @import("./Chunk.rust").Chunk;
+pub const ChunkImport = @import("./Chunk.rust").ChunkImport;
 
 pub const CrossChunkImport = struct {
     chunk_index: Index.Int = 0,
@@ -4334,7 +4334,7 @@ pub fn targetFromHashbang(buffer: []const u8) ?options.Target {
     return null;
 }
 
-pub const AstBuilder = @import("./AstBuilder.zig").AstBuilder;
+pub const AstBuilder = @import("./AstBuilder.rust").AstBuilder;
 
 pub const CssEntryPointMeta = struct {
     /// When this is true, a stub file is added to the Server's IncrementalGraph
@@ -4425,34 +4425,34 @@ pub fn allocatorHasPointer(allocator: std.mem.Allocator) bool {
 }
 
 pub const std = @import("std");
-pub const lex = @import("../js_parser/lexer.zig");
-pub const Logger = @import("../logger/logger.zig");
+pub const lex = @import("../js_parser/lexer.rust");
+pub const Logger = @import("../logger/logger.rust");
 pub const Part = js_ast.Part;
-pub const js_printer = @import("../js_printer/js_printer.zig");
+pub const js_printer = @import("../js_printer/js_printer.rust");
 pub const js_ast = bun.ast;
-pub const linker = @import("./linker.zig");
+pub const linker = @import("./linker.rust");
 pub const SourceMap = bun.SourceMap;
 pub const StringJoiner = bun.StringJoiner;
 pub const base64 = bun.base64;
 pub const Ref = bun.ast.Ref;
 pub const ThreadLocalArena = bun.allocators.MimallocArena;
 pub const BabyList = bun.collections.BabyList;
-pub const Fs = @import("../resolver/fs.zig");
+pub const Fs = @import("../resolver/fs.rust");
 pub const api = bun.schema.api;
-pub const _resolver = @import("../resolver/resolver.zig");
+pub const _resolver = @import("../resolver/resolver.rust");
 pub const ImportRecord = bun.ImportRecord;
 pub const ImportKind = bun.ImportKind;
 pub const allocators = bun.allocators;
-pub const resolve_path = @import("../paths/resolve_path.zig");
-pub const runtime = @import("../js_parser/runtime.zig");
-pub const Timer = @import("../perf/system_timer.zig");
+pub const resolve_path = @import("../paths/resolve_path.rust");
+pub const runtime = @import("../js_parser/runtime.rust");
+pub const Timer = @import("../perf/system_timer.rust");
 pub const OOM = bun.OOM;
 
-pub const HTMLScanner = @import("./HTMLScanner.zig");
+pub const HTMLScanner = @import("./HTMLScanner.rust");
 pub const isPackagePath = _resolver.isPackagePath;
-pub const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
-pub const CacheEntry = @import("./cache.zig").Fs.Entry;
-pub const URL = @import("../url/url.zig").URL;
+pub const NodeFallbackModules = @import("../resolver/node_fallbacks.rust");
+pub const CacheEntry = @import("./cache.rust").Fs.Entry;
+pub const URL = @import("../url/url.rust").URL;
 pub const Resolver = _resolver.Resolver;
 pub const TOML = bun.interchange.toml.TOML;
 pub const Dependency = js_ast.Dependency;
@@ -4482,14 +4482,14 @@ pub const Async = bun.Async;
 pub const Loc = Logger.Loc;
 pub const bake = bun.bake;
 pub const lol = bun.LOLHTML;
-pub const DataURL = @import("../resolver/resolver.zig").DataURL;
-pub const IndexStringMap = @import("./IndexStringMap.zig");
-pub const DeferredBatchTask = @import("./DeferredBatchTask.zig").DeferredBatchTask;
-pub const ThreadPool = @import("./ThreadPool.zig").ThreadPool;
-pub const ParseTask = @import("./ParseTask.zig").ParseTask;
-pub const LinkerContext = @import("./LinkerContext.zig").LinkerContext;
-pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
-pub const Graph = @import("./Graph.zig");
+pub const DataURL = @import("../resolver/resolver.rust").DataURL;
+pub const IndexStringMap = @import("./IndexStringMap.rust");
+pub const DeferredBatchTask = @import("./DeferredBatchTask.rust").DeferredBatchTask;
+pub const ThreadPool = @import("./ThreadPool.rust").ThreadPool;
+pub const ParseTask = @import("./ParseTask.rust").ParseTask;
+pub const LinkerContext = @import("./LinkerContext.rust").LinkerContext;
+pub const LinkerGraph = @import("./LinkerGraph.rust").LinkerGraph;
+pub const Graph = @import("./Graph.rust");
 
 const string = []const u8;
 
@@ -4497,7 +4497,7 @@ const string = []const u8;
 // Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention
 // Sets up metafile object with { json: <lazy parsed>, markdown?: string }
 
-const options = @import("./options.zig");
+const options = @import("./options.rust");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

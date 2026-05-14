@@ -1,5 +1,5 @@
-// Test for integer overflow fix in pretty_format.zig
-// Previously crashed with: panic: integer overflow at writeIndent in pretty_format.zig:648
+// Test for integer overflow fix in pretty_format.rust
+// Previously crashed with: panic: integer overflow at writeIndent in pretty_format.rust:648
 // Platform: Windows x86_64_baseline, Bun v1.3.0
 
 import { describe, expect, test } from "bun:test";

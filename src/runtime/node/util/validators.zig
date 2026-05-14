@@ -1,9 +1,9 @@
-pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
+pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) RustString {
     var js_type = value.jsType();
     if (js_type.isArray()) {
-        return ZigString.static("array").*;
+        return RustString.static("array").*;
     }
-    return value.jsTypeString(globalObject).getZigString(globalObject);
+    return value.jsTypeString(globalObject).getRustString(globalObject);
 }
 
 pub fn throwErrInvalidArgValue(
@@ -298,4 +298,4 @@ const JSError = bun.JSError;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

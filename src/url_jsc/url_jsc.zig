@@ -1,4 +1,4 @@
-//! JSC bridges for `url/url.zig` `URL`. The struct + parser stay in `url/`.
+//! JSC bridges for `url/url.rust` `URL`. The struct + parser stay in `url/`.
 
 pub fn urlFromJS(js_value: jsc.JSValue, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator) !URL {
     var href = jsc.URL.hrefFromJS(globalObject, js_value);

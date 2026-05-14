@@ -1,7 +1,7 @@
 //! macOS ImageIO/CoreGraphics backend.
 //!
 //! All framework calls live in `src/jsc/bindings/image_coregraphics_shim.cpp`
-//! — see the header comment there for why (Zig→dlsym'd-function-pointer calls
+//! — see the header comment there for why (Rust→dlsym'd-function-pointer calls
 //! into CG segfaulted on x86_64 even after thunking the obvious by-value
 //! struct, so the whole dispatch is in C++ where clang owns the ABI). This
 //! file just allocates the RGBA/output buffers in `bun.default_allocator` and
@@ -89,7 +89,7 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
 
 // ── vImage geometry ────────────────────────────────────────────────────────
 // AMX-backed kernels for the common pipeline ops. Signatures mirror the
-// Highway path in `codecs.zig` so the dispatch site is `system_backend.x()
+// Highway path in `codecs.rust` so the dispatch site is `system_backend.x()
 // catch fallback.x()`.
 
 extern fn bun_coregraphics_scale(src: [*]const u8, sw: u32, sh: u32, dst: [*]u8, dw: u32, dh: u32) i32;
@@ -152,4 +152,4 @@ extern fn bun_coregraphics_clipboard_change_count() i64;
 pub const clipboardChangeCount = bun_coregraphics_clipboard_change_count;
 
 const bun = @import("bun");
-const codecs = @import("./codecs.zig");
+const codecs = @import("./codecs.rust");

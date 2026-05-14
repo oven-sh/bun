@@ -650,7 +650,7 @@ pub fn closeAndWait() void {
 const string = []const u8;
 
 const std = @import("std");
-const EventType = @import("./path_watcher.zig").PathWatcher.EventType;
+const EventType = @import("./path_watcher.rust").PathWatcher.EventType;
 const Semaphore = std.Thread.Semaphore;
 
 const bun = @import("bun");

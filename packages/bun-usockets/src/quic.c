@@ -162,7 +162,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
         }
     }
     /* Relative µs from now (≤0 means "tick due"). On epoll/kqueue,
-     * getTimeout() in Timer.zig folds this into the epoll_pwait2 timeout —
+     * getTimeout() in Timer.rust folds this into the epoll_pwait2 timeout —
      * no timerfd. On libuv there's no equivalent hook into the poll
      * timeout, so arm a fallthrough uv_timer instead. */
     loop->data.quic_next_tick_us = have_tick ? (min_diff < 0 ? 0 : min_diff) : -1;

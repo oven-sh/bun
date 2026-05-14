@@ -25,7 +25,7 @@
 // #include "JSDOMWindow.h"
 #include "WebCoreJSClientData.h"
 // #include "WindowProxy.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include <wtf/MainThread.h>
 
 namespace WebCore {

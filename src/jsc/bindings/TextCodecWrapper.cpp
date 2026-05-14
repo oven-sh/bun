@@ -1,7 +1,7 @@
 #include "root.h"
 
 /*
- * Wrapper functions for Text Codecs to allow access from Zig
+ * Wrapper functions for Text Codecs to allow access from Rust
  */
 
 #include "TextCodec.h"

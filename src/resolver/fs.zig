@@ -2,7 +2,7 @@ const Fs = @This();
 
 pub const debug = Output.scoped(.fs, .hidden);
 
-// pub const FilesystemImplementation = @import("./fs_impl.zig");
+// pub const FilesystemImplementation = @import("./fs_impl.rust");
 
 pub const Preallocate = struct {
     pub const Counts = struct {
@@ -2038,12 +2038,12 @@ fn FmtHandleFnGenerator(comptime T: type) type {
     };
 }
 
-pub const StatHash = @import("./fs/stat_hash.zig");
+pub const StatHash = @import("./fs/stat_hash.rust");
 
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const path_handler = @import("../paths/resolve_path.zig");
+const path_handler = @import("../paths/resolve_path.rust");
 const std = @import("std");
 
 const bun = @import("bun");

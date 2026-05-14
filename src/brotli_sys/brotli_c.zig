@@ -192,8 +192,8 @@ pub const BrotliDecoderParameter = enum(c_uint) {
     LARGE_WINDOW = 1,
 };
 
-pub const BROTLI_UINT32_MAX = ~@import("std").zig.c_translation.cast(u32, @as(c_int, 0));
-pub const BROTLI_SIZE_MAX = ~@import("std").zig.c_translation.cast(usize, @as(c_int, 0));
+pub const BROTLI_UINT32_MAX = ~@import("std").rust.c_translation.cast(u32, @as(c_int, 0));
+pub const BROTLI_SIZE_MAX = ~@import("std").rust.c_translation.cast(usize, @as(c_int, 0));
 pub const BROTLI_LAST_ERROR_CODE = BROTLI_DECODER_ERROR_UNREACHABLE;
 pub const BrotliSharedDictionaryStruct = struct_BrotliSharedDictionaryStruct;
 

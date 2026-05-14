@@ -33,13 +33,13 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 const std = @import("std");
-const NewWriter = @import("./NewWriter.zig").NewWriter;
-const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
+const NewWriter = @import("./NewWriter.rust").NewWriter;
+const WriteWrap = @import("./WriteWrap.rust").WriteWrap;
 const toBytes = std.mem.toBytes;
 
-const types = @import("../PostgresTypes.zig");
+const types = @import("../PostgresTypes.rust");
 const Int32 = types.Int32;
 const int4 = types.int4;
 
-const zHelpers = @import("./zHelpers.zig");
+const zHelpers = @import("./zHelpers.rust");
 const zCount = zHelpers.zCount;

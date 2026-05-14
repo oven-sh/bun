@@ -1,8 +1,8 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGlobalObject.h"
+#include "RustGeneratedClasses.h"
 
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/JSObject.h"

@@ -117,10 +117,10 @@ pub const HashMap = allocators.BSSMap(DirInfo, Fs.Preallocate.Counts.dir_entry, 
 
 const string = []const u8;
 
-const Fs = @import("./fs.zig");
+const Fs = @import("./fs.rust");
 const std = @import("std");
-const PackageJSON = @import("./package_json.zig").PackageJSON;
-const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
+const PackageJSON = @import("./package_json.rust").PackageJSON;
+const TSConfigJSON = @import("./tsconfig_json.rust").TSConfigJSON;
 
 const bun = @import("bun");
 const FD = bun.FD;

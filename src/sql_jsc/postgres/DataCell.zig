@@ -1,4 +1,4 @@
-pub const SQLDataCell = @import("../shared/SQLDataCell.zig").SQLDataCell;
+pub const SQLDataCell = @import("../shared/SQLDataCell.rust").SQLDataCell;
 
 fn parseBytea(hex: []const u8) !SQLDataCell {
     const len = hex.len / 2;
@@ -1018,13 +1018,13 @@ extern fn Postgres__formatTimeTz(microseconds: i64, tzOffsetSeconds: i32, buffer
 
 const log = bun.Output.scoped(.PostgresDataCell, .visible);
 
-const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
-const protocol = @import("../../sql/postgres/PostgresProtocol.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.rust");
+const protocol = @import("../../sql/postgres/PostgresProtocol.rust");
 const std = @import("std");
-const Data = @import("../../sql/shared/Data.zig").Data;
-const PostgresSQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const Data = @import("../../sql/shared/Data.rust").Data;
+const PostgresSQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.rust").SQLQueryResultMode;
 
-const types = @import("../../sql/postgres/PostgresTypes.zig");
+const types = @import("../../sql/postgres/PostgresTypes.rust");
 const AnyPostgresError = types.AnyPostgresError;
 const int4 = types.int4;
 const short = types.short;

@@ -280,7 +280,7 @@ pub const Snapshots = struct {
             for (ils_info.items) |ils| {
                 if (ils.line == last_line and ils.col == last_col) {
                     if (!bun.strings.eql(ils.value, last_value)) {
-                        const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+                        const DiffFormatter = @import("./diff_format.rust").DiffFormatter;
                         try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{f}", .{DiffFormatter{
                             .received_string = ils.value,
                             .expected_string = last_value,
@@ -565,9 +565,9 @@ pub const Snapshots = struct {
 const string = []const u8;
 
 const std = @import("std");
-const Expect = @import("./expect.zig").Expect;
+const Expect = @import("./expect.rust").Expect;
 
-const jest = @import("./jest.zig");
+const jest = @import("./jest.rust");
 const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;
 

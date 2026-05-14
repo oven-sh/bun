@@ -79,7 +79,7 @@ pub const darwin = struct {
 };
 pub const windows = struct {
     /// Windows doesn't have memmem, so we need to implement it
-    /// This is used in src/string/immutable.zig
+    /// This is used in src/string/immutable.rust
     pub export fn memmem(haystack: ?[*]const u8, haystacklen: usize, needle: ?[*]const u8, needlelen: usize) ?[*]const u8 {
         // Handle null pointers
         if (haystack == null or needle == null) return null;
@@ -117,7 +117,7 @@ pub const windows = struct {
 pub const freebsd = struct {
     pub const memmem = bun.c.memmem;
     // FreeBSD has plain stat/fstat/lstat (no 64-suffix; off_t is always
-    // 64-bit). Zig's std.c only exports darwin's `stat$INODE64`, so bind
+    // 64-bit). Rust's std.c only exports darwin's `stat$INODE64`, so bind
     // them directly.
     pub extern "c" fn lstat(noalias path: [*:0]const u8, noalias buf: *std.c.Stat) c_int;
     pub extern "c" fn fstat(fd: c_int, buf: *std.c.Stat) c_int;

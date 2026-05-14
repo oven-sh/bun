@@ -8,7 +8,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-// Must be synced with bindings.zig's JSValue.SerializedScriptValue.External
+// Must be synced with bindings.rust's JSValue.SerializedScriptValue.External
 struct SerializedValueSlice {
     const uint8_t* bytes;
     size_t size;

@@ -362,7 +362,7 @@ const string = []const u8;
 
 const std = @import("std");
 
-const install = @import("./install.zig");
+const install = @import("./install.rust");
 const DependencyID = install.DependencyID;
 const ExtractData = install.ExtractData;
 const ExtractTarball = install.ExtractTarball;

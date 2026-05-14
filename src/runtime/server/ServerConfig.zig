@@ -380,7 +380,7 @@ fn validateRouteName(global: *jsc.JSGlobalObject, path: []const u8) !void {
     }
 }
 
-pub const SSLConfig = @import("../socket/SSLConfig.zig");
+pub const SSLConfig = @import("../socket/SSLConfig.rust");
 
 fn getRoutesObject(global: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!?jsc.JSValue {
     inline for (.{ "routes", "static" }) |key| {
@@ -1112,7 +1112,7 @@ const UserRouteBuilder = struct {
 
 const string = []const u8;
 
-const WebSocketServerContext = @import("./WebSocketServerContext.zig");
+const WebSocketServerContext = @import("./WebSocketServerContext.rust");
 const std = @import("std");
 
 const bun = @import("bun");

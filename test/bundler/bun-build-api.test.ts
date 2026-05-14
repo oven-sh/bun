@@ -1212,32 +1212,32 @@ test.skipIf(!isDebug && !isASAN)(
   120_000,
 );
 
-// Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`
+// Regression: src/js_printer/renamer.rust:592 `assignNamesRecursiveWithNumberScope`
 // walks a linear single-child scope chain in a `while(true)` loop, allocating a
 // fresh `NumberScope` from `number_scope_pool` for every level that declares
 // symbols. The trailing `defer if (s != initial_scope) { s.deinit; pool.put(s) }`
 // only returns the FINAL `s` to the pool — every intermediate NumberScope (and its
-// `name_counts` map) is abandoned. In Zig this is harmless: `name_counts` is backed
-// by the per-chunk worker arena (renamer.zig:533 `number_scope_pool = .init(arena)`,
+// `name_counts` map) is abandoned. In Rust this is harmless: `name_counts` is backed
+// by the per-chunk worker arena (renamer.rust:533 `number_scope_pool = .init(arena)`,
 // findUnusedName puts via `r.allocator` = worker MimallocArena) and is bulk-freed
 // when the build completes. A port that drops the arena and backs `name_counts`
 // with the global heap leaks one HashMap per intermediate nested scope, per build,
 // forever — watch-mode / dev-server rebuilds grow unbounded.
 //
-// This test asserts the Zig invariant: repeated builds of a file with many deep
+// This test asserts the Rust invariant: repeated builds of a file with many deep
 // linear `{ let ...; { ... } }` chains must not grow RSS proportionally to
 // (chain depth × build count). Gated to debug/ASAN like the sourcemap-leak test
 // above because release mimalloc page retention makes RSS too noisy to threshold.
-// TODO(zig-rust-divergence): currently times out on the Rust debug build (the
+// TODO(rust-rust-divergence): currently times out on the Rust debug build (the
 // per-chunk arena backing for NumberScope.name_counts was dropped — see
-// docs/ZIG_RUST_DIVERGENCE_AUDIT.md). Skipped instead of `.todo` because the
+// docs/RUST_RUST_DIVERGENCE_AUDIT.md). Skipped instead of `.todo` because the
 // body never reaches its assertion before the 120s timeout, so `.todo` would
 // just burn two minutes of CI per run without exercising the check.
 test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_counts across builds", async () => {
   // 8 independent linear chains, each 150 blocks deep, 80 `let` bindings per
   // block. Every block has exactly one child block → renamer takes the linear
   // fast-path and allocates a NumberScope per level; 149 of 150 are the
-  // "intermediate" ones the Zig defer never puts back. 80 bindings/level means
+  // "intermediate" ones the Rust defer never puts back. 80 bindings/level means
   // each leaked `name_counts` holds 80 boxed-key entries.
   const CHAINS = 8;
   const DEPTH = 150;
@@ -1285,7 +1285,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { growth } = JSON.parse(stdout.trim());
-  // With arena-backed scopes (Zig spec) the 20 measured builds reuse the same
+  // With arena-backed scopes (Rust spec) the 20 measured builds reuse the same
   // worker heap and settle near zero net growth. With global-heap name_counts
   // and intermediate scopes never returned to the pool, each build abandons
   // ~8×149 maps × 80 entries — roughly 4-5 MB/build, ~90-100 MB over 20

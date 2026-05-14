@@ -26,7 +26,7 @@
 #pragma once
 
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMConvertResult.h"

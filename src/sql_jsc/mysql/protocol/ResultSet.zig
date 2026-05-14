@@ -1,4 +1,4 @@
-pub const Header = @import("../../../sql/mysql/protocol/ResultSetHeader.zig");
+pub const Header = @import("../../../sql/mysql/protocol/ResultSetHeader.rust");
 
 pub const Row = struct {
     values: []SQLDataCell = &[_]SQLDataCell{},
@@ -256,20 +256,20 @@ pub const Row = struct {
 
 const debug = bun.Output.scoped(.MySQLResultSet, .visible);
 
-const AnyMySQLError = @import("../../../sql/mysql/protocol/AnyMySQLError.zig");
-const CachedStructure = @import("../../shared/CachedStructure.zig");
-const ColumnDefinition41 = @import("../../../sql/mysql/protocol/ColumnDefinition41.zig");
+const AnyMySQLError = @import("../../../sql/mysql/protocol/AnyMySQLError.rust");
+const CachedStructure = @import("../../shared/CachedStructure.rust");
+const ColumnDefinition41 = @import("../../../sql/mysql/protocol/ColumnDefinition41.rust");
 const bun = @import("bun");
 const std = @import("std");
-const Data = @import("../../../sql/shared/Data.zig").Data;
-const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
-const SQLQueryResultMode = @import("../../../sql/shared/SQLQueryResultMode.zig").SQLQueryResultMode;
-const decodeLengthInt = @import("../../../sql/mysql/protocol/EncodeInt.zig").decodeLengthInt;
+const Data = @import("../../../sql/shared/Data.rust").Data;
+const SQLDataCell = @import("../../shared/SQLDataCell.rust").SQLDataCell;
+const SQLQueryResultMode = @import("../../../sql/shared/SQLQueryResultMode.rust").SQLQueryResultMode;
+const decodeLengthInt = @import("../../../sql/mysql/protocol/EncodeInt.rust").decodeLengthInt;
 
-const NewReader = @import("../../../sql/mysql/protocol/NewReader.zig").NewReader;
-const decoderWrap = @import("../../../sql/mysql/protocol/NewReader.zig").decoderWrap;
+const NewReader = @import("../../../sql/mysql/protocol/NewReader.rust").NewReader;
+const decoderWrap = @import("../../../sql/mysql/protocol/NewReader.rust").decoderWrap;
 
-const DecodeBinaryValue = @import("./DecodeBinaryValue.zig");
+const DecodeBinaryValue = @import("./DecodeBinaryValue.rust");
 const decodeBinaryValue = DecodeBinaryValue.decodeBinaryValue;
 
 const jsc = bun.jsc;

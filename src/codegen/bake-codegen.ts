@@ -14,14 +14,14 @@ if (!codegenRoot) {
 const base_dir = join(import.meta.dirname, "../runtime/bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
-function convertZigEnum(zig: string, names: string[]) {
-  let output = "/** Generated from DevServer.zig */\n";
+function convertRustEnum(rust: string, names: string[]) {
+  let output = "/** Generated from DevServer.rust */\n";
   for (const name of names) {
     const startTrigger = `\npub const ${name} = enum(u8) {`;
-    const start = zig.indexOf(startTrigger) + startTrigger.length;
+    const start = rust.indexOf(startTrigger) + startTrigger.length;
     const endTrigger = /\n    pub (inline )?fn |\n};/g;
-    const end = zig.slice(start).search(endTrigger) + start;
-    const enumText = zig.slice(start, end);
+    const end = rust.slice(start).search(endTrigger) + start;
+    const enumText = rust.slice(start, end);
     const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
       return `\n  ${name} = ${value.charCodeAt(0)},`;
     });
@@ -41,8 +41,8 @@ function css(file: string, is_development: boolean): string {
 }
 
 async function run() {
-  const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
-  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
+  const devServerRust = readFileSync(join(base_dir, "DevServer.rust"), "utf-8");
+  writeIfNotChanged(join(base_dir, "generated.ts"), convertRustEnum(devServerRust, ["IncomingMessageId", "MessageId"]));
 
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {

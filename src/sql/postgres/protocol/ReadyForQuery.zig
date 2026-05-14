@@ -14,6 +14,6 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 pub const decode = DecoderWrap(ReadyForQuery, decodeInternal).decode;
 
 const bun = @import("bun");
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const NewReader = @import("./NewReader.zig").NewReader;
-const TransactionStatusIndicator = @import("./TransactionStatusIndicator.zig").TransactionStatusIndicator;
+const DecoderWrap = @import("./DecoderWrap.rust").DecoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const TransactionStatusIndicator = @import("./TransactionStatusIndicator.rust").TransactionStatusIndicator;

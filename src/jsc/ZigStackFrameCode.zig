@@ -1,4 +1,4 @@
-pub const ZigStackFrameCode = enum(u8) {
+pub const RustStackFrameCode = enum(u8) {
     None = 0,
     /// 🏃
     Eval = 1,
@@ -14,7 +14,7 @@ pub const ZigStackFrameCode = enum(u8) {
     Constructor = 6,
     _,
 
-    pub fn emoji(this: ZigStackFrameCode) u21 {
+    pub fn emoji(this: RustStackFrameCode) u21 {
         return switch (this) {
             .Eval => 0x1F3C3,
             .Module => 0x1F4E6,
@@ -26,7 +26,7 @@ pub const ZigStackFrameCode = enum(u8) {
         };
     }
 
-    pub fn ansiColor(this: ZigStackFrameCode) []const u8 {
+    pub fn ansiColor(this: RustStackFrameCode) []const u8 {
         return switch (this) {
             .Eval => "\x1b[31m",
             .Module => "\x1b[36m",

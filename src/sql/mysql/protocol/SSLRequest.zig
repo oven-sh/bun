@@ -34,9 +34,9 @@ pub const write = writeWrap(SSLRequest, writeInternal).write;
 
 const debug = bun.Output.scoped(.MySQLConnection, .hidden);
 
-const Capabilities = @import("../Capabilities.zig");
+const Capabilities = @import("../Capabilities.rust");
 const bun = @import("bun");
-const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
+const CharacterSet = @import("./CharacterSet.rust").CharacterSet;
 
-const NewWriter = @import("./NewWriter.zig").NewWriter;
-const writeWrap = @import("./NewWriter.zig").writeWrap;
+const NewWriter = @import("./NewWriter.rust").NewWriter;
+const writeWrap = @import("./NewWriter.rust").writeWrap;

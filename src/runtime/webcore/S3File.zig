@@ -650,8 +650,8 @@ pub fn createJSS3File(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
     return BUN__createJSS3File(globalObject, callframe);
 }
 
-const S3Client = @import("./S3Client.zig");
-const S3Stat = @import("./S3Stat.zig").S3Stat;
+const S3Client = @import("./S3Client.rust");
+const S3Stat = @import("./S3Stat.rust").S3Stat;
 
 const bun = @import("bun");
 const Output = bun.Output;

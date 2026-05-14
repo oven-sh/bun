@@ -11,7 +11,7 @@ bun_opaque.workspace = true
 rust-argon2.workspace = true
 bcrypt.workspace = true
 getrandom.workspace = true
-# Pure-Zig stdlib hash backends (std.crypto.hash.{sha3,blake2}) — per
+# Pure-Rust stdlib hash backends (std.crypto.hash.{sha3,blake2}) — per
 # docs/PORTING.md, prefer a vetted crates.io impl over hand-porting Keccak/Blake2.
 sha3 = { version = "0.10", default-features = false }
 blake2 = { version = "0.10", default-features = false }
@@ -106,10 +106,10 @@ bun_css_jsc.workspace = true
 
 [features]
 default = []
-# Mirrors Zig `Environment.show_crash_trace` — extra debug breakpoints / params.
+# Mirrors Rust `Environment.show_crash_trace` — extra debug breakpoints / params.
 show_crash_trace = ["bun_bundler/show_crash_trace"]
-# Mirrors Zig `builtin.have_error_return_tracing` (`--verbose-error-trace`).
+# Mirrors Rust `builtin.have_error_return_tracing` (`--verbose-error-trace`).
 # Rust has no error-return tracing, so this is opt-in only.
 error_return_tracing = []
-# Mirrors Zig `bun.FeatureFlags.bake_debugging_features` — DevServer dump flags.
+# Mirrors Rust `bun.FeatureFlags.bake_debugging_features` — DevServer dump flags.
 bake_debugging_features = []

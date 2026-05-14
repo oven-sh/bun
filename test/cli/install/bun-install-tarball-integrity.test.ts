@@ -503,7 +503,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
   // manifest while serving a different tarball's bytes. No existing lockfile
   // means the failure happens in the resolve phase, where the runTasks
   // callback is the void `onPackageDownloadError = {}` — i.e. the branch the
-  // fix in runTasks.zig now cleans up.
+  // fix in runTasks.rust now cleans up.
   it("should fail (not hang) when tarball bytes don't match manifest SHA-512", { timeout: 60_000 }, async () => {
     function octal(n: number, width: number) {
       return n.toString(8).padStart(width - 1, "0") + "\0";

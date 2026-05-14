@@ -168,7 +168,7 @@ pub const State = opaque {
 
     /// Define multiple preprocessor symbols with comptime-known values.
     /// ## Example
-    /// ```zig
+    /// ```rust
     /// const state = TCC.State.init() catch @panic("ahhh");
     /// state.defineSymbols(.{
     ///     .foo = "bar",
@@ -264,7 +264,7 @@ pub const State = opaque {
     /// Add multiple symbols to the compiled program.
     ///
     /// ## Example
-    /// ```zig
+    /// ```rust
     /// const state = TCC.State.init() catch @panic("ahhh");
     /// fn add(a: c_int, b: c_int) callconv(.c) c_int {
     ///     return a + b;

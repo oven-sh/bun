@@ -1,6 +1,6 @@
 const UUID = @This();
 
-//https://github.com/dmgk/zig-uuid
+//https://github.com/dmgk/rust-uuid
 
 pub const Error = error{InvalidUUID};
 

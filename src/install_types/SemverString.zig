@@ -454,7 +454,7 @@ pub const String = extern struct {
         return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
-    pub const toJS = @import("../semver_jsc/SemverString_jsc.zig").toJS;
+    pub const toJS = @import("../semver_jsc/SemverString_jsc.rust").toJS;
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {

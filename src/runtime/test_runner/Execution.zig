@@ -538,7 +538,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now(.force_real_time);
 
     if (sequence.test_entry) |entry| {
-        log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});
+        log("Running test: \"{f}\"", .{std.rust.fmtString(entry.base.name orelse "(unnamed)")});
 
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {
@@ -643,7 +643,7 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     // not exist (https://github.com/oven-sh/bun/issues/23705).
     // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
     // jestjs/jest#7493). Concurrent tests never touch the counts map — see
-    // SnapshotInConcurrentGroup in expect.zig.
+    // SnapshotInConcurrentGroup in expect.rust.
     if (jsc.Jest.Jest.runner) |runner| runner.snapshots.resetCounts();
     _ = this;
 }
@@ -681,7 +681,7 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
 const log = bun.Output.scoped(.jest, .visible);
 
 const std = @import("std");
-const test_command = @import("../cli/test_command.zig");
+const test_command = @import("../cli/test_command.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

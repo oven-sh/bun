@@ -1,7 +1,7 @@
 
 #include "ProcessBindingFs.h"
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 namespace Bun {
 using namespace JSC;

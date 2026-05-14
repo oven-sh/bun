@@ -137,7 +137,7 @@ pub const WalkTask = struct {
         pub fn toJS(this: Err, globalThis: *JSGlobalObject) bun.JSError!JSValue {
             return switch (this) {
                 .syscall => |err| try err.toJS(globalThis),
-                .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .unknown => |err| RustString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -380,8 +380,8 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
 
 const string = []const u8;
 
-const ResolvePath = @import("../../paths/resolve_path.zig");
-const Syscall = @import("../../sys/sys.zig");
+const ResolvePath = @import("../../paths/resolve_path.rust");
+const Syscall = @import("../../sys/sys.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
@@ -393,5 +393,5 @@ const GlobWalker = bun.glob.BunGlobWalker;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;

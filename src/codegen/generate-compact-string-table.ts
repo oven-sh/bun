@@ -3,7 +3,7 @@
 /**
  * Compact String Table Generator
  *
- * Generates a Zig enum that stores multiple strings in a contiguous buffer with
+ * Generates a Rust enum that stores multiple strings in a contiguous buffer with
  * reduced per-string overhead compared to individual string slices.
  *
  * Instead of storing each string as a separate slice (16 bytes each), this packs
@@ -22,8 +22,8 @@
  * # Input: newline-delimited strings
  * echo -e "application/json\\ntext/html\\ntext/plain" > strings.txt
  *
- * # Generate Zig code
- * bun src/codegen/generate-compact-string-table.ts strings.txt output.zig MyStrings
+ * # Generate Rust code
+ * bun src/codegen/generate-compact-string-table.ts strings.txt output.rust MyStrings
  * ```
  *
  * ## Trade-offs:
@@ -40,7 +40,7 @@ import { writeFileSync } from "fs";
 const args = process.argv.slice(2);
 
 if (args.length < 3) {
-  console.error("Usage: generate-compact-string-table.ts <input.txt> <output.zig> <enum-name> [namespace]");
+  console.error("Usage: generate-compact-string-table.ts <input.txt> <output.rust> <enum-name> [namespace]");
   console.error("Provide strings via stdin, one per line");
   process.exit(1);
 }
@@ -60,12 +60,12 @@ interface PackedString {
   entries: StringEntry[];
 }
 
-function escapeZigIdentifier(name: string): string {
+function escapeRustIdentifier(name: string): string {
   // Always use @"..." syntax for consistency
   return `@"${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function escapeZigString(str: string): string {
+function escapeRustString(str: string): string {
   return str
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
@@ -327,7 +327,7 @@ export function generateCompactStringTable(
         position: u${positionBits},
     };
     
-    const _bytes = "${escapeZigString(packedData)}";
+    const _bytes = "${escapeRustString(packedData)}";
     const _lengths = [_]${findSmallestIntType(Math.max(...uniqueLengths))}{${uniqueLengths.join(", ")}};
     const _group_start_offsets = [_]${findSmallestIntType(Math.max(...groupStartOffsets))}{${groupStartOffsets.join(", ")}};
     
@@ -340,7 +340,7 @@ export function generateCompactStringTable(
   for (const entry of entries) {
     const pos = entryPositions.get(entry.name)!;
     const packedValue = pos.groupIndex | (pos.positionInGroup << lengthGroupBits);
-    output += `    ${escapeZigIdentifier(entry.name)} = ${packedValue},\n`;
+    output += `    ${escapeRustIdentifier(entry.name)} = ${packedValue},\n`;
   }
 
   output += `
@@ -365,7 +365,7 @@ export function generateCompactStringTable(
     
     pub const count = ${entries.length};
     pub const all = &[_]${enumName}{
-${entries.map(entry => `        .${escapeZigIdentifier(entry.name)},`).join("\n")}
+${entries.map(entry => `        .${escapeRustIdentifier(entry.name)},`).join("\n")}
     };
 };
 `;

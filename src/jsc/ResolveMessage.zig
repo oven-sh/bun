@@ -106,7 +106,7 @@ pub const ResolveMessage = struct {
         const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
             return globalThis.throwOutOfMemoryValue();
         };
-        var str = ZigString.init(text);
+        var str = RustString.init(text);
         str.setOutputEncoding();
         if (str.isUTF8()) {
             const out = str.toJS(globalThis);
@@ -138,7 +138,7 @@ pub const ResolveMessage = struct {
                 return jsc.JSValue.jsNull();
             }
 
-            const str = try args[0].getZigString(globalThis);
+            const str = try args[0].getRustString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }
@@ -153,13 +153,13 @@ pub const ResolveMessage = struct {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 7);
-        object.put(globalThis, ZigString.static("name"), try bun.String.static("ResolveMessage").toJS(globalThis));
-        object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
-        object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
-        object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
-        object.put(globalThis, ZigString.static("specifier"), this.getSpecifier(globalThis));
-        object.put(globalThis, ZigString.static("importKind"), this.getImportKind(globalThis));
-        object.put(globalThis, ZigString.static("referrer"), this.getReferrer(globalThis));
+        object.put(globalThis, RustString.static("name"), try bun.String.static("ResolveMessage").toJS(globalThis));
+        object.put(globalThis, RustString.static("position"), this.getPosition(globalThis));
+        object.put(globalThis, RustString.static("message"), this.getMessage(globalThis));
+        object.put(globalThis, RustString.static("level"), this.getLevel(globalThis));
+        object.put(globalThis, RustString.static("specifier"), this.getSpecifier(globalThis));
+        object.put(globalThis, RustString.static("importKind"), this.getImportKind(globalThis));
+        object.put(globalThis, RustString.static("referrer"), this.getReferrer(globalThis));
         return object;
     }
 
@@ -189,28 +189,28 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.data.text).toJS(globalThis);
+        return RustString.init(this.msg.data.text).toJS(globalThis);
     }
 
     pub fn getLevel(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.kind.string()).toJS(globalThis);
+        return RustString.init(this.msg.kind.string()).toJS(globalThis);
     }
 
     pub fn getSpecifier(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toJS(globalThis);
+        return RustString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toJS(globalThis);
     }
 
     pub fn getImportKind(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.metadata.resolve.import_kind.label()).toJS(globalThis);
+        return RustString.init(this.msg.metadata.resolve.import_kind.label()).toJS(globalThis);
     }
 
     pub fn getReferrer(
@@ -218,7 +218,7 @@ pub const ResolveMessage = struct {
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
         if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toJS(globalThis);
+            return RustString.init(referrer.text).toJS(globalThis);
         } else {
             return jsc.JSValue.jsNull();
         }
@@ -235,7 +235,7 @@ pub const ResolveMessage = struct {
 
 const string = []const u8;
 
-const Resolver = @import("../resolver/resolver.zig");
+const Resolver = @import("../resolver/resolver.rust");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -246,4 +246,4 @@ const strings = bun.strings;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

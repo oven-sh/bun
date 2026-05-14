@@ -192,27 +192,27 @@ pub const Jest = struct {
         const module = JSValue.createEmptyObject(globalObject, 23);
 
         const test_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{}, bun_test.ScopeFunctions.strings.@"test");
-        module.put(globalObject, ZigString.static("test"), test_scope_functions);
-        module.put(globalObject, ZigString.static("it"), test_scope_functions);
+        module.put(globalObject, RustString.static("test"), test_scope_functions);
+        module.put(globalObject, RustString.static("it"), test_scope_functions);
 
         const xtest_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{ .self_mode = .skip }, bun_test.ScopeFunctions.strings.xtest);
-        module.put(globalObject, ZigString.static("xtest"), xtest_scope_functions);
-        module.put(globalObject, ZigString.static("xit"), xtest_scope_functions);
+        module.put(globalObject, RustString.static("xtest"), xtest_scope_functions);
+        module.put(globalObject, RustString.static("xit"), xtest_scope_functions);
 
         const describe_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .describe, .zero, .{}, bun_test.ScopeFunctions.strings.describe);
-        module.put(globalObject, ZigString.static("describe"), describe_scope_functions);
+        module.put(globalObject, RustString.static("describe"), describe_scope_functions);
 
         const xdescribe_scope_functions = bun_test.ScopeFunctions.createBound(globalObject, .describe, .zero, .{ .self_mode = .skip }, bun_test.ScopeFunctions.strings.xdescribe) catch return .zero;
-        module.put(globalObject, ZigString.static("xdescribe"), xdescribe_scope_functions);
+        module.put(globalObject, RustString.static("xdescribe"), xdescribe_scope_functions);
 
-        module.put(globalObject, ZigString.static("beforeEach"), jsc.JSFunction.create(globalObject, "beforeEach", bun_test.js_fns.genericHook(.beforeEach).hookFn, 1, .{}));
-        module.put(globalObject, ZigString.static("beforeAll"), jsc.JSFunction.create(globalObject, "beforeAll", bun_test.js_fns.genericHook(.beforeAll).hookFn, 1, .{}));
-        module.put(globalObject, ZigString.static("afterAll"), jsc.JSFunction.create(globalObject, "afterAll", bun_test.js_fns.genericHook(.afterAll).hookFn, 1, .{}));
-        module.put(globalObject, ZigString.static("afterEach"), jsc.JSFunction.create(globalObject, "afterEach", bun_test.js_fns.genericHook(.afterEach).hookFn, 1, .{}));
-        module.put(globalObject, ZigString.static("onTestFinished"), jsc.JSFunction.create(globalObject, "onTestFinished", bun_test.js_fns.genericHook(.onTestFinished).hookFn, 1, .{}));
-        module.put(globalObject, ZigString.static("setDefaultTimeout"), jsc.JSFunction.create(globalObject, "setDefaultTimeout", jsSetDefaultTimeout, 1, .{}));
-        module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
-        module.put(globalObject, ZigString.static("expectTypeOf"), ExpectTypeOf.js.getConstructor(globalObject));
+        module.put(globalObject, RustString.static("beforeEach"), jsc.JSFunction.create(globalObject, "beforeEach", bun_test.js_fns.genericHook(.beforeEach).hookFn, 1, .{}));
+        module.put(globalObject, RustString.static("beforeAll"), jsc.JSFunction.create(globalObject, "beforeAll", bun_test.js_fns.genericHook(.beforeAll).hookFn, 1, .{}));
+        module.put(globalObject, RustString.static("afterAll"), jsc.JSFunction.create(globalObject, "afterAll", bun_test.js_fns.genericHook(.afterAll).hookFn, 1, .{}));
+        module.put(globalObject, RustString.static("afterEach"), jsc.JSFunction.create(globalObject, "afterEach", bun_test.js_fns.genericHook(.afterEach).hookFn, 1, .{}));
+        module.put(globalObject, RustString.static("onTestFinished"), jsc.JSFunction.create(globalObject, "onTestFinished", bun_test.js_fns.genericHook(.onTestFinished).hookFn, 1, .{}));
+        module.put(globalObject, RustString.static("setDefaultTimeout"), jsc.JSFunction.create(globalObject, "setDefaultTimeout", jsSetDefaultTimeout, 1, .{}));
+        module.put(globalObject, RustString.static("expect"), Expect.js.getConstructor(globalObject));
+        module.put(globalObject, RustString.static("expectTypeOf"), ExpectTypeOf.js.getConstructor(globalObject));
 
         // will add more 9 properties in the module here so we need to allocate 23 properties
         createMockObjects(globalObject, module);
@@ -229,34 +229,34 @@ pub const Jest = struct {
         const restoreAllMocks = jsc.JSFunction.create(globalObject, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, .{});
         const clearAllMocks = jsc.JSFunction.create(globalObject, "clearAllMocks", JSMock__jsClearAllMocks, 2, .{});
         const mockModuleFn = jsc.JSFunction.create(globalObject, "module", JSMock__jsModuleMock, 2, .{});
-        module.put(globalObject, ZigString.static("mock"), mockFn);
-        mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
-        mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
-        mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
+        module.put(globalObject, RustString.static("mock"), mockFn);
+        mockFn.put(globalObject, RustString.static("module"), mockModuleFn);
+        mockFn.put(globalObject, RustString.static("restore"), restoreAllMocks);
+        mockFn.put(globalObject, RustString.static("clearAllMocks"), clearAllMocks);
 
         const jest = JSValue.createEmptyObject(globalObject, 9 + bun_test.FakeTimers.timerFnsCount);
-        jest.put(globalObject, ZigString.static("fn"), mockFn);
-        jest.put(globalObject, ZigString.static("mock"), mockModuleFn);
-        jest.put(globalObject, ZigString.static("spyOn"), spyOn);
-        jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
-        jest.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
-        jest.put(globalObject, ZigString.static("resetAllMocks"), clearAllMocks);
-        jest.put(globalObject, ZigString.static("setSystemTime"), setSystemTime);
-        jest.put(globalObject, ZigString.static("now"), jsc.JSFunction.create(globalObject, "now", JSMock__jsNow, 0, .{}));
-        jest.put(globalObject, ZigString.static("setTimeout"), jsc.JSFunction.create(globalObject, "setTimeout", jsSetDefaultTimeout, 1, .{}));
+        jest.put(globalObject, RustString.static("fn"), mockFn);
+        jest.put(globalObject, RustString.static("mock"), mockModuleFn);
+        jest.put(globalObject, RustString.static("spyOn"), spyOn);
+        jest.put(globalObject, RustString.static("restoreAllMocks"), restoreAllMocks);
+        jest.put(globalObject, RustString.static("clearAllMocks"), clearAllMocks);
+        jest.put(globalObject, RustString.static("resetAllMocks"), clearAllMocks);
+        jest.put(globalObject, RustString.static("setSystemTime"), setSystemTime);
+        jest.put(globalObject, RustString.static("now"), jsc.JSFunction.create(globalObject, "now", JSMock__jsNow, 0, .{}));
+        jest.put(globalObject, RustString.static("setTimeout"), jsc.JSFunction.create(globalObject, "setTimeout", jsSetDefaultTimeout, 1, .{}));
 
-        module.put(globalObject, ZigString.static("jest"), jest);
-        module.put(globalObject, ZigString.static("spyOn"), spyOn);
-        module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
+        module.put(globalObject, RustString.static("jest"), jest);
+        module.put(globalObject, RustString.static("spyOn"), spyOn);
+        module.put(globalObject, RustString.static("expect"), Expect.js.getConstructor(globalObject));
 
         const vi = JSValue.createEmptyObject(globalObject, 6 + bun_test.FakeTimers.timerFnsCount);
-        vi.put(globalObject, ZigString.static("fn"), mockFn);
-        vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
-        vi.put(globalObject, ZigString.static("spyOn"), spyOn);
-        vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
-        vi.put(globalObject, ZigString.static("resetAllMocks"), clearAllMocks);
-        vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
-        module.put(globalObject, ZigString.static("vi"), vi);
+        vi.put(globalObject, RustString.static("fn"), mockFn);
+        vi.put(globalObject, RustString.static("mock"), mockModuleFn);
+        vi.put(globalObject, RustString.static("spyOn"), spyOn);
+        vi.put(globalObject, RustString.static("restoreAllMocks"), restoreAllMocks);
+        vi.put(globalObject, RustString.static("resetAllMocks"), clearAllMocks);
+        vi.put(globalObject, RustString.static("clearAllMocks"), clearAllMocks);
+        module.put(globalObject, RustString.static("vi"), vi);
 
         bun_test.FakeTimers.putTimersFns(globalObject, jest, vi);
     }
@@ -494,13 +494,13 @@ pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSE
 
 const string = []const u8;
 
-pub const bun_test = @import("./bun_test.zig");
+pub const bun_test = @import("./bun_test.rust");
 
 const std = @import("std");
-const CommandLineReporter = @import("../cli/test_command.zig").CommandLineReporter;
-const Snapshots = @import("./snapshot.zig").Snapshots;
+const CommandLineReporter = @import("../cli/test_command.rust").CommandLineReporter;
+const Snapshots = @import("./snapshot.rust").Snapshots;
 
-const expect = @import("./expect.zig");
+const expect = @import("./expect.rust");
 const Expect = expect.Expect;
 const ExpectTypeOf = expect.ExpectTypeOf;
 
@@ -516,4 +516,4 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const RegularExpression = jsc.RegularExpression;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

@@ -100,7 +100,7 @@ pub const PackageInstaller = struct {
                             .PERM, .ACCES, .INVAL, .NAMETOOLONG => {
                                 // Use fallback
                             },
-                            else => return e.toZigErr(),
+                            else => return e.toRustErr(),
                         }
                     },
                     .result => |file| return file,

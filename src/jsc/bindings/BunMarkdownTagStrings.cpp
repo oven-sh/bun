@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 
@@ -36,8 +36,8 @@ template void MarkdownTagStrings::visit(JSC::SlotVisitor&);
 
 } // namespace Bun
 
-// C API for Zig bindings
-extern "C" JSC::EncodedJSValue BunMarkdownTagStrings__getTagString(Zig::GlobalObject* globalObject, uint8_t tagIndex)
+// C API for Rust bindings
+extern "C" JSC::EncodedJSValue BunMarkdownTagStrings__getTagString(Rust::GlobalObject* globalObject, uint8_t tagIndex)
 {
     if (tagIndex >= MARKDOWN_TAG_STRINGS_COUNT)
         return JSC::JSValue::encode(JSC::jsUndefined());

@@ -44,11 +44,11 @@ pub const TestingAPIs = struct {
         const mapping = ism.find(.fromZeroBased(line), .fromZeroBased(col)) orelse return .null;
 
         const obj = jsc.JSValue.createEmptyObject(globalThis, 5);
-        obj.put(globalThis, jsc.ZigString.static("generatedLine"), .jsNumber(mapping.generated.lines.zeroBased()));
-        obj.put(globalThis, jsc.ZigString.static("generatedColumn"), .jsNumber(mapping.generated.columns.zeroBased()));
-        obj.put(globalThis, jsc.ZigString.static("originalLine"), .jsNumber(mapping.original.lines.zeroBased()));
-        obj.put(globalThis, jsc.ZigString.static("originalColumn"), .jsNumber(mapping.original.columns.zeroBased()));
-        obj.put(globalThis, jsc.ZigString.static("sourceIndex"), .jsNumber(mapping.source_index));
+        obj.put(globalThis, jsc.RustString.static("generatedLine"), .jsNumber(mapping.generated.lines.zeroBased()));
+        obj.put(globalThis, jsc.RustString.static("generatedColumn"), .jsNumber(mapping.generated.columns.zeroBased()));
+        obj.put(globalThis, jsc.RustString.static("originalLine"), .jsNumber(mapping.original.lines.zeroBased()));
+        obj.put(globalThis, jsc.RustString.static("originalColumn"), .jsNumber(mapping.original.columns.zeroBased()));
+        obj.put(globalThis, jsc.RustString.static("sourceIndex"), .jsNumber(mapping.source_index));
         return obj;
     }
 };

@@ -1,6 +1,6 @@
 pub const JSString = opaque {
     extern fn JSC__JSString__toObject(this: *JSString, global: *JSGlobalObject) ?*JSObject;
-    extern fn JSC__JSString__toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *jsc.ZigString) void;
+    extern fn JSC__JSString__toRustString(this: *JSString, global: *JSGlobalObject, rust_str: *jsc.RustString) void;
     extern fn JSC__JSString__eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool;
     extern fn JSC__JSString__iterator(this: *JSString, globalObject: *JSGlobalObject, iter: *anyopaque) void;
     extern fn JSC__JSString__length(this: *const JSString) usize;
@@ -14,30 +14,30 @@ pub const JSString = opaque {
         return JSC__JSString__toObject(this, global);
     }
 
-    pub fn toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *jsc.ZigString) void {
-        return JSC__JSString__toZigString(this, global, zig_str);
+    pub fn toRustString(this: *JSString, global: *JSGlobalObject, rust_str: *jsc.RustString) void {
+        return JSC__JSString__toRustString(this, global, rust_str);
     }
 
     pub fn ensureStillAlive(this: *JSString) void {
         std.mem.doNotOptimizeAway(this);
     }
 
-    pub fn getZigString(this: *JSString, global: *JSGlobalObject) jsc.ZigString {
-        var out = jsc.ZigString.init("");
-        this.toZigString(global, &out);
+    pub fn getRustString(this: *JSString, global: *JSGlobalObject) jsc.RustString {
+        var out = jsc.RustString.init("");
+        this.toRustString(global, &out);
         return out;
     }
 
-    pub const view = getZigString;
+    pub const view = getRustString;
 
     /// doesn't always allocate
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ZigString.Slice {
-        var str = ZigString.init("");
-        this.toZigString(global, &str);
+    ) RustString.Slice {
+        var str = RustString.init("");
+        this.toRustString(global, &str);
         return str.toSlice(allocator);
     }
 
@@ -45,9 +45,9 @@ pub const JSString = opaque {
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) JSError!ZigString.Slice {
-        var str = ZigString.init("");
-        this.toZigString(global, &str);
+    ) JSError!RustString.Slice {
+        var str = RustString.init("");
+        this.toRustString(global, &str);
         return str.toSliceClone(allocator);
     }
 
@@ -55,9 +55,9 @@ pub const JSString = opaque {
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ZigString.Slice {
-        var str = ZigString.init("");
-        this.toZigString(global, &str);
+    ) RustString.Slice {
+        var str = RustString.init("");
+        this.toRustString(global, &str);
         return str.toSliceZ(allocator);
     }
 
@@ -92,8 +92,8 @@ pub const JSString = opaque {
 };
 
 const std = @import("std");
-const JSObject = @import("./JSObject.zig").JSObject;
-const ZigString = @import("./ZigString.zig").ZigString;
+const JSObject = @import("./JSObject.rust").JSObject;
+const RustString = @import("./RustString.rust").RustString;
 
 const bun = @import("bun");
 const JSError = bun.JSError;

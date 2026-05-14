@@ -1,6 +1,6 @@
 // On Windows, fs.readdir() goes through openDirAtWindowsNtPath which calls
 // NtCreateFile. NtCreateFile can return NTSTATUS codes that are not named in
-// Zig's (non-exhaustive) NTSTATUS enum — one seen in the wild is
+// Rust's (non-exhaustive) NTSTATUS enum — one seen in the wild is
 // STATUS_UNTRUSTED_MOUNT_POINT (0xC00004BC) when traversing certain junctions
 // under newer Windows 11 security policies.
 //
@@ -10,7 +10,7 @@
 // (allow_assert = true), that branch was compiled into shipped binaries.
 //
 // A deterministic unit test would need to force NtCreateFile to return an
-// NTSTATUS outside the Zig enum, which depends on OS version and local
+// NTSTATUS outside the Rust enum, which depends on OS version and local
 // security policy and can't be done portably from userspace. Instead this
 // test exercises the same readdir → openDirAtWindowsNtPath path through a
 // junction (the reported trigger) and asserts that any failure surfaces as a

@@ -202,11 +202,11 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
 const debug = bun.Output.scoped(.MySQLDecodeBinaryValue, .visible);
 
 const std = @import("std");
-const types = @import("../../../sql/mysql/MySQLTypes.zig");
-const NewReader = @import("../../../sql/mysql/protocol/NewReader.zig").NewReader;
-const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
+const types = @import("../../../sql/mysql/MySQLTypes.rust");
+const NewReader = @import("../../../sql/mysql/protocol/NewReader.rust").NewReader;
+const SQLDataCell = @import("../../shared/SQLDataCell.rust").SQLDataCell;
 
-const Value = @import("../MySQLValue.zig").Value;
+const Value = @import("../MySQLValue.rust").Value;
 const DateTime = Value.DateTime;
 const Time = Value.Time;
 

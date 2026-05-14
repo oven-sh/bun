@@ -211,7 +211,7 @@ pub const Source = union(enum) {
     pub fn openPipe(loop: *uv.Loop, fd: bun.FD) bun.sys.Maybe(*Source.Pipe) {
         log("openPipe (fd = {f})", .{fd});
         const pipe = bun.new(Source.Pipe, std.mem.zeroes(Source.Pipe));
-        // we should never init using IPC here see ipc.zig
+        // we should never init using IPC here see ipc.rust
         switch (pipe.init(loop, false)) {
             .err => |err| {
                 bun.destroy(pipe);

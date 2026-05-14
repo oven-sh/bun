@@ -104,4 +104,4 @@ public:
 #endif
 };
 
-} // namespace Zig
+} // namespace Rust

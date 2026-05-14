@@ -195,7 +195,7 @@ pub const S3HttpDownloadStreamingTask = struct {
 
         // remember the state is atomic load it once, and store it again
         var state = this.getState();
-        // old state should have more otherwise its a http.zig bug
+        // old state should have more otherwise its a http.rust bug
         bun.assert(state.has_more);
         const is_done = !result.has_more;
         const wait_until_done = updateState(this, async_http, result, &state);
@@ -224,7 +224,7 @@ pub const S3HttpDownloadStreamingTask = struct {
         }
         return false;
     }
-    /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
+    /// this is the callback from the http.rust AsyncHTTP is always called from the HTTPThread
     pub fn httpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
         if (processHttpCallback(this, async_http, result)) {
             // we are always unlocked here and its safe to enqueue
@@ -234,9 +234,9 @@ pub const S3HttpDownloadStreamingTask = struct {
 };
 
 const std = @import("std");
-const S3Error = @import("../../../s3_signing/error.zig").S3Error;
+const S3Error = @import("../../../s3_signing/error.rust").S3Error;
 
-const S3Credentials = @import("../../../s3_signing/credentials.zig").S3Credentials;
+const S3Credentials = @import("../../../s3_signing/credentials.rust").S3Credentials;
 const SignResult = S3Credentials.SignResult;
 
 const bun = @import("bun");

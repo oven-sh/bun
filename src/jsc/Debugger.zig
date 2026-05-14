@@ -461,7 +461,7 @@ pub const LifecycleAgent = struct {
 
     pub const Handle = opaque {
         extern "c" fn Bun__LifecycleAgentReportReload(agent: *Handle) void;
-        extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *ZigException) void;
+        extern "c" fn Bun__LifecycleAgentReportError(agent: *Handle, exception: *RustException) void;
         extern "c" fn Bun__LifecycleAgentPreventExit(agent: *Handle) void;
         extern "c" fn Bun__LifecycleAgentStopPreventingExit(agent: *Handle) void;
 
@@ -478,7 +478,7 @@ pub const LifecycleAgent = struct {
             Bun__LifecycleAgentReportReload(this);
         }
 
-        pub fn reportError(this: *Handle, exception: *ZigException) void {
+        pub fn reportError(this: *Handle, exception: *RustException) void {
             debug("reportError", .{});
             Bun__LifecycleAgentReportError(this, exception);
         }
@@ -505,7 +505,7 @@ pub const LifecycleAgent = struct {
         }
     }
 
-    pub fn reportError(this: *LifecycleAgent, exception: *ZigException) void {
+    pub fn reportError(this: *LifecycleAgent, exception: *RustException) void {
         if (this.handle) |handle| {
             handle.reportError(exception);
         }
@@ -517,10 +517,10 @@ pub const LifecycleAgent = struct {
 };
 
 pub const DebuggerId = bun.GenericIndex(i32, Debugger);
-pub const BunFrontendDevServerAgent = @import("../runtime/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
-pub const HTTPServerAgent = @import("./HTTPServerAgent.zig");
+pub const BunFrontendDevServerAgent = @import("../runtime/server/InspectorBunFrontendDevServerAgent.rust").BunFrontendDevServerAgent;
+pub const HTTPServerAgent = @import("./HTTPServerAgent.rust");
 
-const DotEnv = @import("../dotenv/env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.rust");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -532,4 +532,4 @@ const jsc = bun.jsc;
 const Debugger = jsc.Debugger;
 const JSGlobalObject = jsc.JSGlobalObject;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigException = jsc.ZigException;
+const RustException = jsc.RustException;

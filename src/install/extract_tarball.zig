@@ -134,7 +134,7 @@ pub fn usesStreamingExtraction() bool {
 
 /// Derive the display name and a filesystem-safe basename for this
 /// package. Shared by the buffered `extract()` path below and the
-/// streaming extractor in `TarballStream.zig` so both pick identical
+/// streaming extractor in `TarballStream.rust` so both pick identical
 /// temp-dir and cache-folder names.
 pub fn nameAndBasename(this: *const ExtractTarball) struct { []const u8, []const u8 } {
     const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
@@ -195,7 +195,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         defer extract_destination.close();
 
         const Archiver = bun.libarchive.Archiver;
-        const Zlib = @import("../zlib/zlib.zig");
+        const Zlib = @import("../zlib/zlib.rust");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
         defer Npm.Registry.BodyPool.release(zlib_pool);
@@ -593,13 +593,13 @@ pub fn moveToCacheDirectory(
 
 const string = []const u8;
 
-const Npm = @import("./npm.zig");
+const Npm = @import("./npm.rust");
 const std = @import("std");
-const FileSystem = @import("../resolver/fs.zig").FileSystem;
-const Integrity = @import("./integrity.zig").Integrity;
-const Resolution = @import("./resolution.zig").Resolution;
+const FileSystem = @import("../resolver/fs.rust").FileSystem;
+const Integrity = @import("./integrity.rust").Integrity;
+const Resolution = @import("./resolution.rust").Resolution;
 
-const Install = @import("./install.zig");
+const Install = @import("./install.rust");
 const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
 

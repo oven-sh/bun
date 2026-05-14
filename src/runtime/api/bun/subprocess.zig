@@ -86,7 +86,7 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     }
 }
 
-pub const ResourceUsage = @import("./subprocess/ResourceUsage.zig");
+pub const ResourceUsage = @import("./subprocess/ResourceUsage.rust");
 
 const log = Output.scoped(.Subprocess, .visible);
 pub const StdioKind = enum {
@@ -285,8 +285,8 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSE
     return globalObject.throw("Cannot construct Subprocess", .{});
 }
 
-pub const PipeReader = @import("./subprocess/SubprocessPipeReader.zig");
-pub const Readable = @import("./subprocess/Readable.zig").Readable;
+pub const PipeReader = @import("./subprocess/SubprocessPipeReader.rust");
+pub const Readable = @import("./subprocess/Readable.rust").Readable;
 
 pub fn getStderr(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
     // When terminal is used, stderr goes through the terminal
@@ -544,7 +544,7 @@ pub const Source = union(enum) {
     }
 };
 
-pub const NewStaticPipeWriter = @import("./subprocess/StaticPipeWriter.zig").NewStaticPipeWriter;
+pub const NewStaticPipeWriter = @import("./subprocess/StaticPipeWriter.rust").NewStaticPipeWriter;
 pub const StaticPipeWriter = NewStaticPipeWriter(Subprocess);
 
 pub fn memoryCost(this: *const Subprocess) usize {
@@ -881,7 +881,7 @@ pub fn getSignalCode(
 ) JSValue {
     if (this.process.signalCode()) |signal| {
         if (signal.name()) |name|
-            return jsc.ZigString.init(name).toJS(global)
+            return jsc.RustString.init(name).toJS(global)
         else
             return jsc.JSValue.jsNumber(@intFromEnum(signal));
     }
@@ -991,16 +991,16 @@ pub const TestingAPIs = struct {
 };
 
 pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FD;
-pub const Writable = @import("./subprocess/Writable.zig").Writable;
+pub const Writable = @import("./subprocess/Writable.rust").Writable;
 
 pub const MaxBuf = bun.io.MaxBuf;
 pub const spawnSync = js_bun_spawn_bindings.spawnSync;
 pub const spawn = js_bun_spawn_bindings.spawn;
 
-const IPC = @import("../../../jsc/ipc.zig");
-const Terminal = @import("./Terminal.zig");
-const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");
-const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
+const IPC = @import("../../../jsc/ipc.rust");
+const Terminal = @import("./Terminal.rust");
+const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.rust");
+const node_cluster_binding = @import("../../node/node_cluster_binding.rust");
 const std = @import("std");
 
 const bun = @import("bun");

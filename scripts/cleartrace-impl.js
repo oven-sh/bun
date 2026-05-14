@@ -24,10 +24,10 @@ const ignore = [
   " validateObject__",
   " allocPrint ",
   " addWarningFmt_",
-  "logger.zig", // maybe?
-  "output.zig", // might be overly optimistic
-  "vendor/zig/lib/std",
-  "ErrorCode.zig",
+  "logger.rust", // maybe?
+  "output.rust", // might be overly optimistic
+  "vendor/rust/lib/std",
+  "ErrorCode.rust",
 ];
 
 let skipNext = false;
@@ -37,7 +37,7 @@ rl.on("line", line => {
     return;
   }
   if (line.includes(": error: ")) {
-    console.log("\x1b[31m" + line.replace(/^vendor\/zig\/lib\/std\/Io\/Writer\.zig:\d+:\d+: /, "") + "\x1b[0m");
+    console.log("\x1b[31m" + line.replace(/^vendor\/rust\/lib\/std\/Io\/Writer\.rust:\d+:\d+: /, "") + "\x1b[0m");
   } else if (line.includes(": note: ")) {
     console.log("\x1b[36m" + line + "\x1b[0m");
   } else if (line.includes('@compileError("')) {

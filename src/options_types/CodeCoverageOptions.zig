@@ -1,5 +1,5 @@
-//! `bun test --coverage` option struct, extracted from `cli/test_command.zig`
-//! so `options_types/Context.zig` (and `cli/cli.zig` `TestOptions`) can hold
+//! `bun test --coverage` option struct, extracted from `cli/test_command.rust`
+//! so `options_types/Context.rust` (and `cli/cli.rust` `TestOptions`) can hold
 //! it without depending on `cli/`.
 
 pub const CodeCoverageOptions = struct {

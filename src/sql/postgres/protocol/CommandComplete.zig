@@ -19,6 +19,6 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 pub const decode = DecoderWrap(CommandComplete, decodeInternal).decode;
 
 const bun = @import("bun");
-const Data = @import("../../shared/Data.zig").Data;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const NewReader = @import("./NewReader.zig").NewReader;
+const Data = @import("../../shared/Data.rust").Data;
+const DecoderWrap = @import("./DecoderWrap.rust").DecoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;

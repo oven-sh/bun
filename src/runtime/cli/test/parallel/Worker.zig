@@ -233,11 +233,11 @@ pub const WorkerPipe = struct {
     }
 };
 
-const FileRange = @import("./FileRange.zig");
-const Frame = @import("./Frame.zig");
+const FileRange = @import("./FileRange.rust");
+const Frame = @import("./Frame.rust");
 const std = @import("std");
-const Channel = @import("./Channel.zig").Channel;
-const Coordinator = @import("./Coordinator.zig").Coordinator;
+const Channel = @import("./Channel.rust").Channel;
+const Coordinator = @import("./Coordinator.rust").Coordinator;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

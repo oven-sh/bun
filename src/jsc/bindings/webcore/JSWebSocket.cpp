@@ -26,7 +26,7 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -204,7 +204,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(lexicalGlobalObject);
     auto* context = globalObject->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
@@ -213,7 +213,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 
     Vector<String> protocols;
     int rejectUnauthorized = -1;
-    // Zig heap SSLConfig. RAII — freed on any early return, moved into
+    // Rust heap SSLConfig. RAII — freed on any early return, moved into
     // WebSocket::create() on success.
     WebSocketSSLConfigPtr sslConfig;
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
@@ -254,7 +254,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             }
         }
 
-        // Parse TLS options using Zig's SSLConfig.fromJS for full TLS option support
+        // Parse TLS options using Rust's SSLConfig.fromJS for full TLS option support
         JSValue tlsOptionsValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "tls"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (tlsOptionsValue && !tlsOptionsValue.isUndefinedOrNull() && tlsOptionsValue.isObject()) {
@@ -267,7 +267,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                 }
             }
 
-            // Parse full TLS options using Zig's SSLConfig.fromJS
+            // Parse full TLS options using Rust's SSLConfig.fromJS
             sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsOptionsValue)) };
             RETURN_IF_EXCEPTION(throwScope, {});
         }
@@ -1038,7 +1038,7 @@ WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
 }
 
 // https://github.com/oven-sh/bun/issues/11866
-JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
+JSC::JSValue getWebSocketConstructor(Rust::GlobalObject* globalObject)
 {
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }

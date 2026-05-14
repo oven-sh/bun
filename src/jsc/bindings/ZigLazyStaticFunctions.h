@@ -2,13 +2,13 @@
 #pragma once
 #include "root.h"
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 class JSFFIFunction;
 
 class LazyStaticFunctions {
 public:
-    void init(Zig::GlobalObject* globalObject);
+    void init(Rust::GlobalObject* globalObject);
 
     template<typename Visitor>
     void visit(Visitor& visitor);
@@ -18,4 +18,4 @@ public:
     /* -- END FUNCTION DEFINITIONS-- */
 };
 
-} // namespace Zig
+} // namespace Rust

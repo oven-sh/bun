@@ -540,8 +540,8 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
 const string = []const u8;
 
 const std = @import("std");
-const Repository = @import("./repository.zig").Repository;
-const VersionedURLType = @import("./versioned_url.zig").VersionedURLType;
+const Repository = @import("./repository.rust").Repository;
+const VersionedURLType = @import("./versioned_url.rust").VersionedURLType;
 
 const bun = @import("bun");
 const OOM = bun.OOM;

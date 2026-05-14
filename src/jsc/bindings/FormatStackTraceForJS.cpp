@@ -1,7 +1,7 @@
 #include "root.h"
 
 #include "FormatStackTraceForJS.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "helpers.h"
 
 #include "JavaScriptCore/ArgList.h"
@@ -29,7 +29,7 @@ using namespace WebCore;
 
 namespace Bun {
 
-static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
+static JSValue formatStackTraceToJSValue(JSC::VM& vm, Rust::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -78,7 +78,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     return jsString(vm, sb.toString());
 }
 
-static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStackTrace)
+static JSValue formatStackTraceToJSValue(JSC::VM& vm, Rust::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites);
@@ -117,10 +117,10 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     return stackStringValue;
 }
 
-static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
+static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Rust::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     JSValue prepareStackTrace = {};
-    if (lexicalGlobalObject->inherits<Zig::GlobalObject>()) {
+    if (lexicalGlobalObject->inherits<Rust::GlobalObject>()) {
         if (auto prepare = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
             prepareStackTrace = prepare;
         }
@@ -137,7 +137,7 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
 
 WTF::String formatStackTrace(
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
     const WTF::String& name,
     const WTF::String& message,
@@ -181,15 +181,15 @@ WTF::String formatStackTrace(
                 // "".test(/[a-0]/);
                 auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-                ZigStackFrame remappedFrame = {};
-                memset(&remappedFrame, 0, sizeof(ZigStackFrame));
+                RustStackFrame remappedFrame = {};
+                memset(&remappedFrame, 0, sizeof(RustStackFrame));
 
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
                 remappedFrame.position.column_zero_based = 0;
 
                 String sourceURLForFrame = err->sourceURL();
 
-                // If it's not a Zig::GlobalObject, don't bother source-mapping it.
+                // If it's not a Rust::GlobalObject, don't bother source-mapping it.
                 if (globalObject && !sourceURLForFrame.isEmpty()) {
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
@@ -236,21 +236,21 @@ WTF::String formatStackTrace(
     sb.append("\n"_s);
 
     // Pass 1: collect (line, col, source_url) for frames that should be
-    // source-mapped, then batch the remap so the Zig side can resolve each
+    // source-mapped, then batch the remap so the Rust side can resolve each
     // file's map once instead of per frame.
-    WTF::Vector<ZigStackFrame, 8> remappedFrames;
+    WTF::Vector<RustStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<LineColumn, 8> originalLineColumns;
     remappedFrames.grow(framesCount);
-    memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * framesCount);
+    memset(remappedFrames.begin(), 0, sizeof(RustStackFrame) * framesCount);
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
-        ZigStackFrame& remappedFrame = remappedFrames[i];
-        // Match `ZigStackFramePosition.invalid` exactly so the Zig batch loop's
+        RustStackFrame& remappedFrame = remappedFrames[i];
+        // Match `RustStackFramePosition.invalid` exactly so the Rust batch loop's
         // `position.isInvalid()` skips frames we never populate (vm-context
         // frames, frames without line/col info). memset alone leaves
         // `line_start_byte = 0` which fails that byte-compare.
@@ -270,7 +270,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        sourceURLs[i] = Zig::sourceURL(vm, frame);
+        sourceURLs[i] = Rust::sourceURL(vm, frame);
 
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
         bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
@@ -293,7 +293,7 @@ WTF::String formatStackTrace(
     // re-derived from `frame`; only the remap output is read from pass 1.
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
-        ZigStackFrame& remappedFrame = remappedFrames[i];
+        RustStackFrame& remappedFrame = remappedFrames[i];
         unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
@@ -305,7 +305,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
+        WTF::String functionName = Rust::functionName(vm, globalObjectForFrame, frame, errorInstance ? Rust::FinalizerSafety::NotInFinalizer : Rust::FinalizerSafety::MustNotTriggerGC, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -393,7 +393,7 @@ WTF::String formatStackTrace(
 // error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
     Vector<StackFrame>& stackTrace,
     OrdinalNumber& line,
@@ -425,7 +425,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
 }
 
-static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Rust::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -435,24 +435,24 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     MarkedArgumentBuffer callSites;
 
     // Create the call sites (one per frame)
-    Zig::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
+    Rust::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
 
     // We need to sourcemap it if it's a GlobalObject.
 
     const int n = stackTrace.size();
-    WTF::Vector<ZigStackFrame, 8> remappedFrames;
+    WTF::Vector<RustStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<bool, 8> didRemap;
     remappedFrames.grow(n);
-    memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * n);
+    memset(remappedFrames.begin(), 0, sizeof(RustStackFrame) * n);
     sourceURLs.grow(n);
     didRemap.grow(n);
     bool anyRemap = false;
 
     for (int i = 0; i < n; i++) {
-        ZigStackFrame& frame = remappedFrames[i];
+        RustStackFrame& frame = remappedFrames[i];
         auto& stackFrame = stackFrames.at(i);
-        sourceURLs[i] = Zig::sourceURL(vm, stackFrame);
+        sourceURLs[i] = Rust::sourceURL(vm, stackFrame);
         didRemap[i] = false;
         frame.position.line_zero_based = -1;
         frame.position.column_zero_based = -1;
@@ -493,7 +493,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     for (int i = 0; i < n; i++) {
-        ZigStackFrame& frame = remappedFrames[i];
+        RustStackFrame& frame = remappedFrames[i];
         WTF::String sourceURLForFrame = didRemap[i] ? frame.source_url.toWTFString() : sourceURLs[i];
 
         auto* callsite = uncheckedDowncast<CallSite>(callSites.at(i));
@@ -516,7 +516,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
 {
 
-    Zig::GlobalObject* globalObject = nullptr;
+    Rust::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
 
     return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
@@ -526,10 +526,10 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
 {
     UNUSED_PARAM(bunErrorData);
 
-    Zig::GlobalObject* globalObject = nullptr;
+    Rust::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
     lexicalGlobalObject = errorInstance->globalObject();
-    globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    globalObject = dynamicDowncast<Rust::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
@@ -604,7 +604,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
-    ZigStackFrame frame = {};
+    RustStackFrame frame = {};
     frame.position.line_zero_based = line.zeroBasedInt();
     frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
@@ -633,7 +633,7 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = static_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -723,7 +723,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = static_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -784,9 +784,9 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
 } // namespace Bun
 
-namespace Zig {
+namespace Rust {
 
-void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
+void createCallSitesFromFrames(Rust::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
 {
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
@@ -810,4 +810,4 @@ void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObj
     }
 }
 
-} // namespace Zig
+} // namespace Rust

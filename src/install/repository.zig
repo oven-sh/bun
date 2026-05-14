@@ -704,14 +704,14 @@ pub const Repository = extern struct {
 
 const string = []const u8;
 
-const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../dotenv/env_loader.zig");
-const Environment = @import("../bun_core/env.zig");
-const hosted_git_info = @import("./hosted_git_info.zig");
+const Dependency = @import("./dependency.rust");
+const DotEnv = @import("../dotenv/env_loader.rust");
+const Environment = @import("../bun_core/env.rust");
+const hosted_git_info = @import("./hosted_git_info.rust");
 const std = @import("std");
-const FileSystem = @import("../resolver/fs.zig").FileSystem;
+const FileSystem = @import("../resolver/fs.rust").FileSystem;
 
-const Install = @import("./install.zig");
+const Install = @import("./install.rust");
 const ExtractData = Install.ExtractData;
 const PackageManager = Install.PackageManager;
 

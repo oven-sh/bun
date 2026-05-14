@@ -315,9 +315,9 @@ pub const Json = struct {
 
 const string = []const u8;
 
-const fs = @import("../resolver/fs.zig");
+const fs = @import("../resolver/fs.rust");
 const std = @import("std");
-const Define = @import("./defines.zig").Define;
+const Define = @import("./defines.rust").Define;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

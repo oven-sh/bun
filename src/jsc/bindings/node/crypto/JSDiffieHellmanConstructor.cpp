@@ -167,8 +167,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     }
 
     // Get the appropriate structure and create the DiffieHellman object
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanClassStructure.get(zigGlobalObject);
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = rustGlobalObject->m_JSDiffieHellmanClassStructure.get(rustGlobalObject);
 
     return JSC::JSValue::encode(JSDiffieHellman::create(vm, structure, globalObject, WTF::move(dh)));
 }

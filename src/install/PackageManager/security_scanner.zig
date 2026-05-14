@@ -770,7 +770,7 @@ pub const SecurityScanSubprocess = struct {
 
     /// Posix fd 4: .buffer stdio creates a nonblocking socketpair inside the
     /// spawn machinery. The child's end is dup'd to fd 4 and closed in the
-    /// parent by spawn's to_close_at_end list (process.zig:1460). The parent's
+    /// parent by spawn's to_close_at_end list (process.rust:1460). The parent's
     /// end comes back via spawned.extra_pipes.
     fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, ipc_output_fds: [2]bun.FD) !void {
         const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
@@ -799,7 +799,7 @@ pub const SecurityScanSubprocess = struct {
     }
 
     /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the
-    /// child's handle (process.zig:1702), which breaks sync reads in the child.
+    /// child's handle (process.rust:1702), which breaks sync reads in the child.
     /// Instead, create the pipe ourselves with asymmetric flags so only the
     /// parent's write end is overlapped. Child inherits the non-overlapped read
     /// end via .pipe (inherit_fd); parent wraps the overlapped write end in a
@@ -811,7 +811,7 @@ pub const SecurityScanSubprocess = struct {
         if (uv.uv_pipe(&json_fds, 0, uv.UV_NONBLOCK_PIPE).errEnum()) |e| {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
-            return bun.errnoToZigErr(e);
+            return bun.errnoToRustErr(e);
         }
         // Track ownership with optionals: null means the fd has been transferred
         // or closed, so the errdefer skips it. Prevents double-close on error paths
@@ -1283,9 +1283,9 @@ fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bu
     return try advisories_list.toOwnedSlice(manager.allocator);
 }
 
-const HoistedInstall = @import("../hoisted_install.zig");
-const InstallWithManager = @import("./install_with_manager.zig");
-const IsolatedInstall = @import("../isolated_install.zig");
+const HoistedInstall = @import("../hoisted_install.rust");
+const InstallWithManager = @import("./install_with_manager.rust");
+const IsolatedInstall = @import("../isolated_install.rust");
 const std = @import("std");
 
 const bun = @import("bun");

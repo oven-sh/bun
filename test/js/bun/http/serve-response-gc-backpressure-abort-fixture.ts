@@ -5,7 +5,7 @@
 // nothing rooted the Response (RequestContext is a pool struct, not GC-
 // visited). If GC collected it and the client then aborted while the request
 // body was still .Locked, onAbort() dereferenced a freed *Response at
-// RequestContext.zig:692 — heap-use-after-free under ASAN.
+// RequestContext.rust:692 — heap-use-after-free under ASAN.
 //
 // This fixture reproduces: POST with an incomplete chunked body (so
 // request_body stays .Locked and onAbort takes the !isDeadRequest branch),

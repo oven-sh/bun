@@ -1,6 +1,6 @@
 /// <reference types="../../build/debug/codegen/generated.d.ts" />
 /// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
-/// <reference types="../../build/debug/codegen/ZigGeneratedClasses.d.ts" />
+/// <reference types="../../build/debug/codegen/RustGeneratedClasses.d.ts" />
 /// <reference types="../../build/debug/codegen/WebCoreJSBuiltins.d.ts" />
 
 // Typedefs for JSC intrinsics. Instead of @, we use $

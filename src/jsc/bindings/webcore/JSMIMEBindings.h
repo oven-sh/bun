@@ -2,13 +2,13 @@
 
 #include "root.h"
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
 namespace WebCore {
 
 // Function to create a unified MIME binding object
-JSC::JSValue createMIMEBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createMIMEBinding(Rust::GlobalObject* globalObject);
 
 } // namespace WebCore

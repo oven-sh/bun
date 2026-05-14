@@ -6,7 +6,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Rust {
 
 inline void generateNativeModule_AbortControllerModule(
     JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey,
@@ -14,7 +14,7 @@ inline void generateNativeModule_AbortControllerModule(
     JSC::MarkedArgumentBuffer& exportValues)
 {
 
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = static_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
 
     auto* abortController = WebCore::JSAbortController::getConstructor(vm, globalObject).getObject();
@@ -49,4 +49,4 @@ inline void generateNativeModule_AbortControllerModule(
         vm, vm.propertyNames->defaultKeyword, abortController,
         static_cast<unsigned>(PropertyAttribute::DontDelete));
 }
-} // namespace Zig
+} // namespace Rust

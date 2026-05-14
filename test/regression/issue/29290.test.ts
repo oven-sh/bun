@@ -54,7 +54,7 @@ function readInterp(buf: Buffer): string | null {
 
 // Read up to the first 4 KiB of a file (enough for PT_INTERP, which always
 // lives in the first ELF page). The bun binary is ~1.3 GB in debug builds,
-// so `readFileSync` on it would be wasteful; mirror what the Zig helper does.
+// so `readFileSync` on it would be wasteful; mirror what the Rust helper does.
 function readHead(path: string, bytes = 4096): Buffer {
   const fd = openSync(path, "r");
   try {
@@ -66,7 +66,7 @@ function readHead(path: string, bytes = 4096): Buffer {
   }
 }
 
-// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig: true iff the
+// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.rust: true iff the
 // running bun would skip the FHS rewrite for this host. Test decisions must
 // stay in lockstep with the runtime's — if these two drift, tests pass/fail
 // for the wrong reason.

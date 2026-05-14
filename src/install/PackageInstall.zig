@@ -542,7 +542,7 @@ pub const PackageInstall = struct {
         if (dest_path_length == 0 or dest_path_length >= state.buf.len) {
             const e = bun.windows.Win32Error.get();
             const err = if (dest_path_length == 0)
-                (if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected)
+                (if (e.toSystemErrno()) |sys_err| bun.errnoToRustErr(sys_err) else error.Unexpected)
             else
                 error.NameTooLong;
             state.cached_package_dir.close();
@@ -569,7 +569,7 @@ pub const PackageInstall = struct {
         if (cache_path_length == 0 or cache_path_length >= state.buf2.len) {
             const e = bun.windows.Win32Error.get();
             const err = if (cache_path_length == 0)
-                (if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected)
+                (if (e.toSystemErrno()) |sys_err| bun.errnoToRustErr(sys_err) else error.Unexpected)
             else
                 error.NameTooLong;
             state.cached_package_dir.close();
@@ -1069,7 +1069,7 @@ pub const PackageInstall = struct {
                                             }
                                         }
 
-                                        return bun.errnoToZigErr(err.errno);
+                                        return bun.errnoToRustErr(err.errno);
                                     },
                                     .result => {},
                                 }
@@ -1230,7 +1230,7 @@ pub const PackageInstall = struct {
     }
 
     pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FD, path: []const u16, temp_buffer: []u8) bool {
-        const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
+        const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.rust");
         const bin_path = bin_path: {
             const fd = bun.sys.openatWindows(node_mod_fd, path, bun.O.RDONLY).unwrap() catch return true;
             defer fd.close();
@@ -1271,7 +1271,7 @@ pub const PackageInstall = struct {
             if (dest_path_length == 0 or dest_path_length >= wbuf.len) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (dest_path_length == 0)
-                    (if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected)
+                    (if (e.toSystemErrno()) |sys_err| bun.errnoToRustErr(sys_err) else error.Unexpected)
                 else
                     error.NameTooLong;
                 return Result.fail(err, .linking_dependency, null);
@@ -1321,7 +1321,7 @@ pub const PackageInstall = struct {
                         }
                     }
 
-                    return Result.fail(bun.errnoToZigErr(err.errno), .linking_dependency, null);
+                    return Result.fail(bun.errnoToRustErr(err.errno), .linking_dependency, null);
                 },
                 .result => {},
             }
@@ -1482,7 +1482,7 @@ pub const PackageInstall = struct {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Walker = @import("../sys/walker_skippable.zig");
+const Walker = @import("../sys/walker_skippable.rust");
 const std = @import("std");
 
 const bun = @import("bun");

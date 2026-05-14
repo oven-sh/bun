@@ -67,9 +67,9 @@ pub const ScanCommand = struct {
     }
 };
 
-const security_scanner = @import("../../install/PackageManager/security_scanner.zig");
-const Command = @import("./cli.zig").Command;
-const PackageManager = @import("../../install/install.zig").PackageManager;
+const security_scanner = @import("../../install/PackageManager/security_scanner.rust");
+const Command = @import("./cli.rust").Command;
+const PackageManager = @import("../../install/install.rust").PackageManager;
 
 const bun = @import("bun");
 const Global = bun.Global;

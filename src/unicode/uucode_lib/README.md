@@ -4,7 +4,7 @@ A fast and flexible unicode library, fully configurable at build time.
 
 ## Basic usage
 
-```zig
+```rust
 const uucode = @import("uucode");
 
 var cp: u21 = undefined;
@@ -116,14 +116,14 @@ uucode.x.grapheme.wcwidthRemaining(&it); // 3 for "👨🏻‍❤️‍👨🏿_
 uucode.x.grapheme.utf8Wcwidth(str); // 4 for the whole string
 ```
 
-See [src/config.zig](./src/config.zig) for the names of all fields.
+See [src/config.rust](./src/config.rust) for the names of all fields.
 
 ## Configuration
 
 Only include the Unicode fields you actually use:
 
-```zig
-// In `build.zig`:
+```rust
+// In `build.rust`:
 if (b.lazyDependency("uucode", .{
     .target = target,
     .optimize = optimize,
@@ -143,8 +143,8 @@ if (b.lazyDependency("uucode", .{
 
 Fields can be split into multiple tables using `field_0` through `fields_9`, to optimize how fields are stored and accessed (with no code changes needed).
 
-```zig
-// In `build.zig`:
+```rust
+// In `build.rust`:
 if (b.lazyDependency("uucode", .{
     .target = target,
     .optimize = optimize,
@@ -169,8 +169,8 @@ if (b.lazyDependency("uucode", .{
 
 `uucode` includes builtin extensions that add derived properties. Use `extensions` or `extensions_0` through `extensions_9` to include them:
 
-```zig
-// In `build.zig`:
+```rust
+// In `build.rust`:
 if (b.lazyDependency("uucode", .{
     .target = target,
     .optimize = optimize,
@@ -192,31 +192,31 @@ if (b.lazyDependency("uucode", .{
 uucode.get(.wcwidth_standalone, 0x26F5) // ⛵ == 2
 ```
 
-See [src/x/config.x.zig](src/x/config.x.zig) for the full list of builtin extensions.
+See [src/x/config.x.rust](src/x/config.x.rust) for the full list of builtin extensions.
 
 ### Advanced configuration
 
-```zig
+```rust
 ///////////////////////////////////////////////////////////
-// In `build.zig`:
+// In `build.rust`:
 
 b.dependency("uucode", .{
     .target = target,
     .optimize = optimize,
-    .build_config_path = b.path("src/build/uucode_config.zig"),
+    .build_config_path = b.path("src/build/uucode_config.rust"),
 
     // Alternatively, use a string literal:
-    //.@"build_config.zig" = "..."
+    //.@"build_config.rust" = "..."
 })
 
 ///////////////////////////////////////////////////////////
-// In `src/build/uucode_config.zig`:
+// In `src/build/uucode_config.rust`:
 
 const std = @import("std");
-const config = @import("config.zig");
+const config = @import("config.rust");
 
-// Use `config.x.zig` for builtin extensions:
-const config_x = @import("config.x.zig");
+// Use `config.x.rust` for builtin extensions:
+const config_x = @import("config.x.rust");
 
 const d = config.default;
 const wcwidth = config_x.wcwidth;
@@ -241,7 +241,7 @@ fn computeEmojiOddOrEven(
     _ = allocator;
 
     // backing and tracking are only used for slice types (see
-    // src/build/test_build_config.zig for examples).
+    // src/build/test_build_config.rust for examples).
     _ = backing;
     _ = tracking;
 
@@ -276,7 +276,7 @@ pub const tables = [_]config.Table{
         .stages = .three,
 
         // The default `.auto` value decide whether the final data stage struct
-        // should be a `packed struct` (.@"packed") or a regular Zig `struct`.
+        // should be a `packed struct` (.@"packed") or a regular Rust `struct`.
         .packing = .unpacked,
 
         .extensions = &.{
@@ -290,7 +290,7 @@ pub const tables = [_]config.Table{
             wcwidth.field("wcwidth_standalone"),
             wcwidth.field("wcwidth_zero_in_grapheme"),
 
-            // See `src/config.zig` for everything that can be overriden.
+            // See `src/config.rust` for everything that can be overriden.
             // In this example, we're embedding 15 bytes into the `stage3` data,
             // and only names longer than that need to use the `backing` slice.
             d.field("name").override(.{
@@ -323,9 +323,9 @@ uucode.get(.emoji_odd_or_even, 0x1F34B) // 🍋 == .odd_emoji
 
 The architecture works in a few layers:
 
-- Layer 1 (`src/build/Ucd.zig`): Parses the Unicode Character Database (UCD).
-- Layer 2 (`src/build/tables.zig`): Generates table data written to a zig file.
-- Layer 3 (`src/root.zig`): Exposes methods to fetch information from the built tables.
+- Layer 1 (`src/build/Ucd.rust`): Parses the Unicode Character Database (UCD).
+- Layer 2 (`src/build/tables.rust`): Generates table data written to a rust file.
+- Layer 3 (`src/root.rust`): Exposes methods to fetch information from the built tables.
 
 ## History and acknowledgments
 

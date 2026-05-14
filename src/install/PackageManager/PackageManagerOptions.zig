@@ -146,7 +146,7 @@ pub const LogLevel = enum {
     }
 };
 
-pub const NodeLinker = @import("../../install_types/NodeLinker.zig").NodeLinker;
+pub const NodeLinker = @import("../../install_types/NodeLinker.rust").NodeLinker;
 
 pub const Update = struct {
     development: bool = false,
@@ -735,7 +735,7 @@ pub const Enable = packed struct(u16) {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const CommandLineArguments = @import("./CommandLineArguments.zig");
+const CommandLineArguments = @import("./CommandLineArguments.rust");
 const std = @import("std");
 
 const bun = @import("bun");

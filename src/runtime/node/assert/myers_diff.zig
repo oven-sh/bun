@@ -4,7 +4,7 @@
 //!
 //! This file has tests defined in it which _cannot_ be run if `@import("bun")` is used!
 //!
-//! Run tests with `:zig test %`
+//! Run tests with `:rust test %`
 
 /// Comptime diff configuration. Defaults are usually sufficient.
 pub const Options = struct {
@@ -43,8 +43,8 @@ const int = i64; // must be large enough to hold all valid values of `uint` w/o 
 /// the Myers' diff algorithm.
 ///
 /// ## Example
-/// ```zig
-/// const myers_diff = @import("./myers_diff.zig");
+/// ```rust
+/// const myers_diff = @import("./myers_diff.rust");
 /// const StrDiffer = myers_diff.Differ([]const u8, .{});
 /// const actual = &[_][]const u8{
 ///   "foo",

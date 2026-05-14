@@ -8,7 +8,7 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 // WebSocket, double-deref'ing the RequestContext in the process.
 
 // server.upgrade() reads Sec-WebSocket-Key/Protocol/Extensions from
-// req.headers via FetchHeaders::fastGet, which returns a ZigString that
+// req.headers via FetchHeaders::fastGet, which returns a RustString that
 // BORROWS from the header map entry's StringImpl. It then invokes the
 // opts.data / opts.headers getters (arbitrary user JS) before using those
 // borrowed slices in the actual upgrade. A getter that mutates req.headers

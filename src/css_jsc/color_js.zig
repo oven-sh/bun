@@ -156,7 +156,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
 
         break :brk OutputColorFormat.css;
     };
-    var input = jsc.ZigString.Slice.empty;
+    var input = jsc.RustString.Slice.empty;
     defer input.deinit();
 
     var parsed_color: css.CssColor.ParseResult = brk: {
@@ -430,7 +430,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
 
 const std = @import("std");
 
-const color = @import("../css/values/color.zig");
+const color = @import("../css/values/color.rust");
 const HSL = color.HSL;
 const LAB = color.LAB;
 const RGBA = color.RGBA;

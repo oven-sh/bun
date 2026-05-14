@@ -122,8 +122,8 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     }) catch |e| globalObject.takeError(e);
 }
 
-const ErrorResponse = @import("../../../sql/postgres/protocol/ErrorResponse.zig");
-const createPostgresError = @import("../error_jsc.zig").createPostgresError;
+const ErrorResponse = @import("../../../sql/postgres/protocol/ErrorResponse.rust");
+const createPostgresError = @import("../error_jsc.rust").createPostgresError;
 
 const bun = @import("bun");
 const String = bun.String;

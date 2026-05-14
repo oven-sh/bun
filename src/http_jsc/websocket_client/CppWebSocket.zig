@@ -1,9 +1,9 @@
-/// This is the wrapper between Zig and C++ for WebSocket client functionality. It corresponds to the `WebCore::WebSocket` class (WebSocket.cpp).
+/// This is the wrapper between Rust and C++ for WebSocket client functionality. It corresponds to the `WebCore::WebSocket` class (WebSocket.cpp).
 ///
 /// Each method in this interface ensures proper JavaScript event loop integration by entering
 /// and exiting the event loop around C++ function calls, maintaining proper execution context.
 ///
-/// The external C++ functions are imported and wrapped with Zig functions that handle
+/// The external C++ functions are imported and wrapped with Rust functions that handle
 /// the event loop management automatically.
 ///
 /// Note: This is specifically for WebSocket client implementations, not for server-side WebSockets.
@@ -25,7 +25,7 @@ pub const CppWebSocket = opaque {
     ) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
     extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
-    extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void;
+    extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const jsc.RustString) void;
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
     extern fn WebSocket__rejectUnauthorized(websocket_context: *CppWebSocket) bool;
     pub fn didAbruptClose(this: *CppWebSocket, reason: ErrorCode) void {
@@ -40,7 +40,7 @@ pub const CppWebSocket = opaque {
         defer loop.exit();
         WebSocket__didClose(this, code, reason);
     }
-    pub fn didReceiveText(this: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void {
+    pub fn didReceiveText(this: *CppWebSocket, clone: bool, text: *const jsc.RustString) void {
         const loop = jsc.VirtualMachine.get().eventLoop();
         loop.enter();
         defer loop.exit();
@@ -88,8 +88,8 @@ pub const CppWebSocket = opaque {
     }
 };
 
-const WebSocketDeflate = @import("./WebSocketDeflate.zig");
-const ErrorCode = @import("../websocket_client.zig").ErrorCode;
+const WebSocketDeflate = @import("./WebSocketDeflate.rust");
+const ErrorCode = @import("../websocket_client.rust").ErrorCode;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

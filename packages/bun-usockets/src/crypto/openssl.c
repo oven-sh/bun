@@ -145,7 +145,7 @@ static void us_ssl_reneg_state_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   us_free(ptr);
 }
 
-/* Defined in Zig (`SSLContextCache.zig`): tombstones the cache entry on
+/* Defined in Rust (`SSLContextCache.rust`): tombstones the cache entry on
  * SSL_CTX refcount→0 so the per-VM weak SSL_CTX cache learns the pointer is
  * dead without holding a ref of its own. */
 extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
@@ -869,7 +869,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   }
 
   /* code != 0 (forceful — `_destroy()` / `_handle.close()` / abort): send
-   * close_notify best-effort and raw-close now. The Zig destroy path detaches
+   * close_notify best-effort and raw-close now. The Rust destroy path detaches
    * + poll_ref.unref() right after, so deferring would orphan the us_socket_t.
    *
    * code == 0 (graceful — `end()` → markInactive → closeAndDetach(.normal)):

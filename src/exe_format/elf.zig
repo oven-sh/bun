@@ -1,6 +1,6 @@
 /// ELF file manipulation for `bun build --compile` on Linux.
 ///
-/// Analogous to `macho.zig` (macOS) and `pe.zig` (Windows).
+/// Analogous to `macho.rust` (macOS) and `pe.rust` (Windows).
 /// Finds the `.bun` ELF section (placed by a linker symbol in c-bindings.cpp)
 /// and expands it to hold the standalone module graph data.
 ///
@@ -204,7 +204,7 @@ pub const ElfFile = struct {
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the
         // 128-byte alignment that JSC's bytecode cache requires — see
-        // `target_mod = 120` in StandaloneModuleGraph.zig, which assumes the
+        // `target_mod = 120` in StandaloneModuleGraph.rust, which assumes the
         // payload starts on a 128-byte boundary so bytecode at payload-offset
         // 120 lands 128-aligned once the 8-byte `[u64 size]` header is
         // accounted for. A non-page-aligned `new_vaddr` (e.g. one inheriting

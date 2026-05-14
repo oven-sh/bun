@@ -3,7 +3,7 @@
 //! host process — Chrome IS the IPC peer. One fewer hop than WKWebView.
 //!
 //! Parent death → Chrome's pipe read EOFs → Chrome exits. Same lifetime
-//! coupling as HostProcess.zig's socket EOF path.
+//! coupling as HostProcess.rust's socket EOF path.
 //!
 //! fd layout (child):
 //!   3 = Chrome reads CDP commands from us  (parent writes → child reads)

@@ -25,7 +25,7 @@ pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject
         return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
     }
 
-    const str = try arguments[0].getZigString(globalObject);
+    const str = try arguments[0].getRustString(globalObject);
 
     if (str.is16Bit()) {
         return this.encodeUTF16(globalObject, str.utf16SliceAligned());
@@ -35,7 +35,7 @@ pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject
 }
 
 pub fn encodeWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject, input: *jsc.JSString) JSValue {
-    const str = input.getZigString(globalObject);
+    const str = input.getRustString(globalObject);
 
     if (str.is16Bit()) {
         return this.encodeUTF16(globalObject, str.utf16SliceAligned());

@@ -27,7 +27,7 @@ pub const JSUint8Array = opaque {
     }
 };
 
-const Sizes = @import("./sizes.zig");
+const Sizes = @import("./sizes.rust");
 const bun = @import("bun");
 
 const jsc = bun.jsc;

@@ -22,7 +22,7 @@ struct CheckPrimeJobCtx {
     WTF_MAKE_TZONE_ALLOCATED(CheckPrimeJobCtx);
 };
 
-// Opaque struct created zig land
+// Opaque struct created rust land
 struct CheckPrimeJob {
     static CheckPrimeJob* create(JSC::JSGlobalObject*, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
@@ -48,7 +48,7 @@ struct GeneratePrimeJobCtx {
     WTF_MAKE_TZONE_ALLOCATED(GeneratePrimeJobCtx);
 };
 
-// Opaque struct created zig land
+// Opaque struct created rust land
 struct GeneratePrimeJob {
     static GeneratePrimeJob* create(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);

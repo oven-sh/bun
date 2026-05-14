@@ -251,7 +251,7 @@ fn containsNewlineOrCR(value: []const u8) bool {
 }
 
 const std = @import("std");
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+const MultiPartUploadOptions = @import("./multipart_options.rust").MultiPartUploadOptions;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

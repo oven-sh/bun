@@ -3,7 +3,7 @@ const ThreadPool = @This();
 // Thank you @kprotty.
 //
 // This file contains code derived from the following source:
-//   https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
+//   https://github.com/kprotty/zap/blob/blog/src/thread_pool.rust
 //
 // That code is covered by the following copyright and license notice:
 //   MIT License

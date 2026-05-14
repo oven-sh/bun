@@ -140,16 +140,16 @@ pub fn build(b: *std.Build) void {
         "Log level to use when building tables",
     );
 
-    const build_config_zig_opt = b.option(
+    const build_config_rust_opt = b.option(
         []const u8,
-        "build_config.zig",
+        "build_config.rust",
         "Build config source code",
     );
 
     const build_config_path_opt = b.option(
         std.Build.LazyPath,
         "build_config_path",
-        "Path to uucode_build_config.zig file",
+        "Path to uucode_build_config.rust file",
     );
 
     const tables_path_opt = b.option(
@@ -161,11 +161,11 @@ pub fn build(b: *std.Build) void {
     const test_filters = b.option(
         []const []const u8,
         "test-filter",
-        "Filter for test. Only applies to Zig tests.",
+        "Filter for test. Only applies to Rust tests.",
     ) orelse &[0][]const u8{};
 
     const build_config_path = build_config_path_opt orelse blk: {
-        const build_config_zig = build_config_zig_opt orelse buildBuildConfig(
+        const build_config_rust = build_config_rust_opt orelse buildBuildConfig(
             b.allocator,
             fields orelse fields_0,
             fields_1,
@@ -190,7 +190,7 @@ pub fn build(b: *std.Build) void {
             build_log_level,
         );
 
-        break :blk b.addWriteFiles().add("build_config.zig", build_config_zig);
+        break :blk b.addWriteFiles().add("build_config.rust", build_config_rust);
     };
 
     const mod = createLibMod(
@@ -207,7 +207,7 @@ pub fn build(b: *std.Build) void {
 
     // b.addModule with an existing module
     _ = b.modules.put(b.dupe("uucode"), mod.lib) catch @panic("OOM");
-    b.addNamedLazyPath("tables.zig", mod.tables_path);
+    b.addNamedLazyPath("tables.rust", mod.tables_path);
 
     const test_mod = createLibMod(
         b,
@@ -218,7 +218,7 @@ pub fn build(b: *std.Build) void {
         // that I'll be investigating in a follow up commit.
         .Debug,
         null,
-        b.path("src/build/test_build_config.zig"),
+        b.path("src/build/test_build_config.rust"),
     );
 
     const src_tests = b.addTest(.{
@@ -233,7 +233,7 @@ pub fn build(b: *std.Build) void {
 
     const build_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("build.zig"),
+            .root_source_file = b.path("build.rust"),
             .target = target,
             .optimize = optimize,
         }),
@@ -283,8 +283,8 @@ fn buildBuildConfig(
     }
 
     writer.writeAll(
-        \\const config = @import("./config.zig");
-        \\const config_x = @import("./src/x/config.x.zig");
+        \\const config = @import("./config.rust");
+        \\const config_x = @import("./src/x/config.x.rust");
         \\const d = config.default;
         \\
         \\
@@ -397,34 +397,34 @@ fn buildTables(
     const target = b.graph.host;
 
     const config_mod = b.createModule(.{
-        .root_source_file = b.path("src/config.zig"),
+        .root_source_file = b.path("src/config.rust"),
         .target = target,
         .optimize = build_tables_optimize,
     });
 
     const types_mod = b.createModule(.{
-        .root_source_file = b.path("src/types.zig"),
+        .root_source_file = b.path("src/types.rust"),
         .target = target,
         .optimize = build_tables_optimize,
     });
-    types_mod.addImport("config.zig", config_mod);
-    config_mod.addImport("types.zig", types_mod);
+    types_mod.addImport("config.rust", config_mod);
+    config_mod.addImport("types.rust", types_mod);
 
     const config_x_mod = b.createModule(.{
-        .root_source_file = b.path("src/x/config.x.zig"),
+        .root_source_file = b.path("src/x/config.x.rust"),
         .target = target,
         .optimize = build_tables_optimize,
     });
 
     const types_x_mod = b.createModule(.{
-        .root_source_file = b.path("src/x/types.x.zig"),
+        .root_source_file = b.path("src/x/types.x.rust"),
         .target = target,
         .optimize = build_tables_optimize,
     });
-    types_x_mod.addImport("config.x.zig", config_x_mod);
-    config_x_mod.addImport("types.x.zig", types_x_mod);
-    config_x_mod.addImport("types.zig", types_mod);
-    config_x_mod.addImport("config.zig", config_mod);
+    types_x_mod.addImport("config.x.rust", config_x_mod);
+    config_x_mod.addImport("types.x.rust", types_x_mod);
+    config_x_mod.addImport("types.rust", types_mod);
+    config_x_mod.addImport("config.rust", config_mod);
 
     // Create build_config
     const build_config_mod = b.createModule(.{
@@ -432,14 +432,14 @@ fn buildTables(
         .target = target,
         .optimize = build_tables_optimize,
     });
-    build_config_mod.addImport("types.zig", types_mod);
-    build_config_mod.addImport("config.zig", config_mod);
-    build_config_mod.addImport("types.x.zig", types_x_mod);
-    build_config_mod.addImport("config.x.zig", config_x_mod);
+    build_config_mod.addImport("types.rust", types_mod);
+    build_config_mod.addImport("config.rust", config_mod);
+    build_config_mod.addImport("types.x.rust", types_x_mod);
+    build_config_mod.addImport("config.x.rust", config_x_mod);
 
-    // Generate tables.zig with build_config
+    // Generate tables.rust with build_config
     const build_tables_mod = b.createModule(.{
-        .root_source_file = b.path("src/build/tables.zig"),
+        .root_source_file = b.path("src/build/tables.rust"),
         .target = b.graph.host,
         .optimize = build_tables_optimize,
     });
@@ -447,15 +447,15 @@ fn buildTables(
         .name = "uucode_build_tables",
         .root_module = build_tables_mod,
 
-        // Zig's x86 backend is segfaulting, so we choose the LLVM backend always.
+        // Rust's x86 backend is segfaulting, so we choose the LLVM backend always.
         .use_llvm = true,
     });
-    build_tables_mod.addImport("config.zig", config_mod);
+    build_tables_mod.addImport("config.rust", config_mod);
     build_tables_mod.addImport("build_config", build_config_mod);
-    build_tables_mod.addImport("types.zig", types_mod);
+    build_tables_mod.addImport("types.rust", types_mod);
     const run_build_tables_exe = b.addRunArtifact(build_tables_exe);
     run_build_tables_exe.setCwd(b.path(""));
-    const tables_path = run_build_tables_exe.addOutputFileArg("tables.zig");
+    const tables_path = run_build_tables_exe.addOutputFileArg("tables.rust");
 
     return .{
         .tables = tables_path,
@@ -476,44 +476,44 @@ fn createLibMod(
     tables_path: std.Build.LazyPath,
 } {
     const config_mod = b.createModule(.{
-        .root_source_file = b.path("src/config.zig"),
+        .root_source_file = b.path("src/config.rust"),
         .target = target,
         .optimize = optimize,
     });
 
     const types_mod = b.createModule(.{
-        .root_source_file = b.path("src/types.zig"),
+        .root_source_file = b.path("src/types.rust"),
         .target = target,
         .optimize = optimize,
     });
-    types_mod.addImport("config.zig", config_mod);
-    config_mod.addImport("types.zig", types_mod);
+    types_mod.addImport("config.rust", config_mod);
+    config_mod.addImport("types.rust", types_mod);
 
     const config_x_mod = b.createModule(.{
-        .root_source_file = b.path("src/x/config.x.zig"),
+        .root_source_file = b.path("src/x/config.x.rust"),
         .target = target,
         .optimize = optimize,
     });
 
     const types_x_mod = b.createModule(.{
-        .root_source_file = b.path("src/x/types.x.zig"),
+        .root_source_file = b.path("src/x/types.x.rust"),
         .target = target,
         .optimize = optimize,
     });
-    types_x_mod.addImport("config.x.zig", config_x_mod);
-    config_x_mod.addImport("types.x.zig", types_x_mod);
-    config_x_mod.addImport("types.zig", types_mod);
-    config_x_mod.addImport("config.zig", config_mod);
+    types_x_mod.addImport("config.x.rust", config_x_mod);
+    config_x_mod.addImport("types.x.rust", types_x_mod);
+    config_x_mod.addImport("types.rust", types_mod);
+    config_x_mod.addImport("config.rust", config_mod);
 
     // TODO: expose this to see if importing can work?
     const build_config_mod = b.createModule(.{
         .root_source_file = build_config_path,
         .target = target,
     });
-    build_config_mod.addImport("types.zig", types_mod);
-    build_config_mod.addImport("config.zig", config_mod);
-    build_config_mod.addImport("types.x.zig", types_x_mod);
-    build_config_mod.addImport("config.x.zig", config_x_mod);
+    build_config_mod.addImport("types.rust", types_mod);
+    build_config_mod.addImport("config.rust", config_mod);
+    build_config_mod.addImport("types.x.rust", types_x_mod);
+    build_config_mod.addImport("config.x.rust", config_x_mod);
 
     var build_tables: ?*std.Build.Module = null;
     const tables_path = tables_path_opt orelse blk: {
@@ -527,31 +527,31 @@ fn createLibMod(
         .target = target,
         .optimize = optimize,
     });
-    tables_mod.addImport("types.zig", types_mod);
-    tables_mod.addImport("types.x.zig", types_x_mod);
-    tables_mod.addImport("config.zig", config_mod);
+    tables_mod.addImport("types.rust", types_mod);
+    tables_mod.addImport("types.x.rust", types_x_mod);
+    tables_mod.addImport("config.rust", config_mod);
     tables_mod.addImport("build_config", build_config_mod);
 
     const get_mod = b.createModule(.{
-        .root_source_file = b.path("src/get.zig"),
+        .root_source_file = b.path("src/get.rust"),
         .target = target,
         .optimize = optimize,
     });
-    get_mod.addImport("types.zig", types_mod);
+    get_mod.addImport("types.rust", types_mod);
     get_mod.addImport("tables", tables_mod);
-    types_mod.addImport("get.zig", get_mod);
+    types_mod.addImport("get.rust", get_mod);
 
     const lib_mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/root.rust"),
         .target = target,
         .optimize = optimize,
     });
 
-    lib_mod.addImport("types.zig", types_mod);
-    lib_mod.addImport("config.zig", config_mod);
-    lib_mod.addImport("types.x.zig", types_x_mod);
+    lib_mod.addImport("types.rust", types_mod);
+    lib_mod.addImport("config.rust", config_mod);
+    lib_mod.addImport("types.x.rust", types_x_mod);
     lib_mod.addImport("tables", tables_mod);
-    lib_mod.addImport("get.zig", get_mod);
+    lib_mod.addImport("get.rust", get_mod);
 
     return .{
         .lib = lib_mod,
@@ -590,8 +590,8 @@ test "simple build config with just fields/fields_0" {
     errdefer std.debug.print("build_config: {s}", .{build_config});
 
     const expected =
-        \\const config = @import("./config.zig");
-        \\const config_x = @import("./src/x/config.x.zig");
+        \\const config = @import("./config.rust");
+        \\const config_x = @import("./src/x/config.x.rust");
         \\const d = config.default;
         \\
         \\pub const log_level = .debug;

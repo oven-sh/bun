@@ -337,15 +337,15 @@ pub fn buildRefDefHashtable(self: *Parser) error{OutOfMemory}!void {
     }
 }
 
-const helpers = @import("./helpers.zig");
-const parser_mod = @import("./parser.zig");
+const helpers = @import("./helpers.rust");
+const parser_mod = @import("./parser.rust");
 const std = @import("std");
-const unicode = @import("./unicode.zig");
+const unicode = @import("./unicode.rust");
 
 const Parser = parser_mod.Parser;
 const BlockHeader = Parser.BlockHeader;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const Align = types.Align;
 const Mark = types.Mark;
 const VerbatimLine = types.VerbatimLine;

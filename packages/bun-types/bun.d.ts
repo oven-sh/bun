@@ -3118,8 +3118,8 @@ declare module "bun" {
    *
    * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
-   * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
+   * The underlying implementation of these functions are provided by the Rust
+   * Standard Library. Thanks to \@jedisct1 and other Rust contributors for their
    * work on this.
    *
    * @example
@@ -3225,8 +3225,8 @@ declare module "bun" {
      * Warning: password hashing is slow, consider using {@link Bun.password.verify}
      * instead which runs in a worker thread.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
+     * The underlying implementation of these functions are provided by the Rust
+     * Standard Library. Thanks to \@jedisct1 and other Rust contributors for their
      * work on this.
      *
      * @example
@@ -3270,8 +3270,8 @@ declare module "bun" {
      * Warning: password hashing is slow, consider using {@link Bun.password.hash}
      * instead which runs in a worker thread.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
+     * The underlying implementation of these functions are provided by the Rust
+     * Standard Library. Thanks to \@jedisct1 and other Rust contributors for their
      * work on this.
      *
      * @example

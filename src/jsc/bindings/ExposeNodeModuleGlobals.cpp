@@ -11,7 +11,7 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/SourceCode.h>
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "InternalModuleRegistry.h"
 
 #pragma push_macro("assert")
@@ -64,7 +64,7 @@ namespace ExposeNodeModuleGlobalGetters {
 #define DECL_GETTER(id, field) \
     JSC_DEFINE_CUSTOM_GETTER(id, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)) \
     { \
-        Zig::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject); \
+        Rust::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject); \
         JSC::VM& vm = thisObject->vm(); \
         return JSC::JSValue::encode(thisObject->internalModuleRegistry()->requireId(thisObject, vm, field)); \
     }
@@ -73,7 +73,7 @@ FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 
 } // namespace ExposeNodeModuleGlobalGetters
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
+extern "C" [[RUST_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Rust::GlobalObject* globalObject)
 {
 
     auto& vm = JSC::getVM(globalObject);
@@ -94,8 +94,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 
 // Set up require(), module, __filename, __dirname on globalThis for the REPL.
 // Creates a CommonJS module object rooted at the given directory so require() resolves correctly.
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
-    Zig::GlobalObject* globalObject,
+extern "C" [[RUST_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
+    Rust::GlobalObject* globalObject,
     const unsigned char* cwdPtr,
     size_t cwdLen)
 {

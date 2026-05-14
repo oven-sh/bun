@@ -101,11 +101,11 @@ Local<NewClass> NewClass::New(Isolate* isolate, /* parameters */)
 
 For each new C++ method, you must add the mangled symbol names to multiple files:
 
-#### a. Add to `src/napi/napi.zig`
+#### a. Add to `src/napi/napi.rust`
 
 Find the `V8API` struct (around line 1801) and add entries for both GCC/Clang and MSVC:
 
-```zig
+```rust
 const V8API = if (!bun.Environment.isWindows) struct {
     // ... existing functions ...
     pub extern fn _ZN2v88NewClass3NewEPNS_7IsolateE/* parameters */() *anyopaque;
@@ -278,7 +278,7 @@ bun bd test test/v8/v8.test.ts -t "can create small integer"
 
 ### Common Issues
 
-**Symbol Not Found**: Ensure mangled names are correctly added to `napi.zig` and symbol files.
+**Symbol Not Found**: Ensure mangled names are correctly added to `napi.rust` and symbol files.
 
 **Segmentation Fault**: Usually indicates inline V8 functions are reading incorrect memory layouts. Check `Map` setup and `ObjectLayout` structure.
 

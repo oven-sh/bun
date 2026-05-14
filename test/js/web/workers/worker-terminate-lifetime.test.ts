@@ -11,7 +11,7 @@ const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
 
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
-// Zig-side `user_keep_alive` field was set from it but never read, and the
+// Rust-side `user_keep_alive` field was set from it but never read, and the
 // parent keep-alive was taken unconditionally in `create()`. `.unref()` after
 // construction worked; the constructor option did not.
 test("new Worker with { ref: false } does not keep the parent alive", async () => {
@@ -37,7 +37,7 @@ test("new Worker with { ref: false } does not keep the parent alive", async () =
   expect(exitCode).toBe(0);
 });
 
-// Regression: the Zig WebWorker struct was freed by the worker thread in
+// Regression: the Rust WebWorker struct was freed by the worker thread in
 // exitAndDeinit while the C++ Worker still held a raw impl_ pointer, so a
 // terminate()/ref()/unref() that landed after natural exit dereferenced freed
 // memory (ASAN use-after-poison in setRefInternal).
@@ -56,7 +56,7 @@ test(
             workers.push(new Worker("data:text/javascript,"));
           }
           await Promise.all(workers.map(w => new Promise(r => w.addEventListener("close", r, { once: true }))));
-          // All workers have exited; previously the Zig struct was freed here,
+          // All workers have exited; previously the Rust struct was freed here,
           // so every call below dereferenced freed memory via Worker::impl_.
           for (const w of workers) {
             w.ref();

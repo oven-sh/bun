@@ -1161,13 +1161,13 @@ fn addDependencyError(manager: *PackageManager, dependency: *const Dependency, e
     if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
         manager.log.addWarningWithNote(null, .{}, manager.allocator, @errorName(err), note.fmt, note.args) catch unreachable
     else
-        manager.log.addZigErrorWithNote(manager.allocator, err, note.fmt, note.args) catch unreachable;
+        manager.log.addRustErrorWithNote(manager.allocator, err, note.fmt, note.args) catch unreachable;
 }
 
-const security_scanner = @import("./security_scanner.zig");
+const security_scanner = @import("./security_scanner.rust");
 const std = @import("std");
-const installHoistedPackages = @import("../hoisted_install.zig").installHoistedPackages;
-const installIsolatedPackages = @import("../isolated_install.zig").installIsolatedPackages;
+const installHoistedPackages = @import("../hoisted_install.rust").installHoistedPackages;
+const installIsolatedPackages = @import("../isolated_install.rust").installIsolatedPackages;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

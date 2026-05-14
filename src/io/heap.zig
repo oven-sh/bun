@@ -2,7 +2,7 @@
 ///
 /// Why? Intrusive data structures require the element type to hold the metadata
 /// required for the structure, rather than an additional container structure.
-/// There are numerous pros/cons that are documented well by Boost[2]. For Zig,
+/// There are numerous pros/cons that are documented well by Boost[2]. For Rust,
 /// I think the primary benefits are making data structures allocation free
 /// (rather, shifting allocation up to the consumer which can choose how they
 /// want the memory to be available). There are various costs to this such as

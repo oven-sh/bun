@@ -168,7 +168,7 @@ pub const HostedGitInfo = struct {
     }
 
     /// Convert this HostedGitInfo to a JavaScript object
-    pub const toJS = @import("../install_jsc/hosted_git_info_jsc.zig").hostedGitInfoToJS;
+    pub const toJS = @import("../install_jsc/hosted_git_info_jsc.rust").hostedGitInfoToJS;
 
     pub const StringPair = struct {
         save_spec: []const u8,
@@ -567,7 +567,7 @@ pub const UrlProtocolPair = struct {
 
     fn concatPartsToUrl(allocator: std.mem.Allocator, parts: []const []const u8) ?*jsc.URL {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
-        // get rid of -- in theory, URL.zig could allocate once.
+        // get rid of -- in theory, URL.rust could allocate once.
         const new_str = bun.handleOom(bun.strings.concat(allocator, parts));
         defer allocator.free(new_str);
         return jsc.URL.fromString(bun.String.init(new_str));
@@ -1641,12 +1641,12 @@ const HostProvider = enum {
 };
 
 pub const TestingAPIs = struct {
-    pub const jsParseUrl = @import("../install_jsc/hosted_git_info_jsc.zig").jsParseUrl;
-    pub const jsFromUrl = @import("../install_jsc/hosted_git_info_jsc.zig").jsFromUrl;
+    pub const jsParseUrl = @import("../install_jsc/hosted_git_info_jsc.rust").jsParseUrl;
+    pub const jsFromUrl = @import("../install_jsc/hosted_git_info_jsc.rust").jsFromUrl;
 };
 
 const std = @import("std");
-const PercentEncoding = @import("../url/url.zig").PercentEncoding;
+const PercentEncoding = @import("../url/url.rust").PercentEncoding;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -141,7 +141,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     return JSC::JSValue::encode(jsEmptyString(vm));
 }
 
-JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
+JSC::JSValue createNodeURLBinding(Rust::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

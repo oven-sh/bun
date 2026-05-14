@@ -17,7 +17,7 @@ pub const js_bindings = struct {
             .{ "outOfMemory", jsOutOfMemory },
             .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
-            const name = jsc.ZigString.static(tuple[0]);
+            const name = jsc.RustString.static(tuple[0]);
             obj.put(global, name, jsc.JSFunction.create(global, tuple[0], tuple[1], 1, .{}));
         }
         return obj;
@@ -79,15 +79,15 @@ pub const js_bindings = struct {
         for (list, 0..) |feature, i| {
             try array.putIndex(global, @intCast(i), try bun.String.static(feature).toJS(global));
         }
-        obj.put(global, jsc.ZigString.static("features"), array);
-        obj.put(global, jsc.ZigString.static("version"), try bun.String.init(Global.package_json_version).toJS(global));
-        obj.put(global, jsc.ZigString.static("is_canary"), jsc.JSValue.jsBoolean(bun.Environment.is_canary));
+        obj.put(global, jsc.RustString.static("features"), array);
+        obj.put(global, jsc.RustString.static("version"), try bun.String.init(Global.package_json_version).toJS(global));
+        obj.put(global, jsc.RustString.static("is_canary"), jsc.JSValue.jsBoolean(bun.Environment.is_canary));
 
         // This is the source of truth for the git sha.
         // Not the github ref or the git tag.
-        obj.put(global, jsc.ZigString.static("revision"), try bun.String.init(bun.Environment.git_sha).toJS(global));
+        obj.put(global, jsc.RustString.static("revision"), try bun.String.init(bun.Environment.git_sha).toJS(global));
 
-        obj.put(global, jsc.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
+        obj.put(global, jsc.RustString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };

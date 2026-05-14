@@ -1,5 +1,5 @@
 //! This is a copy-pasta of std.Thread.Futex, except without `unreachable`
-//! Synchronized with std as of Zig 0.14.1
+//! Synchronized with std as of Rust 0.14.1
 //!
 //! A mechanism used to block (`wait`) and unblock (`wake`) threads using a
 //! 32bit memory address as hints.

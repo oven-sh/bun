@@ -1248,11 +1248,11 @@ const Template = enum {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const CLI = @import("./cli.zig");
-const Fs = @import("../../resolver/fs.zig");
-const options = @import("../../bundler/options.zig");
+const CLI = @import("./cli.rust");
+const Fs = @import("../../resolver/fs.rust");
+const options = @import("../../bundler/options.rust");
 const std = @import("std");
-const initializeStore = @import("./create_command.zig").initializeStore;
+const initializeStore = @import("./create_command.rust").initializeStore;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

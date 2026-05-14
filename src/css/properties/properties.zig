@@ -1,36 +1,36 @@
 const Position = position.Position;
 
-pub const CustomPropertyName = @import("./custom.zig").CustomPropertyName;
+pub const CustomPropertyName = @import("./custom.rust").CustomPropertyName;
 
-pub const @"align" = @import("./align.zig");
-pub const animation = @import("./animation.zig");
-pub const background = @import("./background.zig");
-pub const border = @import("./border.zig");
-pub const border_image = @import("./border_image.zig");
-pub const border_radius = @import("./border_radius.zig");
-pub const box_shadow = @import("./box_shadow.zig");
-pub const contain = @import("./contain.zig");
-pub const css_modules = @import("./css_modules.zig");
-pub const custom = @import("./custom.zig");
-pub const display = @import("./display.zig");
-pub const effects = @import("./effects.zig");
-pub const flex = @import("./flex.zig");
-pub const font = @import("./font.zig");
-pub const grid = @import("./grid.zig");
-pub const list = @import("./list.zig");
-pub const margin_padding = @import("./margin_padding.zig");
-pub const masking = @import("./masking.zig");
-pub const outline = @import("./outline.zig");
-pub const overflow = @import("./overflow.zig");
-pub const position = @import("./position.zig");
-pub const prefix_handler = @import("./prefix_handler.zig");
-pub const shape = @import("./shape.zig");
-pub const size = @import("./size.zig");
-pub const svg = @import("./svg.zig");
-pub const text = @import("./text.zig");
-pub const transform = @import("./transform.zig");
-pub const transition = @import("./transition.zig");
-pub const ui = @import("./ui.zig");
+pub const @"align" = @import("./align.rust");
+pub const animation = @import("./animation.rust");
+pub const background = @import("./background.rust");
+pub const border = @import("./border.rust");
+pub const border_image = @import("./border_image.rust");
+pub const border_radius = @import("./border_radius.rust");
+pub const box_shadow = @import("./box_shadow.rust");
+pub const contain = @import("./contain.rust");
+pub const css_modules = @import("./css_modules.rust");
+pub const custom = @import("./custom.rust");
+pub const display = @import("./display.rust");
+pub const effects = @import("./effects.rust");
+pub const flex = @import("./flex.rust");
+pub const font = @import("./font.rust");
+pub const grid = @import("./grid.rust");
+pub const list = @import("./list.rust");
+pub const margin_padding = @import("./margin_padding.rust");
+pub const masking = @import("./masking.rust");
+pub const outline = @import("./outline.rust");
+pub const overflow = @import("./overflow.rust");
+pub const position = @import("./position.rust");
+pub const prefix_handler = @import("./prefix_handler.rust");
+pub const shape = @import("./shape.rust");
+pub const size = @import("./size.rust");
+pub const svg = @import("./svg.rust");
+pub const text = @import("./text.rust");
+pub const transform = @import("./transform.rust");
+pub const transition = @import("./transition.rust");
+pub const ui = @import("./ui.rust");
 
 pub const PropertyId = generated.PropertyId;
 pub const Property = generated.Property;
@@ -1876,9 +1876,9 @@ pub const CSSWideKeyword = enum {
 // });
 
 const bun = @import("bun");
-const generated = @import("./properties_generated.zig");
+const generated = @import("./properties_generated.rust");
 
-const css = @import("../css_parser.zig");
+const css = @import("../css_parser.rust");
 const Error = css.Error;
 const SmallList = css.SmallList;
 

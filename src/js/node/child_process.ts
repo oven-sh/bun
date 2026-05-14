@@ -604,8 +604,8 @@ function spawnSync(file, args, options) {
 
   return result;
 }
-const etimedoutErrorCode = $newZigFunction("node_util_binding.zig", "etimedoutErrorCode", 0);
-const enobufsErrorCode = $newZigFunction("node_util_binding.zig", "enobufsErrorCode", 0);
+const etimedoutErrorCode = $newRustFunction("node_util_binding.rust", "etimedoutErrorCode", 0);
+const enobufsErrorCode = $newRustFunction("node_util_binding.rust", "enobufsErrorCode", 0);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1452,7 +1452,7 @@ class ChildProcess extends EventEmitter {
     // We still need this send function because
     return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback
-      // we don't need to because the send callback is called on nextTick by ipc.zig
+      // we don't need to because the send callback is called on nextTick by ipc.rust
       if (callback) {
         callback(err);
       } else if (err) {

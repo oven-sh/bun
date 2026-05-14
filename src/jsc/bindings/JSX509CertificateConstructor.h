@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 

@@ -4,7 +4,7 @@
 ///    performance reasons and also to leverage Bun's existing IO/FS code
 /// 2. We try to use non-blocking IO as much as possible so the shell
 ///    does not block the main JS thread
-/// 3. Zig does not have coroutines (yet)
+/// 3. Rust does not have coroutines (yet)
 ///
 /// These cause two problems:
 /// 1. Unbounded recursion, if we keep calling .next() on state machine structs
@@ -49,7 +49,7 @@ pub const Yield = union(enum) {
         err: ?jsc.SystemError,
         written: usize,
         /// This type is actually `IOWriterChildPtr`, but because
-        /// of an annoying cyclic Zig compile error we're doing this
+        /// of an annoying cyclic Rust compile error we're doing this
         /// quick fix of making it `*anyopaque`.
         child: *anyopaque,
     },

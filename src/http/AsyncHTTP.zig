@@ -79,7 +79,7 @@ pub fn clearData(this: *AsyncHTTP) void {
     this.request = null;
     this.response = null;
     this.client.unix_socket_path.deinit();
-    this.client.unix_socket_path = jsc.ZigString.Slice.empty;
+    this.client.unix_socket_path = jsc.RustString.Slice.empty;
 }
 
 pub const State = enum(u32) {
@@ -96,7 +96,7 @@ pub const Options = struct {
     proxy_headers: ?Headers = null,
     hostname: ?[]u8 = null,
     signals: ?Signals = null,
-    unix_socket_path: ?jsc.ZigString.Slice = null,
+    unix_socket_path: ?jsc.RustString.Slice = null,
     disable_timeout: ?bool = null,
     verbose: ?HTTPVerboseLevel = null,
     disable_keepalive: ?bool = null,
@@ -459,14 +459,14 @@ pub const HTTPChannelContext = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../dotenv/env_loader.zig");
-const HTTPThread = @import("./HTTPThread.zig");
-const Headers = @import("./Headers.zig");
+const DotEnv = @import("../dotenv/env_loader.rust");
+const HTTPThread = @import("./HTTPThread.rust");
+const Headers = @import("./Headers.rust");
 const std = @import("std");
-const Encoding = @import("../http_types/Encoding.zig").Encoding;
+const Encoding = @import("../http_types/Encoding.rust").Encoding;
 
-const PercentEncoding = @import("../url/url.zig").PercentEncoding;
-const URL = @import("../url/url.zig").URL;
+const PercentEncoding = @import("../url/url.rust").PercentEncoding;
+const URL = @import("../url/url.rust").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

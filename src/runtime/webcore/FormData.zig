@@ -1,4 +1,4 @@
-//! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
+//! HTML `FormData` parsing + JS bridge. Moved from `url/url.rust` because the
 //! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
 
 pub const FormData = struct {
@@ -57,7 +57,7 @@ pub const FormData = struct {
         pub fn toJS(this: *AsyncFormData, global: *jsc.JSGlobalObject, data: []const u8, promise: jsc.AnyPromise) bun.JSTerminated!void {
             if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
                 log("AsnycFormData.toJS -> promise.reject missing boundary", .{});
-                try promise.reject(global, jsc.ZigString.init("FormData missing boundary").toErrorInstance(global));
+                try promise.reject(global, jsc.RustString.init("FormData missing boundary").toErrorInstance(global));
                 return;
             }
 
@@ -109,8 +109,8 @@ pub const FormData = struct {
         };
 
         pub const External = extern struct {
-            name: jsc.ZigString,
-            value: jsc.ZigString,
+            name: jsc.RustString,
+            value: jsc.RustString,
             blob: ?*jsc.WebCore.Blob = null,
         };
     };
@@ -118,7 +118,7 @@ pub const FormData = struct {
     pub fn toJS(globalThis: *jsc.JSGlobalObject, input: []const u8, encoding: Encoding) !jsc.JSValue {
         switch (encoding) {
             .URLEncoded => {
-                var str = jsc.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
+                var str = jsc.RustString.fromUTF8(strings.withoutUTF8BOM(input));
                 const result = jsc.DOMFormData.createFromURLQuery(globalThis, &str);
                 // Check if an exception was thrown (e.g., string too long)
                 if (result == .zero) {
@@ -142,7 +142,7 @@ pub const FormData = struct {
 
         const input_value = args[0];
         const boundary_value = args[1];
-        var boundary_slice = jsc.ZigString.Slice.empty;
+        var boundary_slice = jsc.RustString.Slice.empty;
         defer boundary_slice.deinit();
 
         var encoding = Encoding{
@@ -166,7 +166,7 @@ pub const FormData = struct {
                 return globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
             }
         }
-        var input_slice = jsc.ZigString.Slice{};
+        var input_slice = jsc.RustString.Slice{};
         defer input_slice.deinit();
         var input: []const u8 = "";
 
@@ -210,14 +210,14 @@ pub const FormData = struct {
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
                 const value_str = field.value;
-                var key = jsc.ZigString.initUTF8(name.slice(buf));
+                var key = jsc.RustString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
                     const filename_str = field.filename.slice(buf);
 
                     var blob = jsc.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
-                    var filename = jsc.ZigString.initUTF8(filename_str);
+                    var filename = jsc.RustString.initUTF8(filename_str);
                     const content_type: []const u8 = brk: {
                         if (!field.content_type.isEmpty()) {
                             break :brk field.content_type.slice(buf);
@@ -252,7 +252,7 @@ pub const FormData = struct {
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
                 } else {
-                    var value = jsc.ZigString.initUTF8(
+                    var value = jsc.RustString.initUTF8(
                         // > Each part whose `Content-Disposition` header does not
                         // > contain a `filename` parameter must be parsed into an
                         // > entry whose value is the UTF-8 decoded without BOM

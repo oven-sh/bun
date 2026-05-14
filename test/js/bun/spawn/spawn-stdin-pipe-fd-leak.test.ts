@@ -61,7 +61,7 @@ test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading 
 
 // Reading `proc.stdin` calls `Writable.toJS` (.pipe arm), which moves the
 // enum's owned `*FileSink` (+1) into the JS wrapper:
-//   src/runtime/api/bun/subprocess/Writable.zig:244-272
+//   src/runtime/api/bun/subprocess/Writable.rust:244-272
 //     this.* = .{ .ignore = {} };
 //     return pipe.toJS(globalThis);              // TRANSFER, no extra ref()
 //     return pipe.toJSWithDestructor(...);       // TRANSFER, no extra ref()
@@ -71,8 +71,8 @@ test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading 
 // enum's original +1 would be orphaned and every `.stdin` read would leak one
 // native FileSink — observable here via `fileSinkInternals.liveCount()`
 // growing by N regardless of GC.
-// TODO(zig-rust-divergence): Rust port over-refs in the JS-wrapper constructor;
-// see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
+// TODO(rust-rust-divergence): Rust port over-refs in the JS-wrapper constructor;
+// see docs/RUST_RUST_DIVERGENCE_AUDIT.md.
 test.todo(
   "reading .stdin does not leak a native FileSink per spawn",
   async () => {

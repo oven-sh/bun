@@ -325,7 +325,7 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Regressions for the H2Client.zig hardening pass.
+  // Regressions for the H2Client.rust hardening pass.
   // ───────────────────────────────────────────────────────────────────────────
 
   test("DATA after END_STREAM in same packet is rejected", async () => {

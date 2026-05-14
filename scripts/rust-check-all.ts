@@ -2,7 +2,7 @@
 /**
  * `cargo check --workspace` for every CI target triple.
  *
- * Replaces the old `zig:check-all` (which leaned on zig's bundled per-target
+ * Replaces the old `rust:check-all` (which leaned on rust's bundled per-target
  * libc/SDK). cargo has no such bundle: each `--target` needs its std installed
  * via `rustup target add` (Tier 1/2) or built from source via `-Zbuild-std`
  * (Tier 3). This script does NOT auto-install — it skips a target if its std

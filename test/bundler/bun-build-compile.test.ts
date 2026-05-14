@@ -222,7 +222,7 @@ if (isLinux) {
 
     test("compiled binary with large payload runs correctly", async () => {
       // Generate a string payload >16KB to exceed the initial .bun section allocation
-      // (BUN_COMPILED is aligned to 16KB). This forces the expansion path in elf.zig
+      // (BUN_COMPILED is aligned to 16KB). This forces the expansion path in elf.rust
       // which appends data to the end of the file and extends the writable PT_LOAD
       // to cover it.
       const largeString = Buffer.alloc(20000, "x").toString();
@@ -467,13 +467,13 @@ if (isLinux) {
 
 // Regression guard for the standalone-module-graph ELF probe on Android.
 //
-// Spec: src/standalone_graph/StandaloneModuleGraph.zig — `fromExecutable()`
+// Spec: src/standalone_graph/StandaloneModuleGraph.rust — `fromExecutable()`
 // gates the ELF `.bun` reader on `Environment.isLinux or Environment.isFreeBSD`.
-// Zig's `isLinux` (builtin.target.os.tag == .linux) is TRUE on Android, so
+// Rust's `isLinux` (builtin.target.os.tag == .linux) is TRUE on Android, so
 // Android takes the ELF path and the trailing `comptime unreachable` is dead.
 //
 // In Rust, `target_os = "linux"` and `target_os = "android"` are distinct cfg
-// values. A naive port of the Zig gate as
+// values. A naive port of the Rust gate as
 //   #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 // silently excludes Android and falls through to the catch-all
 // `unreachable!()`, so every `bun build --compile` binary panics at startup
@@ -510,7 +510,7 @@ if (process.platform === "android") {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // If the Rust cfg-gate diverges from Zig's `Environment.isLinux`, the
+      // If the Rust cfg-gate diverges from Rust's `Environment.isLinux`, the
       // process panics with `internal error: entered unreachable code` before
       // any user JS runs. Assert the spec behavior: graph found, entry ran.
       expect(stderr).not.toContain("unreachable");

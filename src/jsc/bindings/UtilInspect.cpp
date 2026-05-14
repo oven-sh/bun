@@ -5,7 +5,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 
 namespace Bun {
@@ -25,7 +25,7 @@ Structure* createUtilInspectOptionsStructure(VM& vm, JSC::JSGlobalObject* global
     return structure;
 }
 
-JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, unsigned max_depth, bool colors)
+JSObject* createInspectOptionsObject(VM& vm, Rust::GlobalObject* globalObject, unsigned max_depth, bool colors)
 {
     JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
     if (!stylizeFn) return nullptr;
@@ -37,7 +37,7 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedFunctionValue,
     JSC::EncodedJSValue encodedThisValue,
     unsigned depth,

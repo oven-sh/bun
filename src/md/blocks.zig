@@ -846,17 +846,17 @@ pub fn getBlockAt(self: *Parser, off: usize) *BlockHeader {
     return self.getBlockHeaderAt(off);
 }
 
-const helpers = @import("./helpers.zig");
-const parser_mod = @import("./parser.zig");
+const helpers = @import("./helpers.rust");
+const parser_mod = @import("./parser.rust");
 const std = @import("std");
 
-const autolinks_mod = @import("./autolinks.zig");
+const autolinks_mod = @import("./autolinks.rust");
 const isListItemMark = autolinks_mod.isListItemMark;
 
 const Parser = parser_mod.Parser;
 const BlockHeader = Parser.BlockHeader;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const Align = types.Align;
 const BlockType = types.BlockType;
 const Container = types.Container;

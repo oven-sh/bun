@@ -8,7 +8,7 @@ pub const FetchRedirect = enum(u2) {
         .{ "manual", .manual },
         .{ "error", .@"error" },
     });
-    pub const toJS = @import("../http_jsc/fetch_enums_jsc.zig").fetchRedirectToJS;
+    pub const toJS = @import("../http_jsc/fetch_enums_jsc.rust").fetchRedirectToJS;
 };
 
 const bun = @import("bun");

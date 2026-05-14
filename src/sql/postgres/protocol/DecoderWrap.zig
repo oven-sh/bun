@@ -7,6 +7,6 @@ pub fn DecoderWrap(comptime Container: type, comptime decodeFn: anytype) type {
     };
 }
 
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const AnyPostgresError = @import("../AnyPostgresError.rust").AnyPostgresError;
 
-const NewReader = @import("./NewReader.zig").NewReader;
+const NewReader = @import("./NewReader.rust").NewReader;

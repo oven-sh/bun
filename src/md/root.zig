@@ -106,13 +106,13 @@ pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, option
     return parser.renderWithRenderer(text, allocator, options.toFlags(), options.toRenderOptions(), renderer);
 }
 
-pub const types = @import("./types.zig");
+pub const types = @import("./types.rust");
 const Flags = types.Flags;
 
-pub const entity = @import("./entity.zig");
-pub const helpers = @import("./helpers.zig");
+pub const entity = @import("./entity.rust");
+pub const helpers = @import("./helpers.rust");
 
-pub const ansi = @import("./ansi_renderer.zig");
+pub const ansi = @import("./ansi_renderer.rust");
 pub const AnsiRenderer = ansi.AnsiRenderer;
 pub const AnsiTheme = ansi.Theme;
 pub const ImageUrlCollector = ansi.ImageUrlCollector;
@@ -120,5 +120,5 @@ pub const renderToAnsi = ansi.renderToAnsi;
 pub const detectLightBackground = ansi.detectLightBackground;
 pub const detectKittyGraphics = ansi.detectKittyGraphics;
 
-const parser = @import("./parser.zig");
+const parser = @import("./parser.rust");
 const std = @import("std");

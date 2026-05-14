@@ -121,12 +121,12 @@ pub fn writeWrap(comptime Container: type, comptime writeFn: anytype) type {
 
 const debug = bun.Output.scoped(.NewWriter, .hidden);
 
-const AnyMySQLError = @import("./AnyMySQLError.zig");
-const PacketHeader = @import("./PacketHeader.zig");
+const AnyMySQLError = @import("./AnyMySQLError.rust");
+const PacketHeader = @import("./PacketHeader.rust");
 const bun = @import("bun");
 const std = @import("std");
-const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
+const encodeLengthInt = @import("./EncodeInt.rust").encodeLengthInt;
 
-const types = @import("../MySQLTypes.zig");
+const types = @import("../MySQLTypes.rust");
 const MySQLInt32 = types.MySQLInt32;
 const MySQLInt64 = types.MySQLInt64;

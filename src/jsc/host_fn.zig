@@ -3,9 +3,9 @@
 pub const JSHostFn = fn (*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 /// To allow usage of `try` for error handling, Bun provides `toJSHostFn` to
 /// wrap this type into a JSHostFn.
-pub const JSHostFnZig = fn (*JSGlobalObject, *CallFrame) bun.JSError!JSValue;
+pub const JSHostFnRust = fn (*JSGlobalObject, *CallFrame) bun.JSError!JSValue;
 
-pub fn JSHostFnZigWithContext(comptime ContextType: type) type {
+pub fn JSHostFnRustWithContext(comptime ContextType: type) type {
     return fn (*ContextType, *JSGlobalObject, *CallFrame) bun.JSError!JSValue;
 }
 
@@ -13,7 +13,7 @@ pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type {
     return fn (*ContextType, *JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 }
 
-pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
+pub fn toJSHostFn(comptime functionToWrap: JSHostFnRust) JSHostFn {
     return struct {
         pub fn function(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
             return toJSHostFnResult(globalThis, functionToWrap(globalThis, callframe));
@@ -21,7 +21,7 @@ pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
     }.function;
 }
 
-pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnZigWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
+pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnRustWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
     return struct {
         pub fn function(ctx: *ContextType, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
             return toJSHostFnResult(globalThis, Function(ctx, globalThis, callframe));
@@ -178,7 +178,7 @@ pub fn voidFromJSError(err: bun.JSError, globalThis: *jsc.JSGlobalObject) void {
         error.JSTerminated => {},
     }
     // TODO: catch exception, declare throw scope, re-throw
-    // c++ needs to be able to see that zig functions can throw for BUN_JSC_validateExceptionChecks
+    // c++ needs to be able to see that rust functions can throw for BUN_JSC_validateExceptionChecks
 }
 
 pub fn wrap1(comptime func: anytype) @"return": {
@@ -268,7 +268,7 @@ pub fn wrap4v(comptime func: anytype) @"return": {
 const private = struct {
     pub extern fn Bun__CreateFFIFunctionWithDataValue(
         *JSGlobalObject,
-        ?*const ZigString,
+        ?*const RustString,
         argCount: u32,
         function: *const JSHostFn,
         data: *anyopaque,
@@ -276,7 +276,7 @@ const private = struct {
 
     pub extern fn Bun__CreateFFIFunctionValue(
         globalObject: *JSGlobalObject,
-        symbolName: ?*const ZigString,
+        symbolName: ?*const RustString,
         argCount: u32,
         function: *const JSHostFn,
         add_ptr_field: bool,
@@ -289,7 +289,7 @@ const private = struct {
 
 pub fn NewRuntimeFunction(
     globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
+    symbolName: ?*const RustString,
     argCount: u32,
     functionPointer: *const JSHostFn,
     add_ptr_property: bool,
@@ -311,9 +311,9 @@ pub fn setFunctionData(function: JSValue, value: ?*anyopaque) void {
 
 pub fn NewFunctionWithData(
     globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
+    symbolName: ?*const RustString,
     argCount: u32,
-    comptime function: JSHostFnZig,
+    comptime function: JSHostFnRust,
     data: *anyopaque,
 ) JSValue {
     jsc.markBinding(@src());
@@ -456,7 +456,7 @@ pub fn DOMCall(
         const Slowpath = @field(Container, functionName);
         const SlowpathType = @TypeOf(@field(Container, functionName));
 
-        // Zig doesn't support @frameAddress(1)
+        // Rust doesn't support @frameAddress(1)
         // so we have to add a small wrapper fujnction
         pub fn slowpath(
             globalObject: *jsc.JSGlobalObject,
@@ -579,7 +579,7 @@ pub fn wrapInstanceMethod(
                             args[i] = null;
                         }
                     },
-                    jsc.ZigString => {
+                    jsc.RustString => {
                         var string_value = eater(&iter) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("Missing argument", .{});
@@ -590,7 +590,7 @@ pub fn wrapInstanceMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = try string_value.getZigString(globalThis);
+                        args[i] = try string_value.getRustString(globalThis);
                     },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -655,7 +655,7 @@ pub fn wrapStaticMethod(
     comptime Container: type,
     comptime name: string,
     comptime auto_protect: bool,
-) jsc.JSHostFnZig {
+) jsc.JSHostFnRust {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
         const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).@"fn";
@@ -732,7 +732,7 @@ pub fn wrapStaticMethod(
                             args[i] = null;
                         }
                     },
-                    jsc.ZigString => {
+                    jsc.RustString => {
                         var string_value = eater(&iter) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("Missing argument", .{});
@@ -743,7 +743,7 @@ pub fn wrapStaticMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = try string_value.getZigString(globalThis);
+                        args[i] = try string_value.getRustString(globalThis);
                     },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -804,4 +804,4 @@ const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

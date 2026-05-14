@@ -264,12 +264,12 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
 
 static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBounds::emptyBounds();
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
+extern "C" [[RUST_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
     stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void* Bun__StackCheck__getMaxStack()
+extern "C" [[RUST_EXPORT(nothrow)]] void* Bun__StackCheck__getMaxStack()
 {
     return stackBoundsForCurrentThread.end();
 }

@@ -132,7 +132,7 @@ pub const Route = extern struct {
 
 //#endregion
 
-//#region C++ agent reference type for Zig
+//#region C++ agent reference type for Rust
 pub const InspectorHTTPServerAgent = opaque {
     extern fn Bun__HTTPServerAgent__notifyRequestWillBeSent(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, routeId: RouteId, url: *const BunString, fullUrl: *const BunString, method: HTTPMethod, headersJson: *const BunString, paramsJson: *const BunString, hasBody: bool, timestamp: f64) void;
     extern fn Bun__HTTPServerAgent__notifyResponseReceived(agent: *InspectorHTTPServerAgent, requestId: RequestId, serverId: ServerId, statusCode: i32, statusText: *const BunString, headersJson: *const BunString, hasBody: bool, timestamp: f64) void;
@@ -155,7 +155,7 @@ pub const InspectorHTTPServerAgent = opaque {
 
 //#endregion
 
-//#region Zig -> C++
+//#region Rust -> C++
 
 export fn Bun__HTTPServerAgent__setEnabled(agent: ?*InspectorHTTPServerAgent) void {
     if (jsc.VirtualMachine.get().debugger) |*debugger| {

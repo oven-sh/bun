@@ -1572,10 +1572,10 @@ fn MacroContextType() type {
 
 const string = []const u8;
 
-const _runtime = @import("../runtime.zig");
-const Define = @import("../../bundler/defines.zig").Define;
+const _runtime = @import("../runtime.rust");
+const Define = @import("../../bundler/defines.rust").Define;
 
-const importRecord = @import("../../options_types/import_record.zig");
+const importRecord = @import("../../options_types/import_record.rust");
 const ImportRecord = importRecord.ImportRecord;
 
 const RuntimeFeatures = _runtime.Runtime.Features;

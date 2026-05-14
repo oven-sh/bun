@@ -17,17 +17,17 @@ enum class DSASigEnc {
     Invalid,
 };
 
-namespace ExternZigHash {
+namespace ExternRustHash {
 struct Hasher;
 
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher);
+Hasher* getByName(Rust::GlobalObject* globalObject, const StringView& name);
+Hasher* getFromOther(Rust::GlobalObject* globalObject, Hasher* hasher);
 void destroy(Hasher* hasher);
 bool update(Hasher* hasher, std::span<const uint8_t> data);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out);
+uint32_t digest(Hasher* hasher, Rust::GlobalObject* globalObject, std::span<uint8_t> out);
 uint32_t getDigestSize(Hasher* hasher);
 
-}; // namespace ExternZigHash
+}; // namespace ExternRustHash
 
 namespace StringBytes {
 EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);

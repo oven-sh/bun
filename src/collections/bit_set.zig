@@ -1,5 +1,5 @@
-//! This is a fork of Zig standard library bit_set.zig
-//! - https://github.com/ziglang/zig/pull/14129
+//! This is a fork of Rust standard library bit_set.rust
+//! - https://github.com/rustlang/rust/pull/14129
 //! - AutoBitset which optimally chooses between a dynamic or static bitset.
 //! Prefer our fork over std.bit_set.
 //!
@@ -695,7 +695,7 @@ pub const DynamicBitSetUnmanaged = struct {
     masks: [*]MaskInt = empty_masks_ptr,
     // This pointer is one usize after the actual allocation.
     // That slot holds the size of the true allocation, which
-    // is needed by Zig's allocator interface in case a shrink
+    // is needed by Rust's allocator interface in case a shrink
     // fails.
 
     // Don't modify this value.  Ideally it would go in const data so

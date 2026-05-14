@@ -112,9 +112,9 @@ pub fn NewReader(comptime Context: type) type {
 }
 
 const bun = @import("bun");
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-const Data = @import("../../shared/Data.zig").Data;
+const AnyPostgresError = @import("../AnyPostgresError.rust").AnyPostgresError;
+const Data = @import("../../shared/Data.rust").Data;
 
-const int_types = @import("../types/int_types.zig");
+const int_types = @import("../types/int_types.rust");
 const PostgresInt32 = int_types.PostgresInt32;
 const PostgresShort = int_types.PostgresShort;

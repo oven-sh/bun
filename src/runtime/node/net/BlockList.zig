@@ -246,7 +246,7 @@ fn _compare_ipv6(l: *const sockaddr.in6, r: *const sockaddr.in6) std.math.Order 
 }
 
 const std = @import("std");
-const validators = @import("../util/validators.zig");
+const validators = @import("../util/validators.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

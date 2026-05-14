@@ -244,7 +244,7 @@ pub const Tag = enum(short) {
     pub const toJSTypedArrayType = tag_jsc.toJSTypedArrayType;
     pub const toJS = tag_jsc.toJS;
     pub const fromJS = tag_jsc.fromJS;
-    const tag_jsc = @import("../../../sql_jsc/postgres/types/tag_jsc.zig");
+    const tag_jsc = @import("../../../sql_jsc/postgres/types/tag_jsc.rust");
 
     pub fn byteArrayType(comptime T: Tag) !type {
         return comptime switch (T) {
@@ -263,5 +263,5 @@ pub const Tag = enum(short) {
 
 const std = @import("std");
 
-const int_types = @import("./int_types.zig");
+const int_types = @import("./int_types.rust");
 const short = int_types.short;

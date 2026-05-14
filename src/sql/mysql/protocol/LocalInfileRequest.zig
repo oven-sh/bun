@@ -16,7 +16,7 @@ pub fn decodeInternal(this: *LocalInfileRequest, comptime Context: type, reader:
 
 pub const decode = decoderWrap(LocalInfileRequest, decodeInternal).decode;
 
-const Data = @import("../../shared/Data.zig").Data;
+const Data = @import("../../shared/Data.rust").Data;
 
-const NewReader = @import("./NewReader.zig").NewReader;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const decoderWrap = @import("./NewReader.rust").decoderWrap;

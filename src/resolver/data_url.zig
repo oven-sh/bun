@@ -1,4 +1,4 @@
-// https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
+// https://github.com/Vexu/zuri/blob/master/src/zuri.rust#L61-L127
 pub const PercentEncoding = struct {
     /// possible errors for decode and encode
     pub const EncodeError = error{

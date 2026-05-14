@@ -443,10 +443,10 @@ pub const TrustCommand = struct {
 const string = []const u8;
 
 const std = @import("std");
-const Command = @import("./cli.zig").Command;
-const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+const Command = @import("./cli.rust").Command;
+const PackageManagerCommand = @import("./package_manager_command.rust").PackageManagerCommand;
 
-const Install = @import("../../install/install.zig");
+const Install = @import("../../install/install.rust");
 const DependencyID = Install.DependencyID;
 const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
 const Lockfile = Install.Lockfile;

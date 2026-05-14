@@ -866,9 +866,9 @@ it.serial("instances should be finalized when GC'd", async () => {
   expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
 });
 
-// The Zig-heap-allocated SSLConfig (holding duped cert/key/ca strings) used
+// The Rust-heap-allocated SSLConfig (holding duped cert/key/ca strings) used
 // to leak on every early-return path between parseSSLConfig and the point
-// where the Zig upgrade client takes ownership: throwing option getters
+// where the Rust upgrade client takes ownership: throwing option getters
 // (JSWebSocket.cpp), invalid proxy, and any connect() validation failure
 // (WebSocket.cpp). Exercise both families of paths with a large `ca` payload
 // and assert RSS stays bounded.
@@ -893,7 +893,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
       }
 
       // Path 2: WebSocket::create assigns m_sslConfig, then connect() rejects
-      // the URL (fragment identifier) before handing the config to Zig.
+      // the URL (fragment identifier) before handing the config to Rust.
       let threw = false;
       try {
         new WebSocket("wss://127.0.0.1:1/path#fragment", { tls });

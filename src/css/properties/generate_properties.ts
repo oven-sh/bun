@@ -40,7 +40,7 @@ type PropertyDef = {
   parse_dont_make_unparsed?: boolean;
 };
 
-const OUTPUT_FILE = "src/css/properties/properties_generated.zig";
+const OUTPUT_FILE = "src/css/properties/properties_generated.rust";
 
 async function generateCode(property_defs: Record<string, PropertyDef>) {
   const EMIT_COMPLETED_MD_FILE = true;
@@ -54,7 +54,7 @@ async function generateCode(property_defs: Record<string, PropertyDef>) {
   await Bun.$`echo ${generateProperty(property_defs)} >> ${OUTPUT_FILE}`;
   await Bun.$`echo ${generatePropertyId(property_defs)} >> ${OUTPUT_FILE}`;
   await Bun.$`echo ${generatePropertyIdTag(property_defs)} >> ${OUTPUT_FILE}`;
-  await Bun.$`vendor/zig/zig.exe fmt ${OUTPUT_FILE}`;
+  await Bun.$`vendor/rust/rust.exe fmt ${OUTPUT_FILE}`;
 }
 
 function generatePropertyIdTag(property_defs: Record<string, PropertyDef>): string {
@@ -121,7 +121,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   // - toCss()
   // 
   // We do this string concatenation thing so we get all the errors at once,
-  // instead of relying on Zig semantic analysis which usually stops at the first error.
+  // instead of relying on Rust semantic analysis which usually stops at the first error.
   comptime {
   const compile_error: []const u8 = compile_error: {
       var compile_error: []const u8 = "";
@@ -1529,14 +1529,14 @@ generateCode({
   // cursor: {
   //   ty: "Cursor",
   // },
-  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.rust :)
   // "caret-color": {
   //   ty: "ColorOrAuto",
   // },
   // "caret-shape": {
   //   ty: "CaretShape",
   // },
-  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.rust :)
   // caret: {
   //   ty: "Caret",
   //   shorthand: true,
@@ -1573,7 +1573,7 @@ generateCode({
     conditional: { css_modules: true },
     parse_dont_make_unparsed: true,
   },
-  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.rust :)
   // fill: {
   //   ty: "SVGPaint",
   // },
@@ -1583,7 +1583,7 @@ generateCode({
   // "fill-opacity": {
   //   ty: "AlphaValue",
   // },
-  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.rust :)
   // stroke: {
   //   ty: "SVGPaint",
   // },
@@ -1752,12 +1752,12 @@ generateCode({
     unprefixed: false,
   },
 
-  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.rust :)
   // filter: {
   //   ty: "FilterList",
   //   valid_prefixes: ["webkit"],
   // },
-  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
+  // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.rust :)
   // "backdrop-filter": {
   //   ty: "FilterList",
   //   valid_prefixes: ["webkit"],
@@ -1784,17 +1784,17 @@ generateCode({
 });
 
 function prelude() {
-  return /* zig */ `const std = @import("std");
+  return /* rust */ `const std = @import("std");
 const bun = @import("bun");
 const Allocator = std.mem.Allocator;
 
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const VendorPrefix = css.VendorPrefix;
 
-const properties_impl = @import("./properties_impl.zig");
+const properties_impl = @import("./properties_impl.rust");
 
 const CSSWideKeyword = css.css_properties.CSSWideKeyword;
 const UnparsedProperty = css.css_properties.custom.UnparsedProperty;

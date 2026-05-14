@@ -233,7 +233,7 @@ pub const EncodingLabel = enum {
 };
 const string = []const u8;
 
-const encoding = @import("./encoding.zig");
+const encoding = @import("./encoding.rust");
 
 const bun = @import("bun");
 const strings = bun.strings;

@@ -64,7 +64,7 @@ export function enumeration(
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?: CodeStyle) {
+    rustType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     toCpp(value: string): string {
@@ -174,10 +174,10 @@ export function enumeration(
       `);
     }
 
-    get hasZigSource() {
+    get hasRustSource() {
       return true;
     }
-    get zigSource() {
+    get rustSource() {
       return reindent(`
         pub const ${name} = enum(u32) {
           ${joinIndented(

@@ -12,7 +12,7 @@ pub fn BabyList(comptime Type: type) type {
         const Self = @This();
 
         // NOTE: If you add, remove, or rename any public fields, you need to update
-        // `looksLikeListContainerType` in `meta.zig`.
+        // `looksLikeListContainerType` in `meta.rust`.
 
         /// Don't access this field directly, as it's not safety-checked. Use `.slice()`, `.at()`,
         /// or `.mut()`.

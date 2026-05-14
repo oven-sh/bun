@@ -22,7 +22,7 @@ pub const BunObject = struct {
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
-    pub const jest = toJSCallback(@import("../test_runner/jest.zig").Jest.call);
+    pub const jest = toJSCallback(@import("../test_runner/jest.rust").Jest.call);
     pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
@@ -71,7 +71,7 @@ pub const BunObject = struct {
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
-    pub const cron = toJSLazyPropertyCallback(@import("./cron.zig").getCronObject);
+    pub const cron = toJSLazyPropertyCallback(@import("./cron.rust").getCronObject);
     pub const cwd = toJSLazyPropertyCallback(Bun.getCWD);
     pub const embeddedFiles = toJSLazyPropertyCallback(Bun.getEmbeddedFiles);
     pub const enableANSIColors = toJSLazyPropertyCallback(Bun.enableANSIColors);
@@ -315,9 +315,9 @@ pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         return globalThis.throw("which: expected 1 argument, got 0", .{});
     };
 
-    var path_str: ZigString.Slice = ZigString.Slice.empty;
-    var bin_str: ZigString.Slice = ZigString.Slice.empty;
-    var cwd_str: ZigString.Slice = ZigString.Slice.empty;
+    var path_str: RustString.Slice = RustString.Slice.empty;
+    var bin_str: RustString.Slice = RustString.Slice.empty;
+    var cwd_str: RustString.Slice = RustString.Slice.empty;
     defer {
         path_str.deinit();
         bin_str.deinit();
@@ -341,10 +341,10 @@ pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         return jsc.JSValue.jsNull();
     }
 
-    path_str = ZigString.Slice.fromUTF8NeverFree(
+    path_str = RustString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().transpiler.env.get("PATH") orelse "",
     );
-    cwd_str = ZigString.Slice.fromUTF8NeverFree(
+    cwd_str = RustString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().transpiler.fs.top_level_dir,
     );
 
@@ -366,7 +366,7 @@ pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         cwd_str.slice(),
         bin_str.slice(),
     )) |bin_path| {
-        return ZigString.init(bin_path).withEncoding().toJS(globalThis);
+        return RustString.init(bin_path).withEncoding().toJS(globalThis);
     }
 
     return jsc.JSValue.jsNull();
@@ -485,7 +485,7 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
-    var out = ZigString.init(array.written()).withEncoding();
+    var out = RustString.init(array.written()).withEncoding();
     const ret = out.toJS(globalThis);
 
     return ret;
@@ -524,9 +524,9 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
 
 pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     const fun = jsc.JSFunction.create(globalObject, "inspect", inspect, 2, .{});
-    var str = ZigString.init("nodejs.util.inspect.custom");
-    fun.put(globalObject, ZigString.static("custom"), jsc.JSValue.symbolFor(globalObject, &str));
-    fun.put(globalObject, ZigString.static("table"), jsc.JSFunction.create(globalObject, "table", inspectTable, 3, .{}));
+    var str = RustString.init("nodejs.util.inspect.custom");
+    fun.put(globalObject, RustString.static("custom"), jsc.JSValue.symbolFor(globalObject, &str));
+    fun.put(globalObject, RustString.static("table"), jsc.JSFunction.create(globalObject, "table", inspectTable, 3, .{}));
     return fun;
 }
 
@@ -558,11 +558,11 @@ pub fn registerMacro(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 }
 
 pub fn getCWD(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    return ZigString.init(VirtualMachine.get().transpiler.fs.top_level_dir).toJS(globalThis);
+    return RustString.init(VirtualMachine.get().transpiler.fs.top_level_dir).toJS(globalThis);
 }
 
 pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
+    return RustString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
 }
 
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -619,7 +619,7 @@ fn getMain(globalThis: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return vm.main_resolved_path.toJS(globalThis) catch .zero;
     }
 
-    return ZigString.init(vm.main).toJS(globalThis);
+    return RustString.init(vm.main).toJS(globalThis);
 }
 
 fn setMain(global_this: *jsc.JSGlobalObject, new_value: JSValue) callconv(jsc.conv) bool {
@@ -859,7 +859,7 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
             query_string,
         });
 
-        return ZigString.initUTF8(arraylist.items).toJS(ctx);
+        return RustString.initUTF8(arraylist.items).toJS(ctx);
     }
 
     return errorable.result.value.toJS(ctx);
@@ -992,7 +992,7 @@ pub fn indexOfLine(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return jsc.JSValue.jsNumberFromInt32(-1);
 }
 
-pub const Crypto = @import("../crypto/crypto.zig");
+pub const Crypto = @import("../crypto/crypto.rust");
 
 pub fn nanoseconds(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const ns = globalThis.bunVM().origin_timer.read();
@@ -1036,22 +1036,22 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                 switch (entry.tag()) {
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPServer)) => {
                         var server: *jsc.API.HTTPServer = entry.as(jsc.API.HTTPServer);
-                        server.onReloadFromZig(&config, globalObject);
+                        server.onReloadFromRust(&config, globalObject);
                         return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPServer)) => {
                         var server: *jsc.API.DebugHTTPServer = entry.as(jsc.API.DebugHTTPServer);
-                        server.onReloadFromZig(&config, globalObject);
+                        server.onReloadFromRust(&config, globalObject);
                         return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.DebugHTTPSServer)) => {
                         var server: *jsc.API.DebugHTTPSServer = entry.as(jsc.API.DebugHTTPSServer);
-                        server.onReloadFromZig(&config, globalObject);
+                        server.onReloadFromRust(&config, globalObject);
                         return server.js_value.tryGet() orelse .js_undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(jsc.API.HTTPSServer)) => {
                         var server: *jsc.API.HTTPSServer = entry.as(jsc.API.HTTPSServer);
-                        server.onReloadFromZig(&config, globalObject);
+                        server.onReloadFromRust(&config, globalObject);
                         return server.js_value.tryGet() orelse .js_undefined;
                     },
                     else => {},
@@ -1115,13 +1115,13 @@ pub export fn Bun__escapeHTML16(globalObject: *jsc.JSGlobalObject, input_value: 
     assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
+        return globalObject.throwValue(RustString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     return switch (escaped) {
-        .static => |val| ZigString.init(val).toJS(globalObject),
+        .static => |val| RustString.init(val).toJS(globalObject),
         .original => input_value,
-        .allocated => |escaped_html| ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject),
+        .allocated => |escaped_html| RustString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject),
     };
 }
 
@@ -1133,12 +1133,12 @@ pub export fn Bun__escapeHTML8(globalObject: *jsc.JSGlobalObject, input_value: J
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
-        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
+        return globalObject.throwValue(RustString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     switch (escaped) {
         .static => |val| {
-            return ZigString.init(val).toJS(globalObject);
+            return RustString.init(val).toJS(globalObject);
         },
         .original => return input_value,
         .allocated => |escaped_html| {
@@ -1157,12 +1157,12 @@ pub export fn Bun__escapeHTML8(globalObject: *jsc.JSGlobalObject, input_value: J
             }
 
             if (input_slice.len <= 32) {
-                const zig_str = ZigString.init(escaped_html);
-                const out = zig_str.toAtomicValue(globalObject);
+                const rust_str = RustString.init(escaped_html);
+                const out = rust_str.toAtomicValue(globalObject);
                 return out;
             }
 
-            return ZigString.init(escaped_html).toExternalValue(globalObject);
+            return RustString.init(escaped_html).toExternalValue(globalObject);
         },
     }
 }
@@ -1326,7 +1326,7 @@ pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, c
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const SubscriptionCtx = @import("../valkey_jsc/js_valkey.zig").SubscriptionCtx;
+    const SubscriptionCtx = @import("../valkey_jsc/js_valkey.rust").SubscriptionCtx;
 
     var valkey = jsc.API.Valkey.createNoJsNoPubsub(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
@@ -1414,14 +1414,14 @@ const CSRFObject = struct {
 
         object.put(
             globalThis,
-            ZigString.static("generate"),
-            jsc.JSFunction.create(globalThis, "generate", @import("./csrf_jsc.zig").csrf__generate, 1, .{}),
+            RustString.static("generate"),
+            jsc.JSFunction.create(globalThis, "generate", @import("./csrf_jsc.rust").csrf__generate, 1, .{}),
         );
 
         object.put(
             globalThis,
-            ZigString.static("verify"),
-            jsc.JSFunction.create(globalThis, "verify", @import("./csrf_jsc.zig").csrf__verify, 1, .{}),
+            RustString.static("verify"),
+            jsc.JSFunction.create(globalThis, "verify", @import("./csrf_jsc.rust").csrf__verify, 1, .{}),
         );
 
         return object;
@@ -1442,7 +1442,7 @@ pub const EnvironmentVariables = struct {
         return item.len;
     }
 
-    pub export fn Bun__getEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) bool {
+    pub export fn Bun__getEnvValue(globalObject: *jsc.JSGlobalObject, name: *RustString, value: *RustString) bool {
         if (getEnvValue(globalObject, name.*)) |val| {
             value.* = val;
             return true;
@@ -1462,7 +1462,7 @@ pub const EnvironmentVariables = struct {
         return true;
     }
 
-    /// Sync a process.env write back to the Zig-side env map so that Zig
+    /// Sync a process.env write back to the Rust-side env map so that Rust
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
     /// observe the updated value. Used by custom setters for proxy-related
     /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
@@ -1515,22 +1515,22 @@ pub const EnvironmentVariables = struct {
         bun.handleOom(vm.transpiler.env.map.put(slot.key, new_val.bytes));
     }
 
-    pub fn getEnvNames(globalObject: *jsc.JSGlobalObject, names: []ZigString) usize {
+    pub fn getEnvNames(globalObject: *jsc.JSGlobalObject, names: []RustString) usize {
         var vm = globalObject.bunVM();
         const keys = vm.transpiler.env.map.map.keys();
         const len = @min(names.len, keys.len);
         for (keys[0..len], names[0..len]) |key, *name| {
-            name.* = ZigString.initUTF8(key);
+            name.* = RustString.initUTF8(key);
         }
         return len;
     }
 
-    pub fn getEnvValue(globalObject: *jsc.JSGlobalObject, name: ZigString) ?ZigString {
+    pub fn getEnvValue(globalObject: *jsc.JSGlobalObject, name: RustString) ?RustString {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
         const value = vm.transpiler.env.get(sliced.slice()) orelse return null;
-        return ZigString.initUTF8(value);
+        return RustString.initUTF8(value);
     }
 };
 
@@ -1686,7 +1686,7 @@ pub const JSZlib = struct {
 
                 reader.readAll(true) catch {
                     defer reader.deinit();
-                    return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+                    return globalThis.throwValue(RustString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
                 reader.list = .{ .items = reader.list.items };
                 reader.list.capacity = reader.list.items.len;
@@ -1793,7 +1793,7 @@ pub const JSZlib = struct {
 
                 reader.readAll() catch {
                     defer reader.deinit();
-                    return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+                    return globalThis.throwValue(RustString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
                 reader.list = .{ .items = bun.handleOom(reader.list.toOwnedSlice(allocator)) };
                 reader.list.capacity = reader.list.items.len;
@@ -2093,7 +2093,7 @@ pub const JSZstd = struct {
 
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
-    _ = @import("../../jsc/btjs.zig").dumpBtjsTrace;
+    _ = @import("../../jsc/btjs.rust").dumpBtjsTrace;
     BunObject.exportAll();
 }
 
@@ -2130,13 +2130,13 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue
     return blob.toJS(globalThis);
 }
 
-const Braces = @import("../../shell_parser/braces.zig");
-const Which = @import("../../which/which.zig");
-const options = @import("../../bundler/options.zig");
+const Braces = @import("../../shell_parser/braces.rust");
+const Which = @import("../../which/which.rust");
+const options = @import("../../bundler/options.rust");
 const std = @import("std");
-const zlib = @import("../../zlib/zlib.zig");
-const Editor = @import("../cli/open.zig").Editor;
-const URL = @import("../../url/url.zig").URL;
+const zlib = @import("../../zlib/zlib.rust");
+const Editor = @import("../cli/open.rust").Editor;
+const URL = @import("../../url/url.rust").URL;
 const conv = std.builtin.CallingConvention.Unspecified;
 
 const bun = @import("bun");
@@ -2169,7 +2169,7 @@ const JSPromise = bun.jsc.JSPromise;
 const JSValue = bun.jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const WebCore = bun.jsc.WebCore;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;
 const host_fn = bun.jsc.host_fn;
 
 const JSBundler = bun.jsc.API.JSBundler;

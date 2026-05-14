@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -493,7 +493,7 @@ pub const Property = union(PropertyIdTag) {
     // - toCss()
     //
     // We do this string concatenation thing so we get all the errors at once,
-    // instead of relying on Zig semantic analysis which usualy stops at the first error.
+    // instead of relying on Rust semantic analysis which usualy stops at the first error.
     comptime {
         const compile_error: []const u8 = compile_error: {
             var compile_error: []const u8 = "";
@@ -10353,7 +10353,7 @@ pub const PropertyIdTag = enum(u16) {
     }
 };
 
-const properties_impl = @import("./properties_impl.zig");
+const properties_impl = @import("./properties_impl.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

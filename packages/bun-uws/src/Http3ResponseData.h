@@ -20,7 +20,7 @@ struct Http3ResponseData {
     using OnDataCallback = void (*)(Http3Response *, const char *, size_t, bool, void *);
 
     /* Same bit values as HttpResponseData so uws_res_state() consumers
-     * (Zig's State enum) work unchanged. */
+     * (Rust's State enum) work unchanged. */
     enum : uint8_t {
         HTTP_STATUS_CALLED = 1,
         HTTP_WRITE_CALLED = 2,

@@ -666,10 +666,10 @@ fn hasCycle(current: *ProcessHandle) bool {
     return false;
 }
 
-const FilterArg = @import("./filter_arg.zig");
+const FilterArg = @import("./filter_arg.rust");
 const std = @import("std");
-const DependencyMap = @import("../../resolver/package_json.zig").DependencyMap;
-const RunCommand = @import("./run_command.zig").RunCommand;
+const DependencyMap = @import("../../resolver/package_json.rust").DependencyMap;
+const RunCommand = @import("./run_command.rust").RunCommand;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

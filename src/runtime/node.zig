@@ -2,24 +2,24 @@
 comptime {
     _ = process.getTitle;
     _ = process.setTitle;
-    _ = @import("./node/util/parse_args.zig");
+    _ = @import("./node/util/parse_args.rust");
     if (Environment.isWindows) {
-        _ = @import("./node/uv_signal_handle_windows.zig");
+        _ = @import("./node/uv_signal_handle_windows.rust");
     }
 }
 
 /// node:fs
-pub const fs = @import("./node/node_fs.zig");
+pub const fs = @import("./node/node_fs.rust");
 /// node:path
-pub const path = @import("./node/path.zig");
+pub const path = @import("./node/path.rust");
 /// node:crypto
-pub const crypto = @import("./node/node_crypto_binding.zig");
+pub const crypto = @import("./node/node_crypto_binding.rust");
 /// node:os
-pub const os = @import("./node/node_os.zig");
+pub const os = @import("./node/node_os.rust");
 /// node:process
-pub const process = @import("./node/node_process.zig");
-pub const validators = @import("./node/util/validators.zig");
-pub const ErrorCode = @import("./node/nodejs_error_code.zig").Code;
+pub const process = @import("./node/node_process.rust");
+pub const validators = @import("./node/util/validators.rust");
+pub const ErrorCode = @import("./node/nodejs_error_code.rust").Code;
 
 pub const Buffer = jsc.MarkedArrayBuffer;
 
@@ -38,7 +38,7 @@ pub const Encoding = types.Encoding;
 pub const StringOrBuffer = types.StringOrBuffer;
 pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
 
-pub const FSEvents = @import("./node/fs_events.zig");
+pub const FSEvents = @import("./node/fs_events.rust");
 pub const Stats = stat.Stats;
 pub const StatsBig = stat.StatsBig;
 pub const StatsSmall = stat.StatsSmall;
@@ -50,7 +50,7 @@ pub const StatFS = statfs.StatFS;
 pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
 pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
 
-pub const time_like = @import("./node/time_like.zig");
+pub const time_like = @import("./node/time_like.rust");
 pub const TimeLike = time_like.TimeLike;
 pub const timeLikeFromJS = time_like.fromJS;
 
@@ -59,7 +59,7 @@ pub const timeLikeFromJS = time_like.fromJS;
 /// - "path"
 /// - "errno"
 ///
-/// We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
+/// We can't really use Rust's error handling for syscalls because Node.js expects the "real" errno to be returned
 /// and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
     // can't call @hasDecl on void, anyerror, etc
@@ -112,7 +112,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         pub fn unwrap(this: @This()) !ReturnType {
             return switch (this) {
                 .result => |r| r,
-                .err => |e| bun.errnoToZigErr(e.errno),
+                .err => |e| bun.errnoToRustErr(e.errno),
             };
         }
 
@@ -199,8 +199,8 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         .int, .float, .comptime_int, .comptime_float => jsc.JSValue.jsNumber(r),
                         .@"struct", .@"enum", .@"opaque", .@"union" => r.toJS(globalObject),
                         .pointer => {
-                            if (bun.trait.isZigString(ReturnType))
-                                jsc.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
+                            if (bun.trait.isRustString(ReturnType))
+                                jsc.RustString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
 
                             return r.toJS(globalObject);
                         },
@@ -352,9 +352,9 @@ fn translateToErrInt(err: anytype) bun.sys.Error.Int {
     };
 }
 
-const stat = @import("./node/Stat.zig");
-const statfs = @import("./node/StatFS.zig");
-const types = @import("./node/types.zig");
+const stat = @import("./node/Stat.rust");
+const statfs = @import("./node/StatFS.rust");
+const types = @import("./node/types.rust");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

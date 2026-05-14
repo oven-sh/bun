@@ -1132,7 +1132,7 @@ pub const FetchTasklet = struct {
         }
 
         var url = fetch_options.url;
-        var proxy: ?ZigURL = null;
+        var proxy: ?RustURL = null;
         if (fetch_options.proxy) |proxy_opt| {
             if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
                 // Check NO_PROXY even for explicitly-provided proxies
@@ -1147,7 +1147,7 @@ pub const FetchTasklet = struct {
                 // env_proxy.href may be a slice into a RefCountedEnvValue's bytes which can
                 // be freed by a subsequent `process.env.HTTP_PROXY = "..."` assignment while
                 // this fetch is in flight on the HTTP thread. Clone it into url_proxy_buffer
-                // alongside the request URL — the same pattern fetch.zig uses for the explicit
+                // alongside the request URL — the same pattern fetch.rust uses for the explicit
                 // `fetch(url, { proxy: "..." })` option.
                 if (env_proxy.href.len > 0) {
                     const old_url_len = url.href.len;
@@ -1156,8 +1156,8 @@ pub const FetchTasklet = struct {
                         bun.default_allocator.free(fetch_tasklet.url_proxy_buffer);
                     }
                     fetch_tasklet.url_proxy_buffer = new_buffer;
-                    url = ZigURL.parse(new_buffer[0..old_url_len]);
-                    proxy = ZigURL.parse(new_buffer[old_url_len..]);
+                    url = RustURL.parse(new_buffer[0..old_url_len]);
+                    proxy = RustURL.parse(new_buffer[old_url_len..]);
                 } else {
                     proxy = env_proxy;
                 }
@@ -1379,10 +1379,10 @@ pub const FetchTasklet = struct {
         disable_keepalive: bool,
         disable_decompression: bool,
         reject_unauthorized: bool,
-        url: ZigURL,
+        url: RustURL,
         verbose: http.HTTPVerboseLevel = .none,
         redirect_type: FetchRedirect = FetchRedirect.follow,
-        proxy: ?ZigURL = null,
+        proxy: ?RustURL = null,
         proxy_headers: ?Headers = null,
         url_proxy_buffer: []const u8 = "",
         signal: ?*jsc.WebCore.AbortSignal = null,
@@ -1390,7 +1390,7 @@ pub const FetchTasklet = struct {
         // Custom Hostname
         hostname: ?[]u8 = null,
         check_server_identity: jsc.Strong.Optional = .empty,
-        unix_socket_path: ZigString.Slice,
+        unix_socket_path: RustString.Slice,
         ssl_config: ?SSLConfig.SharedPtr = null,
         upgraded_connection: bool = false,
         force_http2: bool = false,
@@ -1505,10 +1505,10 @@ pub const FetchTasklet = struct {
     }
 };
 
-const X509 = @import("../../api/bun/x509.zig");
+const X509 = @import("../../api/bun/x509.rust");
 const std = @import("std");
-const Method = @import("../../../http_types/Method.zig").Method;
-const ZigURL = @import("../../../url/url.zig").URL;
+const Method = @import("../../../http_types/Method.rust").Method;
+const RustURL = @import("../../../url/url.rust").URL;
 
 const bun = @import("bun");
 const Async = bun.Async;
@@ -1528,7 +1528,7 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 
 const Body = jsc.WebCore.Body;
 const Response = jsc.WebCore.Response;

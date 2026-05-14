@@ -1,7 +1,7 @@
 {
   "recommendations": [
-    // Zig
-    "ziglang.vscode-zig",
+    // Rust
+    "rustlang.vscode-rust",
 
     // C/C++
     "clang.clangd",

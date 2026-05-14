@@ -67,5 +67,5 @@ pub fn deinit(self: *WebSocketProxy) void {
     }
 }
 
-const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.zig");
+const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.rust");
 const bun = @import("bun");

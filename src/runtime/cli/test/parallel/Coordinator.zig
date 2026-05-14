@@ -1,7 +1,7 @@
 //! Process-pool coordinator for `bun test --parallel`. Owns the worker slice,
 //! drives the event loop, routes IPC frames to per-test output, and handles
 //! crash accounting / panic-abort / bail / lazy scale-up. Construction and
-//! the run loop entry live in `runner.zig`; this file is the per-run state
+//! the run loop entry live in `runner.rust`; this file is the per-run state
 //! and its methods.
 
 pub const Coordinator = struct {
@@ -508,11 +508,11 @@ pub const Coordinator = struct {
     }
 };
 
-const Frame = @import("./Frame.zig");
-const Worker = @import("./Worker.zig");
+const Frame = @import("./Frame.rust");
+const Worker = @import("./Worker.rust");
 const std = @import("std");
 
-const test_command = @import("../../test_command.zig");
+const test_command = @import("../../test_command.rust");
 const CommandLineReporter = test_command.CommandLineReporter;
 
 const bun = @import("bun");

@@ -411,7 +411,7 @@ pub const Closer = struct {
     }
 };
 
-const Posix = @import("./posix_event_loop.zig");
+const Posix = @import("./posix_event_loop.rust");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -1,14 +1,14 @@
-// This file is run through translate-c and exposed to Zig code
+// This file is run through translate-c and exposed to Rust code
 // under the namespace bun.c (lowercase c). Prefer adding includes
 // to this file instead of manually porting struct definitions
-// into Zig code. By using automatic translation, differences
+// into Rust code. By using automatic translation, differences
 // between platforms and subtle mistakes can be avoided.
 //
 // One way to locate a definition for a given symbol is to open
-// Zig's `lib` directory and run ripgrep on it. For example,
+// Rust's `lib` directory and run ripgrep on it. For example,
 // `sockaddr_dl` is in `libc/include/any-macos-any/net/if_dl.h`
 //
-// When Zig is translating this file, it will define these macros:
+// When Rust is translating this file, it will define these macros:
 // - WINDOWS
 // - DARWIN
 // - LINUX

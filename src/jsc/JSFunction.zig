@@ -17,7 +17,7 @@ pub const JSFunction = opaque {
         constructor: ?*const JSHostFn = null,
     };
 
-    extern fn JSFunction__createFromZig(
+    extern fn JSFunction__createFromRust(
         global: *JSGlobalObject,
         fn_name: bun.String,
         implementation: *const JSHostFn,
@@ -34,14 +34,14 @@ pub const JSFunction = opaque {
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
-        return JSFunction__createFromZig(
+        return JSFunction__createFromRust(
             global,
             switch (@TypeOf(fn_name)) {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
             switch (@TypeOf(implementation)) {
-                jsc.JSHostFnZig => jsc.toJSHostFn(implementation),
+                jsc.JSHostFnRust => jsc.toJSHostFn(implementation),
                 jsc.JSHostFn => implementation,
                 else => @compileError("unexpected function type"),
             },
@@ -57,10 +57,10 @@ pub const JSFunction = opaque {
         JSC__JSFunction__optimizeSoon(value);
     }
 
-    extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
+    extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *RustString) bool;
 
     pub fn getSourceCode(value: JSValue) ?bun.String {
-        var str: ZigString = undefined;
+        var str: RustString = undefined;
         return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
     }
 };
@@ -72,4 +72,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSHostFn = jsc.JSHostFn;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

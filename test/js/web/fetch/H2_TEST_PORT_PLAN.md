@@ -111,7 +111,7 @@ function rawH2Server(onStream: (write: (type, flags, sid, payload) => void, hpac
 }
 ```
 
-Or piggy-back on `src/http/H2FrameParser.zig` exposed via `bun:internal-for-testing` for encode helpers.
+Or piggy-back on `src/http/H2FrameParser.rust` exposed via `bun:internal-for-testing` for encode helpers.
 
 ---
 

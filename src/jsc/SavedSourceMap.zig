@@ -85,12 +85,12 @@ pub fn removeDevServerSourceProvider(this: *SavedSourceMap, opaque_source_provid
     }
 }
 
-pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+pub fn putRustSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
     bun.handleOom(this.putValue(path, Value.init(source_provider)));
 }
 
-pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+pub fn removeRustSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
     this.lock();
     defer this.unlock();
 
@@ -130,7 +130,7 @@ pub fn deinit(this: *SavedSourceMap) void {
             if (value.get(ParsedSourceMap)) |source_map| {
                 source_map.deref();
             } else if (value.get(SourceProviderMap)) |provider| {
-                _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+                _ = provider; // do nothing, we did not hold a ref to RustSourceProvider
             } else if (value.get(InternalSourceMap)) |ism| {
                 (InternalSourceMap{ .data = @as([*]u8, @ptrCast(ism)) }).deinit();
             }
@@ -175,7 +175,7 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
             var source_map: *ParsedSourceMap = parsed_source_map;
             source_map.deref();
         } else if (old_value.get(SourceProviderMap)) |provider| {
-            _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+            _ = provider; // do nothing, we did not hold a ref to RustSourceProvider
         } else if (old_value.get(InternalSourceMap)) |ism| {
             (InternalSourceMap{ .data = @as([*]u8, @ptrCast(ism)) }).deinit();
         }

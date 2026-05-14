@@ -7,7 +7,7 @@
 ///
 /// The obvious way to introduce undefined memory into a struct is via `.field = undefined`, but a much more
 /// subtle way is to have implicit padding in an extern struct. For example:
-/// ```zig
+/// ```rust
 /// const Demo = struct {
 ///     a: u8,  // @sizeOf(Demo, "a") == 1,   @offsetOf(Demo, "a") == 0
 ///     b: u64, // @sizeOf(Demo, "b") == 8,   @offsetOf(Demo, "b") == 8
@@ -18,7 +18,7 @@
 /// which is considered *undefined memory*.
 ///
 /// The solution is to have it explicitly initialized to zero bytes, like:
-/// ```zig
+/// ```rust
 /// const Demo = extern struct {
 ///     a: u8,
 ///     _padding: [7]u8 = .{0} ** 7,
@@ -76,7 +76,7 @@ pub fn assertNoUninitializedPadding(comptime T: type) void {
         const offset = @offsetOf(T, field.name);
         if (offset != i) {
             @compileError(std.fmt.comptimePrint(
-                \\Expected no possibly uninitialized bytes of memory in '{s}', but found a {d} byte gap between fields '{s}' and '{s}' This can be fixed by adding a padding field to the struct like `padding: [{d}]u8 = .{{0}} ** {d},` between these fields. For more information, look at `padding_checker.zig`
+                \\Expected no possibly uninitialized bytes of memory in '{s}', but found a {d} byte gap between fields '{s}' and '{s}' This can be fixed by adding a padding field to the struct like `padding: [{d}]u8 = .{{0}} ** {d},` between these fields. For more information, look at `padding_checker.rust`
             ,
                 .{
                     @typeName(T),
@@ -93,7 +93,7 @@ pub fn assertNoUninitializedPadding(comptime T: type) void {
 
     if (i != @sizeOf(T)) {
         @compileError(std.fmt.comptimePrint(
-            \\Expected no possibly uninitialized bytes of memory in '{s}', but found a {d} byte gap at the end of the struct. This can be fixed by adding a padding field to the struct like `padding: [{d}]u8 = .{{0}} ** {d},` between these fields. For more information, look at `padding_checker.zig`
+            \\Expected no possibly uninitialized bytes of memory in '{s}', but found a {d} byte gap at the end of the struct. This can be fixed by adding a padding field to the struct like `padding: [{d}]u8 = .{{0}} ** {d},` between these fields. For more information, look at `padding_checker.rust`
         ,
             .{
                 @typeName(T),

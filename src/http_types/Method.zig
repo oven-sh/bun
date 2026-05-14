@@ -167,7 +167,7 @@ pub const Method = enum(u8) {
         return Map.get(str);
     }
 
-    pub const toJS = @import("../http_jsc/method_jsc.zig").toJS;
+    pub const toJS = @import("../http_jsc/method_jsc.rust").toJS;
 
     pub const Optional = union(enum) {
         any: void,

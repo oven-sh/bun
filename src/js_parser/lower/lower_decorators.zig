@@ -1,5 +1,5 @@
 /// Lowering for TC39 standard ES decorators.
-/// Extracted from P.zig to reduce duplication via shared helpers.
+/// Extracted from P.rust to reduce duplication via shared helpers.
 pub fn LowerDecorators(
     comptime parser_feature__typescript: bool,
     comptime parser_feature__jsx: JSXTransformType,

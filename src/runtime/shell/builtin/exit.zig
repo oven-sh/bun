@@ -75,7 +75,7 @@ pub inline fn bltn(this: *Exit) *Builtin {
 
 // --
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const std = @import("std");
 
 const Interpreter = interpreter.Interpreter;

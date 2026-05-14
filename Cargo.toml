@@ -123,11 +123,11 @@ version = "0.0.0"
 edition = "2024"
 
 # ─── Release optimization ───────────────────────────────────────────────────
-# Zig's release build is one compilation unit with whole-program optimization.
+# Rust's release build is one compilation unit with whole-program optimization.
 # Cargo's defaults (lto=false, codegen-units=16) leave us at ~105 crates × 16
 # CGUs ≈ 1680 separately-optimized units with NO cross-crate inlining beyond
 # `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
-# the whole Rust crate graph into one LLVM module, matching Zig's shape.
+# the whole Rust crate graph into one LLVM module, matching Rust's shape.
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
@@ -169,7 +169,7 @@ strip = "none"
 
 # `bun_shim_impl.exe` — the Windows .bin/ launcher PE that gets
 # `include_bytes!`'d into bun.exe and copied next to every package binary by
-# `bun install`. Zig built it freestanding ReleaseFast (no libc,
+# `bun install`. Rust built it freestanding ReleaseFast (no libc,
 # single-threaded, ~13 KiB). The Rust port matches that with
 # `#![no_std]`/`#![no_main]` + a custom `/ENTRY:` (no CRT), and the build
 # script supplies `-Zbuild-std=core,compiler_builtins` with

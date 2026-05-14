@@ -191,10 +191,10 @@ pub const UV_E = struct {
 pub fn getErrno(rc: anytype) E {
     const T = @TypeOf(rc);
     // Libc wrappers return -1 on failure with the actual errno in
-    // thread-local errno. Some Zig std signatures (e.g. copy_file_range) use
+    // thread-local errno. Some Rust std signatures (e.g. copy_file_range) use
     // `usize`, so a kernel -1 arrives as maxInt(usize) — comparing that to
     // comptime -1 is always false. Bitcast unsigned inputs to signed first
-    // (matches linux_errno.zig).
+    // (matches linux_errno.rust).
     const info = @typeInfo(T);
     const is_neg1 = if (info == .int and info.int.signedness == .unsigned)
         @as(std.meta.Int(.signed, info.int.bits), @bitCast(rc)) == -1

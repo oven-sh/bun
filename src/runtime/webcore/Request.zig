@@ -149,10 +149,10 @@ pub fn init2(
 
 pub fn getContentType(
     this: *Request,
-) bun.JSError!?ZigString.Slice {
+) bun.JSError!?RustString.Slice {
     if (this.request_context.getRequest()) |req| {
         if (req.header("content-type")) |value| {
-            return ZigString.Slice.fromUTF8NeverFree(value);
+            return RustString.Slice.fromUTF8NeverFree(value);
         }
     }
 
@@ -164,14 +164,14 @@ pub fn getContentType(
 
     if (this.#body.value == .Blob) {
         if (this.#body.value.Blob.content_type.len > 0)
-            return ZigString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
+            return RustString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
     }
 
     return null;
 }
 
 pub fn getFormDataEncoding(this: *Request) bun.JSError!?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
+    var content_type_slice: RustString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding);
@@ -353,14 +353,14 @@ pub fn getDestination(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("").toJS(globalThis);
+    return RustString.init("").toJS(globalThis);
 }
 
 pub fn getIntegrity(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.Empty.toJS(globalThis);
+    return RustString.Empty.toJS(globalThis);
 }
 
 pub fn getSignal(this: *Request, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
@@ -429,17 +429,17 @@ pub fn getReferrer(
 ) jsc.JSValue {
     if (this.#headers) |headers_ref| {
         if (headers_ref.get("referrer", globalObject)) |referrer| {
-            return ZigString.init(referrer).toJS(globalObject);
+            return RustString.init(referrer).toJS(globalObject);
         }
     }
 
-    return ZigString.init("").toJS(globalObject);
+    return RustString.init("").toJS(globalObject);
 }
 pub fn getReferrerPolicy(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("").toJS(globalThis);
+    return RustString.init("").toJS(globalThis);
 }
 pub fn getUrl(this: *Request, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     try this.ensureURL();
@@ -1084,12 +1084,12 @@ pub fn setTimeout(
 
 const string = []const u8;
 
-const Environment = @import("../../bun_core/env.zig");
+const Environment = @import("../../bun_core/env.rust");
 const std = @import("std");
-const FetchCacheMode = @import("../../http_types/FetchCacheMode.zig").FetchCacheMode;
-const FetchRedirect = @import("../../http_types/FetchRedirect.zig").FetchRedirect;
-const FetchRequestMode = @import("../../http_types/FetchRequestMode.zig").FetchRequestMode;
-const Method = @import("../../http_types/Method.zig").Method;
+const FetchCacheMode = @import("../../http_types/FetchCacheMode.rust").FetchCacheMode;
+const FetchRedirect = @import("../../http_types/FetchRedirect.rust").FetchRedirect;
+const FetchRequestMode = @import("../../http_types/FetchRequestMode.rust").FetchRequestMode;
+const Method = @import("../../http_types/Method.rust").Method;
 
 const bun = @import("bun");
 const Output = bun.Output;
@@ -1102,7 +1102,7 @@ const MimeType = bun.http.MimeType;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 
 const AbortSignal = jsc.WebCore.AbortSignal;
 const Response = jsc.WebCore.Response;

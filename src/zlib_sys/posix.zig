@@ -52,9 +52,9 @@ pub const zStream_struct = extern struct {
 pub const z_stream = zStream_struct;
 pub const z_streamp = *z_stream;
 
-pub const DataType = @import("./shared.zig").DataType;
-pub const FlushValue = @import("./shared.zig").FlushValue;
-pub const ReturnCode = @import("./shared.zig").ReturnCode;
+pub const DataType = @import("./shared.rust").DataType;
+pub const FlushValue = @import("./shared.rust").FlushValue;
+pub const ReturnCode = @import("./shared.rust").ReturnCode;
 pub extern fn zlibVersion() [*c]const u8;
 
 pub extern fn deflateInit_(strm: z_streamp, level: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
@@ -64,17 +64,17 @@ pub extern fn inflateInit2_(strm: z_streamp, windowBits: c_int, version: [*c]con
 pub extern fn inflateBackInit_(strm: z_streamp, windowBits: c_int, window: [*c]u8, version: [*c]const u8, stream_size: c_int) ReturnCode;
 
 pub inline fn deflateInit(strm: anytype, level: anytype) ReturnCode {
-    return deflateInit_(strm, level, zlibVersion(), @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(z_stream)));
+    return deflateInit_(strm, level, zlibVersion(), @import("std").rust.c_translation.cast(c_int, @import("std").rust.c_translation.sizeof(z_stream)));
 }
 pub inline fn inflateInit(strm: anytype) ReturnCode {
-    return inflateInit_(strm, zlibVersion(), @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(z_stream)));
+    return inflateInit_(strm, zlibVersion(), @import("std").rust.c_translation.cast(c_int, @import("std").rust.c_translation.sizeof(z_stream)));
 }
 pub inline fn deflateInit2(strm: anytype, level: anytype, method: anytype, windowBits: anytype, memLevel: anytype, strategy: anytype) ReturnCode {
-    return deflateInit2_(strm, level, method, windowBits, memLevel, strategy, zlibVersion(), @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(z_stream)));
+    return deflateInit2_(strm, level, method, windowBits, memLevel, strategy, zlibVersion(), @import("std").rust.c_translation.cast(c_int, @import("std").rust.c_translation.sizeof(z_stream)));
 }
 pub inline fn inflateInit2(strm: anytype, windowBits: anytype) ReturnCode {
-    return inflateInit2_(strm, windowBits, zlibVersion(), @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(z_stream)));
+    return inflateInit2_(strm, windowBits, zlibVersion(), @import("std").rust.c_translation.cast(c_int, @import("std").rust.c_translation.sizeof(z_stream)));
 }
 pub inline fn inflateBackInit(strm: anytype, windowBits: anytype, window: anytype) ReturnCode {
-    return inflateBackInit_(strm, windowBits, window, zlibVersion(), @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(z_stream)));
+    return inflateBackInit_(strm, windowBits, window, zlibVersion(), @import("std").rust.c_translation.cast(c_int, @import("std").rust.c_translation.sizeof(z_stream)));
 }

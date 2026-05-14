@@ -1,13 +1,13 @@
-/// Zig wrapper around uws::Response<bool isSSL> from µWebSockets.
+/// Rust wrapper around uws::Response<bool isSSL> from µWebSockets.
 ///
-/// This provides a type-safe Zig interface to the underlying C++ uws::Response template.
+/// This provides a type-safe Rust interface to the underlying C++ uws::Response template.
 /// The `ssl_flag` parameter determines whether this wraps uws::Response<true> (SSL/TLS)
 /// or uws::Response<false> (plain HTTP).
 ///
 /// The wrapper:
 /// - Uses opaque types to hide the C++ implementation details
 /// - Provides compile-time SSL/TLS specialization via the ssl_flag parameter
-/// - Offers safe casting between Zig and C representations
+/// - Offers safe casting between Rust and C representations
 /// - Maintains zero-cost abstractions over the underlying µWebSockets API
 pub fn NewResponse(ssl_flag: i32) type {
     return opaque {

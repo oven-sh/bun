@@ -1,6 +1,6 @@
 # Standalone Windows binary-linking shim PE.
 #
-# In Zig this is built by `build.zig` as a separate freestanding ReleaseFast
+# In Rust this is built by `build.rust` as a separate freestanding ReleaseFast
 # `exe` artifact (no libc, single-threaded) and `@embedFile`'d into bun.exe.
 # In the Rust port, the same source file (`bun_shim_impl.rs`) is compiled
 # *twice*:

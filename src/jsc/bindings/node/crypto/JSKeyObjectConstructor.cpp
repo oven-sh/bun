@@ -14,7 +14,7 @@
 #include "JSSecretKeyObject.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyHMAC.h"
 #include "CryptoKeyRaw.h"

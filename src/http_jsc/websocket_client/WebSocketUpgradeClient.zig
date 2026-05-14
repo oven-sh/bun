@@ -77,7 +77,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         const HTTPClient = @This();
 
-        /// Handler set referenced by `dispatch.zig` (kind = `.ws_client_upgrade[_tls]`).
+        /// Handler set referenced by `dispatch.rust` (kind = `.ws_client_upgrade[_tls]`).
         /// The `register()` C++ round-trip that previously installed these on a
         /// shared `us_socket_context_t` is gone — sockets are stamped with the
         /// kind at connect time and routed here statically.
@@ -152,15 +152,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             defer pathname_slice.deinit();
             defer client_protocol_slice.deinit();
 
-            var proxy_host_slice: ?jsc.ZigString.Slice = null;
+            var proxy_host_slice: ?jsc.RustString.Slice = null;
             defer if (proxy_host_slice) |s| s.deinit();
             if (proxy_host) |ph| proxy_host_slice = ph.toUTF8(allocator);
 
-            var target_authorization_slice: ?jsc.ZigString.Slice = null;
+            var target_authorization_slice: ?jsc.RustString.Slice = null;
             defer if (target_authorization_slice) |s| s.deinit();
             if (target_authorization) |ta| target_authorization_slice = ta.toUTF8(allocator);
 
-            var unix_socket_path_slice: ?jsc.ZigString.Slice = null;
+            var unix_socket_path_slice: ?jsc.RustString.Slice = null;
             defer if (unix_socket_path_slice) |s| s.deinit();
             if (unix_socket_path) |usp| unix_socket_path_slice = usp.toUTF8(allocator);
 
@@ -196,7 +196,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (using_proxy) {
                 // Parse proxy authorization (temporary, freed after building CONNECT request)
                 var proxy_auth_slice: ?[]const u8 = null;
-                var proxy_auth_decoded: ?jsc.ZigString.Slice = null;
+                var proxy_auth_decoded: ?jsc.RustString.Slice = null;
                 defer if (proxy_auth_decoded) |s| s.deinit();
 
                 if (proxy_authorization) |auth| {
@@ -1183,7 +1183,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 /// Decodes an array of BunString header name/value pairs to UTF-8 up front.
 ///
 /// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
-/// `WTFStringImpl`s. Calling `.slice()` on a ZigString wrapper that was built
+/// `WTFStringImpl`s. Calling `.slice()` on a RustString wrapper that was built
 /// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
 /// which then corrupts the HTTP upgrade request and can cause heap corruption.
 ///
@@ -1191,7 +1191,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 /// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
 /// here so buildRequestBody / buildConnectRequest can index them by []const u8.
 const Headers8Bit = struct {
-    slices: []jsc.ZigString.Slice,
+    slices: []jsc.RustString.Slice,
     name_slices: [][]const u8,
     value_slices: [][]const u8,
     allocator: std.mem.Allocator,
@@ -1213,7 +1213,7 @@ const Headers8Bit = struct {
         const names_in = names_ptr.?[0..len];
         const values_in = values_ptr.?[0..len];
 
-        const slices = try allocator.alloc(jsc.ZigString.Slice, len * 2);
+        const slices = try allocator.alloc(jsc.RustString.Slice, len * 2);
         errdefer allocator.free(slices);
 
         const name_slices = try allocator.alloc([]const u8, len);
@@ -1526,7 +1526,7 @@ pub fn parseSSLConfig(
 /// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
 /// WebSocket.cpp can release ownership without leaking the heap allocation
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
-/// hands the pointer off to a Zig upgrade client.
+/// hands the pointer off to a Rust upgrade client.
 pub fn freeSSLConfig(config: *SSLConfig) callconv(.c) void {
     config.deinit();
     bun.default_allocator.destroy(config);
@@ -1537,13 +1537,13 @@ comptime {
     @export(&freeSSLConfig, .{ .name = "Bun__WebSocket__freeSSLConfig" });
 }
 
-const WebSocketDeflate = @import("./WebSocketDeflate.zig");
-const WebSocketProxy = @import("./WebSocketProxy.zig");
-const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.zig");
+const WebSocketDeflate = @import("./WebSocketDeflate.rust");
+const WebSocketProxy = @import("./WebSocketProxy.rust");
+const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.rust");
 const std = @import("std");
-const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
+const CppWebSocket = @import("./CppWebSocket.rust").CppWebSocket;
 
-const websocket_client = @import("../websocket_client.zig");
+const websocket_client = @import("../websocket_client.rust");
 const ErrorCode = websocket_client.ErrorCode;
 
 const bun = @import("bun");

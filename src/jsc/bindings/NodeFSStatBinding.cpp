@@ -18,7 +18,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JavaScriptCore/DateInstance.h"
 #if !OS(WINDOWS)
 #include <sys/stat.h>
@@ -157,7 +157,7 @@ static JSValue modeStatFunction(JSC::JSGlobalObject* globalObject, CallFrame* ca
 }
 
 template<bool isBigInt>
-Structure* getStructure(Zig::GlobalObject* globalObject)
+Structure* getStructure(Rust::GlobalObject* globalObject)
 {
     if (isBigInt) {
         return globalObject->m_JSStatsBigIntClassStructure.getInitializedOnMainThread(globalObject);
@@ -167,7 +167,7 @@ Structure* getStructure(Zig::GlobalObject* globalObject)
 }
 
 template<bool isBigInt>
-JSObject* getPrototype(Zig::GlobalObject* globalObject)
+JSObject* getPrototype(Rust::GlobalObject* globalObject)
 {
     if (isBigInt) {
         return globalObject->m_JSStatsBigIntClassStructure.prototypeInitializedOnMainThread(globalObject);
@@ -177,7 +177,7 @@ JSObject* getPrototype(Zig::GlobalObject* globalObject)
 }
 
 template<bool isBigInt>
-JSObject* getConstructor(Zig::GlobalObject* globalObject)
+JSObject* getConstructor(Rust::GlobalObject* globalObject)
 {
     if (isBigInt) {
         return globalObject->m_JSStatsBigIntClassStructure.constructorInitializedOnMainThread(globalObject);
@@ -598,7 +598,7 @@ JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObj
     return structure;
 }
 
-extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globalObject, uint64_t dev,
+extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Rust::GlobalObject* globalObject, uint64_t dev,
     uint64_t ino,
     uint64_t mode,
     uint64_t nlink,
@@ -642,7 +642,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
     return JSC::JSValue::encode(object);
 }
 
-extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject* globalObject,
+extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Rust::GlobalObject* globalObject,
     uint64_t dev,
     uint64_t ino,
     uint64_t mode,
@@ -817,7 +817,7 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto* structure = getStructure<isBigInt>(globalObject);
     auto* constructor = getConstructor<isBigInt>(globalObject);
@@ -825,7 +825,7 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
 
     if (constructor != newTarget) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
+        auto* functionGlobalObject = static_cast<Rust::GlobalObject*>(
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
@@ -915,12 +915,12 @@ JSC_DEFINE_HOST_FUNCTION(callBigIntStats, (JSC::JSGlobalObject * lexicalGlobalOb
     return JSValue::encode(callJSStatsFunction<true>(lexicalGlobalObject, callFrame));
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSBigIntStatsObjectConstructor(Zig::GlobalObject* globalobject)
+extern "C" JSC::EncodedJSValue Bun__JSBigIntStatsObjectConstructor(Rust::GlobalObject* globalobject)
 {
     return JSValue::encode(globalobject->m_JSStatsBigIntClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSStatsObjectConstructor(Zig::GlobalObject* globalobject)
+extern "C" JSC::EncodedJSValue Bun__JSStatsObjectConstructor(Rust::GlobalObject* globalobject)
 {
     return JSValue::encode(globalobject->m_JSStatsClassStructure.constructor(globalobject));
 }

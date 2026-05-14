@@ -1393,7 +1393,7 @@ application/vnd.contact.cmsg
 application/vnd.dreamfactory
 application/vnd.ecdis-update
 application/vnd.ecowin.chart
-application/vnd.eszigno3+xml
+application/vnd.esrustno3+xml
 application/vnd.etsi.aoc+xml
 application/vnd.etsi.cug+xml
 application/vnd.etsi.sci+xml

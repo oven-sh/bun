@@ -1,4 +1,4 @@
-//! This type is a `GenericAllocator`; see `src/allocators.zig`.
+//! This type is a `GenericAllocator`; see `src/allocators.rust`.
 
 const Self = @This();
 
@@ -6,7 +6,7 @@ const Self = @This();
 
 /// Uses the default thread-local heap. This type is zero-sized.
 ///
-/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+/// This type is a `GenericAllocator`; see `src/allocators.rust`.
 pub const Default = struct {
     pub fn allocator(_: Default) std.mem.Allocator {
         return .{ .ptr = undefined, .vtable = &global_mimalloc_vtable };
@@ -17,7 +17,7 @@ pub const Default = struct {
 /// Using this type makes it clear who actually owns the `MimallocArena`, and prevents
 /// `deinit` from being called twice.
 ///
-/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+/// This type is a `GenericAllocator`; see `src/allocators.rust`.
 pub const Borrowed = struct {
     #heap: BorrowedHeap,
 

@@ -12,8 +12,8 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include "JSBakeResponse.h"
-#include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGlobalObject.h"
+#include "RustGeneratedClasses.h"
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"
@@ -43,7 +43,7 @@ extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
 
-    auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
+    auto* rustGlobal = static_cast<Rust::GlobalObject*>(globalObject);
     auto& vm = JSC::getVM(globalObject);
 
     // React does this:
@@ -63,7 +63,7 @@ bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObjec
         JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (typeofValue.isSymbol() && (typeofValue == zigGlobal->bakeAdditions().reactLegacyElementSymbol(zigGlobal) || typeofValue == zigGlobal->bakeAdditions().reactElementSymbol(zigGlobal))) {
+        if (typeofValue.isSymbol() && (typeofValue == rustGlobal->bakeAdditions().reactLegacyElementSymbol(rustGlobal) || typeofValue == rustGlobal->bakeAdditions().reactElementSymbol(rustGlobal))) {
             return true;
         }
     }
@@ -76,7 +76,7 @@ extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JS
     return isJSXElement(JSValue0, globalObject);
 }
 
-extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponse__createForSSR(Zig::GlobalObject* globalObject, void* ptr, uint8_t kind)
+extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponse__createForSSR(Rust::GlobalObject* globalObject, void* ptr, uint8_t kind)
 {
     Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
 
@@ -106,7 +106,7 @@ static const HashTableValue JSBakeResponseConstructorTableValues[] = {
 
 };
 
-JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, Rust::GlobalObject* globalObject, JSC::Structure* structure, void* ctx)
 {
     JSBakeResponse* ptr = new (NotNull, JSC::allocateCell<JSBakeResponse>(vm)) JSBakeResponse(vm, structure, ctx);
     ptr->finishCreation(vm);
@@ -195,7 +195,7 @@ public:
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
     {
-        Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+        Rust::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* newTarget = asObject(callFrame->newTarget());
@@ -236,7 +236,7 @@ public:
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
     {
-        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+        Rust::GlobalObject* globalObject = static_cast<Rust::GlobalObject*>(lexicalGlobalObject);
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -287,7 +287,7 @@ private:
 const JSC::ClassInfo JSBakeResponse::s_info = { "Response"_s, &JSResponse::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponse) };
 const JSC::ClassInfo JSBakeResponseConstructor::s_info = { ""_s, &JSC::InternalFunction::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBakeResponseConstructor) };
 
-Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalObject, JSObject* prototype)
+Structure* createJSBakeResponseStructure(JSC::VM& vm, Rust::GlobalObject* globalObject, JSObject* prototype)
 {
 
     auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, 0), JSBakeResponse::info(), NonArray, 0);
@@ -300,13 +300,13 @@ Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalO
 
 void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* zigGlobal = static_cast<Zig::GlobalObject*>(init.global);
-    auto* prototype = JSC::constructEmptyObject(zigGlobal, zigGlobal->JSResponsePrototype());
+    auto* rustGlobal = static_cast<Rust::GlobalObject*>(init.global);
+    auto* prototype = JSC::constructEmptyObject(rustGlobal, rustGlobal->JSResponsePrototype());
 
     auto* constructorStructure = JSBakeResponseConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
     auto* constructor = JSBakeResponseConstructor::create(init.vm, constructorStructure, prototype);
 
-    auto* structure = createJSBakeResponseStructure(init.vm, zigGlobal, prototype);
+    auto* structure = createJSBakeResponseStructure(init.vm, rustGlobal, prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);

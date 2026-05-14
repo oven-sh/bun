@@ -138,7 +138,7 @@ pub fn deinit(this: *Cd) void {
 // --
 const log = bun.Output.scoped(.Cd, .hidden);
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const std = @import("std");
 
 const Interpreter = interpreter.Interpreter;

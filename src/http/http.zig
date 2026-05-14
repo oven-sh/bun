@@ -723,7 +723,7 @@ pending_h2: ?*H2.PendingConnect = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
-unix_socket_path: jsc.ZigString.Slice = jsc.ZigString.Slice.empty,
+unix_socket_path: jsc.RustString.Slice = jsc.RustString.Slice.empty,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -755,7 +755,7 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.custom_ssl_ctx) |ctx| ctx.deref();
     this.custom_ssl_ctx = null;
     this.unix_socket_path.deinit();
-    this.unix_socket_path = jsc.ZigString.Slice.empty;
+    this.unix_socket_path = jsc.RustString.Slice.empty;
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
@@ -778,7 +778,7 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
 ///
 /// target_hostname in the pool stores url.hostname (the CONNECT TCP target
 /// at writeProxyConnect line 346). But the inner TLS SNI/cert verification
-/// uses hostname orelse url.hostname (ProxyTunnel.zig:44). If a Host header
+/// uses hostname orelse url.hostname (ProxyTunnel.rust:44). If a Host header
 /// override sets hostname != url.hostname, two requests to different IPs
 /// with the same Host header must NOT share a tunnel — they're physically
 /// connected to different servers. Hashing hostname here catches that.
@@ -931,7 +931,7 @@ pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
 
-pub const HeaderBuilder = @import("./HeaderBuilder.zig");
+pub const HeaderBuilder = @import("./HeaderBuilder.rust");
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
@@ -1130,7 +1130,7 @@ pub fn doRedirect(
     }
 
     this.unix_socket_path.deinit();
-    this.unix_socket_path = jsc.ZigString.Slice.empty;
+    this.unix_socket_path = jsc.RustString.Slice.empty;
     // TODO: what we do with stream body?
     const request_body = if (this.state.flags.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
         this.state.original_request_body.bytes
@@ -2399,7 +2399,7 @@ fn doRedirectMultiplexed(this: *HTTPClient) void {
         this.flags.is_streaming_request_body = false;
     }
     this.unix_socket_path.deinit();
-    this.unix_socket_path = jsc.ZigString.Slice.empty;
+    this.unix_socket_path = jsc.RustString.Slice.empty;
     const request_body = if (this.state.flags.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
         this.state.original_request_body.bytes
     else
@@ -3259,37 +3259,37 @@ pub const ThreadlocalAsyncHTTP = struct {
     async_http: AsyncHTTP,
 };
 
-pub const ETag = @import("../http_types/ETag.zig");
-pub const Method = @import("../http_types/Method.zig").Method;
-pub const Headers = @import("./Headers.zig");
-pub const MimeType = @import("../http_types/MimeType.zig");
-pub const URLPath = @import("../http_types/URLPath.zig");
-pub const Encoding = @import("../http_types/Encoding.zig").Encoding;
-pub const Decompressor = @import("./Decompressor.zig").Decompressor;
-pub const Signals = @import("./Signals.zig");
-pub const ThreadSafeStreamBuffer = @import("./ThreadSafeStreamBuffer.zig");
-pub const HTTPThread = @import("./HTTPThread.zig");
-pub const NewHTTPContext = @import("./HTTPContext.zig").NewHTTPContext;
-pub const AsyncHTTP = @import("./AsyncHTTP.zig");
-pub const InternalState = @import("./InternalState.zig");
-pub const CertificateInfo = @import("./CertificateInfo.zig");
-pub const FetchRedirect = @import("../http_types/FetchRedirect.zig").FetchRedirect;
-pub const FetchCacheMode = @import("../http_types/FetchCacheMode.zig").FetchCacheMode;
-pub const FetchRequestMode = @import("../http_types/FetchRequestMode.zig").FetchRequestMode;
-pub const InitError = @import("./InitError.zig").InitError;
-pub const HTTPRequestBody = @import("./HTTPRequestBody.zig").HTTPRequestBody;
-pub const SendFile = @import("./SendFile.zig");
-pub const HeaderValueIterator = @import("./HeaderValueIterator.zig");
-pub const H2 = @import("./H2Client.zig");
-pub const H2Wire = @import("./H2FrameParser.zig");
-pub const H3 = @import("./H3Client.zig");
+pub const ETag = @import("../http_types/ETag.rust");
+pub const Method = @import("../http_types/Method.rust").Method;
+pub const Headers = @import("./Headers.rust");
+pub const MimeType = @import("../http_types/MimeType.rust");
+pub const URLPath = @import("../http_types/URLPath.rust");
+pub const Encoding = @import("../http_types/Encoding.rust").Encoding;
+pub const Decompressor = @import("./Decompressor.rust").Decompressor;
+pub const Signals = @import("./Signals.rust");
+pub const ThreadSafeStreamBuffer = @import("./ThreadSafeStreamBuffer.rust");
+pub const HTTPThread = @import("./HTTPThread.rust");
+pub const NewHTTPContext = @import("./HTTPContext.rust").NewHTTPContext;
+pub const AsyncHTTP = @import("./AsyncHTTP.rust");
+pub const InternalState = @import("./InternalState.rust");
+pub const CertificateInfo = @import("./CertificateInfo.rust");
+pub const FetchRedirect = @import("../http_types/FetchRedirect.rust").FetchRedirect;
+pub const FetchCacheMode = @import("../http_types/FetchCacheMode.rust").FetchCacheMode;
+pub const FetchRequestMode = @import("../http_types/FetchRequestMode.rust").FetchRequestMode;
+pub const InitError = @import("./InitError.rust").InitError;
+pub const HTTPRequestBody = @import("./HTTPRequestBody.rust").HTTPRequestBody;
+pub const SendFile = @import("./SendFile.rust");
+pub const HeaderValueIterator = @import("./HeaderValueIterator.rust");
+pub const H2 = @import("./H2Client.rust");
+pub const H2Wire = @import("./H2FrameParser.rust");
+pub const H3 = @import("./H3Client.rust");
 
 const string = []const u8;
 
-const HTTPCertError = @import("./HTTPCertError.zig");
-const ProxyTunnel = @import("./ProxyTunnel.zig");
+const HTTPCertError = @import("./HTTPCertError.rust");
+const ProxyTunnel = @import("./ProxyTunnel.rust");
 const std = @import("std");
-const URL = @import("../url/url.zig").URL;
+const URL = @import("../url/url.rust").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

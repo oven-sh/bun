@@ -1511,7 +1511,7 @@ pub const PublishCommand = struct {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Open = @import("./open.zig");
+const Open = @import("./open.rust");
 const std = @import("std");
 
 const bun = @import("bun");

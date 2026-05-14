@@ -181,7 +181,7 @@ pub const SQLDataCell = extern struct {
 };
 
 const bun = @import("bun");
-const Data = @import("../../sql/shared/Data.zig").Data;
+const Data = @import("../../sql/shared/Data.rust").Data;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

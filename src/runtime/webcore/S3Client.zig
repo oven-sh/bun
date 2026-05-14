@@ -321,7 +321,7 @@ pub const S3Client = struct {
     }
 };
 
-const S3File = @import("./S3File.zig");
+const S3File = @import("./S3File.rust");
 
 const bun = @import("bun");
 const S3Credentials = bun.S3.S3Credentials;

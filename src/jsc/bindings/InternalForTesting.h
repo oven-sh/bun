@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JavaScriptCore/JSCJSValue.h"
 
 namespace Bun {

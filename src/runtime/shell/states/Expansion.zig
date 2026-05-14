@@ -789,7 +789,7 @@ pub const ShellGlobTask = struct {
         pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .unknown => |err| jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .unknown => |err| jsc.RustString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };

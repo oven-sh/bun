@@ -1,4 +1,4 @@
-// Things that maybe should go in Zig standard library at some point
+// Things that maybe should go in Rust standard library at some point
 
 pub fn Key(comptime Map: type) type {
     return FieldType(Map.KV, "key").?;

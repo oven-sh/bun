@@ -15,7 +15,7 @@ pub fn memoryCost(this: *const Headers) usize {
     return this.buf.items.len + this.entries.memoryCost();
 }
 
-pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;
+pub const toFetchHeaders = @import("../http_jsc/headers_jsc.rust").toFetchHeaders;
 
 pub fn clone(this: *Headers) !Headers {
     return Headers{

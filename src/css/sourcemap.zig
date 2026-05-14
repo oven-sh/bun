@@ -1,5 +1,5 @@
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
+pub const css = @import("./css_parser.rust");
+pub const css_values = @import("./values/values.rust");
 pub const Error = css.Error;
 
 pub const SourceMap = struct {

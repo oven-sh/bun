@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 const CustomMedia = css.CustomMedia;
 const Printer = css.Printer;
@@ -6,28 +6,28 @@ const PrintErr = css.PrintErr;
 const Dependency = css.Dependency;
 const dependencies = css.dependencies;
 
-pub const import = @import("./import.zig");
-pub const layer = @import("./layer.zig");
-pub const style = @import("./style.zig");
-pub const keyframes = @import("./keyframes.zig");
-pub const font_face = @import("./font_face.zig");
-pub const font_palette_values = @import("./font_palette_values.zig");
-pub const page = @import("./page.zig");
-pub const supports = @import("./supports.zig");
-pub const counter_style = @import("./counter_style.zig");
-pub const custom_media = @import("./custom_media.zig");
-pub const namespace = @import("./namespace.zig");
-pub const unknown = @import("./unknown.zig");
-pub const document = @import("./document.zig");
-pub const nesting = @import("./nesting.zig");
-pub const viewport = @import("./viewport.zig");
-pub const property = @import("./property.zig");
-pub const container = @import("./container.zig");
-pub const scope = @import("./scope.zig");
-pub const media = @import("./media.zig");
-pub const starting_style = @import("./starting_style.zig");
+pub const import = @import("./import.rust");
+pub const layer = @import("./layer.rust");
+pub const style = @import("./style.rust");
+pub const keyframes = @import("./keyframes.rust");
+pub const font_face = @import("./font_face.rust");
+pub const font_palette_values = @import("./font_palette_values.rust");
+pub const page = @import("./page.rust");
+pub const supports = @import("./supports.rust");
+pub const counter_style = @import("./counter_style.rust");
+pub const custom_media = @import("./custom_media.rust");
+pub const namespace = @import("./namespace.rust");
+pub const unknown = @import("./unknown.rust");
+pub const document = @import("./document.rust");
+pub const nesting = @import("./nesting.rust");
+pub const viewport = @import("./viewport.rust");
+pub const property = @import("./property.rust");
+pub const container = @import("./container.rust");
+pub const scope = @import("./scope.rust");
+pub const media = @import("./media.rust");
+pub const starting_style = @import("./starting_style.rust");
 
-pub const tailwind = @import("./tailwind.zig");
+pub const tailwind = @import("./tailwind.rust");
 
 const debug = bun.Output.scoped(.CSS_MINIFY, .visible);
 

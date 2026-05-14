@@ -177,7 +177,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                             // when printing cross_chunk_prefix_stmts.
                             if (record.source_index.isValid()) continue;
                             // Skip barrel-optimized-away imports — marked is_unused by
-                            // barrel_imports.zig. Never resolved (source_index invalid),
+                            // barrel_imports.rust. Never resolved (source_index invalid),
                             // and removed by convertStmtsForChunk. Not in emitted code.
                             if (record.flags.is_unused) continue;
 
@@ -1085,7 +1085,7 @@ pub fn generateEntryPointTailJS(
     };
 }
 
-const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.rust");
 const std = @import("std");
 
 const bun = @import("bun");

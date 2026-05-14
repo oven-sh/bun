@@ -707,7 +707,7 @@ pub const Extension = struct {
     }
 };
 
-// This is used by generated build_config.zig, and not intended for direct use
+// This is used by generated build_config.rust, and not intended for direct use
 // when using advanced configuration.
 pub fn _resolveFields(
     comptime config_x: type,
@@ -732,4 +732,4 @@ pub fn _resolveFields(
 }
 
 const std = @import("std");
-const types = @import("./types.zig");
+const types = @import("./types.rust");

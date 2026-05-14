@@ -13,7 +13,7 @@ export default [
     estimatedSize: true,
     // Strong-ref slot for the input ArrayBuffer/TypedArray so we BORROW its
     // bytes instead of duping in the constructor. While a task is in flight
-    // the JSRef on the Zig side holds a Strong ref to this wrapper, the
+    // the JSRef on the Rust side holds a Strong ref to this wrapper, the
     // wrapper's sourceJS slot keeps the ArrayBuffer alive, and the buffer is
     // pinned for the task's duration — so the slice stays valid off-thread.
     // (No `hasPendingActivity` polling; the JSRef upgrade/downgrade is
@@ -52,7 +52,7 @@ export default [
       // Terminal async ops — run decode → pipeline → encode on the work pool.
       bytes: { fn: "doBytes", length: 0, async: true },
       buffer: { fn: "doBuffer", length: 0, async: true },
-      // Sharp-compat alias for `buffer()`; same Zig fn, no overhead.
+      // Sharp-compat alias for `buffer()`; same Rust fn, no overhead.
       toBuffer: { fn: "doBuffer", length: 0, async: true },
       // Encode → fs.writeFile, both off-thread; resolves bytes-written.
       write: { fn: "doWrite", length: 1, async: true },

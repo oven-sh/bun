@@ -22,5 +22,5 @@ pub fn decodeInternal(this: *StmtPrepareOKPacket, comptime Context: type, reader
 
 pub const decode = decoderWrap(StmtPrepareOKPacket, decodeInternal).decode;
 
-const NewReader = @import("./NewReader.zig").NewReader;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const decoderWrap = @import("./NewReader.rust").decoderWrap;

@@ -172,7 +172,7 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     if (opts.seed) |seed|
         try argv.append(arena, try printZ(arena, "--seed={d}", .{seed}));
     // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (test_command.zig handleTestCompleted), which the coordinator would
+    // (test_command.rust handleTestCompleted), which the coordinator would
     // misread as a crash. Cross-worker bail is handled at file granularity by
     // the coordinator instead.
     if (opts.repeat_count > 0)
@@ -438,15 +438,15 @@ pub fn workerEmitTestDone(file_idx: u32, formatted_line: []const u8) void {
     cmds.send(worker_frame.finish());
 }
 
-const Frame = @import("./Frame.zig");
-const Worker = @import("./Worker.zig");
-const aggregate = @import("./aggregate.zig");
+const Frame = @import("./Frame.rust");
+const Worker = @import("./Worker.rust");
+const aggregate = @import("./aggregate.rust");
 const std = @import("std");
-const Channel = @import("./Channel.zig").Channel;
-const Command = @import("../../cli.zig").Command;
-const Coordinator = @import("./Coordinator.zig").Coordinator;
+const Channel = @import("./Channel.rust").Channel;
+const Command = @import("../../cli.rust").Command;
+const Coordinator = @import("./Coordinator.rust").Coordinator;
 
-const test_command = @import("../../test_command.zig");
+const test_command = @import("../../test_command.rust");
 const CommandLineReporter = test_command.CommandLineReporter;
 const TestCommand = test_command.TestCommand;
 

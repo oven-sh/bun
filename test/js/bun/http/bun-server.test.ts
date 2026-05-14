@@ -1093,7 +1093,7 @@ describe("HEAD requests #15355", () => {
       expect(response.headers.get("transfer-encoding")).toBe("chunked");
     });
 
-    // fastGet(.TransferEncoding/.ContentLength) returns a ZigString borrowing
+    // fastGet(.TransferEncoding/.ContentLength) returns a RustString borrowing
     // the header map entry's WTF::StringImpl; renderMetadata() -> doWriteHeaders()
     // then calls fastRemove() on those names and derefs the FetchHeaders,
     // destroying the StringImpl before the borrowed bytes are written to the

@@ -4,7 +4,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 namespace Bun {
 
@@ -17,7 +17,7 @@ using namespace JSC;
 JSC_DEFINE_HOST_FUNCTION(jsCleanupLater, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ASSERT(callFrame->argumentCount() == 0);
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Rust::GlobalObject>(globalObject);
     global->asyncHooksNeedsCleanup = true;
     global->resetOnEachMicrotaskTick();
     return JSC::JSValue::encode(JSC::jsUndefined());

@@ -663,7 +663,7 @@ pub fn init(
                     // this is `bun add <package>`.
                     //
                     // create the package json instead of return error. this works around
-                    // a zig bug where continuing control flow through a catch seems to
+                    // a rust bug where continuing control flow through a catch seems to
                     // cause a segfault the second time `PackageManager.init` is called after
                     // switching to the add command.
                     this_cwd = original_cwd;
@@ -1149,15 +1149,15 @@ const PatchTaskFifo = bun.LinearFifo(*PatchTask, .{ .Static = 32 });
 
 // pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 
-pub const CommandLineArguments = @import("./PackageManager/CommandLineArguments.zig");
-pub const Options = @import("./PackageManager/PackageManagerOptions.zig");
-pub const PackageJSONEditor = @import("./PackageManager/PackageJSONEditor.zig");
-pub const UpdateRequest = @import("./PackageManager/UpdateRequest.zig");
-pub const WorkspacePackageJSONCache = @import("./PackageManager/WorkspacePackageJSONCache.zig");
-pub const PackageInstaller = @import("./PackageInstaller.zig").PackageInstaller;
-pub const installWithManager = @import("./PackageManager/install_with_manager.zig").installWithManager;
+pub const CommandLineArguments = @import("./PackageManager/CommandLineArguments.rust");
+pub const Options = @import("./PackageManager/PackageManagerOptions.rust");
+pub const PackageJSONEditor = @import("./PackageManager/PackageJSONEditor.rust");
+pub const UpdateRequest = @import("./PackageManager/UpdateRequest.rust");
+pub const WorkspacePackageJSONCache = @import("./PackageManager/WorkspacePackageJSONCache.rust");
+pub const PackageInstaller = @import("./PackageInstaller.rust").PackageInstaller;
+pub const installWithManager = @import("./PackageManager/install_with_manager.rust").installWithManager;
 
-pub const directories = @import("./PackageManager/PackageManagerDirectories.zig");
+pub const directories = @import("./PackageManager/PackageManagerDirectories.rust");
 pub const attemptToCreatePackageJSON = directories.attemptToCreatePackageJSON;
 const attemptToCreatePackageJSONAndOpen = directories.attemptToCreatePackageJSONAndOpen;
 pub const cachedGitFolderName = directories.cachedGitFolderName;
@@ -1187,7 +1187,7 @@ pub const setupGlobalDir = directories.setupGlobalDir;
 pub const updateLockfileIfNeeded = directories.updateLockfileIfNeeded;
 pub const writeYarnLock = directories.writeYarnLock;
 
-pub const enqueue = @import("./PackageManager/PackageManagerEnqueue.zig");
+pub const enqueue = @import("./PackageManager/PackageManagerEnqueue.rust");
 pub const enqueueDependencyList = enqueue.enqueueDependencyList;
 pub const enqueueDependencyToRoot = enqueue.enqueueDependencyToRoot;
 pub const enqueueDependencyWithMain = enqueue.enqueueDependencyWithMain;
@@ -1224,52 +1224,52 @@ pub const resolveFromDiskCache = resolution.resolveFromDiskCache;
 pub const scopeForPackageName = resolution.scopeForPackageName;
 pub const verifyResolutions = resolution.verifyResolutions;
 
-pub const progress_zig = @import("./PackageManager/ProgressStrings.zig");
-pub const ProgressStrings = progress_zig.ProgressStrings;
-pub const endProgressBar = progress_zig.endProgressBar;
-pub const setNodeName = progress_zig.setNodeName;
-pub const startProgressBar = progress_zig.startProgressBar;
-pub const startProgressBarIfNone = progress_zig.startProgressBarIfNone;
+pub const progress_rust = @import("./PackageManager/ProgressStrings.rust");
+pub const ProgressStrings = progress_rust.ProgressStrings;
+pub const endProgressBar = progress_rust.endProgressBar;
+pub const setNodeName = progress_rust.setNodeName;
+pub const startProgressBar = progress_rust.startProgressBar;
+pub const startProgressBarIfNone = progress_rust.startProgressBarIfNone;
 
-pub const PatchCommitResult = @import("./PackageManager/patchPackage.zig").PatchCommitResult;
-pub const doPatchCommit = @import("./PackageManager/patchPackage.zig").doPatchCommit;
-pub const preparePatch = @import("./PackageManager/patchPackage.zig").preparePatch;
+pub const PatchCommitResult = @import("./PackageManager/patchPackage.rust").PatchCommitResult;
+pub const doPatchCommit = @import("./PackageManager/patchPackage.rust").doPatchCommit;
+pub const preparePatch = @import("./PackageManager/patchPackage.rust").preparePatch;
 
-pub const GitResolver = @import("./PackageManager/processDependencyList.zig").GitResolver;
-pub const processDependencyList = @import("./PackageManager/processDependencyList.zig").processDependencyList;
-pub const processDependencyListItem = @import("./PackageManager/processDependencyList.zig").processDependencyListItem;
-pub const processExtractedTarballPackage = @import("./PackageManager/processDependencyList.zig").processExtractedTarballPackage;
-pub const processPeerDependencyList = @import("./PackageManager/processDependencyList.zig").processPeerDependencyList;
+pub const GitResolver = @import("./PackageManager/processDependencyList.rust").GitResolver;
+pub const processDependencyList = @import("./PackageManager/processDependencyList.rust").processDependencyList;
+pub const processDependencyListItem = @import("./PackageManager/processDependencyList.rust").processDependencyListItem;
+pub const processExtractedTarballPackage = @import("./PackageManager/processDependencyList.rust").processExtractedTarballPackage;
+pub const processPeerDependencyList = @import("./PackageManager/processDependencyList.rust").processPeerDependencyList;
 
-pub const allocGitHubURL = @import("./PackageManager/runTasks.zig").allocGitHubURL;
-pub const decrementPendingTasks = @import("./PackageManager/runTasks.zig").decrementPendingTasks;
-pub const drainDependencyList = @import("./PackageManager/runTasks.zig").drainDependencyList;
-pub const flushDependencyQueue = @import("./PackageManager/runTasks.zig").flushDependencyQueue;
-pub const flushNetworkQueue = @import("./PackageManager/runTasks.zig").flushNetworkQueue;
-pub const flushPatchTaskQueue = @import("./PackageManager/runTasks.zig").flushPatchTaskQueue;
-pub const generateNetworkTaskForTarball = @import("./PackageManager/runTasks.zig").generateNetworkTaskForTarball;
-pub const getNetworkTask = @import("./PackageManager/runTasks.zig").getNetworkTask;
-pub const hasCreatedNetworkTask = @import("./PackageManager/runTasks.zig").hasCreatedNetworkTask;
-pub const incrementPendingTasks = @import("./PackageManager/runTasks.zig").incrementPendingTasks;
-pub const isNetworkTaskRequired = @import("./PackageManager/runTasks.zig").isNetworkTaskRequired;
-pub const pendingTaskCount = @import("./PackageManager/runTasks.zig").pendingTaskCount;
-pub const runTasks = @import("./PackageManager/runTasks.zig").runTasks;
-pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks;
+pub const allocGitHubURL = @import("./PackageManager/runTasks.rust").allocGitHubURL;
+pub const decrementPendingTasks = @import("./PackageManager/runTasks.rust").decrementPendingTasks;
+pub const drainDependencyList = @import("./PackageManager/runTasks.rust").drainDependencyList;
+pub const flushDependencyQueue = @import("./PackageManager/runTasks.rust").flushDependencyQueue;
+pub const flushNetworkQueue = @import("./PackageManager/runTasks.rust").flushNetworkQueue;
+pub const flushPatchTaskQueue = @import("./PackageManager/runTasks.rust").flushPatchTaskQueue;
+pub const generateNetworkTaskForTarball = @import("./PackageManager/runTasks.rust").generateNetworkTaskForTarball;
+pub const getNetworkTask = @import("./PackageManager/runTasks.rust").getNetworkTask;
+pub const hasCreatedNetworkTask = @import("./PackageManager/runTasks.rust").hasCreatedNetworkTask;
+pub const incrementPendingTasks = @import("./PackageManager/runTasks.rust").incrementPendingTasks;
+pub const isNetworkTaskRequired = @import("./PackageManager/runTasks.rust").isNetworkTaskRequired;
+pub const pendingTaskCount = @import("./PackageManager/runTasks.rust").pendingTaskCount;
+pub const runTasks = @import("./PackageManager/runTasks.rust").runTasks;
+pub const scheduleTasks = @import("./PackageManager/runTasks.rust").scheduleTasks;
 
-pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
-pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
+pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.rust").updatePackageJSONAndInstallCatchError;
+pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.rust").updatePackageJSONAndInstallWithManager;
 
-pub const populateManifestCache = @import("./PackageManager/PopulateManifestCache.zig").populateManifestCache;
+pub const populateManifestCache = @import("./PackageManager/PopulateManifestCache.rust").populateManifestCache;
 
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const DirInfo = @import("../resolver/dir_info.zig");
-const resolution = @import("./PackageManager/PackageManagerResolution.zig");
+const DirInfo = @import("../resolver/dir_info.rust");
+const resolution = @import("./PackageManager/PackageManagerResolution.rust");
 const std = @import("std");
-const updatePackageJSONAndInstall = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstall;
+const updatePackageJSONAndInstall = @import("./PackageManager/updatePackageJSONAndInstall.rust").updatePackageJSONAndInstall;
 
-const lifecycle = @import("./PackageManager/PackageManagerLifecycle.zig");
+const lifecycle = @import("./PackageManager/PackageManagerLifecycle.rust");
 const LifecycleScriptTimeLog = lifecycle.LifecycleScriptTimeLog;
 
 const bun = @import("bun");

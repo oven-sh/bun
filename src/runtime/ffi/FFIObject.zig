@@ -22,20 +22,20 @@ pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
             const func = jsc.toJSHostFn(@field(fields, field));
             object.put(
                 globalObject,
-                comptime ZigString.static(field),
+                comptime RustString.static(field),
                 jsc.JSFunction.create(globalObject, field, func, 1, .{ .constructor = func }),
             );
         } else {
             object.put(
                 globalObject,
-                comptime ZigString.static(field),
+                comptime RustString.static(field),
                 jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
             );
         }
     }
 
     dom_call.put(globalObject, object);
-    object.put(globalObject, ZigString.static("read"), Reader.toJS(globalObject));
+    object.put(globalObject, RustString.static("read"), Reader.toJS(globalObject));
 
     return object;
 }
@@ -379,7 +379,7 @@ fn ptr_(
     }
 
     var addr: usize = @intFromPtr(array_buffer.ptr);
-    // const Sizes = @import("../../jsc/sizes.zig");
+    // const Sizes = @import("../../jsc/sizes.rust");
     // assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
 
     if (byteOffset) |off| {
@@ -643,7 +643,7 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSObject = jsc.JSObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const Bun = jsc.API.Bun;
 
 const DOMCall = jsc.host_fn.DOMCall;

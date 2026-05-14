@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // Regression test: microtasks must not drain during Bun.spawnSync.
 //
-// Root cause: tickQueueWithCount (Task.zig) unconditionally calls
+// Root cause: tickQueueWithCount (Task.rust) unconditionally calls
 // drainMicrotasksWithGlobal after every task. The SpawnSyncEventLoop's
 // isolated EventLoop shares the same JSC VM/GlobalObject, so draining
 // microtasks on it would drain the global microtask queue, executing

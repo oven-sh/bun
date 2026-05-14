@@ -16,7 +16,7 @@ pub const WriteStatus = enum {
 pub fn PosixPipeWriter(
     comptime This: type,
     // Originally this was the comptime vtable struct like the below
-    // But that caused a Zig compiler segfault as of 0.12.0-dev.1604+caae40c21
+    // But that caused a Rust compiler segfault as of 0.12.0-dev.1604+caae40c21
     comptime getFd: fn (*This) bun.FD,
     comptime getBuffer: fn (*This) []const u8,
     comptime onWrite: fn (*This, written: usize, status: WriteStatus) void,
@@ -167,7 +167,7 @@ pub fn PosixPipeWriter(
 
 /// See below for the expected signature of `function_table`. In many cases, the
 /// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
+/// dependency loop in Rust.
 pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
     return struct {
         const PosixWriter = @This();
@@ -373,7 +373,7 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
 
 /// See below for the expected signature of `function_table`. In many cases, the
 /// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
+/// dependency loop in Rust.
 pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anytype) type {
     return struct {
         const onWrite: fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
@@ -943,7 +943,7 @@ fn BaseWindowsPipeWriter(
 
 /// See below for the expected signature of `function_table`. In many cases, the
 /// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
+/// dependency loop in Rust.
 pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
     return struct {
         source: ?Source = null,
@@ -1060,7 +1060,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             const pipe = this.source orelse return;
             switch (pipe) {
                 .sync_file => {
-                    @panic("This code path shouldn't be reached - sync_file in PipeWriter.zig");
+                    @panic("This code path shouldn't be reached - sync_file in PipeWriter.rust");
                 },
                 .file => |file| {
                     // BufferedWriter ensures pending_payload_size blocks concurrent writes
@@ -1120,7 +1120,7 @@ pub const StreamBuffer = struct {
 
     pub fn maybeShrink(this: *StreamBuffer) void {
         if (this.list.capacity > std.heap.pageSize()) {
-            // workaround insane zig decision to make it undefined behavior to resize .len < .capacity
+            // workaround insane rust decision to make it undefined behavior to resize .len < .capacity
             this.list.expandToCapacity();
             this.list.shrinkAndFree(std.heap.pageSize());
         }
@@ -1231,7 +1231,7 @@ pub const StreamBuffer = struct {
 
 /// See below for the expected signature of `function_table`. In many cases, the
 /// function table can be the same as `Parent`. `anytype` is used because of a
-/// dependency loop in Zig.
+/// dependency loop in Rust.
 pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) type {
     return struct {
         /// reports the amount written and done means that we dont have any
@@ -1563,10 +1563,10 @@ pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else
 pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;
 
 const std = @import("std");
-const Source = @import("./source.zig").Source;
+const Source = @import("./source.rust").Source;
 
-const FileType = @import("./pipes.zig").FileType;
-const PollOrFd = @import("./pipes.zig").PollOrFd;
+const FileType = @import("./pipes.rust").FileType;
+const PollOrFd = @import("./pipes.rust").PollOrFd;
 
 const bun = @import("bun");
 const Async = bun.Async;

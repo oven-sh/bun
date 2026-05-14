@@ -55,14 +55,14 @@ pub const JSGlobalObject = opaque {
             bun.assert(this.hasException());
             return error.JSError;
         }
-        err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
+        err.put(this, RustString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
         return this.throwValue(err);
     }
 
     pub const requestTermination = JSGlobalObject__requestTermination;
     pub const clearTerminationException = JSGlobalObject__clearTerminationException;
 
-    pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool {
+    pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const RustString) bool {
         return JSGlobalObject__setTimeZone(this, timeZone);
     }
 
@@ -294,18 +294,18 @@ pub const JSGlobalObject = opaque {
                 // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
                 // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
                 _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toErrorInstance(this);
+                return RustString.static(fmt).toErrorInstance(this);
             };
 
             // Ensure we clone it.
-            var str = ZigString.initUTF8(buf.written());
+            var str = RustString.initUTF8(buf.written());
 
             return str.toErrorInstance(this);
         } else {
             if (comptime strings.isAllASCII(fmt)) {
                 return String.static(fmt).toErrorInstance(this);
             } else {
-                return ZigString.initUTF8(fmt).toErrorInstance(this);
+                return RustString.initUTF8(fmt).toErrorInstance(this);
             }
         }
     }
@@ -318,12 +318,12 @@ pub const JSGlobalObject = opaque {
             var writer = buf.writer();
             writer.print(fmt, args) catch {
                 _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toTypeErrorInstance(this);
+                return RustString.static(fmt).toTypeErrorInstance(this);
             };
-            var str = ZigString.fromUTF8(buf.slice());
+            var str = RustString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
-            return ZigString.static(fmt).toTypeErrorInstance(this);
+            return RustString.static(fmt).toTypeErrorInstance(this);
         }
     }
 
@@ -334,10 +334,10 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             try writer.print(fmt, args);
-            var str = ZigString.fromUTF8(buf.slice());
+            var str = RustString.fromUTF8(buf.slice());
             return str.toDOMExceptionInstance(this, code);
         } else {
-            return ZigString.static(fmt).toDOMExceptionInstance(this, code);
+            return RustString.static(fmt).toDOMExceptionInstance(this, code);
         }
     }
 
@@ -349,12 +349,12 @@ pub const JSGlobalObject = opaque {
             var writer = buf.writer();
             writer.print(fmt, args) catch {
                 _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toSyntaxErrorInstance(this);
+                return RustString.static(fmt).toSyntaxErrorInstance(this);
             };
-            var str = ZigString.fromUTF8(buf.slice());
+            var str = RustString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
-            return ZigString.static(fmt).toSyntaxErrorInstance(this);
+            return RustString.static(fmt).toSyntaxErrorInstance(this);
         }
     }
 
@@ -366,12 +366,12 @@ pub const JSGlobalObject = opaque {
             var writer = buf.writer();
             writer.print(fmt, args) catch {
                 _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toRangeErrorInstance(this);
+                return RustString.static(fmt).toRangeErrorInstance(this);
             };
-            var str = ZigString.fromUTF8(buf.slice());
+            var str = RustString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {
-            return ZigString.static(fmt).toRangeErrorInstance(this);
+            return RustString.static(fmt).toRangeErrorInstance(this);
         }
     }
 
@@ -381,7 +381,7 @@ pub const JSGlobalObject = opaque {
             bun.assert(this.hasException());
             return .zero;
         }
-        err.put(this, ZigString.static("code"), ZigString.static(@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)).toJS(this));
+        err.put(this, RustString.static("code"), RustString.static(@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)).toJS(this));
         return err;
     }
 
@@ -405,9 +405,9 @@ pub const JSGlobalObject = opaque {
             bun.assert(this.hasException());
             return error.JSError;
         }
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
-        if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
+        err.put(this, RustString.static("code"), RustString.init(@tagName(opts.code)).toJS(this));
+        if (opts.name) |name| err.put(this, RustString.static("name"), RustString.init(name).toJS(this));
+        if (opts.errno) |errno| err.put(this, RustString.static("errno"), try .fromAny(this, i32, errno));
         return this.throwValue(err);
     }
 
@@ -504,7 +504,7 @@ pub const JSGlobalObject = opaque {
         const allocator_ = stack.get();
         const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
         defer allocator_.free(buffer);
-        const str = ZigString.initUTF8(buffer);
+        const str = RustString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
         return this.throwValue(err_value);
     }
@@ -515,8 +515,8 @@ pub const JSGlobalObject = opaque {
     }
     pub const ctx = ref;
 
-    extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const ZigString) JSValue;
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) bun.JSError!JSValue {
+    extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const RustString) JSValue;
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const RustString) bun.JSError!JSValue {
         return bun.jsc.fromJSHostCall(globalObject, @src(), JSC__JSGlobalObject__createAggregateError, .{ globalObject, errors.ptr, errors.len, message });
     }
 
@@ -609,7 +609,7 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__vm(this);
     }
 
-    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *ZigString) bun.JSError!void {
+    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *RustString) bun.JSError!void {
         return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__deleteModuleRegistryEntry, .{ this, name_ });
     }
 
@@ -665,41 +665,41 @@ pub const JSGlobalObject = opaque {
         return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch return;
     }
 
-    extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToBytes(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToBlob(*JSGlobalObject, JSValue) JSValue;
+    extern fn RustGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
+    extern fn RustGlobalObject__readableStreamToBytes(*JSGlobalObject, JSValue) JSValue;
+    extern fn RustGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
+    extern fn RustGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
+    extern fn RustGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
+    extern fn RustGlobalObject__readableStreamToBlob(*JSGlobalObject, JSValue) JSValue;
 
     pub fn readableStreamToArrayBuffer(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToArrayBuffer(this, value);
+        return RustGlobalObject__readableStreamToArrayBuffer(this, value);
     }
 
     pub fn readableStreamToBytes(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToBytes(this, value);
+        return RustGlobalObject__readableStreamToBytes(this, value);
     }
 
     pub fn readableStreamToText(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToText(this, value);
+        return RustGlobalObject__readableStreamToText(this, value);
     }
 
     pub fn readableStreamToJSON(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToJSON(this, value);
+        return RustGlobalObject__readableStreamToJSON(this, value);
     }
 
     pub fn readableStreamToBlob(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToBlob(this, value);
+        return RustGlobalObject__readableStreamToBlob(this, value);
     }
 
     pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
+        return RustGlobalObject__readableStreamToFormData(this, value, content_type);
     }
 
-    extern fn ZigGlobalObject__makeNapiEnvForFFI(*JSGlobalObject) *napi.NapiEnv;
+    extern fn RustGlobalObject__makeNapiEnvForFFI(*JSGlobalObject) *napi.NapiEnv;
 
     pub fn makeNapiEnvForFFI(this: *JSGlobalObject) *napi.NapiEnv {
-        return ZigGlobalObject__makeNapiEnvForFFI(this);
+        return RustGlobalObject__makeNapiEnvForFFI(this);
     }
 
     pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
@@ -851,16 +851,16 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__vm(*JSGlobalObject) *VM;
-    extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
+    extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const RustString) void;
     extern fn JSGlobalObject__clearException(*JSGlobalObject) void;
     extern fn JSGlobalObject__clearExceptionExceptTermination(*JSGlobalObject) bool;
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
     extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
-    extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
+    extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const RustString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__requestTermination(this: *JSGlobalObject) void;
 
-    extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
+    extern fn Rust__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
     pub fn create(
         v: *jsc.VirtualMachine,
         console: *anyopaque,
@@ -873,7 +873,7 @@ pub const JSGlobalObject = opaque {
         defer trace.end();
 
         v.eventLoop().ensureWaker();
-        const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
+        const global = Rust__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
 
         // JSC might mess with the stack size.
         bun.StackCheck.configureThread();
@@ -881,19 +881,19 @@ pub const JSGlobalObject = opaque {
         return global;
     }
 
-    extern fn Zig__GlobalObject__createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject;
+    extern fn Rust__GlobalObject__createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject;
     pub fn createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject {
-        return Zig__GlobalObject__createForTestIsolation(old_global, console);
+        return Rust__GlobalObject__createForTestIsolation(old_global, console);
     }
 
-    extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
+    extern fn Rust__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
     pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
-        return Zig__GlobalObject__getModuleRegistryMap(global);
+        return Rust__GlobalObject__getModuleRegistryMap(global);
     }
 
-    extern fn Zig__GlobalObject__resetModuleRegistryMap(*JSGlobalObject, *anyopaque) bool;
+    extern fn Rust__GlobalObject__resetModuleRegistryMap(*JSGlobalObject, *anyopaque) bool;
     pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
-        return Zig__GlobalObject__resetModuleRegistryMap(global, map);
+        return Rust__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *bun.String) callconv(.c) void {
@@ -933,9 +933,9 @@ pub const JSGlobalObject = opaque {
         );
 
         const content_type = if (try response.getContentType()) |content_type|
-            content_type.toZigString()
+            content_type.toRustString()
         else
-            ZigString.static("null").*;
+            RustString.static("null").*;
 
         if (!content_type.eqlComptime("application/wasm")) {
             return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{f}'", .{content_type}).throw();
@@ -998,21 +998,21 @@ pub const JSGlobalObject = opaque {
         args: anytype,
     ) jsc.JSValue {
         if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
-            var zig_str = jsc.ZigString.init(fmt);
+            var rust_str = jsc.RustString.init(fmt);
             if (comptime !strings.isAllASCII(fmt)) {
-                zig_str.markUTF16();
+                rust_str.markUTF16();
             }
 
-            return zig_str.toErrorInstance(globalThis);
+            return rust_str.toErrorInstance(globalThis);
         } else {
             var fallback = std.heap.stackFallback(256, bun.default_allocator);
             var alloc = fallback.get();
 
             const buf = std.fmt.allocPrint(alloc, fmt, args) catch unreachable;
-            var zig_str = jsc.ZigString.init(buf);
-            zig_str.detectEncoding();
+            var rust_str = jsc.RustString.init(buf);
+            rust_str.detectEncoding();
             // it alwayas clones
-            const res = zig_str.toErrorInstance(globalThis);
+            const res = rust_str.toErrorInstance(globalThis);
             alloc.free(buf);
             return res;
         }
@@ -1045,16 +1045,16 @@ pub const JSGlobalObject = opaque {
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {
-        @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
-        @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
-        @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
-        @export(&jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
+        @export(&resolve, .{ .name = "Rust__GlobalObject__resolve" });
+        @export(&reportUncaughtException, .{ .name = "Rust__GlobalObject__reportUncaughtException" });
+        @export(&onCrash, .{ .name = "Rust__GlobalObject__onCrash" });
+        @export(&jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Rust__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
     }
 };
 
 const string = []const u8;
 
-const napi = @import("../runtime/napi/napi.zig");
+const napi = @import("../runtime/napi/napi.rust");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1069,4 +1069,4 @@ const CommonStrings = jsc.CommonStrings;
 const ErrorableString = jsc.ErrorableString;
 const JSValue = jsc.JSValue;
 const VM = jsc.VM;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

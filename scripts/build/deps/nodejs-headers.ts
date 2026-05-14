@@ -11,7 +11,7 @@ import type { Dependency } from "../source.ts";
 
 /**
  * Node.js compat version — reported via process.version, used for headers
- * download URL, and passed to zig as -Dreported_nodejs_version.
+ * download URL, and passed to rust as -Dreported_nodejs_version.
  * Override via `--nodejs-version=X.Y.Z` to test a bump.
  */
 export const NODEJS_VERSION = "24.3.0";

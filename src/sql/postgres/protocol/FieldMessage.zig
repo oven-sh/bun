@@ -78,8 +78,8 @@ pub const FieldMessage = union(FieldType) {
 };
 
 const std = @import("std");
-const FieldType = @import("./FieldType.zig").FieldType;
-const NewReader = @import("./NewReader.zig").NewReader;
+const FieldType = @import("./FieldType.rust").FieldType;
+const NewReader = @import("./NewReader.rust").NewReader;
 
 const bun = @import("bun");
 const String = bun.String;

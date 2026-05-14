@@ -1,4 +1,4 @@
-pub const SocketAddress = @import("./SocketAddress.zig");
+pub const SocketAddress = @import("./SocketAddress.rust");
 
 fn JSSocketType(comptime ssl: bool) type {
     if (!ssl) {
@@ -30,11 +30,11 @@ fn selectALPNCallback(ssl: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u
     }
 }
 
-pub const Handlers = @import("./Handlers.zig");
+pub const Handlers = @import("./Handlers.rust");
 pub const SocketConfig = Handlers.SocketConfig;
 
-pub const Listener = @import("./Listener.zig");
-pub const WindowsNamedPipeContext = if (Environment.isWindows) @import("./WindowsNamedPipeContext.zig") else void;
+pub const Listener = @import("./Listener.rust");
+pub const WindowsNamedPipeContext = if (Environment.isWindows) @import("./WindowsNamedPipeContext.rust") else void;
 
 pub fn NewSocket(comptime ssl: bool) type {
     return struct {
@@ -906,7 +906,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-            return ZigString.init(text).toJS(globalThis);
+            return RustString.init(text).toJS(globalThis);
         }
 
         pub fn getLocalPort(this: *This, _: *jsc.JSGlobalObject) JSValue {
@@ -2268,8 +2268,8 @@ pub fn jsSetSocketOptions(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
 const string = []const u8;
 
 const std = @import("std");
-const tls_socket_functions = @import("./tls_socket_functions.zig");
-const H2FrameParser = @import("../api/bun/h2_frame_parser.zig").H2FrameParser;
+const tls_socket_functions = @import("./tls_socket_functions.rust");
+const H2FrameParser = @import("../api/bun/h2_frame_parser.rust").H2FrameParser;
 
 const bun = @import("bun");
 const Async = bun.Async;
@@ -2282,5 +2282,5 @@ const BoringSSL = bun.BoringSSL.c;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const SecureContext = jsc.API.SecureContext;

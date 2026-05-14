@@ -8,13 +8,13 @@
 //! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
 //! side-channel.
 //!
-//! The Windows backend (`win_watcher.zig`, libuv `uv_fs_event`) never went through
+//! The Windows backend (`win_watcher.rust`, libuv `uv_fs_event`) never went through
 //! `bun.Watcher` and is a quarter of the size; this file gives Linux/macOS/FreeBSD
 //! the same shape:
 //!
 //!   PathWatcherManager        process-global, lazy, owns the OS resource
 //!     ├─ Linux:   one inotify fd + one reader thread, wd → PathWatcher map
-//!     ├─ macOS:   delegates to fs_events.zig (one CFRunLoop thread, one FSEventStream)
+//!     ├─ macOS:   delegates to fs_events.rust (one CFRunLoop thread, one FSEventStream)
 //!     └─ FreeBSD: one kqueue fd + one reader thread, fd → PathWatcher map
 //!
 //!   PathWatcher               one per unique (realpath, recursive) — deduped
@@ -44,7 +44,7 @@ pub const PathWatcherManager = struct {
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},
 
     /// Platform-specific state (inotify fd / kqueue fd + dispatch maps + thread).
-    /// On macOS this is empty — FSEvents owns its own thread via `fs_events.zig`.
+    /// On macOS this is empty — FSEvents owns its own thread via `fs_events.rust`.
     platform: Platform = .{},
 
     pub fn get() bun.sys.Maybe(*PathWatcherManager) {
@@ -95,7 +95,7 @@ pub const PathWatcher = struct {
     is_file: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
-    /// for per-handler duplicate suppression (same as win_watcher.zig). Guarded by
+    /// for per-handler duplicate suppression (same as win_watcher.rust). Guarded by
     /// `manager.mutex` on all platforms — every emit path (inotify/kqueue reader
     /// threads and the Darwin FSEvents callback) holds it while iterating, so
     /// attach/detach can never race with dispatch.
@@ -119,8 +119,8 @@ pub const PathWatcher = struct {
 
     /// Per-handler duplicate suppression.
     ///
-    /// The predicate is intentionally identical to `win_watcher.zig` and the old
-    /// `path_watcher.zig` so POSIX and Windows agree on which bursts are coalesced.
+    /// The predicate is intentionally identical to `win_watcher.rust` and the old
+    /// `path_watcher.rust` so POSIX and Windows agree on which bursts are coalesced.
     /// It suppresses only when, within the same millisecond, *both* the hash and
     /// the event type match the previous emission — arguably too aggressive, but
     /// changing it here would diverge from Windows; fixing all three together is
@@ -398,9 +398,9 @@ const Platform = switch (Environment.os) {
     .linux => Linux,
     .mac => Darwin,
     .freebsd => Kqueue,
-    // win_watcher.zig imports PathWatcher.EventType from this file, so this type must
+    // win_watcher.rust imports PathWatcher.EventType from this file, so this type must
     // resolve on Windows even though none of the code paths run. The stub keeps the
-    // struct fields typed while the actual Windows backend lives in win_watcher.zig.
+    // struct fields typed while the actual Windows backend lives in win_watcher.rust.
     .windows => struct {
         pub const Watch = struct {
             pub fn deinit(_: *@This()) void {}
@@ -556,7 +556,7 @@ const Linux = struct {
 
     /// The kernel `struct inotify_event` header. Shared with the bundler watcher;
     /// field naming there is `watch_descriptor` / `name_len`.
-    const InotifyEvent = @import("../../watcher/INotifyWatcher.zig").Event;
+    const InotifyEvent = @import("../../watcher/INotifyWatcher.rust").Event;
 
     fn threadMain(manager: *PathWatcherManager) void {
         Output.Source.configureNamedThread("fs.watch");
@@ -677,9 +677,9 @@ const Linux = struct {
     }
 };
 
-/// macOS: delegate to `fs_events.zig`, which already runs one CFRunLoop thread with
+/// macOS: delegate to `fs_events.rust`, which already runs one CFRunLoop thread with
 /// one FSEventStream covering every watched path. The PathWatcher itself is the
-/// FSEventsWatcher's opaque ctx — `fs_events.zig` calls back via `onFSEvent` below,
+/// FSEventsWatcher's opaque ctx — `fs_events.rust` calls back via `onFSEvent` below,
 /// and we fan out to the JS handlers.
 ///
 /// Unlike the old design, FSEvents is used for both files and directories (same as
@@ -733,7 +733,7 @@ const Darwin = struct {
         }
     }
 
-    /// Called from the CFRunLoop thread (`fs_events.zig`'s `_events_cb`) with the
+    /// Called from the CFRunLoop thread (`fs_events.rust`'s `_events_cb`) with the
     /// FSEvents loop mutex held. Take `manager.mutex` so iterating `handlers` can't
     /// race with `watch()`/`detach()` mutating it. The JS thread never holds
     /// `manager.mutex` across a call into FSEvents, so this is deadlock-free.
@@ -940,7 +940,7 @@ const Kqueue = struct {
     }
 };
 
-const FSEvents = if (Environment.isMac) @import("./fs_events.zig") else struct {};
+const FSEvents = if (Environment.isMac) @import("./fs_events.rust") else struct {};
 
 const std = @import("std");
 

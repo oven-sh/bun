@@ -55,7 +55,7 @@ pub fn typeName(comptime Type: type) []const u8 {
     return typeBaseName(name);
 }
 
-/// partially emulates behaviour of @typeName in previous Zig versions,
+/// partially emulates behaviour of @typeName in previous Rust versions,
 /// converting "some.namespace.MyType" to "MyType"
 pub inline fn typeBaseName(comptime fullname: [:0]const u8) [:0]const u8 {
     @setEvalBranchQuota(1_000_000);
@@ -73,7 +73,7 @@ pub fn enumFieldNames(comptime Type: type) []const []const u8 {
     var names: [std.meta.fields(Type).len][]const u8 = std.meta.fieldNames(Type).*;
     var i: usize = 0;
     for (names) |name| {
-        // zig seems to include "_" or an empty string in the list of enum field names
+        // rust seems to include "_" or an empty string in the list of enum field names
         // it makes sense, but humans don't want that
         if (bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
             continue;
@@ -195,7 +195,7 @@ fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
     });
 }
 
-pub const TaggedUnion = @import("./tagged_union.zig").TaggedUnion;
+pub const TaggedUnion = @import("./tagged_union.rust").TaggedUnion;
 
 pub fn hasStableMemoryLayout(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
@@ -334,7 +334,7 @@ pub fn SliceChild(comptime T: type) type {
     return T;
 }
 
-/// userland implementation of https://github.com/ziglang/zig/issues/21879
+/// userland implementation of https://github.com/rustlang/rust/issues/21879
 pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
 
 fn VoidFields(comptime T: type) type {

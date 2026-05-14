@@ -63,8 +63,8 @@ useSystemBun = inlineEnv.get("USE_SYSTEM_BUN") ?? useSystemBun;
 // Get the executable name (argv0)
 const argv0 = basename(tokens[0], extname(tokens[0]));
 
-// Check if it's zig or zig.exe
-if (argv0 === "zig") {
+// Check if it's rust or rust.exe
+if (argv0 === "rust") {
   // Filter out flags (starting with -) to get positional arguments
   const positionalArgs = tokens.slice(1).filter(arg => !arg.startsWith("-"));
 

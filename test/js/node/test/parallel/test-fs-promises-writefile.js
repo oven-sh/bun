@@ -16,7 +16,7 @@ const otherDest = path.resolve(tmpDir, 'tmp-2.txt');
 const buffer = Buffer.from('abc'.repeat(1000));
 const buffer2 = Buffer.from('xyz'.repeat(1000));
 const stream = Readable.from(['a', 'b', 'c']);
-const stream2 = Readable.from(['ümlaut', ' ', 'sechzig']);
+const stream2 = Readable.from(['ümlaut', ' ', 'sechrust']);
 const iterable = {
   expected: 'abc',
   *[Symbol.iterator]() {
@@ -98,7 +98,7 @@ async function doWriteInvalidIterable() {
 
 async function doWriteIterableWithEncoding() {
   await fsPromises.writeFile(dest, stream2, 'latin1');
-  const expected = 'ümlaut sechzig';
+  const expected = 'ümlaut sechrust';
   const data = fs.readFileSync(dest, 'latin1');
   assert.deepStrictEqual(data, expected);
 }

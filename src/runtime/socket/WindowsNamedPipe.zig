@@ -600,7 +600,7 @@ const WrapperType = SSLWrapper(*WindowsNamedPipe);
 const log = bun.Output.scoped(.WindowsNamedPipe, .visible);
 
 const std = @import("std");
-const SSLWrapper = @import("./ssl_wrapper.zig").SSLWrapper;
+const SSLWrapper = @import("./ssl_wrapper.rust").SSLWrapper;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

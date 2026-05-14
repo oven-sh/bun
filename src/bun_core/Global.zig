@@ -232,10 +232,10 @@ comptime {
 
 const string = []const u8;
 
-const Output = @import("./output.zig");
+const Output = @import("./output.rust");
 const std = @import("std");
 
-const Environment = @import("./env.zig");
+const Environment = @import("./env.rust");
 const version_string = Environment.version_string;
 
 const bun = @import("bun");

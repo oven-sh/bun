@@ -128,7 +128,7 @@ const log = debug;
 
 const std = @import("std");
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const EnvStr = interpreter.EnvStr;
 const Interpreter = interpreter.Interpreter;
 

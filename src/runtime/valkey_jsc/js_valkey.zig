@@ -79,7 +79,7 @@ pub const SubscriptionCtx = struct {
         }
 
         // Existing is guaranteed to be an array of callbacks.
-        // This check is necessary because crossing between Zig and C++ is necessary because Zig doesn't know that C++
+        // This check is necessary because crossing between Rust and C++ is necessary because Rust doesn't know that C++
         // is side-effect-free.
         if (comptime bun.Environment.isDebug) {
             bun.assert(existing.isArray());
@@ -171,7 +171,7 @@ pub const SubscriptionCtx = struct {
         args: []const JSValue,
     ) bun.JSError!void {
         const callbacks = try this.getCallbacks(globalObject, channelName) orelse {
-            debug("No callbacks found for channel {f}", .{channelName.asString().getZigString(globalObject)});
+            debug("No callbacks found for channel {f}", .{channelName.asString().getRustString(globalObject)});
             return;
         };
 
@@ -272,7 +272,7 @@ pub const JSValkeyClient = struct {
         defer url_str.deref();
         var fallback_url_buf: [2048]u8 = undefined;
 
-        // Parse and validate the URL using URL.zig's fromString which returns null for invalid URLs
+        // Parse and validate the URL using URL.rust's fromString which returns null for invalid URLs
         // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
         // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
         // the case right now and I do not understand why. It will take some work in JSC to
@@ -1438,10 +1438,10 @@ pub const JSValkeyClient = struct {
     pub const blmpop = fns.blmpop;
     pub const brpoplpush = fns.brpoplpush;
 
-    const fns = @import("./js_valkey_functions.zig");
+    const fns = @import("./js_valkey_functions.rust");
 };
 
-/// Referenced by `dispatch.zig` (kind = `.valkey[_tls]`).
+/// Referenced by `dispatch.rust` (kind = `.valkey[_tls]`).
 pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         const SocketType = uws.NewSocketHandler(ssl);
@@ -1654,12 +1654,12 @@ const Options = struct {
 
 const debug = bun.Output.scoped(.RedisJS, .visible);
 
-const Command = @import("./ValkeyCommand.zig");
+const Command = @import("./ValkeyCommand.rust");
 const std = @import("std");
-const valkey = @import("./valkey.zig");
-const URL = @import("../../jsc/URL.zig").URL;
+const valkey = @import("./valkey.rust");
+const URL = @import("../../jsc/URL.rust").URL;
 
-const protocol = @import("../../valkey/valkey_protocol.zig");
+const protocol = @import("../../valkey/valkey_protocol.rust");
 const RedisError = protocol.RedisError;
 
 const bun = @import("bun");

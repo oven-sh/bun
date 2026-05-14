@@ -1,15 +1,15 @@
 // Regression test for WebSocket upgrade request crash on non-ASCII inputs.
 //
-// The HTTP upgrade request is built in Zig. Before the fix, header values,
+// The HTTP upgrade request is built in Rust. Before the fix, header values,
 // host, path, client protocol and proxy parameters were passed from C++ as
-// `ZigString` wrappers over the underlying `WTF::StringImpl`. When a
+// `RustString` wrappers over the underlying `WTF::StringImpl`. When a
 // WTFStringImpl was not 8-bit ASCII (either Latin1 with high bytes, or UTF-16),
-// calling `.slice()` on the ZigString returned raw Latin1 / UTF-16 code units.
+// calling `.slice()` on the RustString returned raw Latin1 / UTF-16 code units.
 // Those bytes were then substituted into a printf-like format string and the
 // resulting garbage length could cause heap corruption in mimalloc
 // (`_mi_heap_realloc_zero`) during `std.fmt.allocPrint`.
 //
-// The fix migrates the WebSocket upgrade client FFI from ZigString to
+// The fix migrates the WebSocket upgrade client FFI from RustString to
 // BunString and decodes every input with `bun.String.toUTF8(allocator)`.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -105,7 +105,7 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
 
   test("UTF-16 URL path is decoded to UTF-8 without crashing", async () => {
     // `new URL(...)` with a non-Latin1 path produces a 16-bit-backed
-    // WTFStringImpl for the parsed URL. Before the fix, the Zig side called
+    // WTFStringImpl for the parsed URL. Before the fix, the Rust side called
     // `.slice()` on that and wrote raw UTF-16 bytes into the upgrade request.
     // The target port immediately destroys any connection so the WebSocket
     // fails quickly — we only care that the upgrade request build doesn't
@@ -123,7 +123,7 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     // A subprotocol containing codepoints > U+00FF is rejected by the
     // WebSocket spec validator (which only allows HTTP tokens), so the
     // constructor throws a SyntaxError. The important thing is that the
-    // validator runs before the Zig side sees the string and crashes.
+    // validator runs before the Rust side sees the string and crashes.
     const port = await deadPort();
     expect(
       () =>

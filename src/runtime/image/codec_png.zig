@@ -1,5 +1,5 @@
 //! libspng decode/encode for `Bun.Image`. Indexed-PNG encode quantises via
-//! `quantize.zig`. Dispatch lives in codecs.zig; this file is the codec body.
+//! `quantize.rust`. Dispatch lives in codecs.rust; this file is the codec body.
 
 const spng_ctx = opaque {};
 extern fn spng_ctx_new(flags: c_int) ?*spng_ctx;
@@ -151,7 +151,7 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const
 
 /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
 /// with PLTE + tRNS. The quantizer is a small median-cut — see
-/// quantize.zig. `icc_profile` carries the source colour space; median
+/// quantize.rust. `icc_profile` carries the source colour space; median
 /// cut operates on the raw RGB numbers without converting colour spaces,
 /// so the palette entries are still in that space and need the profile
 /// to be interpreted correctly — same contract as truecolour encode.
@@ -192,6 +192,6 @@ pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, d
 }
 
 const bun = @import("bun");
-const codecs = @import("./codecs.zig");
-const quantize = @import("./quantize.zig");
+const codecs = @import("./codecs.rust");
+const quantize = @import("./quantize.rust");
 const std = @import("std");

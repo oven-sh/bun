@@ -26,7 +26,7 @@
 #pragma once
 
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/VM.h>
@@ -84,6 +84,6 @@ private:
 static_assert(sizeof(JSSQLStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLStatementConstructor in JSFunction IsoSubspace");
 Structure* createJSSQLStatementStructure(JSGlobalObject* globalObject);
 
-JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject);
+JSValue createJSSQLStatementConstructor(Rust::GlobalObject* globalObject);
 
 } // namespace WebCore

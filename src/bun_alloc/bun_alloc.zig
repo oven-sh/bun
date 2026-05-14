@@ -1,18 +1,18 @@
 pub const c_allocator = basic.c_allocator;
 pub const z_allocator = basic.z_allocator;
 pub const freeWithoutSize = basic.freeWithoutSize;
-pub const mimalloc = @import("../mimalloc_sys/mimalloc.zig");
-pub const MimallocArena = @import("./MimallocArena.zig");
+pub const mimalloc = @import("../mimalloc_sys/mimalloc.rust");
+pub const MimallocArena = @import("./MimallocArena.rust");
 
-pub const allocation_scope = @import("./allocation_scope.zig");
+pub const allocation_scope = @import("./allocation_scope.rust");
 pub const AllocationScope = allocation_scope.AllocationScope;
 pub const AllocationScopeIn = allocation_scope.AllocationScopeIn;
 
-pub const NullableAllocator = @import("./NullableAllocator.zig");
-pub const MaxHeapAllocator = @import("./MaxHeapAllocator.zig");
-pub const LinuxMemFdAllocator = @import("./LinuxMemFdAllocator.zig");
-pub const BufferFallbackAllocator = @import("./BufferFallbackAllocator.zig");
-pub const MaybeOwned = @import("./maybe_owned.zig").MaybeOwned;
+pub const NullableAllocator = @import("./NullableAllocator.rust");
+pub const MaxHeapAllocator = @import("./MaxHeapAllocator.rust");
+pub const LinuxMemFdAllocator = @import("./LinuxMemFdAllocator.rust");
+pub const BufferFallbackAllocator = @import("./BufferFallbackAllocator.rust");
+pub const MaybeOwned = @import("./maybe_owned.rust").MaybeOwned;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
@@ -218,7 +218,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             pub inline fn zero(this: *OverflowBlock) void {
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
-                // https://github.com/ziglang/zig/issues/24313
+                // https://github.com/rustlang/rust/issues/24313
                 this.used = std.atomic.Value(u16).init(0);
                 this.prev = null;
             }
@@ -257,7 +257,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
                 instance = bun.handleOom(bun.default_allocator.create(Self));
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
-                // https://github.com/ziglang/zig/issues/24313
+                // https://github.com/rustlang/rust/issues/24313
                 instance.allocator = allocator;
                 instance.mutex = .{};
                 instance.tail.zero();
@@ -349,7 +349,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 instance = bun.handleOom(bun.default_allocator.create(Self));
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
-                // https://github.com/ziglang/zig/issues/24313
+                // https://github.com/rustlang/rust/issues/24313
                 instance.allocator = allocator;
                 instance.backing_buf_used = 0;
                 instance.slice_buf_used = 0;
@@ -535,7 +535,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             if (!loaded) {
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
-                // https://github.com/ziglang/zig/issues/24313
+                // https://github.com/rustlang/rust/issues/24313
                 instance = bun.handleOom(bun.default_allocator.create(Self));
                 instance.index = IndexMap{};
                 instance.allocator = allocator;
@@ -702,7 +702,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 instance = bun.handleOom(bun.default_allocator.create(Self));
                 // Avoid struct initialization syntax.
                 // This makes Bun start about 1ms faster.
-                // https://github.com/ziglang/zig/issues/24313
+                // https://github.com/rustlang/rust/issues/24313
                 instance.map = BSSMapType.init(allocator);
                 instance.key_list_buffer_used = 0;
                 instance.key_list_overflow.zero();
@@ -914,7 +914,7 @@ pub fn unpackNullable(comptime Allocator: type, allocator: Nullable(Allocator)) 
 /// The default allocator. This is a zero-sized type whose `allocator` method returns
 /// `bun.default_allocator`.
 ///
-/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+/// This type is a `GenericAllocator`; see `src/allocators.rust`.
 pub const Default = struct {
     pub fn allocator(self: Default) std.mem.Allocator {
         _ = self;
@@ -925,11 +925,11 @@ pub const Default = struct {
 };
 
 const basic = if (bun.use_mimalloc)
-    @import("./basic.zig")
+    @import("./basic.rust")
 else
-    @import("./fallback.zig");
+    @import("./fallback.rust");
 
-const Environment = @import("../bun_core/env.zig");
+const Environment = @import("../bun_core/env.rust");
 const std = @import("std");
 
 const bun = @import("bun");

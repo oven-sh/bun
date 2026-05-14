@@ -2,7 +2,7 @@
 
 #include "root.h"
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
@@ -16,7 +16,7 @@ class GlobalObject;
 
 namespace WebCore {
 
-Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world);
+Rust::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world);
 
 template<class JSClass>
 JSClass* toJSDOMGlobalObject(JSC::VM& vm, JSC::JSValue value)

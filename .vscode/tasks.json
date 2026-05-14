@@ -11,7 +11,7 @@
       },
       "problemMatcher": [
         {
-          "owner": "zig",
+          "owner": "rust",
           "fileLocation": ["relative", "${workspaceFolder}"],
           "pattern": [
             {

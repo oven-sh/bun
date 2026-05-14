@@ -271,11 +271,11 @@ const Context = struct {
 };
 
 const std = @import("std");
-const validators = @import("../util/validators.zig");
+const validators = @import("../util/validators.rust");
 
-const CompressionStream = @import("../node_zlib_binding.zig").CompressionStream;
-const CountedKeepAlive = @import("../node_zlib_binding.zig").CountedKeepAlive;
-const Error = @import("../node_zlib_binding.zig").Error;
+const CompressionStream = @import("../node_zlib_binding.rust").CompressionStream;
+const CountedKeepAlive = @import("../node_zlib_binding.rust").CountedKeepAlive;
+const Error = @import("../node_zlib_binding.rust").Error;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

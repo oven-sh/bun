@@ -240,13 +240,13 @@ pub const JestPrettyFormat = struct {
             this.estimated_line_length +|= len;
         }
 
-        pub const ZigFormatter = struct {
+        pub const RustFormatter = struct {
             formatter: *JestPrettyFormat.Formatter,
             global: *JSGlobalObject,
             value: JSValue,
 
             pub const WriteError = error{UhOh};
-            pub fn format(self: ZigFormatter, writer: *std.Io.Writer) !void {
+            pub fn format(self: RustFormatter, writer: *std.Io.Writer) !void {
                 self.formatter.remaining_values = &[_]JSValue{self.value};
                 defer {
                     self.formatter.remaining_values = &[_]JSValue{};
@@ -265,7 +265,7 @@ pub const JestPrettyFormat = struct {
 
         // For detecting circular references
         pub const Visited = struct {
-            const ObjectPool = @import("../../collections/pool.zig").ObjectPool;
+            const ObjectPool = @import("../../collections/pool.rust").ObjectPool;
             pub const Map = std.AutoHashMap(JSValue, void);
             pub const Pool = ObjectPool(
                 Map,
@@ -416,8 +416,8 @@ pub const JestPrettyFormat = struct {
                 // Is this a react element?
                 if (js_type.isObject() and js_type != .ProxyObject) {
                     if (try value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
-                        var reactElement = ZigString.init("react.element");
-                        var react_fragment = ZigString.init("react.fragment");
+                        var reactElement = RustString.init("react.element");
+                        var react_fragment = RustString.init("react.fragment");
 
                         if (try typeof_symbol.isSameValue(.symbolFor(globalThis, &reactElement), globalThis) or try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_fragment), globalThis)) {
                             return .{ .tag = .JSX, .cell = js_type };
@@ -612,7 +612,7 @@ pub const JestPrettyFormat = struct {
                     };
                 }
 
-                pub inline fn writeString(self: *@This(), str: ZigString) void {
+                pub inline fn writeString(self: *@This(), str: RustString) void {
                     self.print("{f}", .{str});
                 }
 
@@ -717,7 +717,7 @@ pub const JestPrettyFormat = struct {
                             .ctx = this.writer,
                             .failed = false,
                         };
-                        var name_str = ZigString.init("");
+                        var name_str = RustString.init("");
 
                         try value.getNameProperty(globalThis, &name_str);
                         if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
@@ -734,7 +734,7 @@ pub const JestPrettyFormat = struct {
                     this.formatter.estimated_line_length = this.formatter.indent * 2 + 1;
 
                     if (this.formatter.indent == 0) this.writer.writeAll("\n") catch {};
-                    var classname = ZigString.Empty;
+                    var classname = RustString.Empty;
                     try value.getClassName(globalThis, &classname);
                     if (!classname.isEmpty() and !classname.eqlComptime("Object")) {
                         this.writer.print("{f} ", .{classname}) catch {};
@@ -748,7 +748,7 @@ pub const JestPrettyFormat = struct {
                 pub fn forEach(
                     globalThis: *JSGlobalObject,
                     ctx_ptr: ?*anyopaque,
-                    key_: [*c]ZigString,
+                    key_: [*c]RustString,
                     value: JSValue,
                     is_symbol: bool,
                     is_private_symbol: bool,
@@ -902,8 +902,8 @@ pub const JestPrettyFormat = struct {
                     this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
                 },
                 .String => {
-                    var str = ZigString.init("");
-                    try value.toZigString(&str, this.globalThis);
+                    var str = RustString.init("");
+                    try value.toRustString(&str, this.globalThis);
                     this.addForNewLine(str.len);
 
                     if (value.jsType() == .StringObject or value.jsType() == .DerivedStringObject) {
@@ -1018,7 +1018,7 @@ pub const JestPrettyFormat = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },
                 .BigInt => {
-                    const out_str = (try value.getZigString(this.globalThis)).slice();
+                    const out_str = (try value.getRustString(this.globalThis)).slice();
                     this.addForNewLine(out_str.len);
 
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -1065,7 +1065,7 @@ pub const JestPrettyFormat = struct {
                     }
                 },
                 .Error => {
-                    var classname = ZigString.Empty;
+                    var classname = RustString.Empty;
                     try value.getClassName(this.globalThis, &classname);
                     var message_string = bun.String.empty;
                     defer message_string.deref();
@@ -1082,7 +1082,7 @@ pub const JestPrettyFormat = struct {
                     return;
                 },
                 .Class => {
-                    var printable = ZigString.init(&name_buf);
+                    var printable = RustString.init(&name_buf);
                     try value.getClassName(this.globalThis, &printable);
                     this.addForNewLine(printable.len);
 
@@ -1093,7 +1093,7 @@ pub const JestPrettyFormat = struct {
                     }
                 },
                 .Function => {
-                    var printable = ZigString.init(&name_buf);
+                    var printable = RustString.init(&name_buf);
                     try value.getNameProperty(this.globalThis, &printable);
 
                     if (printable.len == 0) {
@@ -1480,9 +1480,9 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("<");
 
                     var needs_space = false;
-                    var tag_name_str = ZigString.init("");
+                    var tag_name_str = RustString.init("");
 
-                    var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
+                    var tag_name_slice: RustString.Slice = RustString.Slice.empty;
                     var is_tag_kind_primitive = false;
 
                     defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
@@ -1491,21 +1491,21 @@ pub const JestPrettyFormat = struct {
                         const _tag = try Tag.get(type_value, this.globalThis);
 
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                            try type_value.toZigString(&tag_name_str, this.globalThis);
+                            try type_value.toRustString(&tag_name_str, this.globalThis);
                             is_tag_kind_primitive = true;
                         } else if (_tag.cell.isObject() or type_value.isCallable()) {
                             try type_value.getNameProperty(this.globalThis, &tag_name_str);
                             if (tag_name_str.len == 0) {
-                                tag_name_str = ZigString.init("NoName");
+                                tag_name_str = RustString.init("NoName");
                             }
                         } else {
-                            try type_value.toZigString(&tag_name_str, this.globalThis);
+                            try type_value.toRustString(&tag_name_str, this.globalThis);
                         }
 
                         tag_name_slice = tag_name_str.toSlice(default_allocator);
                         needs_space = true;
                     } else {
-                        tag_name_slice = ZigString.init("unknown").toSlice(default_allocator);
+                        tag_name_slice = RustString.init("unknown").toSlice(default_allocator);
 
                         needs_space = true;
                     }
@@ -1616,7 +1616,7 @@ pub const JestPrettyFormat = struct {
                                     print_children: {
                                         switch (tag.tag) {
                                             .String => {
-                                                const children_string = try children.getZigString(this.globalThis);
+                                                const children_string = try children.getRustString(this.globalThis);
                                                 if (children_string.len == 0) break :print_children;
                                                 if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
@@ -1733,7 +1733,7 @@ pub const JestPrettyFormat = struct {
                     try value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
 
                     if (iter.i == 0) {
-                        var object_name = ZigString.Empty;
+                        var object_name = RustString.Empty;
                         try value.getClassName(this.globalThis, &object_name);
 
                         if (!object_name.eqlComptime("Object")) {
@@ -1770,7 +1770,7 @@ pub const JestPrettyFormat = struct {
                     }
 
                     if (jsType == .Uint8Array) {
-                        var buffer_name = ZigString.Empty;
+                        var buffer_name = RustString.Empty;
                         try value.getClassName(this.globalThis, &buffer_name);
                         if (strings.eqlComptime(buffer_name.slice(), "Buffer")) {
                             // special formatting for 'Buffer' snapshots only
@@ -2038,7 +2038,7 @@ pub const JestPrettyFormat = struct {
                 writer.writeAll("Any<");
             }
 
-            var class_name = ZigString.init(&name_buf);
+            var class_name = RustString.init(&name_buf);
             try constructor_value.getClassName(this.globalThis, &class_name);
             this.addForNewLine(class_name.len);
             writer.print(comptime Output.prettyFmt("<cyan>{f}<r>", enable_ansi_colors), .{class_name});
@@ -2127,7 +2127,7 @@ pub const JestPrettyFormat = struct {
 
 const string = []const u8;
 
-const expect = @import("./expect.zig");
+const expect = @import("./expect.rust");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -2141,4 +2141,4 @@ const CAPI = jsc.C;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

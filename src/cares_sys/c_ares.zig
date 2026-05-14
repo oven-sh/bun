@@ -192,7 +192,7 @@ pub const struct_hostent = extern struct {
     // hostent in glibc uses int for h_addrtype and h_length, whereas hostent in winsock2.h uses short.
     const hostent_int = if (bun.Environment.isWindows) c_short else c_int;
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").hostentToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").hostentToJSResponse;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_hostent) void;
@@ -268,7 +268,7 @@ pub const hostent_with_ttls = struct {
     hostent: *struct_hostent,
     ttls: [256]c_int = [_]c_int{-1} ** 256,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").hostentWithTtlsToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").hostentWithTtlsToJSResponse;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*hostent_with_ttls) void;
@@ -359,7 +359,7 @@ pub const struct_nameinfo = extern struct {
     node: [*c]u8,
     service: [*c]u8,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").nameinfoToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").nameinfoToJSResponse;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, node: ?struct_nameinfo) void;
@@ -416,7 +416,7 @@ pub const AddrInfo = extern struct {
     node: ?*AddrInfo_node = null,
     name_: ?[*:0]u8 = null,
 
-    pub const toJSArray = @import("../runtime/dns_jsc/cares_jsc.zig").addrInfoToJSArray;
+    pub const toJSArray = @import("../runtime/dns_jsc/cares_jsc.rust").addrInfoToJSArray;
 
     pub inline fn name(this: *const AddrInfo) []const u8 {
         const name_ = this.name_ orelse return "";
@@ -752,9 +752,9 @@ pub const struct_ares_caa_reply = extern struct {
     value: [*c]u8,
     length: usize,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").caaReplyToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").caaReplyToJSResponse;
 
-    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.zig").caaReplyToJS;
+    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.rust").caaReplyToJS;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_caa_reply) void;
@@ -795,9 +795,9 @@ pub const struct_ares_srv_reply = extern struct {
     weight: c_ushort,
     port: c_ushort,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").srvReplyToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").srvReplyToJSResponse;
 
-    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.zig").srvReplyToJS;
+    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.rust").srvReplyToJS;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_srv_reply) void;
@@ -836,9 +836,9 @@ pub const struct_ares_mx_reply = extern struct {
     host: [*c]u8,
     priority: c_ushort,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").mxReplyToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").mxReplyToJSResponse;
 
-    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.zig").mxReplyToJS;
+    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.rust").mxReplyToJS;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_mx_reply) void;
@@ -877,11 +877,11 @@ pub const struct_ares_txt_reply = extern struct {
     txt: [*c]u8,
     length: usize,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").txtReplyToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").txtReplyToJSResponse;
 
-    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.zig").txtReplyToJS;
+    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.rust").txtReplyToJS;
 
-    pub const toJSForAny = @import("../runtime/dns_jsc/cares_jsc.zig").txtReplyToJSForAny;
+    pub const toJSForAny = @import("../runtime/dns_jsc/cares_jsc.rust").txtReplyToJSForAny;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_txt_reply) void;
@@ -930,9 +930,9 @@ pub const struct_ares_naptr_reply = extern struct {
     order: c_ushort,
     preference: c_ushort,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").naptrReplyToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").naptrReplyToJSResponse;
 
-    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.zig").naptrReplyToJS;
+    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.rust").naptrReplyToJS;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_naptr_reply) void;
@@ -975,9 +975,9 @@ pub const struct_ares_soa_reply = extern struct {
     expire: c_uint,
     minttl: c_uint,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").soaReplyToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").soaReplyToJSResponse;
 
-    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.zig").soaReplyToJS;
+    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.rust").soaReplyToJS;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_soa_reply) void;
@@ -1032,9 +1032,9 @@ pub const struct_any_reply = struct {
     soa_reply: ?*struct_ares_soa_reply = null,
     caa_reply: ?*struct_ares_caa_reply = null,
 
-    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.zig").anyReplyToJSResponse;
+    pub const toJSResponse = @import("../runtime/dns_jsc/cares_jsc.rust").anyReplyToJSResponse;
 
-    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.zig").anyReplyToJS;
+    pub const toJS = @import("../runtime/dns_jsc/cares_jsc.rust").anyReplyToJS;
 
     pub fn Callback(comptime Type: type) type {
         return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_any_reply) void;
@@ -1260,10 +1260,10 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
     ENOSERVER = ARES_ENOSERVER,
 
-    pub const Deferred = @import("../runtime/dns_jsc/cares_jsc.zig").ErrorDeferred;
-    pub const toDeferred = @import("../runtime/dns_jsc/cares_jsc.zig").errorToDeferred;
-    pub const toJSWithSyscall = @import("../runtime/dns_jsc/cares_jsc.zig").errorToJSWithSyscall;
-    pub const toJSWithSyscallAndHostname = @import("../runtime/dns_jsc/cares_jsc.zig").errorToJSWithSyscallAndHostname;
+    pub const Deferred = @import("../runtime/dns_jsc/cares_jsc.rust").ErrorDeferred;
+    pub const toDeferred = @import("../runtime/dns_jsc/cares_jsc.rust").errorToDeferred;
+    pub const toJSWithSyscall = @import("../runtime/dns_jsc/cares_jsc.rust").errorToJSWithSyscall;
+    pub const toJSWithSyscallAndHostname = @import("../runtime/dns_jsc/cares_jsc.rust").errorToJSWithSyscallAndHostname;
 
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
@@ -1490,7 +1490,7 @@ pub const ares_uri_reply = struct_ares_uri_reply;
 pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
 
-// Bun__canonicalizeIP_ host fn: see src/runtime/dns_jsc/cares_jsc.zig
+// Bun__canonicalizeIP_ host fn: see src/runtime/dns_jsc/cares_jsc.rust
 
 /// Creates a sockaddr structure from an address, port.
 ///

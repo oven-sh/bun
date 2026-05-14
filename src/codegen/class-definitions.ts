@@ -94,13 +94,13 @@ export class ClassDefinition {
   /**
    * Which language implements the native side of this class.
    *
-   * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
+   * The C++ wrapper output (`RustGeneratedClasses.{h,cpp}`) is byte-identical
    * regardless of this flag — it only selects whether the implementer thunks
-   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
+   * land in `RustGeneratedClasses.rust` or `generated_classes.rs`.
    *
-   * @default "zig"
+   * @default "rust"
    */
-  lang?: "zig" | "rust";
+  lang?: "rust" | "rust";
   /**
    * Fully-qualified Rust path of the native struct backing this class, e.g.
    * `crate::webcore::request::Request`. The codegen emits
@@ -140,7 +140,7 @@ export class ClassDefinition {
   /**
    * Class constructor needs `this` value.
    *
-   * Makes the code generator call the Zig constructor function **after** the
+   * Makes the code generator call the Rust constructor function **after** the
    * JSValue is instantiated. Only use this if you must, as it probably isn't
    * good for GC since it means if the constructor throws the GC will have to
    * clean up the object that never reached JS.
@@ -160,7 +160,7 @@ export class ClassDefinition {
    * You _must_ free the pointer to your native class!
    *
    * Example for pointers only owned by JavaScript classes:
-   * ```zig
+   * ```rust
    * pub const NativeClass = struct {
    *
    *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
@@ -233,7 +233,7 @@ export class ClassDefinition {
    * Called from any thread.
    *
    * When `true`, classes should have a method with this signature:
-   * ```zig
+   * ```rust
    * pub fn estimatedSize(this: *@This()) usize;
    * ```
    *

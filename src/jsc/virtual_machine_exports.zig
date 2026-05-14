@@ -1,6 +1,6 @@
 comptime {
     if (bun.Environment.isWindows) {
-        @export(&Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+        @export(&Bun__RustGlobalObject__uvLoop, .{ .name = "Bun__RustGlobalObject__uvLoop" });
     }
 }
 
@@ -146,7 +146,7 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.transpiler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.c) *bun.windows.libuv.Loop {
+pub fn Bun__RustGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.c) *bun.windows.libuv.Loop {
     return jsc_vm.uvLoop();
 }
 
@@ -202,14 +202,14 @@ export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_pro
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
-    vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
+    vm.source_mappings.putRustSourceProvider(opaque_source_provider, slice.slice());
 }
 
 export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
-    vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());
+    vm.source_mappings.removeRustSourceProvider(opaque_source_provider, slice.slice());
 }
 
 pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -229,7 +229,7 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
     return JSValue.jsNumber(prev);
 }
 
-const IPC = @import("./ipc.zig");
+const IPC = @import("./ipc.rust");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -13,7 +13,7 @@
 #include <JavaScriptCore/VM.h>
 #include <limits>
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
@@ -25,7 +25,7 @@ class GlobalObject;
 extern "C" size_t Bun__stringSyntheticAllocationLimit;
 extern "C" const char* Bun__errnoName(int);
 
-namespace Zig {
+namespace Rust {
 
 // 8 bit byte
 // we tag the final two bits
@@ -69,11 +69,11 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     if (ptr == nullptr)
         return;
 
-    ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
+    RustString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
-static const WTF::String toString(ZigString str)
+static const WTF::String toString(RustString str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -118,7 +118,7 @@ static const WTF::String toString(ZigString str)
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
-static WTF::AtomString toAtomString(ZigString str)
+static WTF::AtomString toAtomString(RustString str)
 {
 
     if (!isTaggedUTF16Ptr(str.ptr)) {
@@ -128,7 +128,7 @@ static WTF::AtomString toAtomString(ZigString str)
     }
 }
 
-static const WTF::String toString(ZigString str, StringPointer ptr)
+static const WTF::String toString(RustString str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
         return WTF::String();
@@ -156,7 +156,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
               { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
-static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
+static const WTF::String toStringCopy(RustString str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
         return WTF::String();
@@ -184,7 +184,7 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
               std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
-static const WTF::String toStringCopy(ZigString str)
+static const WTF::String toStringCopy(RustString str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -219,7 +219,7 @@ static const WTF::String toStringCopy(ZigString str)
     }
 }
 
-static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
+static void appendToBuilder(RustString str, WTF::StringBuilder& builder)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return;
@@ -245,22 +245,22 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
     builder.append({ untag(str.ptr), str.len });
 }
 
-static WTF::String toStringNotConst(ZigString str) { return toString(str); }
+static WTF::String toStringNotConst(RustString str) { return toString(str); }
 
-static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* global)
+static const JSC::JSString* toJSString(RustString str, JSC::JSGlobalObject* global)
 {
     return JSC::jsOwnedString(global->vm(), toString(str));
 }
 
-static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
+static JSC::JSString* toJSStringGC(RustString str, JSC::JSGlobalObject* global)
 {
     return JSC::jsString(global->vm(), toStringCopy(str));
 }
 
-static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
+static const RustString RustStringEmpty = RustString { (unsigned char*)"", 0 };
 static const unsigned char __dot_char = '.';
-static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
-static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };
+static const RustString RustStringCwd = RustString { &__dot_char, 1 };
+static const BunString BunStringCwd = BunString { BunStringTag::StaticRustString, RustStringCwd };
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
@@ -268,88 +268,88 @@ static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
 
-static ZigString toZigString(WTF::String* str)
+static RustString toRustString(WTF::String* str)
 {
     return str->isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+        ? RustStringEmpty
+        : RustString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
-static ZigString toZigString(WTF::StringImpl& str)
+static RustString toRustString(WTF::StringImpl& str)
 {
     return str.isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        ? RustStringEmpty
+        : RustString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
-// Overload for `StringImpl*` so callers like `toZigString(string.impl())` resolve here
+// Overload for `StringImpl*` so callers like `toRustString(string.impl())` resolve here
 // instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
 // with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
-static ZigString toZigString(const WTF::StringImpl* str)
+static RustString toRustString(const WTF::StringImpl* str)
 {
     return (!str || str->isEmpty())
-        ? ZigStringEmpty
-        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+        ? RustStringEmpty
+        : RustString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
-static ZigString toZigString(WTF::StringView& str)
+static RustString toRustString(WTF::StringView& str)
 {
     return str.isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        ? RustStringEmpty
+        : RustString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
-static ZigString toZigString(const WTF::StringView& str)
+static RustString toRustString(const WTF::StringView& str)
 {
     return str.isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        ? RustStringEmpty
+        : RustString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
-static ZigString toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
+static RustString toRustString(JSC::JSString& str, JSC::JSGlobalObject* global)
 {
     if (str.isSubstring()) {
-        return toZigString(str.view(global));
+        return toRustString(str.view(global));
     }
 
-    return toZigString(str.value(global));
+    return toRustString(str.value(global));
 }
 
-static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
+static RustString toRustString(JSC::JSString* str, JSC::JSGlobalObject* global)
 {
     if (str->isSubstring()) {
-        return toZigString(str->view(global));
+        return toRustString(str->view(global));
     }
-    return toZigString(str->value(global));
+    return toRustString(str->value(global));
 }
 
-static ZigString toZigString(JSC::Identifier& str, JSC::JSGlobalObject* global)
+static RustString toRustString(JSC::Identifier& str, JSC::JSGlobalObject* global)
 {
-    return toZigString(str.string());
+    return toRustString(str.string());
 }
 
-static ZigString toZigString(JSC::Identifier* str, JSC::JSGlobalObject* global)
+static RustString toRustString(JSC::Identifier* str, JSC::JSGlobalObject* global)
 {
-    return toZigString(str->string());
+    return toRustString(str->string());
 }
 
-static WTF::StringView toStringView(ZigString str)
+static WTF::StringView toStringView(RustString str)
 {
     return WTF::StringView(std::span { untag(str.ptr), str.len });
 }
 
-static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
+static void throwException(JSC::ThrowScope& scope, RustErrorType err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
         JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
 }
 
-static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
+static RustString toRustString(JSC::JSValue val, JSC::JSGlobalObject* global)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto* str = val.toString(global);
@@ -357,20 +357,20 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         scope.release();
-        return ZigStringEmpty;
+        return RustStringEmpty;
     }
 
     auto view = str->view(global);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         scope.release();
-        return ZigStringEmpty;
+        return RustStringEmpty;
     }
 
-    return toZigString(view);
+    return toRustString(view);
 }
 
-static const WTF::String toStringStatic(ZigString str)
+static const WTF::String toStringStatic(RustString str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -391,7 +391,7 @@ static const WTF::String toStringStatic(ZigString str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
-static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+static JSC::JSValue getErrorInstance(const RustString* str, JSC::JSGlobalObject* globalObject)
 {
     WTF::String message = toString(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
@@ -405,7 +405,7 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* 
     return result;
 }
 
-static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+static JSC::JSValue getTypeErrorInstance(const RustString* str, JSC::JSGlobalObject* globalObject)
 {
     JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
@@ -413,7 +413,7 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObje
     return result;
 }
 
-static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+static JSC::JSValue getSyntaxErrorInstance(const RustString* str, JSC::JSGlobalObject* globalObject)
 {
     JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
@@ -421,7 +421,7 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalOb
     return result;
 }
 
-static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+static JSC::JSValue getRangeErrorInstance(const RustString* str, JSC::JSGlobalObject* globalObject)
 {
     JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
@@ -429,17 +429,17 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObj
     return result;
 }
 
-static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
+static const JSC::Identifier toIdentifier(RustString str, JSC::JSGlobalObject* global)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return global->vm().propertyNames->emptyIdentifier;
     }
-    WTF::String wtfstr = Zig::isTaggedExternalPtr(str.ptr) ? toString(str) : Zig::toStringCopy(str);
+    WTF::String wtfstr = Rust::isTaggedExternalPtr(str.ptr) ? toString(str) : Rust::toStringCopy(str);
     JSC::Identifier id = JSC::Identifier::fromString(global->vm(), wtfstr);
     return id;
 }
 
-}; // namespace Zig
+}; // namespace Rust
 
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral message, ASCIILiteral syscall, int err);
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral syscall, int err);

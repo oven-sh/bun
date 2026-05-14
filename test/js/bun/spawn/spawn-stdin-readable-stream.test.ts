@@ -599,8 +599,8 @@ describe("spawn stdin ReadableStream", () => {
     await expectMaxObjectTypeCount(expect, "Subprocess", 5);
   });
 
-  // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193
-  // (`pipe.assignToStream(...)`) — Zig's `FileSink.create` returns rc=1 which is
+  // Regression: src/runtime/api/bun/subprocess/Writable.rust:115/193
+  // (`pipe.assignToStream(...)`) — Rust's `FileSink.create` returns rc=1 which is
   // *transferred* into `Writable{ .pipe = pipe }`; `assignToStream` itself is
   // ref-neutral (`ref(); defer deref()`). A port that takes an extra +1 inside
   // `assign_to_stream` (and/or in `to_js`) leaves the native FileSink at rc>=1
@@ -608,8 +608,8 @@ describe("spawn stdin ReadableStream", () => {
   // wrappers are GC'd — leaking the IOWriter buffers and fd for the life of the
   // process. `heapStats()` only counts JS wrappers, so the test above does not
   // catch this; we must check the native live counter directly.
-  // TODO(zig-rust-divergence): Rust port leaks one FileSink per spawn here;
-  // see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
+  // TODO(rust-rust-divergence): Rust port leaks one FileSink per spawn here;
+  // see docs/RUST_RUST_DIVERGENCE_AUDIT.md.
   test.todo("does not leak native FileSink when ReadableStream is used as stdin", async () => {
     async function once(i: number) {
       const stream = new ReadableStream({

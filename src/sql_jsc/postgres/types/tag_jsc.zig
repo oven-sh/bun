@@ -1,4 +1,4 @@
-//! JSC bridges for `sql/postgres/types/Tag.zig`. The `Tag` OID enum and its
+//! JSC bridges for `sql/postgres/types/Tag.rust`. The `Tag` OID enum and its
 //! pure helpers stay in `sql/`; only the `JSValue`/`JSGlobalObject`-touching
 //! conversion paths live here.
 
@@ -140,16 +140,16 @@ pub fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!Tag
     return .numeric;
 }
 
-const @"bool" = @import("./bool.zig");
+const @"bool" = @import("./bool.rust");
 
 const bun = @import("bun");
-const bytea = @import("./bytea.zig");
-const date = @import("./date.zig");
-const json = @import("./json.zig");
+const bytea = @import("./bytea.rust");
+const date = @import("./date.rust");
+const json = @import("./json.rust");
 const std = @import("std");
-const string = @import("./PostgresString.zig");
-const AnyPostgresError = @import("../../../sql/postgres/AnyPostgresError.zig").AnyPostgresError;
-const Tag = @import("../../../sql/postgres/types/Tag.zig").Tag;
+const string = @import("./PostgresString.rust");
+const AnyPostgresError = @import("../../../sql/postgres/AnyPostgresError.rust").AnyPostgresError;
+const Tag = @import("../../../sql/postgres/types/Tag.rust").Tag;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

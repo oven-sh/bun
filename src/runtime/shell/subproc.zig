@@ -1,4 +1,4 @@
-// const IPC = @import("../../jsc/ipc.zig");
+// const IPC = @import("../../jsc/ipc.rust");
 
 pub const Stdio = util.Stdio;
 // pub const ShellSubprocess = NewShellSubprocess(.js);
@@ -1456,7 +1456,7 @@ pub inline fn assertStdioResult(result: StdioResult) void {
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 const std = @import("std");
-const util = @import("./util.zig");
+const util = @import("./util.rust");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");

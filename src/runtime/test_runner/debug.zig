@@ -7,7 +7,7 @@ pub fn dumpSub(current: TestScheduleEntry) bun.JSError!void {
 }
 pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
     if (!group.getLogEnabled()) return;
-    group.beginMsg("describe \"{f}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtString(describe.base.name orelse "(unnamed)"), describe.base.concurrent, @tagName(describe.base.mode), @tagName(describe.base.only), describe.base.has_callback });
+    group.beginMsg("describe \"{f}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.rust.fmtString(describe.base.name orelse "(unnamed)"), describe.base.concurrent, @tagName(describe.base.mode), @tagName(describe.base.only), describe.base.has_callback });
     defer group.end();
 
     for (describe.beforeAll.items) |entry| try dumpTest(entry, "beforeAll");
@@ -18,7 +18,7 @@ pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
 }
 pub fn dumpTest(current: *ExecutionEntry, label: []const u8) bun.JSError!void {
     if (!group.getLogEnabled()) return;
-    group.beginMsg("{s} \"{f}\" (concurrent={}, only={})", .{ label, std.zig.fmtString(current.base.name orelse "(unnamed)"), current.base.concurrent, current.base.only });
+    group.beginMsg("{s} \"{f}\" (concurrent={}, only={})", .{ label, std.rust.fmtString(current.base.name orelse "(unnamed)"), current.base.concurrent, current.base.only });
     defer group.end();
 }
 pub fn dumpOrder(this: *Execution) bun.JSError!void {
@@ -36,7 +36,7 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
 
             var current_entry = sequence.first_entry;
             while (current_entry) |entry| : (current_entry = entry.next) {
-                group.log("ExecutionEntry \"{f}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtString(entry.base.name orelse "(unnamed)"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
+                group.log("ExecutionEntry \"{f}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.rust.fmtString(entry.base.name orelse "(unnamed)"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
             }
         }
     }
@@ -101,7 +101,7 @@ pub const group = struct {
 const bun = @import("bun");
 const std = @import("std");
 
-const bun_test = @import("./bun_test.zig");
+const bun_test = @import("./bun_test.rust");
 const DescribeScope = bun_test.DescribeScope;
 const Execution = bun_test.Execution;
 const ExecutionEntry = bun_test.ExecutionEntry;

@@ -3,7 +3,7 @@ import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 test("JSX lexer should not crash with slice bounds issues", async () => {
   // This used to crash with: "panic: start index N is larger than end index M"
-  // due to invalid slice bounds in js_lexer.zig:767 when calculating string literal content
+  // due to invalid slice bounds in js_lexer.rust:767 when calculating string literal content
   // The issue occurred when suffix_len > lexer.end, causing end_pos < base
 
   // Test JSX with empty template strings that could trigger slice bounds issues

@@ -14,8 +14,8 @@ export function Array(elemType: Type): ArrayType {
     get bindgenType() {
       return `bindgen.BindgenArray(${elemType.bindgenType})`;
     }
-    zigType(style?: CodeStyle) {
-      return `bun.collections.ArrayListDefault(${elemType.zigType(style)})`;
+    rustType(style?: CodeStyle) {
+      return `bun.collections.ArrayListDefault(${elemType.rustType(style)})`;
     }
     toCpp(value: any[]): string {
       const args = `${value.map(elem => elemType.toCpp(elem)).join(", ")}`;

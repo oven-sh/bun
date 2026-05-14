@@ -3,7 +3,7 @@ pub fn cloneActiveStrong() ?BunTestPtr {
     return runner.bun_test_root.cloneActiveFile();
 }
 
-pub const DoneCallback = @import("./DoneCallback.zig");
+pub const DoneCallback = @import("./DoneCallback.rust");
 
 pub const js_fns = struct {
     pub const Signature = union(enum) {
@@ -790,7 +790,7 @@ pub const StepResult = union(enum) {
     complete,
 };
 
-pub const Collection = @import("./Collection.zig");
+pub const Collection = @import("./Collection.rust");
 
 pub const ConcurrentMode = enum {
     inherit,
@@ -1053,19 +1053,19 @@ pub const RunOneResult = union(enum) {
     },
 };
 
-pub const FakeTimers = @import("./timers/FakeTimers.zig");
+pub const FakeTimers = @import("./timers/FakeTimers.rust");
 
-pub const Execution = @import("./Execution.zig");
-pub const debug = @import("./debug.zig");
+pub const Execution = @import("./Execution.rust");
+pub const debug = @import("./debug.rust");
 
-pub const ScopeFunctions = @import("./ScopeFunctions.zig");
+pub const ScopeFunctions = @import("./ScopeFunctions.rust");
 
-pub const Order = @import("./Order.zig");
+pub const Order = @import("./Order.rust");
 
 const group = debug.group;
 
 const std = @import("std");
-const test_command = @import("../cli/test_command.zig");
+const test_command = @import("../cli/test_command.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

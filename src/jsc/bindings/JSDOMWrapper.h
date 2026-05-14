@@ -21,7 +21,7 @@
 
 #pragma once
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include "JSDOMGlobalObject.h"
 #include "NodeConstants.h"
@@ -29,10 +29,10 @@
 #include <wtf/SignedPtr.h>
 
 namespace WebCore {
-using namespace Zig;
+using namespace Rust;
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
 #define RENAMED_JSDOM_GLOBAL_OBJECT
-using JSDOMGlobalObject = Zig::GlobalObject;
+using JSDOMGlobalObject = Rust::GlobalObject;
 }
 #endif
 class ScriptExecutionContext;

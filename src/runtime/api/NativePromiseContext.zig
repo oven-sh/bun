@@ -1,4 +1,4 @@
-//! Zig bindings for the NativePromiseContext JSCell.
+//! Rust bindings for the NativePromiseContext JSCell.
 //!
 //! See src/jsc/bindings/NativePromiseContext.h for the rationale. Short
 //! version: when native code `.then()`s a user Promise and needs a context

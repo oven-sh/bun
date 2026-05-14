@@ -243,44 +243,44 @@ pub const PackageManifestError = error{
     PackageManifestHTTP5xx,
 };
 
-pub const ExtractTarball = @import("./extract_tarball.zig");
-pub const NetworkTask = @import("./NetworkTask.zig");
-pub const TarballStream = @import("./TarballStream.zig");
-pub const Npm = @import("./npm.zig");
-pub const PackageManager = @import("./PackageManager.zig");
-pub const PackageManifestMap = @import("./PackageManifestMap.zig");
-pub const Task = @import("./PackageManagerTask.zig");
-pub const TextLockfile = @import("./lockfile/bun.lock.zig");
-pub const Bin = @import("./bin.zig").Bin;
-pub const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
-pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
-pub const SecurityScanSubprocess = @import("./PackageManager/security_scanner.zig").SecurityScanSubprocess;
-pub const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
-pub const Repository = @import("./repository.zig").Repository;
-pub const Resolution = @import("./resolution.zig").Resolution;
-pub const Store = @import("./isolated_install/Store.zig").Store;
-pub const FileCopier = @import("./isolated_install/FileCopier.zig").FileCopier;
-pub const PnpmMatcher = @import("./PnpmMatcher.zig");
-pub const PostinstallOptimizer = @import("./postinstall_optimizer.zig").PostinstallOptimizer;
+pub const ExtractTarball = @import("./extract_tarball.rust");
+pub const NetworkTask = @import("./NetworkTask.rust");
+pub const TarballStream = @import("./TarballStream.rust");
+pub const Npm = @import("./npm.rust");
+pub const PackageManager = @import("./PackageManager.rust");
+pub const PackageManifestMap = @import("./PackageManifestMap.rust");
+pub const Task = @import("./PackageManagerTask.rust");
+pub const TextLockfile = @import("./lockfile/bun.lock.rust");
+pub const Bin = @import("./bin.rust").Bin;
+pub const FolderResolution = @import("./resolvers/folder_resolver.rust").FolderResolution;
+pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.rust").LifecycleScriptSubprocess;
+pub const SecurityScanSubprocess = @import("./PackageManager/security_scanner.rust").SecurityScanSubprocess;
+pub const PackageInstall = @import("./PackageInstall.rust").PackageInstall;
+pub const Repository = @import("./repository.rust").Repository;
+pub const Resolution = @import("./resolution.rust").Resolution;
+pub const Store = @import("./isolated_install/Store.rust").Store;
+pub const FileCopier = @import("./isolated_install/FileCopier.rust").FileCopier;
+pub const PnpmMatcher = @import("./PnpmMatcher.rust");
+pub const PostinstallOptimizer = @import("./postinstall_optimizer.rust").PostinstallOptimizer;
 
-pub const ArrayIdentityContext = @import("../collections/identity_context.zig").ArrayIdentityContext;
-pub const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
+pub const ArrayIdentityContext = @import("../collections/identity_context.rust").ArrayIdentityContext;
+pub const IdentityContext = @import("../collections/identity_context.rust").IdentityContext;
 
-pub const external = @import("./ExternalSlice.zig");
+pub const external = @import("./ExternalSlice.rust");
 pub const ExternalPackageNameHashList = external.ExternalPackageNameHashList;
 pub const ExternalSlice = external.ExternalSlice;
 pub const ExternalStringList = external.ExternalStringList;
 pub const ExternalStringMap = external.ExternalStringMap;
 pub const VersionSlice = external.VersionSlice;
 
-pub const Integrity = @import("./integrity.zig").Integrity;
-pub const Dependency = @import("./dependency.zig");
-pub const Behavior = @import("./dependency.zig").Behavior;
+pub const Integrity = @import("./integrity.rust").Integrity;
+pub const Dependency = @import("./dependency.rust");
+pub const Behavior = @import("./dependency.rust").Behavior;
 
-pub const Lockfile = @import("./lockfile.zig");
+pub const Lockfile = @import("./lockfile.rust");
 pub const PatchedDep = Lockfile.PatchedDep;
 
-pub const patch = @import("./patch_install.zig");
+pub const patch = @import("./patch_install.rust");
 pub const PatchTask = patch.PatchTask;
 
 const string = []const u8;

@@ -1,10 +1,10 @@
-pub const ACL = @import("../../../s3_signing/acl.zig").ACL;
-pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
-pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-pub const MultiPartUpload = @import("./multipart.zig").MultiPartUpload;
-pub const StorageClass = @import("../../../s3_signing/storage_class.zig").StorageClass;
+pub const ACL = @import("../../../s3_signing/acl.rust").ACL;
+pub const S3HttpDownloadStreamingTask = @import("./download_stream.rust").S3HttpDownloadStreamingTask;
+pub const MultiPartUploadOptions = @import("./multipart_options.rust").MultiPartUploadOptions;
+pub const MultiPartUpload = @import("./multipart.rust").MultiPartUpload;
+pub const StorageClass = @import("../../../s3_signing/storage_class.rust").StorageClass;
 
-pub const Error = @import("../../../s3_signing/error.zig");
+pub const Error = @import("../../../s3_signing/error.rust");
 pub const throwSignError = Error.throwSignError;
 pub const getJSSignError = Error.getJSSignError;
 
@@ -17,7 +17,7 @@ pub const S3StatResult = S3SimpleRequest.S3StatResult;
 pub const S3DownloadResult = S3SimpleRequest.S3DownloadResult;
 pub const S3DeleteResult = S3SimpleRequest.S3DeleteResult;
 pub const S3ListObjectsResult = S3SimpleRequest.S3ListObjectsResult;
-pub const S3ListObjectsOptions = @import("./list_objects.zig").S3ListObjectsOptions;
+pub const S3ListObjectsOptions = @import("./list_objects.rust").S3ListObjectsOptions;
 pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJS;
 
 pub fn stat(
@@ -350,7 +350,7 @@ pub const S3UploadStreamWrapper = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
-    pub const ResumableSink = @import("../ResumableSink.zig").ResumableS3UploadSink;
+    pub const ResumableSink = @import("../ResumableSink.rust").ResumableS3UploadSink;
     const log = bun.Output.scoped(.S3UploadStream, .visible);
 
     ref_count: RefCount,
@@ -734,9 +734,9 @@ pub fn readableStream(
     return readable_value;
 }
 
-const Credentials = @import("../../../s3_signing/credentials.zig");
-const S3ListObjects = @import("./list_objects.zig");
-const S3SimpleRequest = @import("./simple_request.zig");
+const Credentials = @import("../../../s3_signing/credentials.rust");
+const S3ListObjects = @import("./list_objects.rust");
+const S3SimpleRequest = @import("./simple_request.rust");
 const std = @import("std");
 
 const bun = @import("bun");

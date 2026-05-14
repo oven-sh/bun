@@ -1,10 +1,10 @@
-pub const options = @import("./options.zig");
+pub const options = @import("./options.rust");
 
 /// Opaque carrier for the macro evaluation context. Aliases through
 /// `bundler_jsc/` so this file has no direct JSC type reference.
-pub const MacroJSCtx = @import("../bundler_jsc/PluginRunner.zig").MacroJSCtx;
+pub const MacroJSCtx = @import("../bundler_jsc/PluginRunner.rust").MacroJSCtx;
 
-pub const EntryPoints = @import("./entry_points.zig");
+pub const EntryPoints = @import("./entry_points.rust");
 
 pub const ParseResult = struct {
     source: logger.Source,
@@ -57,7 +57,7 @@ pub const ParseResult = struct {
     }
 };
 
-pub const PluginRunner = @import("../bundler_jsc/PluginRunner.zig").PluginRunner;
+pub const PluginRunner = @import("../bundler_jsc/PluginRunner.rust").PluginRunner;
 
 /// This structure was the JavaScript transpiler before bundle_v2 was written. It now
 /// acts mostly as a configuration object, but it also contains stateful logic around
@@ -505,7 +505,7 @@ pub const Transpiler = struct {
                     entry.contents,
                     opts,
                     null,
-                    // TODO: DO WE EVEN HAVE SOURCE INDEX IN THIS TRANSPILER.ZIG file??
+                    // TODO: DO WE EVEN HAVE SOURCE INDEX IN THIS TRANSPILER.RUST file??
                     bun.bundle_v2.Index.invalid,
                 )) {
                     .result => |v| v,
@@ -1417,26 +1417,26 @@ pub const ResolveQueue = bun.LinearFifo(
 
 const string = []const u8;
 
-const DotEnv = @import("../dotenv/env_loader.zig");
-const Fs = @import("../resolver/fs.zig");
-const MimeType = @import("../http_types/MimeType.zig");
-const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
-const Router = @import("../router/router.zig");
-const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
-const runtime = @import("../js_parser/runtime.zig");
+const DotEnv = @import("../dotenv/env_loader.rust");
+const Fs = @import("../resolver/fs.rust");
+const MimeType = @import("../http_types/MimeType.rust");
+const NodeFallbackModules = @import("../resolver/node_fallbacks.rust");
+const Router = @import("../router/router.rust");
+const analyze_transpiled_module = @import("./analyze_transpiled_module.rust");
+const runtime = @import("../js_parser/runtime.rust");
 const std = @import("std");
-const DataURL = @import("../resolver/data_url.zig").DataURL;
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const SystemTimer = @import("../perf/system_timer.zig").Timer;
-const URL = @import("../url/url.zig").URL;
-const default_macro_js_value = @import("../bundler_jsc/PluginRunner.zig").default_macro_js_value;
+const DataURL = @import("../resolver/data_url.rust").DataURL;
+const MacroRemap = @import("../resolver/package_json.rust").MacroMap;
+const PackageManager = @import("../install/install.rust").PackageManager;
+const SystemTimer = @import("../perf/system_timer.rust").Timer;
+const URL = @import("../url/url.rust").URL;
+const default_macro_js_value = @import("../bundler_jsc/PluginRunner.rust").default_macro_js_value;
 
-const _resolver = @import("../resolver/resolver.zig");
+const _resolver = @import("../resolver/resolver.rust");
 const DebugLogs = _resolver.DebugLogs;
 const Resolver = _resolver.Resolver;
 
-const linker = @import("./linker.zig");
+const linker = @import("./linker.rust");
 const Linker = linker.Linker;
 
 const bun = @import("bun");

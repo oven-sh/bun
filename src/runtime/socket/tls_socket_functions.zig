@@ -5,7 +5,7 @@ pub fn getServername(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.Cal
     if (servername == null) {
         return .js_undefined;
     }
-    return ZigString.fromUTF8(servername[0..bun.len(servername)]).toJS(globalObject);
+    return RustString.fromUTF8(servername[0..bun.len(servername)]).toJS(globalObject);
 }
 
 pub fn setServername(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -23,7 +23,7 @@ pub fn setServername(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
         return globalObject.throw("Expected \"serverName\" to be a string", .{});
     }
 
-    const slice = try (try server_name.getZigString(globalObject)).toOwnedSlice(bun.default_allocator);
+    const slice = try (try server_name.getRustString(globalObject)).toOwnedSlice(bun.default_allocator);
     if (this.server_name) |old| {
         this.server_name = slice;
         default_allocator.free(old);
@@ -74,7 +74,7 @@ pub fn getTLSVersion(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.Cal
     const version_len = bun.len(version);
     if (version_len == 0) return JSValue.jsNull();
     const slice = version[0..version_len];
-    return ZigString.fromUTF8(slice).toJS(globalObject);
+    return RustString.fromUTF8(slice).toJS(globalObject);
 }
 
 pub fn setMaxSendFragment(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -248,14 +248,14 @@ pub fn getSharedSigalgs(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.
             bun.copy(u8, buffer, sig_with_md);
             buffer[sig_with_md.len] = '+';
             bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
-            try array.putIndex(globalObject, @as(u32, @intCast(i)), jsc.ZigString.fromUTF8(buffer).toJS(globalObject));
+            try array.putIndex(globalObject, @as(u32, @intCast(i)), jsc.RustString.fromUTF8(buffer).toJS(globalObject));
         } else {
             const buffer = bun.handleOom(bun.default_allocator.alloc(u8, sig_with_md.len + 6));
             defer bun.default_allocator.free(buffer);
 
             bun.copy(u8, buffer, sig_with_md);
             bun.copy(u8, buffer[sig_with_md.len..], "+UNDEF");
-            try array.putIndex(globalObject, @as(u32, @intCast(i)), jsc.ZigString.fromUTF8(buffer).toJS(globalObject));
+            try array.putIndex(globalObject, @as(u32, @intCast(i)), jsc.RustString.fromUTF8(buffer).toJS(globalObject));
         }
     }
     return array;
@@ -267,31 +267,31 @@ pub fn getCipher(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFra
     var result = JSValue.createEmptyObject(globalObject, 0);
 
     if (cipher == null) {
-        result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
-        result.put(globalObject, ZigString.static("standardName"), JSValue.jsNull());
-        result.put(globalObject, ZigString.static("version"), JSValue.jsNull());
+        result.put(globalObject, RustString.static("name"), JSValue.jsNull());
+        result.put(globalObject, RustString.static("standardName"), JSValue.jsNull());
+        result.put(globalObject, RustString.static("version"), JSValue.jsNull());
         return result;
     }
 
     const name = BoringSSL.SSL_CIPHER_get_name(cipher);
     if (name == null) {
-        result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
+        result.put(globalObject, RustString.static("name"), JSValue.jsNull());
     } else {
-        result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(name[0..bun.len(name)]).toJS(globalObject));
+        result.put(globalObject, RustString.static("name"), RustString.fromUTF8(name[0..bun.len(name)]).toJS(globalObject));
     }
 
     const standard_name = BoringSSL.SSL_CIPHER_standard_name(cipher);
     if (standard_name == null) {
-        result.put(globalObject, ZigString.static("standardName"), JSValue.jsNull());
+        result.put(globalObject, RustString.static("standardName"), JSValue.jsNull());
     } else {
-        result.put(globalObject, ZigString.static("standardName"), ZigString.fromUTF8(standard_name[0..bun.len(standard_name)]).toJS(globalObject));
+        result.put(globalObject, RustString.static("standardName"), RustString.fromUTF8(standard_name[0..bun.len(standard_name)]).toJS(globalObject));
     }
 
     const version = BoringSSL.SSL_CIPHER_get_version(cipher);
     if (version == null) {
-        result.put(globalObject, ZigString.static("version"), JSValue.jsNull());
+        result.put(globalObject, RustString.static("version"), JSValue.jsNull());
     } else {
-        result.put(globalObject, ZigString.static("version"), ZigString.fromUTF8(version[0..bun.len(version)]).toJS(globalObject));
+        result.put(globalObject, RustString.static("version"), RustString.fromUTF8(version[0..bun.len(version)]).toJS(globalObject));
     }
 
     return result;
@@ -409,8 +409,8 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
 
     switch (kid) {
         BoringSSL.EVP_PKEY_DH => {
-            result.put(globalObject, ZigString.static("type"), try bun.String.static("DH").toJS(globalObject));
-            result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
+            result.put(globalObject, RustString.static("type"), try bun.String.static("DH").toJS(globalObject));
+            result.put(globalObject, RustString.static("size"), JSValue.jsNumber(bits));
         },
 
         BoringSSL.EVP_PKEY_EC, BoringSSL.EVP_PKEY_X25519, BoringSSL.EVP_PKEY_X448 => {
@@ -432,9 +432,9 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
                     curve_name = "";
                 }
             }
-            result.put(globalObject, ZigString.static("type"), try bun.String.static("ECDH").toJS(globalObject));
-            result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toJS(globalObject));
-            result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
+            result.put(globalObject, RustString.static("type"), try bun.String.static("ECDH").toJS(globalObject));
+            result.put(globalObject, RustString.static("name"), RustString.fromUTF8(curve_name).toJS(globalObject));
+            result.put(globalObject, RustString.static("size"), JSValue.jsNumber(bits));
         },
         else => {},
     }
@@ -459,7 +459,7 @@ pub fn getALPNProtocol(this: *This, globalObject: *jsc.JSGlobalObject) bun.JSErr
     if (strings.eql(slice, "http/1.1")) {
         return bun.String.static("http/1.1").toJS(globalObject);
     }
-    return ZigString.fromUTF8(slice).toJS(globalObject);
+    return RustString.fromUTF8(slice).toJS(globalObject);
 }
 
 pub fn getSession(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
@@ -584,7 +584,7 @@ fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callcon
 }
 
 noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []const u8) JSValue {
-    var zig_str: ZigString = ZigString.init("");
+    var rust_str: RustString = RustString.init("");
     var output_buf: [4096]u8 = undefined;
 
     output_buf[0] = 0;
@@ -634,21 +634,21 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
 
     if (written > 0) {
         const message = output_buf[0..written];
-        zig_str = ZigString.init(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
-        var encoded_str = zig_str.withEncoding();
+        rust_str = RustString.init(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
+        var encoded_str = rust_str.withEncoding();
         encoded_str.markGlobal();
 
         // We shouldn't *need* to do this but it's not entirely clear.
         BoringSSL.ERR_clear_error();
     }
 
-    if (zig_str.len == 0) {
-        zig_str = ZigString.init(defaultMessage);
+    if (rust_str.len == 0) {
+        rust_str = RustString.init(defaultMessage);
     }
 
     // store the exception in here
     // toErrorInstance clones the string
-    const exception = zig_str.toErrorInstance(globalThis);
+    const exception = rust_str.toErrorInstance(globalThis);
 
     // reference it in stack memory
     exception.ensureStillAlive();
@@ -658,7 +658,7 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
 
 const string = []const u8;
 
-const X509 = @import("../api/bun/x509.zig");
+const X509 = @import("../api/bun/x509.rust");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -669,5 +669,5 @@ const BoringSSL = bun.BoringSSL.c;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const This = jsc.API.TLSSocket;

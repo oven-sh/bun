@@ -13,7 +13,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
-} = $zig("mysql.zig", "createBinding") as MySQLDotZig;
+} = $rust("mysql.rust", "createBinding") as MySQLDotRust;
 
 function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {
@@ -41,7 +41,7 @@ initMySQL(
     }
 
     if (!is_last) {
-      // The Zig side swaps the pending value out for js_undefined before
+      // The Rust side swaps the pending value out for js_undefined before
       // invoking this callback; re-prime so the follow-up result set lands in
       // a fresh array.
       query[_handle].setPendingValue(new SQLResultArray());
@@ -74,7 +74,7 @@ initMySQL(
   },
 );
 
-export interface MySQLDotZig {
+export interface MySQLDotRust {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
@@ -96,13 +96,13 @@ export interface MySQLDotZig {
     tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
-    onDisconnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
+    onConnected: (err: Error | null, connection: $RustGeneratedClasses.MySQLConnection) => void,
+    onDisconnected: (err: Error | null, connection: $RustGeneratedClasses.MySQLConnection) => void,
     idleTimeout: number,
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
-  ) => $ZigGeneratedClasses.MySQLConnection;
+  ) => $RustGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
     values: unknown[],
@@ -110,7 +110,7 @@ export interface MySQLDotZig {
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
-  ) => $ZigGeneratedClasses.MySQLQuery;
+  ) => $RustGeneratedClasses.MySQLQuery;
 }
 
 const enum SQLCommand {
@@ -235,9 +235,9 @@ function closeNT(onClose: (err: Error) => void, err: Error | null) {
 class PooledMySQLConnection {
   private static async createConnection(
     options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
+    onConnected: (err: Error | null, connection: $RustGeneratedClasses.MySQLConnection) => void,
     onClose: (err: Error | null) => void,
-  ): Promise<$ZigGeneratedClasses.MySQLConnection | null> {
+  ): Promise<$RustGeneratedClasses.MySQLConnection | null> {
     const {
       hostname,
       port,
@@ -292,7 +292,7 @@ class PooledMySQLConnection {
   }
 
   adapter: MySQLAdapter;
-  connection: $ZigGeneratedClasses.MySQLConnection | null = null;
+  connection: $RustGeneratedClasses.MySQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
@@ -441,7 +441,7 @@ class PooledMySQLConnection {
 
 class MySQLAdapter
   implements
-    DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
+    DatabaseAdapter<PooledMySQLConnection, $RustGeneratedClasses.MySQLConnection, $RustGeneratedClasses.MySQLQuery>
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 

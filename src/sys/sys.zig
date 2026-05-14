@@ -11,13 +11,13 @@ const This = @This();
 // into methods on `bun.FD`, and keeping this namespace to just overall stuff
 // like `Error`, `Maybe`, `Tag`, and so on.
 const platform_defs = switch (Environment.os) {
-    .windows => @import("../errno/windows_errno.zig"),
-    .linux => @import("../errno/linux_errno.zig"),
-    .mac => @import("../errno/darwin_errno.zig"),
-    .freebsd => @import("../errno/freebsd_errno.zig"),
+    .windows => @import("../errno/windows_errno.rust"),
+    .linux => @import("../errno/linux_errno.rust"),
+    .mac => @import("../errno/darwin_errno.rust"),
+    .freebsd => @import("../errno/freebsd_errno.rust"),
     .wasm => {},
 };
-pub const workaround_symbols = @import("../workaround_missing_symbols.zig").current;
+pub const workaround_symbols = @import("../workaround_missing_symbols.rust").current;
 /// Enum of `errno` values
 pub const E = platform_defs.E;
 /// Namespace of (potentially polyfilled) libuv `errno` values.
@@ -28,7 +28,7 @@ pub const S = platform_defs.S;
 /// too complicated; It's duplicated three times, and inside of it it has tons
 /// of re-listings of all errno codes. Why is SystemErrno different than `E`? ...etc!
 ///
-/// The problem is because we use libc in some cases and we use zig's std lib in
+/// The problem is because we use libc in some cases and we use rust's std lib in
 /// other places and other times we go direct. So we end up with a lot of
 /// redundant code.
 pub const SystemErrno = platform_defs.SystemErrno;
@@ -40,7 +40,7 @@ comptime {
 
 const linux = syscall;
 
-pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else sys;
+pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.rust") else sys;
 
 pub const F_OK = 0;
 pub const X_OK = 1;
@@ -331,8 +331,8 @@ pub const Tag = enum(u8) {
     pub var strings = std.EnumMap(Tag, jsc.C.JSStringRef).initFull(null);
 };
 
-pub const Error = @import("./Error.zig");
-pub const PosixStat = @import("./PosixStat.zig").PosixStat;
+pub const Error = @import("./Error.rust");
+pub const PosixStat = @import("./PosixStat.rust").PosixStat;
 
 pub fn Maybe(comptime ReturnTypeT: type) type {
     return bun.api.node.Maybe(ReturnTypeT, Error);
@@ -1180,7 +1180,7 @@ fn openDirAtWindowsNtPath(
         } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
             bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else {
-            // NtCreateFile may return NTSTATUS codes that are not named in Zig's
+            // NtCreateFile may return NTSTATUS codes that are not named in Rust's
             // non-exhaustive NTSTATUS enum (e.g. STATUS_UNTRUSTED_MOUNT_POINT = 0xC00004BC
             // on newer Windows 11 builds). `@tagName` on an unnamed tag panics with
             // "invalid enum value", so use the default formatter which handles them.
@@ -1312,7 +1312,7 @@ const NtCreateFileOptions = struct {
 ///
 /// It is very easy to waste HOURS on the subtle semantics of this function.
 ///
-/// In the zig standard library, messing up the input to their equivalent
+/// In the rust standard library, messing up the input to their equivalent
 /// will trigger `unreachable`. Here there will be a debug log with the path.
 pub fn openFileAtWindowsNtPath(
     dir: bun.FD,
@@ -1391,7 +1391,7 @@ pub fn openFileAtWindowsNtPath(
                     log("NtCreateFile({f}, {f}) = {s} (file) = {f}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
                 } else {
                     // Use the default formatter instead of `@tagName` here: `rc` may
-                    // be an NTSTATUS not named in Zig's non-exhaustive enum, and
+                    // be an NTSTATUS not named in Rust's non-exhaustive enum, and
                     // `@tagName` on an unnamed tag panics with "invalid enum value".
                     log("NtCreateFile({f}, {f}) = {} (file)", .{ dir, bun.fmt.utf16(path), rc });
                 }
@@ -1819,7 +1819,7 @@ pub fn openA(file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FD) {
 
 pub fn open(file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FD) {
     // TODO(@paperclover): this should not use libuv; when the libuv path is
-    // removed here, the call sites in node_fs.zig should make sure they parse
+    // removed here, the call sites in node_fs.rust should make sure they parse
     // the libuv specific file flags using the WindowsOpenFlags structure.
     if (comptime Environment.isWindows) {
         return sys_uv.open(file_path, flags, perm);
@@ -2229,10 +2229,10 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
 /// LP64 bionic, `sigset_t` is a single `unsigned long` and `struct sigaction`
 /// is `{ int sa_flags; union sa_handler; sigset_t sa_mask; sa_restorer }` —
 /// `sa_flags` comes *first*. Passing the glibc-shaped struct to bionic's
-/// `sigaction()` makes it read `sa_handler` from what Zig thinks is
+/// `sigaction()` makes it read `sa_handler` from what Rust thinks is
 /// `mask[0]`, so a zeroed mask silently installs `SIG_DFL` and a mask with
 /// `SIGCHLD` set installs the wild pointer `0x10000` (which segfaults on
-/// delivery). Until the Zig stdlib grows an `abi.isAndroid()` case, use
+/// delivery). Until the Rust stdlib grows an `abi.isAndroid()` case, use
 /// these wrappers instead of `std.posix.Sigaction` / `std.posix.sigaction`.
 pub const sigset_t = if (Environment.isAndroid) c_ulong else posix.sigset_t;
 
@@ -2241,7 +2241,7 @@ pub const Sigaction = if (Environment.isAndroid) extern struct {
     // target 32-bit Android, whose layout is handler-first instead.
     comptime {
         bun.assert(@sizeOf(usize) == 8);
-        // Trip when the Zig stdlib gains a bionic `Sigaction` so this
+        // Trip when the Rust stdlib gains a bionic `Sigaction` so this
         // workaround can be dropped. bionic puts `sa_flags` at offset 0;
         // the glibc-shaped struct std currently uses puts it after a
         // 128-byte mask.
@@ -2254,7 +2254,7 @@ pub const Sigaction = if (Environment.isAndroid) extern struct {
     pub const sigaction_fn = *const fn (i32, *const posix.siginfo_t, ?*anyopaque) callconv(.c) void;
 
     // bionic declares `int sa_flags`, but `SA_RESETHAND` is `0x80000000`
-    // which doesn't fit a `c_int` literal in Zig. `c_uint` is ABI-identical
+    // which doesn't fit a `c_int` literal in Rust. `c_uint` is ABI-identical
     // and matches what `std.c.Sigaction` uses for every other Linux libc.
     flags: c_uint,
     handler: extern union {
@@ -3177,7 +3177,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
 /// semantics.
 ///
 /// For example, when running the shell script:
-/// `grep hi src/js_parser/zig | echo hi`,
+/// `grep hi src/js_parser/rust | echo hi`,
 ///
 /// The `echo hi` command will terminate first and close its
 /// end of the socketpair.
@@ -3644,7 +3644,7 @@ fn utimensWithFlags(path: bun.OSPathSliceZ, atime: jsc.Node.TimeLike, mtime: jsc
         const rc = syscall.utimensat(
             std.fs.cwd().fd,
             path,
-            // this var should be a const, the zig type definition is wrong.
+            // this var should be a const, the rust type definition is wrong.
             &times,
             flags,
         );
@@ -4232,11 +4232,11 @@ pub fn isPollable(mode: mode_t) bool {
     return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
 
-pub const Dir = @import("./dir.zig");
+pub const Dir = @import("./dir.rust");
 const FILE_SHARE = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE;
 
-pub const libuv_error_map = @import("./libuv_error_map.zig").libuv_error_map;
-pub const coreutils_error_map = @import("./coreutils_error_map.zig").coreutils_error_map;
+pub const libuv_error_map = @import("./libuv_error_map.rust").libuv_error_map;
+pub const coreutils_error_map = @import("./coreutils_error_map.rust").coreutils_error_map;
 
 extern fn getRSS(rss: *usize) c_int;
 pub fn selfProcessMemoryUsage() ?usize {
@@ -4324,7 +4324,7 @@ pub fn moveFileZ(from_dir: bun.FD, filename: [:0]const u8, to_dir: bun.FD, desti
             if (err.getErrno() == .XDEV) {
                 try moveFileZSlow(from_dir, filename, to_dir, destination);
             } else {
-                return bun.errnoToZigErr(err.errno);
+                return bun.errnoToRustErr(err.errno);
             }
         },
         .result => {},
@@ -4348,7 +4348,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FD, from_dir: bun.FD, filename: [:0]
                 return;
             }
 
-            return bun.errnoToZigErr(err.errno);
+            return bun.errnoToRustErr(err.errno);
         },
         .result => {},
     }
@@ -4670,9 +4670,9 @@ pub const umask = switch (Environment.os) {
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
 
-pub const TestingAPIs = @import("../sys_jsc/error_jsc.zig").TestingAPIs;
+pub const TestingAPIs = @import("../sys_jsc/error_jsc.rust").TestingAPIs;
 
-pub const File = @import("./File.zig");
+pub const File = @import("./File.rust");
 
 const builtin = @import("builtin");
 const sys = @This(); // to avoid ambiguous references.

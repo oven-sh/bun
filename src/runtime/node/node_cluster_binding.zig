@@ -39,7 +39,7 @@ pub fn sendHelperChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     }
 
     // sequence number for InternalMsgHolder
-    message.put(globalThis, ZigString.static("seq"), jsc.JSValue.jsNumber(child_singleton.seq));
+    message.put(globalThis, RustString.static("seq"), jsc.JSValue.jsNumber(child_singleton.seq));
     child_singleton.seq +%= 1;
 
     // similar code as Bun__Process__send
@@ -62,7 +62,7 @@ pub fn sendHelperChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 
     if (good == .failure) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
-        ex.put(globalThis, ZigString.static("syscall"), try bun.String.static("write").toJS(globalThis));
+        ex.put(globalThis, RustString.static("syscall"), try bun.String.static("write").toJS(globalThis));
         const fnvalue = jsc.JSFunction.create(globalThis, "", S.impl, 1, .{});
         try fnvalue.callNextTick(globalThis, .{ex});
         return .false;
@@ -106,7 +106,7 @@ pub const InternalMsgHolder = struct {
     }
 
     pub fn enqueue(this: *InternalMsgHolder, message: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
-        //TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
+        //TODO: .addOne is workaround for .append causing crash/ dependency loop in rust compiler
         const new_item_ptr = bun.handleOom(this.messages.addOne(bun.default_allocator));
         new_item_ptr.* = .create(message, globalThis);
     }
@@ -194,7 +194,7 @@ pub fn sendHelperPrimary(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     }
 
     // sequence number for InternalMsgHolder
-    message.put(globalThis, ZigString.static("seq"), jsc.JSValue.jsNumber(ipc_data.internal_msg_queue.seq));
+    message.put(globalThis, RustString.static("seq"), jsc.JSValue.jsNumber(ipc_data.internal_msg_queue.seq));
     ipc_data.internal_msg_queue.seq +%= 1;
 
     // similar code as bun.jsc.Subprocess.doSend
@@ -301,4 +301,4 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 
 const jsc = bun.jsc;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

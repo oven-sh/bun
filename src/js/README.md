@@ -63,7 +63,7 @@ export default {
 
 Keep in mind that **these are not ES modules**. `export default` is only syntax sugar to assign to the variable `$exports`, which is actually how the module exports its contents.
 
-To actually wire up one of these modules to the resolver, that is done separately in `module_resolver.zig`. Maybe in the future we can do codegen for it.
+To actually wire up one of these modules to the resolver, that is done separately in `module_resolver.rust`. Maybe in the future we can do codegen for it.
 
 ## Builtin Functions
 

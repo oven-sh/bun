@@ -124,7 +124,7 @@ private:
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
-    /* Not constexpr — the ordinals are linked from Zig (`SocketKind.zig`
+    /* Not constexpr — the ordinals are linked from Rust (`SocketKind.rust`
      * @export) so a reorder there can't silently mis-route us. Only ever read
      * at runtime (listen/adopt). */
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }

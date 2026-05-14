@@ -9,9 +9,9 @@ pub fn toJS(
 }
 
 const bun = @import("bun");
-const AnyPostgresError = @import("../../../sql/postgres/AnyPostgresError.zig").AnyPostgresError;
+const AnyPostgresError = @import("../../../sql/postgres/AnyPostgresError.rust").AnyPostgresError;
 
-const int_types = @import("../../../sql/postgres/types/int_types.zig");
+const int_types = @import("../../../sql/postgres/types/int_types.rust");
 const short = int_types.short;
 
 const jsc = bun.jsc;

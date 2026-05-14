@@ -214,9 +214,9 @@ pub fn initJS(global: *jsc.JSGlobalObject, options: Options) bun.JSError!SocketA
     var stackfb = std.heap.stackFallback(64, bun.default_allocator);
     const alloc = stackfb.get();
 
-    // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
+    // NOTE: `rust translate-c` creates semantically invalid code for `C.ntohs`.
     // Switch back to `htons(options.port)` when this issue gets resolved:
-    // https://github.com/ziglang/zig/issues/22804
+    // https://github.com/rustlang/rust/issues/22804
     const addr: sockaddr = switch (options.family) {
         AF.INET => v4: {
             var sin: inet.sockaddr_in = .{
@@ -370,8 +370,8 @@ pub fn getAddress(this: *SocketAddress, global: *jsc.JSGlobalObject) bun.JSError
 /// and `::`, respectively).
 ///
 /// ### TODO
-/// - replace `addressToString` in `dns.zig` w this
-/// - use this impl in server.zig
+/// - replace `addressToString` in `dns.rust` w this
+/// - use this impl in server.rust
 pub fn address(this: *SocketAddress) bun.String {
     if (this._presentation.tag != .Dead) return this._presentation;
     var buf: [inet.INET6_ADDRSTRLEN]u8 = undefined;
@@ -401,7 +401,7 @@ pub fn getAddrFamily(this: *SocketAddress, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.family().int());
 }
 
-/// NOTE: zig std uses posix values only, while this returns whatever the
+/// NOTE: rust std uses posix values only, while this returns whatever the
 /// system uses. Do not compare to `std.posix.AF`.
 pub fn family(this: *const SocketAddress) AF {
     // NOTE: sockaddr_in and sockaddr_in6 have the same layout for family.
@@ -415,8 +415,8 @@ pub fn getPort(this: *SocketAddress, _: *jsc.JSGlobalObject) JSValue {
 /// Get the port number in host byte order.
 pub fn port(this: *const SocketAddress) u16 {
     // NOTE: sockaddr_in and sockaddr_in6 have the same layout for port.
-    // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
-    // Switch back to `ntohs` when this issue gets resolved: https://github.com/ziglang/zig/issues/22804
+    // NOTE: `rust translate-c` creates semantically invalid code for `C.ntohs`.
+    // Switch back to `ntohs` when this issue gets resolved: https://github.com/rustlang/rust/issues/22804
     return std.mem.bigToNative(u16, this._addr.sin.port);
 }
 
@@ -492,7 +492,7 @@ extern "c" const IPv6: StaticStringImpl;
 const ipv4: bun.String = .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = IPv4 } };
 const ipv6: bun.String = .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = IPv6 } };
 
-// FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
+// FIXME: c-headers-for-rust casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 pub const AF = enum(inet.sa_family_t) {
     INET = @intCast(inet.AF_INET),
     INET6 = @intCast(inet.AF_INET6),

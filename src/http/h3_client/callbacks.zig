@@ -1,9 +1,9 @@
-//! lsquic → Zig callbacks for the HTTP/3 client. Registered on the
+//! lsquic → Rust callbacks for the HTTP/3 client. Registered on the
 //! `quic.Context` from `ClientContext.getOrCreate`; lsquic invokes these from
 //! inside `process_conns` on the HTTP thread. Each one resolves the
 //! `ClientSession` / `Stream` from the ext slot and forwards into the
 //! corresponding session/stream method so the protocol logic stays in
-//! `ClientSession.zig` / `encode.zig`.
+//! `ClientSession.rust` / `encode.rust`.
 
 pub fn register(qctx: *quic.Context) void {
     qctx.onHskDone(onHskDone);
@@ -139,11 +139,11 @@ fn onStreamClose(s: *quic.Stream) callconv(.c) void {
 
 const log = bun.Output.scoped(.h3_client, .hidden);
 
-const ClientContext = @import("./ClientContext.zig");
-const ClientSession = @import("./ClientSession.zig");
-const H3 = @import("../H3Client.zig");
-const Stream = @import("./Stream.zig");
-const encode = @import("./encode.zig");
+const ClientContext = @import("./ClientContext.rust");
+const ClientSession = @import("./ClientSession.rust");
+const H3 = @import("../H3Client.rust");
+const Stream = @import("./Stream.rust");
+const encode = @import("./encode.rust");
 const std = @import("std");
 
 const bun = @import("bun");

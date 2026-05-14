@@ -1,7 +1,7 @@
-pub const jsc = @import("./jsc/jsc.zig");
-pub const webcore = @import("./runtime/webcore.zig");
-pub const api = @import("./runtime/api.zig");
-pub const bindgen = @import("./jsc/bindgen.zig");
+pub const jsc = @import("./jsc/jsc.rust");
+pub const webcore = @import("./runtime/webcore.rust");
+pub const api = @import("./runtime/api.rust");
+pub const bindgen = @import("./jsc/bindgen.rust");
 
 pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.StandaloneModuleGraph) void {
     b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
@@ -34,7 +34,7 @@ pub const Run = struct {
         const arena = Arena.init();
 
         // Load bunfig.toml unless disabled by compile flags
-        // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
+        // Note: config loading with execArgv is handled earlier in cli.rust via loadConfig
         if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
@@ -146,7 +146,7 @@ pub const Run = struct {
         var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
-            try @import("./jsc/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            try @import("./jsc/config.rust").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
         try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
@@ -286,7 +286,7 @@ pub const Run = struct {
         // Allow setting a custom timezone
         if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
-                _ = vm.global.setTimeZone(&jsc.ZigString.init(tz));
+                _ = vm.global.setTimeZone(&jsc.RustString.init(tz));
             }
         }
 
@@ -555,7 +555,7 @@ pub const Run = struct {
         bun.api.napi.fixDeadCodeElimination();
         bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
-        @import("./jsc/JSSecrets.zig").fixDeadCodeElimination();
+        @import("./jsc/JSSecrets.rust").fixDeadCodeElimination();
         vm.globalExit();
     }
 
@@ -636,12 +636,12 @@ fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u
     return result.toOwnedSlice();
 }
 
-const CPUProfiler = @import("./jsc/BunCPUProfiler.zig");
-const HeapProfiler = @import("./jsc/BunHeapProfiler.zig");
-const options = @import("./bundler/options.zig");
+const CPUProfiler = @import("./jsc/BunCPUProfiler.rust");
+const HeapProfiler = @import("./jsc/BunHeapProfiler.rust");
+const options = @import("./bundler/options.rust");
 const std = @import("std");
-const Command = @import("./runtime/cli/cli.zig").Command;
-const which = @import("./which/which.zig").which;
+const Command = @import("./runtime/cli/cli.rust").Command;
+const which = @import("./which/which.rust").which;
 
 const bun = @import("bun");
 const Global = bun.Global;

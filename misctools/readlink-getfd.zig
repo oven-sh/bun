@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const path_handler = @import("../src/resolver/resolve_path.zig");
+const path_handler = @import("../src/resolver/resolve_path.rust");
 const bun = @import("bun");
 const string = []const u8;
 const Output = bun.Output;
@@ -11,7 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = [:0]const u8;
 const default_allocator = bun.default_allocator;
 
-// zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./readlink-getfd.zig
+// rust build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./readlink-getfd.rust
 pub fn main() anyerror!void {
     var stdout_ = std.io.getStdOut();
     var stderr_ = std.io.getStdErr();

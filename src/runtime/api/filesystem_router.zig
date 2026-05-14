@@ -32,14 +32,14 @@ pub const FileSystemRouter = struct {
         }
         var vm = globalThis.bunVM();
 
-        var root_dir_path: ZigString.Slice = ZigString.Slice.fromUTF8NeverFree(vm.transpiler.fs.top_level_dir);
+        var root_dir_path: RustString.Slice = RustString.Slice.fromUTF8NeverFree(vm.transpiler.fs.top_level_dir);
         defer root_dir_path.deinit();
-        var origin_str: ZigString.Slice = .{};
-        var asset_prefix_slice: ZigString.Slice = .{};
+        var origin_str: RustString.Slice = .{};
+        var asset_prefix_slice: RustString.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (try argument.get(globalThis, "style")) |style_val| {
-            if (!(try style_val.getZigString(globalThis)).eqlComptime("nextjs")) {
+            if (!(try style_val.getRustString(globalThis)).eqlComptime("nextjs")) {
                 return globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
             }
         } else {
@@ -58,7 +58,7 @@ pub const FileSystemRouter = struct {
                     root_dir_path = root_dir_path_;
                 } else {
                     var parts = [_][]const u8{path};
-                    root_dir_path = jsc.ZigString.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
+                    root_dir_path = jsc.RustString.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
                 }
             }
         } else {
@@ -292,7 +292,7 @@ pub const FileSystemRouter = struct {
             return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }
 
-        var path: ZigString.Slice = brk: {
+        var path: RustString.Slice = brk: {
             if (argument.isString()) {
                 break :brk try (try argument.toSlice(globalThis, globalThis.allocator())).cloneIfBorrowed(globalThis.allocator());
             }
@@ -313,7 +313,7 @@ pub const FileSystemRouter = struct {
 
         if (path.len == 0 or (path.len == 1 and path.ptr[0] == '/')) {
             path.deinit();
-            path = ZigString.Slice.fromUTF8NeverFree("/");
+            path = RustString.Slice.fromUTF8NeverFree("/");
         }
 
         if (strings.hasPrefixComptime(path.slice(), "http://") or strings.hasPrefixComptime(path.slice(), "https://") or strings.hasPrefixComptime(path.slice(), "file://")) {
@@ -355,7 +355,7 @@ pub const FileSystemRouter = struct {
 
     pub fn getOrigin(this: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) JSValue {
         if (this.origin) |origin| {
-            return jsc.ZigString.init(origin.slice()).withEncoding().toJS(globalThis);
+            return jsc.RustString.init(origin.slice()).withEncoding().toJS(globalThis);
         }
 
         return JSValue.jsNull();
@@ -364,12 +364,12 @@ pub const FileSystemRouter = struct {
     pub fn getRoutes(this: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         const paths = this.router.getEntryPoints();
         const names = this.router.getNames();
-        var name_strings = try bun.default_allocator.alloc(ZigString, names.len * 2);
+        var name_strings = try bun.default_allocator.alloc(RustString, names.len * 2);
         defer bun.default_allocator.free(name_strings);
         var paths_strings = name_strings[names.len..];
         for (names, 0..) |name, i| {
-            name_strings[i] = ZigString.init(name).withEncoding();
-            paths_strings[i] = ZigString.init(paths[i]).withEncoding();
+            name_strings[i] = RustString.init(name).withEncoding();
+            paths_strings[i] = RustString.init(paths[i]).withEncoding();
         }
         return jsc.JSValue.fromEntries(
             globalThis,
@@ -386,7 +386,7 @@ pub const FileSystemRouter = struct {
 
     pub fn getAssetPrefix(this: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) JSValue {
         if (this.asset_prefix) |asset_prefix| {
-            return jsc.ZigString.init(asset_prefix.slice()).withEncoding().toJS(globalThis);
+            return jsc.RustString.init(asset_prefix.slice()).withEncoding().toJS(globalThis);
         }
 
         return JSValue.jsNull();
@@ -429,7 +429,7 @@ pub const MatchedRoute = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     pub fn getName(this: *MatchedRoute, globalThis: *jsc.JSGlobalObject) JSValue {
-        return ZigString.init(this.route.name).withEncoding().toJS(globalThis);
+        return RustString.init(this.route.name).withEncoding().toJS(globalThis);
     }
 
     pub fn init(
@@ -499,7 +499,7 @@ pub const MatchedRoute = struct {
         this: *MatchedRoute,
         globalThis: *jsc.JSGlobalObject,
     ) JSValue {
-        return ZigString.init(this.route.file_path)
+        return RustString.init(this.route.file_path)
             .withEncoding()
             .toJS(globalThis);
     }
@@ -511,13 +511,13 @@ pub const MatchedRoute = struct {
     }
 
     pub fn getPathname(this: *MatchedRoute, globalThis: *jsc.JSGlobalObject) JSValue {
-        return ZigString.init(this.route.pathname)
+        return RustString.init(this.route.pathname)
             .withEncoding()
             .toJS(globalThis);
     }
 
     pub fn getRoute(this: *MatchedRoute, globalThis: *jsc.JSGlobalObject) JSValue {
-        return ZigString.init(this.route.name)
+        return RustString.init(this.route.name)
             .withEncoding()
             .toJS(globalThis);
     }
@@ -529,15 +529,15 @@ pub const MatchedRoute = struct {
         pub const dynamic = "dynamic";
 
         // this is kinda stupid it should maybe just store it
-        pub fn init(name: string) ZigString {
+        pub fn init(name: string) RustString {
             if (strings.contains(name, "[[...")) {
-                return ZigString.init(optional_catch_all);
+                return RustString.init(optional_catch_all);
             } else if (strings.contains(name, "[...")) {
-                return ZigString.init(catch_all);
+                return RustString.init(catch_all);
             } else if (strings.contains(name, "[")) {
-                return ZigString.init(dynamic);
+                return RustString.init(dynamic);
             } else {
-                return ZigString.init(exact);
+                return RustString.init(exact);
             }
         }
     };
@@ -547,7 +547,7 @@ pub const MatchedRoute = struct {
     }
 
     threadlocal var query_string_values_buf: [256]string = undefined;
-    threadlocal var query_string_value_refs_buf: [256]ZigString = undefined;
+    threadlocal var query_string_value_refs_buf: [256]RustString = undefined;
     pub fn createQueryObject(ctx: *jsc.JSGlobalObject, map: *QueryStringMap) JSValue {
         const QueryObjectCreator = struct {
             query: *QueryStringMap,
@@ -555,17 +555,17 @@ pub const MatchedRoute = struct {
                 var iter = this.query.iter();
                 while (iter.next(&query_string_values_buf)) |entry| {
                     const entry_name = entry.name;
-                    var str = ZigString.init(entry_name).withEncoding();
+                    var str = RustString.init(entry_name).withEncoding();
 
                     bun.assert(entry.values.len > 0);
                     if (entry.values.len > 1) {
                         var values = query_string_value_refs_buf[0..entry.values.len];
                         for (entry.values, 0..) |value, i| {
-                            values[i] = ZigString.init(value).withEncoding();
+                            values[i] = RustString.init(value).withEncoding();
                         }
                         try obj.putRecord(global, &str, values);
                     } else {
-                        query_string_value_refs_buf[0] = ZigString.init(entry.values[0]).withEncoding();
+                        query_string_value_refs_buf[0] = RustString.init(entry.values[0]).withEncoding();
                         try obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
                     }
                 }
@@ -621,7 +621,7 @@ pub const MatchedRoute = struct {
             &writer,
             .posix,
         );
-        return ZigString.init(buf[0..writer.context.pos])
+        return RustString.init(buf[0..writer.context.pos])
             .withEncoding()
             .toJS(globalThis);
     }
@@ -683,15 +683,15 @@ pub const MatchedRoute = struct {
 
 const string = []const u8;
 
-const Fs = @import("../../resolver/fs.zig");
-const Router = @import("../../router/router.zig");
-const URLPath = @import("../../http_types/URLPath.zig");
+const Fs = @import("../../resolver/fs.rust");
+const Router = @import("../../router/router.rust");
+const URLPath = @import("../../http_types/URLPath.rust");
 const std = @import("std");
-const Resolver = @import("../../resolver/resolver.zig").Resolver;
+const Resolver = @import("../../resolver/resolver.rust").Resolver;
 
-const CombinedScanner = @import("../../url/url.zig").CombinedScanner;
-const QueryStringMap = @import("../../url/url.zig").QueryStringMap;
-const URL = @import("../../url/url.zig").URL;
+const CombinedScanner = @import("../../url/url.rust").CombinedScanner;
+const QueryStringMap = @import("../../url/url.rust").QueryStringMap;
+const URL = @import("../../url/url.rust").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -703,7 +703,7 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSObject = jsc.JSObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 
 const WebCore = jsc.WebCore;
 const Request = WebCore.Request;

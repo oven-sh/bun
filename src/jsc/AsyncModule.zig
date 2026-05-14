@@ -310,7 +310,7 @@ pub const AsyncModule = struct {
         comptime {
             // Ensure VirtualMachine has a field named "modules" of the correct type
             // If this fails, the @fieldParentPtr in vm() above needs to be updated
-            const VM = @import("./VirtualMachine.zig");
+            const VM = @import("./VirtualMachine.rust");
             if (!@hasField(VM, "modules")) {
                 @compileError("VirtualMachine must have a 'modules' field for AsyncModule.Queue.vm() to work");
             }
@@ -392,8 +392,8 @@ pub const AsyncModule = struct {
             });
         }
 
-        var spec = bun.String.init(ZigString.init(this.specifier).withEncoding());
-        var ref = bun.String.init(ZigString.init(this.referrer).withEncoding());
+        var spec = bun.String.init(RustString.init(this.specifier).withEncoding());
+        var ref = bun.String.init(RustString.init(this.referrer).withEncoding());
         bun.jsc.fromJSHostCallGeneric(this.globalThis, @src(), Bun__onFulfillAsyncModule, .{
             this.globalThis,
             this.promise.get().?,
@@ -531,21 +531,21 @@ pub const AsyncModule = struct {
             else => "PackageResolveError",
         };
 
-        var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
+        var error_instance = RustString.init(msg).withEncoding().toErrorInstance(globalThis);
         if (result.url.len > 0)
-            error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, RustString.static("url"), RustString.init(result.url).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, RustString.static("name"), RustString.init(name).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, RustString.static("pkg"), RustString.init(result.name).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, RustString.static("specifier"), RustString.init(this.specifier).withEncoding().toJS(globalThis));
         const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
-        error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
+        error_instance.put(globalThis, RustString.static("sourceURL"), RustString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, RustString.static("line"), JSValue.jsNumber(location.line));
         if (location.line_text) |line_text| {
-            error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, RustString.static("lineText"), RustString.init(line_text).withEncoding().toJS(globalThis));
         }
-        error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
+        error_instance.put(globalThis, RustString.static("column"), JSValue.jsNumber(location.column));
         if (this.referrer.len > 0 and !strings.eqlComptime(this.referrer, "undefined")) {
-            error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.referrer).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, RustString.static("referrer"), RustString.init(this.referrer).withEncoding().toJS(globalThis));
         }
 
         const promise_value = this.promise.swap();
@@ -623,25 +623,25 @@ pub const AsyncModule = struct {
             else => "TarballDownloadError",
         };
 
-        var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
+        var error_instance = RustString.init(msg).withEncoding().toErrorInstance(globalThis);
         if (result.url.len > 0)
-            error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, RustString.static("url"), RustString.init(result.url).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, RustString.static("name"), RustString.init(name).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, RustString.static("pkg"), RustString.init(result.name).withEncoding().toJS(globalThis));
         if (this.specifier.len > 0 and !strings.eqlComptime(this.specifier, "undefined")) {
-            error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, RustString.static("referrer"), RustString.init(this.specifier).withEncoding().toJS(globalThis));
         }
 
         const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
-        error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(
+        error_instance.put(globalThis, RustString.static("specifier"), RustString.init(
             this.parse_result.ast.import_records.at(import_record_id).path.text,
         ).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
+        error_instance.put(globalThis, RustString.static("sourceURL"), RustString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, RustString.static("line"), JSValue.jsNumber(location.line));
         if (location.line_text) |line_text| {
-            error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, RustString.static("lineText"), RustString.init(line_text).withEncoding().toJS(globalThis));
         }
-        error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
+        error_instance.put(globalThis, RustString.static("column"), JSValue.jsNumber(location.column));
 
         const promise_value = this.promise.swap();
         var promise = promise_value.asInternalPromise().?;
@@ -753,15 +753,15 @@ pub const AsyncModule = struct {
     ) void;
 };
 
-const Dependency = @import("../install/dependency.zig");
-const Fs = @import("../resolver/fs.zig");
-const options = @import("../bundler/options.zig");
+const Dependency = @import("../install/dependency.rust");
+const Fs = @import("../resolver/fs.rust");
+const options = @import("../bundler/options.rust");
 const std = @import("std");
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
+const PackageJSON = @import("../resolver/package_json.rust").PackageJSON;
+const dumpSource = @import("./RuntimeTranspilerStore.rust").dumpSource;
 
-const Install = @import("../install/install.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
+const Install = @import("../install/install.rust");
+const PackageManager = @import("../install/install.rust").PackageManager;
 
 const bun = @import("bun");
 const Async = bun.Async;
@@ -779,4 +779,4 @@ const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const ResolvedSource = bun.jsc.ResolvedSource;
 const VirtualMachine = bun.jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;

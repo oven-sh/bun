@@ -76,8 +76,8 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    auto* structure = zigGlobalObject->NodeVMSyntheticModuleStructure();
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
+    auto* structure = rustGlobalObject->NodeVMSyntheticModuleStructure();
     WTF::String identifier = identifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* ptr = new (NotNull, allocateCell<NodeVMSyntheticModule>(vm)) NodeVMSyntheticModule(vm, structure, WTF::move(identifier), contextValue, moduleWrapperValue, WTF::move(exportNames), syntheticEvaluationStepsValue);

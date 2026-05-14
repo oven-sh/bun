@@ -4,7 +4,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <wtf/Compiler.h>
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include "S3Error.h"
 
 namespace Bun {

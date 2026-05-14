@@ -175,6 +175,6 @@ const debug = bun.Output.scoped(.Postgres, .hidden);
 
 const bun = @import("bun");
 const std = @import("std");
-const Data = @import("../../shared/Data.zig").Data;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const NewReader = @import("./NewReader.zig").NewReader;
+const Data = @import("../../shared/Data.rust").Data;
+const DecoderWrap = @import("./DecoderWrap.rust").DecoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;

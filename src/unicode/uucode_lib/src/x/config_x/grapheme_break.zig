@@ -29,6 +29,6 @@ pub const grapheme_break_no_control = config.Extension{
     },
 };
 
-const config = @import("./config.zig");
+const config = @import("./config.rust");
 const std = @import("std");
-const types_x = @import("../types.x.zig");
+const types_x = @import("../types.x.rust");

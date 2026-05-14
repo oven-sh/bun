@@ -1,7 +1,7 @@
 #include "ErrorCode.h"
 #include "root.h"
 #include "Secrets.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -234,7 +234,7 @@ struct SecretsJobOptions {
     }
 };
 
-// C interface implementation for Zig binding
+// C interface implementation for Rust binding
 extern "C" {
 
 // Runs on the threadpool - does the actual platform API work
@@ -315,7 +315,7 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
     delete opts;
 }
 
-// Zig binding exports
+// Rust binding exports
 void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
 
 } // extern "C"

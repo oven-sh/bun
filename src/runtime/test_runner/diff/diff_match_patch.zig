@@ -968,7 +968,7 @@ pub fn DMP(comptime Unit: type) type {
                                     text_delete.replaceRangeAssumeCapacity(0, common_length, &.{});
                                 }
                                 // Factor out any common suffixies.
-                                // @ZigPort this seems very wrong
+                                // @RustPort this seems very wrong
                                 common_length = diffCommonSuffix(text_insert.items, text_delete.items);
                                 if (common_length != 0) {
                                     const old_text = diffs.items[pointer].text;
@@ -2942,7 +2942,7 @@ pub fn DMP(comptime Unit: type) type {
             }
         }
 
-        /// https://github.com/ziglang/zig/pull/23042/files
+        /// https://github.com/rustlang/rust/pull/23042/files
         fn checkAllAllocationFailures(
             backing_allocator: std.mem.Allocator,
             comptime test_fn: anytype,

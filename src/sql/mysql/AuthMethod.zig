@@ -33,5 +33,5 @@ pub const AuthMethod = enum {
     pub const fromString = Map.get;
 };
 
-const Auth = @import("./protocol/Auth.zig");
+const Auth = @import("./protocol/Auth.rust");
 const bun = @import("bun");

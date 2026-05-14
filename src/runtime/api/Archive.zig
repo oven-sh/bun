@@ -255,16 +255,16 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
     };
 }
 
-/// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
-fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
+/// Returns data as a RustString.Slice (handles ownership automatically via deinit)
+fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!jsc.RustString.Slice {
     // For Blob, use sharedView (no copy needed)
     if (value.as(jsc.WebCore.Blob)) |blob_ptr| {
-        return jsc.ZigString.Slice.fromUTF8NeverFree(blob_ptr.sharedView());
+        return jsc.RustString.Slice.fromUTF8NeverFree(blob_ptr.sharedView());
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
     if (value.asArrayBuffer(globalThis)) |array_buffer| {
-        return jsc.ZigString.Slice.fromUTF8NeverFree(array_buffer.slice());
+        return jsc.RustString.Slice.fromUTF8NeverFree(array_buffer.slice());
     }
 
     // For strings, convert (allocates)
@@ -828,7 +828,7 @@ const FilesContext = struct {
                 while (total_read < size) {
                     const read = archive.readData(data[total_read..]);
                     if (read < 0) {
-                        // Read error - returned as a normal Result (not a Zig error), so the
+                        // Read error - returned as a normal Result (not a Rust error), so the
                         // errdefer above won't fire. Free the current buffer and all previously
                         // collected entries manually to avoid leaking them.
                         bun.default_allocator.free(data);
@@ -1138,8 +1138,8 @@ fn extractToDiskFiltered(
     return count;
 }
 
-const libarchive = @import("../../libarchive/libarchive.zig");
-const libdeflate = @import("../../libdeflate_sys/libdeflate.zig");
+const libarchive = @import("../../libarchive/libarchive.rust");
+const libdeflate = @import("../../libdeflate_sys/libdeflate.rust");
 const std = @import("std");
 
 const bun = @import("bun");

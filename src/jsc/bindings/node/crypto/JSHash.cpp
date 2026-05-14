@@ -36,8 +36,8 @@ void JSHash::destroy(JSC::JSCell* cell)
 
 JSHash::~JSHash()
 {
-    if (m_zigHasher) {
-        ExternZigHash::destroy(m_zigHasher);
+    if (m_rustHasher) {
+        ExternRustHash::destroy(m_rustHasher);
     }
 }
 
@@ -97,10 +97,10 @@ bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EV
     return true;
 }
 
-bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigHash::Hasher* hasher, std::optional<uint32_t> xofLen)
+bool JSHash::initRust(JSGlobalObject* globalObject, ThrowScope& scope, ExternRustHash::Hasher* hasher, std::optional<uint32_t> xofLen)
 {
-    m_zigHasher = hasher;
-    m_mdLen = ExternZigHash::getDigestSize(hasher);
+    m_rustHasher = hasher;
+    m_mdLen = ExternRustHash::getDigestSize(hasher);
 
     if (m_mdLen == 0) {
         return false;
@@ -124,8 +124,8 @@ bool JSHash::update(std::span<const uint8_t> input)
         return m_ctx.digestUpdate(buffer);
     }
 
-    if (m_zigHasher) {
-        return ExternZigHash::update(m_zigHasher, input);
+    if (m_rustHasher) {
+        return ExternRustHash::update(m_rustHasher, input);
     }
 
     return false;
@@ -241,14 +241,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     uint32_t len = hash->m_mdLen;
 
-    if (hash->m_zigHasher) {
+    if (hash->m_rustHasher) {
         if (hash->m_digestBuffer.size() > 0 || len == 0) {
             RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
         }
 
         uint32_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
         hash->m_digestBuffer.resizeToFit(maxDigestLen);
-        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, hash->m_digestBuffer.mutableSpan());
+        auto totalDigestLen = ExternRustHash::digest(hash->m_rustHasher, globalObject, hash->m_digestBuffer.mutableSpan());
         if (!totalDigestLen) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return {};
@@ -285,12 +285,12 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSHashClassStructure.get(zigGlobalObject);
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = rustGlobalObject->m_JSHashClassStructure.get(rustGlobalObject);
 
     // Handle new target
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSHashClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (rustGlobalObject->m_JSHashClassStructure.constructor(rustGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Hash cannot be invoked without 'new'"_s);
             return {};
@@ -309,15 +309,15 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     // If clone, check m_finalized before anything else.
     JSHash* original = nullptr;
     const EVP_MD* md = nullptr;
-    ExternZigHash::Hasher* zigHasher = nullptr;
+    ExternRustHash::Hasher* rustHasher = nullptr;
     if (algorithmOrHashInstanceValue.inherits(JSHash::info())) {
         original = dynamicDowncast<JSHash>(algorithmOrHashInstanceValue);
         if (!original || original->m_finalized) {
             return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
         }
 
-        if (original->m_zigHasher) {
-            zigHasher = ExternZigHash::getFromOther(zigGlobalObject, original->m_zigHasher);
+        if (original->m_rustHasher) {
+            rustHasher = ExternRustHash::getFromOther(rustGlobalObject, original->m_rustHasher);
         } else {
             md = original->m_ctx.getDigest();
         }
@@ -330,11 +330,11 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
         md = ncrypto::getDigestByName(algorithm);
         if (!md) {
-            zigHasher = ExternZigHash::getByName(zigGlobalObject, algorithm);
+            rustHasher = ExternRustHash::getByName(rustGlobalObject, algorithm);
         }
     }
 
-    if (md == nullptr && zigHasher == nullptr) [[unlikely]] {
+    if (md == nullptr && rustHasher == nullptr) [[unlikely]] {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
         return {};
     }
@@ -355,8 +355,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     JSHash* hash = JSHash::create(vm, structure);
 
-    if (zigHasher) {
-        if (!hash->initZig(globalObject, scope, zigHasher, xofLen)) {
+    if (rustHasher) {
+        if (!hash->initRust(globalObject, scope, rustHasher, xofLen)) {
             throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
             return {};
         }

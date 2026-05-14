@@ -870,9 +870,9 @@ pub const Template = union(Tag) {
 
 const string = []const u8;
 
-const linker = @import("../../../bundler/linker.zig");
+const linker = @import("../../../bundler/linker.rust");
 const std = @import("std");
-const Example = @import("../create_command.zig").Example;
+const Example = @import("../create_command.rust").Example;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1,5 +1,5 @@
 #include "blob.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject* globalObject, void* impl);
 extern "C" void Blob__setAsFile(void* impl, BunString* filename);

@@ -1,5 +1,5 @@
 //! `Value` union + JSC bridges for MySQL type encoding. Split from
-//! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
+//! `sql/mysql/MySQLTypes.rust` so the protocol layer keeps the pure
 //! `CharacterSet`/`FieldType` enums without `JSValue` references.
 
 pub const fieldTypeFromJS = struct {
@@ -102,7 +102,7 @@ pub const Value = union(enum) {
     float: f32,
     double: f64,
 
-    string: JSC.ZigString.Slice,
+    string: JSC.RustString.Slice,
     string_data: Data,
     bytes: Bytes,
     bytes_data: Data,
@@ -122,7 +122,7 @@ pub const Value = union(enum) {
     /// alive — `params` is on the malloc heap and isn't scanned. `deinit()`
     /// unpins.
     pub const Bytes = struct {
-        slice: JSC.ZigString.Slice = .empty,
+        slice: JSC.RustString.Slice = .empty,
         /// JS ArrayBuffer/view to `unpinArrayBuffer` in `deinit()`. `.zero`
         /// when the slice is owned (FastTypedArray dupe), borrowed from a
         /// Blob store (nothing to unpin), or empty. GC rooting of this value
@@ -219,7 +219,7 @@ pub const Value = union(enum) {
                         // detached / null
                         0 => Value{ .bytes = .{} },
                         // FastTypedArray — tiny, GC-movable vector; dupe.
-                        1 => Value{ .bytes = .{ .slice = try JSC.ZigString.Slice.initDupe(bun.default_allocator, ptr[0..len]) } },
+                        1 => Value{ .bytes = .{ .slice = try JSC.RustString.Slice.initDupe(bun.default_allocator, ptr[0..len]) } },
                         // Oversize/Wasteful/DataView/JSArrayBuffer — pinned
                         // by the helper. Root the wrapper so GC can't
                         // collect it (and free the backing store despite
@@ -227,7 +227,7 @@ pub const Value = union(enum) {
                         // a later parameter.
                         2 => blk: {
                             roots.append(value);
-                            break :blk Value{ .bytes = .{ .slice = JSC.ZigString.Slice.fromUTF8NeverFree(ptr[0..len]), .pinned = value } };
+                            break :blk Value{ .bytes = .{ .slice = JSC.RustString.Slice.fromUTF8NeverFree(ptr[0..len]), .pinned = value } };
                         },
                         else => unreachable,
                     };
@@ -242,7 +242,7 @@ pub const Value = union(enum) {
                     // the last reference and force GC. Root the wrapper so
                     // the store survives until execute.write() has read it.
                     roots.append(value);
-                    return Value{ .bytes = .{ .slice = JSC.ZigString.Slice.fromUTF8NeverFree(blob.sharedView()) } };
+                    return Value{ .bytes = .{ .slice = JSC.RustString.Slice.fromUTF8NeverFree(blob.sharedView()) } };
                 }
 
                 if (value.isString()) {
@@ -630,11 +630,11 @@ extern fn JSC__JSValue__unpinArrayBuffer(v: JSC.JSValue) void;
 /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
 extern fn JSC__JSValue__borrowBytesForOffThread(v: JSC.JSValue, out_ptr: *[*]const u8, out_len: *usize) i32;
 
-const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.zig");
+const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.rust");
 const std = @import("std");
-const Data = @import("../../sql/shared/Data.zig").Data;
+const Data = @import("../../sql/shared/Data.rust").Data;
 
-const types = @import("../../sql/mysql/MySQLTypes.zig");
+const types = @import("../../sql/mysql/MySQLTypes.rust");
 const FieldType = types.FieldType;
 
 const bun = @import("bun");
@@ -642,4 +642,4 @@ const String = bun.String;
 
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;
+const RustString = JSC.RustString;

@@ -77,7 +77,7 @@ pub fn toHaveLastReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfr
 }
 
 const bun = @import("bun");
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("../diff_format.rust").DiffFormatter;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

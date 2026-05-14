@@ -1,4 +1,4 @@
-//! Pure enum/struct option types extracted from `bundler/options.zig` so
+//! Pure enum/struct option types extracted from `bundler/options.rust` so
 //! `cli/` and other tiers can reference them without depending on `bundler/`.
 //! Aliased back at original locations — call sites unchanged.
 
@@ -48,7 +48,7 @@ pub const Format = enum {
         .{ "internal_bake_dev", .internal_bake_dev },
     });
 
-    pub const fromJS = @import("../bundler_jsc/options_jsc.zig").formatFromJS;
+    pub const fromJS = @import("../bundler_jsc/options_jsc.rust").formatFromJS;
 
     pub fn fromString(slice: []const u8) ?Format {
         return Map.getWithEql(slice, bun.strings.eqlComptime);

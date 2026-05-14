@@ -1,6 +1,6 @@
 const strings = @This();
 
-/// memmem is provided by libc on posix, but implemented in zig for windows.
+/// memmem is provided by libc on posix, but implemented in rust for windows.
 pub const memmem = bun.sys.workaround_symbols.memmem;
 
 pub const Encoding = enum {
@@ -1462,7 +1462,7 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
 
             // This looks extremely redundant but it was the easiest way to make the compiler do the right thing
             // the more convienient "0123456789abcdef" string produces worse codegen
-            // https://zig.godbolt.org/z/bfdracEeq
+            // https://rust.godbolt.org/z/bfdracEeq
             const lower_16 = [16]u8{
                 byte2hex(input_chunk_4[0]),
                 byte2hex(input_chunk_4[1]),
@@ -1523,7 +1523,7 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
 }
 
 /// Leave a single leading char
-/// ```zig
+/// ```rust
 /// trimSubsequentLeadingChars("foo\n\n\n\n", '\n') -> "foo\n"
 /// ```
 pub fn trimSubsequentLeadingChars(slice: []const u8, char: u8) []const u8 {
@@ -1826,7 +1826,7 @@ pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
     return order(a, b) == .gt;
 }
 
-/// Every time you read a non^2 sized integer, Zig masks off the extra bits.
+/// Every time you read a non^2 sized integer, Rust masks off the extra bits.
 /// This is a meaningful performance difference, including in release builds.
 pub const u3_fast = u8;
 
@@ -1967,7 +1967,7 @@ pub fn moveSlice(slice: string, from: string, to: string) string {
     return result;
 }
 
-pub const ExactSizeMatcher = @import("./immutable/exact_size_matcher.zig").ExactSizeMatcher;
+pub const ExactSizeMatcher = @import("./immutable/exact_size_matcher.rust").ExactSizeMatcher;
 
 pub const unicode_replacement = 0xFFFD;
 pub const unicode_replacement_str = brk: {
@@ -2016,7 +2016,7 @@ pub fn leftHasAnyInRight(to_check: []const string, against: []const string) bool
 /// Also returns true if the input ends with the prefix (i.e. EOF)
 ///
 /// Example:
-/// ```zig
+/// ```rust
 /// // returns true
 /// hasPrefixWithWordBoundary("console.log", "console") // true
 /// hasPrefixWithWordBoundary("console.log", "log") // false
@@ -2382,7 +2382,7 @@ pub const withoutTrailingSlashWindowsPath = paths_.withoutTrailingSlashWindowsPa
 pub const basename = paths_.basename;
 
 pub const log = bun.Output.scoped(.STR, .hidden);
-pub const grapheme = @import("./immutable/grapheme.zig");
+pub const grapheme = @import("./immutable/grapheme.rust");
 pub const CodePoint = i32;
 
 const string = []const u8;
@@ -2417,12 +2417,12 @@ pub const ANSIIterator = extern struct {
     extern fn Bun__ANSI__next(it: *ANSIIterator) bool;
 };
 
-const escapeHTML_ = @import("./immutable/escapeHTML.zig");
-const escapeRegExp_ = @import("./escapeRegExp.zig");
-const paths_ = @import("./immutable/paths.zig");
+const escapeHTML_ = @import("./immutable/escapeHTML.rust");
+const escapeRegExp_ = @import("./escapeRegExp.rust");
+const paths_ = @import("./immutable/paths.rust");
 const std = @import("std");
-const unicode = @import("./immutable/unicode.zig");
-const visible_ = @import("./immutable/visible.zig");
+const unicode = @import("./immutable/unicode.rust");
+const visible_ = @import("./immutable/visible.rust");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

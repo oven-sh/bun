@@ -1553,7 +1553,7 @@ pub const ESModule = struct {
 
         // If resolved contains any percent encodings of "/" or "\" ("%2f" and "%5C"
         // respectively), then throw an Invalid Module Specifier error.
-        const PercentEncoding = @import("../url/url.zig").PercentEncoding;
+        const PercentEncoding = @import("../url/url.rust").PercentEncoding;
         const resolved_path_buf_percent = &module_bufs.get().resolved_path_buf_percent;
         var fbs = std.io.fixedBufferStream(resolved_path_buf_percent);
         var writer = fbs.writer();
@@ -2156,17 +2156,17 @@ fn findInvalidSegment(path_: string) ?string {
 
 const string = []const u8;
 
-const Dependency = @import("../install/dependency.zig");
-const Install = @import("../install/install.zig");
-const cache = @import("../bundler/cache.zig");
-const fs = @import("./fs.zig");
-const options = @import("../bundler/options.zig");
-const resolve_path = @import("../paths/resolve_path.zig");
-const resolver = @import("./resolver.zig");
+const Dependency = @import("../install/dependency.rust");
+const Install = @import("../install/install.rust");
+const cache = @import("../bundler/cache.rust");
+const fs = @import("./fs.rust");
+const options = @import("../bundler/options.rust");
+const resolve_path = @import("../paths/resolve_path.rust");
+const resolver = @import("./resolver.rust");
 const std = @import("std");
 
-const Architecture = @import("../install/npm.zig").Architecture;
-const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
+const Architecture = @import("../install/npm.rust").Architecture;
+const OperatingSystem = @import("../install/npm.rust").OperatingSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -60,7 +60,7 @@ pub inline fn bltn(this: *@This()) *Builtin {
     return @fieldParentPtr("impl", impl);
 }
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const std = @import("std");
 
 const Interpreter = interpreter.Interpreter;

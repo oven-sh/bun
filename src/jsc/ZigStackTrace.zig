@@ -1,13 +1,13 @@
 const string = []const u8;
 
 /// Represents a JavaScript stack trace
-pub const ZigStackTrace = extern struct {
+pub const RustStackTrace = extern struct {
     source_lines_ptr: [*]bun.String,
     source_lines_numbers: [*]i32,
     source_lines_len: u8,
     source_lines_to_collect: u8,
 
-    frames_ptr: [*]ZigStackFrame,
+    frames_ptr: [*]RustStackFrame,
     frames_len: u8,
     frames_cap: u8,
 
@@ -15,7 +15,7 @@ pub const ZigStackTrace = extern struct {
     /// If so, then .deref must be called on it to release the memory.
     referenced_source_provider: ?*SourceProvider = null,
 
-    pub fn fromFrames(frames_slice: []ZigStackFrame) ZigStackTrace {
+    pub fn fromFrames(frames_slice: []RustStackFrame) RustStackTrace {
         return .{
             .source_lines_ptr = &[0]bun.String{},
             .source_lines_numbers = &[0]i32{},
@@ -31,10 +31,10 @@ pub const ZigStackTrace = extern struct {
     }
 
     pub fn toAPI(
-        this: *const ZigStackTrace,
+        this: *const RustStackTrace,
         allocator: std.mem.Allocator,
         root_path: string,
-        origin: ?*const ZigURL,
+        origin: ?*const RustURL,
     ) !api.StackTrace {
         var stack_trace: api.StackTrace = comptime std.mem.zeroes(api.StackTrace);
         {
@@ -83,21 +83,21 @@ pub const ZigStackTrace = extern struct {
         return stack_trace;
     }
 
-    pub fn frames(this: *const ZigStackTrace) []const ZigStackFrame {
+    pub fn frames(this: *const RustStackTrace) []const RustStackFrame {
         return this.frames_ptr[0..this.frames_len];
     }
 
-    pub fn framesMutable(this: *ZigStackTrace) []ZigStackFrame {
+    pub fn framesMutable(this: *RustStackTrace) []RustStackFrame {
         return this.frames_ptr[0..this.frames_len];
     }
 
     pub const SourceLineIterator = struct {
-        trace: *const ZigStackTrace,
+        trace: *const RustStackTrace,
         i: i32,
 
         pub const SourceLine = struct {
             line: i32,
-            text: ZigString.Slice,
+            text: RustString.Slice,
         };
 
         pub fn getLength(this: *SourceLineIterator) usize {
@@ -127,7 +127,7 @@ pub const ZigStackTrace = extern struct {
         }
     };
 
-    pub fn sourceLineIterator(this: *const ZigStackTrace) SourceLineIterator {
+    pub fn sourceLineIterator(this: *const RustStackTrace) SourceLineIterator {
         var i: i32 = -1;
         for (this.source_lines_numbers[0..this.source_lines_len], 0..) |num, j| {
             if (num >= 0) {
@@ -139,12 +139,12 @@ pub const ZigStackTrace = extern struct {
 };
 
 const std = @import("std");
-const ZigURL = @import("../url/url.zig").URL;
+const RustURL = @import("../url/url.rust").URL;
 
 const bun = @import("bun");
 const api = bun.schema.api;
 
 const jsc = bun.jsc;
 const SourceProvider = jsc.SourceProvider;
-const ZigStackFrame = jsc.ZigStackFrame;
-const ZigString = jsc.ZigString;
+const RustStackFrame = jsc.RustStackFrame;
+const RustString = jsc.RustString;

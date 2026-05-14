@@ -36,7 +36,7 @@ pub const S3Credentials = struct {
         return hasher.final();
     }
 
-    pub const getCredentialsWithOptions = @import("../runtime/webcore/s3/credentials_jsc.zig").getCredentialsWithOptions;
+    pub const getCredentialsWithOptions = @import("../runtime/webcore/s3/credentials_jsc.rust").getCredentialsWithOptions;
 
     pub fn dupe(this: *const @This()) *S3Credentials {
         return bun.new(S3Credentials, .{
@@ -775,15 +775,15 @@ pub const S3CredentialsWithOptions = struct {
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
     virtual_hosted_style: bool = false,
-    _accessKeyIdSlice: ?jsc.ZigString.Slice = null,
-    _secretAccessKeySlice: ?jsc.ZigString.Slice = null,
-    _regionSlice: ?jsc.ZigString.Slice = null,
-    _endpointSlice: ?jsc.ZigString.Slice = null,
-    _bucketSlice: ?jsc.ZigString.Slice = null,
-    _sessionTokenSlice: ?jsc.ZigString.Slice = null,
-    _contentDispositionSlice: ?jsc.ZigString.Slice = null,
-    _contentTypeSlice: ?jsc.ZigString.Slice = null,
-    _contentEncodingSlice: ?jsc.ZigString.Slice = null,
+    _accessKeyIdSlice: ?jsc.RustString.Slice = null,
+    _secretAccessKeySlice: ?jsc.RustString.Slice = null,
+    _regionSlice: ?jsc.RustString.Slice = null,
+    _endpointSlice: ?jsc.RustString.Slice = null,
+    _bucketSlice: ?jsc.RustString.Slice = null,
+    _sessionTokenSlice: ?jsc.RustString.Slice = null,
+    _contentDispositionSlice: ?jsc.RustString.Slice = null,
+    _contentTypeSlice: ?jsc.RustString.Slice = null,
+    _contentEncodingSlice: ?jsc.RustString.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -929,9 +929,9 @@ fn containsNewlineOrCR(value: []const u8) bool {
 }
 
 const std = @import("std");
-const ACL = @import("./acl.zig").ACL;
-const MultiPartUploadOptions = @import("../runtime/webcore/s3/multipart_options.zig").MultiPartUploadOptions;
-const StorageClass = @import("./storage_class.zig").StorageClass;
+const ACL = @import("./acl.rust").ACL;
+const MultiPartUploadOptions = @import("../runtime/webcore/s3/multipart_options.rust").MultiPartUploadOptions;
+const StorageClass = @import("./storage_class.rust").StorageClass;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

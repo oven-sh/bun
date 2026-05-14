@@ -239,12 +239,12 @@ pub fn encodeHpackTableSizeUpdate(encoded: *std.ArrayListUnmanaged(u8), value: u
     encoded.appendAssumeCapacity(@as(u8, @truncate(rest)));
 }
 
-const ClientSession = @import("./ClientSession.zig");
-const Stream = @import("./Stream.zig");
+const ClientSession = @import("./ClientSession.rust");
+const Stream = @import("./Stream.rust");
 const std = @import("std");
-const wire = @import("../H2FrameParser.zig");
+const wire = @import("../H2FrameParser.rust");
 
-const H2 = @import("../H2Client.zig");
+const H2 = @import("../H2Client.rust");
 const local_initial_window_size = H2.local_initial_window_size;
 const local_max_header_list_size = H2.local_max_header_list_size;
 const write_buffer_high_water = H2.write_buffer_high_water;

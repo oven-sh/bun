@@ -743,7 +743,7 @@ const log = bun.Output.scoped(.cp, .hidden);
 const std = @import("std");
 const ArrayList = std.array_list.Managed;
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
 const OutputSrc = interpreter.OutputSrc;

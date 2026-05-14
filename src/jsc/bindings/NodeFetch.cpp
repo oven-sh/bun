@@ -1,6 +1,6 @@
 #include "root.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include "JSFetchHeaders.h"
 #include "JSDOMFormData.h"
@@ -19,7 +19,7 @@ using namespace JSC;
 using namespace WebCore;
 
 // Ensure overriding globals doesn't impact usages.
-JSC::JSValue createNodeFetchInternalBinding(Zig::GlobalObject* globalObject)
+JSC::JSValue createNodeFetchInternalBinding(Rust::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 

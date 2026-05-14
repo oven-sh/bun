@@ -30,7 +30,7 @@
 
 struct us_socket_t;
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
@@ -378,7 +378,7 @@ public:
     // Chrome's output (chatty on stderr — GCM/updater/font-config noise).
     // Spawn args apply only on the FIRST call — subsequent views share the
     // one Chrome, so mismatched args across views get the first-call's.
-    bool ensureSpawned(Zig::GlobalObject*, const WTF::String& userDataDir = {},
+    bool ensureSpawned(Rust::GlobalObject*, const WTF::String& userDataDir = {},
         const WTF::String& path = {}, const WTF::Vector<WTF::String>& extraArgv = {},
         bool stdoutInherit = false, bool stderrInherit = false);
 
@@ -398,7 +398,7 @@ public:
     // ensureSpawned instead of rejecting the user's promise with a
     // confusing WebSocket error. autoDetected=false means explicit
     // backend.url; connect failure surfaces directly.
-    bool ensureConnected(Zig::GlobalObject*, const WTF::String& wsUrl, bool autoDetected,
+    bool ensureConnected(Rust::GlobalObject*, const WTF::String& wsUrl, bool autoDetected,
         const WTF::String& userDataDir = {}, bool stdoutInherit = false, bool stderrInherit = false);
 
     // Next CDP id — caller uses it with Command(id, ...) then calls send().
@@ -416,7 +416,7 @@ public:
     void onWritable();
     void onClose();
 
-    Zig::GlobalObject* m_global = nullptr;
+    Rust::GlobalObject* m_global = nullptr;
     TransportMode m_mode = TransportMode::None;
     // Pipe mode: usockets-adopted socketpair fd.
     us_socket_t* m_readSock = nullptr;

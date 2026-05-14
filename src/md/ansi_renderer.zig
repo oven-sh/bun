@@ -2108,7 +2108,7 @@ fn probeKittyGraphics() bool {
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
-    // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
+    // bun.sys.poll has a Maybe variant Rust flags as incomplete — keep std.posix.poll.
     const ready = std.posix.poll(&pfd, 80) catch return false;
     if (ready <= 0) return false;
 
@@ -2235,13 +2235,13 @@ pub fn renderToAnsi(
 }
 
 const bun = @import("bun");
-const helpers = @import("./helpers.zig");
-const root = @import("./root.zig");
+const helpers = @import("./helpers.rust");
+const root = @import("./root.rust");
 const std = @import("std");
-const PercentEncoding = @import("../url/url.zig").PercentEncoding;
+const PercentEncoding = @import("../url/url.rust").PercentEncoding;
 const Allocator = std.mem.Allocator;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const BlockType = types.BlockType;
 const Renderer = types.Renderer;
 const SpanDetail = types.SpanDetail;

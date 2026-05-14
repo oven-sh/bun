@@ -1,5 +1,5 @@
-pub const DataURL = @import("./data_url.zig").DataURL;
-pub const DirInfo = @import("./dir_info.zig");
+pub const DataURL = @import("./data_url.rust").DataURL;
+pub const DirInfo = @import("./dir_info.rust");
 
 const debuglog = Output.scoped(.Resolver, .hidden);
 
@@ -3492,8 +3492,8 @@ pub const Resolver = struct {
         };
     }
 
-    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.zig
-    // (no Zig callers; exported to C++ only)
+    // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.rust
+    // (no Rust callers; exported to C++ only)
 
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
         // Try the "index" file with extensions
@@ -4266,7 +4266,7 @@ pub const Resolver = struct {
                             // backing storage before overwriting so the PathsMap from the
                             // deeper config doesn't leak. Each value is a []string slice
                             // that was separately heap-allocated in TSConfigJSON.parse()
-                            // (tsconfig_json.zig), so free those before the map itself.
+                            // (tsconfig_json.rust), so free those before the map itself.
                             for (merged_config.paths.values()) |v| bun.default_allocator.free(v);
                             merged_config.paths.deinit();
                             merged_config.paths = parent_config.paths;
@@ -4339,34 +4339,34 @@ pub const RootPathPair = struct {
     package_json: *const PackageJSON,
 };
 
-pub const GlobalCache = @import("../options_types/GlobalCache.zig").GlobalCache;
+pub const GlobalCache = @import("../options_types/GlobalCache.rust").GlobalCache;
 
 const string = []const u8;
 
-const Dependency = @import("../install/dependency.zig");
-const DotEnv = @import("../dotenv/env_loader.zig");
-const NodeFallbackModules = @import("./node_fallbacks.zig");
-const ResolvePath = @import("../paths/resolve_path.zig");
-const ast = @import("../options_types/import_record.zig");
-const options = @import("../bundler/options.zig");
+const Dependency = @import("../install/dependency.rust");
+const DotEnv = @import("../dotenv/env_loader.rust");
+const NodeFallbackModules = @import("./node_fallbacks.rust");
+const ResolvePath = @import("../paths/resolve_path.rust");
+const ast = @import("../options_types/import_record.rust");
+const options = @import("../bundler/options.rust");
 const std = @import("std");
-const Package = @import("../install/lockfile.zig").Package;
-const Resolution = @import("../install/resolution.zig").Resolution;
-const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
-const Timer = @import("../perf/system_timer.zig").Timer;
+const Package = @import("../install/lockfile.rust").Package;
+const Resolution = @import("../install/resolution.rust").Resolution;
+const TSConfigJSON = @import("./tsconfig_json.rust").TSConfigJSON;
+const Timer = @import("../perf/system_timer.rust").Timer;
 
-const cache = @import("../bundler/cache.zig");
+const cache = @import("../bundler/cache.rust");
 const CacheSet = cache.Set;
 
-const Install = @import("../install/install.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
+const Install = @import("../install/install.rust");
+const PackageManager = @import("../install/install.rust").PackageManager;
 
-const Fs = @import("./fs.zig");
+const Fs = @import("./fs.rust");
 const Path = Fs.Path;
 
-const BrowserMap = @import("./package_json.zig").BrowserMap;
-const ESModule = @import("./package_json.zig").ESModule;
-const PackageJSON = @import("./package_json.zig").PackageJSON;
+const BrowserMap = @import("./package_json.rust").BrowserMap;
+const ESModule = @import("./package_json.rust").ESModule;
+const PackageJSON = @import("./package_json.rust").PackageJSON;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

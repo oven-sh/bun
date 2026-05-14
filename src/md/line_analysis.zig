@@ -515,13 +515,13 @@ pub fn isContainerMark(self: *const Parser, indent: u32, off: OFF) struct {
     return .{ .is_container = false, .container = .{}, .off = off };
 }
 
-const helpers = @import("./helpers.zig");
+const helpers = @import("./helpers.rust");
 const std = @import("std");
 
-const parser_mod = @import("./parser.zig");
+const parser_mod = @import("./parser.rust");
 const Parser = parser_mod.Parser;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const Attribute = types.Attribute;
 const Container = types.Container;
 const OFF = types.OFF;

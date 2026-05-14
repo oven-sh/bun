@@ -514,14 +514,14 @@ pub fn renderAutolink(self: *Parser, url: []const u8, is_email: bool) bun.JSErro
 }
 
 const bun = @import("bun");
-const helpers = @import("./helpers.zig");
-const inlines_mod = @import("./inlines.zig");
+const helpers = @import("./helpers.rust");
+const inlines_mod = @import("./inlines.rust");
 
-const parser_mod = @import("./parser.zig");
+const parser_mod = @import("./parser.rust");
 const Parser = parser_mod.Parser;
 
-const ref_defs_mod = @import("./ref_defs.zig");
+const ref_defs_mod = @import("./ref_defs.rust");
 const RefDef = ref_defs_mod.RefDef;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const OFF = types.OFF;

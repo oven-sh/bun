@@ -76,10 +76,10 @@ pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
     return exports;
 }
 
-const assert = @import("./node_assert.zig");
+const assert = @import("./node_assert.rust");
 const bun = @import("bun");
 const std = @import("std");
-const DiffList = @import("./assert/myers_diff.zig").DiffList;
+const DiffList = @import("./assert/myers_diff.rust").DiffList;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

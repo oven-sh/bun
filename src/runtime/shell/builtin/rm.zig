@@ -1248,7 +1248,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const ShellSyscall = interpreter.ShellSyscall;
 
 const Interpreter = interpreter.Interpreter;

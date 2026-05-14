@@ -1,4 +1,4 @@
-pub const bun = @import("./bun.zig");
+pub const bun = @import("./bun.rust");
 
 const Output = bun.Output;
 const Environment = bun.Environment;
@@ -195,12 +195,12 @@ comptime {
 
     _ = bun.bun_js.Bun__onRejectEntryPointResult;
     _ = bun.bun_js.Bun__onResolveEntryPointResult;
-    _ = &@import("./runtime/node/buffer.zig").BufferVectorized;
-    @import("./runtime/cli/upgrade_command.zig").@"export"();
-    @import("./runtime/cli/test_command.zig").@"export"();
+    _ = &@import("./runtime/node/buffer.rust").BufferVectorized;
+    @import("./runtime/cli/upgrade_command.rust").@"export"();
+    @import("./runtime/cli/test_command.rust").@"export"();
 }
 
 const builtin = @import("builtin");
-const recover = @import("./runtime/test_runner/harness/recover.zig");
+const recover = @import("./runtime/test_runner/harness/recover.rust");
 const std = @import("std");
 const TestFn = std.builtin.TestFn;

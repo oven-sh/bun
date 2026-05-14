@@ -28,7 +28,7 @@
 
 #include "config.h"
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include "JSCallbackData.h"
 

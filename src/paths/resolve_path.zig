@@ -2046,7 +2046,7 @@ pub const PosixToWinNormalizer = struct {
     }
 };
 
-// ResolvePath__joinAbsStringBufCurrentPlatformBunString: see src/jsc/resolve_path_jsc.zig
+// ResolvePath__joinAbsStringBufCurrentPlatformBunString: see src/jsc/resolve_path_jsc.rust
 // (reaches into the VM for cwd; paths/ is JSC-free).
 
 pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
@@ -2111,7 +2111,7 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
-const Fs = @import("../resolver/fs.zig");
+const Fs = @import("../resolver/fs.rust");
 const std = @import("std");
 
 const bun = @import("bun");

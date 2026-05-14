@@ -1,4 +1,4 @@
-//! Bun REPL Command - Native Zig REPL with full TUI support
+//! Bun REPL Command - Native Rust REPL with full TUI support
 //!
 //! This is the entry point for `bun repl` which provides an interactive
 //! JavaScript REPL with:
@@ -13,7 +13,7 @@ pub const ReplCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         @branchHint(.cold);
 
-        // Initialize the Zig REPL
+        // Initialize the Rust REPL
         var repl = Repl.init(ctx.allocator);
         defer repl.deinit();
 
@@ -171,7 +171,7 @@ const ReplRunner = struct {
         // Set timezone if specified
         if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
-                _ = vm.global.setTimeZone(&jsc.ZigString.init(tz));
+                _ = vm.global.setTimeZone(&jsc.RustString.init(tz));
             }
         }
 
@@ -179,7 +179,7 @@ const ReplRunner = struct {
     }
 };
 
-const Repl = @import("./repl.zig");
+const Repl = @import("./repl.rust");
 
 const bun = @import("bun");
 const Global = bun.Global;

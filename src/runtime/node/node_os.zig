@@ -30,7 +30,7 @@ const CPUTimes = struct {
         const fields = comptime std.meta.fieldNames(CPUTimes);
         const ret = jsc.JSValue.createEmptyObject(globalThis, fields.len);
         inline for (fields) |fieldName| {
-            ret.put(globalThis, jsc.ZigString.static(fieldName), jsc.JSValue.jsNumberFromUint64(@field(self, fieldName)));
+            ret.put(globalThis, jsc.RustString.static(fieldName), jsc.JSValue.jsNumberFromUint64(@field(self, fieldName)));
         }
         return ret;
     }
@@ -74,9 +74,9 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             var i: u32 = 0;
             while (i < count) : (i += 1) {
                 const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
-                cpu.put(globalThis, jsc.ZigString.static("times"), (CPUTimes{}).toValue(globalThis));
-                cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
-                cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(0));
+                cpu.put(globalThis, jsc.RustString.static("times"), (CPUTimes{}).toValue(globalThis));
+                cpu.put(globalThis, jsc.RustString.static("model"), jsc.RustString.static("unknown").withEncoding().toJS(globalThis));
+                cpu.put(globalThis, jsc.RustString.static("speed"), jsc.JSValue.jsNumber(0));
                 try stubs.putIndex(globalThis, i, cpu);
             }
             return stubs;
@@ -112,7 +112,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
             // Actually create the JS object representing the CPU
             const cpu = jsc.JSValue.createEmptyObject(globalThis, 1);
-            cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+            cpu.put(globalThis, jsc.RustString.static("times"), times.toValue(globalThis));
             try values.putIndex(globalThis, num_cpus, cpu);
 
             num_cpus += 1;
@@ -138,7 +138,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             if (strings.hasPrefixComptime(line, key_processor)) {
                 if (!has_model_name) {
                     const cpu = try values.getIndex(globalThis, cpu_index);
-                    cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+                    cpu.put(globalThis, jsc.RustString.static("model"), jsc.RustString.static("unknown").withEncoding().toJS(globalThis));
                 }
                 // If this line starts a new processor, parse the index from the line
                 const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
@@ -149,19 +149,19 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                 // If this is the model name, extract it and store on the current cpu
                 const model_name = line[key_model_name.len..];
                 const cpu = try values.getIndex(globalThis, cpu_index);
-                cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(model_name).withEncoding().toJS(globalThis));
+                cpu.put(globalThis, jsc.RustString.static("model"), jsc.RustString.init(model_name).withEncoding().toJS(globalThis));
                 has_model_name = true;
             }
         }
         if (!has_model_name) {
             const cpu = try values.getIndex(globalThis, cpu_index);
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+            cpu.put(globalThis, jsc.RustString.static("model"), jsc.RustString.static("unknown").withEncoding().toJS(globalThis));
         }
     } else |_| {
         // Initialize model name to "unknown"
         var it = try values.arrayIterator(globalThis);
         while (try it.next()) |cpu| {
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+            cpu.put(globalThis, jsc.RustString.static("model"), jsc.RustString.static("unknown").withEncoding().toJS(globalThis));
         }
     }
 
@@ -181,10 +181,10 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             const digits = std.mem.trim(u8, contents, " \n");
             const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
 
-            cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed));
+            cpu.put(globalThis, jsc.RustString.static("speed"), jsc.JSValue.jsNumber(speed));
         } else |_| {
             // Initialize CPU speed to 0
-            cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(0));
+            cpu.put(globalThis, jsc.RustString.static("speed"), jsc.JSValue.jsNumber(0));
         }
     }
 
@@ -200,9 +200,9 @@ fn cpusImplFreeBSD(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     var model_buf: [512]u8 = undefined;
     var model_len: usize = model_buf.len;
     const model = if (std.posix.sysctlbynameZ("hw.model", &model_buf, &model_len, null, 0)) |_|
-        jsc.ZigString.init(std.mem.sliceTo(&model_buf, 0)).withEncoding().toJS(globalThis)
+        jsc.RustString.init(std.mem.sliceTo(&model_buf, 0)).withEncoding().toJS(globalThis)
     else |_|
-        jsc.ZigString.static("unknown").withEncoding().toJS(globalThis);
+        jsc.RustString.static("unknown").withEncoding().toJS(globalThis);
 
     var speed_mhz: c_uint = 0;
     var speed_len: usize = @sizeOf(c_uint);
@@ -229,9 +229,9 @@ fn cpusImplFreeBSD(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             .idle = @as(u64, @intCast(@max(times_buf[off + 4], 0))) * mult,
         };
         const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
-        cpu.put(globalThis, jsc.ZigString.static("model"), model);
-        cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed_mhz));
-        cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+        cpu.put(globalThis, jsc.RustString.static("model"), model);
+        cpu.put(globalThis, jsc.RustString.static("speed"), jsc.JSValue.jsNumber(speed_mhz));
+        cpu.put(globalThis, jsc.RustString.static("times"), times.toValue(globalThis));
         try values.putIndex(globalThis, i, cpu);
     }
     return values;
@@ -271,7 +271,7 @@ fn cpusImplDarwin(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     // NOTE: sysctlbyname doesn't update len if it was large enough, so we
     // still have to find the null terminator.  All cpus can share the same
     // model name.
-    const model_name = jsc.ZigString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toJS(globalThis);
+    const model_name = jsc.RustString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toJS(globalThis);
 
     // Get CPU speed
     var speed: u64 = 0;
@@ -301,9 +301,9 @@ fn cpusImplDarwin(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         };
 
         const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
-        cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed / 1_000_000));
-        cpu.put(globalThis, jsc.ZigString.static("model"), model_name);
-        cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+        cpu.put(globalThis, jsc.RustString.static("speed"), jsc.JSValue.jsNumber(speed / 1_000_000));
+        cpu.put(globalThis, jsc.RustString.static("model"), model_name);
+        cpu.put(globalThis, jsc.RustString.static("times"), times.toValue(globalThis));
 
         try values.putIndex(globalThis, cpu_index, cpu);
     }
@@ -331,9 +331,9 @@ pub fn cpusImplWindows(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         };
 
         const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
-        cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(bun.span(cpu_info.model)).withEncoding().toJS(globalThis));
-        cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(cpu_info.speed));
-        cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+        cpu.put(globalThis, jsc.RustString.static("model"), jsc.RustString.init(bun.span(cpu_info.model)).withEncoding().toJS(globalThis));
+        cpu.put(globalThis, jsc.RustString.static("speed"), jsc.JSValue.jsNumber(cpu_info.speed));
+        cpu.put(globalThis, jsc.RustString.static("times"), times.toValue(globalThis));
 
         try values.putIndex(globalThis, @intCast(i), cpu);
     }
@@ -467,10 +467,10 @@ pub fn hostname(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             }
         }
 
-        return jsc.ZigString.init("unknown").withEncoding().toJS(global);
+        return jsc.RustString.init("unknown").withEncoding().toJS(global);
     } else {
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
-        return jsc.ZigString.init(std.posix.gethostname(&name_buffer) catch "unknown").withEncoding().toJS(global);
+        return jsc.RustString.init(std.posix.gethostname(&name_buffer) catch "unknown").withEncoding().toJS(global);
     }
 }
 
@@ -631,25 +631,25 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
                 const suffix_str = std.fmt.bufPrint(buf[start + addr_str.len ..], "/{}", .{suffix}) catch unreachable;
                 // The full cidr value is the address + the suffix
                 const cidr_str = buf[start .. start + addr_str.len + suffix_str.len];
-                cidr = jsc.ZigString.init(cidr_str).withEncoding().toJS(globalThis);
+                cidr = jsc.RustString.init(cidr_str).withEncoding().toJS(globalThis);
             }
 
-            interface.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.init(addr_str).withEncoding().toJS(globalThis));
-            interface.put(globalThis, jsc.ZigString.static("cidr"), cidr);
+            interface.put(globalThis, jsc.RustString.static("address"), jsc.RustString.init(addr_str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, jsc.RustString.static("cidr"), cidr);
         }
 
         // netmask <string> The IPv4 or IPv6 network mask
         {
             var buf: [64]u8 = undefined;
             const str = bun.fmt.formatIp(netmask, &buf) catch unreachable;
-            interface.put(globalThis, jsc.ZigString.static("netmask"), jsc.ZigString.init(str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, jsc.RustString.static("netmask"), jsc.RustString.init(str).withEncoding().toJS(globalThis));
         }
 
         // family <string> Either IPv4 or IPv6
-        interface.put(globalThis, jsc.ZigString.static("family"), switch (addr.any.family) {
+        interface.put(globalThis, jsc.RustString.static("family"), switch (addr.any.family) {
             std.posix.AF.INET => globalThis.commonStrings().IPv4(),
             std.posix.AF.INET6 => globalThis.commonStrings().IPv6(),
-            else => jsc.ZigString.static("unknown").toJS(globalThis),
+            else => jsc.RustString.static("unknown").toJS(globalThis),
         });
 
         // mac <string> The MAC address of the network interface
@@ -681,26 +681,26 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
                 const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac or Environment.isFreeBSD) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
                 if (addr_data.len < 6) {
                     const mac = "00:00:00:00:00:00";
-                    interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+                    interface.put(globalThis, jsc.RustString.static("mac"), jsc.RustString.init(mac).withEncoding().toJS(globalThis));
                 } else {
                     const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
                         addr_data[0], addr_data[1], addr_data[2],
                         addr_data[3], addr_data[4], addr_data[5],
                     }) catch unreachable;
-                    interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+                    interface.put(globalThis, jsc.RustString.static("mac"), jsc.RustString.init(mac).withEncoding().toJS(globalThis));
                 }
             } else {
                 const mac = "00:00:00:00:00:00";
-                interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+                interface.put(globalThis, jsc.RustString.static("mac"), jsc.RustString.init(mac).withEncoding().toJS(globalThis));
             }
         }
 
         // internal <boolean> true if the network interface is a loopback or similar interface that is not remotely accessible; otherwise false
-        interface.put(globalThis, jsc.ZigString.static("internal"), jsc.JSValue.jsBoolean(helpers.isLoopback(iface)));
+        interface.put(globalThis, jsc.RustString.static("internal"), jsc.JSValue.jsBoolean(helpers.isLoopback(iface)));
 
         // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
         if (addr.any.family == std.posix.AF.INET6) {
-            interface.put(globalThis, jsc.ZigString.static("scopeid"), jsc.JSValue.jsNumber(addr.in6.sa.scope_id));
+            interface.put(globalThis, jsc.RustString.static("scopeid"), jsc.JSValue.jsNumber(addr.in6.sa.scope_id));
         }
 
         // Does this entry already exist?
@@ -710,7 +710,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
             try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
-            const member_name = jsc.ZigString.init(interface_name);
+            const member_name = jsc.RustString.init(interface_name);
             var array = try jsc.JSValue.createEmptyArray(globalThis, 1);
             try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
@@ -772,10 +772,10 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
                 const suffix_str = std.fmt.bufPrint(ip_buf[start + addr_str.len ..], "/{}", .{suffix}) catch unreachable;
                 // The full cidr value is the address + the suffix
                 const cidr_str = ip_buf[start .. start + addr_str.len + suffix_str.len];
-                cidr = jsc.ZigString.init(cidr_str).withEncoding().toJS(globalThis);
+                cidr = jsc.RustString.init(cidr_str).withEncoding().toJS(globalThis);
             }
 
-            interface.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.init(addr_str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, jsc.RustString.static("address"), jsc.RustString.init(addr_str).withEncoding().toJS(globalThis));
         }
 
         // netmask
@@ -785,13 +785,13 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
                 std.net.Address.initPosix(@ptrCast(&iface.netmask.netmask4)),
                 &ip_buf,
             ) catch unreachable;
-            interface.put(globalThis, jsc.ZigString.static("netmask"), jsc.ZigString.init(str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, jsc.RustString.static("netmask"), jsc.RustString.init(str).withEncoding().toJS(globalThis));
         }
         // family
-        interface.put(globalThis, jsc.ZigString.static("family"), switch (iface.address.address4.family) {
+        interface.put(globalThis, jsc.RustString.static("family"), switch (iface.address.address4.family) {
             std.posix.AF.INET => globalThis.commonStrings().IPv4(),
             std.posix.AF.INET6 => globalThis.commonStrings().IPv6(),
-            else => jsc.ZigString.static("unknown").toJS(globalThis),
+            else => jsc.RustString.static("unknown").toJS(globalThis),
         });
 
         // mac
@@ -800,20 +800,20 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
             const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
                 phys[0], phys[1], phys[2], phys[3], phys[4], phys[5],
             }) catch unreachable;
-            interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+            interface.put(globalThis, jsc.RustString.static("mac"), jsc.RustString.init(mac).withEncoding().toJS(globalThis));
         }
 
         // internal
         {
-            interface.put(globalThis, jsc.ZigString.static("internal"), jsc.JSValue.jsBoolean(iface.is_internal != 0));
+            interface.put(globalThis, jsc.RustString.static("internal"), jsc.JSValue.jsBoolean(iface.is_internal != 0));
         }
 
         // cidr. this is here to keep ordering consistent with the node implementation
-        interface.put(globalThis, jsc.ZigString.static("cidr"), cidr);
+        interface.put(globalThis, jsc.RustString.static("cidr"), cidr);
 
         // scopeid
         if (iface.address.address4.family == std.posix.AF.INET6) {
-            interface.put(globalThis, jsc.ZigString.static("scopeid"), jsc.JSValue.jsNumber(iface.address.address6.scope_id));
+            interface.put(globalThis, jsc.RustString.static("scopeid"), jsc.JSValue.jsNumber(iface.address.address6.scope_id));
         }
 
         // Does this entry already exist?
@@ -824,7 +824,7 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
             try array.putIndex(globalThis, next_index, interface);
         } else {
             // Add it as an array with this interface as an element
-            const member_name = jsc.ZigString.init(interface_name);
+            const member_name = jsc.RustString.init(interface_name);
             var array = try jsc.JSValue.createEmptyArray(globalThis, 1);
             try array.putIndex(globalThis, 0, interface);
             ret.put(globalThis, &member_name, array);
@@ -1024,20 +1024,20 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     const home = try homedir(globalThis);
     defer home.deref();
 
-    result.put(globalThis, jsc.ZigString.static("homedir"), try home.toJS(globalThis));
+    result.put(globalThis, jsc.RustString.static("homedir"), try home.toJS(globalThis));
 
     if (comptime Environment.isWindows) {
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(-1));
-        result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(-1));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.JSValue.jsNull());
+        result.put(globalThis, jsc.RustString.static("username"), jsc.RustString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, jsc.RustString.static("uid"), jsc.JSValue.jsNumber(-1));
+        result.put(globalThis, jsc.RustString.static("gid"), jsc.JSValue.jsNumber(-1));
+        result.put(globalThis, jsc.RustString.static("shell"), jsc.JSValue.jsNull());
     } else {
         const username = bun.env_var.USER.get() orelse "unknown";
 
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(username).withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.env_var.SHELL.get() orelse "unknown").withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(c.getuid()));
-        result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(c.getgid()));
+        result.put(globalThis, jsc.RustString.static("username"), jsc.RustString.init(username).withEncoding().toJS(globalThis));
+        result.put(globalThis, jsc.RustString.static("shell"), jsc.RustString.init(bun.env_var.SHELL.get() orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, jsc.RustString.static("uid"), jsc.JSValue.jsNumber(c.getuid()));
+        result.put(globalThis, jsc.RustString.static("gid"), jsc.JSValue.jsNumber(c.getgid()));
     }
 
     return result;

@@ -34,7 +34,7 @@ streaming_extract_task: ?*Task = null,
 /// `async_network_task_queue` — the extract Task published by
 /// `TarballStream.finish()` owns the NetworkTask's lifetime instead
 /// (its `resolve_tasks` handler returns it to the pool). Also read by
-/// the main-thread fallback / retry paths in `runTasks.zig` to assert
+/// the main-thread fallback / retry paths in `runTasks.rust` to assert
 /// the stream was never started.
 streaming_committed: bool = false,
 /// Backing store for the streaming signal the HTTP client polls.
@@ -67,7 +67,7 @@ pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPC
         // status *and* the tarball is large enough to be worth the
         // overhead. For small bodies, or any 4xx/5xx / transport error,
         // fall back to the buffered path so the existing retry and
-        // error-reporting code in runTasks.zig keeps working.
+        // error-reporting code in runTasks.rust keeps working.
         const ok_status = stream.status_code >= 200 and stream.status_code <= 299;
         const big_enough = switch (result.body_size) {
             .content_length => |len| len >= TarballStream.minSize(),
@@ -129,7 +129,7 @@ pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPC
         }
         // Fall through to the normal completion path for anything that
         // did not commit: the buffered extractor / retry logic in
-        // runTasks.zig handles it exactly as it would without
+        // runTasks.rust handles it exactly as it would without
         // streaming support.
     }
 
@@ -478,7 +478,7 @@ const string = []const u8;
 
 const std = @import("std");
 
-const install = @import("./install.zig");
+const install = @import("./install.rust");
 const ExtractTarball = install.ExtractTarball;
 const NetworkTask = install.NetworkTask;
 const Npm = install.Npm;

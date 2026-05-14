@@ -15,7 +15,7 @@
 //!
 //! The remapper is open source: https://github.com/oven-sh/bun.report
 //!
-//! A lot of this handler is based on the Zig Standard Library implementation
+//! A lot of this handler is based on the Rust Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 
 /// Set this to false if you want to disable all uses of this panic handler.
@@ -83,7 +83,7 @@ pub const CrashReason = union(enum) {
     stack_overflow,
 
     /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
-    zig_error: anyerror,
+    rust_error: anyerror,
 
     out_of_memory,
 
@@ -97,7 +97,7 @@ pub const CrashReason = union(enum) {
             .floating_point_error => |addr| try writer.print("Floating point error at address 0x{X}", .{addr}),
             .datatype_misalignment => try writer.writeAll("Unaligned memory access"),
             .stack_overflow => try writer.writeAll("Stack overflow"),
-            .zig_error => |err| try writer.print("error.{s}", .{@errorName(err)}),
+            .rust_error => |err| try writer.print("error.{s}", .{@errorName(err)}),
             .out_of_memory => try writer.writeAll("Bun ran out of memory"),
         }
     }
@@ -465,7 +465,7 @@ pub fn crashHandler(
             // so that a crash will actually crash. We need this because we want the process to
             // exit with a signal, and allow tools to be able to gather core dumps.
             //
-            // This is done so late (in comparison to the Zig Standard Library's panic handler)
+            // This is done so late (in comparison to the Rust Standard Library's panic handler)
             // because if multiple threads segfault (more often the case on Windows), we don't
             // want another thread to interrupt the crashing of the first one.
             resetSegfaultHandler();
@@ -516,7 +516,7 @@ pub fn crashHandler(
     crash();
 }
 
-/// This is called when `main` returns a Zig error.
+/// This is called when `main` returns a Rust error.
 /// We don't want to treat it as a crash under certain error codes.
 pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     var show_trace = bun.Environment.show_crash_trace;
@@ -709,7 +709,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
             }
         },
 
-        // The usage of `unreachable` in Zig's std.posix may cause the file descriptor problem to show up as other errors
+        // The usage of `unreachable` in Rust's std.posix may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
             if (comptime bun.Environment.isPosix) {
                 const limit = std.posix.getrlimit(.NOFILE) catch std.mem.zeroes(std.posix.rlimit);
@@ -1019,7 +1019,7 @@ pub fn printMetadata(writer: anytype) !void {
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {
-            try writer.print("Windows v{f}\n", .{std.zig.system.windows.detectRuntimeVersion()});
+            try writer.print("Windows v{f}\n", .{std.rust.system.windows.detectRuntimeVersion()});
         }
 
         if (bun.Environment.isX64) {
@@ -1203,7 +1203,7 @@ const StackLine = struct {
             },
             .mac => {
                 // This code is slightly modified from std.debug.DebugInfo.lookupModuleNameDyld
-                // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L1783
+                // https://github.com/rustlang/rust/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.rust#L1783
                 const address = if (addr == 0) 0 else addr - 1;
 
                 const image_count = std.c._dyld_image_count();
@@ -1266,7 +1266,7 @@ const StackLine = struct {
             },
             else => {
                 // This code is slightly modified from std.debug.DebugInfo.lookupModuleDl
-                // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L2024
+                // https://github.com/rustlang/rust/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.rust#L2024
                 var ctx: struct {
                     // Input
                     address: usize,
@@ -1431,7 +1431,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
         .datatype_misalignment => try writer.writeByte('6'),
         .stack_overflow => try writer.writeByte('7'),
 
-        .zig_error => |err| {
+        .rust_error => |err| {
             try writer.writeByte('8');
             try writer.writeAll(@errorName(err));
         },
@@ -1613,9 +1613,9 @@ fn crash() noreturn {
 
 pub var verbose_error_trace = false;
 
-noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
+noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_rust_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
     @branchHint(.cold);
-    const err = @errorFromInt(err_int_workaround_for_zig_ccall_bug);
+    const err = @errorFromInt(err_int_workaround_for_rust_ccall_bug);
 
     // The format of the panic trace is slightly different in debug
     // builds Mainly, we demangle the backtrace immediately instead
@@ -1648,7 +1648,7 @@ noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std
     } else {
         const ts = TraceString{
             .trace = trace,
-            .reason = .{ .zig_error = err },
+            .reason = .{ .rust_error = err },
             .action = .view_trace,
         };
         if (is_root) {
@@ -1702,7 +1702,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
         // debug symbols aren't available, lets print a tracestring
         stderr.print("View Debug Trace: {f}\n", .{TraceString{
             .action = .view_trace,
-            .reason = .{ .zig_error = error.DumpStackTrace },
+            .reason = .{ .rust_error = error.DumpStackTrace },
             .trace = &trace,
         }}) catch {};
         return;
@@ -1887,7 +1887,7 @@ pub const StoredTrace = struct {
     }
 };
 
-pub const js_bindings = @import("../runtime/api/crash_handler_jsc.zig").js_bindings;
+pub const js_bindings = @import("../runtime/api/crash_handler_jsc.rust").js_bindings;
 
 const OnBeforeCrash = fn (opaque_ptr: *anyopaque) void;
 
@@ -2245,12 +2245,12 @@ comptime {
     }
 }
 
-const CPUFeatures = @import("./CPUFeatures.zig");
+const CPUFeatures = @import("./CPUFeatures.rust");
 const builtin = @import("builtin");
 const std = @import("std");
 const windows = std.os.windows;
 
-const SourceMap = @import("../sourcemap/sourcemap.zig");
+const SourceMap = @import("../sourcemap/sourcemap.rust");
 const VLQ = SourceMap.VLQ;
 
 const bun = @import("bun");

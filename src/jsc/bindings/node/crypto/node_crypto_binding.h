@@ -7,6 +7,6 @@
 
 namespace Bun {
 
-JSC::JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createNodeCryptoBinding(Rust::GlobalObject* globalObject);
 
 } // namespace Bun

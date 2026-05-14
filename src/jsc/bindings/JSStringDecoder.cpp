@@ -3,7 +3,7 @@
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/ExceptionScope.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JSDOMOperation.h"
 #include "JSDOMAttribute.h"
 #include "headers.h"
@@ -496,7 +496,7 @@ static JSC_DEFINE_CUSTOM_GETTER(jsStringDecoder_lastChar, (JSGlobalObject * lexi
     JSStringDecoder* castedThis = jsStringDecoderCast(lexicalGlobalObject, JSC::JSValue::decode(thisValue), "lastChar"_s);
     RETURN_IF_EXCEPTION(scope, {});
     auto buffer = ArrayBuffer::create({ castedThis->m_lastChar, 4 });
-    auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = static_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buffer), 0, 4);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
 }
@@ -579,7 +579,7 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
         }
     }
     JSValue thisValue = callFrame->newTarget();
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(lexicalGlobalObject);
     JSObject* newTarget = asObject(thisValue);
     auto* constructor = globalObject->JSStringDecoder();
     Structure* structure = globalObject->JSStringDecoderStructure();
@@ -614,4 +614,4 @@ void JSStringDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObjec
 
 const ClassInfo JSStringDecoderConstructor::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderConstructor) };
 
-} // namespace Zig
+} // namespace Rust

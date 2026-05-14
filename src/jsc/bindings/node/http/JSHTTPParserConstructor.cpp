@@ -1,6 +1,6 @@
 #include "JSHTTPParserConstructor.h"
 #include "JSHTTPParser.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "ProcessBindingHTTPParser.h"
 
 namespace Bun {

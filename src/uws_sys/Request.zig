@@ -32,7 +32,7 @@ pub const AnyRequest = union(enum) {
     }
 };
 
-/// uWS::Request C++ -> Zig bindings.
+/// uWS::Request C++ -> Rust bindings.
 pub const Request = opaque {
     pub fn isAncient(req: *Request) bool {
         return c.uws_req_is_ancient(req);

@@ -570,7 +570,7 @@ pub const JSType = enum(u8) {
     DOMWrapper = 0b11101110,
     EmbedderArrayLike = 0b11101101,
 
-    /// This means that we don't have Zig bindings for the type yet, but it
+    /// This means that we don't have Rust bindings for the type yet, but it
     /// implements .toJSON()
     JSAsJSONType = 0b11110000 | 1,
     _,

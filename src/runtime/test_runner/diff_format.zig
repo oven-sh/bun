@@ -69,9 +69,9 @@ pub const DiffFormatter = struct {
 const string = []const u8;
 
 const std = @import("std");
-const JestPrettyFormat = @import("./pretty_format.zig").JestPrettyFormat;
+const JestPrettyFormat = @import("./pretty_format.rust").JestPrettyFormat;
 
-const printDiffFile = @import("./diff/printDiff.zig");
+const printDiffFile = @import("./diff/printDiff.rust");
 const DiffConfig = printDiffFile.DiffConfig;
 const printDiffMain = printDiffFile.printDiffMain;
 

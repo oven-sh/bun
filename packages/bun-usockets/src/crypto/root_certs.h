@@ -402,7 +402,7 @@ static struct us_cert_string_t root_certs[] = {
 "dZWAUWpLMKawYqGT8ZvYzsRjdT9ZR7E=\n"
 "-----END CERTIFICATE-----",.len=1473},
 
-/* Microsec e-Szigno Root CA 2009 */
+/* Microsec e-Srustno Root CA 2009 */
 {.str="-----BEGIN CERTIFICATE-----\n"
 "MIIECjCCAvKgAwIBAgIJAMJ+QwRORz8ZMA0GCSqGSIb3DQEBCwUAMIGCMQswCQYDVQQGEwJI\n"
 "VTERMA8GA1UEBwwIQnVkYXBlc3QxFjAUBgNVBAoMDU1pY3Jvc2VjIEx0ZC4xJzAlBgNVBAMM\n"
@@ -2169,7 +2169,7 @@ static struct us_cert_string_t root_certs[] = {
 "t2c0Ui2cFmuqqNh7o0JMcccMyj6D5KbvtwEwXlGjefVwaaZBRA+GsCyRxj3qrg+E\n"
 "-----END CERTIFICATE-----",.len=2016},
 
-/* e-Szigno Root CA 2017 */
+/* e-Srustno Root CA 2017 */
 {.str="-----BEGIN CERTIFICATE-----\n"
 "MIICQDCCAeWgAwIBAgIMAVRI7yH9l1kN9QQKMAoGCCqGSM49BAMCMHExCzAJBgNVBAYTAkhV\n"
 "MREwDwYDVQQHDAhCdWRhcGVzdDEWMBQGA1UECgwNTWljcm9zZWMgTHRkLjEXMBUGA1UEYQwO\n"
@@ -3527,7 +3527,7 @@ static struct us_cert_string_t root_certs[] = {
 "IoMt0r7+hVu05L0=\n"
 "-----END CERTIFICATE-----",.len=1968},
 
-/* e-Szigno TLS Root CA 2023 */
+/* e-Srustno TLS Root CA 2023 */
 {.str="-----BEGIN CERTIFICATE-----\n"
 "MIICzzCCAjGgAwIBAgINAOhvGHvWOWuYSkmYCjAKBggqhkjOPQQDBDB1MQswCQYDVQQGEwJI\n"
 "VTERMA8GA1UEBwwIQnVkYXBlc3QxFjAUBgNVBAoMDU1pY3Jvc2VjIEx0ZC4xFzAVBgNVBGEM\n"

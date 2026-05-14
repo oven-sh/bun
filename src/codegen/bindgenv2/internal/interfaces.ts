@@ -7,11 +7,11 @@ export const ArrayBuffer = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenArrayBuffer`;
   }
-  zigType(style?: CodeStyle) {
+  rustType(style?: CodeStyle) {
     return "bun.bun_js.jsc.JSCArrayBuffer.Ref";
   }
-  optionalZigType(style?: CodeStyle) {
-    return this.zigType(style) + ".Optional";
+  optionalRustType(style?: CodeStyle) {
+    return this.rustType(style) + ".Optional";
   }
   toCpp(value: any): string {
     throw RangeError("default values for `ArrayBuffer` are not supported");
@@ -25,11 +25,11 @@ export const Blob = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenBlob`;
   }
-  zigType(style?: CodeStyle) {
+  rustType(style?: CodeStyle) {
     return "bun.bun_js.webcore.Blob.Ref";
   }
-  optionalZigType(style?: CodeStyle) {
-    return this.zigType(style) + ".Optional";
+  optionalRustType(style?: CodeStyle) {
+    return this.rustType(style) + ".Optional";
   }
   toCpp(value: any): string {
     throw RangeError("default values for `Blob` are not supported");

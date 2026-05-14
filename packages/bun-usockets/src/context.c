@@ -75,7 +75,7 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
 
 /* Close every connecting/connected socket in the group; if `also_listeners`,
  * close listen sockets too. Process-exit callers pass 0: a us_listen_socket_t
- * is 1:1 owned by a Zig Listener / uWS App that holds a raw pointer to it and
+ * is 1:1 owned by a Rust Listener / uWS App that holds a raw pointer to it and
  * closes it in finalize(), so closing+freeing it here turns that into a UAF
  * (the original LSAN was only the *accepted* sockets, not the listener). */
 void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
@@ -99,7 +99,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         struct us_socket_t *nextS = s->next;
         if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
             /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
-             * (on_close without on_open is wrong), so the Zig wrapper's
+             * (on_close without on_open is wrong), so the Rust wrapper's
              * `socket = .connected` would never detach and finalize() UAFs
              * after drainClosedSockets(). Deliver the same on_connect_error
              * the natural failure path would have, which detaches the

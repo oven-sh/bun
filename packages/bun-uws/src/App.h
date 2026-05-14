@@ -105,7 +105,7 @@ private:
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
-    /* No raw us_listen_socket_t* cache here. server.zig's non-abrupt stop calls
+    /* No raw us_listen_socket_t* cache here. server.rust's non-abrupt stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
      * App::close() task runs. The group's intrusive head_listen_sockets list is

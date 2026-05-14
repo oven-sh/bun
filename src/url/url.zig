@@ -46,7 +46,7 @@ pub const URL = struct {
         return this.href.len == blob_specifier_len and strings.hasPrefixComptime(this.href, "blob:");
     }
 
-    pub const fromJS = @import("../url_jsc/url_jsc.zig").urlFromJS;
+    pub const fromJS = @import("../url_jsc/url_jsc.rust").urlFromJS;
 
     pub fn fromString(allocator: std.mem.Allocator, input: bun.String) !URL {
         var href = jsc.URL.hrefFromString(input);
@@ -882,7 +882,7 @@ pub const PercentEncoding = struct {
     }
 };
 
-pub const FormData = @import("../runtime/webcore/FormData.zig").FormData;
+pub const FormData = @import("../runtime/webcore/FormData.rust").FormData;
 
 pub const CombinedScanner = struct {
     query: Scanner,
@@ -1072,9 +1072,9 @@ pub const Scanner = struct {
 
 const string = []const u8;
 
-const resolve_path = @import("../paths/resolve_path.zig");
+const resolve_path = @import("../paths/resolve_path.rust");
 const std = @import("std");
-const ParamsList = @import("../router/router.zig").Param.List;
+const ParamsList = @import("../router/router.rust").Param.List;
 const expect = std.testing.expect;
 
 const bun = @import("bun");

@@ -830,9 +830,9 @@ fn hasRunnableExtension(name: []const u8) bool {
     return loader.canBeRunByBun();
 }
 
-const FilterArg = @import("./filter_arg.zig");
+const FilterArg = @import("./filter_arg.rust");
 const std = @import("std");
-const RunCommand = @import("./run_command.zig").RunCommand;
+const RunCommand = @import("./run_command.rust").RunCommand;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -2,8 +2,8 @@
 #include "BunString.h"
 #include "headers-handwritten.h"
 
-static_assert(sizeof(WTF::StringBuilder) == 24, "StringBuilder.zig assumes WTF::StringBuilder is 24 bytes");
-static_assert(alignof(WTF::StringBuilder) == 8, "StringBuilder.zig assumes WTF::StringBuilder is 8-byte aligned");
+static_assert(sizeof(WTF::StringBuilder) == 24, "StringBuilder.rust assumes WTF::StringBuilder is 24 bytes");
+static_assert(alignof(WTF::StringBuilder) == 8, "StringBuilder.rust assumes WTF::StringBuilder is 8-byte aligned");
 
 extern "C" void StringBuilder__init(WTF::StringBuilder* ptr)
 {

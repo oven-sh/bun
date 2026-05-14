@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #define V8_UNIMPLEMENTED()                                                                                          \
     do {                                                                                                            \

@@ -76,7 +76,7 @@ fn createWithDigest(global: *jsc.JSGlobalObject, ctx_opts: uws.SocketContext.Bun
 /// digest so identical configs return the same `JSSecureContext` cell while
 /// it's alive; falls through to `create()` (which itself hits the native
 /// `SSLContextCache`) on miss. Returning the same cell is what makes
-/// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
+/// `secureContext === createSecureContext(opts)` hold and lets `Listener.rust`
 /// pointer-compare without a JS-side WeakRef map.
 pub fn intern(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments();

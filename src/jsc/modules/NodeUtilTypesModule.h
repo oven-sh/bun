@@ -9,9 +9,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe));
 
-namespace Zig {
+namespace Rust {
 
 // Hardcoded module "node:util/types"
 DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes);
 
-} // namespace Zig
+} // namespace Rust

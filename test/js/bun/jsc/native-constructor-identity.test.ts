@@ -72,7 +72,7 @@ describe("native constructor identity survives ICF", () => {
   });
 
   test("Bun native class constructors remain distinct", () => {
-    // Generated ZigGeneratedClasses constructors are highly repetitive and
+    // Generated RustGeneratedClasses constructors are highly repetitive and
     // prime candidates for folding.
     expect(new Request("http://x/")).toBeInstanceOf(Request);
     expect(new Request("http://x/")).not.toBeInstanceOf(Response);

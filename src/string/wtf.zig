@@ -78,11 +78,11 @@ pub const WTFStringImplStruct = extern struct {
         return self.m_ptr.latin1[0..length(self)];
     }
 
-    pub fn toZigString(this: WTFStringImpl) ZigString {
+    pub fn toRustString(this: WTFStringImpl) RustString {
         if (this.is8Bit()) {
-            return ZigString.init(this.latin1Slice());
+            return RustString.init(this.latin1Slice());
         } else {
-            return ZigString.initUTF16(this.utf16Slice());
+            return RustString.initUTF16(this.utf16Slice());
         }
     }
 
@@ -111,9 +111,9 @@ pub const WTFStringImplStruct = extern struct {
         return self.m_refCount > 0;
     }
 
-    pub fn toLatin1Slice(this: WTFStringImpl) ZigString.Slice {
+    pub fn toLatin1Slice(this: WTFStringImpl) RustString.Slice {
         this.ref();
-        return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
+        return RustString.Slice.init(this.refCountAllocator(), this.latin1Slice());
     }
 
     /// Compute the hash() if necessary
@@ -122,16 +122,16 @@ pub const WTFStringImplStruct = extern struct {
         bun.cpp.Bun__WTFStringImpl__ensureHash(this);
     }
 
-    pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) RustString.Slice {
         if (this.is8Bit()) {
             if (bun.handleOom(bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()))) |utf8| {
-                return ZigString.Slice.init(allocator, utf8.items);
+                return RustString.Slice.init(allocator, utf8.items);
             }
 
             return this.toLatin1Slice();
         }
 
-        return ZigString.Slice.init(
+        return RustString.Slice.init(
             allocator,
             bun.handleOom(bun.strings.toUTF8Alloc(allocator, this.utf16Slice())),
         );
@@ -139,16 +139,16 @@ pub const WTFStringImplStruct = extern struct {
 
     pub const max = std.math.maxInt(u32);
 
-    pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) RustString.Slice {
         if (this.is8Bit()) {
             if (bun.handleOom(bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()))) |utf8| {
-                return ZigString.Slice.init(allocator, utf8.items);
+                return RustString.Slice.init(allocator, utf8.items);
             }
 
-            return ZigString.Slice.fromUTF8NeverFree(this.latin1Slice());
+            return RustString.Slice.fromUTF8NeverFree(this.latin1Slice());
         }
 
-        return ZigString.Slice.init(
+        return RustString.Slice.init(
             allocator,
             bun.handleOom(bun.strings.toUTF8Alloc(allocator, this.utf16Slice())),
         );
@@ -165,16 +165,16 @@ pub const WTFStringImplStruct = extern struct {
         return bun.handleOom(bun.strings.toUTF8AllocZ(allocator, this.utf16Slice()));
     }
 
-    pub fn toUTF8IfNeeded(this: WTFStringImpl, allocator: std.mem.Allocator) ?ZigString.Slice {
+    pub fn toUTF8IfNeeded(this: WTFStringImpl, allocator: std.mem.Allocator) ?RustString.Slice {
         if (this.is8Bit()) {
             if (bun.handleOom(bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()))) |utf8| {
-                return ZigString.Slice.init(allocator, utf8.items);
+                return RustString.Slice.init(allocator, utf8.items);
             }
 
             return null;
         }
 
-        return ZigString.Slice.init(
+        return RustString.Slice.init(
             allocator,
             bun.handleOom(bun.strings.toUTF8Alloc(allocator, this.utf16Slice())),
         );
@@ -269,4 +269,4 @@ const bun = @import("bun");
 const std = @import("std");
 
 const jsc = bun.jsc;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;

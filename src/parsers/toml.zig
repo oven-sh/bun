@@ -372,14 +372,14 @@ pub const TOML = struct {
     }
 };
 
-pub const lexer = @import("./toml/lexer.zig");
+pub const lexer = @import("./toml/lexer.rust");
 pub const Lexer = lexer.Lexer;
 const T = lexer.T;
 
 const string = []const u8;
 
 const std = @import("std");
-const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
+const IdentityContext = @import("../collections/identity_context.rust").IdentityContext;
 const expect = std.testing.expect;
 
 const bun = @import("bun");

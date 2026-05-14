@@ -1762,7 +1762,7 @@ fn makeTempPath(comptime prefix: []const u8) ![:0]const u8 {
 
 const std = @import("std");
 
-const cron_parser = @import("./cron_parser.zig");
+const cron_parser = @import("./cron_parser.rust");
 const CronExpression = cron_parser.CronExpression;
 
 const bun = @import("bun");

@@ -704,7 +704,7 @@ pub const Bin = extern struct {
         }
 
         fn createWindowsShim(this: *Linker, target: bun.FD, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
-            const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
+            const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.rust");
 
             var shim_buf: [65536]u8 = undefined;
             var read_in_buf: [WinBinLinkingShim.Shebang.max_shebang_input_length]u8 = undefined;
@@ -809,14 +809,14 @@ pub const Bin = extern struct {
             switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {
                     if (err.getErrno() != .EXIST and err.getErrno() != .NOENT) {
-                        this.err = err.toZigErr();
+                        this.err = err.toRustErr();
                         return;
                     }
 
                     // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
                     if (err.getErrno() == .NOENT) {
                         if (global) {
-                            this.err = err.toZigErr();
+                            this.err = err.toRustErr();
                             return;
                         }
 
@@ -828,7 +828,7 @@ pub const Bin = extern struct {
                         switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                             .err => |real_error| {
                                 // It was just created, no need to delete destination and symlink again
-                                this.err = real_error.toZigErr();
+                                this.err = real_error.toRustErr();
                                 return;
                             },
                             .result => return,
@@ -1144,12 +1144,12 @@ const log = bun.Output.scoped(.BinLinker, .hidden);
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Dependency = @import("./dependency.zig");
-const Environment = @import("../bun_core/env.zig");
+const Dependency = @import("./dependency.rust");
+const Environment = @import("../bun_core/env.rust");
 const std = @import("std");
 
-const Install = @import("./install.zig");
-const ExternalStringList = @import("./install.zig").ExternalStringList;
+const Install = @import("./install.rust");
+const ExternalStringList = @import("./install.rust").ExternalStringList;
 
 const bun = @import("bun");
 const JSON = bun.json;

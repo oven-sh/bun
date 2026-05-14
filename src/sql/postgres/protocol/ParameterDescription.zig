@@ -23,14 +23,14 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(ParameterDescription, decodeInternal).decode;
 
-// workaround for zig compiler TODO
+// workaround for rust compiler TODO
 fn toInt32Slice(comptime Int: type, slice: []const u8) []align(1) const Int {
     return @as([*]align(1) const Int, @ptrCast(slice.ptr))[0 .. slice.len / @sizeOf((Int))];
 }
 
 const bun = @import("bun");
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const NewReader = @import("./NewReader.zig").NewReader;
+const DecoderWrap = @import("./DecoderWrap.rust").DecoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
 
-const types = @import("../PostgresTypes.zig");
+const types = @import("../PostgresTypes.rust");
 const int4 = types.int4;

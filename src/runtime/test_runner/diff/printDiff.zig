@@ -581,5 +581,5 @@ pub fn printDiff(
 }
 
 const bun = @import("bun");
-const diff_match_patch = @import("./diff_match_patch.zig");
+const diff_match_patch = @import("./diff_match_patch.rust");
 const std = @import("std");

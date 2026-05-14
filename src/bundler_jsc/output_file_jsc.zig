@@ -1,4 +1,4 @@
-//! `toJS`/`toBlob` bridges for `bundler/OutputFile.zig`. Aliased back so
+//! `toJS`/`toBlob` bridges for `bundler/OutputFile.rust`. Aliased back so
 //! call sites stay `output.toJS(global)`.
 
 pub const SavedFile = struct {
@@ -206,7 +206,7 @@ pub fn toBlob(
 
 const string = []const u8;
 
-const OutputFile = @import("../bundler/OutputFile.zig");
+const OutputFile = @import("../bundler/OutputFile.rust");
 const std = @import("std");
 
 const bun = @import("bun");

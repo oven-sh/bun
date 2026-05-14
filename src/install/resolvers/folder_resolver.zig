@@ -331,17 +331,17 @@ pub const FolderResolution = union(Tag) {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Dependency = @import("../dependency.zig");
-const Npm = @import("../npm.zig");
+const Dependency = @import("../dependency.rust");
+const Npm = @import("../npm.rust");
 const std = @import("std");
-const FileSystem = @import("../../resolver/fs.zig").FileSystem;
-const IdentityContext = @import("../../collections/identity_context.zig").IdentityContext;
-const Resolution = @import("../resolution.zig").Resolution;
+const FileSystem = @import("../../resolver/fs.rust").FileSystem;
+const IdentityContext = @import("../../collections/identity_context.rust").IdentityContext;
+const Resolution = @import("../resolution.rust").Resolution;
 
-const Features = @import("../install.zig").Features;
-const Lockfile = @import("../install.zig").Lockfile;
-const PackageID = @import("../install.zig").PackageID;
-const PackageManager = @import("../install.zig").PackageManager;
+const Features = @import("../install.rust").Features;
+const Lockfile = @import("../install.rust").Lockfile;
+const PackageID = @import("../install.rust").PackageID;
+const PackageManager = @import("../install.rust").PackageManager;
 
 const bun = @import("bun");
 const JSAst = bun.ast;

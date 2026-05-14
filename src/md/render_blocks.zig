@@ -141,13 +141,13 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
 }
 
 const bun = @import("bun");
-const helpers = @import("./helpers.zig");
+const helpers = @import("./helpers.rust");
 const std = @import("std");
 
-const parser_mod = @import("./parser.zig");
+const parser_mod = @import("./parser.rust");
 const Parser = parser_mod.Parser;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const BlockType = types.BlockType;
 const OFF = types.OFF;
 const VerbatimLine = types.VerbatimLine;

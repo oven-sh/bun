@@ -1,6 +1,6 @@
 // Thin C wrapper around the one WIC interaction whose ABI is too fiddly to
-// hand-roll from Zig: IPropertyBag2::Write with a VARIANT. The rest of the
-// WIC backend (vtable-shaped COM calls) lives in src/image/backend_wic.zig
+// hand-roll from Rust: IPropertyBag2::Write with a VARIANT. The rest of the
+// WIC backend (vtable-shaped COM calls) lives in src/image/backend_wic.rust
 // because those are plain function-pointer tables and have been stable; this
 // file exists so the SDK's own <oaidl.h> definition of VARIANT (with its
 // union/BRECORD/DECIMAL padding) is the source of truth instead of an extern
@@ -8,7 +8,7 @@
 //
 // Kept header-light: only the option name + a float go in, so if we later
 // need more knobs (CompressionQuality, HeifCompressionMethod) they're one
-// branch each rather than a Zig-side VARIANT for every type.
+// branch each rather than a Rust-side VARIANT for every type.
 
 #if defined(_WIN32)
 
@@ -54,7 +54,7 @@ extern "C" int32_t bun_wic_propbag_write_u8(void* props, const wchar_t* name, ui
 }
 
 #else
-// Stubs so the symbols exist everywhere; backend_wic.zig is Windows-only so
+// Stubs so the symbols exist everywhere; backend_wic.rust is Windows-only so
 // these are never called, but the linker wants them.
 extern "C" int bun_wic_propbag_write_f32(void*, const void*, float) { return 0; }
 extern "C" int bun_wic_propbag_write_u8(void*, const void*, unsigned char) { return 0; }

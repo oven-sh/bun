@@ -5,7 +5,7 @@
 #include "JavaScriptCore/JSCast.h"
 #include "headers-handwritten.h"
 #include "helpers.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -35,7 +35,7 @@
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
 
-namespace Zig {
+namespace Rust {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
 using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
@@ -143,7 +143,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
         return {};
     }
 
-    Zig::GlobalObject* global = defaultGlobalObject(globalObject);
+    Rust::GlobalObject* global = defaultGlobalObject(globalObject);
 
     if (global->onLoadPlugins.virtualModules == nullptr) {
         global->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
@@ -224,7 +224,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
 
 static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
-    Zig::GlobalObject* global = defaultGlobalObject(globalObject);
+    Rust::GlobalObject* global = defaultGlobalObject(globalObject);
 
     auto& plugins = global->onResolvePlugins;
     auto callback = Bun__onDidAppendPlugin;
@@ -233,7 +233,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalOb
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
-    Zig::GlobalObject* global = defaultGlobalObject(globalObject);
+    Rust::GlobalObject* global = defaultGlobalObject(globalObject);
 
     auto& plugins = global->onLoadPlugins;
     auto callback = Bun__onDidAppendPlugin;
@@ -393,7 +393,7 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
 
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
-    Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
+    Rust::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
 
     if (globalObject->onLoadPlugins.virtualModules == nullptr) {
         globalObject->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
@@ -502,7 +502,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!globalObject) [[unlikely]] {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Cannot run mock from a different global context"_s));
@@ -875,14 +875,14 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
     return JSValue::encode(JSC::jsUndefined());
 }
 
-} // namespace Zig
+} // namespace Rust
 
-extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Rust::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target)
 {
     return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Rust::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunPluginTarget target)
 {
     return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
 }
@@ -891,10 +891,10 @@ namespace Bun {
 
 Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
+    return Rust::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
-JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock)
+JSC::JSValue runVirtualModule(Rust::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock)
 {
     auto fallback = [&]() -> JSC::JSValue {
         return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));
@@ -913,7 +913,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         JSValue result;
 
-        if (Zig::JSModuleMock* moduleMock = dynamicDowncast<Zig::JSModuleMock>(function)) {
+        if (Rust::JSModuleMock* moduleMock = dynamicDowncast<Rust::JSModuleMock>(function)) {
             wasModuleMock = true;
             // module mock
             result = moduleMock->executeOnce(globalObject);
@@ -956,7 +956,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
+    Rust::GlobalObject* global = static_cast<Rust::GlobalObject*>(globalObject);
     global->onLoadPlugins.fileNamespace.clear();
     global->onResolvePlugins.fileNamespace.clear();
     global->onLoadPlugins.groups.clear();

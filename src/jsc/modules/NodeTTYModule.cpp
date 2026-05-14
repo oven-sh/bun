@@ -4,7 +4,7 @@
 
 using namespace JSC;
 
-namespace Zig {
+namespace Rust {
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -44,4 +44,4 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplementedYet,
     return {};
 }
 
-} // namespace Zig
+} // namespace Rust

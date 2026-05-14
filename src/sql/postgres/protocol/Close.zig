@@ -30,8 +30,8 @@ pub const Close = struct {
     pub const write = WriteWrap(@This(), writeInternal);
 };
 
-const NewWriter = @import("./NewWriter.zig").NewWriter;
+const NewWriter = @import("./NewWriter.rust").NewWriter;
 
-const PortalOrPreparedStatement = @import("./PortalOrPreparedStatement.zig").PortalOrPreparedStatement;
+const PortalOrPreparedStatement = @import("./PortalOrPreparedStatement.rust").PortalOrPreparedStatement;
 
-const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
+const WriteWrap = @import("./WriteWrap.rust").WriteWrap;

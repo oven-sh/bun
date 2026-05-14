@@ -150,9 +150,9 @@ fn sliceWithUnderlyingStringToJSWithOptions(this: *SliceWithUnderlyingString, gl
             if (bun.strings.toUTF16Alloc(bun.default_allocator, this.utf8.slice(), false, false) catch null) |utf16| {
                 this.utf8.deinit();
                 this.utf8 = .{};
-                return jsc.ZigString.toExternalU16(utf16.ptr, utf16.len, globalObject);
+                return jsc.RustString.toExternalU16(utf16.ptr, utf16.len, globalObject);
             } else {
-                const js_value = ZigString.init(this.utf8.slice()).toExternalValue(
+                const js_value = RustString.init(this.utf8.slice()).toExternalValue(
                     globalObject,
                 );
                 this.utf8 = .{};
@@ -229,7 +229,7 @@ pub const UnicodeTestingAPIs = struct {
     /// Used in JS tests, see `internal-for-testing.ts`.
     /// Exercises the `sentinel = true` path of `toUTF16AllocForReal`, which is
     /// otherwise only reachable from Windows-only code (`bun build --compile`
-    /// metadata in `src/windows.zig`).
+    /// metadata in `src/windows.rust`).
     pub fn toUTF16AllocSentinel(globalThis: *bun.jsc.JSGlobalObject, callframe: *bun.jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
         const arguments = callframe.arguments();
         if (arguments.len < 1) {
@@ -262,4 +262,4 @@ const String = bun.String;
 const strings = bun.strings;
 
 const jsc = bun.jsc;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;

@@ -794,7 +794,7 @@ pub const ChildPtrRaw = bun.TaggedPointerUnion(.{
 });
 
 /// TODO: This function and `drainBufferedData` are copy pastes from
-/// `PipeWriter.zig`, it would be nice to not have to do that
+/// `PipeWriter.rust`, it would be nice to not have to do that
 fn tryWriteWithWriteFn(fd: bun.FD, buf: []const u8, comptime write_fn: *const fn (bun.FD, []const u8) bun.sys.Maybe(usize)) bun.io.WriteResult {
     var offset: usize = 0;
 

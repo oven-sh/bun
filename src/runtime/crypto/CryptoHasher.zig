@@ -3,7 +3,7 @@ pub const CryptoHasher = union(enum) {
     hmac: ?*HMAC,
 
     evp: EVP,
-    zig: CryptoHasherZig,
+    rust: CryptoHasherRust,
 
     const Digest = EVP.Digest;
 
@@ -14,14 +14,14 @@ pub const CryptoHasher = union(enum) {
 
     pub const new = bun.TrivialNew(@This());
 
-    // For using only CryptoHasherZig in c++
+    // For using only CryptoHasherRust in c++
     pub const Extern = struct {
         fn getByName(global: *JSGlobalObject, name_bytes: [*:0]const u8, name_len: usize) callconv(.c) ?*CryptoHasher {
             const name = name_bytes[0..name_len];
 
-            if (CryptoHasherZig.init(name)) |inner| {
+            if (CryptoHasherRust.init(name)) |inner| {
                 return CryptoHasher.new(.{
-                    .zig = inner,
+                    .rust = inner,
                 });
             }
 
@@ -52,9 +52,9 @@ pub const CryptoHasher = union(enum) {
 
         fn getFromOther(global: *JSGlobalObject, other_handle: *CryptoHasher) callconv(.c) ?*CryptoHasher {
             switch (other_handle.*) {
-                .zig => |other| {
+                .rust => |other| {
                     const hasher = CryptoHasher.new(.{
-                        .zig = other.copy(),
+                        .rust = other.copy(),
                     });
                     return hasher;
                 },
@@ -79,8 +79,8 @@ pub const CryptoHasher = union(enum) {
             const input = input_bytes[0..input_len];
 
             switch (handle.*) {
-                .zig => {
-                    handle.zig.update(input);
+                .rust => {
+                    handle.rust.update(input);
                     return true;
                 },
                 .evp => {
@@ -96,8 +96,8 @@ pub const CryptoHasher = union(enum) {
         fn digest(handle: *CryptoHasher, global: *JSGlobalObject, buf: [*]u8, buf_len: usize) callconv(.c) u32 {
             const digest_buf = buf[0..buf_len];
             switch (handle.*) {
-                .zig => {
-                    const res = handle.zig.finalWithLen(digest_buf, buf_len);
+                .rust => {
+                    const res = handle.rust.finalWithLen(digest_buf, buf_len);
                     return @intCast(res.len);
                 },
                 .evp => {
@@ -112,7 +112,7 @@ pub const CryptoHasher = union(enum) {
 
         fn getDigestSize(handle: *CryptoHasher) callconv(.c) u32 {
             return switch (handle.*) {
-                .zig => |inner| inner.digest_length,
+                .rust => |inner| inner.digest_length,
                 .evp => |inner| inner.size(),
                 else => 0,
             };
@@ -141,14 +141,14 @@ pub const CryptoHasher = union(enum) {
             .hmac => |inner| if (inner) |hmac| hmac.size() else {
                 return throwHmacConsumed(globalThis);
             },
-            .zig => |*inner| inner.digest_length,
+            .rust => |*inner| inner.digest_length,
         });
     }
 
     pub fn getAlgorithm(this: *CryptoHasher, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this.*) {
-            inline .evp, .zig => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
-            .hmac => |inner| if (inner) |hmac| ZigString.fromUTF8(bun.asByteSlice(@tagName(hmac.algorithm))).toJS(globalObject) else {
+            inline .evp, .rust => |*inner| RustString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
+            .hmac => |inner| if (inner) |hmac| RustString.fromUTF8(bun.asByteSlice(@tagName(hmac.algorithm))).toJS(globalObject) else {
                 return throwHmacConsumed(globalObject);
             },
         };
@@ -210,11 +210,11 @@ pub const CryptoHasher = union(enum) {
 
     pub fn hash_(
         globalThis: *JSGlobalObject,
-        algorithm: ZigString,
+        algorithm: RustString,
         input: jsc.Node.BlobOrStringOrBuffer,
         output: ?jsc.Node.StringOrBuffer,
     ) bun.JSError!jsc.JSValue {
-        var evp = EVP.byName(algorithm, globalThis) orelse return try CryptoHasherZig.hashByName(globalThis, algorithm, input, output) orelse {
+        var evp = EVP.byName(algorithm, globalThis) orelse return try CryptoHasherRust.hashByName(globalThis, algorithm, input, output) orelse {
             return globalThis.throwInvalidArguments("Unsupported algorithm \"{f}\"", .{algorithm});
         };
         defer evp.deinit();
@@ -250,7 +250,7 @@ pub const CryptoHasher = union(enum) {
             return globalThis.throwInvalidArguments("algorithm must be a string", .{});
         }
 
-        const algorithm = try algorithm_name.getZigString(globalThis);
+        const algorithm = try algorithm_name.getRustString(globalThis);
 
         if (algorithm.len == 0) {
             return globalThis.throwInvalidArguments("Invalid algorithm name", .{});
@@ -292,7 +292,7 @@ pub const CryptoHasher = union(enum) {
             }
 
             break :brk .{
-                .evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
+                .evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherRust.constructor(algorithm) orelse {
                     return globalThis.throwInvalidArguments("Unsupported algorithm {f}", .{algorithm});
                 },
             };
@@ -346,7 +346,7 @@ pub const CryptoHasher = union(enum) {
                     return globalThis.throwValue(instance);
                 }
             },
-            .zig => |*inner| {
+            .rust => |*inner| {
                 inner.update(buffer.slice());
                 return thisValue;
             },
@@ -374,7 +374,7 @@ pub const CryptoHasher = union(enum) {
                     },
                 };
             },
-            .zig => |*inner| .{ .zig = inner.copy() },
+            .rust => |*inner| .{ .rust = inner.copy() },
         };
         return CryptoHasher.new(copied).toJS(globalObject);
     }
@@ -449,7 +449,7 @@ pub const CryptoHasher = union(enum) {
                 break :brk hmac.final(output_digest_slice);
             },
             .evp => |*inner| inner.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice),
-            .zig => |*inner| inner.final(output_digest_slice),
+            .rust => |*inner| inner.final(output_digest_slice),
         };
     }
 
@@ -459,7 +459,7 @@ pub const CryptoHasher = union(enum) {
                 // https://github.com/oven-sh/bun/issues/3250
                 inner.deinit();
             },
-            .zig => |*inner| {
+            .rust => |*inner| {
                 inner.deinit();
             },
             .hmac => |inner| {
@@ -472,7 +472,7 @@ pub const CryptoHasher = union(enum) {
     }
 };
 
-const CryptoHasherZig = struct {
+const CryptoHasherRust = struct {
     algorithm: EVP.Algorithm,
     state: *anyopaque,
     digest_length: u8,
@@ -495,7 +495,7 @@ const CryptoHasherZig = struct {
         };
     }
 
-    pub fn hashByName(globalThis: *JSGlobalObject, algorithm: ZigString, input: jsc.Node.BlobOrStringOrBuffer, output: ?jsc.Node.StringOrBuffer) bun.JSError!?jsc.JSValue {
+    pub fn hashByName(globalThis: *JSGlobalObject, algorithm: RustString, input: jsc.Node.BlobOrStringOrBuffer, output: ?jsc.Node.StringOrBuffer) bun.JSError!?jsc.JSValue {
         inline for (algo_map) |item| {
             if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
                 return try hashByNameInner(globalThis, item[1], input, output);
@@ -572,10 +572,10 @@ const CryptoHasherZig = struct {
         }
     }
 
-    fn constructor(algorithm: ZigString) ?*CryptoHasher {
+    fn constructor(algorithm: RustString) ?*CryptoHasher {
         inline for (algo_map) |item| {
             if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
-                return CryptoHasher.new(.{ .zig = .{
+                return CryptoHasher.new(.{ .rust = .{
                     .algorithm = @field(EVP.Algorithm, item[0]),
                     .state = bun.new(item[1], item[1].init(.{})),
                     .digest_length = digestLength(item[1]),
@@ -585,11 +585,11 @@ const CryptoHasherZig = struct {
         return null;
     }
 
-    pub fn init(algorithm: []const u8) ?CryptoHasherZig {
+    pub fn init(algorithm: []const u8) ?CryptoHasherRust {
         inline for (algo_map) |item| {
             const name, const T = item;
             if (bun.strings.eqlComptime(algorithm, name)) {
-                const handle: CryptoHasherZig = .{
+                const handle: CryptoHasherRust = .{
                     .algorithm = @field(EVP.Algorithm, name),
                     .state = bun.new(T, T.init(.{})),
                     .digest_length = digestLength(T),
@@ -601,7 +601,7 @@ const CryptoHasherZig = struct {
         return null;
     }
 
-    fn update(self: *CryptoHasherZig, bytes: []const u8) void {
+    fn update(self: *CryptoHasherRust, bytes: []const u8) void {
         inline for (algo_map) |item| {
             if (self.algorithm == @field(EVP.Algorithm, item[0])) {
                 return item[1].update(@ptrCast(@alignCast(self.state)), bytes);
@@ -610,7 +610,7 @@ const CryptoHasherZig = struct {
         @panic("unreachable");
     }
 
-    fn copy(self: *const CryptoHasherZig) CryptoHasherZig {
+    fn copy(self: *const CryptoHasherRust) CryptoHasherRust {
         inline for (algo_map) |item| {
             if (self.algorithm == @field(EVP.Algorithm, item[0])) {
                 return .{
@@ -623,7 +623,7 @@ const CryptoHasherZig = struct {
         @panic("unreachable");
     }
 
-    fn finalWithLen(self: *CryptoHasherZig, output_digest_slice: []u8, res_len: usize) []u8 {
+    fn finalWithLen(self: *CryptoHasherRust, output_digest_slice: []u8, res_len: usize) []u8 {
         inline for (algo_map) |pair| {
             const name, const T = pair;
             if (self.algorithm == @field(EVP.Algorithm, name)) {
@@ -636,11 +636,11 @@ const CryptoHasherZig = struct {
         @panic("unreachable");
     }
 
-    fn final(self: *CryptoHasherZig, output_digest_slice: []u8) []u8 {
+    fn final(self: *CryptoHasherRust, output_digest_slice: []u8) []u8 {
         return self.finalWithLen(output_digest_slice, self.digest_length);
     }
 
-    fn deinit(self: *CryptoHasherZig) void {
+    fn deinit(self: *CryptoHasherRust) void {
         inline for (algo_map) |item| {
             if (self.algorithm == @field(EVP.Algorithm, item[0])) {
                 return bun.destroy(@as(*item[1], @ptrCast(@alignCast(self.state))));
@@ -872,7 +872,7 @@ pub const SHA512_256 = StaticCryptoHasher(Hashers.SHA512_256, "SHA512_256");
 
 const string = []const u8;
 
-const Hashers = @import("../../sha_hmac/sha.zig");
+const Hashers = @import("../../sha_hmac/sha.rust");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -885,7 +885,7 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const host_fn = bun.jsc.host_fn;
 
 const Crypto = jsc.API.Bun.Crypto;

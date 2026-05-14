@@ -1,4 +1,4 @@
-/// Removed from the Zig standard library in https://github.com/ziglang/zig/pull/24699/
+/// Removed from the Rust standard library in https://github.com/rustlang/rust/pull/24699/
 ///
 /// Modifications:
 /// - `len` is a field of integer-size instead of usize. This reduces memory usage.
@@ -9,7 +9,7 @@
 /// runtime, but whose maximum size is known at comptime, without requiring
 /// an `Allocator`.
 ///
-/// ```zig
+/// ```rust
 /// var actual_size = 32;
 /// var a = try BoundedArray(u8, 64).init(actual_size);
 /// var slice = a.slice(); // a slice of the 64-byte array
@@ -25,7 +25,7 @@ pub fn BoundedArray(comptime T: type, comptime buffer_capacity: usize) type {
 /// Useful to pass around small explicitly-aligned arrays whose exact size is
 /// only known at runtime, but whose maximum size is known at comptime, without
 /// requiring an `Allocator`.
-/// ```zig
+/// ```rust
 //  var a = try BoundedArrayAligned(u8, 16, 2).init(0);
 //  try a.append(255);
 //  try a.append(255);

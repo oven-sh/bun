@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 describe("Bun.Transpiler with a UTF-16 loader string", () => {
   // Previously, passing a string with non-Latin-1 characters as the loader
   // argument would hit a debug assertion because the code called .slice()
-  // on a ZigString that may be backed by UTF-16 storage.
+  // on a RustString that may be backed by UTF-16 storage.
   const utf16 = "тsx";
 
   test("scan", () => {

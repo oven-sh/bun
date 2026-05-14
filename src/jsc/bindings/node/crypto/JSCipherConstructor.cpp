@@ -216,8 +216,8 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize cipher"_s);
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSCipherClassStructure.get(zigGlobalObject);
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = rustGlobalObject->m_JSCipherClassStructure.get(rustGlobalObject);
 
     return JSC::JSValue::encode(JSCipher::create(vm, structure, globalObject, cipherKind, WTF::move(ctx), authTagLength, maxMessageSize));
 }

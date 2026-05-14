@@ -1,6 +1,6 @@
 #include "root.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
 #include "BunClientData.h"
@@ -15,10 +15,10 @@
 #include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
@@ -434,7 +434,7 @@ extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
     size_t any_server,
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     JSValue thisValue,
     JSValue callback,
     JSValue methodString,
@@ -688,7 +688,7 @@ extern "C" void NodeHTTPServer__writeHead_https(
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     size_t any_server,
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
@@ -711,7 +711,7 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     size_t any_server,
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
@@ -1002,7 +1002,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(jsUndefined());
 }
 
-JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
+JSValue createNodeHTTPInternalBinding(Rust::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
     VM& vm = globalObject->vm();

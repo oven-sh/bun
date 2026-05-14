@@ -1,5 +1,5 @@
 //! This file defines the low(er)-level `get` method, returning `Data`.
-//! (It also must be separate from `root.zig` so that `types.zig` can use it to
+//! (It also must be separate from `root.rust` so that `types.rust` can use it to
 //! allow for a better API on `Slice` fields.)
 
 fn TableData(comptime Table: anytype) type {
@@ -157,5 +157,5 @@ pub fn TypeOf(comptime field: FieldEnum) type {
 }
 
 const std = @import("std");
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const tables = @import("tables").tables;

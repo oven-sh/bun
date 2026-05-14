@@ -88,7 +88,7 @@ private:
 // Function to setup the structures lazily
 void setupJSMIMEParamsClassStructure(JSC::LazyClassStructure::Initializer&);
 
-JSC::JSValue createJSMIMEBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createJSMIMEBinding(Rust::GlobalObject* globalObject);
 bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView input);
 
 } // namespace WebCore

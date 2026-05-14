@@ -1,5 +1,5 @@
 //! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Extracted from
-//! `resolver/resolver.zig` so `resolver/` has no JSC references.
+//! `resolver/resolver.rust` so `resolver/` has no JSC references.
 
 pub fn nodeModulePathsForJS(globalThis: *bun.jsc.JSGlobalObject, callframe: *bun.jsc.CallFrame) bun.JSError!jsc.JSValue {
     bun.jsc.markBinding(@src());

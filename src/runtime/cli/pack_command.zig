@@ -2631,7 +2631,7 @@ pub const bindings = struct {
     const JSValue = jsc.JSValue;
     const JSGlobalObject = jsc.JSGlobalObject;
     const CallFrame = jsc.CallFrame;
-    const ZigString = jsc.ZigString;
+    const RustString = jsc.RustString;
     const String = bun.String;
     const JSArray = jsc.JSArray;
     const JSObject = jsc.JSObject;
@@ -2814,7 +2814,7 @@ const stringZ = [:0]const u8;
 
 const std = @import("std");
 
-const libarchive = @import("../../libarchive/libarchive.zig").lib;
+const libarchive = @import("../../libarchive/libarchive.rust").lib;
 const Archive = libarchive.Archive;
 
 const bun = @import("bun");

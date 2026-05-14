@@ -8,7 +8,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
         object.put(
             globalThis,
-            comptime ZigString.static(name),
+            comptime RustString.static(name),
             jsc.JSFunction.create(globalThis, name, @field(fields, name), 1, .{}),
         );
     }
@@ -45,14 +45,14 @@ pub fn arrayBufferToString(
     const array_buffer = jsc.ArrayBuffer.fromTypedArray(globalThis, args[0]);
     switch (array_buffer.typed_array_type) {
         .Uint16Array, .Int16Array => {
-            var zig_str = ZigString.init("");
-            zig_str._unsafe_ptr_do_not_use = @as([*]const u8, @ptrCast(@alignCast(array_buffer.ptr)));
-            zig_str.len = array_buffer.len;
-            zig_str.markUTF16();
-            return zig_str.toJS(globalThis);
+            var rust_str = RustString.init("");
+            rust_str._unsafe_ptr_do_not_use = @as([*]const u8, @ptrCast(@alignCast(array_buffer.ptr)));
+            rust_str.len = array_buffer.len;
+            rust_str.markUTF16();
+            return rust_str.toJS(globalThis);
         },
         else => {
-            return ZigString.init(array_buffer.slice()).toJS(globalThis);
+            return RustString.init(array_buffer.slice()).toJS(globalThis);
         },
     }
 }
@@ -73,4 +73,4 @@ const std = @import("std");
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

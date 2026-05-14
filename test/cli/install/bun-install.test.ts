@@ -8810,7 +8810,7 @@ describe.concurrent("bun-install", () => {
     });
 
     // TODO: This test should fail if the param `warn_on_error` is true in
-    // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
+    // `(install.rust).NetworkTask.forManifest()`. Unfortunately, that
     // code never gets run for peer dependencies unless you do some package
     // manifest magic. I doubt it'd ever fail, but having a dedicated
     // test would be nice.

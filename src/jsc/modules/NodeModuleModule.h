@@ -13,12 +13,12 @@
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-using namespace Zig;
+using namespace Rust;
 using namespace JSC;
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
-void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
+void addNodeModuleConstructorProperties(JSC::VM &vm, Rust::GlobalObject *globalObject);
 
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsJSValue(BunString specifier, JSC::JSGlobalObject*, bool use_dirname);
 extern "C" bool ModuleLoader__isBuiltin(const char* data, size_t len);
@@ -33,7 +33,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
 }
 
-namespace Zig {
+namespace Rust {
 
 void generateNativeModule_NodeModule(                                     
   JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     
@@ -41,4 +41,4 @@ void generateNativeModule_NodeModule(
   JSC::MarkedArgumentBuffer &exportValues);  
 
 
-} // namespace Zig
+} // namespace Rust

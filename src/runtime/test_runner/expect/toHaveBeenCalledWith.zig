@@ -112,7 +112,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
     }
 }
 
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("../diff_format.rust").DiffFormatter;
 
 const bun = @import("bun");
 const Output = bun.Output;

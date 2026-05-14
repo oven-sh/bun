@@ -11,9 +11,9 @@ pub fn Visit(
         const LowerUsingDeclarationsContext = P.LowerUsingDeclarationsContext;
         const only_scan_imports_and_do_not_visit = P.only_scan_imports_and_do_not_visit;
 
-        pub const visitExpr = @import("./visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExpr;
-        pub const visitExprInOut = @import("./visitExpr.zig").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExprInOut;
-        pub const visitAndAppendStmt = @import("./visitStmt.zig").VisitStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitAndAppendStmt;
+        pub const visitExpr = @import("./visitExpr.rust").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExpr;
+        pub const visitExprInOut = @import("./visitExpr.rust").VisitExpr(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitExprInOut;
+        pub const visitAndAppendStmt = @import("./visitStmt.rust").VisitStmt(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).visitAndAppendStmt;
 
         pub fn visitStmtsAndPrependTempRefs(p: *P, stmts: *ListManaged(Stmt), opts: *PrependTempRefsOpts) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {

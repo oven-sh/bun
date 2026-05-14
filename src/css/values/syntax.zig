@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 const Result = css.Result;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -431,9 +431,9 @@ pub const ParsedComponent = union(enum) {
     /// A `<color>` value.
     color: CssColor,
     /// An `<image>` value.
-    image: Image, // Zig doesn't have lifetimes, so 'i is omitted.
+    image: Image, // Rust doesn't have lifetimes, so 'i is omitted.
     /// A `<url>` value.
-    url: Url, // Lifetimes are omitted in Zig.
+    url: Url, // Lifetimes are omitted in Rust.
     /// An `<integer>` value.
     integer: CSSInteger,
     /// An `<angle>` value.

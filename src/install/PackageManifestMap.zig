@@ -111,7 +111,7 @@ const string = []const u8;
 
 const std = @import("std");
 
-const install = @import("./install.zig");
+const install = @import("./install.rust");
 const Npm = install.Npm;
 const PackageManager = install.PackageManager;
 const PackageManifestMap = install.PackageManifestMap;

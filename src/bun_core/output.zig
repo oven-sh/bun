@@ -176,7 +176,7 @@ pub const Source = struct {
             const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
             const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
-            const fd_internals = @import("../sys/fd.zig");
+            const fd_internals = @import("../sys/fd.rust");
             const INVALID_HANDLE_VALUE = std.os.windows.INVALID_HANDLE_VALUE;
             fd_internals.windows_cached_stderr = if (stderr != INVALID_HANDLE_VALUE) .fromSystem(stderr) else .invalid;
             fd_internals.windows_cached_stdout = if (stdout != INVALID_HANDLE_VALUE) .fromSystem(stdout) else .invalid;
@@ -1194,7 +1194,7 @@ pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
 }
 
 /// Print a red error message. The first argument takes an `error_name` value, which can be either
-/// be a Zig error, or a string or enum. The error name is converted to a string and displayed
+/// be a Rust error, or a string or enum. The error name is converted to a string and displayed
 /// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
 pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) void {
     const T = @TypeOf(error_name);
@@ -1215,7 +1215,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     }
 
     const display_name, const is_comptime_name = display_name: {
-        // Zig string literals are of type *const [n:0]u8
+        // Rust string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
         if (info == .pointer and info.pointer.size == .one and info.pointer.is_const) {
             const child_info = @typeInfo(info.pointer.child);
@@ -1225,8 +1225,8 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
             }
         }
 
-        // other zig strings we shall treat as dynamic
-        if (comptime bun.trait.isZigString(T)) {
+        // other rust strings we shall treat as dynamic
+        if (comptime bun.trait.isRustString(T)) {
             break :display_name .{ error_name, false };
         }
 
@@ -1237,7 +1237,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
                     @compileError("Output.err was given an empty error set");
                 }
 
-                // TODO: convert zig errors to errno for better searchability?
+                // TODO: convert rust errors to errno for better searchability?
                 if (errors.len == 1) break :display_name .{ errors[0].name, true };
             }
 
@@ -1366,10 +1366,10 @@ pub const Synchronized = struct {
     }
 };
 
-const Environment = @import("./env.zig");
+const Environment = @import("./env.rust");
 const root = @import("root");
 const std = @import("std");
-const SystemTimer = @import("../perf/system_timer.zig").Timer;
+const SystemTimer = @import("../perf/system_timer.rust").Timer;
 
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;

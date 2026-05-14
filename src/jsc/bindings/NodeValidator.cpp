@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ExceptionScope.h"

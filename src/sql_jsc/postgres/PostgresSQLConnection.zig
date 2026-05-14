@@ -773,7 +773,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     return js_value;
 }
 
-/// Referenced by `dispatch.zig` (kind = `.postgres[_tls]`). Now the only
+/// Referenced by `dispatch.rust` (kind = `.postgres[_tls]`). Now the only
 /// caller — `configure()` is gone.
 pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
@@ -1950,24 +1950,24 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const DataCell = @import("./DataCell.zig");
-const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
-const PostgresRequest = @import("./PostgresRequest.zig");
-const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
-const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
-const SocketMonitor = @import("../../sql/postgres/SocketMonitor.zig");
-const protocol = @import("../../sql/postgres/PostgresProtocol.zig");
+const DataCell = @import("./DataCell.rust");
+const PostgresCachedStructure = @import("../shared/CachedStructure.rust");
+const PostgresRequest = @import("./PostgresRequest.rust");
+const PostgresSQLQuery = @import("./PostgresSQLQuery.rust");
+const PostgresSQLStatement = @import("./PostgresSQLStatement.rust");
+const SocketMonitor = @import("../../sql/postgres/SocketMonitor.rust");
+const protocol = @import("../../sql/postgres/PostgresProtocol.rust");
 const std = @import("std");
-const AuthenticationState = @import("./AuthenticationState.zig").AuthenticationState;
-const ConnectionFlags = @import("../../sql/shared/ConnectionFlags.zig").ConnectionFlags;
-const Data = @import("../../sql/shared/Data.zig").Data;
-const SSLMode = @import("../../sql/postgres/SSLMode.zig").SSLMode;
-const Status = @import("../../sql/postgres/Status.zig").Status;
-const TLSStatus = @import("../../sql/postgres/TLSStatus.zig").TLSStatus;
+const AuthenticationState = @import("./AuthenticationState.rust").AuthenticationState;
+const ConnectionFlags = @import("../../sql/shared/ConnectionFlags.rust").ConnectionFlags;
+const Data = @import("../../sql/shared/Data.rust").Data;
+const SSLMode = @import("../../sql/postgres/SSLMode.rust").SSLMode;
+const Status = @import("../../sql/postgres/Status.rust").Status;
+const TLSStatus = @import("../../sql/postgres/TLSStatus.rust").TLSStatus;
 
-const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.zig").AnyPostgresError;
-const createPostgresError = @import("../../sql/postgres/AnyPostgresError.zig").createPostgresError;
-const postgresErrorToJS = @import("../../sql/postgres/AnyPostgresError.zig").postgresErrorToJS;
+const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.rust").AnyPostgresError;
+const createPostgresError = @import("../../sql/postgres/AnyPostgresError.rust").createPostgresError;
+const postgresErrorToJS = @import("../../sql/postgres/AnyPostgresError.rust").postgresErrorToJS;
 
 const bun = @import("bun");
 const BoringSSL = bun.BoringSSL;

@@ -171,8 +171,8 @@ pub fn name(this: *const Error) []const u8 {
     return "UNKNOWN";
 }
 
-pub fn toZigErr(this: Error) anyerror {
-    return bun.errnoToZigErr(this.errno);
+pub fn toRustErr(this: Error) anyerror {
+    return bun.errnoToRustErr(this.errno);
 }
 
 /// 1. Convert libuv errno values into libc ones.
@@ -320,9 +320,9 @@ pub inline fn todo() Error {
     return Error{ .errno = todo_errno, .syscall = .TODO };
 }
 
-pub const toJS = @import("../sys_jsc/error_jsc.zig").toJS;
-pub const toJSWithAsyncStack = @import("../sys_jsc/error_jsc.zig").toJSWithAsyncStack;
-pub const TestingAPIs = @import("../sys_jsc/error_jsc.zig").TestingAPIs;
+pub const toJS = @import("../sys_jsc/error_jsc.rust").toJS;
+pub const toJSWithAsyncStack = @import("../sys_jsc/error_jsc.rust").toJSWithAsyncStack;
+pub const TestingAPIs = @import("../sys_jsc/error_jsc.rust").TestingAPIs;
 
 const std = @import("std");
 

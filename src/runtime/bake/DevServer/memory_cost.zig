@@ -23,7 +23,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
     var js_code: usize = 0;
     var source_maps: usize = 0;
     var assets: usize = 0;
-    // See https://github.com/ziglang/zig/issues/21879
+    // See https://github.com/rustlang/rust/issues/21879
     useAllFields(DevServer, .{
         // does not contain pointers
         .assume_perfect_incremental_bundling = {},

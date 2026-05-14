@@ -29,7 +29,7 @@ pub const RedisError = error{
     NestingDepthExceeded,
 };
 
-pub const valkeyErrorToJS = @import("../runtime/valkey_jsc/protocol_jsc.zig").valkeyErrorToJS;
+pub const valkeyErrorToJS = @import("../runtime/valkey_jsc/protocol_jsc.rust").valkeyErrorToJS;
 
 // RESP protocol types
 pub const RESPType = enum(u8) {
@@ -204,9 +204,9 @@ pub const RESPValue = union(RESPType) {
         }
     }
 
-    pub const toJS = @import("../runtime/valkey_jsc/protocol_jsc.zig").respValueToJS;
-    pub const ToJSOptions = @import("../runtime/valkey_jsc/protocol_jsc.zig").ToJSOptions;
-    pub const toJSWithOptions = @import("../runtime/valkey_jsc/protocol_jsc.zig").respValueToJSWithOptions;
+    pub const toJS = @import("../runtime/valkey_jsc/protocol_jsc.rust").respValueToJS;
+    pub const ToJSOptions = @import("../runtime/valkey_jsc/protocol_jsc.rust").ToJSOptions;
+    pub const toJSWithOptions = @import("../runtime/valkey_jsc/protocol_jsc.rust").respValueToJSWithOptions;
 };
 
 pub const ValkeyReader = struct {

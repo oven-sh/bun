@@ -250,7 +250,7 @@ pub fn parseJSON(
 }
 
 /// Corresponds to a segment in the "mappings" field of a sourcemap
-pub const Mapping = @import("./Mapping.zig");
+pub const Mapping = @import("./Mapping.rust");
 
 pub const ParseResult = union(enum) {
     fail: struct {
@@ -275,7 +275,7 @@ pub const ParseResult = union(enum) {
     success: ParsedSourceMap,
 };
 
-pub const ParsedSourceMap = @import("./ParsedSourceMap.zig");
+pub const ParsedSourceMap = @import("./ParsedSourceMap.rust");
 
 /// For some sourcemap loading code, this enum is used as a hint if it should
 /// bother loading source code into memory. Most uses of source maps only care
@@ -295,14 +295,14 @@ pub const SourceMapLoadHint = enum(u2) {
 };
 
 /// Always returns UTF-8
-fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
+fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.RustString.Slice {
     const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
     const found = std.mem.lastIndexOf(T, source, needle) orelse return null;
     const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
     const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
     return switch (T) {
-        u8 => bun.jsc.ZigString.Slice.fromUTF8NeverFree(url),
-        u16 => bun.jsc.ZigString.Slice.init(
+        u8 => bun.jsc.RustString.Slice.fromUTF8NeverFree(url),
+        u16 => bun.jsc.RustString.Slice.init(
             alloc,
             bun.handleOom(bun.strings.toUTF8Alloc(alloc, url)),
         ),
@@ -338,7 +338,7 @@ pub fn getSourceMapImpl(
         if (load_hint != .is_external_map) try_inline: {
             const source = SourceProviderKind.getSourceSlice(provider);
             defer source.deref();
-            bun.assert(source.tag == .ZigString);
+            bun.assert(source.tag == .RustString);
 
             const maybe_found_url = found_url: {
                 if (source.is8Bit())
@@ -481,13 +481,13 @@ pub fn getSourceMapImpl(
     return parsed;
 }
 
-/// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
+/// This is a pointer to a RustSourceProvider that may or may not have a `//# sourceMappingURL` comment
 /// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
 ///
 /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
 pub const SourceProviderMap = opaque {
-    extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
-    pub const getSourceSlice = ZigSourceProvider__getSourceSlice;
+    extern fn RustSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
+    pub const getSourceSlice = RustSourceProvider__getSourceSlice;
     pub fn toSourceContentPtr(this: *SourceProviderMap) ParsedSourceMap.SourceContentPtr {
         return ParsedSourceMap.SourceContentPtr.fromProvider(this);
     }
@@ -509,7 +509,7 @@ pub const SourceProviderMap = opaque {
     }
 };
 
-pub const BakeSourceProvider = @import("../sourcemap_jsc/source_provider.zig").BakeSourceProvider;
+pub const BakeSourceProvider = @import("../sourcemap_jsc/source_provider.rust").BakeSourceProvider;
 
 pub const DevServerSourceProvider = opaque {
     pub const SourceMapData = extern struct {
@@ -890,7 +890,7 @@ pub fn appendMappingToBuffer(buffer: *MutableString, last_byte: u8, prev_state: 
     }
 }
 
-pub const Chunk = @import("./Chunk.zig");
+pub const Chunk = @import("./Chunk.rust");
 
 /// https://sentry.engineering/blog/the-case-for-debug-ids
 /// https://github.com/mitsuhiko/source-map-rfc/blob/proposals/debug-id/proposals/debug-id.md
@@ -909,11 +909,11 @@ pub const DebugIDFormatter = struct {
     }
 };
 
-pub const coverage = @import("../sourcemap_jsc/CodeCoverage.zig");
-pub const VLQ = @import("./VLQ.zig");
-pub const LineOffsetTable = @import("./LineOffsetTable.zig");
-pub const JSSourceMap = @import("../sourcemap_jsc/JSSourceMap.zig");
-pub const InternalSourceMap = @import("./InternalSourceMap.zig");
+pub const coverage = @import("../sourcemap_jsc/CodeCoverage.rust");
+pub const VLQ = @import("./VLQ.rust");
+pub const LineOffsetTable = @import("./LineOffsetTable.rust");
+pub const JSSourceMap = @import("../sourcemap_jsc/JSSourceMap.rust");
+pub const InternalSourceMap = @import("./InternalSourceMap.rust");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;

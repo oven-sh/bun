@@ -1,6 +1,6 @@
 // Regression test for TLS upgrade raw socket leak (#12117, #24118, #25948)
 // When a TCP socket is upgraded to TLS via tls.connect({ socket }),
-// both a TLS wrapper and a raw TCP wrapper are created in Zig.
+// both a TLS wrapper and a raw TCP wrapper are created in Rust.
 // Previously, the raw socket's has_pending_activity was never set to
 // false on close, causing it (and all its retained objects) to leak.
 

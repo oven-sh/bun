@@ -1,7 +1,7 @@
-pub const args = @import("./args.zig");
+pub const args = @import("./args.rust");
 
-pub const ComptimeClap = @import("./comptime.zig").ComptimeClap;
-pub const StreamingClap = @import("./streaming.zig").StreamingClap;
+pub const ComptimeClap = @import("./comptime.rust").ComptimeClap;
+pub const StreamingClap = @import("./streaming.rust").StreamingClap;
 
 /// The names a ::Param can have.
 pub const Names = struct {
@@ -659,7 +659,7 @@ pub fn usageFull(
 
         const prefix = if (param.names.short) |_| "-" else "--";
 
-        // Seems the zig compiler is being a little wierd. I doesn't allow me to write
+        // Seems the rust compiler is being a little wierd. I doesn't allow me to write
         // @as(*const [1]u8, s)                  VVVVVVVVVVVVVVVVVVVVVVVVVVVVVV
         const name = if (param.names.short) |*s| @as([*]const u8, @ptrCast(s))[0..1] else param.names.long orelse {
             positional = param;
@@ -724,7 +724,7 @@ fn testUsage(expected: []const u8, params: []const Param(Help)) !void {
     testing.expectEqualStrings(expected, fbs.getWritten());
 }
 
-const Output = @import("../bun_core/output.zig");
+const Output = @import("../bun_core/output.rust");
 const bun = @import("bun");
 
 const std = @import("std");

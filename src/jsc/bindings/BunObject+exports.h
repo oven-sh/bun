@@ -83,22 +83,22 @@
     macro(zstdCompress) \
     macro(zstdDecompress) \
 
-#define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
-FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
-#undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
+#define DECLARE_RUST_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
+FOR_EACH_CALLBACK(DECLARE_RUST_BUN_OBJECT_CALLBACK);
+#undef DECLARE_RUST_BUN_OBJECT_CALLBACK
 
-// declaration for the exported function in BunObject.zig
-#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_lazyPropCb_##name(JSC::JSGlobalObject*, JSC::JSObject*);
-FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
-#undef DECLARE_ZIG_BUN_OBJECT_GETTER
+// declaration for the exported function in BunObject.rust
+#define DECLARE_RUST_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_lazyPropCb_##name(JSC::JSGlobalObject*, JSC::JSObject*);
+FOR_EACH_GETTER(DECLARE_RUST_BUN_OBJECT_GETTER);
+#undef DECLARE_RUST_BUN_OBJECT_GETTER
 
-// definition of the C++ wrapper to call the Zig function
-#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
+// definition of the C++ wrapper to call the Rust function
+#define DEFINE_RUST_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
     return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
 } \
 
-FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);
-#undef DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER
+FOR_EACH_GETTER(DEFINE_RUST_BUN_OBJECT_GETTER_WRAPPER);
+#undef DEFINE_RUST_BUN_OBJECT_GETTER_WRAPPER
 
 #undef FOR_EACH_GETTER
 #undef FOR_EACH_CALLBACK

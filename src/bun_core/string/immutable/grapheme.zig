@@ -1,7 +1,7 @@
 // Grapheme break implementation using uucode's approach.
 // Includes GB9c (Indic Conjunct Break) support.
 // Types and algorithm are self-contained; no runtime dependency on uucode.
-// Tables are pre-generated and committed as grapheme_tables.zig.
+// Tables are pre-generated and committed as grapheme_tables.rust.
 
 /// Grapheme break property for codepoints, excluding control/CR/LF
 /// which are assumed to be handled externally.
@@ -327,5 +327,5 @@ fn isExtendedPictographic(gb: GraphemeBreakNoControl) bool {
 }
 
 const bun = @import("bun");
-const grapheme_tables = @import("./grapheme_tables.zig");
+const grapheme_tables = @import("./grapheme_tables.rust");
 const std = @import("std");

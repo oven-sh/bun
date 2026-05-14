@@ -758,7 +758,7 @@ pub const SendQueue = struct {
             log("IPC call continueSend() from empty item", .{});
             return continueSend(this, global, reason);
         }
-        // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtString(to_send), first.handle != null });
+        // log("sending ipc message: '{'}' (has_handle={})", .{ std.rust.fmtString(to_send), first.handle != null });
         bun.assert(!this.write_in_progress);
         this.write_in_progress = true;
         this._write(to_send, if (first.handle) |handle| handle.fd else null);
@@ -829,7 +829,7 @@ pub const SendQueue = struct {
 
         const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
-        // log("enqueueing ipc message: '{'}'", .{std.zig.fmtString(msg.data.list.items[start_offset..])});
+        // log("enqueueing ipc message: '{'}'", .{std.rust.fmtString(msg.data.list.items[start_offset..])});
 
         log("IPC call continueSend() from serializeAndSend", .{});
         self.continueSend(global, .new_message_appended);
@@ -844,7 +844,7 @@ pub const SendQueue = struct {
             if (item.data.list.items.len > 100) {
                 log(" {d}|{d}", .{ item.data.cursor, item.data.list.items.len - item.data.cursor });
             } else {
-                log("  \"{f}\"|\"{f}\"", .{ std.zig.fmtString(item.data.list.items[0..item.data.cursor]), std.zig.fmtString(item.data.list.items[item.data.cursor..]) });
+                log("  \"{f}\"|\"{f}\"", .{ std.rust.fmtString(item.data.list.items[0..item.data.cursor]), std.rust.fmtString(item.data.list.items[item.data.cursor..]) });
             }
         }
     }
@@ -1041,7 +1041,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
         }
     }
 
-    var zig_handle: ?Handle = null;
+    var rust_handle: ?Handle = null;
     if (!handle.isUndefinedOrNull()) {
         if (bun.jsc.API.Listener.fromJS(handle)) |listener| {
             log("got listener", .{});
@@ -1049,7 +1049,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
                 .uws => |socket_uws| {
                     // may need to handle ssl case
                     const fd = socket_uws.getSocket().getFd();
-                    zig_handle = .init(fd, handle);
+                    rust_handle = .init(fd, handle);
                 },
                 .namedPipe => |namedPipe| {
                     _ = namedPipe;
@@ -1061,11 +1061,11 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
         }
     }
 
-    const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);
+    const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, rust_handle);
 
     if (status == .failure) {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, jsc.ZigString.static("syscall"), try bun.String.static("write").toJS(globalObject));
+        ex.put(globalObject, jsc.RustString.static("syscall"), try bun.String.static("write").toJS(globalObject));
         return doSendErr(globalObject, callback, ex, from);
     }
 
@@ -1191,7 +1191,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
 
 fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
     var data = all_data;
-    // log("onData '{'}'", .{std.zig.fmtString(data)});
+    // log("onData '{'}'", .{std.rust.fmtString(data)});
 
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
@@ -1529,9 +1529,9 @@ pub fn ipcParse(globalObject: *jsc.JSGlobalObject, target: jsc.JSValue, serializ
 
 const string = []const u8;
 
-const node_cluster_binding = @import("../runtime/node/node_cluster_binding.zig");
+const node_cluster_binding = @import("../runtime/node/node_cluster_binding.rust");
 const std = @import("std");
-const JSONLineBuffer = @import("./JSONLineBuffer.zig").JSONLineBuffer;
+const JSONLineBuffer = @import("./JSONLineBuffer.rust").JSONLineBuffer;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

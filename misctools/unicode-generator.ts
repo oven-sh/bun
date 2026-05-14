@@ -1,6 +1,6 @@
 import crypto from "crypto";
 
-// Types to mirror Zig's structures
+// Types to mirror Rust's structures
 interface Context<Elem> {
   get(codepoint: number): Promise<Elem> | Elem;
   eql(a: Elem, b: Elem): boolean;
@@ -90,8 +90,8 @@ class Generator<Elem> {
     return { stage1, stage2, stage3 };
   }
 
-  // Generates Zig code for the lookup tables
-  static writeZig<Elem>(tableName: string, tables: Tables<Elem>, elemToString: (elem: Elem) => string): string {
+  // Generates Rust code for the lookup tables
+  static writeRust<Elem>(tableName: string, tables: Tables<Elem>, elemToString: (elem: Elem) => string): string {
     let output = `/// Auto-generated. Do not edit.\n`;
     output += `fn ${tableName}(comptime Elem: type) type {\n`;
     output += "    return struct {\n";
@@ -130,9 +130,9 @@ async function example() {
   const generator = new Generator(ctx);
   const tables = await generator.generate();
 
-  // Generate Zig code
-  const zigCode = Generator.writeZig(tables, (elem: string) => `"${elem}"`);
-  console.log(zigCode);
+  // Generate Rust code
+  const rustCode = Generator.writeRust(tables, (elem: string) => `"${elem}"`);
+  console.log(rustCode);
 }
 
 export { Generator, type Context, type Tables };

@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 describe("bun update --interactive formatting regression", () => {
   it("should not underflow when dependency type text is longer than available space", async () => {
     // This test verifies the fix for the padding calculation underflow issue
-    // in lines 745-750 of update_interactive_command.zig
+    // in lines 745-750 of update_interactive_command.rust
     const dir = tempDirWithFiles("formatting-regression-test", {
       "package.json": JSON.stringify({
         name: "test-project",

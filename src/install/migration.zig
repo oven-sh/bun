@@ -49,7 +49,7 @@ pub fn detectAndLoadOtherLockfile(
         const lockfile = File.openat(dir, "yarn.lock", bun.O.RDONLY, 0).unwrap() catch break :yarn;
         defer lockfile.close();
         const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
-        const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
+        const migrate_result = @import("./yarn.rust").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,
@@ -73,7 +73,7 @@ pub fn detectAndLoadOtherLockfile(
         const lockfile = File.openat(dir, "pnpm-lock.yaml", bun.O.RDONLY, 0).unwrap() catch break :pnpm;
         defer lockfile.close();
         const data = lockfile.readToEnd(allocator).unwrap() catch break :pnpm;
-        const migrate_result = @import("./pnpm.zig").migratePnpmLockfile(this, manager, allocator, log, data, dir) catch |err| {
+        const migrate_result = @import("./pnpm.rust").migratePnpmLockfile(this, manager, allocator, log, data, dir) catch |err| {
             switch (err) {
                 error.PnpmLockfileTooOld => {
                     Output.prettyErrorln(
@@ -1109,16 +1109,16 @@ fn packageNameFromPath(pkg_path: []const u8) []const u8 {
 
 const string = []const u8;
 
-const Dependency = @import("./dependency.zig");
-const Install = @import("./install.zig");
-const Npm = @import("./npm.zig");
+const Dependency = @import("./dependency.rust");
+const Install = @import("./install.rust");
+const Npm = @import("./npm.rust");
 const std = @import("std");
-const Bin = @import("./bin.zig").Bin;
-const Integrity = @import("./integrity.zig").Integrity;
-const Resolution = @import("./resolution.zig").Resolution;
+const Bin = @import("./bin.rust").Bin;
+const Integrity = @import("./integrity.rust").Integrity;
+const Resolution = @import("./resolution.rust").Resolution;
 const Allocator = std.mem.Allocator;
 
-const Lockfile = @import("./lockfile.zig");
+const Lockfile = @import("./lockfile.rust");
 const LoadResult = Lockfile.LoadResult;
 
 const bun = @import("bun");

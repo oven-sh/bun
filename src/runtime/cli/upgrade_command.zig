@@ -15,7 +15,7 @@ pub const Version = struct {
     pub fn name(this: Version) ?string {
         if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
             if (strings.eqlComptime(this.tag, "canary")) {
-                const Cli = @import("./cli.zig");
+                const Cli = @import("./cli.rust");
 
                 return std.fmt.allocPrint(
                     bun.default_allocator,
@@ -897,15 +897,15 @@ pub const UpgradeCommand = struct {
 pub const upgrade_js_bindings = struct {
     const jsc = bun.jsc;
     const JSValue = jsc.JSValue;
-    const ZigString = jsc.ZigString;
+    const RustString = jsc.RustString;
 
     var tempdir_fd: ?bun.FD = null;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = JSValue.createEmptyObject(global, 2);
-        const open = ZigString.static("openTempDirWithoutSharingDelete");
+        const open = RustString.static("openTempDirWithoutSharingDelete");
         obj.put(global, open, jsc.JSFunction.create(global, "openTempDirWithoutSharingDelete", jsOpenTempDirWithoutSharingDelete, 1, .{}));
-        const close = ZigString.static("closeTempDirHandle");
+        const close = RustString.static("closeTempDirHandle");
         obj.put(global, close, jsc.JSFunction.create(global, "closeTempDirHandle", jsCloseTempDirHandle, 1, .{}));
         return obj;
     }
@@ -985,14 +985,14 @@ pub fn @"export"() void {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const DotEnv = @import("../../dotenv/env_loader.zig");
-const fs = @import("../../resolver/fs.zig");
-const linker = @import("../../bundler/linker.zig");
+const DotEnv = @import("../../dotenv/env_loader.rust");
+const fs = @import("../../resolver/fs.rust");
+const linker = @import("../../bundler/linker.rust");
 const std = @import("std");
-const Archive = @import("../../libarchive/libarchive.zig").Archive;
-const Command = @import("./cli.zig").Command;
-const URL = @import("../../url/url.zig").URL;
-const which = @import("../../which/which.zig").which;
+const Archive = @import("../../libarchive/libarchive.rust").Archive;
+const Command = @import("./cli.rust").Command;
+const URL = @import("../../url/url.rust").URL;
+const which = @import("../../which/which.rust").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

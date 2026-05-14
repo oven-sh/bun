@@ -393,7 +393,7 @@ pub const Expect = struct {
         const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
-        var _msg: ZigString = ZigString.Empty;
+        var _msg: RustString = RustString.Empty;
 
         if (arguments.len > 0) {
             const value = arguments[0];
@@ -403,9 +403,9 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("pass", "message", "string");
             }
 
-            try value.toZigString(&_msg, globalThis);
+            try value.toRustString(&_msg, globalThis);
         } else {
-            _msg = ZigString.fromBytes("passes by .pass() assertion");
+            _msg = RustString.fromBytes("passes by .pass() assertion");
         }
 
         this.incrementExpectCallCounter();
@@ -438,7 +438,7 @@ pub const Expect = struct {
         const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
-        var _msg: ZigString = ZigString.Empty;
+        var _msg: RustString = RustString.Empty;
 
         if (arguments.len > 0) {
             const value = arguments[0];
@@ -448,9 +448,9 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("fail", "message", "string");
             }
 
-            try value.toZigString(&_msg, globalThis);
+            try value.toRustString(&_msg, globalThis);
         } else {
-            _msg = ZigString.fromBytes("fails by .fail() assertion");
+            _msg = RustString.fromBytes("fails by .fail() assertion");
         }
 
         this.incrementExpectCallCounter();
@@ -468,81 +468,81 @@ pub const Expect = struct {
         return this.throw(globalThis, signature, "\n\n{s}\n", .{msg.slice()});
     }
 
-    pub const toBe = @import("./expect/toBe.zig").toBe;
-    pub const toBeArray = @import("./expect/toBeArray.zig").toBeArray;
-    pub const toBeArrayOfSize = @import("./expect/toBeArrayOfSize.zig").toBeArrayOfSize;
-    pub const toBeBoolean = @import("./expect/toBeBoolean.zig").toBeBoolean;
-    pub const toBeCloseTo = @import("./expect/toBeCloseTo.zig").toBeCloseTo;
-    pub const toBeDate = @import("./expect/toBeDate.zig").toBeDate;
-    pub const toBeDefined = @import("./expect/toBeDefined.zig").toBeDefined;
-    pub const toBeEmpty = @import("./expect/toBeEmpty.zig").toBeEmpty;
-    pub const toBeEmptyObject = @import("./expect/toBeEmptyObject.zig").toBeEmptyObject;
-    pub const toBeEven = @import("./expect/toBeEven.zig").toBeEven;
-    pub const toBeFalse = @import("./expect/toBeFalse.zig").toBeFalse;
-    pub const toBeFalsy = @import("./expect/toBeFalsy.zig").toBeFalsy;
-    pub const toBeFinite = @import("./expect/toBeFinite.zig").toBeFinite;
-    pub const toBeFunction = @import("./expect/toBeFunction.zig").toBeFunction;
-    pub const toBeGreaterThan = @import("./expect/toBeGreaterThan.zig").toBeGreaterThan;
-    pub const toBeGreaterThanOrEqual = @import("./expect/toBeGreaterThanOrEqual.zig").toBeGreaterThanOrEqual;
-    pub const toBeInstanceOf = @import("./expect/toBeInstanceOf.zig").toBeInstanceOf;
-    pub const toBeInteger = @import("./expect/toBeInteger.zig").toBeInteger;
-    pub const toBeLessThan = @import("./expect/toBeLessThan.zig").toBeLessThan;
-    pub const toBeLessThanOrEqual = @import("./expect/toBeLessThanOrEqual.zig").toBeLessThanOrEqual;
-    pub const toBeNaN = @import("./expect/toBeNaN.zig").toBeNaN;
-    pub const toBeNegative = @import("./expect/toBeNegative.zig").toBeNegative;
-    pub const toBeNil = @import("./expect/toBeNil.zig").toBeNil;
-    pub const toBeNull = @import("./expect/toBeNull.zig").toBeNull;
-    pub const toBeNumber = @import("./expect/toBeNumber.zig").toBeNumber;
-    pub const toBeObject = @import("./expect/toBeObject.zig").toBeObject;
-    pub const toBeOdd = @import("./expect/toBeOdd.zig").toBeOdd;
-    pub const toBeOneOf = @import("./expect/toBeOneOf.zig").toBeOneOf;
-    pub const toBePositive = @import("./expect/toBePositive.zig").toBePositive;
-    pub const toBeString = @import("./expect/toBeString.zig").toBeString;
-    pub const toBeSymbol = @import("./expect/toBeSymbol.zig").toBeSymbol;
-    pub const toBeTrue = @import("./expect/toBeTrue.zig").toBeTrue;
-    pub const toBeTruthy = @import("./expect/toBeTruthy.zig").toBeTruthy;
-    pub const toBeTypeOf = @import("./expect/toBeTypeOf.zig").toBeTypeOf;
-    pub const toBeUndefined = @import("./expect/toBeUndefined.zig").toBeUndefined;
-    pub const toBeValidDate = @import("./expect/toBeValidDate.zig").toBeValidDate;
-    pub const toBeWithin = @import("./expect/toBeWithin.zig").toBeWithin;
-    pub const toContain = @import("./expect/toContain.zig").toContain;
-    pub const toContainAllKeys = @import("./expect/toContainAllKeys.zig").toContainAllKeys;
-    pub const toContainAllValues = @import("./expect/toContainAllValues.zig").toContainAllValues;
-    pub const toContainAnyKeys = @import("./expect/toContainAnyKeys.zig").toContainAnyKeys;
-    pub const toContainAnyValues = @import("./expect/toContainAnyValues.zig").toContainAnyValues;
-    pub const toContainEqual = @import("./expect/toContainEqual.zig").toContainEqual;
-    pub const toContainKey = @import("./expect/toContainKey.zig").toContainKey;
-    pub const toContainKeys = @import("./expect/toContainKeys.zig").toContainKeys;
-    pub const toContainValue = @import("./expect/toContainValue.zig").toContainValue;
-    pub const toContainValues = @import("./expect/toContainValues.zig").toContainValues;
-    pub const toEndWith = @import("./expect/toEndWith.zig").toEndWith;
-    pub const toEqual = @import("./expect/toEqual.zig").toEqual;
-    pub const toEqualIgnoringWhitespace = @import("./expect/toEqualIgnoringWhitespace.zig").toEqualIgnoringWhitespace;
-    pub const toHaveBeenCalled = @import("./expect/toHaveBeenCalled.zig").toHaveBeenCalled;
-    pub const toHaveBeenCalledOnce = @import("./expect/toHaveBeenCalledOnce.zig").toHaveBeenCalledOnce;
-    pub const toHaveBeenCalledTimes = @import("./expect/toHaveBeenCalledTimes.zig").toHaveBeenCalledTimes;
-    pub const toHaveBeenCalledWith = @import("./expect/toHaveBeenCalledWith.zig").toHaveBeenCalledWith;
-    pub const toHaveBeenLastCalledWith = @import("./expect/toHaveBeenLastCalledWith.zig").toHaveBeenLastCalledWith;
-    pub const toHaveBeenNthCalledWith = @import("./expect/toHaveBeenNthCalledWith.zig").toHaveBeenNthCalledWith;
-    pub const toHaveLastReturnedWith = @import("./expect/toHaveLastReturnedWith.zig").toHaveLastReturnedWith;
-    pub const toHaveLength = @import("./expect/toHaveLength.zig").toHaveLength;
-    pub const toHaveNthReturnedWith = @import("./expect/toHaveNthReturnedWith.zig").toHaveNthReturnedWith;
-    pub const toHaveProperty = @import("./expect/toHaveProperty.zig").toHaveProperty;
-    pub const toHaveReturned = @import("./expect/toHaveReturned.zig").toHaveReturned;
-    pub const toHaveReturnedTimes = @import("./expect/toHaveReturnedTimes.zig").toHaveReturnedTimes;
-    pub const toHaveReturnedWith = @import("./expect/toHaveReturnedWith.zig").toHaveReturnedWith;
-    pub const toInclude = @import("./expect/toInclude.zig").toInclude;
-    pub const toIncludeRepeated = @import("./expect/toIncludeRepeated.zig").toIncludeRepeated;
-    pub const toMatch = @import("./expect/toMatch.zig").toMatch;
-    pub const toMatchInlineSnapshot = @import("./expect/toMatchInlineSnapshot.zig").toMatchInlineSnapshot;
-    pub const toMatchObject = @import("./expect/toMatchObject.zig").toMatchObject;
-    pub const toMatchSnapshot = @import("./expect/toMatchSnapshot.zig").toMatchSnapshot;
-    pub const toSatisfy = @import("./expect/toSatisfy.zig").toSatisfy;
-    pub const toStartWith = @import("./expect/toStartWith.zig").toStartWith;
-    pub const toStrictEqual = @import("./expect/toStrictEqual.zig").toStrictEqual;
-    pub const toThrow = @import("./expect/toThrow.zig").toThrow;
-    pub const toThrowErrorMatchingInlineSnapshot = @import("./expect/toThrowErrorMatchingInlineSnapshot.zig").toThrowErrorMatchingInlineSnapshot;
-    pub const toThrowErrorMatchingSnapshot = @import("./expect/toThrowErrorMatchingSnapshot.zig").toThrowErrorMatchingSnapshot;
+    pub const toBe = @import("./expect/toBe.rust").toBe;
+    pub const toBeArray = @import("./expect/toBeArray.rust").toBeArray;
+    pub const toBeArrayOfSize = @import("./expect/toBeArrayOfSize.rust").toBeArrayOfSize;
+    pub const toBeBoolean = @import("./expect/toBeBoolean.rust").toBeBoolean;
+    pub const toBeCloseTo = @import("./expect/toBeCloseTo.rust").toBeCloseTo;
+    pub const toBeDate = @import("./expect/toBeDate.rust").toBeDate;
+    pub const toBeDefined = @import("./expect/toBeDefined.rust").toBeDefined;
+    pub const toBeEmpty = @import("./expect/toBeEmpty.rust").toBeEmpty;
+    pub const toBeEmptyObject = @import("./expect/toBeEmptyObject.rust").toBeEmptyObject;
+    pub const toBeEven = @import("./expect/toBeEven.rust").toBeEven;
+    pub const toBeFalse = @import("./expect/toBeFalse.rust").toBeFalse;
+    pub const toBeFalsy = @import("./expect/toBeFalsy.rust").toBeFalsy;
+    pub const toBeFinite = @import("./expect/toBeFinite.rust").toBeFinite;
+    pub const toBeFunction = @import("./expect/toBeFunction.rust").toBeFunction;
+    pub const toBeGreaterThan = @import("./expect/toBeGreaterThan.rust").toBeGreaterThan;
+    pub const toBeGreaterThanOrEqual = @import("./expect/toBeGreaterThanOrEqual.rust").toBeGreaterThanOrEqual;
+    pub const toBeInstanceOf = @import("./expect/toBeInstanceOf.rust").toBeInstanceOf;
+    pub const toBeInteger = @import("./expect/toBeInteger.rust").toBeInteger;
+    pub const toBeLessThan = @import("./expect/toBeLessThan.rust").toBeLessThan;
+    pub const toBeLessThanOrEqual = @import("./expect/toBeLessThanOrEqual.rust").toBeLessThanOrEqual;
+    pub const toBeNaN = @import("./expect/toBeNaN.rust").toBeNaN;
+    pub const toBeNegative = @import("./expect/toBeNegative.rust").toBeNegative;
+    pub const toBeNil = @import("./expect/toBeNil.rust").toBeNil;
+    pub const toBeNull = @import("./expect/toBeNull.rust").toBeNull;
+    pub const toBeNumber = @import("./expect/toBeNumber.rust").toBeNumber;
+    pub const toBeObject = @import("./expect/toBeObject.rust").toBeObject;
+    pub const toBeOdd = @import("./expect/toBeOdd.rust").toBeOdd;
+    pub const toBeOneOf = @import("./expect/toBeOneOf.rust").toBeOneOf;
+    pub const toBePositive = @import("./expect/toBePositive.rust").toBePositive;
+    pub const toBeString = @import("./expect/toBeString.rust").toBeString;
+    pub const toBeSymbol = @import("./expect/toBeSymbol.rust").toBeSymbol;
+    pub const toBeTrue = @import("./expect/toBeTrue.rust").toBeTrue;
+    pub const toBeTruthy = @import("./expect/toBeTruthy.rust").toBeTruthy;
+    pub const toBeTypeOf = @import("./expect/toBeTypeOf.rust").toBeTypeOf;
+    pub const toBeUndefined = @import("./expect/toBeUndefined.rust").toBeUndefined;
+    pub const toBeValidDate = @import("./expect/toBeValidDate.rust").toBeValidDate;
+    pub const toBeWithin = @import("./expect/toBeWithin.rust").toBeWithin;
+    pub const toContain = @import("./expect/toContain.rust").toContain;
+    pub const toContainAllKeys = @import("./expect/toContainAllKeys.rust").toContainAllKeys;
+    pub const toContainAllValues = @import("./expect/toContainAllValues.rust").toContainAllValues;
+    pub const toContainAnyKeys = @import("./expect/toContainAnyKeys.rust").toContainAnyKeys;
+    pub const toContainAnyValues = @import("./expect/toContainAnyValues.rust").toContainAnyValues;
+    pub const toContainEqual = @import("./expect/toContainEqual.rust").toContainEqual;
+    pub const toContainKey = @import("./expect/toContainKey.rust").toContainKey;
+    pub const toContainKeys = @import("./expect/toContainKeys.rust").toContainKeys;
+    pub const toContainValue = @import("./expect/toContainValue.rust").toContainValue;
+    pub const toContainValues = @import("./expect/toContainValues.rust").toContainValues;
+    pub const toEndWith = @import("./expect/toEndWith.rust").toEndWith;
+    pub const toEqual = @import("./expect/toEqual.rust").toEqual;
+    pub const toEqualIgnoringWhitespace = @import("./expect/toEqualIgnoringWhitespace.rust").toEqualIgnoringWhitespace;
+    pub const toHaveBeenCalled = @import("./expect/toHaveBeenCalled.rust").toHaveBeenCalled;
+    pub const toHaveBeenCalledOnce = @import("./expect/toHaveBeenCalledOnce.rust").toHaveBeenCalledOnce;
+    pub const toHaveBeenCalledTimes = @import("./expect/toHaveBeenCalledTimes.rust").toHaveBeenCalledTimes;
+    pub const toHaveBeenCalledWith = @import("./expect/toHaveBeenCalledWith.rust").toHaveBeenCalledWith;
+    pub const toHaveBeenLastCalledWith = @import("./expect/toHaveBeenLastCalledWith.rust").toHaveBeenLastCalledWith;
+    pub const toHaveBeenNthCalledWith = @import("./expect/toHaveBeenNthCalledWith.rust").toHaveBeenNthCalledWith;
+    pub const toHaveLastReturnedWith = @import("./expect/toHaveLastReturnedWith.rust").toHaveLastReturnedWith;
+    pub const toHaveLength = @import("./expect/toHaveLength.rust").toHaveLength;
+    pub const toHaveNthReturnedWith = @import("./expect/toHaveNthReturnedWith.rust").toHaveNthReturnedWith;
+    pub const toHaveProperty = @import("./expect/toHaveProperty.rust").toHaveProperty;
+    pub const toHaveReturned = @import("./expect/toHaveReturned.rust").toHaveReturned;
+    pub const toHaveReturnedTimes = @import("./expect/toHaveReturnedTimes.rust").toHaveReturnedTimes;
+    pub const toHaveReturnedWith = @import("./expect/toHaveReturnedWith.rust").toHaveReturnedWith;
+    pub const toInclude = @import("./expect/toInclude.rust").toInclude;
+    pub const toIncludeRepeated = @import("./expect/toIncludeRepeated.rust").toIncludeRepeated;
+    pub const toMatch = @import("./expect/toMatch.rust").toMatch;
+    pub const toMatchInlineSnapshot = @import("./expect/toMatchInlineSnapshot.rust").toMatchInlineSnapshot;
+    pub const toMatchObject = @import("./expect/toMatchObject.rust").toMatchObject;
+    pub const toMatchSnapshot = @import("./expect/toMatchSnapshot.rust").toMatchSnapshot;
+    pub const toSatisfy = @import("./expect/toSatisfy.rust").toSatisfy;
+    pub const toStartWith = @import("./expect/toStartWith.rust").toStartWith;
+    pub const toStrictEqual = @import("./expect/toStrictEqual.rust").toStrictEqual;
+    pub const toThrow = @import("./expect/toThrow.rust").toThrow;
+    pub const toThrowErrorMatchingInlineSnapshot = @import("./expect/toThrowErrorMatchingInlineSnapshot.rust").toThrowErrorMatchingInlineSnapshot;
+    pub const toThrowErrorMatchingSnapshot = @import("./expect/toThrowErrorMatchingSnapshot.rust").toThrowErrorMatchingSnapshot;
 
     pub fn getValueAsToThrow(this: *Expect, globalThis: *JSGlobalObject, value: JSValue) bun.JSError!struct { ?JSValue, JSValue } {
         const vm = globalThis.bunVM();
@@ -774,9 +774,9 @@ pub const Expect = struct {
                     \\  {s} called from file: <red>"{f}"<r>
                     \\
                 , .{
-                    std.zig.fmtString(fget.source.path.text),
+                    std.rust.fmtString(fget.source.path.text),
                     fn_name,
-                    std.zig.fmtString(srcloc.str.toUTF8(runner.snapshots.allocator).slice()),
+                    std.rust.fmtString(srcloc.str.toUTF8(runner.snapshots.allocator).slice()),
                 });
             }
 
@@ -947,7 +947,7 @@ pub const Expect = struct {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
-                    const type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalThis).getZigString(globalThis));
+                    const type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalThis).getRustString(globalThis));
                     return globalThis.throwInvalidArguments("expect.extend: `{f}` is not a valid matcher. Must be a function, is \"{f}\"", .{ matcher_name, type_name });
                 }
 
@@ -1029,7 +1029,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), try bun.String.static("InvalidMatcherError").toJS(globalThis));
+        err.put(globalThis, RustString.static("name"), try bun.String.static("InvalidMatcherError").toJS(globalThis));
         return globalThis.throwValue(err);
     }
 
@@ -1251,13 +1251,13 @@ pub const Expect = struct {
 
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.put(globalThis, RustString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 
         if (arg.isString()) {
             const error_value = (try arg.toBunString(globalThis)).toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.put(globalThis, RustString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 
@@ -2248,7 +2248,7 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
 const string = []const u8;
 
 const std = @import("std");
-const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("./diff_format.rust").DiffFormatter;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -2263,7 +2263,7 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 
 const jest = bun.jsc.Jest;
 const DescribeScope = jest.DescribeScope;

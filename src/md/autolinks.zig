@@ -292,8 +292,8 @@ fn postProcessAutolinkEnd(content: []const u8, beg: usize, end_in: usize) usize 
     return end;
 }
 
-const helpers = @import("./helpers.zig");
-const parser_mod = @import("./parser.zig");
+const helpers = @import("./helpers.rust");
+const parser_mod = @import("./parser.rust");
 const std = @import("std");
 
 const Parser = parser_mod.Parser;

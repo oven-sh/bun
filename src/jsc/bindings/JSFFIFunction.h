@@ -1,6 +1,6 @@
 #pragma once
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
@@ -16,7 +16,7 @@ namespace JSC {
 class JSGlobalObject;
 }
 
-namespace Zig {
+namespace Rust {
 
 using namespace JSC;
 
@@ -69,8 +69,8 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, Zig::GlobalObject*, unsigned length, const String& name, FFIFunction, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor);
-    JS_EXPORT_PRIVATE static JSFFIFunction* createForFFI(VM&, Zig::GlobalObject*, unsigned length, const String& name, CFFIFunction);
+    JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, Rust::GlobalObject*, unsigned length, const String& name, FFIFunction, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor);
+    JS_EXPORT_PRIVATE static JSFFIFunction* createForFFI(VM&, Rust::GlobalObject*, unsigned length, const String& name, CFFIFunction);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {

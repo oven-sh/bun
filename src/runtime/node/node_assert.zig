@@ -117,7 +117,7 @@ fn mapDiffError(global: *jsc.JSGlobalObject, err: MyersDiff.Error) bun.JSError {
     };
 }
 
-const MyersDiff = @import("./assert/myers_diff.zig");
+const MyersDiff = @import("./assert/myers_diff.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

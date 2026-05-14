@@ -212,7 +212,7 @@ pub fn findEntity(content: []const u8, start: usize) ?usize {
     return null;
 }
 
-// zig fmt: off
+// rust fmt: off
 const unicode_punctuation_ranges = &[_][2]u21{
     .{ 0x00A1, 0x00A9 }, .{ 0x00AB, 0x00AC }, .{ 0x00AE, 0x00B1 }, .{ 0x00B4, 0x00B4 },
     .{ 0x00B6, 0x00B8 }, .{ 0x00BB, 0x00BB }, .{ 0x00BF, 0x00BF }, .{ 0x00D7, 0x00D7 },
@@ -299,7 +299,7 @@ const unicode_punctuation_ranges = &[_][2]u21{
     .{ 0x1FA80, 0x1FA88 }, .{ 0x1FA90, 0x1FABD }, .{ 0x1FABF, 0x1FAC5 }, .{ 0x1FACE, 0x1FADB },
     .{ 0x1FAE0, 0x1FAE8 }, .{ 0x1FAF0, 0x1FAF8 }, .{ 0x1FB00, 0x1FB92 }, .{ 0x1FB94, 0x1FBCA },
 };
-// zig fmt: on
+// rust fmt: on
 
 /// Parse a numeric character reference (&#DDD; or &#xHHH;) and return the codepoint.
 pub fn parseEntityCodepoint(entity_text: []const u8) ?u21 {
@@ -473,10 +473,10 @@ pub const HeadingIdTracker = struct {
 };
 
 const bun = @import("bun");
-const entity_mod = @import("./entity.zig");
+const entity_mod = @import("./entity.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const OFF = types.OFF;
 const TextType = types.TextType;

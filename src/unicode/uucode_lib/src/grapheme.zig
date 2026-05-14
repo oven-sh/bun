@@ -193,7 +193,7 @@ pub const BreakState = enum(u3) {
     indic_conjunct_break_linker,
 };
 
-// Note: this should be kept in sync with `src/x/grapheme.zig`
+// Note: this should be kept in sync with `src/x/grapheme.rust`
 // `computeGraphemeBreakNoControl`
 pub fn computeGraphemeBreak(
     gb1: types.GraphemeBreak,
@@ -435,7 +435,7 @@ fn isExtendedPictographic(gb: types.GraphemeBreak) bool {
 }
 
 fn testGraphemeBreak(getActualIsBreak: fn (cp1: u21, cp2: u21, state: *BreakState) bool) !void {
-    const Ucd = @import("./build/Ucd.zig");
+    const Ucd = @import("./build/Ucd.rust");
 
     const trim = Ucd.trim;
     const parseCp = Ucd.parseCp;
@@ -739,9 +739,9 @@ test "sequence of regional indicators" {
 }
 
 const std = @import("std");
-const types = @import("./types.zig");
-const utf8 = @import("./utf8.zig");
+const types = @import("./types.rust");
+const utf8 = @import("./utf8.rust");
 
-const getpkg = @import("./get.zig");
+const getpkg = @import("./get.rust");
 const FieldEnum = getpkg.FieldEnum;
 const get = getpkg.get;

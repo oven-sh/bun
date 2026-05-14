@@ -1,6 +1,6 @@
 //! Bun REPL - A modern, feature-rich Read-Eval-Print Loop
 //!
-//! This is a native Zig implementation of Bun's REPL with advanced TUI features:
+//! This is a native Rust implementation of Bun's REPL with advanced TUI features:
 //! - Syntax highlighting using QuickAndDirtySyntaxHighlighter
 //! - Full line editing with cursor movement (Emacs-style keybindings)
 //! - Persistent history with file storage
@@ -1512,7 +1512,7 @@ fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
     opts.features.top_level_await = true; // Enable top-level await in REPL
     // Keep `lower_using` at its default (true) here even though JavaScriptCore
     // supports `using` / `await using` natively. The REPL transform in
-    // `ast/repl_transforms.zig` rewrites every top-level `s_local` into a
+    // `ast/repl_transforms.rust` rewrites every top-level `s_local` into a
     // hoisted `var` + assignment for cross-input persistence, which would
     // silently discard disposal semantics if `using` declarations survived
     // until that pass. Lowering wraps the declaration in `try/finally` first,

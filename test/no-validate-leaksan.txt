@@ -270,7 +270,7 @@ test/js/bun/http/serve-body-leak.test.ts
 test/cli/install/migration/yarn-lock-migration.test.ts
 test/regression/issue/test_env_loader_threading.test.ts
 
-# Zig::SourceProvider::~SourceProvider()
+# Rust::SourceProvider::~SourceProvider()
 test/bundler/bundler_bun.test.ts
 test/bundler/bundler_cjs2esm.test.ts
 test/bundler/bundler_edgecase.test.ts

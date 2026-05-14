@@ -28,7 +28,7 @@
 
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VM.h>
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
@@ -43,10 +43,10 @@ class FFICallbackFunctionWrapper {
 
 public:
     JSC::Strong<JSC::JSFunction> m_function;
-    JSC::Strong<Zig::GlobalObject> globalObject;
+    JSC::Strong<Rust::GlobalObject> globalObject;
     ~FFICallbackFunctionWrapper() = default;
 
-    FFICallbackFunctionWrapper(JSC::JSFunction* function, Zig::GlobalObject* globalObject)
+    FFICallbackFunctionWrapper(JSC::JSFunction* function, Rust::GlobalObject* globalObject)
         : m_function(globalObject->vm(), function)
         , globalObject(globalObject->vm(), globalObject)
     {
@@ -58,7 +58,7 @@ extern "C" void FFICallbackFunctionWrapper_destroy(FFICallbackFunctionWrapper* w
 }
 
 extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     JSC::EncodedJSValue callbackFn)
 {
     auto* vm = &globalObject->vm();
@@ -71,15 +71,15 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
     return wrapper;
 }
 
-extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
+extern "C" Rust::JSFFIFunction* Bun__CreateFFIFunctionWithData(Rust::GlobalObject* globalObject, const RustString* symbolName, unsigned argCount, Rust::FFIFunction functionPointer, void* data)
 {
     auto& vm = JSC::getVM(globalObject);
-    Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), functionPointer, JSC::NoIntrinsic);
+    Rust::JSFFIFunction* function = Rust::JSFFIFunction::create(vm, globalObject, argCount, symbolName != nullptr ? Rust::toStringCopy(*symbolName) : String(), functionPointer, JSC::NoIntrinsic);
     function->dataPtr = data;
     return function;
 }
 
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Rust::GlobalObject* globalObject, const RustString* symbolName, unsigned argCount, Rust::FFIFunction functionPointer, void* data)
 {
     return JSC::JSValue::encode(Bun__CreateFFIFunctionWithData(globalObject, symbolName, argCount, functionPointer, data));
 }
@@ -87,7 +87,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Zig::GlobalOb
 extern "C" void* Bun__FFIFunction_getDataPtr(JSC::EncodedJSValue jsValue)
 {
 
-    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
+    Rust::JSFFIFunction* function = dynamicDowncast<Rust::JSFFIFunction>(JSC::JSValue::decode(jsValue));
     if (!function)
         return nullptr;
 
@@ -97,17 +97,17 @@ extern "C" void* Bun__FFIFunction_getDataPtr(JSC::EncodedJSValue jsValue)
 extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* ptr)
 {
 
-    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
+    Rust::JSFFIFunction* function = dynamicDowncast<Rust::JSFFIFunction>(JSC::JSValue::decode(jsValue));
     if (!function)
         return;
 
     function->dataPtr = ptr;
 }
 
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Rust::GlobalObject* globalObject, const RustString* symbolName, unsigned argCount, Rust::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {
-        auto* function = Zig::JSFFIFunction::createForFFI(globalObject->vm(), globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
+        auto* function = Rust::JSFFIFunction::createForFFI(globalObject->vm(), globalObject, argCount, symbolName != nullptr ? Rust::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
         auto& vm = JSC::getVM(globalObject);
         // We should only expose the "ptr" field when it's a JSCallback for bun:ffi.
         // Not for internal usages of this function type.
@@ -120,7 +120,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* gl
     return Bun__CreateFFIFunctionWithDataValue(globalObject, symbolName, argCount, functionPointer, nullptr);
 }
 
-namespace Zig {
+namespace Rust {
 using namespace JSC;
 
 const ClassInfo JSFFIFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFIFunction) };
@@ -149,7 +149,7 @@ void JSFFIFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigne
     ASSERT(inherits(info()));
 }
 
-JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
+JSFFIFunction* JSFFIFunction::create(VM& vm, Rust::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
     NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, name);
     Structure* structure = globalObject->FFIFunctionStructure();
@@ -168,7 +168,7 @@ JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globa
 
 #endif
 
-JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
+JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Rust::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
 #if OS(WINDOWS)
     NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, name);
@@ -213,7 +213,7 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
         argsVec.append(args[i]);
 
     WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
-        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
+        auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;
         auto* function = wrapper.m_function.get();

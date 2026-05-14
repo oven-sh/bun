@@ -89,10 +89,10 @@ pub const Config = struct {
                     }
 
                     names.appendAssumeCapacity(prop.toOwnedSlice(allocator) catch unreachable);
-                    var val = jsc.ZigString.init("");
-                    try property_value.toZigString(&val, globalThis);
+                    var val = jsc.RustString.init("");
+                    try property_value.toRustString(&val, globalThis);
                     if (val.len == 0) {
-                        val = jsc.ZigString.init("\"\"");
+                        val = jsc.RustString.init("\"\"");
                     }
                     values.appendAssumeCapacity(std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable);
                 }
@@ -110,11 +110,11 @@ pub const Config = struct {
 
                 const toplevel_type = external.jsType();
                 if (toplevel_type.isStringLike()) {
-                    var zig_str = jsc.ZigString.init("");
-                    try external.toZigString(&zig_str, globalThis);
-                    if (zig_str.len == 0) break :external;
+                    var rust_str = jsc.RustString.init("");
+                    try external.toRustString(&rust_str, globalThis);
+                    if (rust_str.len == 0) break :external;
                     var single_external = allocator.alloc(string, 1) catch unreachable;
-                    single_external[0] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
+                    single_external[0] = std.fmt.allocPrint(allocator, "{f}", .{rust_str}) catch unreachable;
                     this.transform.external = single_external;
                 } else if (toplevel_type.isArray()) {
                     const count = try external.getLength(globalThis);
@@ -128,10 +128,10 @@ pub const Config = struct {
                             return globalThis.throwInvalidArguments("external must be a string or string[]", .{});
                         }
 
-                        var zig_str = jsc.ZigString.init("");
-                        try entry.toZigString(&zig_str, globalThis);
-                        if (zig_str.len == 0) continue;
-                        externals[i] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
+                        var rust_str = jsc.RustString.init("");
+                        try entry.toRustString(&rust_str, globalThis);
+                        if (rust_str.len == 0) continue;
+                        externals[i] = std.fmt.allocPrint(allocator, "{f}", .{rust_str}) catch unreachable;
                         i += 1;
                     }
 
@@ -339,7 +339,7 @@ pub const Config = struct {
                         var length_iter = iter;
                         while (try length_iter.next()) |value| {
                             if (!value.isString()) continue;
-                            const str = try value.getZigString(globalThis);
+                            const str = try value.getRustString(globalThis);
                             if (str.len == 0) continue;
                             const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{f}", .{str}) catch {
                                 return globalThis.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{});
@@ -638,7 +638,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
 
     if (value.isString()) {
         const str = JSAst.E.String{
-            .data = try std.fmt.allocPrint(allocator, "{f}", .{try value.getZigString(globalThis)}),
+            .data = try std.fmt.allocPrint(allocator, "{f}", .{try value.getRustString(globalThis)}),
         };
         const out = try allocator.create(JSAst.E.String);
         out.* = str;
@@ -881,8 +881,8 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
         return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
     }
 
-    const exports_label = jsc.ZigString.static("exports");
-    const imports_label = jsc.ZigString.static("imports");
+    const exports_label = jsc.RustString.static("exports");
+    const imports_label = jsc.RustString.static("imports");
     const named_imports_value = try namedImportsToJS(
         globalThis,
         parse_result.ast.import_records.slice(),
@@ -1044,7 +1044,7 @@ pub fn transformSync(
 
     // TODO: benchmark if pooling this way is faster or moving is faster
     buffer_writer = printer.ctx;
-    var out = jsc.ZigString.init(buffer_writer.written);
+    var out = jsc.RustString.init(buffer_writer.written);
     out.setOutputEncoding();
 
     return out.toJS(globalThis);
@@ -1074,8 +1074,8 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
 }
 
 fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecord, trim_unused_imports: bool) bun.JSError!jsc.JSValue {
-    const path_label = jsc.ZigString.static("path");
-    const kind_label = jsc.ZigString.static("kind");
+    const path_label = jsc.RustString.static("path");
+    const kind_label = jsc.RustString.static("kind");
 
     var count: u32 = 0;
     for (import_records) |record| {
@@ -1093,8 +1093,8 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
         if (trim_unused_imports and record.flags.is_unused) continue;
 
         array.ensureStillAlive();
-        const path = jsc.ZigString.init(record.path.text).toJS(global);
-        const kind = jsc.ZigString.init(record.kind.label()).toJS(global);
+        const path = jsc.RustString.init(record.path.text).toJS(global);
+        const kind = jsc.RustString.init(record.kind.label()).toJS(global);
         try array.putIndex(global, i, try jsc.JSValue.createObject2(global, path_label, kind_label, path, kind));
         i += 1;
     }
@@ -1196,16 +1196,16 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
 const string = []const u8;
 
 const std = @import("std");
-const ImportRecord = @import("../../options_types/import_record.zig").ImportRecord;
-const Runtime = @import("../../js_parser/runtime.zig").Runtime;
-const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
+const ImportRecord = @import("../../options_types/import_record.rust").ImportRecord;
+const Runtime = @import("../../js_parser/runtime.rust").Runtime;
+const TSConfigJSON = @import("../../resolver/tsconfig_json.rust").TSConfigJSON;
 
-const options = @import("../../bundler/options.zig");
+const options = @import("../../bundler/options.rust");
 const Loader = options.Loader;
 const Target = options.Target;
 
-const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
+const MacroMap = @import("../../resolver/package_json.rust").MacroMap;
+const PackageJSON = @import("../../resolver/package_json.rust").PackageJSON;
 
 const bun = @import("bun");
 const JSLexer = bun.js_lexer;
@@ -1225,4 +1225,4 @@ const ScanPassResult = JSParser.ScanPassResult;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

@@ -57,7 +57,7 @@ pub const HTMLRewriter = struct {
     pub fn on_(
         this: *HTMLRewriter,
         global: *JSGlobalObject,
-        selector_name: ZigString,
+        selector_name: RustString,
         callFrame: *jsc.CallFrame,
         listener: JSValue,
     ) bun.JSError!JSValue {
@@ -889,7 +889,7 @@ const DocumentHandler = struct {
 
 fn HandlerCallback(
     comptime HandlerType: type,
-    comptime ZigType: type,
+    comptime RustType: type,
     comptime LOLHTMLType: type,
     comptime field_name: string,
     comptime callback_name: string,
@@ -898,7 +898,7 @@ fn HandlerCallback(
         pub fn callback(this: *HandlerType, value: *LOLHTMLType) bool {
             jsc.markBinding(@src());
 
-            var wrapper = ZigType.init(value);
+            var wrapper = RustType.init(value);
             wrapper.ref();
 
             // When using RefCount, we don't check the count value directly
@@ -906,7 +906,7 @@ fn HandlerCallback(
             // The init values are handled by bun.new with .init()
 
             defer {
-                if (comptime @hasDecl(ZigType, "invalidate")) {
+                if (comptime @hasDecl(RustType, "invalidate")) {
                     // Some wrapper types (Element) hand out sub-objects that
                     // borrow from the underlying lol-html value and must be
                     // detached along with the wrapper itself.
@@ -1103,7 +1103,7 @@ fn createLOLHTMLError(global: *JSGlobalObject) JSValue {
 
     var err = createLOLHTMLStringError();
     const value = err.toErrorInstance(global);
-    value.put(global, "name", ZigString.init("HTMLRewriterError").toJS(global));
+    value.put(global, "name", RustString.init("HTMLRewriterError").toJS(global));
     return value;
 }
 fn createLOLHTMLStringError() bun.String {
@@ -1137,7 +1137,7 @@ pub const TextChunk = struct {
         });
     }
 
-    fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         const text_chunk = this.text_chunk orelse return .js_undefined;
         var content_slice = content.toSlice(bun.default_allocator);
         defer content_slice.deinit();
@@ -1155,7 +1155,7 @@ pub const TextChunk = struct {
         this: *TextChunk,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.TextChunk.before, callFrame.this(), globalObject, content, contentOptions);
@@ -1165,7 +1165,7 @@ pub const TextChunk = struct {
         this: *TextChunk,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.TextChunk.after, callFrame.this(), globalObject, content, contentOptions);
@@ -1175,7 +1175,7 @@ pub const TextChunk = struct {
         this: *TextChunk,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.TextChunk.replace, callFrame.this(), globalObject, content, contentOptions);
@@ -1262,7 +1262,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getName().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toJS(globalObject);
+        return RustString.init(str).toJS(globalObject);
     }
 
     pub fn systemId(
@@ -1275,7 +1275,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getSystemId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toJS(globalObject);
+        return RustString.init(str).toJS(globalObject);
     }
 
     pub fn publicId(
@@ -1288,7 +1288,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getPublicId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toJS(globalObject);
+        return RustString.init(str).toJS(globalObject);
     }
 
     pub fn remove(
@@ -1332,7 +1332,7 @@ pub const DocEnd = struct {
         });
     }
 
-    fn contentHandler(this: *DocEnd, comptime Callback: (fn (*LOLHTML.DocEnd, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *DocEnd, comptime Callback: (fn (*LOLHTML.DocEnd, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         if (this.doc_end == null)
             return JSValue.jsNull();
 
@@ -1352,7 +1352,7 @@ pub const DocEnd = struct {
         this: *DocEnd,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.DocEnd.append, callFrame.this(), globalObject, content, contentOptions);
@@ -1390,7 +1390,7 @@ pub const Comment = struct {
         });
     }
 
-    fn contentHandler(this: *Comment, comptime Callback: (fn (*LOLHTML.Comment, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *Comment, comptime Callback: (fn (*LOLHTML.Comment, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
         var content_slice = content.toSlice(bun.default_allocator);
@@ -1409,7 +1409,7 @@ pub const Comment = struct {
         this: *Comment,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.Comment.before, callFrame.this(), globalObject, content, contentOptions);
@@ -1419,7 +1419,7 @@ pub const Comment = struct {
         this: *Comment,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.Comment.after, callFrame.this(), globalObject, content, contentOptions);
@@ -1429,7 +1429,7 @@ pub const Comment = struct {
         this: *Comment,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.Comment.replace, callFrame.this(), globalObject, content, contentOptions);
@@ -1536,7 +1536,7 @@ pub const EndTag = struct {
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         if (this.end_tag == null)
             return JSValue.jsNull();
 
@@ -1556,7 +1556,7 @@ pub const EndTag = struct {
         this: *EndTag,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.EndTag.before, callFrame.this(), globalObject, content, contentOptions);
@@ -1566,7 +1566,7 @@ pub const EndTag = struct {
         this: *EndTag,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.EndTag.after, callFrame.this(), globalObject, content, contentOptions);
@@ -1576,7 +1576,7 @@ pub const EndTag = struct {
         this: *EndTag,
         callFrame: *jsc.CallFrame,
         globalObject: *JSGlobalObject,
-        content: ZigString,
+        content: RustString,
         contentOptions: ?ContentOptions,
     ) JSValue {
         return this.contentHandler(LOLHTML.EndTag.replace, callFrame.this(), globalObject, content, contentOptions);
@@ -1661,8 +1661,8 @@ pub const AttributeIterator = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
-        const done_label = jsc.ZigString.static("done");
-        const value_label = jsc.ZigString.static("value");
+        const done_label = jsc.RustString.static("done");
+        const value_label = jsc.RustString.static("value");
 
         if (this.iterator == null) {
             return JSValue.createObject2(globalObject, done_label, value_label, .true, .js_undefined);
@@ -1756,7 +1756,7 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsNull();
         if (function.isUndefinedOrNull() or !function.isCallable()) {
-            return ZigString.init("Expected a function").withEncoding().toJS(globalObject);
+            return RustString.init("Expected a function").withEncoding().toJS(globalObject);
         }
 
         const end_tag_handler = bun.handleOom(bun.default_allocator.create(EndTag.Handler));
@@ -1774,8 +1774,8 @@ pub const Element = struct {
 
     //     // fn wrap(comptime name: string)
 
-    ///  Returns the value for a given attribute name: ZigString on the element, or null if it is not found.
-    pub fn getAttribute_(this: *Element, globalObject: *JSGlobalObject, name: ZigString) bun.JSError!JSValue {
+    ///  Returns the value for a given attribute name: RustString on the element, or null if it is not found.
+    pub fn getAttribute_(this: *Element, globalObject: *JSGlobalObject, name: RustString) bun.JSError!JSValue {
         if (this.element == null)
             return JSValue.jsNull();
 
@@ -1790,7 +1790,7 @@ pub const Element = struct {
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub fn hasAttribute_(this: *Element, global: *JSGlobalObject, name: ZigString) JSValue {
+    pub fn hasAttribute_(this: *Element, global: *JSGlobalObject, name: RustString) JSValue {
         if (this.element == null)
             return .false;
 
@@ -1800,7 +1800,7 @@ pub const Element = struct {
     }
 
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
-    pub fn setAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name_: ZigString, value_: ZigString) JSValue {
+    pub fn setAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name_: RustString, value_: RustString) JSValue {
         if (this.element == null)
             return .js_undefined;
 
@@ -1818,7 +1818,7 @@ pub const Element = struct {
     }
 
     ///  Removes the attribute.
-    pub fn removeAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name: ZigString) JSValue {
+    pub fn removeAttribute_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, name: RustString) JSValue {
         if (this.element == null)
             return .js_undefined;
 
@@ -1841,7 +1841,7 @@ pub const Element = struct {
     pub const setAttribute = host_fn.wrapInstanceMethod(Element, "setAttribute_", false);
     pub const removeAttribute = host_fn.wrapInstanceMethod(Element, "removeAttribute_", false);
 
-    fn contentHandler(this: *Element, comptime Callback: (fn (*LOLHTML.Element, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *Element, comptime Callback: (fn (*LOLHTML.Element, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         if (this.element == null)
             return .js_undefined;
 
@@ -1858,7 +1858,7 @@ pub const Element = struct {
     }
 
     ///  Inserts content before the element.
-    pub fn before_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn before_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.before,
@@ -1870,7 +1870,7 @@ pub const Element = struct {
     }
 
     ///  Inserts content right after the element.
-    pub fn after_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn after_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.after,
@@ -1882,7 +1882,7 @@ pub const Element = struct {
     }
 
     /// Inserts content right after the start tag of the element.
-    pub fn prepend_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn prepend_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.prepend,
@@ -1894,7 +1894,7 @@ pub const Element = struct {
     }
 
     ///  Inserts content right before the end tag of the element.
-    pub fn append_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn append_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.append,
@@ -1906,7 +1906,7 @@ pub const Element = struct {
     }
 
     /// Removes the element and inserts content in place of it.
-    pub fn replace_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn replace_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.replace,
@@ -1918,7 +1918,7 @@ pub const Element = struct {
     }
 
     ///  Replaces content of the element.
-    pub fn setInnerContent_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    pub fn setInnerContent_(this: *Element, callFrame: *jsc.CallFrame, globalObject: *JSGlobalObject, content: RustString, contentOptions: ?ContentOptions) JSValue {
         return contentHandler(
             this,
             LOLHTML.Element.setInnerContent,
@@ -2027,5 +2027,5 @@ const Response = bun.webcore.Response;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const host_fn = jsc.host_fn;

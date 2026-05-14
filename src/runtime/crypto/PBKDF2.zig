@@ -217,7 +217,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, is_asy
     return out;
 }
 
-/// For usage in Zig
+/// For usage in Rust
 pub fn pbkdf2(
     output: []u8,
     password: []const u8,
@@ -227,8 +227,8 @@ pub fn pbkdf2(
 ) ?[]const u8 {
     var pbk = PBKDF2{
         .algorithm = algorithm,
-        .password = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(password) },
-        .salt = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(salt) },
+        .password = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.RustString.Slice.fromUTF8NeverFree(password) },
+        .salt = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.RustString.Slice.fromUTF8NeverFree(salt) },
         .iteration_count = iteration_count,
         .length = @intCast(output.len),
     };
@@ -255,7 +255,7 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const createCryptoError = jsc.API.Bun.Crypto.createCryptoError;
 
 const EVP = jsc.API.Bun.Crypto.EVP;

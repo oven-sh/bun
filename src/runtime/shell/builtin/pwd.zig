@@ -81,7 +81,7 @@ pub inline fn bltn(this: *Pwd) *Builtin {
 
 // --
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;

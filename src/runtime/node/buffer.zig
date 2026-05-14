@@ -1,6 +1,6 @@
 pub const BufferVectorized = struct {
     pub fn fill(
-        str: *jsc.ZigString,
+        str: *jsc.RustString,
         buf_ptr: [*]u8,
         fill_length: usize,
         encoding: jsc.Node.Encoding,

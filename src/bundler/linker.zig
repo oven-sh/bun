@@ -396,15 +396,15 @@ pub const Linker = struct {
 
 const string = []const u8;
 
-const Fs = @import("../resolver/fs.zig");
-const Options = @import("./options.zig");
+const Fs = @import("../resolver/fs.rust");
+const Options = @import("./options.rust");
 const std = @import("std");
-const URL = @import("../url/url.zig").URL;
+const URL = @import("../url/url.rust").URL;
 
-const _import_record = @import("../options_types/import_record.zig");
+const _import_record = @import("../options_types/import_record.rust");
 const ImportRecord = _import_record.ImportRecord;
 
-const Resolver = @import("../resolver/resolver.zig");
+const Resolver = @import("../resolver/resolver.rust");
 const ResolverType = Resolver.Resolver;
 
 const bun = @import("bun");

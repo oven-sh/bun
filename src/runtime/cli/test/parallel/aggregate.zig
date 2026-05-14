@@ -159,7 +159,7 @@ pub fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.Code
     if (opts.reporters.lcov) {
         var fs = bun.jsc.Node.fs.NodeFS{};
         _ = fs.mkdirRecursive(.{
-            .path = .{ .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory) },
+            .path = .{ .encoded_slice = jsc.RustString.Slice.fromUTF8NeverFree(opts.reports_directory) },
             .always_return_none = true,
         });
         var path_buf: bun.PathBuffer = undefined;
@@ -275,9 +275,9 @@ fn writeRange(w: *std.Io.Writer, first: *bool, a: u32, b: u32, comptime colors: 
 }
 
 const std = @import("std");
-const Coordinator = @import("./Coordinator.zig").Coordinator;
+const Coordinator = @import("./Coordinator.rust").Coordinator;
 
-const test_command = @import("../../test_command.zig");
+const test_command = @import("../../test_command.rust");
 const TestCommand = test_command.TestCommand;
 
 const bun = @import("bun");

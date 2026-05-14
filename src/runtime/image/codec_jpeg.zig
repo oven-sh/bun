@@ -1,5 +1,5 @@
 //! libjpeg-turbo (TurboJPEG 3 API) decode/encode for `Bun.Image`.
-//! Dispatch lives in codecs.zig; this file is the codec body.
+//! Dispatch lives in codecs.rust; this file is the codec body.
 
 const tjhandle = ?*anyopaque;
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
@@ -172,5 +172,5 @@ pub fn encode(rgba: []const u8, w: u32, ht: u32, quality: u8, progressive: bool,
 }
 
 const bun = @import("bun");
-const codecs = @import("./codecs.zig");
+const codecs = @import("./codecs.rust");
 const std = @import("std");

@@ -376,20 +376,20 @@ pub const StringID = enum(u32) {
     _,
 };
 
-// zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
-// JSModuleRecord/IdentifierArray opaques: see src/bundler_jsc/analyze_jsc.zig
+// rust__renderDiff, rust__ModuleInfoDeserialized__toJSModuleRecord, and the
+// JSModuleRecord/IdentifierArray opaques: see src/bundler_jsc/analyze_jsc.rust
 comptime {
-    _ = @import("../bundler_jsc/analyze_jsc.zig");
+    _ = @import("../bundler_jsc/analyze_jsc.rust");
 }
 
-export fn zig__ModuleInfo__destroy(info: *ModuleInfo) void {
+export fn rust__ModuleInfo__destroy(info: *ModuleInfo) void {
     info.destroy();
 }
-export fn zig__ModuleInfoDeserialized__deinit(info: *ModuleInfoDeserialized) void {
+export fn rust__ModuleInfoDeserialized__deinit(info: *ModuleInfoDeserialized) void {
     info.deinit();
 }
 
-export fn zig_log(msg: [*:0]const u8) void {
+export fn rust_log(msg: [*:0]const u8) void {
     bun.Output.errorWriter().print("{s}\n", .{std.mem.span(msg)}) catch {};
 }
 

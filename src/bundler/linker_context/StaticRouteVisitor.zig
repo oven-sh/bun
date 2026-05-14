@@ -1,7 +1,7 @@
 //! The `isFullyStatic(source_index)` function returns whether or not
 //! `source_index` imports a file with `"use client"`.
 //!
-//! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.zig`?
+//! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.rust`?
 
 const StaticRouteVisitor = @This();
 

@@ -1,49 +1,49 @@
-//! Web APIs implemented in Zig live here
+//! Web APIs implemented in Rust live here
 
 comptime {
     if (bun.Environment.export_cpp_apis) {
-        _ = &@import("./webcore/prompt.zig");
+        _ = &@import("./webcore/prompt.rust");
     }
-    _ = &@import("./webcore/TextEncoder.zig");
+    _ = &@import("./webcore/TextEncoder.rust");
 }
 
-pub const DOMExceptionCode = @import("../jsc/JSErrorCode.zig").DOMExceptionCode;
+pub const DOMExceptionCode = @import("../jsc/JSErrorCode.rust").DOMExceptionCode;
 
 // TODO: make this JSGlobalObject local for better security
 pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);
 
-pub const Crypto = @import("./webcore/Crypto.zig");
-pub const AbortSignal = @import("../jsc/AbortSignal.zig").AbortSignal;
-pub const WebWorker = @import("../jsc/web_worker.zig");
-pub const AutoFlusher = @import("../event_loop/AutoFlusher.zig");
-pub const EncodingLabel = @import("./webcore/EncodingLabel.zig").EncodingLabel;
-pub const Fetch = @import("./webcore/fetch.zig");
-pub const Response = @import("./webcore/Response.zig");
-pub const BakeResponse = @import("./webcore/BakeResponse.zig");
-pub const TextDecoder = @import("./webcore/TextDecoder.zig");
-pub const TextEncoder = @import("./webcore/TextEncoder.zig");
-pub const TextEncoderStreamEncoder = @import("./webcore/TextEncoderStreamEncoder.zig");
-pub const encoding = @import("./webcore/encoding.zig");
-pub const ReadableStream = @import("./webcore/ReadableStream.zig");
-pub const Blob = @import("./webcore/Blob.zig");
-pub const S3Stat = @import("./webcore/S3Stat.zig").S3Stat;
-pub const ResumableFetchSink = @import("./webcore/ResumableSink.zig").ResumableFetchSink;
-pub const ResumableS3UploadSink = @import("./webcore/ResumableSink.zig").ResumableS3UploadSink;
-pub const ResumableSinkBackpressure = @import("./webcore/ResumableSink.zig").ResumableSinkBackpressure;
-pub const S3Client = @import("./webcore/S3Client.zig").S3Client;
-pub const Request = @import("./webcore/Request.zig");
-pub const Body = @import("./webcore/Body.zig");
-pub const CookieMap = @import("./webcore/CookieMap.zig").CookieMap;
-pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
-pub const Sink = @import("./webcore/Sink.zig");
-pub const FileSink = @import("./webcore/FileSink.zig");
-pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;
-pub const ByteBlobLoader = @import("./webcore/ByteBlobLoader.zig");
-pub const ByteStream = @import("./webcore/ByteStream.zig");
-pub const FileReader = @import("./webcore/FileReader.zig");
-pub const ScriptExecutionContext = @import("./webcore/ScriptExecutionContext.zig");
+pub const Crypto = @import("./webcore/Crypto.rust");
+pub const AbortSignal = @import("../jsc/AbortSignal.rust").AbortSignal;
+pub const WebWorker = @import("../jsc/web_worker.rust");
+pub const AutoFlusher = @import("../event_loop/AutoFlusher.rust");
+pub const EncodingLabel = @import("./webcore/EncodingLabel.rust").EncodingLabel;
+pub const Fetch = @import("./webcore/fetch.rust");
+pub const Response = @import("./webcore/Response.rust");
+pub const BakeResponse = @import("./webcore/BakeResponse.rust");
+pub const TextDecoder = @import("./webcore/TextDecoder.rust");
+pub const TextEncoder = @import("./webcore/TextEncoder.rust");
+pub const TextEncoderStreamEncoder = @import("./webcore/TextEncoderStreamEncoder.rust");
+pub const encoding = @import("./webcore/encoding.rust");
+pub const ReadableStream = @import("./webcore/ReadableStream.rust");
+pub const Blob = @import("./webcore/Blob.rust");
+pub const S3Stat = @import("./webcore/S3Stat.rust").S3Stat;
+pub const ResumableFetchSink = @import("./webcore/ResumableSink.rust").ResumableFetchSink;
+pub const ResumableS3UploadSink = @import("./webcore/ResumableSink.rust").ResumableS3UploadSink;
+pub const ResumableSinkBackpressure = @import("./webcore/ResumableSink.rust").ResumableSinkBackpressure;
+pub const S3Client = @import("./webcore/S3Client.rust").S3Client;
+pub const Request = @import("./webcore/Request.rust");
+pub const Body = @import("./webcore/Body.rust");
+pub const CookieMap = @import("./webcore/CookieMap.rust").CookieMap;
+pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.rust");
+pub const Sink = @import("./webcore/Sink.rust");
+pub const FileSink = @import("./webcore/FileSink.rust");
+pub const FetchHeaders = @import("../jsc/FetchHeaders.rust").FetchHeaders;
+pub const ByteBlobLoader = @import("./webcore/ByteBlobLoader.rust");
+pub const ByteStream = @import("./webcore/ByteStream.rust");
+pub const FileReader = @import("./webcore/FileReader.rust");
+pub const ScriptExecutionContext = @import("./webcore/ScriptExecutionContext.rust");
 
-pub const streams = @import("./webcore/streams.zig");
+pub const streams = @import("./webcore/streams.rust");
 pub const NetworkSink = streams.NetworkSink;
 pub const HTTPResponseSink = streams.HTTPResponseSink;
 pub const HTTPSResponseSink = streams.HTTPSResponseSink;
@@ -58,7 +58,7 @@ comptime {
 }
 
 pub const PathOrFileDescriptor = union(enum) {
-    path: jsc.ZigString.Slice,
+    path: jsc.RustString.Slice,
     fd: bun.FD,
 
     pub fn deinit(this: *const PathOrFileDescriptor) void {
@@ -120,10 +120,10 @@ pub const Lifetime = enum {
 
 const std = @import("std");
 
-const WebSocketClient = @import("../http/websocket_http_client.zig").WebSocketClient;
-const WebSocketClientTLS = @import("../http/websocket_http_client.zig").WebSocketClientTLS;
-const WebSocketHTTPClient = @import("../http/websocket_http_client.zig").WebSocketHTTPClient;
-const WebSocketHTTPSClient = @import("../http/websocket_http_client.zig").WebSocketHTTPSClient;
+const WebSocketClient = @import("../http/websocket_http_client.rust").WebSocketClient;
+const WebSocketClientTLS = @import("../http/websocket_http_client.rust").WebSocketClientTLS;
+const WebSocketHTTPClient = @import("../http/websocket_http_client.rust").WebSocketHTTPClient;
+const WebSocketHTTPSClient = @import("../http/websocket_http_client.rust").WebSocketHTTPSClient;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -1650,7 +1650,7 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
-// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
+// src/sys/sys.rust getFdPath has an exhaustive per-OS switch: .windows
 // (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
 // covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
 // non-Windows target Bun ships, fd→path resolution is implemented — there is
@@ -1664,7 +1664,7 @@ it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX tar
   try {
     resolved = realpathSync(probe);
   } catch (e: any) {
-    // The Zig spec never returns ENOSYS from getFdPath: every Environment.os
+    // The Rust spec never returns ENOSYS from getFdPath: every Environment.os
     // value has a real implementation. If this fires, a target (FreeBSD's
     // F_KINFO arm, or Android via the .linux /proc/self/fd arm) was dropped.
     expect(e?.code).not.toBe("ENOSYS");

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "BunGlobalScope.h"
 
 #include <JavaScriptCore/JSFunction.h>
@@ -150,9 +150,9 @@ private:
 };
 
 // Helper functions to create vm contexts and run code
-JSC::JSValue createNodeVMBinding(Zig::GlobalObject*);
+JSC::JSValue createNodeVMBinding(Rust::GlobalObject*);
 Structure* createNodeVMGlobalObjectStructure(JSC::VM&);
-void configureNodeVM(JSC::VM&, Zig::GlobalObject*);
+void configureNodeVM(JSC::VM&, Rust::GlobalObject*);
 
 // VM module functions
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);

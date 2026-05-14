@@ -15,7 +15,7 @@
 //!   cluster consisting of only this code point. For some code points, it is
 //!   rare or even technically "invalid" to be alone in a grapheme cluster but
 //!   despite that, we provide a width for them. See `wcwidth` in
-//!   `src/x/grapheme.zig` for the code and documentation for determining the
+//!   `src/x/grapheme.rust` for the code and documentation for determining the
 //!   width of a grapheme cluster that may contain multiple code points, and
 //!   not how it uses this `wcwidth_standalone` when there is only one code
 //!   point.
@@ -114,7 +114,7 @@
 //!   "zero in grapheme" in the sense that they don't affect width--they change
 //!   the width of the base char! But they don't have their *own* independent
 //!   width contribution that should be summed. They are special cased in the
-//!   `x/grapheme.zig` `wcwidth` calculation.
+//!   `x/grapheme.rust` `wcwidth` calculation.
 //!
 //! * Hangul Jamo medial vowels and Kirat Rai vowels (all
 //!   Grapheme_Cluster_Break=V) and Hangul trailing consonants
@@ -218,5 +218,5 @@ pub const wcwidth = config.Extension{
     },
 };
 
-const config = @import("./config.zig");
+const config = @import("./config.rust");
 const std = @import("std");

@@ -111,7 +111,7 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
 
         const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
         errdefer bun.default_allocator.free(keyslice);
-        const value_str = try value.getZigString(globalThis);
+        const value_str = try value.getRustString(globalThis);
         const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
         const keyref = EnvStr.initRefCounted(keyslice);
         defer keyref.deref();
@@ -199,7 +199,7 @@ fn createParsedShellScriptImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
 
 const std = @import("std");
 
-const interpreter = @import("./interpreter.zig");
+const interpreter = @import("./interpreter.rust");
 const ShellArgs = interpreter.ShellArgs;
 
 const bun = @import("bun");

@@ -16,4 +16,4 @@ pub const AuthenticationState = union(enum) {
     }
 };
 
-const SASL = @import("./SASL.zig");
+const SASL = @import("./SASL.rust");

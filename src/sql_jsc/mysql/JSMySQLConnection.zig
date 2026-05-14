@@ -207,7 +207,7 @@ pub fn finalize(this: *@This()) void {
     this.deref();
 }
 
-/// Referenced by `dispatch.zig` (kind = `.mysql[_tls]`).
+/// Referenced by `dispatch.rust` (kind = `.mysql[_tls]`).
 pub fn SocketHandler(comptime ssl: bool) type {
     return struct {
         pub const SocketType = uws.NewSocketHandler(ssl);
@@ -779,18 +779,18 @@ pub const Writer = MySQLConnection.Writer;
 
 const debug = bun.Output.scoped(.MySQLConnection, .visible);
 
-const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.zig");
-const CachedStructure = @import("../shared/CachedStructure.zig");
-const ErrorPacket = @import("../../sql/mysql/protocol/ErrorPacket.zig");
-const JSMySQLQuery = @import("./JSMySQLQuery.zig");
-const MySQLConnection = @import("./MySQLConnection.zig");
-const MySQLQueryResult = @import("../../sql/mysql/MySQLQueryResult.zig");
-const MySQLStatement = @import("./MySQLStatement.zig");
-const ResultSet = @import("./protocol/ResultSet.zig");
+const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.rust");
+const CachedStructure = @import("../shared/CachedStructure.rust");
+const ErrorPacket = @import("../../sql/mysql/protocol/ErrorPacket.rust");
+const JSMySQLQuery = @import("./JSMySQLQuery.rust");
+const MySQLConnection = @import("./MySQLConnection.rust");
+const MySQLQueryResult = @import("../../sql/mysql/MySQLQueryResult.rust");
+const MySQLStatement = @import("./MySQLStatement.rust");
+const ResultSet = @import("./protocol/ResultSet.rust");
 const std = @import("std");
-const NewReader = @import("../../sql/mysql/protocol/NewReader.zig").NewReader;
-const NewWriter = @import("../../sql/mysql/protocol/NewWriter.zig").NewWriter;
-const SSLMode = @import("../../sql/mysql/SSLMode.zig").SSLMode;
+const NewReader = @import("../../sql/mysql/protocol/NewReader.rust").NewReader;
+const NewWriter = @import("../../sql/mysql/protocol/NewWriter.rust").NewWriter;
+const SSLMode = @import("../../sql/mysql/SSLMode.rust").SSLMode;
 
 const bun = @import("bun");
 const uws = bun.uws;

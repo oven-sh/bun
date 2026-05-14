@@ -806,7 +806,7 @@ pub const GetAddrInfoRequest = struct {
                     }
 
                     // do not free addrinfo when err != 0
-                    // https://github.com/ziglang/zig/pull/14242
+                    // https://github.com/rustlang/rust/pull/14242
                     defer std.c.freeaddrinfo(addrinfo.?);
 
                     this.* = .{ .success = bun.handleOom(GetAddrInfo.Result.toList(default_allocator, addrinfo.?)) };
@@ -1738,12 +1738,12 @@ pub const internal = struct {
 
     pub fn getDNSCacheStats(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const object = jsc.JSValue.createEmptyObject(globalObject, 6);
-        object.put(globalObject, jsc.ZigString.static("cacheHitsCompleted"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("cacheHitsInflight"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("cacheMisses"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("size"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("errors"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("totalCount"), jsc.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .monotonic)));
+        object.put(globalObject, jsc.RustString.static("cacheHitsCompleted"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .monotonic)));
+        object.put(globalObject, jsc.RustString.static("cacheHitsInflight"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .monotonic)));
+        object.put(globalObject, jsc.RustString.static("cacheMisses"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .monotonic)));
+        object.put(globalObject, jsc.RustString.static("size"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .monotonic)));
+        object.put(globalObject, jsc.RustString.static("errors"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .monotonic)));
+        object.put(globalObject, jsc.RustString.static("totalCount"), jsc.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .monotonic)));
         return object;
     }
 
@@ -1816,7 +1816,7 @@ pub const internal = struct {
 
         const hostname_or_url = arguments[0];
 
-        var hostname_slice = jsc.ZigString.Slice.empty;
+        var hostname_slice = jsc.RustString.Slice.empty;
         defer hostname_slice.deinit();
 
         if (hostname_or_url.isString()) {
@@ -1917,7 +1917,7 @@ pub const internal = struct {
 pub const InternalDNSRequest = internal.Request;
 
 comptime {
-    _ = @import("./cares_jsc.zig"); // Bun__canonicalizeIP @export
+    _ = @import("./cares_jsc.rust"); // Bun__canonicalizeIP @export
     @export(&internal.us_getaddrinfo_set, .{
         .name = "Bun__addrinfo_set",
     });
@@ -2053,7 +2053,7 @@ pub const Resolver = struct {
         });
 
         pub fn toJS(this: Order, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-            return jsc.ZigString.init(@tagName(this)).toJS(globalThis);
+            return jsc.RustString.init(@tagName(this)).toJS(globalThis);
         }
 
         pub fn fromString(order: []const u8) ?Order {
@@ -2643,7 +2643,7 @@ pub const Resolver = struct {
     }
 
     const DNSQuery = struct {
-        name: jsc.ZigString.Slice,
+        name: jsc.RustString.Slice,
         record_type: RecordType,
 
         ttl: i32 = 0,
@@ -2715,7 +2715,7 @@ pub const Resolver = struct {
                 break :brk RecordType.default;
             }
 
-            break :brk RecordType.map.getWithEql(record_type_str.getZigString(globalThis), jsc.ZigString.eqlComptime) orelse {
+            break :brk RecordType.map.getWithEql(record_type_str.getRustString(globalThis), jsc.RustString.eqlComptime) orelse {
                 return globalThis.throwInvalidArgumentPropertyValue("record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT", record_type_value);
             };
         };
@@ -3319,16 +3319,16 @@ pub const Resolver = struct {
 
             const size = bun.len(bun.cast([*:0]u8, buf[1..])) + 1;
             if (port == IANA_DNS_PORT) {
-                try values.putIndex(globalThis, i, jsc.ZigString.init(buf[1..size]).withEncoding().toJS(globalThis));
+                try values.putIndex(globalThis, i, jsc.RustString.init(buf[1..size]).withEncoding().toJS(globalThis));
             } else {
                 if (family == std.posix.AF.INET6) {
                     buf[0] = '[';
                     buf[size] = ']';
                     const port_slice = std.fmt.bufPrint(buf[size + 1 ..], ":{d}", .{port}) catch unreachable;
-                    try values.putIndex(globalThis, i, jsc.ZigString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toJS(globalThis));
+                    try values.putIndex(globalThis, i, jsc.RustString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toJS(globalThis));
                 } else {
                     const port_slice = std.fmt.bufPrint(buf[size..], ":{d}", .{port}) catch unreachable;
-                    try values.putIndex(globalThis, i, jsc.ZigString.init(buf[1 .. size + port_slice.len]).withEncoding().toJS(globalThis));
+                    try values.putIndex(globalThis, i, jsc.RustString.init(buf[1 .. size + port_slice.len]).withEncoding().toJS(globalThis));
                 }
             }
         }
@@ -3532,7 +3532,7 @@ pub const Resolver = struct {
         if (addr_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "non-empty string");
         }
-        const addr_s = addr_str.getZigString(globalThis).slice();
+        const addr_s = addr_str.getRustString(globalThis).slice();
 
         const port_value = arguments.ptr[1];
         const port: u16 = try port_value.toPortNumber(globalThis);

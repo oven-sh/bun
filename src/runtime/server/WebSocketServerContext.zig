@@ -180,7 +180,7 @@ pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!
                 if (compression.isBoolean()) {
                     server.compression |= if (compression.toBoolean()) uws.SHARED_COMPRESSOR else 0;
                 } else if (compression.isString()) {
-                    server.compression |= CompressTable.getWithEql(try compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
+                    server.compression |= CompressTable.getWithEql(try compression.getRustString(globalObject), RustString.eqlComptime) orelse {
                         return globalObject.throwInvalidArguments("WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"", .{});
                     };
                 } else {
@@ -192,7 +192,7 @@ pub fn onCreate(globalObject: *jsc.JSGlobalObject, object: JSValue) bun.JSError!
                 if (compression.isBoolean()) {
                     server.compression |= if (compression.toBoolean()) uws.SHARED_DECOMPRESSOR else 0;
                 } else if (compression.isString()) {
-                    server.compression |= DecompressTable.getWithEql(try compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
+                    server.compression |= DecompressTable.getWithEql(try compression.getRustString(globalObject), RustString.eqlComptime) orelse {
                         return globalObject.throwInvalidArguments("websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"", .{});
                     };
                 } else {
@@ -281,4 +281,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

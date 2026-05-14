@@ -97,7 +97,7 @@ if (obj->cellState <= blackThreshold)   // 0 normally, bumped while GC is markin
 
 `vendor/WebKit/Source/JavaScriptCore/heap/ConservativeRoots.cpp` walks the native stack/registers word-by-word (after `MachineThreads::tryCopyOtherThreadStacks` snapshots them). Any aligned word inside a live `MarkedBlock` cell or `PreciseAllocation` is a root.
 
-**This means:** a `JSCell*` / `JSValue` in a C++/Zig local variable _usually_ keeps the object alive — no `Handle`/`Local` ceremony like V8.
+**This means:** a `JSCell*` / `JSValue` in a C++/Rust local variable _usually_ keeps the object alive — no `Handle`/`Local` ceremony like V8.
 
 **This does NOT mean you're always safe.** The compiler may dead-store-eliminate the local after its last visible use, or never spill it. If you extract an interior pointer (`string->characters8()`, butterfly storage, typed-array `vector()`) and then call something that can allocate, the original cell may no longer be on the stack:
 
@@ -106,7 +106,7 @@ JSC::EnsureStillAliveScope keepAlive(cell);   // RAII: forces cell onto stack un
 // ... use interior pointer, call things that allocate ...
 ```
 
-or `ensureStillAliveHere(cell)`. In Zig: `value.ensureStillAlive()`.
+or `ensureStillAliveHere(cell)`. In Rust: `value.ensureStillAlive()`.
 
 ## `visitChildren` — the per-cell tracing hook
 
@@ -166,7 +166,7 @@ void JSFoo::visitOutputConstraints(JSCell* cell, Visitor& visitor) {
 
 **Why two entry points?** `visitChildren` runs once when the cell turns grey. But marking may later discover that some _other_ native object (an opaque root) is live, which retroactively makes more of _this_ cell's references live. `visitOutputConstraints` is re-invoked by `DOMGCOutputConstraint` during the constraint fixpoint to catch that.
 
-To make a class participate, its IsoSubspace must be registered as an **output-constraint subspace** (`clientSubspaceFor*` with `outputConstraint` in `BunClientData` / generated `ZigGeneratedClasses.cpp`). The codegen does this automatically when `.classes.ts` has `hasPendingActivity`, `own` properties, or event-target semantics.
+To make a class participate, its IsoSubspace must be registered as an **output-constraint subspace** (`clientSubspaceFor*` with `outputConstraint` in `BunClientData` / generated `RustGeneratedClasses.cpp`). The codegen does this automatically when `.classes.ts` has `hasPendingActivity`, `own` properties, or event-target semantics.
 
 ## Opaque roots — liveness through non-JSCell pointers
 
@@ -213,9 +213,9 @@ JSC::Weak<JSFoo> m_wrapper { jsFoo, &myOwnerSingleton, nativeThing };
 
 `Weak<T>` is **move-only** (allocates a `WeakImpl`). Don't put it in a hot path; cache it.
 
-## Zig: `jsc.JSRef` — the native↔wrapper reference pattern
+## Rust: `jsc.JSRef` — the native↔wrapper reference pattern
 
-In Bun's Zig code, when a native object needs to hold a reference back to its own JS wrapper, **use `jsc.JSRef`** (`src/jsc/bindings/JSRef.zig`), not `gcProtect`, not a raw `JSValue` field, and usually not `jsc.Strong` directly.
+In Bun's Rust code, when a native object needs to hold a reference back to its own JS wrapper, **use `jsc.JSRef`** (`src/jsc/bindings/JSRef.rust`), not `gcProtect`, not a raw `JSValue` field, and usually not `jsc.Strong` directly.
 
 `JSRef` is a tagged union with three states:
 
@@ -225,7 +225,7 @@ In Bun's Zig code, when a native object needs to hold a reference back to its ow
 
 Pattern: **strong while busy, weak while idle.**
 
-```zig
+```rust
 this_value: jsc.JSRef = .empty(),
 
 // On construction / when work starts:
@@ -276,7 +276,7 @@ visitor.reportExtraMemoryVisited(thisObject->wrapped().byteSize());
 - If the size changes over time, report the delta on growth (`reportExtraMemoryAllocated(cell, newSize - oldSize)`) and report the current size in `visitChildren`.
 - `deprecatedReportExtraMemory` exists for callers that can't satisfy the visit-side half — avoid it.
 
-In `.classes.ts`, `estimatedSize: true` generates the `reportExtraMemoryVisited` side; you implement `estimatedSize()` in Zig. You still call `reportExtraMemoryAllocated` (or the binding's helper) at allocation time.
+In `.classes.ts`, `estimatedSize: true` generates the `reportExtraMemoryVisited` side; you implement `estimatedSize()` in Rust. You still call `reportExtraMemoryAllocated` (or the binding's helper) at allocation time.
 
 ## `HeapAnalyzer` — heap snapshots and labelling
 
@@ -309,9 +309,9 @@ If your class shows up as an opaque blob in heap snapshots, implement `analyzeHe
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | JSCell field pointing to another JSCell                                            | `WriteBarrier<T>` member + `visitor.append(m_field)` in `visitChildren`                                                                            |
 | Native state inside the wrapped C++ object holds JS values                         | `visitAdditionalChildren` + register subspace as output-constraint                                                                                 |
-| C++/Zig local across allocation/call                                               | Conservative scan (free) — add `EnsureStillAliveScope` / `value.ensureStillAlive()` if extracting interior pointers or seeing release-only crashes |
-| **Zig** native object holds its own JS wrapper (class has `finalize: true`)        | **`jsc.JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                  |
-| **Zig** native object owns an arbitrary JS value (callback, options object)        | `jsc.Strong.Optional` — `deinit()` in `finalize()`. Watch for cycles                                                                               |
+| C++/Rust local across allocation/call                                               | Conservative scan (free) — add `EnsureStillAliveScope` / `value.ensureStillAlive()` if extracting interior pointers or seeing release-only crashes |
+| **Rust** native object holds its own JS wrapper (class has `finalize: true`)        | **`jsc.JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                  |
+| **Rust** native object owns an arbitrary JS value (callback, options object)        | `jsc.Strong.Optional` — `deinit()` in `finalize()`. Watch for cycles                                                                               |
 | C++ non-GC object owns a JS value as a root                                        | `JSC::Strong<T>`. **Danger:** cycle if the JS value can reach back → leak                                                                          |
 | Weak ref with resurrection predicate / finalize callback (C++)                     | `JSC::Weak<T>` + `WeakHandleOwner`                                                                                                                 |
 | Wrapper kept alive by **many concurrent operations** with no single busy/idle edge | `.classes.ts` `hasPendingActivity: true` (atomic flag polled on GC thread). **Uncommon — prefer `JSRef` if you can.**                              |
@@ -323,7 +323,7 @@ If your class shows up as an opaque blob in heap snapshots, implement `analyzeHe
 ## Destruction & finalizers
 
 - `static constexpr bool needsDestruction = true` → C++ destructor runs when the cell is swept. Sweep is **lazy** (next allocation from that block, or `IncrementalSweeper`), so destruction is delayed arbitrarily. Do not rely on it for prompt resource release — expose explicit `close()`/`dispose()`.
-- In `.classes.ts`, `finalize: true` → Zig `finalize()` called from the destructor. Same laziness applies.
+- In `.classes.ts`, `finalize: true` → Rust `finalize()` called from the destructor. Same laziness applies.
 - `WeakHandleOwner::finalize` runs earlier (at weak-reap time) but the cell is already dead; only use it to clear caches.
 - Destructors run on the mutator thread but **other JS objects may already be swept** — do not dereference `WriteBarrier` fields in a destructor.
 
@@ -363,4 +363,4 @@ If GC runs constantly with little garbage → missing `reportExtraMemoryVisited`
 - `vendor/WebKit/Source/JavaScriptCore/heap/HeapAnalyzer.h`, `vendor/WebKit/Source/JavaScriptCore/heap/HeapSnapshotBuilder.cpp`, Bun: `vendor/WebKit/Source/JavaScriptCore/heap/BunV8HeapSnapshotBuilder.cpp`
 - `vendor/WebKit/Source/JavaScriptCore/heap/DeferGC.h`, `vendor/WebKit/Source/JavaScriptCore/heap/Strong.h`, `vendor/WebKit/Source/JavaScriptCore/heap/HandleSet.h`
 - `runtime/JSCell.h` / `JSCellInlines.h` — header layout, `visitChildren` base
-- Bun: `src/jsc/bindings/BunGCOutputConstraint.cpp`, `ZigGeneratedClasses.cpp` (codegen'd `visitChildren` / `visitOutputConstraints`)
+- Bun: `src/jsc/bindings/BunGCOutputConstraint.cpp`, `RustGeneratedClasses.cpp` (codegen'd `visitChildren` / `visitOutputConstraints`)

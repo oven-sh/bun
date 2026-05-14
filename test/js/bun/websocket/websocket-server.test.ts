@@ -1095,7 +1095,7 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
   expect(server.subscriberCount("boop")).toBe(0);
 });
 
-// Regression: onUpgrade stored the ZigString returned by FetchHeaders.fastGet()
+// Regression: onUpgrade stored the RustString returned by FetchHeaders.fastGet()
 // (which borrows directly from the header map entry's WTF::StringImpl) and then
 // called fastRemove(), which frees that StringImpl when the map holds the only
 // reference. The dangling pointer was later read in toSlice() and written to the

@@ -17,7 +17,7 @@ class GlobalInternals : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
 
-    static GlobalInternals* create(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject);
+    static GlobalInternals* create(JSC::VM& vm, JSC::Structure* structure, Rust::GlobalObject* globalObject);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
@@ -72,7 +72,7 @@ public:
     friend class ::v8::Context;
 
 private:
-    Zig::GlobalObject* m_globalObject;
+    Rust::GlobalObject* m_globalObject;
     JSC::LazyClassStructure m_objectTemplateStructure;
     JSC::LazyClassStructure m_handleScopeBufferStructure;
     JSC::LazyClassStructure m_functionTemplateStructure;
@@ -88,7 +88,7 @@ private:
     Isolate m_isolate;
 
     void finishCreation(JSC::VM& vm);
-    GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject)
+    GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Rust::GlobalObject* globalObject)
         : Base(vm, structure)
         , m_currentHandleScope(nullptr)
         , m_undefinedValue(Oddball::Kind::kUndefined)

@@ -1,31 +1,31 @@
-//! JSC bridges for `src/install/hosted_git_info.zig`. Aliased back so call
-//! sites and `$newZigFunction("hosted_git_info.zig", …)` are unchanged.
+//! JSC bridges for `src/install/hosted_git_info.rust`. Aliased back so call
+//! sites and `$newRustFunction("hosted_git_info.rust", …)` are unchanged.
 
 pub fn hostedGitInfoToJS(self: *const hgi.HostedGitInfo, go: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const obj = jsc.JSValue.createEmptyObject(go, 6);
     obj.put(
         go,
-        jsc.ZigString.static("type"),
+        jsc.RustString.static("type"),
         try bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
     );
     obj.put(
         go,
-        jsc.ZigString.static("domain"),
+        jsc.RustString.static("domain"),
         try bun.String.fromBytes(self.host_provider.domain()).toJS(go),
     );
     obj.put(
         go,
-        jsc.ZigString.static("project"),
+        jsc.RustString.static("project"),
         try bun.String.fromBytes(self.project).toJS(go),
     );
     obj.put(
         go,
-        jsc.ZigString.static("user"),
+        jsc.RustString.static("user"),
         if (self.user) |user| try bun.String.fromBytes(user).toJS(go) else .null,
     );
     obj.put(
         go,
-        jsc.ZigString.static("committish"),
+        jsc.RustString.static("committish"),
         if (self.committish) |committish|
             try bun.String.fromBytes(committish).toJS(go)
         else
@@ -33,7 +33,7 @@ pub fn hostedGitInfoToJS(self: *const hgi.HostedGitInfo, go: *jsc.JSGlobalObject
     );
     obj.put(
         go,
-        jsc.ZigString.static("default"),
+        jsc.RustString.static("default"),
         try bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),
     );
 
@@ -103,7 +103,7 @@ pub fn jsFromUrl(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError
     return parsed.toJS(go);
 }
 
-const hgi = @import("../install/hosted_git_info.zig");
+const hgi = @import("../install/hosted_git_info.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

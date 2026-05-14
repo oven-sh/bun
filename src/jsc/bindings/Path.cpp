@@ -2,7 +2,7 @@
 #include "root.h"
 #include "headers.h"
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSMicrotask.h>
@@ -10,7 +10,7 @@
 
 #pragma mark - Node.js Path
 
-namespace Zig {
+namespace Rust {
 
 static JSC::JSObject* createPath(JSC::JSGlobalObject* globalThis, bool isWindows);
 
@@ -31,7 +31,7 @@ using namespace JSC;
 using PathFunction = JSC::EncodedJSValue (*SYSV_ABI)(JSGlobalObject*, bool, EncodedJSValue*, uint16_t len);
 
 template<bool isWindows, PathFunction Function>
-static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+static inline JSC::EncodedJSValue createRustFunction(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -48,7 +48,7 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
     JSC_DEFINE_HOST_FUNCTION(jsFunctionName,                                    \
         (JSC::JSGlobalObject * globalObject, JSC::CallFrame * callFrame))       \
     {                                                                           \
-        return createZigFunction<isWindows, Function>(globalObject, callFrame); \
+        return createRustFunction<isWindows, Function>(globalObject, callFrame); \
     }
 
 DEFINE_PATH_FUNCTION(jsFunctionPath_basenamePosix, Bun__Path__basename, false)
@@ -112,7 +112,7 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
     return path;
 }
 
-} // namespace Zig
+} // namespace Rust
 
 extern "C" JSC::EncodedJSValue PathParsedObject__create(
     JSC::JSGlobalObject* globalObject,
@@ -122,7 +122,7 @@ extern "C" JSC::EncodedJSValue PathParsedObject__create(
     JSC::EncodedJSValue ext,
     JSC::EncodedJSValue name)
 {
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Rust::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* result = JSC::constructEmptyObject(vm, global->pathParsedObjectStructure());
     result->putDirectOffset(vm, 0, JSC::JSValue::decode(root));
@@ -135,7 +135,7 @@ extern "C" JSC::EncodedJSValue PathParsedObject__create(
 
 namespace Bun {
 
-JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
+JSC::JSValue createNodePathBinding(Rust::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -144,12 +144,12 @@ JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
     binding->putDirectIndex(
         globalObject,
         (unsigned)0,
-        Zig::createPath(globalObject, false));
+        Rust::createPath(globalObject, false));
     RETURN_IF_EXCEPTION(scope, {});
     binding->putDirectIndex(
         globalObject,
         (unsigned)1,
-        Zig::createPath(globalObject, true));
+        Rust::createPath(globalObject, true));
     RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }

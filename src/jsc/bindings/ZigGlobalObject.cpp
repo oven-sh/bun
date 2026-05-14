@@ -3708,20 +3708,28 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
     auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
 
-    // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
-    // executed in a .then(...) callback, throwing is perfectly fine.
+    // The streaming hook used to return a freshly created promise; the caller
+    // (webAssemblyCompileStreamingFunc) was a host function that propagated
+    // any pending exception into a rejected promise. Now the caller passes the
+    // already-allocated outer promise in and is itself an internal microtask
+    // (webAssemblyCompileStreaming in JSMicrotask.cpp) that does NOT catch the
+    // exception. If this callback throws, the outer promise is never settled
+    // and the awaiting test hangs. Convert any thrown exception into a
+    // rejection here.
 
     auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
         globalObject, JSC::JSValue::encode(source), compiler.ptr()));
 
-    RETURN_IF_EXCEPTION(scope, void());
+    if (scope.exception()) [[unlikely]] {
+        promise->rejectWithCaughtException(globalObject, scope);
+        return;
+    }
 
     // We were able to get the slice synchronously.
     if (readableStreamMaybe.isNull()) {
         compiler->finalize(globalObject);
-
-        // Apparently rejecting a Promise (done in JSC::Wasm::StreamingCompiler#fail) can throw
-        RETURN_IF_EXCEPTION(scope, void());
+        if (scope.exception()) [[unlikely]]
+            promise->rejectWithCaughtException(globalObject, scope);
         return;
     }
 
@@ -3732,7 +3740,8 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
 
     arguments.append(readableStreamMaybe);
     JSC::call(globalObject, builtin, callData, wrapper, arguments);
-    scope.assertNoException();
+    if (scope.exception()) [[unlikely]]
+        promise->rejectWithCaughtException(globalObject, scope);
 }
 
 void GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)

@@ -149,12 +149,18 @@ fn load_bunfig(
     };
 
     // Success: `source.path.text` (and any `ctx.log` location borrowed by
-    // `Bunfig::parse`) points into `boxed_path`. `Box::leak` promotes the
-    // `&'static [u8]` lifetime fabricated by `IntoStr::into_str` from lie to
-    // truth — the path lives for the rest of the process, matching how
-    // `ctx.log` messages hold borrowed path slices across `load_config`'s
-    // control flow.
-    let _: &'static [u8] = Box::leak(boxed_path);
+    // `Bunfig::parse`) points into `boxed_path`. Leak the allocation so the
+    // `&'static [u8]` lifetime fabricated by `IntoStr::into_str` is honest —
+    // the path lives for the rest of the process, matching how `ctx.log`
+    // messages hold borrowed path slices across `load_config`'s control flow.
+    //
+    // Use `Box::into_raw` rather than `Box::leak` because `Box::leak(b)` is
+    // `unsafe { &mut *Box::into_raw(b) }`, and that `&mut` reborrow pops the
+    // SharedReadOnly tag that `owned_path` / `source.path.text` (derived from
+    // `boxed_path.as_ptr()` above) were created with — the subsequent
+    // `Bunfig::parse` read would trip Stacked Borrows. `Box::into_raw` just
+    // consumes the Box and returns the raw pointer, no `&mut` reborrow.
+    let _raw: *mut [u8] = Box::into_raw(boxed_path);
 
     bun_ast::stmt::data::Store::create();
     bun_ast::expr::data::Store::create();

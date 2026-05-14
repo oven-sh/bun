@@ -136,8 +136,10 @@ domain.createDomain = domain.create = function () {
   // `d.add(emitter)`: errors emitted by `emitter` are routed to this domain.
   // Node tags the error with `domainEmitter = emitter` and `domainThrown = false`
   // on this path to distinguish emitted vs. thrown errors.
+  const memberListeners = new WeakMap();
   d.add = function (emitter) {
-    emitter.on("error", function (e) {
+    if (memberListeners.has(emitter)) return;
+    const listener = function (e) {
       if ((typeof e === "object" && e !== null) || typeof e === "function") {
         try {
           e.domainEmitter = emitter;
@@ -146,10 +148,19 @@ domain.createDomain = domain.create = function () {
       decorateThrownError(e, d, false);
       while (currentDomain() === d) d.exit();
       d.emit("error", e);
-    });
+    };
+    memberListeners.set(emitter, listener);
+    emitter.on("error", listener);
+    d.members.push(emitter);
   };
   d.remove = function (emitter) {
-    emitter.removeListener("error", emitError);
+    const listener = memberListeners.get(emitter);
+    if (listener) {
+      emitter.removeListener("error", listener);
+      memberListeners.delete(emitter);
+    }
+    const i = d.members.indexOf(emitter);
+    if (i !== -1) d.members.splice(i, 1);
   };
   d.bind = function (fn) {
     return function () {

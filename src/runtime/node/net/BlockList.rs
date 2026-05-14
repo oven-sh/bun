@@ -370,6 +370,16 @@ impl BlockList {
         Ok(array)
     }
 
+    /// Process-wide set of `BlockList` addresses emitted by serialize. Deserialize
+    /// validates the embedded pointer against this set; the byte stream is untrusted.
+    fn serialized_registry()
+    -> &'static bun_threading::Guarded<std::collections::HashSet<usize>> {
+        use std::sync::OnceLock;
+        static REGISTRY: OnceLock<bun_threading::Guarded<std::collections::HashSet<usize>>> =
+            OnceLock::new();
+        REGISTRY.get_or_init(Default::default)
+    }
+
     pub fn on_structured_clone_serialize(
         this: &Self,
         _global: &JSGlobalObject,
@@ -380,6 +390,10 @@ impl BlockList {
         use bun_io::Write as _;
         let _guard = this.mutex.lock_guard();
         this.ref_();
+        // Register *after* the +1 ref so a registered address is always pinned alive.
+        Self::serialized_registry()
+            .lock()
+            .insert(std::ptr::from_ref::<Self>(this) as usize);
         let mut writer = StructuredCloneWriter {
             ctx,
             impl_: write_bytes,
@@ -417,6 +431,14 @@ impl BlockList {
         // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via `checked_add`).
         *ptr = unsafe { (*ptr).add(r.pos) };
 
+        // The byte stream may be untrusted; only dereference addresses we
+        // ourselves emitted from serialize.
+        if !Self::serialized_registry().lock().contains(&int) {
+            return Err(global.throw(format_args!(
+                "BlockList.onStructuredCloneDeserialize failed"
+            )));
+        }
+
         let this: *mut Self = int as *mut Self;
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
@@ -425,9 +447,10 @@ impl BlockList {
         // SerializedScriptValue has no destroy hook for Bun-native tags, so that
         // ref is retained until a buffer-level deref exists (preferable to UAF).
         // SAFETY: `int` was produced by `on_structured_clone_serialize` from a
-        // live `*mut Self` whose ref was bumped at serialize time. Ownership of
-        // one ref transfers to the C++ wrapper (released via `finalize` → `deref`).
-        // `to_js_ptr` is the `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
+        // live `*mut Self` whose ref was bumped at serialize time (verified by
+        // the registry check above). Ownership of one ref transfers to the C++
+        // wrapper (released via `finalize` → `deref`). `to_js_ptr` is the
+        // `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
         unsafe {
             (*this).ref_();
             Ok(Self::to_js_ptr(this, global))

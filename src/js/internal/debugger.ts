@@ -592,7 +592,9 @@ function parseUrl(input: string): URL {
 }
 
 function randomId() {
-  return Math.random().toString(36).slice(2);
+  // Sole auth token for the debugger WebSocket — must be unpredictable.
+  // Strip hyphens to keep the historical `[a-z0-9]+` path shape.
+  return crypto.randomUUID().replace(/-/g, "");
 }
 
 const { enableANSIColors } = Bun;

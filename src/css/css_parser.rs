@@ -668,7 +668,16 @@ fn parse_nested_block<T>(
     let saved_stop_before = parser.stop_before;
     parser.stop_before = closing_delimiter;
     parser.at_start_of = None;
-    let result = parser.parse_entirely((), |(), p| parsefn(p));
+    // Bound recursive descent so deeply nested blocks (e.g. `calc(calc(...))`)
+    // can't overflow the native stack; the error path leaves the parser recoverable.
+    let result = if parser.nesting_depth >= MAX_NESTING_DEPTH {
+        Err(parser.new_custom_error(ParserError::maximum_nesting_depth))
+    } else {
+        parser.nesting_depth += 1;
+        let r = parser.parse_entirely((), |(), p| parsefn(p));
+        parser.nesting_depth -= 1;
+        r
+    };
     if let Some(block_type2) = parser.at_start_of.take() {
         consume_until_end_of_block(block_type2, &mut parser.input.tokenizer);
     }
@@ -3439,7 +3448,13 @@ pub struct Parser<'a> {
     /// materialises a fresh short-lived `&mut` instead.
     pub import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
     pub extra: Option<&'a mut ParserExtra>,
+    /// Current nested-block depth; bounded by [`MAX_NESTING_DEPTH`] to prevent
+    /// stack overflow from deeply nested input.
+    pub nesting_depth: u32,
 }
+
+/// Hard cap on nested-block depth (matches WebKit's CSS tokenizer limit).
+pub const MAX_NESTING_DEPTH: u32 = 128;
 
 impl<'a> Parser<'a> {
     pub fn add_symbol_for_name(
@@ -3563,6 +3578,7 @@ impl<'a> Parser<'a> {
             flags,
             import_records,
             extra,
+            nesting_depth: 0,
         }
     }
 

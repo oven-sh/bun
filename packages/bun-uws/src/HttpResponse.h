@@ -257,7 +257,11 @@ public:
 
         /* Note: OpenSSL can be used here to speed this up somewhat */
         char secWebSocketAccept[29] = {};
-        WebSocketHandshake::generate(secWebSocketKey.data(), secWebSocketAccept);
+        /* WebSocketHandshake::generate reads exactly 24 bytes; the client-controlled
+         * header may be shorter, so copy into a zero-padded fixed buffer first. */
+        char secWebSocketKeyBuf[24] = {};
+        secWebSocketKey.copy(secWebSocketKeyBuf, sizeof(secWebSocketKeyBuf));
+        WebSocketHandshake::generate(secWebSocketKeyBuf, secWebSocketAccept);
 
         writeStatus("101 Switching Protocols")
             ->writeHeader("Upgrade", "websocket")

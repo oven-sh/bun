@@ -821,7 +821,9 @@ impl MySQLConnection {
                                 Auth::caching_sha2_password::FastAuthStatus::CONTINUE_AUTH => {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
 
-                                    if self.ssl_mode == SSLMode::Disable {
+                                    // Check whether TLS actually established, not the
+                                    // configured ssl_mode (which may have fallen back).
+                                    if self.tls_status != TLSStatus::SslOk {
                                         // we are in plain TCP so we need to request the public key
                                         self.set_status(ConnectionState::AuthenticationAwaitingPk);
                                         bun_core::scoped_log!(
@@ -1401,6 +1403,18 @@ impl MySQLConnection {
                     header.decode_internal(reader)?;
                     if header.field_count == 0 {
                         // Can't be 0
+                        return Err(AnyMySQLError::UnexpectedPacket);
+                    }
+                    // `field_count` is a server-controlled length-encoded integer; cap
+                    // it before it drives an allocation. MySQL caps tables at 4096 cols.
+                    const MAX_RESULT_SET_COLUMNS: u64 = 0xFFFF;
+                    if header.field_count > MAX_RESULT_SET_COLUMNS {
+                        bun_core::scoped_log!(
+                            MySQLConnection,
+                            "result set header field count {} exceeds cap {}",
+                            header.field_count,
+                            MAX_RESULT_SET_COLUMNS
+                        );
                         return Err(AnyMySQLError::UnexpectedPacket);
                     }
                     if statement.columns.len() as u64 != header.field_count {

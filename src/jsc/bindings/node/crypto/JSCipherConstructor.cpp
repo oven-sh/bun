@@ -205,6 +205,10 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     if (cipher.isSupportedAuthenticatedMode()) {
         initAuthenticated(globalObject, scope, ctx, cipherString, cipherKind, ivLen, authTagLength, maxMessageSize);
         RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        // authTagLength only applies to AEAD ciphers; storing it for non-AEAD
+        // would let getAuthTag() read past the 16-byte m_authTag buffer.
+        authTagLength = std::nullopt;
     }
 
     if (!ctx.setKeyLength(keyData.size())) {

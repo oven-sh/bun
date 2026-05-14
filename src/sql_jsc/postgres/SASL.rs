@@ -11,6 +11,10 @@ const SERVER_SIGNATURE_BASE64_LEN: usize =
 
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 
+/// Hard cap on the server-supplied SCRAM iteration count. PBKDF2 runs
+/// synchronously on the JS thread, so an unbounded value pins the event loop.
+const MAX_SCRAM_ITERATION_COUNT: u32 = 4096 * 1024;
+
 pub struct SASL {
     pub nonce_base64_bytes: [u8; NONCE_BASE64_LEN],
     pub nonce_len: u8,
@@ -73,6 +77,12 @@ impl SASL {
         // `bun_jsc`); `bun_boringssl_sys` is already a direct dependency.
         use bun_boringssl_sys as boringssl;
         use core::ffi::c_uint;
+
+        // Reject server-controlled iteration counts that would pin the JS thread.
+        // Use a known AnyPostgresError variant so the error roundtrips.
+        if iteration_count == 0 || iteration_count > MAX_SCRAM_ITERATION_COUNT {
+            return Err(bun_core::err!("PBKDFD2"));
+        }
 
         self.salted_password_created = true;
         let out = &mut self.salted_password_bytes;

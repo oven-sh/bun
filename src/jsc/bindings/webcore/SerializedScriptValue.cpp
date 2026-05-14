@@ -3972,9 +3972,13 @@ private:
 
     bool read(BIO** bio, uint64_t length)
     {
-        if (m_ptr + length > m_end)
+        // Compare remaining bytes (not `m_ptr + length`) to avoid pointer overflow.
+        if (length > static_cast<uint64_t>(m_end - m_ptr))
             return false;
-        *bio = BIO_new_mem_buf(m_ptr, length);
+        // BIO_new_mem_buf takes `int`; reject lengths that would truncate or go negative.
+        if (length > static_cast<uint64_t>(std::numeric_limits<int>::max()))
+            return false;
+        *bio = BIO_new_mem_buf(m_ptr, static_cast<int>(length));
         if (!*bio)
             return false;
         m_ptr += length;

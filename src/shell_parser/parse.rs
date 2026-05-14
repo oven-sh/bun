@@ -3636,7 +3636,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }));
             return Ok(());
         }
-        self.append_string_to_str_pool(bunstr)
+        // Emit interpolated bytes as DoubleQuotedText so a user-supplied
+        // leading `~` is not tilde-expanded as if typed literally.
+        let start = self.j;
+        self.append_string_to_str_pool(bunstr)?;
+        let end = self.j;
+        self.tokens.push(Token::DoubleQuotedText(TextRange { start, end }));
+        self.word_start = self.j;
+        Ok(())
     }
 
     fn looks_like_js_obj_ref(&mut self) -> bool {

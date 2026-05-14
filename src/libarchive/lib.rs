@@ -1617,6 +1617,11 @@ impl Archiver {
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
         // (guard Drop puts the buffer back to the pool)
 
+        // Paths of symlinks created during this extraction; later entries that
+        // traverse through one are rejected to prevent chained-symlink escape.
+        #[cfg(unix)]
+        let mut created_symlinks: Vec<Vec<u8>> = Vec::new();
+
         let mut normalized_buf = OSPathBuffer::uninit();
         let mut use_pwrite = cfg!(unix);
         let mut use_lseek = true;
@@ -1787,6 +1792,36 @@ impl Archiver {
 
                     count += 1;
 
+                    // Reject entries whose path passes through (or equals) a
+                    // symlink created earlier in this extraction (chained-symlink escape).
+                    #[cfg(unix)]
+                    {
+                        // Case-insensitive on macOS (APFS default is case-insensitive).
+                        #[cfg(target_os = "macos")]
+                        fn component_eq(a: &[u8], b: &[u8]) -> bool {
+                            a.eq_ignore_ascii_case(b)
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        fn component_eq(a: &[u8], b: &[u8]) -> bool {
+                            a == b
+                        }
+                        let traverses_created_symlink = created_symlinks.iter().any(|prefix| {
+                            path_slice.len() >= prefix.len()
+                                && component_eq(&path_slice[..prefix.len()], &prefix[..])
+                                && (path_slice.len() == prefix.len()
+                                    || path_slice[prefix.len()] == b'/')
+                        });
+                        if traverses_created_symlink {
+                            if options.log {
+                                Output::warn(&format_args!(
+                                    "Skipping entry that traverses a previously created symlink: {}\n",
+                                    bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                                ));
+                            }
+                            continue;
+                        }
+                    }
+
                     match kind {
                         bun_sys::FileKind::Directory => {
                             // SAFETY: entry valid
@@ -1889,6 +1924,9 @@ impl Archiver {
                                         _ => return Err(err.into()),
                                     },
                                 }
+                                // Remember that this path is a symlink so later
+                                // entries cannot be written through it.
+                                created_symlinks.push(path_slice.to_vec());
                             }
                             #[cfg(not(unix))]
                             {

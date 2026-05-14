@@ -132,6 +132,7 @@ if ($debug) {
  */
 function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options);
+  if (options.windowsBatchFileError) throw options.windowsBatchFileError;
   validateTimeout(options.timeout);
   validateAbortSignal(options.signal, "options.signal");
   const killSignal = sanitizeKillSignal(options.killSignal);
@@ -517,6 +518,18 @@ function spawnSync(file, args, options) {
     } else {
       throw $ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["string", "Buffer", "TypedArray", "DataView"], input);
     }
+  }
+
+  if (options.windowsBatchFileError) {
+    return {
+      error: options.windowsBatchFileError,
+      status: null,
+      signal: null,
+      output: [null, null, null],
+      pid: 0,
+      stdout: null,
+      stderr: null,
+    };
   }
 
   var error;
@@ -930,6 +943,7 @@ function normalizeSpawnArguments(file, args, options) {
   if (windowsVerbatimArguments != null) {
     validateBoolean(windowsVerbatimArguments, "options.windowsVerbatimArguments");
   }
+  let windowsBatchFileError;
 
   // Handle shell
   if (options.shell) {
@@ -951,6 +965,18 @@ function normalizeSpawnArguments(file, args, options) {
       else if (process.platform === "android") file = "sh";
       else file = "/bin/sh";
       args = ["-c", command];
+    }
+  } else if (process.platform === "win32") {
+    // CVE-2024-27980 (BatBadBut): refuse to spawn .bat/.cmd without `shell`,
+    // matching Node's IsWindowsBatchFile check.
+    if (/\.(?:bat|cmd)[\s.]*$/i.exec(file) !== null) {
+      windowsBatchFileError = genericNodeError(`spawn ${file} EINVAL`, {
+        code: "EINVAL",
+        errno: -4071, // UV_EINVAL
+        syscall: "spawn " + file,
+        path: file,
+        spawnargs: ArrayPrototypeSlice.$call(args),
+      });
     }
   }
 
@@ -1007,6 +1033,7 @@ function normalizeSpawnArguments(file, args, options) {
     file,
     windowsHide: !!options.windowsHide,
     windowsVerbatimArguments: !!windowsVerbatimArguments,
+    windowsBatchFileError,
     argv0: options.argv0,
   };
 }

@@ -74,8 +74,26 @@ pub fn post_process_css_chunk(
             j.push_static(b"/* ");
             line_offset.advance(b"/* ");
 
-            j.push_static(pretty);
-            line_offset.advance(pretty);
+            // Escape `*/` so a hostile package path can't terminate the
+            // comment and inject arbitrary CSS into the bundle output.
+            if bun_core::immutable::contains(pretty, b"*/") {
+                let mut escaped: Vec<u8> = Vec::with_capacity(pretty.len() + 1);
+                let mut i = 0;
+                while i < pretty.len() {
+                    if pretty[i] == b'*' && pretty.get(i + 1) == Some(&b'/') {
+                        escaped.extend_from_slice(b"*\\/");
+                        i += 2;
+                    } else {
+                        escaped.push(pretty[i]);
+                        i += 1;
+                    }
+                }
+                line_offset.advance(&escaped);
+                j.push_owned(escaped.into_boxed_slice());
+            } else {
+                j.push_static(pretty);
+                line_offset.advance(pretty);
+            }
 
             j.push_static(b" */\n");
             line_offset.advance(b" */\n");

@@ -2738,6 +2738,19 @@ impl<'a> ESModule<'a> {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                             let len = replacement_size(str, b"*", subpath);
+                            // Untrusted target/subpath: many `*`s × a long subpath
+                            // can exceed the fixed PathBuffer; bail instead of overflowing.
+                            if len > resolve_target_buf2.0.len() {
+                                dedent!();
+                                return Resolution {
+                                    path: Box::<[u8]>::from(str),
+                                    status: Status::InvalidPackageTarget,
+                                    debug: ResolutionDebug {
+                                        token: target.first_token,
+                                        ..Default::default()
+                                    },
+                                };
+                            }
                             let _ = replace(str, b"*", subpath, &mut resolve_target_buf2.0);
                             let result = &resolve_target_buf2.0[0..len];
                             if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -2845,6 +2858,18 @@ impl<'a> ESModule<'a> {
                 if PATTERN {
                     // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
                     let len = replacement_size(resolved_target, b"*", subpath);
+                    // Same untrusted-input bound as above.
+                    if len > resolve_target_buf2.0.len() {
+                        dedent!();
+                        return Resolution {
+                            path: Box::<[u8]>::from(str),
+                            status: Status::InvalidPackageTarget,
+                            debug: ResolutionDebug {
+                                token: target.first_token,
+                                ..Default::default()
+                            },
+                        };
+                    }
                     let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf2.0);
                     let result = &resolve_target_buf2.0[0..len];
                     if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -3302,6 +3327,8 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
             path = b"";
         }
 
+        // Mirrors Node's `invalidSegmentRegEx`: percent-encoded dots must be
+        // rejected too, since the path is percent-decoded later in `finalize()`.
         match segment.len() {
             1 => {
                 if segment == b"." {
@@ -3310,6 +3337,26 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
             }
             2 => {
                 if segment == b".." {
+                    return Some(segment);
+                }
+            }
+            3 => {
+                // "%2e"
+                if strings::eql_case_insensitive_ascii(segment, b"%2e", true) {
+                    return Some(segment);
+                }
+            }
+            4 => {
+                // ".%2e" / "%2e."
+                if strings::eql_case_insensitive_ascii(segment, b".%2e", true)
+                    || strings::eql_case_insensitive_ascii(segment, b"%2e.", true)
+                {
+                    return Some(segment);
+                }
+            }
+            6 => {
+                // "%2e%2e"
+                if strings::eql_case_insensitive_ascii(segment, b"%2e%2e", true) {
                     return Some(segment);
                 }
             }

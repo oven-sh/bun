@@ -686,6 +686,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       return { valid: true };
     }
 
+    // Options are interpolated unquoted into `BEGIN ${options}`; restrict to
+    // letters/spaces to prevent statement injection.
+    if (!/^[a-zA-Z ]+$/.test(options)) {
+      return {
+        valid: false,
+        error: "Transaction options may only contain letters and spaces.",
+      };
+    }
+
     const upperOptions = options.toUpperCase();
     if (upperOptions === "READONLY" || upperOptions === "READ") {
       return {

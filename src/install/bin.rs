@@ -737,6 +737,17 @@ pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
     name
 }
 
+/// True when `abs_target` is contained in `package_dir`. `bin` targets are
+/// untrusted package.json values; a `../../..` target would be symlinked + chmod 0o777.
+fn bin_target_within_package_dir(abs_target: &[u8], package_dir: &[u8]) -> bool {
+    debug_assert!(matches!(package_dir.last(), Some(&b'/') | Some(&b'\\')));
+    let dir = strings::without_trailing_slash(package_dir);
+    if !strings::has_prefix(abs_target, dir) {
+        return false;
+    }
+    matches!(abs_target.get(dir.len()), None | Some(&b'/') | Some(&b'\\'))
+}
+
 pub struct Linker<'a> {
     pub bin: Bin,
 
@@ -1436,6 +1447,11 @@ impl<'a> Linker<'a> {
                             target,
                             unscoped_package_name,
                         );
+                        // SECURITY: refuse `bin` targets that traverse outside the
+                        // package directory (would otherwise be symlinked + chmod 0o777).
+                        if !bin_target_within_package_dir(r.as_bytes(), package_dir) {
+                            return;
+                        }
                         // SAFETY: `resolve_bin_target` writes into the thread-local
                         // `PARSER_JOIN_INPUT_BUFFER` (via `join_abs_string_z`); the
                         // returned slice does not actually borrow `self` or
@@ -1476,6 +1492,11 @@ impl<'a> Linker<'a> {
                             target,
                             normalized_name,
                         );
+                        // SECURITY: refuse `bin` targets that traverse outside the
+                        // package directory (would otherwise be symlinked + chmod 0o777).
+                        if !bin_target_within_package_dir(r.as_bytes(), package_dir) {
+                            return;
+                        }
                         // SAFETY: thread-local buffer; see Tag::File above.
                         ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                     };
@@ -1521,6 +1542,12 @@ impl<'a> Linker<'a> {
                                 bin_target,
                                 normalized_bin_dest,
                             );
+                            // SECURITY: refuse `bin` targets that traverse outside the
+                            // package directory (would otherwise be symlinked + chmod 0o777).
+                            if !bin_target_within_package_dir(r.as_bytes(), package_dir) {
+                                i += 2;
+                                continue;
+                            }
                             // SAFETY: thread-local buffer; see Tag::File above.
                             ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                         };
@@ -1551,6 +1578,11 @@ impl<'a> Linker<'a> {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
                         let r =
                             resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
+                        // SECURITY: refuse `directories.bin` targets that traverse
+                        // outside the package directory.
+                        if !bin_target_within_package_dir(r.as_bytes(), package_dir) {
+                            return;
+                        }
                         // SAFETY: `join_abs_string_z` writes into the thread-local
                         // `PARSER_JOIN_INPUT_BUFFER`; result does not borrow
                         // `package_dir`. Detached so `abs_target_buf` can be

@@ -1213,3 +1213,33 @@ it.skipIf(!isWindows)("proxy env vars survive process.env enumeration regardless
     expect(enumerated).toBe("http://proxy.example");
   }
 });
+
+// `process.env.HTTP_PROXY = "..."` (a runtime assignment of a proxy var that
+// was NOT in the OS env at startup) must make the var enumerable so it
+// survives `{...process.env}` / `Bun.spawn({env: process.env})`. The proxy
+// vars are lazily added as `DontEnum` CustomAccessors when not in the OS env
+// block; the setter must clear `DontEnum` on first assignment, like the
+// regular env-var setter does.
+it("proxy env vars assigned at runtime propagate to spawned children via {...process.env}", () => {
+  const cmd = [
+    bunExe(),
+    "-e",
+    `process.env.HTTP_PROXY = "http://x:8080";
+     process.env.HTTPS_PROXY = "http://y:8080";
+     process.env.NO_PROXY = "z";
+     const p = Bun.spawnSync({
+       cmd: [process.execPath, "-e", "console.log(JSON.stringify({HTTP_PROXY: process.env.HTTP_PROXY, HTTPS_PROXY: process.env.HTTPS_PROXY, NO_PROXY: process.env.NO_PROXY}))"],
+       env: { ...process.env },
+     });
+     process.stdout.write(p.stdout.toString());`,
+  ];
+  // Ensure none of the proxy vars are pre-set in the parent's env so the
+  // test exercises the not-in-OS-env-at-startup → assigned-at-runtime path.
+  const env = { ...bunEnv };
+  for (const k of Object.keys(env)) {
+    if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+  }
+  const child = spawnSync({ cmd, env });
+  const got = JSON.parse(child.stdout.toString().trim());
+  expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
+});

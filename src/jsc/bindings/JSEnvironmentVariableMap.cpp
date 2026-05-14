@@ -108,6 +108,24 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     BunString name = Bun::toStringView(propertyName.publicName());
     BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
+
+    // The proxy-var accessors are added with `DontEnum` when the var was not
+    // present in the OS env at startup. The regular env-var setter
+    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
+    // replacing the accessor with a data property; this setter keeps the
+    // accessor (so the native env map stays the source of truth) but must
+    // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
+    // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
+    // (the spread skips non-enumerable properties).
+    unsigned attributes;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
+        // putDirectCustomAccessor asserts NewProperty, so delete first.
+        object->deleteProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        object->putDirectCustomAccessor(vm, propertyName, existing,
+            attributes & ~JSC::PropertyAttribute::DontEnum);
+    }
     return true;
 }
 

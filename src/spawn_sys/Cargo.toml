@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 bstr.workspace = true
 libc.workspace = true

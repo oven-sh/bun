@@ -875,7 +875,16 @@ class PostgresAdapter
         // the number of still-handshaking connections is less than the
         // backlog — otherwise those pending connections will drain the
         // queue on their own once they become ready.
-        const unservedWaiters = this.waitingQueue.length - this.#pendingConnectionsCount();
+        //
+        // `release()` hands freshly-connected slots to `reservedQueue`
+        // first (and returns early, never feeding `waitingQueue`), so up
+        // to `reservedQueue.length` pending sockets are already spoken for
+        // and don't count as capacity for `waitingQueue`. Without this
+        // adjustment a mixed `reserve()` + plain-query workload
+        // under-provisions.
+        const pending = this.#pendingConnectionsCount();
+        const pendingForWaiting = Math.max(0, pending - this.reservedQueue.length);
+        const unservedWaiters = this.waitingQueue.length - pendingForWaiting;
         if (unservedWaiters > 0 && this.connections.length < this.maxPoolSize) {
           this.#tryGrowPool();
         }

@@ -7,15 +7,18 @@ test("async transform() rejection with parse errors does not crash", async () =>
   // the freed arena memory. Run enough iterations that mimalloc decommits the
   // arena's pages so the dangling read faults.
   let last: unknown;
+  const pending: Promise<unknown>[] = [];
   for (let i = 0; i < 500; i++) {
-    new Bun.Transpiler().transform("a b c d").catch(e => {
-      last = e;
-    });
+    pending.push(
+      new Bun.Transpiler().transform("a b c d").catch(e => {
+        last = e;
+      }),
+    );
     if (i % 10 === 0) {
       await new Promise(r => setImmediate(r));
     }
   }
-  await new Promise(r => setImmediate(r));
+  await Promise.allSettled(pending);
 
   expect(last).toBeInstanceOf(AggregateError);
   const err = last as AggregateError;

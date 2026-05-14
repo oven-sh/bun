@@ -1923,7 +1923,9 @@ describe("rm", () => {
   const cwdDrive = process.cwd().slice(0, 2);
   const tmpDrive = tmpdir().slice(0, 2);
   const sameDriveAsCwd = isWindows && cwdDrive.toLowerCase() === tmpDrive.toLowerCase();
-  const drivelessTmp = tmpdir().replace(/^[a-zA-Z]:/, "").replaceAll("\\", "/");
+  const drivelessTmp = tmpdir()
+    .replace(/^[a-zA-Z]:/, "")
+    .replaceAll("\\", "/");
 
   it.skipIf(!sameDriveAsCwd)("rmSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
     const dir = `${drivelessTmp}/bun-rm-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;

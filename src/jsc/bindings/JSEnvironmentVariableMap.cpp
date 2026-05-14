@@ -20,9 +20,9 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
-extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, BunString* name, BunString* value);
-extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, BunString* name, BunString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
+extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 
 namespace Bun {
 
@@ -108,6 +108,24 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     BunString name = Bun::toStringView(propertyName.publicName());
     BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
+
+    // The proxy-var accessors are added with `DontEnum` when the var was not
+    // present in the OS env at startup. The regular env-var setter
+    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
+    // replacing the accessor with a data property; this setter keeps the
+    // accessor (so the native env map stays the source of truth) but must
+    // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
+    // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
+    // (the spread skips non-enumerable properties).
+    unsigned attributes;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
+        // putDirectCustomAccessor asserts NewProperty, so delete first.
+        object->deleteProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        object->putDirectCustomAccessor(vm, propertyName, existing,
+            attributes & ~JSC::PropertyAttribute::DontEnum);
+    }
     return true;
 }
 
@@ -369,6 +387,17 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         for (size_t j = 0; j < proxyVarCount; j++) {
             if (name == proxyVarNames[j]) return j;
         }
+#if OS(WINDOWS)
+        // Windows env var names are case-insensitive, so the OS env block can
+        // carry any casing (`Http_Proxy`, `HTTP_proxy`, ...). Without this
+        // fallback the per-key loop falls through, the bottom loop then adds
+        // the canonical accessor with `DontEnum` (because hasProxyVar[*] stayed
+        // false), and `{...process.env}` (which most spawn env merges do) drops
+        // the var even though `process.env.HTTP_PROXY` reads it fine.
+        for (size_t j = 0; j < proxyVarCount; j++) {
+            if (equalIgnoringASCIICase(name, proxyVarNames[j])) return j;
+        }
+#endif
         return std::nullopt;
     };
 

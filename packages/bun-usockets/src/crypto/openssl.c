@@ -1140,6 +1140,16 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 
+  /* Fast-path connect attaches SSL eagerly on a SEMI_SOCKET (see
+   * us_socket_group_connect_resolved_dns); on_open hasn't fired yet so
+   * SNI/ALPN aren't on the SSL. SSL_write here would serialize the
+   * ClientHello without them. Report 0 so the caller buffers; on_open →
+   * ssl_update_handshake drains it. Mirrors the SEMI_SOCKET guard in
+   * us_internal_ssl_close above. */
+  if ((us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    return 0;
+  }
+
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   loop_ssl_data->ssl_read_input_length = 0;

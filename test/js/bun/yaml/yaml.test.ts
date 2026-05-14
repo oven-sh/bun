@@ -1338,9 +1338,7 @@ config:
         },
       };
 
-      // 1000 iterations is enough to flush any reference-lifetime issues; the original
-      // 10k doesn't fit the default 5s budget under debug+ASAN on slow CI containers.
-      for (let i = 0; i < 1000; i++) {
+      for (let i = 0; i < 10000; i++) {
         expect(YAML.stringify(config)).toBeString();
       }
     });

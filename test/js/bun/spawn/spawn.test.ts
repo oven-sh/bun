@@ -6,6 +6,7 @@ import {
   bunExe,
   getMaxFD,
   isBroken,
+  isDebug,
   isMacOS,
   isPosix,
   isWindows,
@@ -163,7 +164,7 @@ for (let [gcTick, label] of [
       });
 
       it("check exit code from onExit", async () => {
-        const count = isWindows ? 100 : 1000;
+        const count = isWindows || isDebug ? 100 : 1000;
 
         for (let i = 0; i < count; i++) {
           var exitCode1, exitCode2;

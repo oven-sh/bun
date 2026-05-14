@@ -399,10 +399,10 @@ const max_parameters = std.math.maxInt(u16);
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
-const Signature = @import("../../sql_jsc/postgres/Signature.zig");
+const Signature = @import("./Signature.zig");
 const protocol = @import("../../sql/postgres/PostgresProtocol.zig");
 const std = @import("std");
-const QueryBindingIterator = @import("../../sql_jsc/shared/QueryBindingIterator.zig").QueryBindingIterator;
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 
 const types = @import("../../sql/postgres/PostgresTypes.zig");
 const AnyPostgresError = @import("../../sql/postgres/PostgresTypes.zig").AnyPostgresError;

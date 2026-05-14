@@ -128,16 +128,20 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    size_t size = 0;
-    for (auto it = request->begin(); it != request->end(); ++it) {
-        size++;
-    }
-
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
+    // Skip the extra O(headers) counting pass that used to size the inline
+    // capacity hint. Using a constant capacity keeps every request's headers
+    // object on a single cached structure (structureCache keys on prototype +
+    // inline capacity), so the putDirect transitions below stay on the fast
+    // path request-to-request instead of churning a fresh structure for every
+    // distinct header count. The default inline capacity covers the typical
+    // request without over-allocating; rarer header-heavy requests spill to a
+    // butterfly, same as any other object.
+    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), JSFinalObject::defaultInlineCapacity);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
     MarkedArgumentBuffer arrayValues;
+    HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     args.append(headersObject);
 
@@ -153,20 +157,25 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         JSString* jsValue = jsString(vm, value);
 
-        HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
+        // `findHTTPHeaderName` only writes `name` when it returns true, so the
+        // SetCookie check must be gated on a successful lookup rather than on the
+        // (otherwise indeterminate) `name` value. set-cookie is always a known
+        // header name, so an unrecognized header is never set-cookie.
+        bool isSetCookie = false;
 
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             nameString = identifiers.stringFor(globalObject, name);
             nameIdentifier = identifiers.identifierFor(vm, name);
+            isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
         } else {
             WTF::String wtfString = nameView.toString();
             nameString = jsString(vm, wtfString);
             nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
         }
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isSetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, );
@@ -887,8 +896,23 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
             RETURN_IF_EXCEPTION(scope, {});
             const auto name = nameString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
-                RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+
+            // Resolve the name to its known header enum once. A known name then
+            // takes the HTTPHeaderName fast path (HTTPHeaderMap::get) and skips
+            // the isValidHTTPToken scan plus the second findHTTPHeaderName
+            // lookup that FetchHeaders::get(StringView) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            if (WebCore::findHTTPHeaderName(name, headerName)) {
+                if (headerName == WebCore::HTTPHeaderName::SetCookie) {
+                    RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+                }
+
+                String value = impl->fastGet(headerName);
+                if (value.isEmpty()) {
+                    return JSValue::encode(jsUndefined());
+                }
+
+                return JSC::JSValue::encode(jsString(vm, value));
             }
 
             WebCore::ExceptionOr<String> res = impl->get(name);
@@ -929,6 +953,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
+            // Resolve the header name to its known enum once. Known names then
+            // take the HTTPHeaderName overload of FetchHeaders::set, which skips
+            // the isValidHTTPToken scan (an enum name is a valid token by
+            // construction) and the second findHTTPHeaderName lookup that
+            // HTTPHeaderMap::set(const String&, ...) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            const bool isKnownHeaderName = WebCore::findHTTPHeaderName(StringView(name), headerName);
+            const auto setHeader = [&](const String& value) {
+                if (isKnownHeaderName)
+                    impl->set(headerName, value);
+                else
+                    impl->set(name, value);
+            };
+
             // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
             // Fall through to the single-value path in that case.
             if (auto* array = dynamicDowncast<JSArray>(valueValue)) {
@@ -938,7 +976,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     RETURN_IF_EXCEPTION(scope, {});
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
+                    setHeader(value);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
@@ -955,7 +993,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             auto value = valueValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            impl->set(name, value);
+            setHeader(value);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }

@@ -4692,6 +4692,20 @@ declare module "bun" {
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;
+
+    /**
+     * Accurate per-process memory footprint in bytes.
+     *
+     * Unlike `process.memoryUsage.rss()`, this excludes pages already
+     * returned to the OS that the kernel keeps mapped lazily (Darwin's
+     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+     *
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
+     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
+     * Returns `undefined` on platforms with no accurate accessor; callers
+     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
+     */
+    function memoryFootprint(): number | undefined;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";

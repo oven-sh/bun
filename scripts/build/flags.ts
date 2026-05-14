@@ -309,7 +309,7 @@ export const globalFlags: Flag[] = [
 
   // ─── Unwinding / exception tables ───
   // These go together: -fno-unwind-tables at compile, --no-eh-frame-hdr at
-  // link (LTO only), and strip -R .eh_frame at post-link (LTO only).
+  // link (release glibc), and strip -R .eh_frame at post-link (release glibc).
   // See linkerFlags and stripFlags below — kept adjacent intentionally.
   {
     flag: ["-fno-unwind-tables", "-fno-asynchronous-unwind-tables"],
@@ -745,6 +745,17 @@ export const linkerFlags: Flag[] = [
 
   // ─── Windows ───
   {
+    // Explicit machine type — clang-cl's driver does not reliably forward
+    // its default target to lld-link when invoked as a pure link driver
+    // (no source inputs, /link separator), so on arm64 lld-link would
+    // autodetect x64 and reject every arm64 input. CMake's Windows-MSVC
+    // platform module always set /machine: from CMAKE_SYSTEM_PROCESSOR,
+    // which is why the pre-ninja build never needed this in BuildBun.cmake.
+    flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
+    when: c => c.windows,
+    desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+  },
+  {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
@@ -764,7 +775,18 @@ export const linkerFlags: Flag[] = [
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
-      "/OPT:SAFEICF",
+      //
+      // TEMPORARILY /OPT:NOICF instead of /OPT:SAFEICF: re-enabling
+      // `panic = "abort"` (Cargo.toml) exposes a Windows-only `Strong<Impl>*
+      // corrupted (0x1)` in the fs/promises writeFile async-iterable path
+      // (#53265+). Under abort's no-landing-pad codegen SAFEICF folds enough
+      // Rust+C++ bodies that PDB symbolication maps the crash to
+      // lol_html/ucnv_MBCS/JSBigInt — useless for finding the owning struct.
+      // `bun-profile.exe` and `bun.exe` share this link (strip-only diff), so
+      // NOICF can't be confined to the profile binary alone; once the
+      // corruption is root-caused via `llvm-symbolizer --relative-address`
+      // against the NOICF PDB, revert this to `/OPT:SAFEICF`.
+      "/OPT:NOICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",
@@ -813,22 +835,62 @@ export const linkerFlags: Flag[] = [
 
   // ─── Linux ───
   {
-    // Wrap old glibc symbols so the binary runs on older glibc
+    // Wrap glibc symbols whose default version on a modern build host is
+    // > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
+    // 2.2.5/2.17 compat version (or a raw syscall) so the binary's verneed
+    // never exceeds the floor regardless of the host's glibc.
     flag: [
-      "-Wl,--wrap=exp",
-      "-Wl,--wrap=exp2",
-      "-Wl,--wrap=expf",
-      "-Wl,--wrap=fcntl64",
-      "-Wl,--wrap=getrandom",
-      "-Wl,--wrap=gettid",
-      "-Wl,--wrap=log",
-      "-Wl,--wrap=log2",
-      "-Wl,--wrap=log2f",
-      "-Wl,--wrap=logf",
-      "-Wl,--wrap=pow",
-      "-Wl,--wrap=powf",
-      "-Wl,--wrap=quick_exit",
-    ],
+      "exp",
+      "exp2",
+      "expf",
+      "fcntl64",
+      "getrandom",
+      "gettid",
+      "log",
+      "log2",
+      "log2f",
+      "logf",
+      "pow",
+      "powf",
+      "quick_exit",
+      // libpthread/libdl → libc.so merge (2.32/2.34)
+      "__libc_start_main",
+      "__pthread_key_create",
+      "dladdr",
+      "dlerror",
+      "dlsym",
+      "dlvsym",
+      "pthread_attr_setstack",
+      "pthread_attr_setstacksize",
+      "pthread_getattr_np",
+      "pthread_getspecific",
+      "pthread_key_create",
+      "pthread_key_delete",
+      "pthread_kill",
+      "pthread_mutex_trylock",
+      "pthread_mutexattr_destroy",
+      "pthread_mutexattr_init",
+      "pthread_mutexattr_settype",
+      "pthread_once",
+      "pthread_rwlock_destroy",
+      "pthread_rwlock_rdlock",
+      "pthread_rwlock_unlock",
+      "pthread_rwlock_wrlock",
+      "pthread_setspecific",
+      // stat-family inline → real symbol (2.33)
+      "fstat",
+      "fstat64",
+      "fstatat",
+      "fstatat64",
+      "mknod",
+      // syscall wrappers (2.27/2.28)
+      "copy_file_range",
+      "memfd_create",
+      "statx",
+      // no older version (2.29/2.35)
+      "_dl_find_object",
+      "posix_spawn_file_actions_addchdir_np",
+    ].map(s => `-Wl,--wrap=${s}`),
     when: c => c.linux && c.abi === "gnu",
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
@@ -859,15 +921,18 @@ export const linkerFlags: Flag[] = [
   },
   {
     // Paired with compile-side -fno-unwind-tables above.
-    // Only in LTO builds — otherwise .eh_frame is needed for backtraces.
+    // Gated on release (not LTO): the workspace is `panic = "abort"` and
+    // C++ is `-fno-exceptions`/`-fno-unwind-tables`, so nothing unwinds at
+    // runtime regardless of LTO. Backtraces walk frame pointers (forced on
+    // both sides). Debug builds keep .eh_frame for gdb/libunwind.
     flag: "-Wl,--no-eh-frame-hdr",
-    when: c => c.linux && c.lto,
-    desc: "Omit eh_frame header (LTO builds; size opt; see stripFlags for matching -R .eh_frame)",
+    when: c => c.linux && c.abi === "gnu" && c.release,
+    desc: "Omit eh_frame header (release; size/RSS opt; see stripFlags for matching -R .eh_frame)",
   },
   {
     flag: "-Wl,--eh-frame-hdr",
-    when: c => c.linux && !c.lto,
-    desc: "Keep eh_frame header (non-LTO; needed for backtraces)",
+    when: c => c.linux && !(c.abi === "gnu" && c.release),
+    desc: "Keep eh_frame header (debug/musl/android; needed for DWARF backtraces)",
   },
   {
     flag: c => `--ld-path=${c.ld}`,
@@ -888,18 +953,27 @@ export const linkerFlags: Flag[] = [
     flag: [
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,--compress-debug-sections=zlib",
       "-Wl,-z,lazy",
       "-Wl,-z,norelro",
+      // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
+      // and we wrap symbols for portability down to 2.17. With -no-pie
+      // there are <500 R_*_RELATIVE entries anyway — not worth the compat
+      // break.)
       "-Wl,-O2",
       "-Wl,--gdb-index",
       "-Wl,-z,combreloc",
-      "-Wl,--sort-section=name",
+      // NOTE: --sort-section=name was here historically; lld ignores it
+      // for the default `.text` rule. We also deliberately do NOT pass
+      // `-z keep-text-section-prefix`: without a PGO profile, LLVM's *static*
+      // `.unlikely` heuristic mislabels a lot of error/panic/bring-up code
+      // that actually runs on the `bun <file>` startup path; segregating it
+      // into `.text.unlikely` made ~84% of that section resident at startup
+      // anyway, so the monolithic default `.text` has *better* RSS locality.
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
-    desc: "Linux linker tuning: lazy binding, large stack, compressed debug, fast gdb loading",
+    desc: "Linux linker tuning: lazy binding, large stack, fast gdb loading",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -907,9 +981,31 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
   },
   {
+    // Always icf=safe in release. The stripped `bun` shares its build-id
+    // with `bun-profile`, so disabling ICF on the profile binary "for perf
+    // symbolication" would also bloat the shipped binary's .text — and
+    // `perf` symbolicates folded functions fine via the linker-map anyway.
     flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
     when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Safe identical-code-folding + linker map (release only)",
+    desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
+  },
+  {
+    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage `btg`
+    // build driven by scripts/build-pgo.ts) clang AND rustc emit `.text.hot` /
+    // `.text.unlikely` section prefixes from *measured* execution counts.
+    // Tell lld to keep those prefixes (it merges them into one `.text` by
+    // default) so the hot cold-start working set — clap → CLI dispatch →
+    // module loader → js_parser/js_printer bring-up → JSC VM init — lands in
+    // one contiguous run of pages instead of being scattered across the ~54 MB
+    // `.text` (each hot fn otherwise drags in a 64 KB fault-around window of
+    // cold neighbours: ~+1.3 MB resident `.text` vs the PGO+BOLT'd shipped
+    // binary).
+    // Gated strictly on `pgoUse`: without a real profile this flag is harmful
+    // (the static `.unlikely` heuristic is wrong for our startup path — see
+    // the linker-tuning block above).
+    flag: "-Wl,-z,keep-text-section-prefix",
+    when: c => c.linux && c.release && !!c.pgoUse && !c.asan && !c.valgrind,
+    desc: "Keep .text.hot/.text.unlikely prefixes from the PGO profile (cluster hot startup .text)",
   },
 
   // ─── Symbols / exports ───
@@ -935,7 +1031,6 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
   },
-
   // ─── FreeBSD ───
   {
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
@@ -948,7 +1043,7 @@ export const linkerFlags: Flag[] = [
     desc: "Use lld instead of system ld",
   },
   {
-    flag: ["-fno-pic", "-no-pie"],
+    flag: ["-fno-pic", "-Wl,-no-pie"],
     when: c => c.freebsd,
     desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
   },
@@ -957,7 +1052,6 @@ export const linkerFlags: Flag[] = [
       "-Wl,-O2",
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,--compress-debug-sections=zlib",
       "-Wl,-z,lazy",
       "-Wl,-z,norelro",
       "-Wl,--gdb-index",
@@ -967,6 +1061,21 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.freebsd,
     desc: "FreeBSD linker tuning (same as Linux ELF)",
+  },
+  {
+    // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for
+    // the lld they bundle as `rust-lld`, so this flag hard-fails there:
+    //   `rust-lld: error: --compress-debug-sections: LLVM was not built with
+    //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
+    // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
+    // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
+    // that case, drop the flag rather than fail the link. Larger debug
+    // sections in `bun-profile` is a build-size cost, not a correctness one —
+    // and only on agents where the LLVM versions diverge. The system lld path
+    // (linux/freebsd llvm-* packages) keeps compressing.
+    flag: "-Wl,--compress-debug-sections=zlib",
+    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
+    desc: "Compress ELF debug sections (skipped with rust-lld — built without zlib)",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1033,14 +1142,17 @@ export const stripFlags: Flag[] = [
   {
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     //
-    // Gated on LTO to match -Wl,--no-eh-frame-hdr in linkerFlags above. GNU
-    // strip does not rewrite the program header table, so on a non-LTO
-    // build (which links WITH --eh-frame-hdr) removing .eh_frame_hdr here
-    // would leave an orphan PT_GNU_EH_FRAME phdr pointing at unmapped
-    // memory — any C++ unwind (e.g. WTF::Thread teardown after a worker
-    // exits) would then fault reading it.
+    // Gated on release to match -Wl,--no-eh-frame-hdr in linkerFlags above
+    // (both fire on `c.linux && c.abi === "gnu" && c.release`). GNU strip
+    // does not rewrite the program header table, so the PT_GNU_EH_FRAME
+    // phdr must already be absent at link time — which the matching
+    // --no-eh-frame-hdr above guarantees. Nothing unwinds at runtime
+    // (`panic = "abort"`, `-fno-exceptions`); release backtraces use frame
+    // pointers. Saves ~962 KB of R-segment (.eh_frame 806 KB +
+    // .eh_frame_hdr 142 KB + .gcc_except_table 13 KB) that otherwise gets
+    // dragged into RSS via 64 KB fault-around on adjacent .rodata reads.
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi === "gnu" && c.lto,
+    when: c => c.linux && c.abi === "gnu" && c.release,
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];
@@ -1070,7 +1182,7 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/jsc/bindings/v8"),
     join(cwd, "src/jsc/modules"),
     join(cwd, "src/js/builtins"),
-    join(cwd, "src/napi"),
+    join(cwd, "src/runtime/napi"),
     join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,

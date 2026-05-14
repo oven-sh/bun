@@ -95,26 +95,24 @@ std::atomic<int> wtfStringCopyCount;
 #endif
 
 #if defined(__x86_64__)
-__asm__(".symver exp,exp@GLIBC_2.2.5");
-__asm__(".symver exp2,exp2@GLIBC_2.2.5");
-__asm__(".symver expf,expf@GLIBC_2.2.5");
-__asm__(".symver log,log@GLIBC_2.2.5");
-__asm__(".symver log2,log2@GLIBC_2.2.5");
-__asm__(".symver log2f,log2f@GLIBC_2.2.5");
-__asm__(".symver logf,logf@GLIBC_2.2.5");
-__asm__(".symver pow,pow@GLIBC_2.2.5");
-__asm__(".symver powf,powf@GLIBC_2.2.5");
+#define BUN_GLIBC_BASE "GLIBC_2.2.5"
+#define BUN_GLIBC_2_4 "GLIBC_2.4"
 #elif defined(__aarch64__)
-__asm__(".symver expf,expf@GLIBC_2.17");
-__asm__(".symver exp,exp@GLIBC_2.17");
-__asm__(".symver exp2,exp2@GLIBC_2.17");
-__asm__(".symver log,log@GLIBC_2.17");
-__asm__(".symver log2,log2@GLIBC_2.17");
-__asm__(".symver log2f,log2f@GLIBC_2.17");
-__asm__(".symver logf,logf@GLIBC_2.17");
-__asm__(".symver pow,pow@GLIBC_2.17");
-__asm__(".symver powf,powf@GLIBC_2.17");
+#define BUN_GLIBC_BASE "GLIBC_2.17"
+#define BUN_GLIBC_2_4 "GLIBC_2.17"
 #endif
+
+#define BUN_SYMVER(sym, ver) __asm__(".symver " #sym "," #sym "@" ver)
+
+BUN_SYMVER(exp, BUN_GLIBC_BASE);
+BUN_SYMVER(exp2, BUN_GLIBC_BASE);
+BUN_SYMVER(expf, BUN_GLIBC_BASE);
+BUN_SYMVER(log, BUN_GLIBC_BASE);
+BUN_SYMVER(log2, BUN_GLIBC_BASE);
+BUN_SYMVER(log2f, BUN_GLIBC_BASE);
+BUN_SYMVER(logf, BUN_GLIBC_BASE);
+BUN_SYMVER(pow, BUN_GLIBC_BASE);
+BUN_SYMVER(powf, BUN_GLIBC_BASE);
 
 #if defined(__x86_64__) || defined(__aarch64__)
 #define BUN_WRAP_GLIBC_SYMBOL(symbol) __wrap_##symbol
@@ -355,6 +353,139 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
 
 extern "C" __attribute__((used)) char _libc_single_threaded = 0;
 extern "C" __attribute__((used)) char __libc_single_threaded = 0;
+
+// ───────────────────────────────────────────────────────────────────────────
+// glibc 2.27–2.35 symbols pulled in by Rust std, host crt1.o, libgcc_eh,
+// libarchive, and the ASAN runtime when building on a glibc ≥ 2.27 host.
+// All have ABI-compatible older versions (or syscall fallbacks); pinning
+// each __wrap_X to the floor version keeps verneed ≤ 2.17 regardless of
+// build host. On a glibc 2.17 host these wraps are inert (the linker never
+// sees the newer default version, so --wrap just routes through a no-op
+// trampoline).
+// ───────────────────────────────────────────────────────────────────────────
+
+#include <sys/stat.h>
+#include <spawn.h>
+
+// Group A: libpthread/libdl symbols moved into libc.so in 2.34. The 2.2.5
+// (x86_64) / 2.17 (aarch64) versions are ABI-identical aliases of the 2.34
+// ones — glibc kept them as compat_symbol — so a plain .symver forward is
+// correct on every glibc ≥ 2.17.
+#define BUN_WRAP_FWD(ret, sym, params, args) \
+    BUN_SYMVER(sym, BUN_GLIBC_BASE);         \
+    extern "C" ret __wrap_##sym params { return sym args; }
+#define BUN_WRAP_FWD_VOID(sym, params, args) \
+    BUN_SYMVER(sym, BUN_GLIBC_BASE);         \
+    extern "C" void __wrap_##sym params { sym args; }
+
+BUN_WRAP_FWD(void*, dlsym, (void* h, const char* s), (h, s))
+BUN_WRAP_FWD(void*, dlvsym, (void* h, const char* s, const char* v), (h, s, v))
+BUN_WRAP_FWD(int, dladdr, (const void* a, Dl_info* i), (a, i))
+BUN_WRAP_FWD(char*, dlerror, (), ())
+BUN_WRAP_FWD(int, pthread_key_create, (pthread_key_t * k, void (*d)(void*)), (k, d))
+BUN_WRAP_FWD(int, pthread_key_delete, (pthread_key_t k), (k))
+BUN_WRAP_FWD(void*, pthread_getspecific, (pthread_key_t k), (k))
+BUN_WRAP_FWD(int, pthread_setspecific, (pthread_key_t k, const void* v), (k, v))
+BUN_WRAP_FWD(int, pthread_once, (pthread_once_t * o, void (*f)()), (o, f))
+BUN_WRAP_FWD(int, pthread_mutexattr_init, (pthread_mutexattr_t * a), (a))
+BUN_WRAP_FWD(int, pthread_mutexattr_settype, (pthread_mutexattr_t * a, int t), (a, t))
+BUN_WRAP_FWD(int, pthread_mutexattr_destroy, (pthread_mutexattr_t * a), (a))
+BUN_WRAP_FWD(int, pthread_mutex_trylock, (pthread_mutex_t * m), (m))
+BUN_WRAP_FWD(int, pthread_rwlock_rdlock, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_rwlock_wrlock, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_rwlock_unlock, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_rwlock_destroy, (pthread_rwlock_t * l), (l))
+BUN_WRAP_FWD(int, pthread_attr_setstacksize, (pthread_attr_t * a, size_t s), (a, s))
+BUN_WRAP_FWD(int, pthread_attr_setstack, (pthread_attr_t * a, void* s, size_t z), (a, s, z))
+BUN_WRAP_FWD(int, pthread_getattr_np, (pthread_t t, pthread_attr_t* a), (t, a))
+BUN_WRAP_FWD(int, pthread_kill, (pthread_t t, int s), (t, s))
+
+BUN_SYMVER(__pthread_key_create, BUN_GLIBC_BASE);
+extern "C" int __pthread_key_create(pthread_key_t*, void (*)(void*));
+extern "C" int __wrap___pthread_key_create(pthread_key_t* k, void (*d)(void*)) { return __pthread_key_create(k, d); }
+
+// Group B: stat family became real symbols in 2.33. Before that they were
+// header inlines around __fxstat*/__xmknod, which still exist at ≤ 2.17.
+extern "C" int __fxstat(int, int, struct stat*);
+extern "C" int __fxstat64(int, int, struct stat64*);
+extern "C" int __fxstatat(int, int, const char*, struct stat*, int);
+extern "C" int __fxstatat64(int, int, const char*, struct stat64*, int);
+extern "C" int __xmknod(int, const char*, mode_t, dev_t*);
+BUN_SYMVER(__fxstat, BUN_GLIBC_BASE);
+BUN_SYMVER(__fxstat64, BUN_GLIBC_BASE);
+BUN_SYMVER(__fxstatat, BUN_GLIBC_2_4);
+BUN_SYMVER(__fxstatat64, BUN_GLIBC_2_4);
+BUN_SYMVER(__xmknod, BUN_GLIBC_BASE);
+
+#ifndef _MKNOD_VER
+#define _MKNOD_VER 0
+#endif
+
+extern "C" int __wrap_fstat(int fd, struct stat* st) { return __fxstat(_STAT_VER, fd, st); }
+extern "C" int __wrap_fstat64(int fd, struct stat64* st) { return __fxstat64(_STAT_VER, fd, st); }
+extern "C" int __wrap_fstatat(int dfd, const char* p, struct stat* st, int f) { return __fxstatat(_STAT_VER, dfd, p, st, f); }
+extern "C" int __wrap_fstatat64(int dfd, const char* p, struct stat64* st, int f) { return __fxstatat64(_STAT_VER, dfd, p, st, f); }
+extern "C" int __wrap_mknod(const char* p, mode_t m, dev_t d) { return __xmknod(_MKNOD_VER, p, m, &d); }
+
+// Group C: thin syscall wrappers added in 2.27/2.28. Kernel has had the
+// syscalls since 4.5 (copy_file_range), 3.17 (memfd_create), 4.11 (statx);
+// callers (Rust std, bun.sys) already handle ENOSYS.
+extern "C" int __wrap_statx(int dfd, const char* p, int flags, unsigned mask, struct statx* st)
+{
+    return syscall(SYS_statx, dfd, p, flags, mask, st);
+}
+extern "C" int __wrap_memfd_create(const char* name, unsigned flags)
+{
+    return syscall(SYS_memfd_create, name, flags);
+}
+extern "C" ssize_t __wrap_copy_file_range(int in, loff_t* ioff, int out, loff_t* ooff, size_t len, unsigned flags)
+{
+    return syscall(SYS_copy_file_range, in, ioff, out, ooff, len, flags);
+}
+
+// Group D: no older version exists. Forward via dlsym when present;
+// otherwise return the documented "not supported" result so callers fall
+// back (libgcc unwinder → dl_iterate_phdr; Rust spawn → fork/exec).
+extern "C" int __wrap__dl_find_object(void* addr, void* result)
+{
+    using fn = int (*)(void*, void*);
+    static fn real = reinterpret_cast<fn>(dlsym(RTLD_DEFAULT, "_dl_find_object"));
+    return real ? real(addr, result) : -1;
+}
+extern "C" int __wrap_posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t* fa, const char* path)
+{
+    using fn = int (*)(posix_spawn_file_actions_t*, const char*);
+    static fn real = reinterpret_cast<fn>(dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addchdir_np"));
+    return real ? real(fa, path) : ENOSYS;
+}
+
+// __libc_start_main: 2.34 dropped the init/fini contract (crt1.o passes
+// NULL). The 2.2.5 compat symbol on ≥ 2.34 ignores init and walks
+// DT_INIT_ARRAY itself; on < 2.34 it calls init, so supply a walker that
+// reproduces what the now-absent __libc_csu_init did.
+extern "C" {
+extern void (*__preinit_array_start[])(int, char**, char**) __attribute__((weak));
+extern void (*__preinit_array_end[])(int, char**, char**) __attribute__((weak));
+extern void (*__init_array_start[])(int, char**, char**) __attribute__((weak));
+extern void (*__init_array_end[])(int, char**, char**) __attribute__((weak));
+extern void _init() __attribute__((weak));
+}
+static int bun_libc_csu_init(int argc, char** argv, char** envp)
+{
+    for (auto f = __preinit_array_start; f < __preinit_array_end; ++f)
+        (*f)(argc, argv, envp);
+    if (&_init) _init();
+    for (auto f = __init_array_start; f < __init_array_end; ++f)
+        (*f)(argc, argv, envp);
+    return 0;
+}
+BUN_SYMVER(__libc_start_main, BUN_GLIBC_BASE);
+extern "C" int __libc_start_main(int (*)(int, char**, char**), int, char**, int (*)(int, char**, char**), void (*)(), void (*)(), void*);
+extern "C" int __wrap___libc_start_main(int (*main)(int, char**, char**), int argc, char** argv,
+    int (*init)(int, char**, char**), void (*fini)(), void (*rtld_fini)(), void* stack_end)
+{
+    return __libc_start_main(main, argc, argv, init ? init : bun_libc_csu_init, fini, rtld_fini, stack_end);
+}
 
 #endif // glibc
 

@@ -800,6 +800,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     if (!scope.exception() && strongExportsObject && strongExportsObject.get() != resultValue) {
         PutPropertySlot slot(strongObject.get(), false);
         strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
+        RETURN_IF_EXCEPTION(scope, void());
     }
 
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);

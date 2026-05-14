@@ -271,28 +271,21 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, envp, envc, onCrash]() {
         JSC::Config::enableRestrictedOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
 
-#if ASAN_ENABLED && OS(LINUX)
-        {
-            JSC::Options::AllowUnfinalizedAccessScope scope;
-
-            // ASAN interferes with JSC's signal handlers
-            JSC::Options::useWasmFaultSignalHandler() = false;
-            JSC::Options::useWasmFastMemory() = false;
-        }
-#endif
-
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
+        // Under ASAN+Linux, JSC's notifyOptionsChanged() already disables
+        // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
+        // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
@@ -319,6 +312,21 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
+
+            if (oneShotStartup) {
+                // One-shot invocations (`bun -e ...` / `bun --print ...`) run a
+                // trivial amount of JavaScript and then exit; they never reach a
+                // long-running event loop. Creating the JSC worker threads that
+                // VM construction otherwise spawns eagerly — the concurrent JIT
+                // worklist thread and the Heap parallel-marking helpers — is pure
+                // overhead here (clone3 + faulting fresh thread stacks) and none
+                // of those threads do useful work before the process exits. Run
+                // the DFG/FTL on the executing thread and use a single GC marker.
+                // A `BUN_JSC_<option>` environment override below can still flip
+                // either knob back on for debugging.
+                JSC::Options::useConcurrentJIT() = false;
+                JSC::Options::numberOfGCMarkers() = 1;
+            }
 
             if (envc > 0) [[likely]] {
                 auto envc_copy = envc;
@@ -2509,16 +2517,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSFileSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
-            auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
     m_JSBufferListClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = JSBufferListPrototype::create(
@@ -2647,6 +2645,31 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stderrValue);
 }
+
+// The CommonJS `require()` machinery (`@requireESM`, `@loadEsmIntoCjs`,
+// `@internalRequire`) is only ever reached from inside CommonJS modules. A
+// process whose entry point is ESM (the common case for short scripts) never
+// touches it, so parsing/compiling these builtins during global object setup is
+// pure startup overhead. Register lazy custom-value getters instead: the first
+// `@`-reference from builtin code materializes the function and replaces the
+// accessor with the plain builtin function for subsequent fast access.
+//
+// Note: these private names are only consumed via `op_get_from_scope` from
+// builtin JS (`$requireESM`, `$loadEsmIntoCjs`, `$internalRequire`), never via
+// `getDirect`, so a custom accessor is a transparent substitute. (`@create*ReadableStream`
+// next to these *do* have `getDirect` callers and must stay eager.)
+#define BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getterName, codeGenerator, attributes)                                           \
+    JSC_DEFINE_CUSTOM_GETTER(getterName, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name))            \
+    {                                                                                                                          \
+        auto& vm = JSC::getVM(lexicalGlobalObject);                                                                            \
+        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);                                        \
+        JSC::JSFunction* fn = globalObject->putDirectBuiltinFunction(vm, globalObject, name, codeGenerator(vm), (attributes)); \
+        return JSValue::encode(fn);                                                                                            \
+    }
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+#undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -2864,9 +2887,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createUsedReadableStreamPrivateName(), readableStreamCreateUsedReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), commonJSRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.loadEsmIntoCjsPrivateName(), commonJSLoadEsmIntoCjsCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), commonJSInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // These three are CommonJS-only and never reached on an ESM startup path; install
+    // lazy getters so their source isn't parsed during global object construction.
+    // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
+    putDirectCustomAccessor(vm, builtinNames.requireESMPrivateName(), JSC::CustomGetterSetter::create(vm, getRequireESMBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.loadEsmIntoCjsPrivateName(), JSC::CustomGetterSetter::create(vm, getLoadEsmIntoCjsBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.internalRequirePrivateName(), JSC::CustomGetterSetter::create(vm, getInternalRequireBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 

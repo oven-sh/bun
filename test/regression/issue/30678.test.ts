@@ -27,7 +27,7 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { promises as fs, existsSync } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 
 // Simulates the broken emission state by stripping `refresh: "..."` from
@@ -201,11 +201,7 @@ test("hmr client does not crash when config.refresh is missing", async () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      client.stdout.text(),
-      client.stderr.text(),
-      client.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([client.stdout.text(), client.stderr.text(), client.exited]);
 
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: expect.stringContaining("CLIENT_OK"),

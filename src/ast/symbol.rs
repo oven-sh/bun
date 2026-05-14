@@ -586,10 +586,10 @@ impl Map {
     pub fn init(source_count: usize) -> Map {
         // Zig: `arena.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
         // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.
-        let mut v: Vec<List> = Vec::with_capacity(source_count);
+        let mut v: NestedList = Vec::with_capacity(source_count);
         v.resize_with(source_count, List::default);
         Map {
-            symbols_for_source: NestedList::move_from_list(v),
+            symbols_for_source: v,
         }
     }
 
@@ -599,7 +599,7 @@ impl Map {
     // PERF(port): one extra allocation vs Zig — profile (single
     // caller is the printer one-shot, cold).
     pub fn init_with_one_list(list: List) -> Map {
-        Self::init_list(NestedList::move_from_list(vec![list]))
+        Self::init_list(vec![list])
     }
 
     pub fn init_list(list: NestedList) -> Map {

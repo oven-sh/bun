@@ -209,7 +209,7 @@ impl BufferedIoClosed {
         // single-threaded and this is the same pattern `subproc::on_close_io`
         // uses to take the done buffer.
         let buffer = unsafe { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
-        *state = BufferedIoState::Closed(Vec::<u8>::move_from_list(buffer));
+        *state = BufferedIoState::Closed(buffer);
     }
 }
 

@@ -693,7 +693,7 @@ pub fn compute_chunks(
     // is only assigned here on success, so no rollback guard is needed.)
     this.unique_key_buf = unique_key_builder.move_to_slice();
 
-    Ok(sorted_chunks.to_owned_slice())
+    Ok(sorted_chunks.into_boxed_slice())
     // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
     // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
 }

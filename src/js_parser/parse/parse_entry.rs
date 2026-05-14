@@ -581,13 +581,11 @@ impl<'a> Parser<'a> {
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
-        let mut symbols_ = symbols;
         // PORT NOTE: Zig `moveToListManaged(arena)` rebinds the same
         // backing storage to an `ArrayList(arena)`. The Rust Vec
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
         // copy elements into the arena. Phase B may grow a zero-copy adapter.
-        p.symbols =
-            bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
+        p.symbols = bun_alloc::vec_from_iter_in(symbols.into_iter(), p.arena);
 
         p.prepare_for_visit_pass()?;
 

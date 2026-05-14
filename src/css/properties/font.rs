@@ -805,10 +805,8 @@ impl Font {
         };
 
         // PORT NOTE: Zig `Vec(FontFamily).parse` parsed a comma-separated
-        // list and packed it; route through `parse_comma_separated` + move.
-        let family = input
-            .parse_comma_separated(FontFamily::parse)
-            .map(Vec::<FontFamily>::move_from_list)?;
+        // list and packed it; route through `parse_comma_separated`.
+        let family = input.parse_comma_separated(FontFamily::parse)?;
 
         Ok(Font {
             family,

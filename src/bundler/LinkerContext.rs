@@ -3942,7 +3942,7 @@ impl<'a> LinkerContext<'a> {
                         .put(
                             import_ref,
                             crate::ImportData {
-                                re_exports: Vec::<Dependency>::move_from_list(re_exports),
+                                re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,
@@ -3965,7 +3965,7 @@ impl<'a> LinkerContext<'a> {
                         .put(
                             import_ref,
                             crate::ImportData {
-                                re_exports: Vec::<Dependency>::move_from_list(re_exports),
+                                re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,

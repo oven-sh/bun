@@ -480,9 +480,7 @@ impl FileReader {
         if self.reader().is_done() {
             self.consume_reader_buffer();
             if !self.buffered.get().is_empty() {
-                return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(
-                    self.buffered.replace(Vec::new()),
-                ));
+                return streams::Start::OwnedAndDone(self.buffered.replace(Vec::new()));
             }
         } else {
             #[cfg(unix)]
@@ -669,10 +667,8 @@ impl FileReader {
                             });
                             drop(buffer); // clearAndFree
                         } else {
-                            self.pending.with_mut(|p| {
-                                p.result =
-                                    streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer))
-                            });
+                            self.pending
+                                .with_mut(|p| p.result = streams::Result::OwnedAndDone(buffer));
                         }
                     } else {
                         self.pending.with_mut(|p| p.result = streams::Result::Done);
@@ -711,10 +707,8 @@ impl FileReader {
                         debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
                         let mut buffer = unsafe { mem::take(&mut *reader_buffer) };
                         buffer.truncate(buf.len()); // shrinkRetainingCapacity
-                        self.pending.with_mut(|p| {
-                            p.result =
-                                streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffer))
-                        });
+                        self.pending
+                            .with_mut(|p| p.result = streams::Result::OwnedAndDone(buffer));
                     } else {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
@@ -742,9 +736,9 @@ impl FileReader {
 
                 self.pending.with_mut(|p| {
                     p.result = if self.reader().is_done() {
-                        streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
+                        streams::Result::OwnedAndDone(buffered)
                     } else {
-                        streams::Result::Owned(Vec::<u8>::move_from_list(buffered))
+                        streams::Result::Owned(buffered)
                     }
                 });
                 break 'pending !was_done;
@@ -897,9 +891,9 @@ impl FileReader {
                     );
                     let buffered = self.buffered.replace(Vec::new());
                     if self.reader().is_done() {
-                        return streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered));
+                        return streams::Result::OwnedAndDone(buffered);
                     }
-                    return streams::Result::Owned(Vec::<u8>::move_from_list(buffered));
+                    return streams::Result::Owned(buffered);
                 }
                 _ => {
                     // Spec FileReader.zig:544 `else => {}` falls through to set
@@ -928,7 +922,7 @@ impl FileReader {
 
     pub fn drain(&self) -> Vec<u8> {
         if !self.buffered.get().is_empty() {
-            let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
+            let out = self.buffered.replace(Vec::new());
             if cfg!(debug_assertions) {
                 debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
             }
@@ -939,7 +933,7 @@ impl FileReader {
             return Vec::<u8>::default();
         }
 
-        Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
+        mem::take(self.reader().buffer())
     }
 
     pub fn set_ref_or_unref(&self, enable: bool) {
@@ -962,10 +956,8 @@ impl FileReader {
             if self.pending.get().state == streams::PendingState::Pending {
                 if !self.buffered.get().is_empty() {
                     let buffered = self.buffered.replace(Vec::new());
-                    self.pending.with_mut(|p| {
-                        p.result =
-                            streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
-                    });
+                    self.pending
+                        .with_mut(|p| p.result = streams::Result::OwnedAndDone(buffered));
                 } else {
                     self.pending.with_mut(|p| p.result = streams::Result::Done);
                 }

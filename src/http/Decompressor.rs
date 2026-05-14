@@ -131,16 +131,6 @@ impl Decompressor {
                 reader.zlib.avail_in = buffer.len() as u32;
 
                 let initial = body_out_str.list.len();
-                // PORT NOTE: Zig `expandToCapacity()` set `len = capacity` so the
-                // zlib output pointers could write into the spare region while
-                // `read_all` later truncated back to `total_out`. `read_all`'s
-                // grow-on-avail_out==0 path reads `list_ptr.len()` to compute the
-                // resume offset, so this `set_len(capacity)` is load-bearing —
-                // skipping it leaves `len == initial` and the next grow rewinds
-                // `next_out` to `ptr + initial`, overwriting freshly-inflated
-                // bytes (observed as mid-stream gzip/deflate corruption when a
-                // streamed body chunk decompresses past the reused buffer's
-                // capacity).
                 if body_out_str.list.capacity() == initial {
                     body_out_str.list.reserve(4096);
                 }
@@ -155,10 +145,11 @@ impl Decompressor {
                 // SAFETY: see `seat` contract — same buffer pair as initial seat.
                 let (_, out) = unsafe { seat(buffer, &mut body_out_str.list) };
                 reader.list_ptr = out;
-                // SAFETY: zlib writes the tail; `read_all` truncates to `total_out` before any read.
-                // `additional = 0`: the conditional reserve above already grew the buffer; `reserve(0)` is a no-op.
-                // `list_ptr.len() == initial` here (reserve does not change len), so the helper's internal `prev` matches.
-                let (next_out, avail_out) = unsafe { reader.list_ptr.reserve_expand_tail(0) };
+                // `list_ptr.len() == initial` here (reserve does not change len),
+                // so the spare tail starts at `ptr + initial`. `read_all` commits
+                // `len = total_out` per iteration before each subsequent reseat,
+                // so multi-round inflate never rewinds `next_out`.
+                let (next_out, avail_out) = reader.list_ptr.ffi_spare_tail(0);
                 reader.zlib.next_out = next_out;
                 reader.zlib.avail_out = avail_out as u32;
                 // we reset the total out so we can track how much we decompressed this time

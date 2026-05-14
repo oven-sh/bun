@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as options } from "harness";
+import https from "https";
 import { createHash } from "node:crypto";
 import http from "node:http";
-import https from "https";
 import { connect as netConnect, type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer } from "ws";

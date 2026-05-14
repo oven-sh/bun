@@ -22,17 +22,10 @@ pub use host_fns::{generate_symbol_for_function, generate_symbols};
 
 // ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
 
+// `pub` so `generated_js2native.rs` can reach `crate::ffi::ffi_body::bun__ffi__cc`
+// directly (the `$rust("ffi_body.rs", …)` call site names this file on disk).
 #[path = "ffi_body.rs"]
-mod ffi_body; // full Phase-A draft of FFI.zig
-
-/// `js2native` codegen resolves `$zig(ffi.zig, Bun__FFI__cc)` to
-/// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.zig` basename.
-/// `FFI::bun_ffi_cc` lives in `ffi_body` (the full port) — re-export it under
-/// the codegen-expected path so the dispatch table links without forcing the
-/// generator to special-case `ffi/ffi.zig`.
-pub mod ffi {
-    pub use super::ffi_body::bun__ffi__cc;
-}
+pub mod ffi_body; // full Phase-A draft of FFI.zig
 
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;

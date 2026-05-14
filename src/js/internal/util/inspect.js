@@ -2644,7 +2644,7 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 const stripANSI = Bun.stripANSI;
-const internalGetStringWidth = $newRustFunction("string.rs", "String.jsGetStringWidth", 1);
+const internalGetStringWidth = $newRustFunction("bun_string_jsc.rs", "String.jsGetStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */

@@ -20,11 +20,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 pub use bun_sql_jsc::mysql::create_binding as sql_jsc_mysql_create_binding;
 pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding;
 
-// ── src/crash_handler/crash_handler.zig js_bindings.generate ────────────────
-// Zig aliases this to `runtime/api/crash_handler_jsc.zig::js_bindings`; the
-// real body already lives in this crate.
-pub use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
-
 // ── src/install/**.zig ──────────────────────────────────────────────────────
 pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
 pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
@@ -35,11 +30,11 @@ pub use bun_install_jsc::npm_jsc::architecture_is_match as install_npm_architect
 pub use bun_install_jsc::npm_jsc::operating_system_is_match as install_npm_operating_system_js_function_operating_system_is_match;
 pub use bun_install_jsc::npm_jsc::package_manifest_bindings_generate as install_npm_package_manifest_bindings_generate;
 
-// ── src/ini/ini.zig IniTestingAPIs ──────────────────────────────────────────
+// ── src/install_jsc/ini_jsc.rs IniTestingAPIs ───────────────────────────────
 // PORT NOTE: the `*_jsc` bodies were lifted into `bun_install_jsc::ini_jsc`
 // (ini's only JSC consumer is `bun install`'s npmrc loader).
-pub use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as ini_ini_ini_testing_ap_is_load_npmrc_from_js;
-pub use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testing_ap_is_parse;
+pub use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as install_jsc_ini_jsc_ini_testing_ap_is_load_npmrc_from_js;
+pub use bun_install_jsc::ini_jsc::ini_testing_parse as install_jsc_ini_jsc_ini_testing_ap_is_parse;
 
 // ── src/jsc/*.zig ───────────────────────────────────────────────────────────
 pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_get_bindgen_test_functions;
@@ -57,23 +52,23 @@ pub use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_mess
 // so the codegen mangles the dispatch name with the `bun_core_string_` prefix.
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as bun_core_string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as bun_core_string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
-pub use bun_jsc::bun_string_jsc::js_get_string_width as string_string_string_js_get_string_width;
+pub use bun_jsc::bun_string_jsc::js_get_string_width as jsc_bun_string_jsc_string_js_get_string_width;
 pub use bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel as bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel;
 
-// ── src/patch/patch.zig TestingAPIs ─────────────────────────────────────────
-pub use bun_patch_jsc::testing::patch_apply as patch_patch_testing_ap_is_apply;
-pub use bun_patch_jsc::testing::patch_make_diff as patch_patch_testing_ap_is_make_diff;
-pub use bun_patch_jsc::testing::patch_parse as patch_patch_testing_ap_is_parse;
+// ── src/patch_jsc/testing.rs TestingAPIs ────────────────────────────────────
+pub use bun_patch_jsc::testing::patch_apply as patch_jsc_testing_testing_ap_is_apply;
+pub use bun_patch_jsc::testing::patch_make_diff as patch_jsc_testing_testing_ap_is_make_diff;
+pub use bun_patch_jsc::testing::patch_parse as patch_jsc_testing_testing_ap_is_parse;
 
 // ── src/sourcemap/InternalSourceMap.zig TestingAPIs ─────────────────────────
 pub use bun_sourcemap_jsc::internal_jsc::testing_find as sourcemap_internal_source_map_testing_ap_is_find;
 pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_source_map_testing_ap_is_from_vlq;
 pub use bun_sourcemap_jsc::internal_jsc::testing_to_vlq as sourcemap_internal_source_map_testing_ap_is_to_vlq;
 
-// ── src/sys/{sys,Error}.zig TestingAPIs ─────────────────────────────────────
-pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_sys_testing_ap_is_sigaction_layout;
+// ── src/sys/Error.rs + src/sys_jsc/error_jsc.rs TestingAPIs ─────────────────
+pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_jsc_error_jsc_testing_ap_is_sigaction_layout;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_error_testing_ap_is_sys_error_name_from_libuv;
-pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_testing_ap_is_translate_uv_error_to_e;
+pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_jsc_error_jsc_testing_ap_is_translate_uv_error_to_e;
 
 // ── src/http/{H2Client,H3Client}.zig TestingAPIs ────────────────────────────
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;

@@ -51,9 +51,9 @@ const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSo
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket_body.rs", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newRustFunction("runtime/socket/socket_body.rs", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newRustFunction("runtime/socket/socket_body.rs", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");

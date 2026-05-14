@@ -41,7 +41,7 @@ const {
   validateNumber,
 } = require("internal/validators");
 
-const internalGetStringWidth = $newRustFunction("string.rs", "String.jsGetStringWidth", 1);
+const internalGetStringWidth = $newRustFunction("bun_string_jsc.rs", "String.jsGetStringWidth", 1);
 
 const PromiseReject = Promise.$reject;
 

@@ -17,9 +17,9 @@ export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeI
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {
-  parse: $newRustFunction("patch.rs", "TestingAPIs.parse", 1),
-  apply: $newRustFunction("patch.rs", "TestingAPIs.apply", 2),
-  makeDiff: $newRustFunction("patch.rs", "TestingAPIs.makeDiff", 2),
+  parse: $newRustFunction("patch_jsc/testing.rs", "TestingAPIs.parse", 1),
+  apply: $newRustFunction("patch_jsc/testing.rs", "TestingAPIs.apply", 2),
+  makeDiff: $newRustFunction("patch_jsc/testing.rs", "TestingAPIs.makeDiff", 2),
 };
 
 export const internalSourceMap = {
@@ -38,8 +38,8 @@ export const internalSourceMap = {
   } | null,
 };
 
-const shellLex = $newRustFunction("shell.rs", "TestingAPIs.shellLex", 2);
-const shellParse = $newRustFunction("shell.rs", "TestingAPIs.shellParse", 2);
+const shellLex = $newRustFunction("shell_body.rs", "TestingAPIs.shellLex", 2);
+const shellParse = $newRustFunction("shell_body.rs", "TestingAPIs.shellParse", 2);
 
 export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount", 0);
 
@@ -61,7 +61,7 @@ export const shellInternals = {
    * const isDisabled = builtinDisabled("cp")
    * ```
    */
-  builtinDisabled: $newRustFunction("shell.rs", "TestingAPIs.disabledOnThisPlatform", 1),
+  builtinDisabled: $newRustFunction("shell_body.rs", "TestingAPIs.disabledOnThisPlatform", 1),
 };
 
 export const subprocessInternals = {
@@ -72,7 +72,7 @@ export const subprocessInternals = {
 };
 
 export const iniInternals = {
-  parse: $newRustFunction("ini.rs", "IniTestingAPIs.parse", 1),
+  parse: $newRustFunction("ini_jsc.rs", "IniTestingAPIs.parse", 1),
   // loadNpmrc: (
   //   src: string,
   //   env?: Record<string, string>,
@@ -81,8 +81,8 @@ export const iniInternals = {
   //   default_registry_token: string;
   //   default_registry_username: string;
   //   default_registry_password: string;
-  // } => $newRustFunction("ini.rs", "IniTestingAPIs.loadNpmrcFromJS", 2)(src, env),
-  loadNpmrc: $newRustFunction("ini.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),
+  // } => $newRustFunction("ini_jsc.rs", "IniTestingAPIs.loadNpmrcFromJS", 2)(src, env),
+  loadNpmrc: $newRustFunction("ini_jsc.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
 export const cssInternals = {
@@ -96,7 +96,7 @@ export const cssInternals = {
   attrTest: $newRustFunction("css_internals.rs", "attrTest", 3),
 };
 
-export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {
+export const crash_handler = $rust("crash_handler_jsc.rs", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
   panic: () => void;
@@ -175,7 +175,7 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
 );
 
 export const createSocketPair: () => [number, number] = $newRustFunction(
-  "runtime/socket/socket.rs",
+  "runtime/socket/socket_body.rs",
   "jsCreateSocketPair",
   0,
 );
@@ -235,7 +235,7 @@ interface setSocketOptionsFn {
 }
 
 export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
-  "runtime/socket/socket.rs",
+  "runtime/socket/socket_body.rs",
   "jsSetSocketOptions",
   3,
 );
@@ -265,7 +265,7 @@ export const hostedGitInfo = {
 };
 
 export const translateUVErrorToE: (code: number) => string | undefined = $newRustFunction(
-  "sys.rs",
+  "sys_jsc/error_jsc.rs",
   "TestingAPIs.translateUVErrorToE",
   1,
 );
@@ -282,7 +282,7 @@ export const sigactionLayout: () =>
       installed: { handler: number; flags: number };
       readback: { handler: number; flags: number };
       sizeof: number;
-    } = $newRustFunction("sys.rs", "TestingAPIs.sigactionLayout", 0);
+    } = $newRustFunction("sys_jsc/error_jsc.rs", "TestingAPIs.sigactionLayout", 0);
 
 export const stringsInternals = {
   /**

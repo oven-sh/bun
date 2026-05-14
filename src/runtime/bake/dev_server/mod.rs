@@ -277,7 +277,7 @@ impl GraphTraceState {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
         };
-        if b.unmanaged.bit_length < new_size {
+        if b.unmanaged.bit_length() < new_size {
             b.resize(new_size, false)?;
         }
         Ok(())

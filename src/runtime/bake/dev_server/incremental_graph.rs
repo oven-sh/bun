@@ -459,7 +459,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         are_new_files_stale: bool,
     ) -> Result<(), bun_alloc::AllocError> {
-        let want = self.bundled_files.count().max(self.stale_files.bit_length);
+        let want = self.bundled_files.count().max(self.stale_files.bit_length());
         // Align forward to 8 usize words (8*64 bits).
         const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
         let aligned = want.div_ceil(STEP) * STEP;
@@ -645,7 +645,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.first_import.push(None);
         }
 
-        if self.stale_files.bit_length > file_index.get() as usize {
+        if self.stale_files.bit_length() > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
         }
 
@@ -1366,7 +1366,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.first_dep.push(None);
             self.first_import.push(None);
         }
-        if self.stale_files.bit_length > idx {
+        if self.stale_files.bit_length() > idx {
             self.stale_files.set(idx);
         }
 

@@ -1,5 +1,4 @@
 import { file } from "bun";
-import { readdirSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../scripts/glob-sources.ts";
 

@@ -283,6 +283,51 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
   });
+  // https://github.com/oven-sh/bun/issues/30654 — drop parens around a
+  // single simple identifier arrow parameter when minifying syntax.
+  itBundled("minify/ArrowSingleParamParensDropped", {
+    files: {
+      "/entry.js": /* js */ `
+        capture((x) => x);
+        capture(x => x);
+        capture(async (x) => x);
+        capture(async x => x);
+        capture((x, y) => x + y);
+        capture(({ a }) => a);
+        capture(([a]) => a);
+        capture((...rest) => rest);
+        capture((x = 1) => x);
+        capture(() => 1);
+      `,
+    },
+    capture: [
+      "a=>a",
+      "a=>a",
+      "async a=>a",
+      "async a=>a",
+      "(a,c)=>a+c",
+      "({a})=>a",
+      "([a])=>a",
+      "(...a)=>a",
+      "(a=1)=>a",
+      "()=>1",
+    ],
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+  });
+  // Arrow parens must be preserved when syntax minification is off, even
+  // with whitespace/identifier minification.
+  itBundled("minify/ArrowSingleParamParensKeptWithoutSyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        capture((x) => x);
+      `,
+    },
+    capture: ["(a)=>a"],
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+  });
   itBundled("minify/ForAndWhileLoopsWithMissingBlock", {
     files: {
       "/entry.js": /* js */ `

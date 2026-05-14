@@ -1375,10 +1375,24 @@ fn NewPrinter(
             open_paren_loc: ?logger.Loc,
             args: []G.Arg,
             has_rest_arg: bool,
-            // is_arrow can be used for minifying later
-            _: bool,
+            is_arrow: bool,
         ) void {
-            const wrap = true;
+            // When minifying, drop the parentheses around an arrow function's
+            // single simple identifier parameter: `(x) => …` becomes `x => …`.
+            // Only safe when there's exactly one argument, it's a plain
+            // identifier binding (not destructuring), no default value, no
+            // rest/spread, and no decorators.
+            const wrap = wrap: {
+                if (!is_arrow) break :wrap true;
+                if (!p.options.minify_syntax) break :wrap true;
+                if (args.len != 1) break :wrap true;
+                if (has_rest_arg) break :wrap true;
+                const arg = args[0];
+                if (arg.binding.data != .b_identifier) break :wrap true;
+                if (arg.default != null) break :wrap true;
+                if (arg.ts_decorators.len != 0) break :wrap true;
+                break :wrap false;
+            };
 
             if (wrap) {
                 if (open_paren_loc) |loc| {

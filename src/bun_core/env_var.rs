@@ -77,9 +77,16 @@ new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 // so nothing it spawned outlives it. See `src/io/ParentDeathWatchdog.rs`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
-// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
-// so we'll keep it for now.
-new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
+/// Nanoseconds the filesystem watcher waits for additional events after
+/// the first read returns, so a single editor save (which typically emits
+/// several events a few ms apart) is delivered as one `on_file_update` call.
+/// The old 0.1 ms default was too short to coalesce real-world save bursts
+/// and caused `--hot` to re-evaluate the entry point once per kernel event.
+///
+/// Despite the name this is honoured by all three watcher backends
+/// (inotify, kqueue, and `ReadDirectoryChangesW`); the Windows backend
+/// rounds to milliseconds.
+new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 10_000_000 });
 new!(pub BUN_INSPECT: string, "BUN_INSPECT", { default: b"" });
 new!(pub BUN_INSPECT_CONNECT_TO: string, "BUN_INSPECT_CONNECT_TO", { default: b"" });
 new!(pub BUN_INSPECT_PRELOAD: string, "BUN_INSPECT_PRELOAD", {});

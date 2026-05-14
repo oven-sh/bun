@@ -53,9 +53,27 @@ pub struct INotifyWatcher {
     read_ptr: Option<ReadPtr>,
 
     pub watch_count: AtomicU32,
-    /// nanoseconds
+    /// After the first `read()` returns events, the watcher repeatedly
+    /// `ppoll`s with this timeout and drains any further events that
+    /// arrive before it expires. Editors commonly generate several
+    /// inotify events for a single logical save (truncate+write, or
+    /// write+rename, plus matching events on the parent-directory
+    /// watch), often spread across a few milliseconds. If those events
+    /// land in separate `read()` cycles the consumer sees multiple
+    /// `on_file_update` calls for one save and, in `--hot` mode,
+    /// re-evaluates the entry point once per burst.
+    ///
+    /// Nanoseconds. Overridable via `BUN_INOTIFY_COALESCE_INTERVAL`.
     pub coalesce_interval: isize,
 }
+
+pub const DEFAULT_COALESCE_INTERVAL_NS: isize = 10_000_000; // 10ms
+/// Safety cap on drain iterations so a file written to faster than the
+/// coalesce interval cannot hold the watch loop indefinitely. In the
+/// common case the loop exits on the first `ppoll` that sees no new
+/// data (one `coalesce_interval` after the final event in a burst);
+/// this bound only bites when writes never stop.
+const MAX_COALESCE_ITERATIONS: u32 = 32;
 
 impl Default for INotifyWatcher {
     fn default() -> Self {
@@ -66,7 +84,7 @@ impl Default for INotifyWatcher {
             eventlist_ptrs: [core::ptr::null(); max_count],
             read_ptr: None,
             watch_count: AtomicU32::new(0),
-            coalesce_interval: 100_000,
+            coalesce_interval: DEFAULT_COALESCE_INTERVAL_NS,
         }
     }
 }
@@ -192,7 +210,7 @@ impl INotifyWatcher {
         self.coalesce_interval = env_var::BUN_INOTIFY_COALESCE_INTERVAL
             .get()
             .and_then(|v| isize::try_from(v).ok())
-            .unwrap_or(100_000);
+            .unwrap_or(DEFAULT_COALESCE_INTERVAL_NS);
 
         let raw = bun_sys::linux::inotify_init1(IN::CLOEXEC);
         let errno = bun_sys::get_errno(raw);
@@ -247,18 +265,45 @@ impl INotifyWatcher {
                             return Ok(&[]);
                         }
 
-                        // IN_MODIFY is very noisy
-                        // we do a 0.1ms sleep to try to coalesce events better
-                        const DOUBLE_READ_THRESHOLD: usize = Event::LARGEST_SIZE * (max_count / 2);
-                        if read_len < DOUBLE_READ_THRESHOLD {
+                        // IN_MODIFY is very noisy. Editors typically emit
+                        // several events per save (truncate+write,
+                        // write+rename, plus the parent-directory watch),
+                        // often a few ms apart. Keep draining until the fd
+                        // goes quiet for `coalesce_interval` so a single
+                        // save becomes a single `on_file_update` call.
+                        //
+                        // The loop exits as soon as (a) `ppoll` times out
+                        // with no new data, (b) we've accumulated enough
+                        // bytes that the parse loop below would set
+                        // `read_ptr` anyway (more than `max_count`
+                        // minimum-size events), or (c) the iteration cap is
+                        // hit. (b) and (c) keep a file that is written to
+                        // continuously from starving the watch loop while
+                        // still letting an ordinary save burst — a few
+                        // dozen events over a few ms — collapse into one
+                        // cycle.
+                        const NS_PER_S: isize = 1_000_000_000;
+                        let mut iterations: u32 = 0;
+                        while read_len < size_of::<Event>() * max_count
+                            && iterations < MAX_COALESCE_ITERATIONS
+                        {
+                            let rest = &mut self.eventlist_bytes.0[read_len..];
+                            if rest.len() < Event::LARGEST_SIZE {
+                                break; // buffer nearly full
+                            }
+
                             let mut fds = [system::pollfd {
                                 fd: self.fd.native(),
                                 events: (libc::POLLIN | libc::POLLERR) as _,
                                 revents: 0,
                             }];
+                            // POSIX requires tv_nsec < 10^9; split so a
+                            // user-supplied interval ≥ 1 s doesn't make
+                            // `ppoll` fail with EINVAL (which we treat as
+                            // "quiet" and would disable coalescing).
                             let timespec = libc::timespec {
-                                tv_sec: 0,
-                                tv_nsec: self.coalesce_interval as _,
+                                tv_sec: (self.coalesce_interval / NS_PER_S) as _,
+                                tv_nsec: (self.coalesce_interval % NS_PER_S) as _,
                             };
                             // SAFETY: fds and timespec are valid stack locals; sigmask is null.
                             let poll_n = unsafe {
@@ -269,37 +314,39 @@ impl INotifyWatcher {
                                     core::ptr::null(),
                                 )
                             };
-                            if poll_n > 0 {
-                                'inner: loop {
-                                    let rest = &mut self.eventlist_bytes.0[read_len..];
-                                    debug_assert!(!rest.is_empty());
-                                    // SAFETY: fd valid; rest is a valid mutable buffer.
-                                    let new_rc = unsafe {
-                                        system::read(
-                                            self.fd.native(),
-                                            rest.as_mut_ptr(),
-                                            rest.len(),
-                                        )
-                                    };
-                                    let e = get_errno(new_rc);
-                                    match e {
-                                        E::SUCCESS => {
-                                            read_len += usize::try_from(new_rc).expect("int cast");
-                                            break 'outer read_len;
-                                        }
-                                        E::EAGAIN | E::EINTR => {
-                                            continue 'inner;
-                                        }
-                                        _ => {
-                                            return Err(bun_sys::Error {
-                                                errno: e as u32 as _,
-                                                syscall: bun_sys::Tag::read,
-                                                ..Default::default()
-                                            });
-                                        }
+                            if poll_n <= 0 {
+                                break; // quiet
+                            }
+
+                            'inner: loop {
+                                // SAFETY: fd valid; rest is a valid mutable buffer.
+                                let new_rc = unsafe {
+                                    system::read(
+                                        self.fd.native(),
+                                        rest.as_mut_ptr(),
+                                        rest.len(),
+                                    )
+                                };
+                                let e = get_errno(new_rc);
+                                match e {
+                                    E::SUCCESS => {
+                                        read_len +=
+                                            usize::try_from(new_rc).expect("int cast");
+                                        break 'inner;
+                                    }
+                                    E::EAGAIN | E::EINTR => {
+                                        continue 'inner;
+                                    }
+                                    _ => {
+                                        return Err(bun_sys::Error {
+                                            errno: e as u32 as _,
+                                            syscall: bun_sys::Tag::read,
+                                            ..Default::default()
+                                        });
                                     }
                                 }
                             }
+                            iterations += 1;
                         }
 
                         break 'outer read_len;

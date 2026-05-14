@@ -97,21 +97,46 @@ fn load_bunfig(
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
-    let source =
-        match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
-            Ok(s) => s,
-            Err(err) => {
-                if auto_loaded {
-                    return Ok(());
-                }
-                Output::pretty_errorln(format_args!(
-                    "{}\nwhile reading config \"{}\"",
-                    err,
-                    BStr::new(config_path.as_bytes()),
-                ));
-                Global::exit(1);
+    // Dupe `config_path` onto the heap so `ctx.log` can safely borrow it after
+    // the caller's PathBuffer goes out of scope. `Source::init_path_string_owned`
+    // goes through `IntoStr::into_str` which uses `detach_lifetime` to fake
+    // `&'static [u8]` from the caller's slice; errors logged by `Bunfig::parse`
+    // then store `Location.file = Cow::Borrowed(source.path.text)` in ctx.log.
+    // Those messages are often printed later (by `report_bunfig_load_failure`
+    // in `load_config()`'s catch, after `load_system_bunfig`'s `config_buf`
+    // stack frame has been dropped). Without duping, the later print reads
+    // freed stack memory — stack-use-after-return under ASAN. Mirrors the Zig
+    // fix in 6c7bdf5de2 for src/runtime/cli/Arguments.zig::loadBunfig.
+    //
+    // `Box::leak` makes the `&'static [u8]` lifetime fabricated by
+    // `IntoStr::into_str` honest — the path lives for the rest of the
+    // process, matching how ctx.log messages hold borrowed path slices
+    // across `load_config`'s control flow.
+    let owned_path_leaked: &'static ZStr = {
+        let boxed = bun_core::ZBox::from_bytes(config_path.as_bytes())
+            .into_boxed_slice_with_nul();
+        let leaked: &'static [u8] = Box::leak(boxed);
+        // SAFETY: invariant — last byte is 0, written by `ZBox::from_bytes`.
+        unsafe { ZStr::from_raw(leaked.as_ptr(), leaked.len() - 1) }
+    };
+
+    let source = match bun_ast::to_source(
+        owned_path_leaked,
+        bun_ast::ToSourceOptions { convert_bom: true },
+    ) {
+        Ok(s) => s,
+        Err(err) => {
+            if auto_loaded {
+                return Ok(());
             }
-        };
+            Output::pretty_errorln(format_args!(
+                "{}\nwhile reading config \"{}\"",
+                err,
+                BStr::new(owned_path_leaked.as_bytes()),
+            ));
+            Global::exit(1);
+        }
+    };
 
     bun_ast::stmt::data::Store::create();
     bun_ast::expr::data::Store::create();

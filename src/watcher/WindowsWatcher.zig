@@ -197,11 +197,22 @@ pub fn stop(this: *WindowsWatcher) void {
     w.CloseHandle(this.iocp);
 }
 
-/// Wake the watcher thread from a blocking `GetQueuedCompletionStatus` so
-/// it can observe `Watcher.running == false` and exit. Posts a zero-byte
-/// completion, which `next()` already treats as a shutdown notification.
+/// On Linux/macOS `wake()` unblocks the watcher thread so it can observe
+/// `Watcher.running == false`, run its cleanup, and exit. On Windows that
+/// cleanup path is not yet safe: `next()` always has a pending
+/// `ReadDirectoryChangesW` armed on `this.watcher.overlapped`, and running
+/// `stop()` followed by `allocator.destroy(this)` races the kernel writing
+/// the cancellation status into that (now-freed) OVERLAPPED. Posting a
+/// zero-byte completion here reliably aborted the process with exit code 3
+/// on Windows CI (`test/bake/serve-plugins-dev-server.test.ts`).
+///
+/// For now this is a no-op, which restores the pre-existing Windows
+/// behaviour: the thread stays parked in `GetQueuedCompletionStatus` until
+/// process exit. The original #21017 use-after-free is fixed independently
+/// by `Watcher.deinit` keying off `thread != null`, so the parked thread is
+/// never handed a freed `*Watcher`.
 pub fn wake(this: *WindowsWatcher) void {
-    _ = w.kernel32.PostQueuedCompletionStatus(this.iocp, 0, 0, &this.watcher.overlapped);
+    _ = this;
 }
 
 pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {

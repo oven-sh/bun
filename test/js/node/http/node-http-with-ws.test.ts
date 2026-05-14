@@ -228,6 +228,7 @@ test.concurrent("server.on('upgrade') works over TLS (https)", async () => {
 
   const serverReceived: Buffer[] = [];
   const { promise: serverGotData, resolve: resolveServerData } = Promise.withResolvers<void>();
+  const { promise: serverClosed, resolve: resolveServerClosed } = Promise.withResolvers<void>();
 
   server.on("upgrade", (req, socket) => {
     const key = req.headers["sec-websocket-key"] as string;
@@ -244,6 +245,7 @@ test.concurrent("server.on('upgrade') works over TLS (https)", async () => {
       serverReceived.push(chunk);
       resolveServerData();
     });
+    socket.on("close", () => resolveServerClosed());
   });
 
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
@@ -270,10 +272,12 @@ test.concurrent("server.on('upgrade') works over TLS (https)", async () => {
   const handshake = await handshakeDone;
   expect(handshake).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
   expect(handshake).toContain("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+  expect(handshake.split("HTTP/1.1").length - 1).toBe(1);
 
   client.write(Buffer.from([0x81, 0x83, 0x00, 0x00, 0x00, 0x00, 0x66, 0x6f, 0x6f]));
   await serverGotData;
   expect(Buffer.concat(serverReceived)).toEqual(Buffer.from([0x81, 0x83, 0x00, 0x00, 0x00, 0x00, 0x66, 0x6f, 0x6f]));
 
   client.end();
+  await serverClosed;
 });

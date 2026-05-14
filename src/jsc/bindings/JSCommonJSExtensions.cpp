@@ -213,6 +213,7 @@ extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* glob
 extern "C" void JSCommonJSExtensions__setFunction(Zig::GlobalObject* globalObject, uint32_t index, JSC::JSValue value)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
+    WTF::Locker locker { extensions->cellLock() };
     extensions->m_registeredFunctions[index].set(globalObject->vm(), extensions, value);
 }
 
@@ -305,10 +306,11 @@ void JSCommonJSExtensions::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    // m_registeredFunctions is mutated by JSCommonJSExtensions__appendFunction
-    // and JSCommonJSExtensions__swapRemove on the mutator thread; take cellLock
-    // so a concurrent Vector reallocation does not free the backing buffer
-    // mid-scan when this runs on a parallel mark thread.
+    // m_registeredFunctions is mutated by JSCommonJSExtensions__appendFunction,
+    // JSCommonJSExtensions__setFunction, and JSCommonJSExtensions__swapRemove on
+    // the mutator thread; take cellLock so a concurrent Vector reallocation does
+    // not free the backing buffer mid-scan when this runs on a parallel mark
+    // thread.
     WTF::Locker locker { thisObject->cellLock() };
     for (auto& func : thisObject->m_registeredFunctions) {
         visitor.append(func);

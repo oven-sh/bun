@@ -15,9 +15,9 @@
 // Layout is `#[repr(transparent)] NonZeroU16`, so `Option<Error>` is one u16
 // and FFI/packed-struct slots that held a Zig `anyerror` keep the same width.
 
+use crate::RwLock;
 use core::fmt;
 use core::num::NonZeroU16;
-use crate::RwLock;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

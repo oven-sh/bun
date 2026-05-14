@@ -537,7 +537,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
     ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, false)
+        Self::configure_env_for_run_impl(
+            ctx,
+            this_transpiler,
+            env,
+            log_errors,
+            store_root_fd,
+            false,
+        )
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a

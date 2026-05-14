@@ -44,7 +44,11 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     /// multiple of 64; otherwise zeros in the high padding bits).
     const LAST_WORD_MASK: usize = {
         let rem = CAPACITY % WORD_BITS;
-        if rem == 0 { usize::MAX } else { (1usize << rem) - 1 }
+        if rem == 0 {
+            usize::MAX
+        } else {
+            (1usize << rem) - 1
+        }
     };
 
     pub const fn init_empty() -> Self {
@@ -113,10 +117,13 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     /// the `<KIND_SET=true, DIR_FWD=true>` combination is implemented (the
     /// only one used in-tree); other params assert.
     #[inline]
-    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
-        &self,
-    ) -> HiveBitSetIter<CAPACITY> {
-        const { assert!(KIND_SET && DIR_FWD, "HiveBitSet::iterator only supports <true,true>") };
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(&self) -> HiveBitSetIter<CAPACITY> {
+        const {
+            assert!(
+                KIND_SET && DIR_FWD,
+                "HiveBitSet::iterator only supports <true,true>"
+            )
+        };
         HiveBitSetIter {
             masks: self.masks,
             word: 0,

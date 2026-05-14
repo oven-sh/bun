@@ -146,7 +146,11 @@ impl AutoFlusher {
         // Ctx is opaque ptr identity only; `cast_mut()` does not assert write
         // provenance (no `&mut T` formed) — the trampoline recovers `*mut T`
         // and the impl decides how to borrow.
-        NonNull::new(core::ptr::from_ref::<T>(this).cast_mut().cast::<core::ffi::c_void>())
+        NonNull::new(
+            core::ptr::from_ref::<T>(this)
+                .cast_mut()
+                .cast::<core::ffi::c_void>(),
+        )
     }
 
     #[inline]

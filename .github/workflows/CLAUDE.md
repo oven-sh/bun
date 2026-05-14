@@ -6,7 +6,7 @@ This document provides guidance for maintaining the GitHub Actions workflows in 
 
 ### Overview
 
-The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig fmt) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
+The `format.yml` workflow runs code formatters (Prettier, clang-format, and `cargo fmt`) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
 
 ### Key Components
 
@@ -32,7 +32,7 @@ The `format.yml` workflow runs code formatters (Prettier, clang-format, and Zig 
 
 The workflow runs all three formatters simultaneously:
 
-- Each formatter outputs with a prefix (`[prettier]`, `[clang-format]`, `[zig]`)
+- Each formatter outputs with a prefix (`[prettier]`, `[clang-format]`, `[rustfmt]`)
 - Output is streamed in real-time without blocking
 - Uses GitHub Actions groups (`::group::`) for collapsible sections
 
@@ -44,20 +44,17 @@ The workflow runs all three formatters simultaneously:
 - Uses `--no-install-recommends --no-install-suggests` to skip unnecessary packages
 - Quiet installation with `-qq` and `-o=Dpkg::Use-Pty=0`
 
-##### Zig
+##### Rustfmt
 
-- Downloads from `oven-sh/zig` releases (musl build for static linking)
-- URL: `https://github.com/oven-sh/zig/releases/download/autobuild-{COMMIT}/bootstrap-x86_64-linux-musl.zip`
-- Extracts to temp directory to avoid polluting the repository
-- Directory structure: `bootstrap-x86_64-linux-musl/zig`
+- The pinned nightly toolchain comes from `rust-toolchain.toml` (which lists `rustfmt` in `components`); `cargo fmt --all` runs against the workspace at the repo root.
+- `rustup` auto-installs the pinned toolchain + components on the first `cargo`/`rustup` invocation, so no separate install step is needed.
 
 ### Updating the Workflow
 
-#### To update Zig version:
+#### To update the Rust toolchain:
 
-1. Find the new commit hash from https://github.com/oven-sh/zig/releases
-2. Replace the hash in the wget URL (line 65 of format.yml)
-3. Test that the URL is valid and the binary works
+1. Bump `channel` in `rust-toolchain.toml` (and `Dockerfile`/`bootstrap.sh` to match).
+2. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
 
 #### To update clang-format version:
 
@@ -114,5 +111,4 @@ export LLVM_VERSION_MAJOR=19
 
 - The script defaults to **format** mode (modifies files)
 - Always test locally before pushing workflow changes
-- The musl Zig build works on glibc systems due to static linking
 - Keep the exclusion list updated as new third-party code is added

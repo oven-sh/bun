@@ -10,8 +10,8 @@
 
 use crate::ManagedTask;
 // TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
-use bun_threading::unbounded_queue::{Link, Linked};
 use bun_threading::UnboundedQueue;
+use bun_threading::unbounded_queue::{Link, Linked};
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
 // Zig spelled these as namespace calls (`ConcurrentTask.createFrom(...)`,

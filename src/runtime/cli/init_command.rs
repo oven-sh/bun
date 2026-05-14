@@ -2024,7 +2024,9 @@ pub(crate) fn exists(path: &[u8]) -> bool {
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
     !bun_paths::is_absolute_loose(path)
-        && !path.split(|&c| c == b'/' || c == b'\\').any(|seg| seg == b"..")
+        && !path
+            .split(|&c| c == b'/' || c == b'\\')
+            .any(|seg| seg == b"..")
 }
 
 #[inline]

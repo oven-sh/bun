@@ -55,21 +55,17 @@ jobs:
           ) &
           CLANG_PID=$!
 
-          # Setup Zig in temp directory and run zig fmt in background with prefixed output
-          echo "::group::Zig fmt"
+          # Run cargo fmt in background with prefixed output. The pinned
+          # nightly + rustfmt component come from rust-toolchain.toml; rustup
+          # auto-installs on first cargo invocation.
+          echo "::group::Cargo fmt"
           (
-            ZIG_TEMP=$(mktemp -d)
-            echo "[zig] Downloading Zig (musl build)..."
-            wget -q -O "$ZIG_TEMP/zig.zip" https://github.com/oven-sh/zig/releases/download/autobuild-e0b7c318f318196c5f81fdf3423816a7b5bb3112/bootstrap-x86_64-linux-musl.zip
-            unzip -q -d "$ZIG_TEMP" "$ZIG_TEMP/zig.zip"
-            export PATH="$ZIG_TEMP/bootstrap-x86_64-linux-musl:$PATH"
-            echo "[zig] Running zig fmt..."
-            zig fmt src 2>&1 | sed 's/^/[zig] /'
-            ./scripts/sort-imports.ts src 2>&1 | sed 's/^/[zig] /'
-            zig fmt src 2>&1 | sed 's/^/[zig] /'
-            rm -rf "$ZIG_TEMP"
+            echo "[rustfmt] Installing toolchain from rust-toolchain.toml..."
+            rustup show active-toolchain 2>&1 | sed 's/^/[rustfmt] /'
+            echo "[rustfmt] Running cargo fmt --all..."
+            cargo fmt --all 2>&1 | sed 's/^/[rustfmt] /'
           ) &
-          ZIG_PID=$!
+          RUST_PID=$!
 
           # Wait for all formatting tasks to complete
           echo ""
@@ -88,8 +84,8 @@ jobs:
           fi
           echo "::endgroup::"
 
-          if ! wait $ZIG_PID; then
-            echo "::error::Zig fmt failed"
+          if ! wait $RUST_PID; then
+            echo "::error::cargo fmt failed"
             FAILED=1
           fi
           echo "::endgroup::"

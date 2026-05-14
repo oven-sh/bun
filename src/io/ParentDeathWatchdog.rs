@@ -590,7 +590,9 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
     #[cfg(target_os = "linux")]
     {
         let mut path_buf = [0u8; 64];
-        let Ok(path) = bun_core::fmt::buf_print_z(&mut path_buf, format_args!("/proc/{}/stat", pid)) else {
+        let Ok(path) =
+            bun_core::fmt::buf_print_z(&mut path_buf, format_args!("/proc/{}/stat", pid))
+        else {
             return 0;
         };
         let mut read_buf = [0u8; 512];

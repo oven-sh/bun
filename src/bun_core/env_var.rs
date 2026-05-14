@@ -386,7 +386,10 @@ pub(crate) mod kind {
 
         pub(crate) fn string_is_truthy(s: &[u8]) -> bool {
             // Most values are considered truthy, except for "", "0", "false", "no", and "off".
-            !crate::strings::eql_any_case_insensitive_ascii(s, &[b"", b"0", b"false", b"no", b"off"])
+            !crate::strings::eql_any_case_insensitive_ascii(
+                s,
+                &[b"", b"0", b"false", b"no", b"off"],
+            )
         }
 
         // This is a template which ignores its parameter, but is necessary so that a separate

@@ -2203,7 +2203,11 @@ pub struct Version {
 }
 
 impl Version {
-    pub const ZERO: Self = Self { major: 0, minor: 0, patch: 0 };
+    pub const ZERO: Self = Self {
+        major: 0,
+        minor: 0,
+        patch: 0,
+    };
 
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
@@ -2233,7 +2237,11 @@ impl Version {
                 break;
             }
         }
-        Self { major: nums[0], minor: nums[1], patch: nums[2] }
+        Self {
+            major: nums[0],
+            minor: nums[1],
+            patch: nums[2],
+        }
     }
 }
 

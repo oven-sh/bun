@@ -1,6 +1,9 @@
 {
   "recommendations": [
-    // Zig
+    // Rust
+    "rust-lang.rust-analyzer",
+
+    // Zig (legacy .zig files kept as porting reference)
     "ziglang.vscode-zig",
 
     // C/C++

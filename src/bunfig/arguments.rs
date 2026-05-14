@@ -18,16 +18,70 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
+/// Result of looking up the system bunfig path.
+struct SystemConfigResult<'a> {
+    path: Option<&'a ZStr>,
+    /// `true` if the path came from `BUN_SYSTEM_CONFIG` (admin opt-in).
+    /// Explicit paths fail loudly; auto-discovered defaults are best-effort.
+    is_explicit: bool,
+}
+
+fn get_system_config_path(buf: &mut PathBuffer) -> SystemConfigResult<'_> {
+    // Allow overriding the system config path via BUN_SYSTEM_CONFIG.
+    // get_not_empty() treats empty string as unset.
+    if let Some(custom_path) = env_var::BUN_SYSTEM_CONFIG.get_not_empty() {
+        // Require absolute paths so system-wide policy isn't cwd-dependent.
+        if !resolve_path::Platform::AUTO.is_absolute(custom_path) {
+            Output::err_generic(
+                "BUN_SYSTEM_CONFIG must be an absolute path, got: \"{s}\"",
+                (BStr::new(custom_path),),
+            );
+            Global::exit(1);
+        }
+        if custom_path.len() < bun_paths::MAX_PATH_BYTES {
+            buf[..custom_path.len()].copy_from_slice(custom_path);
+            buf[custom_path.len()] = 0;
+            let len = custom_path.len();
+            return SystemConfigResult {
+                path: Some(ZStr::from_buf(&buf[..], len)),
+                is_explicit: true,
+            };
+        }
+        return SystemConfigResult { path: None, is_explicit: true };
+    }
+
+    if cfg!(windows) {
+        // Windows: use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
+        if let Some(all_users) = env_var::ALLUSERSPROFILE.get_not_empty() {
+            let paths: [&[u8]; 1] = [b"bunfig.toml"];
+            let joined =
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(all_users, &mut **buf, &paths);
+            return SystemConfigResult { path: Some(joined), is_explicit: false };
+        }
+        SystemConfigResult { path: None, is_explicit: false }
+    } else {
+        // POSIX: /etc/bunfig.toml.
+        let system_path: &[u8] = b"/etc/bunfig.toml";
+        buf[..system_path.len()].copy_from_slice(system_path);
+        buf[system_path.len()] = 0;
+        let len = system_path.len();
+        SystemConfigResult {
+            path: Some(ZStr::from_buf(&buf[..], len)),
+            is_explicit: false,
+        }
+    }
+}
+
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     let paths: [&[u8]; 1] = [b".bunfig.toml"];
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
+    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get_not_empty() {
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
             data_dir, &mut **buf, &paths,
         ));
     }
 
-    if let Some(home_dir) = env_var::HOME.get() {
+    if let Some(home_dir) = env_var::HOME.get_not_empty() {
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
             home_dir, &mut **buf, &paths,
         ));
@@ -39,6 +93,7 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
 fn load_bunfig(
     cmd: CommandTag,
     auto_loaded: bool,
+    is_project: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
@@ -77,8 +132,86 @@ fn load_bunfig(
         // SAFETY: same as above; runs on the same thread.
         unsafe { (*log_ptr).level = lvl };
     });
-    ctx.debug.loaded_bunfig = true;
+    // Only mark loaded_bunfig for project-level configs so guards in
+    // run_command / standalone / repl don't skip project bunfig.toml
+    // when a system or home config was already loaded.
+    if is_project {
+        ctx.debug.loaded_bunfig = true;
+    }
     Bunfig::parse(cmd, &source, ctx)
+}
+
+/// Load the system-wide bunfig (lowest priority). Auto-discovered paths are
+/// best-effort (warn-and-continue on errors so a broken /etc/bunfig.toml
+/// doesn't brick every bun invocation on the host). Explicit BUN_SYSTEM_CONFIG
+/// fails loudly so admin typos surface immediately.
+pub fn load_system_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_core::Error> {
+    if ctx.has_loaded_system_config {
+        return Ok(());
+    }
+    ctx.has_loaded_system_config = true;
+
+    let mut config_buf = PathBuffer::uninit();
+    let result = get_system_config_path(&mut config_buf);
+    if result.is_explicit && result.path.is_none() {
+        Output::err_generic("BUN_SYSTEM_CONFIG path is too long", ());
+        Global::exit(1);
+    }
+    if let Some(path) = result.path {
+        let log_ptr: *mut bun_ast::Log = ctx.log;
+        // SAFETY: process-global Log; see load_bunfig note.
+        let errors_before = unsafe { (*log_ptr).errors };
+
+        // System config is not project-level, so pass is_project = false.
+        // Explicit paths aren't auto-loaded (must fail loudly on missing file).
+        let load_result =
+            load_bunfig(cmd, !result.is_explicit, false, path, ctx);
+
+        match load_result {
+            Ok(()) => {}
+            Err(err) => {
+                if result.is_explicit {
+                    return Err(err);
+                }
+                // Auto-discovered: warn and continue. Bunfig::parse mutates ctx
+                // in place as it walks keys, so settings before the failing key
+                // may already be applied — reflect that honestly.
+                // SAFETY: process-global Log.
+                let log = unsafe { &mut *log_ptr };
+                if log.has_any() {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                }
+                Output::warn(format_args!(
+                    "aborted parsing auto-discovered system bunfig at \"{}\" ({}); keys before the error may have been applied",
+                    BStr::new(path.as_bytes()),
+                    err.name(),
+                ));
+                log.reset();
+                return Ok(());
+            }
+        }
+
+        // TOML lexer errors reach ctx.log without propagating as Zig/Rust
+        // errors. Check for that separately.
+        let log = unsafe { &mut *log_ptr };
+        if log.errors > errors_before {
+            if result.is_explicit {
+                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                Output::err_generic(
+                    "failed to parse BUN_SYSTEM_CONFIG at \"{s}\"",
+                    (BStr::new(path.as_bytes()),),
+                );
+                Global::exit(1);
+            }
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Output::warn(format_args!(
+                "aborted parsing auto-discovered system bunfig at \"{}\"; keys before the error may have been applied",
+                BStr::new(path.as_bytes()),
+            ));
+            log.reset();
+        }
+    }
+    Ok(())
 }
 
 fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_core::Error> {
@@ -87,9 +220,13 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_core:
     }
     ctx.has_loaded_global_config = true;
 
+    // Load system-wide config first (lowest priority).
+    load_system_bunfig(cmd, ctx)?;
+
     let mut config_buf = PathBuffer::uninit();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx)?;
+        // Home config is not project-level.
+        load_bunfig(cmd, true, false, path, ctx)?;
     }
     Ok(())
 }
@@ -118,7 +255,8 @@ pub fn load_config_path(
         }
     }
 
-    load_bunfig(cmd, auto_loaded, config_path, ctx)
+    // This is the project-level config path.
+    load_bunfig(cmd, auto_loaded, true, config_path, ctx)
 }
 
 #[cold]
@@ -138,8 +276,22 @@ pub fn load_config(
     user_config_path_: Option<&[u8]>,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
-    // If running as a standalone executable with autoloadBunfig disabled, skip config loading
-    // unless an explicit config path was provided via --config
+    // BUN_SYSTEM_CONFIG is an explicit administrator policy override — honor
+    // it even for standalone executables compiled with disable_autoload_bunfig.
+    // get_not_empty() treats empty string as unset.
+    let has_explicit_system_config = env_var::BUN_SYSTEM_CONFIG.get_not_empty().is_some();
+
+    // Load system-wide config BEFORE the standalone disable check so that
+    // BUN_SYSTEM_CONFIG is honored even for compiled binaries, while still
+    // letting disable_autoload_bunfig block home/project config loading.
+    if has_explicit_system_config || cmd.read_global_config() {
+        if let Err(err) = load_system_bunfig(cmd, ctx) {
+            report_bunfig_load_failure(ctx.log, err);
+        }
+    }
+
+    // If running as a standalone executable with autoloadBunfig disabled, skip further
+    // config loading unless an explicit --config path was provided.
     if user_config_path_.is_none() {
         if let Some(graph) = StandaloneModuleGraph::get() {
             // SAFETY: `get()` returns a non-null process-global pointer when Some.
@@ -157,7 +309,8 @@ pub fn load_config(
             ctx.has_loaded_global_config = true;
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
-                if let Err(err) = load_config_path(cmd, true, path, ctx) {
+                // Home config is not project-level.
+                if let Err(err) = load_bunfig(cmd, true, false, path, ctx) {
                     report_bunfig_load_failure(ctx.log, err);
                 }
             }

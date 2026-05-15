@@ -1650,7 +1650,7 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
-// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
+// `get_fd_path` (src/bun.rs) has an exhaustive per-OS switch: .windows
 // (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
 // covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
 // non-Windows target Bun ships, fd→path resolution is implemented — there is

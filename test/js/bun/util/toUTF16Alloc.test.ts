@@ -2,7 +2,7 @@ import { stringsInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 
 // `bun.strings.toUTF16AllocForReal(..., sentinel = true)` is only called from
-// Windows-specific code (`bun build --compile` metadata in `src/windows.zig`),
+// Windows-specific code (`bun build --compile` metadata),
 // so we exercise it directly via an internal binding here.
 //
 // Previously, the manual-conversion fallback (taken when simdutf rejects the

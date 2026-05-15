@@ -55,7 +55,7 @@ function readHead(path: string, bytes = 4096): Buffer {
   }
 }
 
-// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig. After #29290 the
+// Mirror of `hostUsesNixStoreInterpreter()` in src/exe_format/elf.rs. After #29290 the
 // normalization is skipped on Nix/Guix hosts — this assertion only holds on
 // non-Nix hosts. (The #29290 test covers the NixOS-host branch.)
 function hostLooksNix(): boolean {

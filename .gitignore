@@ -19,7 +19,6 @@
 .vs
 .vscode/clang*
 .vscode/cpp*
-.zig-cache
 .bake-debug
 *.a
 *.bc
@@ -61,7 +60,6 @@
 /test-report.md
 /test.js
 /test.ts
-/test.zig
 /testdir
 /build/
 cmake/sources
@@ -71,7 +69,6 @@ bun-mimalloc
 bun-nomimalloc
 bun-singlehtreaded
 bun-test-scratch
-bun-zigld
 cmake_install.cmake
 CMakeCache.txt
 CMakeFiles
@@ -89,9 +86,6 @@ examples/lotta-modules/bun-yday
 failing-tests.txt
 github
 make-dev-stats.csv
-misctools/fetch
-misctools/machbench
-misctools/sha
 myscript.sh
 node_modules
 node_modules_*
@@ -126,10 +120,6 @@ sign.json
 src/bake/generated.ts
 src/jsc/bindings-obj
 src/bun.js/debug-bindings-obj
-src/deps/zig-clap/.gitattributes
-src/deps/zig-clap/.github
-src/deps/zig-clap/example
-src/deps/zig-clap/README.md
 src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*
@@ -138,7 +128,6 @@ src/js/out/tmp
 src/node-fallbacks/node_modules
 src/node-fallbacks/out/*
 src/runtime.version
-src/tests.zig
 test.txt
 test/js/bun/glob/fixtures
 test/node.js/upstream
@@ -146,10 +135,7 @@ tsconfig.tsbuildinfo
 txt.js
 x64
 yarn.lock
-zig-cache
-zig-out
 test/node.js/upstream
-.zig-cache
 scripts/env.local
 *.generated.ts
 src/bake/generated.ts
@@ -157,7 +143,6 @@ test/cli/install/registry/packages/publish-pkg-*
 test/cli/install/registry/packages/@secret/publish-pkg-8
 test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 tmp
-codegen-for-zig-team.tar.gz
 
 # Dependencies
 /vendor
@@ -177,7 +162,6 @@ codegen-for-zig-team.tar.gz
 /src/deps/picohttpparser
 /src/deps/tinycc
 /src/deps/WebKit
-/src/deps/zig
 /src/deps/zlib
 /src/deps/zstd
 

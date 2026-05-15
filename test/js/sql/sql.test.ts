@@ -2776,7 +2776,7 @@ if (isDockerEnabled()) {
       10000,
     );
 
-    // Regression: src/sql_jsc/postgres/PostgresSQLQuery.zig:234 `push()` appends each
+    // Regression: src/sql_jsc/postgres/PostgresSQLQuery.rs `push()` appends each
     // DataRow JSValue into the codegen-backed `pending_value` cached array. The Rust port
     // stubbed push() as a no-op under the mistaken belief that `pending_value` is not a
     // field (it is — generated from `values: ["pendingValue", ...]` in sql.classes.ts).

@@ -66,7 +66,7 @@ function readHead(path: string, bytes = 4096): Buffer {
   }
 }
 
-// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig: true iff the
+// Mirror of `hostUsesNixStoreInterpreter()` in src/exe_format/elf.rs: true iff the
 // running bun would skip the FHS rewrite for this host. Test decisions must
 // stay in lockstep with the runtime's — if these two drift, tests pass/fail
 // for the wrong reason.

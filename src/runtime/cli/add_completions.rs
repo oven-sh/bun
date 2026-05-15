@@ -1,6 +1,7 @@
-// GENERATED: re-run `bun misctools/generate-add-completions.ts` with .rs output
-// (this module is auto-generated; do not hand-edit the compressed_data blob,
-// FirstLetter/Index tables, or init/getPackages — update the generator.)
+// GENERATED from src/runtime/cli/add_completions.txt — do not hand-edit the
+// compressed_data blob, FirstLetter/Index tables, or init/getPackages.
+// A Rust-emitting generator has not been written yet; until it is, this module
+// is a stub (see init/get_packages below).
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]

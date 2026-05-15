@@ -2191,7 +2191,7 @@ it.concurrent("#20283", async () => {
 });
 
 // Regression: hostname containing an interior NUL byte must not abort the process.
-// Zig reference: src/runtime/server/ServerConfig.zig — `bun.default_allocator.dupeZ(u8, host_str.slice())`
+// Reference: src/runtime/server/ServerConfig.rs — duplicating the host string with a NUL terminator
 // copies the raw bytes and the underlying C socket layer truncates at the first NUL, so
 // `"127.0.0.1\0ignored"` behaves like `"127.0.0.1"` (or at worst surfaces as a catchable JS error).
 // A port that uses CString::new(...).expect(...) would panic and crash the process instead.

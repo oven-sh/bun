@@ -599,7 +599,7 @@ describe("spawn stdin ReadableStream", () => {
     await expectMaxObjectTypeCount(expect, "Subprocess", 5);
   });
 
-  // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193
+  // Regression: src/runtime/api/bun/subprocess/Writable.rs
   // (`pipe.assignToStream(...)`) — Zig's `FileSink.create` returns rc=1 which is
   // *transferred* into `Writable{ .pipe = pipe }`; `assignToStream` itself is
   // ref-neutral (`ref(); defer deref()`). A port that takes an extra +1 inside

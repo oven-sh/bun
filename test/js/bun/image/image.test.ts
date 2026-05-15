@@ -1349,7 +1349,7 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     const at = base.indexOf(0x2c, 13);
     const g = Buffer.concat([base.subarray(0, at), ext, base.subarray(at)]);
     // Force the static decoder explicitly so this regression test still hits
-    // codec_gif.zig when run in isolation on macOS/Windows (the constructor
+    // codec_gif.rs when run in isolation on macOS/Windows (the constructor
     // has no per-instance backend option; the previous version relied on
     // earlier tests' side-effect on the process-global).
     Bun.Image.backend = "bun";

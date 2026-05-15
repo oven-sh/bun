@@ -1,7 +1,7 @@
 // Regression tests for node-compat group u9sf0l.
 //
 // The core bug was an ASAN use-after-poison in
-// src/http/HTTPContext.zig onHandshake: when the native
+// src/http/HTTPContext.rs onHandshake: when the native
 // checkServerIdentity() rejected the peer certificate, it called
 // closeAndFail() → fail() → result callback, which destroyed the
 // AsyncHTTP (and its embedded HTTPClient). onHandshake then wrote to

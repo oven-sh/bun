@@ -233,7 +233,7 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60000);
 
-// Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
+// Regression for src/runtime/webcore/fetch/FetchTasklet.rs —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)
 // the jsc.Strong handle on the fetch() promise before calling resolve()/reject().
 // A port that reads-without-consuming (e.g. value_or_empty()) and forgets to
@@ -251,11 +251,11 @@ test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet 
       return heapStats().protectedObjectTypeCounts.Promise ?? 0;
     };
 
-    // resolve path: real HTTP server (FetchTasklet.zig:601 — Holder.resolve)
+    // resolve path: real HTTP server (FetchTasklet.rs — Holder.resolve)
     using ok = Bun.serve({ port: 0, fetch: () => new Response("hi") });
 
     // reject path: TCP server that hangs up before sending headers, so
-    // result.isSuccess() == false → Holder.reject (FetchTasklet.zig:614)
+    // result.isSuccess() == false → Holder.reject (FetchTasklet.rs)
     const bad = createServer(sock => sock.destroy()).listen(0, "127.0.0.1");
     await new Promise(r => bad.once("listening", r));
     const badURL = "http://127.0.0.1:" + bad.address().port + "/";
@@ -303,7 +303,7 @@ test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet 
   expect(exitCode).toBe(0);
 }, 30000);
 
-// Regression: src/collections/hive_array.zig:65-76 (HiveArray.put) + src/bun.zig HiveRef.unref.
+// Regression: src/collections/hive_array.rs (HiveArray.put) + HiveRef.unref.
 // Zig's HiveRef.unref() calls `value.deinit()` BEFORE `pool.put()`, and `put()` itself runs
 // no destructor (just `value.* = undefined`). So Body.Value.deinit() — which derefs the
 // intrusive WTFStringImpl +1, frees InternalBlob bytes, and decrements the Blob.Store ref —

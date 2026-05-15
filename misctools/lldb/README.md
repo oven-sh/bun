@@ -4,8 +4,7 @@ This directory contains LLDB pretty printers for various Bun data structures to 
 
 ## Files
 
-- `bun_pretty_printer.py` - Pretty printers for Bun-specific types (bun.String, WTFStringImpl, ZigString, BabyList, etc.)
-- `lldb_pretty_printers.py` - Pretty printers for Zig language types from the Zig project
+- `bun_pretty_printer.py` - Pretty printers for Bun-specific types (`bun.String`, `WTFStringImpl`, `BabyList`, etc.)
 - `lldb_webkit.py` - Pretty printers for WebKit/JavaScriptCore types
 - `init.lldb` - LLDB initialization commands
 
@@ -14,7 +13,7 @@ This directory contains LLDB pretty printers for various Bun data structures to 
 ### bun.String Types
 - `bun.String` (or just `String`) - The main Bun string type
 - `WTFStringImpl` - WebKit string implementation (Latin1/UTF16)
-- `ZigString` - Zig string type (UTF8/Latin1/UTF16 with pointer tagging)
+- `UnsafeStringView` - Tagged-pointer string view (UTF8/Latin1/UTF16)
 
 ### Display Format
 
@@ -22,7 +21,7 @@ The pretty printers show string content directly, with additional metadata:
 
 ```
 # bun.String examples:
-"Hello, World!" [latin1]          # Regular ZigString
+"Hello, World!" [latin1]          # Regular string view
 "UTF-8 String 🎉" [utf8]          # UTF-8 encoded
 "Static content" [latin1 static]  # Static string
 ""                                # Empty string
@@ -31,7 +30,7 @@ The pretty printers show string content directly, with additional metadata:
 # WTFStringImpl examples:
 "WebKit String"                   # Shows the actual string content
 
-# ZigString examples:
+# UnsafeStringView examples:
 "Some text" [utf16 global]        # UTF16 globally allocated
 "ASCII text" [latin1]             # Latin1 encoded
 ```
@@ -70,18 +69,19 @@ bun bd
 ```bash
 lldb ./build/debug/bun-debug
 (lldb) command script import misctools/lldb/bun_pretty_printer.py
-(lldb) breakpoint set --file your_test.zig --line <line_number>
-(lldb) run your_test.zig
+(lldb) breakpoint set --name <function name>
+(lldb) run your_test.ts
 (lldb) frame variable
 ```
 
 ## Implementation Details
 
-### ZigString Pointer Tagging
-ZigString uses pointer tagging in the upper bits:
+### UnsafeStringView Pointer Tagging
+`UnsafeStringView` uses pointer tagging in the upper bits:
 - Bit 63: 1 = UTF16, 0 = UTF8/Latin1
 - Bit 62: 1 = Globally allocated (mimalloc)
 - Bit 61: 1 = UTF8 encoding
+- Bit 60: 1 = Static/immortal
 
 The pretty printer automatically detects and handles these tags.
 
@@ -90,11 +90,11 @@ WTFStringImpl uses flags in `m_hashAndFlags`:
 - Bit 2 (s_hashFlag8BitBuffer): 1 = Latin1, 0 = UTF16
 
 ### bun.String Tag Union
-bun.String is a tagged union with these variants:
+`bun.String` is a tagged union with these variants:
 - Dead (0): Invalid/freed string
 - WTFStringImpl (1): WebKit string
-- ZigString (2): Regular Zig string
-- StaticZigString (3): Static/immortal string
+- UnsafeStringView (2): Regular string view
+- StaticUnsafeStringView (3): Static/immortal string
 - Empty (4): Empty string ""
 
 ## Troubleshooting

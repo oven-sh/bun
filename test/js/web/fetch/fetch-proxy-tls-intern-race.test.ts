@@ -2,7 +2,7 @@
 //
 // Non-deterministic by nature: the race window between deref()'s fetchSub(1→0)
 // and destroy()'s mutex.lock() is ~10 CPU cycles in release. On debug+ASAN
-// builds, debug.deinit() in ref_count.zig widens the window enough for ~60%
+// builds, debug.deinit() in src/ptr/ref_count.rs widens the window enough for ~60%
 // catch rate without special env vars. On release builds, this is a best-effort
 // regression guard that will catch reintroduction across enough CI runs.
 //

@@ -222,7 +222,7 @@ if (isLinux) {
 
     test("compiled binary with large payload runs correctly", async () => {
       // Generate a string payload >16KB to exceed the initial .bun section allocation
-      // (BUN_COMPILED is aligned to 16KB). This forces the expansion path in elf.zig
+      // (BUN_COMPILED is aligned to 16KB). This forces the expansion path in src/exe_format/elf.rs
       // which appends data to the end of the file and extends the writable PT_LOAD
       // to cover it.
       const largeString = Buffer.alloc(20000, "x").toString();
@@ -467,7 +467,7 @@ if (isLinux) {
 
 // Regression guard for the standalone-module-graph ELF probe on Android.
 //
-// Spec: src/standalone_graph/StandaloneModuleGraph.zig — `fromExecutable()`
+// Spec: src/standalone_graph/StandaloneModuleGraph.rs — `fromExecutable()`
 // gates the ELF `.bun` reader on `Environment.isLinux or Environment.isFreeBSD`.
 // Zig's `isLinux` (builtin.target.os.tag == .linux) is TRUE on Android, so
 // Android takes the ELF path and the trailing `comptime unreachable` is dead.

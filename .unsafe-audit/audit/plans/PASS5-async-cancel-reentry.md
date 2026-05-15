@@ -2,8 +2,8 @@
 
 **Scope:** `src/` of oven-sh/bun (Rust port at `*.rs`; `.zig` siblings are
 historical reference only and not compiled).
-**Methodology:** Codex-grade — every claim traced to a specific file:line in
-the current tree; T1 findings require a concrete reachable call path.
+**Methodology:** Codex-grade — claims are tied to specific file:line evidence
+in the current tree; T1 findings require a concrete reachable call path.
 **Trigger:** P4-H soundness archeology surfaced three recent maintainer
 commits that all sealed the same UAF class. This pass searches the rest of
 the source for sites with the same shape.

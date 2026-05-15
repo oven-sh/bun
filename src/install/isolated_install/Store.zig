@@ -447,8 +447,17 @@ pub const Store = struct {
                 pkg_names: []const String,
 
                 pub fn eql(ctx: *const OrderedArraySetCtx, l_item: TransitivePeer, r_item: TransitivePeer) bool {
-                    _ = ctx;
-                    return l_item.pkg_id == r_item.pkg_id;
+                    if (l_item.pkg_id == r_item.pkg_id) return true;
+                    // Compare by package name rather than pkg_id so that peers
+                    // resolving to different versions of the same package (e.g.
+                    // effect@3.19.15 vs effect@3.19.19) are treated as equivalent
+                    // for deduplication. This prevents duplicate store entries for
+                    // the same package version when workspaces use different but
+                    // compatible version specifiers for peer dependencies.
+                    const pkg_names = ctx.pkg_names;
+                    const l_pkg_name = pkg_names[l_item.pkg_id];
+                    const r_pkg_name = pkg_names[r_item.pkg_id];
+                    return l_pkg_name.order(&r_pkg_name, ctx.string_buf, ctx.string_buf) == .eq;
                 }
 
                 pub fn order(ctx: *const OrderedArraySetCtx, l: TransitivePeer, r: TransitivePeer) std.math.Order {

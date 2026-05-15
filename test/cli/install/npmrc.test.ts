@@ -1,8 +1,9 @@
-import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { write } from "bun";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, stderrForInstall } from "harness";
+import { bunExe, bunEnv as env, stderrForInstall, VerdaccioRegistry } from "harness";
 import { join } from "path";
+
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
 
@@ -163,6 +164,80 @@ registry = http://localhost:${registry.port}/
       .env({
         ...process.env,
         XDG_CONFIG_HOME: `${homeDir}`,
+      })
+      .cwd(packageDir)
+      .throws(true);
+  });
+
+  it("falls back to HOME/.npmrc when XDG_CONFIG_HOME is set but has no .npmrc", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    // XDG_CONFIG_HOME exists but has no .npmrc
+    const xdgDir = `${packageDir}/xdg_config`;
+    await Bun.$`mkdir -p ${xdgDir}`;
+
+    // HOME has the .npmrc
+    const homeDir = `${packageDir}/home_dir`;
+    await Bun.$`mkdir -p ${homeDir}`;
+
+    const ini = /* ini */ `
+  registry=http://localhost:${registry.port}/
+  `;
+
+    await Bun.$`echo ${ini} > ${homeDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`
+      .env({
+        ...process.env,
+        XDG_CONFIG_HOME: `${xdgDir}`,
+        HOME: `${homeDir}`,
+      })
+      .cwd(packageDir)
+      .throws(true);
+  });
+
+  it("prefers XDG_CONFIG_HOME/.npmrc over HOME/.npmrc when both exist", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const xdgDir = `${packageDir}/xdg_config`;
+    await Bun.$`mkdir -p ${xdgDir}`;
+
+    const homeDir = `${packageDir}/home_dir`;
+    await Bun.$`mkdir -p ${homeDir}`;
+
+    // XDG has the correct registry
+    const xdgIni = /* ini */ `
+  registry=http://localhost:${registry.port}/
+  `;
+    await Bun.$`echo ${xdgIni} > ${xdgDir}/.npmrc`;
+
+    // HOME has an incorrect registry that would fail
+    const homeIni = /* ini */ `
+  registry=http://localhost:1/
+  `;
+    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
+
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    // Should succeed because XDG_CONFIG_HOME/.npmrc is preferred
+    await Bun.$`${bunExe()} install`
+      .env({
+        ...process.env,
+        XDG_CONFIG_HOME: `${xdgDir}`,
+        HOME: `${homeDir}`,
       })
       .cwd(packageDir)
       .throws(true);

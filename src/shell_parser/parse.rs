@@ -2839,6 +2839,26 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Newline);
                             fell_through = true;
                         }
+                        // Handle CRLF line endings from Windows-edited scripts.
+                        // A `\r` immediately before `\n` in Normal state is
+                        // discarded so the `\n` fires its usual word-break +
+                        // Newline token. Inside quotes, `\r` stays literal
+                        // (matches bash/dash).
+                        c if c == u32::from(b'\r') => {
+                            const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\r' as usize));
+                            if self.chars.state == CharState::Single
+                                || self.chars.state == CharState::Double
+                            {
+                                break 'escaped;
+                            }
+                            if let Some(next) = self.peek() {
+                                if !next.escaped && next.char == u32::from(b'\n') {
+                                    fell_through = true;
+                                    break 'escaped;
+                                }
+                            }
+                            break 'escaped;
+                        }
                         // glob asterisks
                         c if c == u32::from(b'*') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'*' as usize));
@@ -3170,6 +3190,32 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     self.break_word_impl(true, true, false)?;
                 }
                 continue;
+            }
+            // Escaped CR from `\<CR><LF>` line-continuation in a
+            // CRLF-encoded script: `read_char()` swallowed the backslash
+            // and returned the `\r` as escaped, leaving the `\n` for the
+            // next read. Consume that `\n` so the whole `\<CR><LF>` acts
+            // as a single line continuation (matches the escaped-`\n`
+            // case above). Escaped CR *not* followed by `\n` preserves
+            // both bytes verbatim: in Normal state the swallowed
+            // backslash was already the escape prefix (so only `\r`
+            // remains), but in Double state bash/POSIX treats `\<CR>`
+            // as literal `\` + CR, so re-emit the backslash that
+            // read_char() consumed.
+            else if char == u32::from(b'\r') {
+                debug_assert!(input.escaped);
+                if let Some(next) = self.peek() {
+                    if !next.escaped && next.char == u32::from(b'\n') {
+                        let _ = self.eat();
+                        if self.chars.state != CharState::Double {
+                            self.break_word_impl(true, true, false)?;
+                        }
+                        continue;
+                    }
+                }
+                if self.chars.state == CharState::Double {
+                    self.append_char_to_str_pool(u32::from(b'\\'))?;
+                }
             }
 
             self.append_char_to_str_pool(char)?;
@@ -4064,12 +4110,16 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                     Src::Unicode(u) => u.index_next().map(|v| v.char),
                 }?;
                 match peeked {
-                    // Backslash only applies to these characters
+                    // Backslash only applies to these characters.
+                    // `\r` is included so `\<CR><LF>` in a CRLF script
+                    // reaches the escaped-`\r` line-continuation handler
+                    // in the main lexer (parity with `\<LF>`).
                     c if c == u32::from(b'$')
                         || c == u32::from(b'`')
                         || c == u32::from(b'"')
                         || c == u32::from(b'\\')
                         || c == u32::from(b'\n')
+                        || c == u32::from(b'\r')
                         || c == u32::from(b'#') =>
                     {
                         char = peeked;
@@ -4190,13 +4240,14 @@ fn is_all_ascii(s: &[u8]) -> bool {
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
-pub const SPECIAL_CHARS: [u8; 34] = [
+pub const SPECIAL_CHARS: [u8; 35] = [
     b'~',
     b'[',
     b']',
     b'#',
     b';',
     b'\n',
+    b'\r',
     b'*',
     b'{',
     b',',

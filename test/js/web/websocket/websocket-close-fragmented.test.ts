@@ -129,33 +129,41 @@ describe("WebSocket", () => {
   // Regression: the close() reason was transcoded into a fixed 128-byte
   // stack buffer and then pointer-cast to `&mut [u8; 125]` before being
   // passed on with `body_len = cursor.position()`. A UTF-16 reason of
-  // 42 code units of U+0800 passes the C++ 123-char limit but transcodes
-  // to 126 UTF-8 bytes — overrunning the 125-byte reference in the next
-  // frame, panicking the Rust side (`range end index 126 out of range
-  // for slice of length 125`) and aborting the process across `extern "C"`.
+  // 42 code units of U+0800 passes the C++ 123-char limit (which bounds
+  // code units, not UTF-8 bytes) but transcodes to 126 UTF-8 bytes,
+  // overrunning the 125-byte reference, panicking the Rust side (`range
+  // end index 126 out of range for slice of length 125`) and aborting
+  // the process across `extern "C"`.
   //
   // The subprocess wrapper is deliberate: a panic in `WebSocket::close`
   // terminates the WHOLE bun process, which would crash the test runner
   // itself and leave no JUnit output. Spawning a child isolates the
   // expected crash so the parent test can assert on the child's exit
   // code.
-  test("close() with reason that transcodes beyond 125 UTF-8 bytes does not crash", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", CLOSE_LONG_REASON_FIXTURE],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // With the fix: the fixture completes normally and prints the close
-    // event code. Without the fix: the process aborts before reaching
-    // the close listener and exitCode is non-zero (SIGILL from the panic).
-    expect({ stdout: stdout.trim(), exitCode, panicked: stderr.includes("panic") }).toEqual({
-      stdout: "close:1000",
-      exitCode: 0,
-      panicked: false,
-    });
-  }, 15_000);
+  test(
+    "close() with reason that transcodes beyond 123 UTF-8 bytes does not crash",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", CLOSE_LONG_REASON_FIXTURE],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // With the fix: the fixture reaches the close listener, prints
+      // `close:1000`, and exits cleanly. Without the fix: the child aborts
+      // inside `WebSocket::close` before the listener fires — stdout is
+      // empty and exitCode is non-zero (SIGILL from the Rust panic).
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+        stdout: "close:1000",
+        exitCode: 0,
+      });
+    },
+    // The pre-fix failure mode routes through the debug crash handler
+    // (SIGILL → llvm-symbolizer), which takes ~6s in ASAN builds. 30s
+    // gives CI headroom; the happy path is ~1s.
+    30_000,
+  );
 });
 
 // Raw-socket WebSocket handshake + close(1000, reason-transcoding-to-126-UTF-8-bytes).

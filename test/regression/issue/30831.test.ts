@@ -23,8 +23,8 @@
 //      gets `EAGAIN: Resource temporarily unavailable` on its first read.
 
 import { expect, test } from "bun:test";
-import { spawn } from "node:child_process";
 import { bunEnv, bunExe } from "harness";
+import { spawn } from "node:child_process";
 
 // Tiny uppercasing filter implemented in bun itself so the test doesn't
 // depend on `perl`/`tr`/`awk` being installed on the runner.

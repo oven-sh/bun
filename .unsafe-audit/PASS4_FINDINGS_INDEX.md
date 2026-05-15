@@ -82,9 +82,9 @@ These crates / clusters were investigated thoroughly and found CLEAN of new soun
 | Pass 2 (Claude + Codex P2/P3 review) | ~14 | 0 |
 | Pass 3 (post-Codex final review) | ~17 | 4 |
 | Pass 4 (this pass) | 3 new T1/T1-equivalent entries (F-NEW-1, F-NEW-2, TH-1) plus 2 critical signal-safety defects | 2 new P0 |
-| **Cumulative** | **40 current T1/T1-equivalent entries** | **6 supply-chain P0** |
+| **Cumulative** | **40 current T1/T1-equivalent entries** | **6 ceiling-score supply-chain entries** |
 
-The 5 miri-confirmed traces cover: 2 of the 6 P0s (PUB-INSTALL-1, PUB-INSTALL-3), 1 latent-pub-API bug (linux_errno), 1 JS-reachable allocator-layout bug (UB-RT-001), 1 niche-T cluster (linear_fifo F-1).
+The 5 miri-confirmed traces cover: 2 of the 6 ceiling-score supply-chain entries (PUB-INSTALL-1, PUB-INSTALL-3), 1 latent-pub-API bug (linux_errno), 1 JS-reachable allocator-layout bug (UB-RT-001), 1 niche-T cluster (linear_fifo F-1).
 
 ## Total audit content
 

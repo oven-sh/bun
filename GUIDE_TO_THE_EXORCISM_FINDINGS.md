@@ -245,7 +245,7 @@ The ast-grep rule fires on the 2 real Bun U2 sites (`src/http/AsyncHTTP.rs:117`,
 ## How to cite an audit finding in a PR / issue / CVE
 
 Each finding has a STABLE ID prefix from the audit:
-- `PUB-INSTALL-N` — P0 supply-chain primitives
+- `PUB-INSTALL-N` — install/lockfile findings; PUB-INSTALL-1..4 are in the ceiling-score supply-chain set, while later PUB-INSTALL entries carry their own dashboard risk scores
 - `pre-existing-ub-N` — pass-2 latent UBs
 - `UB-RT-N` — bun_runtime findings
 - `H1..H17` — HTTP-stack findings

@@ -384,9 +384,13 @@ pub struct Batch {
 
 impl Batch {
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
-        // SAFETY: `len` is only read here for the fast-path zero check; the
-        // atomic load mirrors Zig's `@atomicLoad(usize, &this.len, .monotonic)`.
-        let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
+        // `Batch` is not shared across threads — `pop` takes `&mut self` and
+        // every mutation of `len` goes through `&mut self`. The Zig original
+        // uses `@atomicLoad(usize, &this.len, .monotonic)`, but a pointer-cast
+        // of a plain `usize` to `AtomicUsize` would be UB under Rust's memory
+        // model, and there is no concurrent writer that would require an
+        // atomic here. A plain read preserves the observable behavior.
+        let len = self.len;
         if len == 0 {
             return None;
         }
@@ -1938,6 +1942,67 @@ pub mod node {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::{Batch, Task};
+
+    fn new_task() -> *mut Task {
+        Box::into_raw(Box::new(Task::default()))
+    }
+
+    unsafe fn drop_task(ptr: *mut Task) {
+        // SAFETY: ptr came from `Box::into_raw` above and nothing else owns it.
+        drop(unsafe { Box::from_raw(ptr) });
+    }
+
+    /// Regression for #30774: `Batch::pop` used to pointer-cast `self.len` (a
+    /// plain `usize`) to `AtomicUsize` and call `.load()`, which is UB under
+    /// Rust's memory model. The fix reads `self.len` directly. The single-task
+    /// pop path is the common case taken by `HTTPThread::schedule`.
+    #[test]
+    fn pop_single_task() {
+        let task = new_task();
+        let mut batch = Batch::from(task);
+        assert_eq!(batch.len, 1);
+
+        let popped = batch.pop().expect("non-empty batch should pop");
+        assert_eq!(popped.as_ptr(), task);
+        assert_eq!(batch.len, 0);
+        assert!(batch.head.is_none());
+        assert!(batch.tail.is_none());
+
+        // Popping an empty batch returns None without touching head/tail.
+        assert!(batch.pop().is_none());
+
+        unsafe { drop_task(task) };
+    }
+
+    #[test]
+    fn pop_drains_pushed_tasks_fifo() {
+        let a = new_task();
+        let b = new_task();
+        let c = new_task();
+
+        let mut batch = Batch::default();
+        batch.push(Batch::from(a));
+        batch.push(Batch::from(b));
+        batch.push(Batch::from(c));
+        assert_eq!(batch.len, 3);
+
+        let popped: Vec<_> = core::iter::from_fn(|| batch.pop())
+            .map(|t| t.as_ptr())
+            .collect();
+        assert_eq!(popped, vec![a, b, c]);
+        assert_eq!(batch.len, 0);
+
+        unsafe {
+            drop_task(a);
+            drop_task(b);
+            drop_task(c);
         }
     }
 }

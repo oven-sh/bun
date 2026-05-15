@@ -2275,14 +2275,29 @@ impl PublishCommand {
                 // metadata) so the stem matches the `.tgz` key above — npm's
                 // `${manifest.name}-${manifest.version}` template uses the
                 // same version string for both.
+                // UTF-8, not latin1: the bundle is `serde_json::to_vec` output
+                // (or raw `--provenance-file` bytes) and real Rekor's
+                // `inclusionProof.checkpoint` always contains U+2014 EM DASH
+                // (sumdb/note signed-note format) — latin1 would mojibake
+                // `E2 80 94` and break inclusion-proof verification.
+                //
+                // `length` is the UTF-16 code-unit count, matching npm's
+                // `JSON.stringify(bundle).length` (i.e. what the registry
+                // sees as `data.length` after parsing the PUT body).
+                let data_len = std::str::from_utf8(&prov.bundle_json)
+                    .map(|s| s.encode_utf16().count())
+                    .unwrap_or(prov.bundle_json.len());
                 write!(
                     &mut buf,
                     ",\"{}-{}.sigstore\":{{\"content_type\":{},\"data\":{},\"length\":{}}}",
                     bstr::BStr::new(&ctx.package_name),
                     bstr::BStr::new(&ctx.package_version),
-                    bun_fmt::format_json_string_latin1(prov.media_type.as_bytes()),
-                    bun_fmt::format_json_string_latin1(&prov.bundle_json),
-                    prov.bundle_json.len(),
+                    bun_fmt::format_json_string_utf8(
+                        prov.media_type.as_bytes(),
+                        Default::default()
+                    ),
+                    bun_fmt::format_json_string_utf8(&prov.bundle_json, Default::default()),
+                    data_len,
                 )
                 .ok();
             }

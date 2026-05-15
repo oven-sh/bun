@@ -24,7 +24,37 @@ test("throw inside Error.prepareStackTrace doesnt crash", () => {
     throw new Error("wat");
   };
 
-  expect(() => new Error().stack).toThrow("wat");
+  // Node throws the prepareStackTrace exception here; we swallow it and
+  // fall back to the default-formatted stack because
+  // ErrorInstance::materializeErrorInfoIfNeeded has no way to propagate a
+  // throw without violating the getOwnPropertySlot contract and tripping
+  // debug assertions (see computeErrorInfoWrapperToJSValue).
+  expect(typeof new Error().stack).toBe("string");
+});
+
+test("structuredClone of Error with throwing Error.prepareStackTrace doesnt crash", () => {
+  Error.prepareStackTrace = ArrayBuffer;
+  const e = new Error("test");
+  const cloned = structuredClone(e);
+  expect(cloned).toBeInstanceOf(Error);
+  expect(cloned.message).toBe("test");
+
+  Error.prepareStackTrace = () => {
+    throw new Error("boom");
+  };
+  const e2 = new Error("test2");
+  const cloned2 = structuredClone(e2);
+  expect(cloned2).toBeInstanceOf(Error);
+  expect(cloned2.message).toBe("test2");
+  expect(typeof cloned2.stack).toBe("string");
+});
+
+test("getOwnPropertyDescriptor of Error with throwing Error.prepareStackTrace doesnt crash", () => {
+  Error.prepareStackTrace = ArrayBuffer;
+  const e = new Error("test");
+  const desc = Object.getOwnPropertyDescriptor(e, "stack");
+  expect(typeof desc.value).toBe("string");
+  expect(Object.getOwnPropertyDescriptor(e, "line").value).toBeNumber();
 });
 
 test("capture stack trace", () => {
@@ -523,8 +553,8 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(518);
-  expect(parentLineNumber).toBe(523);
+  expect(lineNumber).toBe(548);
+  expect(parentLineNumber).toBe(553);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {

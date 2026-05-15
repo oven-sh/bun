@@ -2640,5 +2640,63 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(stderr).toContain("--minimum-release-age");
       expect(exitCode).not.toBe(0);
     });
+
+    // Same unix-only fake-cache layout as the other warm-cache tests above.
+    test.skipIf(isWindows)("warm cache with mismatched bin name does not bypass --minimum-release-age", async () => {
+      // Regression: for scoped packages like `@angular/cli` (bin `ng`), bunx's
+      // first cache probe looks for `.bin/<initial_bin_name>` where the guess
+      // comes from the last path segment — here `cli`. That probe misses
+      // because the real bin is `ng`. Execution falls through to
+      // `get_bin_name_from_temp_directory` which reads the cached
+      // package.json's `bin` field, rewrites the probe path, and a second
+      // `which` call hits `.bin/ng` → `Run::run_binary`.
+      //
+      // Without threading the age gate into the cached-package.json
+      // staleness check, this path never sees `--minimum-release-age` and
+      // silently runs the cached (possibly-too-new) binary.
+      using dir = tempDir("bunx-min-age-bin-mismatch", {});
+      using cacheDir = tempDir("bunx-min-age-cache-bin-mismatch", {});
+      using tmp = tempDir("bunx-min-age-tmp-bin-mismatch", {});
+
+      const uid = process.getuid?.() ?? 0;
+      // Use a scoped package so `initial_bin_name` (= last segment after `/`)
+      // doesn't match the real bin name — exactly the `@angular/cli` → `ng`
+      // shape. `package_fmt` on disk becomes literally `@scope/name@latest`.
+      const pkgName = "@fake-scope/bin-mismatch";
+      const realBin = "mytool";
+      const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@latest`);
+      const pkgDir = join(cacheRoot, "node_modules", pkgName);
+      const binDir = join(cacheRoot, "node_modules", ".bin");
+      mkdirSync(pkgDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+
+      // Root package.json — bunx uses its mtime for the 24h staleness check.
+      writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
+      // Target package's package.json — bin name differs from last segment.
+      writeFileSync(
+        join(pkgDir, "package.json"),
+        JSON.stringify({ name: pkgName, version: "1.0.0", bin: { [realBin]: `./bin/${realBin}.js` } }),
+      );
+      // The fake cached binary at the real bin name.
+      const binPath = join(binDir, realBin);
+      writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+      chmodSync(binPath, 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", "--minimum-release-age=3155760000", pkgName],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+      expect(exitCode).not.toBe(0);
+    });
   });
 });

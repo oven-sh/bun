@@ -425,6 +425,15 @@ impl BunxCommand {
         tempdir_name: &[u8],
         package_name: &[u8],
         with_stale_check: bool,
+        // When true, the cache is unconditionally treated as stale — used to
+        // honor `--minimum-release-age` on packages whose real bin name
+        // differs from the `initial_bin_name` guess (e.g. `@angular/cli` → `ng`).
+        // That path skips the top-level age-gate check inside the `'find`
+        // branch (cache probe at `.bin/<initial_bin_name>` misses), then falls
+        // through to this function to discover the real bin name. Without this
+        // flag, a fresh cache would be honored and the binary executed without
+        // re-resolution, bypassing the supply-chain gate.
+        force_stale: bool,
     ) -> Result<Box<[u8]>, bun_core::Error> {
         let mut subpath = PathBuffer::uninit();
         if with_stale_check {
@@ -452,6 +461,9 @@ impl BunxCommand {
             };
 
             let is_stale: bool = 'is_stale: {
+                if force_stale {
+                    break 'is_stale true;
+                }
                 #[cfg(windows)]
                 {
                     use bun_sys::windows as win;
@@ -526,6 +538,7 @@ impl BunxCommand {
         toplevel_fd: Fd,
         tempdir_name: &[u8],
         package_name: &[u8],
+        force_stale: bool,
     ) -> Result<Box<[u8]>, GetBinNameError> {
         debug_assert!(toplevel_fd.is_valid());
         match Self::get_bin_name_from_project_directory(transpiler, toplevel_fd, package_name) {
@@ -540,6 +553,7 @@ impl BunxCommand {
                     tempdir_name,
                     package_name,
                     true,
+                    force_stale,
                 ) {
                     Ok(v) => Ok(v),
                     Err(err2) => {
@@ -1124,6 +1138,15 @@ impl BunxCommand {
                         root_dir_fd,
                         bunx_cache_dir,
                         result_package_name,
+                        // When `--minimum-release-age` is set, force the cache
+                        // to be treated as stale so we re-resolve through
+                        // `bun add` (where the age filter is applied). Without
+                        // this, `bunx --minimum-release-age=<N> <pkg-whose-bin-
+                        // name-differs-from-initial-guess>` would find the
+                        // cached bin via `get_bin_name_from_temp_directory` and
+                        // run it — bypassing the gate for packages like
+                        // `@angular/cli` (initial guess `cli`, real bin `ng`).
+                        opts.minimum_release_age.is_some(),
                     ) {
                         Ok(package_name_for_bin) => {
                             // if we check the bin name and its actually the same, we don't need to check $PATH here again
@@ -1496,6 +1519,10 @@ impl BunxCommand {
                 this_transpiler,
                 bunx_cache_dir,
                 result_package_name,
+                false,
+                // Post-install — the freshly installed cache was resolved
+                // under the active age filter (or its absence), no need to
+                // force stale here.
                 false,
             ) {
                 if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {

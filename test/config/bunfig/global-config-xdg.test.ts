@@ -4,9 +4,9 @@
 // `$HOME/.config` when `$XDG_CONFIG_HOME` is unset, and back-compat for the
 // previously documented `$XDG_CONFIG_HOME/.bunfig.toml`.
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // Observe global-bunfig loading via `[install.cache] dir = "<sentinel>"` and
 // reading back the effective cache path with `bun pm cache`. Global config
@@ -31,11 +31,7 @@ async function runPmCache(appDir: string, env: Record<string, string | undefined
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.trim(), stderr, exitCode };
 }
 

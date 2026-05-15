@@ -74,7 +74,10 @@ registry = "http://localhost:${server.port}/"
       stdin: "ignore",
       env: bunEnv,
     });
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Surface the underlying install error (e.g. missing tarball, 404 from
+    // the in-process registry) before the exit-code mismatch, per CLAUDE.md.
+    expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
   }
 

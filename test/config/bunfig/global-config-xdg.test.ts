@@ -16,12 +16,20 @@ import { dirname, join } from "node:path";
 async function runPmCache(appDir: string, env: Record<string, string | undefined>) {
   // Strip any inherited HOME / XDG_CONFIG_HOME from bunEnv, then layer
   // per-test values. An `undefined` value means "explicitly absent".
+  //
+  // `env_var::HOME` reads `USERPROFILE` on Windows (env_var.rs:138), so when a
+  // test passes `HOME`, mirror it into `USERPROFILE` so the spawned bun sees
+  // the same value on both platforms. `XDG_CONFIG_HOME` is honoured on
+  // Windows too (env_var.rs:177–180), so no special-casing is needed there.
   const spawnEnv: Record<string, string> = { ...bunEnv };
   delete spawnEnv.HOME;
   delete spawnEnv.XDG_CONFIG_HOME;
   delete spawnEnv.USERPROFILE;
   for (const [k, v] of Object.entries(env)) {
     if (v !== undefined) spawnEnv[k] = v;
+  }
+  if (spawnEnv.HOME !== undefined && spawnEnv.USERPROFILE === undefined) {
+    spawnEnv.USERPROFILE = spawnEnv.HOME;
   }
 
   await using proc = Bun.spawn({
@@ -116,6 +124,24 @@ describe("global bunfig.toml XDG path lookup", () => {
       XDG_CONFIG_HOME: join(homeStr, ".config"),
     });
     expect(stdout).toBe(winnerCache);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("empty XDG_CONFIG_HOME falls back to $HOME/.config (per XDG spec)", async () => {
+    // XDG spec: "If $XDG_CONFIG_HOME is either not set or empty, a default
+    // equal to $HOME/.config should be used." A bare `XDG_CONFIG_HOME=""`
+    // must be treated as unset, not as an empty-string base.
+    using home = tempDir("bunfig-xdg-empty", { "app/package.json": "{}" });
+    const homeStr = String(home);
+    const cacheDir = join(homeStr, "empty-xdg-default-cache");
+    writeBunfigCacheDir(join(homeStr, ".config/bun/bunfig.toml"), cacheDir);
+
+    const { stdout, stderr, exitCode } = await runPmCache(join(homeStr, "app"), {
+      HOME: homeStr,
+      XDG_CONFIG_HOME: "",
+    });
+    expect(stdout).toBe(cacheDir);
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

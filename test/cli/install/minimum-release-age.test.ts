@@ -2721,11 +2721,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toContain("ZERO_DISABLE_OK");
       expect(stderr).not.toContain("Cannot use --no-install");
       expect(exitCode).toBe(0);
@@ -2738,11 +2734,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout2, stderr2, exitCode2] = await Promise.all([
-        proc2.stdout.text(),
-        proc2.stderr.text(),
-        proc2.exited,
-      ]);
+      const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
       expect(stdout2).toContain("ZERO_DISABLE_OK");
       expect(stderr2).not.toContain("Cannot use --no-install");
       expect(exitCode2).toBe(0);

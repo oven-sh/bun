@@ -962,10 +962,13 @@ impl PublishCommand {
             use std::fmt::Write as _;
             let _ = write!(&mut sha512_hex, "{b:02x}");
         }
-        let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
+        // Full version (including any `+build` metadata) — npm's
+        // `npa.toPurl(`${manifest.name}@${manifest.version}`)` uses the raw
+        // manifest version, and the `.sigstore` `_attachments` key below
+        // does the same.
         let subject = bun_sigstore::provenance::subject(
             &ctx.package_name,
-            version_without_build_tag,
+            &ctx.package_version,
             &sha512_hex,
         );
 

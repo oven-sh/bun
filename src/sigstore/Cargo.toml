@@ -15,10 +15,7 @@ bun_http.workspace = true
 bun_url.workspace = true
 bun_base64.workspace = true
 bun_sha_hmac.workspace = true
-bun_alloc.workspace = true
 thiserror.workspace = true
-strum.workspace = true
-bstr.workspace = true
 # JSON body/bundle (de)serialization — already transitive via lol_html.
 # NOTE: serde_json defines `impl PartialEq<Value> for i32` (and all other
 # integer types), which makes `x == Y as _` patterns elsewhere in bun_runtime

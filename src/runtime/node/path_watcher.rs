@@ -138,24 +138,21 @@ impl PathWatcherManager {
 
         // Process-lifetime singleton (Zig: `var default_manager`). Hand the
         // allocation off via `heap::release`; it is published into
-        // `DEFAULT_MANAGER` below and lives until process exit — except on the
-        // `Platform::init` error path, which is the one place it is reclaimed.
-        let m: &'static mut PathWatcherManager =
-            bun_core::heap::release(Box::new(PathWatcherManager::default()));
-        if let Err(e) = Platform::init(m) {
-            // SAFETY: `m` came from `release(Box::new(..))` above and has not
-            // been published — reclaim it so the failed init isn't a leak.
-            unsafe {
-                drop(bun_core::heap::take(
-                    std::ptr::from_mut::<PathWatcherManager>(m),
-                ))
-            };
-            return Err(e);
-        }
+        // `DEFAULT_MANAGER` below and lives until process exit. Bind as the
+        // canonical *shared* `&'static` immediately so every downstream
+        // reference (the reader thread, `DEFAULT_MANAGER`, callers) derives
+        // from one borrow — re-deriving a second `&'static` from the
+        // `&'static mut` later would pop the first under Stacked Borrows.
+        let m: &'static PathWatcherManager =
+            &*bun_core::heap::release(Box::new(PathWatcherManager::default()));
+        // On the rare `inotify_init1`/`kqueue` failure the struct leaks
+        // (process-lifetime, a few hundred bytes). Reclaiming it would need
+        // `&mut`, which we deliberately never form after this point.
+        Platform::init(m)?;
         // Holding DEFAULT_MANAGER_MUTEX with `.get()` having returned `None`
         // above, so this is the first publish; `set` cannot fail.
-        let _ = DEFAULT_MANAGER.set(&*m);
-        Ok(&*m)
+        let _ = DEFAULT_MANAGER.set(m);
+        Ok(m)
     }
 
     /// Build the dedup key into `buf`. Not null-terminated; only used as a hashmap key.
@@ -673,7 +670,7 @@ mod inotify_masks {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
-    fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
+    fn init(manager: &'static PathWatcherManager) -> sys::Result<()> {
         use bun_sys::linux::IN;
         // SAFETY: thin wrapper over libc::inotify_init1.
         let rc = unsafe { sys::linux::inotify_init1(IN::CLOEXEC) };
@@ -683,19 +680,9 @@ impl Linux {
         manager.platform_fd.set(Fd::from_native(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
-        // `*const T` is `!Send`, so wrap it — do NOT launder through `usize`
-        // (int→ptr casts strip provenance; accesses through the result are UB).
-        struct SendPtr(*const PathWatcherManager);
-        // SAFETY: manager is process-global (&'static), never freed; the reader
-        // thread only takes `&PathWatcherManager` and all cross-thread state is
-        // behind `manager.mutex` / atomics.
-        unsafe impl Send for SendPtr {}
-        let send = SendPtr(std::ptr::from_mut::<PathWatcherManager>(manager).cast_const());
-        match std::thread::Builder::new().spawn(move || {
-            let send = send;
-            // SAFETY: manager is process-global (&'static), never freed.
-            Linux::thread_main(unsafe { &*send.0 })
-        }) {
+        // `PathWatcherManager: Sync` ⇒ `&'static PathWatcherManager: Send`, so the
+        // closure captures the shared reference directly — no raw-pointer games.
+        match std::thread::Builder::new().spawn(move || Linux::thread_main(manager)) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();
@@ -1065,7 +1052,7 @@ impl Drop for DarwinWatch {
 
 #[cfg(target_os = "macos")]
 impl Darwin {
-    fn init(_: &mut PathWatcherManager) -> sys::Result<()> {
+    fn init(_: &'static PathWatcherManager) -> sys::Result<()> {
         Ok(())
     }
 
@@ -1227,26 +1214,16 @@ impl PathWatcherManager {
 
 #[cfg(target_os = "freebsd")]
 impl Kqueue {
-    fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
+    fn init(manager: &'static PathWatcherManager) -> sys::Result<()> {
         let kq = match sys::kqueue() {
             Ok(f) => f,
             Err(e) => return Err(e),
         };
         manager.platform_fd.set(kq);
         // Daemon reader — the manager is process-global and never torn down.
-        // `*const T` is `!Send`, so wrap it — do NOT launder through `usize`
-        // (int→ptr casts strip provenance; accesses through the result are UB).
-        struct SendPtr(*const PathWatcherManager);
-        // SAFETY: manager is process-global (&'static), never freed; the reader
-        // thread only takes `&PathWatcherManager` and all cross-thread state is
-        // behind `manager.mutex` / atomics.
-        unsafe impl Send for SendPtr {}
-        let send = SendPtr((manager as *mut PathWatcherManager).cast_const());
-        match std::thread::Builder::new().spawn(move || {
-            let send = send;
-            // SAFETY: manager is process-global (&'static), never freed.
-            Kqueue::thread_main(unsafe { &*send.0 })
-        }) {
+        // `PathWatcherManager: Sync` ⇒ `&'static PathWatcherManager: Send`, so the
+        // closure captures the shared reference directly — no raw-pointer games.
+        match std::thread::Builder::new().spawn(move || Kqueue::thread_main(manager)) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();
@@ -1476,7 +1453,7 @@ pub struct WindowsStubWatch {}
 
 #[cfg(windows)]
 impl WindowsStub {
-    fn init(_: &mut PathWatcherManager) -> sys::Result<()> {
+    fn init(_: &'static PathWatcherManager) -> sys::Result<()> {
         Err(sys::Error::from_code(E::ENOTSUP, Tag::watch))
     }
     fn add_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) -> sys::Result<()> {

@@ -44,19 +44,27 @@ test.concurrent(
     const watcher = fs.watch(file, () => {
       // Inside the callback: drop the watcher (→ unregister_watcher →
       // enqueue_task_concurrent, which reads self.loop_), then exit
-      // (→ close_and_wait → Drop → enqueue_task_concurrent again while the
-      // CF thread is still inside cf_thread_loop).
+      // (→ close_and_wait → shutdown → enqueue_task_concurrent again while
+      // the CF thread is still inside cf_thread_loop).
       watcher.close();
       try { fs.unlinkSync(file); } catch {}
       process.exit(0);
     });
 
-    // Trigger the watch.
-    setImmediate(() => fs.writeFileSync(file, "modified"));
+    // Trigger the watch — repeat on an interval so every platform
+    // (FSEvents has a 50ms latency floor) gets a chance to deliver.
+    let n = 0;
+    const trigger = setInterval(() => fs.writeFileSync(file, "m" + n++), 20);
 
-    // Fallback exit in case the event never fires (acceptable — we're
-    // asserting "does not crash", not "event delivered").
+    // Fallback: if the event never fires, still exercise the crash site
+    // (close() → unregister_watcher → enqueue_task_concurrent → reads
+    // self.loop_; process.exit → close_and_wait → shutdown → same). We're
+    // asserting "does not crash", and that code path is identical whether
+    // close() is called from the watch callback or a timer — only the CF
+    // thread's concurrent position differs. Failing here instead would
+    // make the test flaky under load for no extra coverage.
     setTimeout(() => {
+      clearInterval(trigger);
       watcher.close();
       process.exit(0);
     }, 4000);
@@ -64,7 +72,7 @@ test.concurrent(
 
     // Run the sequence many times. On an unpatched macOS aarch64 release build
     // this reproduces the 0xC segfault within a handful of iterations; on other
-    // platforms it exercises the SendPtr-wrapped reader-thread spawn.
+    // platforms it still exercises the reader-thread spawn + shutdown path.
     // Batch them so a failure surfaces quickly without serializing 40 spawns.
     const iterations = 40;
     const width = 8;

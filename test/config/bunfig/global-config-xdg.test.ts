@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // Observe global-bunfig loading via `[install.cache] dir = "<sentinel>"` and
 // reading back the effective cache path with `bun pm cache`. Global config
@@ -36,7 +36,7 @@ async function runPmCache(appDir: string, env: Record<string, string | undefined
 }
 
 function writeBunfigCacheDir(path: string, cacheDir: string) {
-  mkdirSync(path.substring(0, path.lastIndexOf("/")), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `[install.cache]\ndir = ${JSON.stringify(cacheDir)}\n`);
 }
 
@@ -47,11 +47,12 @@ describe("global bunfig.toml XDG path lookup", () => {
     const cacheDir = join(homeStr, "xdg-conventional-cache");
     writeBunfigCacheDir(join(homeStr, ".config/bun/bunfig.toml"), cacheDir);
 
-    const { stdout, exitCode } = await runPmCache(join(homeStr, "app"), {
+    const { stdout, stderr, exitCode } = await runPmCache(join(homeStr, "app"), {
       HOME: homeStr,
       XDG_CONFIG_HOME: join(homeStr, ".config"),
     });
     expect(stdout).toBe(cacheDir);
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -61,12 +62,13 @@ describe("global bunfig.toml XDG path lookup", () => {
     const cacheDir = join(homeStr, "spec-default-cache");
     writeBunfigCacheDir(join(homeStr, ".config/bun/bunfig.toml"), cacheDir);
 
-    const { stdout, exitCode } = await runPmCache(join(homeStr, "app"), {
+    const { stdout, stderr, exitCode } = await runPmCache(join(homeStr, "app"), {
       HOME: homeStr,
       // XDG_CONFIG_HOME explicitly omitted — spec default of `$HOME/.config`
       // should apply.
     });
     expect(stdout).toBe(cacheDir);
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -76,11 +78,12 @@ describe("global bunfig.toml XDG path lookup", () => {
     const cacheDir = join(homeStr, "xdg-legacy-cache");
     writeBunfigCacheDir(join(homeStr, ".config/.bunfig.toml"), cacheDir);
 
-    const { stdout, exitCode } = await runPmCache(join(homeStr, "app"), {
+    const { stdout, stderr, exitCode } = await runPmCache(join(homeStr, "app"), {
       HOME: homeStr,
       XDG_CONFIG_HOME: join(homeStr, ".config"),
     });
     expect(stdout).toBe(cacheDir);
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -90,12 +93,13 @@ describe("global bunfig.toml XDG path lookup", () => {
     const cacheDir = join(homeStr, "home-dotfile-cache");
     writeBunfigCacheDir(join(homeStr, ".bunfig.toml"), cacheDir);
 
-    const { stdout, exitCode } = await runPmCache(join(homeStr, "app"), {
+    const { stdout, stderr, exitCode } = await runPmCache(join(homeStr, "app"), {
       HOME: homeStr,
       // `~/.config/bun/bunfig.toml` (spec default) does not exist here, so
       // we fall through to `$HOME/.bunfig.toml`.
     });
     expect(stdout).toBe(cacheDir);
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -107,11 +111,12 @@ describe("global bunfig.toml XDG path lookup", () => {
     writeBunfigCacheDir(join(homeStr, ".config/bun/bunfig.toml"), winnerCache);
     writeBunfigCacheDir(join(homeStr, ".config/.bunfig.toml"), loserCache);
 
-    const { stdout, exitCode } = await runPmCache(join(homeStr, "app"), {
+    const { stdout, stderr, exitCode } = await runPmCache(join(homeStr, "app"), {
       HOME: homeStr,
       XDG_CONFIG_HOME: join(homeStr, ".config"),
     });
     expect(stdout).toBe(winnerCache);
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -123,11 +128,12 @@ describe("global bunfig.toml XDG path lookup", () => {
     writeBunfigCacheDir(join(homeStr, "custom/bun/bunfig.toml"), customCache);
     writeBunfigCacheDir(join(homeStr, ".config/bun/bunfig.toml"), defaultCache);
 
-    const { stdout, exitCode } = await runPmCache(join(homeStr, "app"), {
+    const { stdout, stderr, exitCode } = await runPmCache(join(homeStr, "app"), {
       HOME: homeStr,
       XDG_CONFIG_HOME: join(homeStr, "custom"),
     });
     expect(stdout).toBe(customCache);
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

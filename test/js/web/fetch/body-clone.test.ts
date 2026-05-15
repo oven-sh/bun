@@ -521,11 +521,7 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
 
 // https://github.com/oven-sh/bun/issues/30797
 test("Response.clone().bytes() returns a Uint8Array for multi-chunk binary bodies", async () => {
-  const chunks = [
-    new Uint8Array([1, 2, 3, 4]),
-    new Uint8Array([5, 6, 7, 8]),
-    new Uint8Array([9, 10, 11, 12]),
-  ];
+  const chunks = [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8]), new Uint8Array([9, 10, 11, 12])];
   const stream = new ReadableStream({
     async pull(controller) {
       for (const chunk of chunks) {
@@ -550,11 +546,7 @@ test("Response.clone().bytes() returns a Uint8Array for multi-chunk binary bodie
 
 // https://github.com/oven-sh/bun/issues/30797
 test("Response.clone().arrayBuffer() returns an ArrayBuffer for multi-chunk binary bodies", async () => {
-  const chunks = [
-    new Uint8Array([1, 2, 3, 4]),
-    new Uint8Array([5, 6, 7, 8]),
-    new Uint8Array([9, 10, 11, 12]),
-  ];
+  const chunks = [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8]), new Uint8Array([9, 10, 11, 12])];
   const stream = new ReadableStream({
     async pull(controller) {
       for (const chunk of chunks) {

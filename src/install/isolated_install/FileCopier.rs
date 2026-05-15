@@ -47,11 +47,7 @@ impl FileCopier {
             src_path,
             dest_subpath,
             walker: {
-                let mut w = walker_skippable::walk(
-                    src_dir,
-                    skip_filenames,
-                    skip_dirnames,
-                )?;
+                let mut w = walker_skippable::walk(src_dir, skip_filenames, skip_dirnames)?;
                 w.resolve_unknown_entry_types = true;
                 w
             },

@@ -1164,11 +1164,14 @@ impl Task {
                                     // would land IN the shared cache under every
                                     // consumer on the machine.
                                     let mut local = AutoPath::init_top_level_dir();
-                                    installer.append_local_store_entry_path(&mut local, self.entry_id);
+                                    installer
+                                        .append_local_store_entry_path(&mut local, self.entry_id);
                                     let is_stale_link: bool = {
                                         #[cfg(windows)]
                                         {
-                                            if let Some(a) = sys::get_file_attributes(local.slice_z()) {
+                                            if let Some(a) =
+                                                sys::get_file_attributes(local.slice_z())
+                                            {
                                                 a.is_reparse_point
                                             } else {
                                                 false

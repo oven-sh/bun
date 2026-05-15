@@ -14,9 +14,9 @@ import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 
-function hasAndroidTarget(): boolean {
+function hasAndroidTarget(rustup: string): boolean {
   const r = Bun.spawnSync({
-    cmd: ["rustup", "target", "list", "--installed"],
+    cmd: [rustup, "target", "list", "--installed"],
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -38,7 +38,12 @@ function workspaceResolvable(cargo: string): boolean {
 }
 
 const cargo = Bun.which("cargo");
-const skip = !isLinux || cargo == null || !hasAndroidTarget() || !workspaceResolvable(cargo);
+// rustup is checked separately — distro-packaged cargo (apt/dnf) ships
+// without it, and Bun.spawnSync throws ENOENT (it does not return a
+// non-zero exitCode) when the executable is missing.
+const rustup = Bun.which("rustup");
+const skip =
+  !isLinux || cargo == null || rustup == null || !hasAndroidTarget(rustup) || !workspaceResolvable(cargo);
 
 describe.skipIf(skip)("recover.rs on Android", () => {
   // Building bun_runtime for aarch64-linux-android can be slow on a cold
@@ -48,9 +53,21 @@ describe.skipIf(skip)("recover.rs on Android", () => {
     async () => {
       // Build bun_runtime as an rlib for Android. Reuses the workspace
       // target dir so cached dependency builds aren't thrown away — only
-      // bun_runtime itself is rebuilt if its sources changed.
+      // bun_runtime itself is rebuilt if its sources changed. Pin
+      // --target-dir so an ambient CARGO_TARGET_DIR doesn't redirect
+      // output away from the rlib path checked below.
       await using build = Bun.spawn({
-        cmd: [cargo!, "build", "-p", "bun_runtime", "--target", "aarch64-linux-android", "--message-format=short"],
+        cmd: [
+          cargo!,
+          "build",
+          "-p",
+          "bun_runtime",
+          "--target",
+          "aarch64-linux-android",
+          "--target-dir",
+          "target",
+          "--message-format=short",
+        ],
         cwd: repoRoot,
         stdout: "pipe",
         stderr: "pipe",

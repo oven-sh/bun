@@ -1,6 +1,6 @@
 # Pass 4 — Consolidated Findings Index
 
-**Pass 4 standard:** Codex-grade defensibility. Every claim verifiable from source; every miri-eligible bug has a concrete trace.
+**Pass 4 standard:** Codex-grade defensibility. High-priority claims are source-verifiable; miri-backed bugs have concrete traces; findings that need scheduling, Loom, integration, or call-graph evidence are labelled accordingly.
 
 ## Pass-4 agents
 

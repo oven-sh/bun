@@ -2,7 +2,7 @@
 
 This document records per-fix verification for the three changes that ship in the companion fix PR ([`claude/unsafe-exorcist-demo`](https://github.com/Dicklesworthstone/bun/tree/claude/unsafe-exorcist-demo)).
 
-**Scope discipline.** Of the 6 P0 + 37 T1 findings the audit catalogs, this PR lands the **3 lowest-risk fixes with focused local verification and miri-backed evidence where applicable**. The remaining ~40 fixes are deliberately staged as separate, more carefully reviewed PRs per the audit's PR-landing-order document ([`.unsafe-audit/PASS4_FINDINGS_INDEX.md` § "Pass-4 PR landing order"](../../PASS4_FINDINGS_INDEX.md)). Better three perfect than ten with risk.
+**Scope discipline.** Of the 6 P0 + 40 T1/T1-equivalent entries in the current public dashboard, this PR lands the **3 lowest-risk fixes with focused local verification and miri-backed evidence where applicable**. The remaining fixes are deliberately staged as separate, more carefully reviewed PRs per the audit's PR-landing-order document ([`.unsafe-audit/PASS4_FINDINGS_INDEX.md` § "Pass-4 PR landing order"](../../PASS4_FINDINGS_INDEX.md)). Better three perfect than ten with risk.
 
 ---
 
@@ -122,7 +122,7 @@ The new path is **strictly safer** for the same set of valid inputs and **define
 
 ## What is NOT in this PR
 
-The audit catalogs 6 P0 + 37 T1 findings. This PR lands 3 (one T1 + two related T1s). The remaining ~40 fixes are deliberately staged as separate PRs:
+The audit's current public dashboard catalogs 6 P0 + 40 T1/T1-equivalent entries, with strict memory-safety, non-UB security, and crash-reliability items labelled separately. This PR lands 3 tightly verified fixes. The remaining fixes are deliberately staged as separate PRs:
 
 | Cluster | Audit ID(s) | Reason for separate PR |
 |---------|-------------|------------------------|

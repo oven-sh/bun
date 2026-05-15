@@ -532,7 +532,6 @@ impl TSConfigJSON {
                     // match (`ascii_lowercase_buf` returns `None` when it
                     // can't fit).
                     if let Some((str_lower, len)) = strings::ascii_lowercase_buf::<12>(str) {
-                        // - We don't support "preserve" yet
                         if let Some(runtime) = options::jsx::RUNTIME_MAP.get(&str_lower[..len]) {
                             result.jsx.runtime = runtime.runtime;
                             result.jsx_flags.insert(JsxField::Runtime);

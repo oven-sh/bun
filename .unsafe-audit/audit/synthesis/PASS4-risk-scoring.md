@@ -1,7 +1,7 @@
 # Pass 4 — Risk Scoring of Current T1 Findings
 
 **Date:** 2026-05-15
-**Methodology:** [`rust-unsafe-code-exorcist` RISK-SCORING.md](file:///home/ubuntu/.claude/skills/rust-unsafe-code-exorcist/references/methodology/RISK-SCORING.md).
+**Methodology:** `rust-unsafe-code-exorcist` RISK-SCORING.md (skill-local methodology; not committed into this repository).
 **Input:** Pass 2 T1 list (Codex-confirmed) + Pass 3 T1 list (post-Codex demotions, per [`CODEX_PASS3_FINAL_REVIEW.md`](../../CODEX_PASS3_FINAL_REVIEW.md)) + Pass 4 additions from parser, threading, and crash-handler audits.
 **Output of this document:** a quantified prioritization of every current T1, plus aggregates by crate and a pre-/post-Codex comparison.
 

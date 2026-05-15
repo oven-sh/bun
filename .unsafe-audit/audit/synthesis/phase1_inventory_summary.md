@@ -63,7 +63,7 @@ Clustering by normalized text (identifiers → ID, integers → N, strings → "
 | 12 | `unsafe { &*p }` |
 | 12 | `unsafe { core::hint::unreachable_unchecked() }` |
 
-These are dominated by what we'll call the **"Zig-port `*mut Self` pattern"** (see [Soundness Invariants](soundness-invariants.md) for the load-bearing reason). The `src/CLAUDE.md` documents this pattern explicitly:
+These are dominated by what we'll call the **"Zig-port `*mut Self` pattern"** (see [Soundness Invariants](invariants.md) for the load-bearing reason). The `src/CLAUDE.md` documents this pattern explicitly:
 
 > If a callback may free `self` (close, error, GC finalize), do **not** materialize `&self`/`&mut self` at the boundary — a `&self`-derived raw pointer carries `SharedReadOnly` provenance, and `Box::from_raw`/dealloc through it is UB. Pass and dispatch off `*mut Self` until the body proves ownership.
 

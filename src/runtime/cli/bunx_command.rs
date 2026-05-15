@@ -1243,6 +1243,37 @@ impl BunxCommand {
                                         do_cache_bust = true;
                                         break 'try_run_existing;
                                     }
+
+                                    // Same supply-chain guard as the `'find` branch
+                                    // above: if this hit is under the bunx cache and
+                                    // `--minimum-release-age` is an active gate, the
+                                    // cached binary may be too recent. Don't run it
+                                    // — force re-resolution through `bun add`. This
+                                    // path is reachable when `get_bin_name` succeeded
+                                    // via `get_bin_name_from_project_directory`
+                                    // (which doesn't consult `force_stale`) and the
+                                    // user passed an explicit version literal (which
+                                    // gates out `'find2`'s local-bin probe above),
+                                    // so the bin is found in the bunx cache.
+                                    if strings::has_prefix(out, bunx_cache_dir)
+                                        && opts.has_active_age_gate()
+                                    {
+                                        bun_output::scoped_log!(
+                                            bunx,
+                                            "found stale binary (age gate): {}",
+                                            BStr::new(out),
+                                        );
+                                        do_cache_bust = true;
+                                        if opts.no_install {
+                                            Output::err_generic(
+                                                "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: the cached binary for <b>{}<r> cannot be re-verified under the age gate without resolving a new version. Drop <b>--no-install<r> to allow re-resolution.",
+                                                (BStr::new(&update_request.name),),
+                                            );
+                                            Global::exit(1);
+                                        }
+                                        break 'try_run_existing;
+                                    }
+
                                     let stored = fs.dirname_store.append_slice(out)?;
                                     Run::run_binary(
                                         ctx,

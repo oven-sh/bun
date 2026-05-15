@@ -2739,5 +2739,69 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(stderr2).not.toContain("Cannot use --no-install");
       expect(exitCode2).toBe(0);
     });
+
+    // Same unix-only fake-cache layout as the other warm-cache tests.
+    test.skipIf(isWindows)(
+      "warm cache with local project install + version literal does not bypass --minimum-release-age",
+      async () => {
+        // Regression: when the project has a local `node_modules/<pkg>` install
+        // AND the user passes an explicit version (e.g. `bunx pkg@^1`),
+        // `get_bin_name` succeeds via `get_bin_name_from_project_directory`
+        // without consulting `force_stale`, then `'find2`'s local-bin probe
+        // is skipped (gated on `version.literal.is_empty()`), so execution
+        // hits the bunx-cache probe and `Run::run_binary` would run the
+        // cached binary with no age check.
+        using dir = tempDir("bunx-min-age-local-install", {});
+        using cacheDir = tempDir("bunx-min-age-cache-local-install", {});
+        using tmp = tempDir("bunx-min-age-tmp-local-install", {});
+
+        const pkgName = "@fake-scope/local-and-cached";
+        const realBin = "mytool";
+        const uid = process.getuid?.() ?? 0;
+
+        // 1. Local project install: `<cwd>/node_modules/<pkg>/package.json`
+        //    with a bin entry. `get_bin_name_from_project_directory` reads
+        //    this and returns the real bin name, bypassing force_stale.
+        const localPkgDir = join(String(dir), "node_modules", pkgName);
+        mkdirSync(localPkgDir, { recursive: true });
+        writeFileSync(
+          join(localPkgDir, "package.json"),
+          JSON.stringify({
+            name: pkgName,
+            version: "1.0.0",
+            bin: { [realBin]: `./bin/${realBin}.js` },
+          }),
+        );
+
+        // 2. Warm bunx cache for the requested version literal `^1`.
+        //    `package_fmt` includes the literal verbatim.
+        const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@^1`);
+        const cacheBinDir = join(cacheRoot, "node_modules", ".bin");
+        mkdirSync(cacheBinDir, { recursive: true });
+        // Root package.json for the 24h staleness check.
+        writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
+        // Cached binary at the REAL bin name (not the initial-guess `cli`-style
+        // name). If bunx wrongly falls through, this sentinel prints.
+        const binPath = join(cacheBinDir, realBin);
+        writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+        chmodSync(binPath, 0o755);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "x", "--minimum-release-age=3155760000", `${pkgName}@^1`],
+          cwd: String(dir),
+          env: bunxEnv(String(cacheDir), String(tmp)),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
+        expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+        expect(exitCode).not.toBe(0);
+      },
+    );
   });
 });

@@ -2690,11 +2690,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       expect(exitCode).not.toBe(0);
     });

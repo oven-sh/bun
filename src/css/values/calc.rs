@@ -433,9 +433,15 @@ impl<V: CalcValue> Calc<V> {
 
                 Ok(match (min, max) {
                     (None, None) => center,
-                    (Some(min), None) => Calc::Function(Box::new(MathFunction::Max(arr2(min, center)))),
-                    (None, Some(max)) => Calc::Function(Box::new(MathFunction::Min(arr2(max, center)))),
-                    (Some(min), Some(max)) => Calc::Function(Box::new(MathFunction::Clamp { min, center, max })),
+                    (Some(min), None) => {
+                        Calc::Function(Box::new(MathFunction::Max(arr2(min, center))))
+                    }
+                    (None, Some(max)) => {
+                        Calc::Function(Box::new(MathFunction::Min(arr2(max, center))))
+                    }
+                    (Some(min), Some(max)) => {
+                        Calc::Function(Box::new(MathFunction::Clamp { min, center, max }))
+                    }
                 })
             }
             CalcUnit::Round => input.parse_nested_block(|i| {

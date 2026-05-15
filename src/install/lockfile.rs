@@ -85,7 +85,7 @@ pub use self::tree::Tree;
 pub use crate::padding_checker::assert_no_uninitialized_padding;
 // Bring the derive-generated `items_*` column accessors (`PackageColumns` for
 // `MultiArrayList<Package>`, `PackageColumns` for `Slice<Package>`) into scope.
-use self::package::{PackageColumns as _};
+use self::package::PackageColumns as _;
 
 // Zig path-style associated types (`Dependency.Version`, `Resolution.Tag`,
 // `String.Buf`/`String.Builder`) are module-level types in the Rust port.

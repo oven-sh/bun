@@ -317,14 +317,7 @@ impl Fs {
         use_shared_buffer: bool,
         _file_handle: Option<Fd>,
     ) -> Result<Entry, bun_core::Error> {
-        self.read_file_with_allocator(
-            _fs,
-            path,
-            dirname_fd,
-            use_shared_buffer,
-            _file_handle,
-            None,
-        )
+        self.read_file_with_allocator(_fs, path, dirname_fd, use_shared_buffer, _file_handle, None)
     }
 
     /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
@@ -431,8 +424,14 @@ impl Fs {
             }
             _ => {
                 let shared = self.shared_buffer();
-                match fs_mod::read_file_contents(&file_handle, path, use_shared_buffer, shared, stream)
-                    .map(Contents::from)
+                match fs_mod::read_file_contents(
+                    &file_handle,
+                    path,
+                    use_shared_buffer,
+                    shared,
+                    stream,
+                )
+                .map(Contents::from)
                 {
                     Ok(c) => c,
                     Err(err) => {

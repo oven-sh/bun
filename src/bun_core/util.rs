@@ -2203,7 +2203,11 @@ pub struct Version {
 }
 
 impl Version {
-    pub const ZERO: Self = Self { major: 0, minor: 0, patch: 0 };
+    pub const ZERO: Self = Self {
+        major: 0,
+        minor: 0,
+        patch: 0,
+    };
 
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
@@ -2233,7 +2237,11 @@ impl Version {
                 break;
             }
         }
-        Self { major: nums[0], minor: nums[1], patch: nums[2] }
+        Self {
+            major: nums[0],
+            minor: nums[1],
+            patch: nums[2],
+        }
     }
 }
 
@@ -4854,7 +4862,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
     #[cfg(unix)]
     unsafe {
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             unsafe extern "C" {
                 safe fn on_before_reload_process_linux();
@@ -5545,27 +5553,27 @@ impl core::fmt::Display for f16 {
 // callsites (audited r5) are bundler/parser hot paths where Linux ftrace is
 // the profiling target. Windows/other platforms are no-ops in Zig too.
 pub mod perf {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::sync::atomic::AtomicBool;
     use core::sync::atomic::{AtomicU8, Ordering};
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use std::sync::Once;
 
     /// Per-span state returned by `trace()`. `end()` is idempotent; `Drop`
     /// calls it so `let _t = trace("x");` works as a scope guard.
     #[must_use = "bind to a local (`let _t = perf::trace(..)`) so the span has nonzero duration"]
     pub struct Ctx {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         linux: Option<Linux>,
     }
     impl Ctx {
         pub const DISABLED: Ctx = Ctx {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             linux: None,
         };
         #[inline]
         pub fn end(&mut self) {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if let Some(l) = self.linux.take() {
                 l.end();
             }
@@ -5589,7 +5597,7 @@ pub mod perf {
 
     #[cold]
     fn is_enabled_init() -> bool {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let on = crate::env_var::feature_flag::BUN_TRACE
             .get()
             .unwrap_or(false)
@@ -5599,7 +5607,7 @@ pub mod perf {
         // ftrace and signpost backends via `PerfEvent`); `bun_core::perf` is
         // the T0 subset for low-tier callers that cannot reach `bun_perf` and
         // only need Linux ftrace. T0 therefore reports disabled on macOS.
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let on = false;
         IS_ENABLED.store(if on { ENABLED } else { DISABLED }, Ordering::Relaxed);
         on
@@ -5622,7 +5630,7 @@ pub mod perf {
             let _ = name;
             return Ctx::DISABLED;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return Ctx {
                 linux: Some(Linux::init(name)),
@@ -5636,13 +5644,13 @@ pub mod perf {
     }
 
     // ── Linux ftrace backend (folded from src/perf/lib.rs) ────────────────
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     struct Linux {
         start_time: u64,
         name: &'static str,
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     impl Linux {
         fn is_supported() -> bool {
             static INIT_ONCE: Once = Once::new();
@@ -5686,7 +5694,7 @@ pub mod perf {
     /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
     /// (the canonical signpost/ftrace entry point) imports these instead of
     /// re-declaring them — see src/perf/perf.zig:127-129 for the spec.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub mod sys {
         unsafe extern "C" {
             /// No preconditions; returns 0/1 based on tracefs availability.

@@ -2045,7 +2045,7 @@ impl Archiver {
                                 }
                                 // archive_read_data_into_fd reads in chunks of 1 MB
                                 // #define    MAX_WRITE    (1024 * 1024)
-                                #[cfg(target_os = "linux")]
+                                #[cfg(any(target_os = "linux", target_os = "android"))]
                                 {
                                     if size > 1_000_000 {
                                         let _ = bun_sys::preallocate_file(

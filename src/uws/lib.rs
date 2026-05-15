@@ -210,8 +210,8 @@ pub mod ssl_wrapper {
         };
     }
 
-    use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
     use crate::{create_bun_socket_error_t, us_bun_verify_error_t};
+    use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
 
@@ -1174,7 +1174,7 @@ pub mod ssl_wrapper {
 /// correct field offsets of `parent_ptr`/`jsc_vm` after it.
 #[cfg(target_vendor = "apple")]
 type ZigMutex = u32; // os_unfair_lock
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 type ZigMutex = u32;
 #[cfg(windows)]
 type ZigMutex = *mut c_void; // SRWLOCK

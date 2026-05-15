@@ -30,7 +30,9 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
             break;
         }
         let mut header = wire::FrameHeader::decode(
-            remaining[0..wire::FrameHeader::BYTE_SIZE].try_into().unwrap(),
+            remaining[0..wire::FrameHeader::BYTE_SIZE]
+                .try_into()
+                .unwrap(),
         );
         let sid = wire::UInt31WithReserved::from(header.stream_identifier).uint31();
         header.stream_identifier = sid;

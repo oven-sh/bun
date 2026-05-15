@@ -260,9 +260,12 @@ pub mod bun_spawn {
             // that value when the flag bit isn't available.
             // TODO(port): Zig used `@hasDecl(bun.c, "POSIX_SPAWN_SETSID")`; approximated
             // here as unix-not-freebsd. Phase B should use a build-time cfg from bindgen.
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
-                self.detached = (flags & system::POSIX_SPAWN_SETSID as u16) != 0;
+                // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
+                // the libc crate only exposes it for `target_os = "linux"`.
+                const POSIX_SPAWN_SETSID: u16 = 0x80;
+                self.detached = (flags & POSIX_SPAWN_SETSID) != 0;
             }
             #[cfg(target_os = "macos")]
             {
@@ -576,7 +579,7 @@ pub mod posix_spawn {
         //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
         //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
-        let use_bun_spawn = cfg!(target_os = "linux")
+        let use_bun_spawn = cfg!(any(target_os = "linux", target_os = "android"))
             || cfg!(target_os = "freebsd")
             || (cfg!(target_os = "macos") && pty_slave_fd >= 0);
 

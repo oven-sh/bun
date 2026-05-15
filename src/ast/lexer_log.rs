@@ -14,7 +14,7 @@
 
 use core::fmt;
 
-use crate::{usize2loc, AddErrorOptions, Loc, Log, Range, Source};
+use crate::{AddErrorOptions, Loc, Log, Range, Source, usize2loc};
 
 pub trait LexerLog<'s> {
     /// Per-lexer error variant returned from the `*_error` family

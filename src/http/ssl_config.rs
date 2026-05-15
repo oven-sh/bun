@@ -9,8 +9,8 @@ use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
 // Zig: `std.hash.Wyhash` (final4 variant). NOT `Wyhash11`.
-use bun_wyhash::Wyhash;
 use bun_threading::Guarded as Mutex;
+use bun_wyhash::Wyhash;
 
 /// Owned, NUL-terminated C-string slice (`?[*:0]const u8` in Zig). The
 /// pointer is heap-owned (allocated via `dupeZ`); freed via

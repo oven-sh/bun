@@ -27,7 +27,7 @@ use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
 use crate::lockfile_real::bun_lock as TextLockfile;
 use crate::lockfile_real::package::Diff;
-use crate::lockfile_real::package::{PackageColumns as _};
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::{Printer, printer as LockfilePrinter};
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::package_manager::Options::Enable;
@@ -571,7 +571,12 @@ pub fn install_with_manager(
     }
 
     if needs_new_lockfile {
-        root = create_new_lockfile_and_enqueue(manager, &load_result, root_package_json_path, log_level)?;
+        root = create_new_lockfile_and_enqueue(
+            manager,
+            &load_result,
+            root_package_json_path,
+            log_level,
+        )?;
     } else {
         {
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
@@ -1831,7 +1836,13 @@ fn run_root_lifecycle_scripts(
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (Zig only frees `package_name` afterwards, which is
         // owned by the List in Rust and drops with it).
-        manager.spawn_package_lifecycle_scripts(ctx, scripts, optional, output_in_foreground, None)?;
+        manager.spawn_package_lifecycle_scripts(
+            ctx,
+            scripts,
+            optional,
+            output_in_foreground,
+            None,
+        )?;
 
         // .monotonic is okay because at this point, this value is only accessed from this
         // thread.

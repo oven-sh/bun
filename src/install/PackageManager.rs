@@ -2482,7 +2482,10 @@ pub fn init_with_runtime_once(
         // Zig leaves `.root_package_json_file = undefined` (never read in the runtime
         // path). Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
         // on posix `Fd(0)` is stdin, not the invalid marker.
-        wr!(root_package_json_file, bun_sys::File::from_fd(Fd::invalid()));
+        wr!(
+            root_package_json_file,
+            bun_sys::File::from_fd(Fd::invalid())
+        );
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());

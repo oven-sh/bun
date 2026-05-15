@@ -57,6 +57,16 @@ const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 const { promisify } = require("internal/promisify");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
+let priorityDeprecationWarned = false;
+function emitPriorityDeprecation() {
+  if (priorityDeprecationWarned) return;
+  priorityDeprecationWarned = true;
+  process.emitWarning(
+    "http2Stream.priority is longer supported after priority signalling was deprecated in RFC 9113",
+    "DeprecationWarning",
+    "DEP0194",
+  );
+}
 const ObjectAssign = Object.assign;
 const ArrayIsArray = Array.isArray;
 const ObjectKeys = Object.keys;
@@ -2087,13 +2097,11 @@ class Http2Stream extends Duplex {
     return constants.NGHTTP2_STREAM_STATE_CLOSED;
   }
 
-  priority(options) {
-    if (!options) return false;
-    if (options.silent) return false;
-    const session = this[bunHTTP2Session];
-    assertSession(session);
-
-    session[bunHTTP2Native]?.setStreamPriority(this.#id, options);
+  priority(_options) {
+    emitPriorityDeprecation();
+    if (this.destroyed || this[bunHTTP2Session]?.destroyed) {
+      throw $ERR_HTTP2_INVALID_STREAM();
+    }
   }
 
   get endAfterHeaders() {

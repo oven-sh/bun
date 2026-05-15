@@ -196,17 +196,23 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// On error, this returns null.
     /// Returning null signals to the parent function that the connection failed.
     ///
-    /// The signature is safe: `websocket` is an opaque back-reference
-    /// stored in a field (no deref happens in this function), and the
-    /// remaining FFI pointers have been lifted to `&[BunString]` slices by
-    /// the extern-C shim below. The focused `unsafe {}` blocks inside the
-    /// body cover the genuinely unsafe operations (reads through the live
-    /// VM pointer, pre-connect `&mut *client` derivations, `Self::deref`
-    /// on the error paths, raw `SSL_CTX*` creation).
+    /// The signature is safe: `websocket` is an opaque back-reference this
+    /// function stores on the client — `connect` never dereferences it.
+    /// Taking `NonNull` (instead of the raw `*mut` the extern-C shim
+    /// receives) encodes the non-nullness invariant in the type; the C++
+    /// caller in WebSocket.cpp always passes `this` cast from a live
+    /// object. The remaining FFI pointers have been lifted to
+    /// `&[BunString]` slices by the extern-C shim below. The focused
+    /// `unsafe {}` blocks inside the body cover the genuinely unsafe
+    /// operations (reads through the live VM pointer, pre-connect
+    /// `&mut *client` derivations, `Self::deref` on the error paths,
+    /// raw `SSL_CTX*` creation). Later callbacks that dereference the
+    /// stored pointer (`handle_connect_error`, `did_connect`, etc.) still
+    /// carry their own SAFETY comments at the deref sites.
     #[allow(clippy::too_many_arguments)]
     pub fn connect(
         global: &JSGlobalObject,
-        websocket: *mut CppWebSocket,
+        websocket: core::ptr::NonNull<CppWebSocket>,
         host: &BunString,
         port: u16,
         pathname: &BunString,
@@ -339,7 +345,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
-            outgoing_websocket: Some(websocket),
+            outgoing_websocket: Some(websocket.as_ptr()),
             input_body_buf,
             to_send_len: 0,
             read_length: 0,
@@ -1805,23 +1811,30 @@ struct Headers8Bit<'a> {
 
 impl<'a> Headers8Bit<'a> {
     /// Decode parallel name/value `BunString` slices into interleaved UTF-8
-    /// slices. Both inputs must have the same length; callers that reach
-    /// this from the C ABI should convert their `(ptr, len)` pairs with
-    /// `bun_core::ffi::slice` inside an `unsafe {}` block before calling.
+    /// slices. Callers that reach this from the C ABI should convert their
+    /// `(ptr, len)` pairs with `bun_core::ffi::slice` inside an `unsafe {}`
+    /// block before calling.
+    ///
+    /// `names` and `values` are expected to be the same length — the
+    /// extern-C shim derives both from a single `header_count`, so a
+    /// mismatch is a programmer bug. The `debug_assert_eq!` catches that
+    /// loudly in debug; `zip` stops at the shorter slice so a mismatch in
+    /// release drops the trailing unpaired entries instead of panicking
+    /// on an OOB index.
     fn init(names: &'a [BunString], values: &'a [BunString]) -> Self {
         debug_assert_eq!(names.len(), values.len());
-        let len = names.len();
-        if len == 0 {
+        let pair_count = names.len().min(values.len());
+        if pair_count == 0 {
             return Self {
                 slices: Vec::new(),
                 _marker: core::marker::PhantomData,
             };
         }
 
-        let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);
-        for i in 0..len {
-            slices.push(names[i].to_utf8());
-            slices.push(values[i].to_utf8());
+        let mut slices: Vec<Utf8Slice> = Vec::with_capacity(pair_count * 2);
+        for (name, value) in names.iter().zip(values.iter()) {
+            slices.push(name.to_utf8());
+            slices.push(value.to_utf8());
         }
 
         Self {
@@ -2180,8 +2193,13 @@ macro_rules! export_http_client {
                     unsafe { bun_core::ffi::slice(proxy_header_names, proxy_header_count) };
                 let proxy_header_values =
                     unsafe { bun_core::ffi::slice(proxy_header_values, proxy_header_count) };
-                // `websocket` is an opaque back-reference; `connect` only
-                // stores it on the client and never derefs it here.
+                // `websocket` is a live back-ref to the C++ WebCore::WebSocket;
+                // WebSocket.cpp always passes `this`. Encode non-nullness at
+                // the boundary and return null on the defensive-unreachable
+                // branch so the inner `connect` can take a `NonNull`.
+                let Some(websocket) = core::ptr::NonNull::new(websocket) else {
+                    return ptr::null_mut();
+                };
                 match HTTPClient::<$ssl>::connect(
                     global,
                     websocket,

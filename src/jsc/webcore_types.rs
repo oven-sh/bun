@@ -1194,10 +1194,10 @@ pub mod store {
     }
     impl Eq for StoreRef {}
 
-    // SAFETY: `Store`'s refcount is atomic and its payload is either
-    // immutable-after-init or guarded by callers; matches Zig's cross-thread
-    // `*Store` usage.
+    // SAFETY: `Store`'s refcount is atomic, making it safe to move between
+    // threads. `StoreRef` is NOT Sync — `data_mut(&self) -> &mut Data` creates
+    // interior mutability from a shared reference; sharing across threads
+    // would allow concurrent mutable aliasing.
     unsafe impl Send for StoreRef {}
-    unsafe impl Sync for StoreRef {}
 }
 pub use store::{Store, StoreRef};

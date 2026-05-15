@@ -115,15 +115,13 @@ fn load_bunfig(
     // Those messages are often printed later (by `report_bunfig_load_failure`
     // in `load_config()`'s catch, after `load_system_bunfig`'s `config_buf`
     // stack frame has been dropped). Without duping, the later print reads
-    // freed stack memory — stack-use-after-return under ASAN. Mirrors the Zig
-    // fix in 6c7bdf5de2 for src/runtime/cli/Arguments.zig::loadBunfig.
+    // freed stack memory — stack-use-after-return under ASAN.
     //
     // Hold the `Box` un-leaked across `to_source()` so the `auto_loaded` ENOENT
     // early-return (the common case: every `bun install` probes both
     // /etc/bunfig.toml and ~/.bunfig.toml, neither of which usually exists)
-    // drops the allocation naturally. Only `Box::leak` on the `Ok` arm where
-    // `Bunfig::parse` actually borrows from it. Mirrors the Zig
-    // `allocator.free(owned_path)` added in 25066f8808.
+    // drops the allocation naturally. Only leak on the `Ok` arm where
+    // `Bunfig::parse` actually borrows from it.
     let boxed_path = bun_core::ZBox::from_bytes(config_path.as_bytes())
         .into_boxed_slice_with_nul();
     // SAFETY: invariant — last byte is 0, written by `ZBox::from_bytes`.

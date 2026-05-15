@@ -142,10 +142,10 @@ describe("system-wide bunfig.toml", () => {
 
   test("bun run loads project bunfig.toml even when system config is set", async () => {
     // Regression test for loaded_bunfig poisoning: system config loading must not
-    // set ctx.debug.loaded_bunfig, which is used as a guard in run_command.zig
-    // (line ~1366) to load project bunfig.toml. If system config incorrectly
-    // poisons loaded_bunfig, `bun run script.ts` silently skips the project
-    // bunfig.toml, inverting the documented config priority (system < project).
+    // set ctx.debug.loaded_bunfig, which is used as a guard in run_command.rs
+    // (RunCommand::boot_standalone) to load project bunfig.toml. If system config
+    // incorrectly poisons loaded_bunfig, `bun run script.ts` silently skips the
+    // project bunfig.toml, inverting the documented config priority (system < project).
     using dir = tempDir("system-bunfig-run-priority", {
       "system-bunfig.toml": `
 [define]
@@ -270,8 +270,8 @@ describe("system-wide bunfig.toml", () => {
     // home config on top. Every other surviving test either runs through
     // AutoCommand/RunCommand (readGlobalConfig() == false) or has no home
     // config — so without this test the readGlobalConfig-true branch at
-    // Arguments.zig:loadConfig and loadGlobalBunfig's system→home ordering
-    // have zero coverage.
+    // bunfig/arguments.rs::load_config and load_global_bunfig's system→home
+    // ordering have zero coverage.
     //
     // We verify the ordering by giving each tier a distinct `[install] cache`
     // directory and reading it back with `bun pm cache`, which prints the

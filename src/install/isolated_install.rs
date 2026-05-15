@@ -2233,7 +2233,11 @@ pub fn install_isolated_packages(
                             false
                         } else {
                             let mut link_buf = paths::PathBuffer::uninit();
-                            crate::package_manager_real::directories::linked_package_path(
+                            // Main-thread path: use the `&mut` entry point so
+                            // the Windows GetFileAttributesW fallback can
+                            // lazy-initialize the global link dir if needed.
+                            // Worker threads use the read-only companion.
+                            crate::package_manager_real::directories::linked_package_path_mut(
                                 manager,
                                 lockfile.str(&pkg_name),
                                 &mut link_buf,

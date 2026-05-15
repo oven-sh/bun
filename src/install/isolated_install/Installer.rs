@@ -1071,12 +1071,14 @@ impl Task {
                             {
                                 let mut linked_buf = PathBuffer::uninit();
                                 let producer_path_opt = {
-                                    // SAFETY: matches how `manager_ref.get()` /
-                                    // `assume_mut` are used elsewhere in this file —
-                                    // the raw pointer is live for the whole
-                                    // Step::LinkPackage arm, and no other thread
-                                    // holds a borrow here on the main loop.
-                                    let manager = unsafe { manager_ref.assume_mut() };
+                                    // Worker thread: must not form `&mut PackageManager`
+                                    // (the Task::run SAFETY contract at the top of
+                                    // this file forbids it — concurrent workers would
+                                    // alias it). `populate_linked_names_cache` ran on
+                                    // the main thread before workers started and the
+                                    // linked_names map is read-only thereafter, so the
+                                    // shared-ref entry point is race-free here.
+                                    let manager = manager_ref.get();
                                     match directories::linked_package_path(
                                         manager,
                                         pkg_name.slice(string_buf),
@@ -1152,14 +1154,99 @@ impl Task {
                                         let _ = src_path.append_join(producer_path);
                                     }
 
+                                    // Stale-GVS-symlink detachment. The `continue` at
+                                    // the bottom of this override block bypasses the
+                                    // detachment in the else-branch at lines ~1244-1310
+                                    // below; without this an entry that was GVS-
+                                    // eligible on the previous install would still have
+                                    // `node_modules/.bun/<storepath>` as a symlink into
+                                    // `<cache>/links/<hash>/`, and FileCopier's writes
+                                    // would land IN the shared cache under every
+                                    // consumer on the machine.
+                                    let mut local = AutoPath::init_top_level_dir();
+                                    installer.append_local_store_entry_path(&mut local, self.entry_id);
+                                    let is_stale_link: bool = {
+                                        #[cfg(windows)]
+                                        {
+                                            if let Some(a) = sys::get_file_attributes(local.slice_z()) {
+                                                a.is_reparse_point
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        #[cfg(not(windows))]
+                                        {
+                                            if let Some(st) = sys::lstat(local.slice_z()).ok() {
+                                                sys::posix::s_islnk(
+                                                    u32::try_from(st.st_mode).expect("int cast"),
+                                                )
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                    };
+                                    if is_stale_link {
+                                        #[cfg(windows)]
+                                        {
+                                            if let Some(_e) = sys::rmdir(local.slice_z()).err() {
+                                                let _ = sys::unlink(local.slice_z());
+                                            }
+                                        }
+                                        #[cfg(not(windows))]
+                                        {
+                                            let _ = sys::unlink(local.slice_z());
+                                        }
+                                    }
+
+                                    // Wipe the entry dir first — linked packages re-
+                                    // materialize straight to the final path (no
+                                    // staging rename). Files the producer has since
+                                    // deleted would otherwise persist across
+                                    // reinstalls.
+                                    let mut final_path = AutoPath::init();
+                                    installer.append_real_store_path(
+                                        &mut final_path,
+                                        self.entry_id,
+                                        Which::Final,
+                                    );
+                                    let _ = Fd::cwd().delete_tree(final_path.slice());
+
                                     let mut dest = OsAutoPath::init();
                                     installer.append_store_path(&mut dest, self.entry_id);
 
-                                    let mut file_copier = FileCopier::init(
+                                    // Full skip lists matching Zig Installer.zig:646-681:
+                                    // default excludes for the producer's working tree
+                                    // (lockfiles, VCS state, env files, OS junk) that
+                                    // `bun pm pack` would also drop.
+                                    let skip_dirs: &[&paths::OSPathSlice] = &[
+                                        bun_paths::os_path_literal!("node_modules"),
+                                        bun_paths::os_path_literal!(".git"),
+                                        bun_paths::os_path_literal!(".hg"),
+                                        bun_paths::os_path_literal!(".svn"),
+                                        bun_paths::os_path_literal!("CVS"),
+                                    ];
+                                    let skip_files: &[&paths::OSPathSlice] = &[
+                                        bun_paths::os_path_literal!(".DS_Store"),
+                                        bun_paths::os_path_literal!(".gitignore"),
+                                        bun_paths::os_path_literal!(".npmignore"),
+                                        bun_paths::os_path_literal!(".npmrc"),
+                                        bun_paths::os_path_literal!(".lock-wscript"),
+                                        bun_paths::os_path_literal!("npm-debug.log"),
+                                        bun_paths::os_path_literal!("bunfig.toml"),
+                                        bun_paths::os_path_literal!(".env.production"),
+                                        bun_paths::os_path_literal!("package-lock.json"),
+                                        bun_paths::os_path_literal!("yarn.lock"),
+                                        bun_paths::os_path_literal!("pnpm-lock.yaml"),
+                                        bun_paths::os_path_literal!("bun.lockb"),
+                                        bun_paths::os_path_literal!("bun.lock"),
+                                    ];
+
+                                    let mut file_copier = FileCopier::init_with_skip(
                                         folder_dir,
                                         src_path.into_sep::<{ PathSeparators::AUTO }>(),
                                         dest.into_sep::<{ PathSeparators::AUTO }>(),
-                                        &[bun_paths::os_path_literal!("node_modules")],
+                                        skip_files,
+                                        skip_dirs,
                                     )?;
                                     match file_copier.copy() {
                                         sys::Result::Ok(()) => {}

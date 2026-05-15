@@ -376,8 +376,8 @@ pub struct FSEventsLoop {
     sem: Semaphore,
     /// Lock-free MPSC; `push`/`pop_batch` are `&self`.
     tasks: UnboundedQueue<ConcurrentTask>,
-    /// JS-thread-only: written once in `init()` (before any other thread can
-    /// observe `self`), taken once in `shutdown()`.
+    /// JS-thread-only: written once in `init()`, taken once in `shutdown()`.
+    /// The CF thread never touches this field.
     thread: UnsafeCell<Option<std::thread::JoinHandle<()>>>,
     /// All remaining mutable state — accessed only while holding `mutex`.
     state: UnsafeCell<FSEventsLoopState>,
@@ -400,9 +400,11 @@ struct FSEventsLoopState {
 //  - `mutex`, `sem`, `tasks` are `Sync`.
 //  - `state` is only accessed while holding `mutex` (every access site takes
 //    the guard first; this is the same discipline `PathWatcherManager` uses).
-//  - `thread` is written once in `init()` before any other thread can observe
-//    `self` (the `&'static` is created *after* the write), and read once in
-//    `shutdown()` from the JS thread; the CF thread never touches it.
+//  - `thread` is JS-thread-only: written once in `init()` (through
+//    `UnsafeCell`, *after* the CF thread has been spawned with a capture of
+//    `&'static self`), and read once in `shutdown()` from the JS thread. The
+//    CF thread never touches this field, so the unsynchronized write is not
+//    a data race.
 unsafe impl Sync for FSEventsLoop {}
 // SAFETY: the CF thread takes ownership of nothing; `Send` is required only so
 // `&'static FSEventsLoop: Send` (which follows from `Sync`). Included for
@@ -600,11 +602,19 @@ impl FSEventsLoop {
 
         // `FSEventsLoop: Sync` ⇒ `&'static FSEventsLoop: Send`, so the
         // spawn closure captures `this` directly — no raw-pointer smuggling.
-        //
-        // SAFETY: no other thread can observe `self` yet (we haven't
-        // published), so this is the only access to `thread`.
+        // Zig: `try std.Thread.spawn` — propagate via Builder so a
+        // once-per-process pthread_create failure surfaces to JS instead of
+        // panicking (matches `Linux::init`/`Kqueue::init`).
+        let handle = std::thread::Builder::new()
+            .spawn(move || this.cf_thread_loop())
+            .map_err(|_| {
+                // `this` and `signal_source` leak — once-per-process error path.
+                bun_core::err!("FailedToSpawnFSEventsThread")
+            })?;
+        // SAFETY: `thread` is JS-thread-only; the CF thread captured `this`
+        // above but never accesses this field.
         unsafe {
-            *this.thread.get() = Some(std::thread::spawn(move || this.cf_thread_loop()));
+            *this.thread.get() = Some(handle);
         }
 
         // sync threads

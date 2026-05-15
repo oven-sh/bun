@@ -1244,6 +1244,22 @@ await Bun.build({
 
 This preserves the `.name` property on functions and classes while still minifying the actual identifier names in the code.
 
+<Important title="Function and class expression names">
+  By default, `--minify-syntax` removes names from function and class expressions when they are not referenced elsewhere in the code. This is an optimization to reduce bundle size.
+
+  For example:
+  ```ts
+  const foo = function bar() {};
+  console.log(foo.name); // "bar" without --minify-syntax
+  console.log(foo.name); // "" with --minify-syntax (name removed)
+  ```
+
+  To preserve these names, use the `--keep-names` flag. This is particularly useful for:
+  - Debugging stack traces
+  - Logging and error reporting
+  - Dependency injection frameworks that rely on function names
+</Important>
+
 ## Combined Example
 
 Using all three minification modes together:

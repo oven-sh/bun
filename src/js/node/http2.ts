@@ -2082,9 +2082,10 @@ class Http2Stream extends Duplex {
   get state() {
     const session = this[bunHTTP2Session];
     if (session) {
-      return session[bunHTTP2Native]?.getStreamState(this.#id);
+      const native = session[bunHTTP2Native];
+      if (native) return native.getStreamState(this.#id) ?? {};
     }
-    return constants.NGHTTP2_STREAM_STATE_CLOSED;
+    return {};
   }
 
   priority(options) {
@@ -2109,7 +2110,9 @@ class Http2Stream extends Duplex {
   }
 
   get session() {
-    return this[bunHTTP2Session];
+    const session = this[bunHTTP2Session];
+    if (session == null || session.destroyed) return undefined;
+    return session;
   }
 
   get pushAllowed() {

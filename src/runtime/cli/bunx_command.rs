@@ -533,7 +533,6 @@ impl BunxCommand {
                 // error from the caller.
                 if !force_stale {
                     // If delete fails, oh well. Hope installation takes care of it.
-                    // TODO(port): Zig used std.fs.cwd().deleteTree; map to bun_sys recursive rm.
                     let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 }
                 return Err(bun_core::err!("NeedToInstall"));

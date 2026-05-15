@@ -37,8 +37,9 @@ test.concurrent(
     const fs = require("fs");
     const path = require("path");
     // Each subprocess gets its own file so concurrent runs don't race on
-    // unlink/watch of a shared path.
-    const file = path.join(process.argv[2], "target-" + process.pid + ".txt");
+    // unlink/watch of a shared path. Under 'bun -e' there is no script
+    // slot, so the first extra CLI arg is argv[1].
+    const file = path.join(process.argv[1], "target-" + process.pid + ".txt");
     fs.writeFileSync(file, "initial");
 
     const watcher = fs.watch(file, () => {

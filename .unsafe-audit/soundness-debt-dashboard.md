@@ -23,7 +23,7 @@ This dashboard summarises Bun's Rust soundness debt after Pass 4 risk-scoring. I
 | **pre-existing-ub (current T1/T1-equivalent)** | **40** | **2,507** | **63** |
 | Tier 2 unsafe-contract defects | ~32 | not scored here (qualitative tier; see PASS3_FINDINGS_INDEX) | n/a |
 | Tier 3 watchlist | ~58 | not scored here | n/a |
-| **Total open soundness/security debt (T1 + T2 + T3)** | **~133** | **2,507 (T1/T1-equivalent only)** | **— ** |
+| **Total open soundness/security debt (T1 + T2 + T3)** | **~130** | **2,507 (T1/T1-equivalent only)** | **— ** |
 
 The T1 count is the corrected post-Codex total (see [`CODEX_PASS3_FINAL_REVIEW.md`](CODEX_PASS3_FINAL_REVIEW.md)) plus the Pass 4 semver/threading additions. The pre-Codex raw count was ~63 T1; the follow-up Codex correction pass moved H3, the libuv transmute, JSC contract hazards, WeakPtrData, JsCell/RacyCell, and several atomic-ordering claims out of T1. H5 is kept as an explicitly marked T1-equivalent security P0, not as Rust memory-UB.
 

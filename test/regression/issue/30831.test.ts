@@ -9,14 +9,19 @@
 // `subprocess.stdout`/`stderr` is a `Readable` wrapping a native
 // `ReadableStream`. Neither surfaced the underlying pipe fd.
 //
-// Fix (three parts, all required — removing any one of them breaks one of the
-// three tests below):
+// Fix (three parts — removing any of the first three breaks one of the first
+// three tests; the fourth test guards the ordering of part 2):
 //   1. Surface `.fd` on both wrappers at construction time from the
 //      underlying sink/source, so `nodeToBun` can forward the fd.
-//   2. When `nodeToBun` extracts an fd from a stream, also pause the stream
-//      and tag it `kIsUsedAsStdio` — mirrors Node's `getValidStdio`
+//   2. When `nodeToBun` extracts an fd from a stream, record the stream in a
+//      `streamsToQuiesce` list; after `Bun.spawn` succeeds, pause each one
+//      and tag it `kIsUsedAsStdio`. Mirrors Node's `getValidStdio`
 //      post-spawn `readStop`/`pause`, without which the parent's own
-//      `PipeReader` races the child for the pipe's bytes.
+//      `PipeReader` races the child for the pipe's bytes. The quiesce
+//      runs AFTER spawn because `setFlowing(false)` is sticky at the
+//      native layer with no user-recoverable counterpart — if we paused
+//      pre-spawn and spawn then threw, the source stream would be stuck
+//      forever.
 //   3. `Bun.spawn`'s POSIX path clears `O_NONBLOCK` on the caller-supplied
 //      fd before `dup2`; otherwise the child inherits non-blocking mode (the
 //      parent set it for async reads) and a synchronous reader like `cat`
@@ -112,17 +117,65 @@ test("spawn({ stdio: [otherProc.stdout, ...] }) pipes A's stdout into B's stdin 
   expect(filterExit).toBe(0);
 });
 
-test("spawn({ stdio: [..., process.stdout, process.stderr] }) still works (fd already on process streams)", async () => {
-  // process.stdout.fd is set to 1 by getStdioWriteStream. This existed
-  // before the fix but the code path shares `nodeToBun` with the two
-  // tests above, so regression-guard it.
-  using proc = spawn(bunExe(), ["-e", 'console.error("from-child")'], {
+test("spawn({ stdio: [..., process.stdout, process.stderr] }) forwards via the stream→fd path", async () => {
+  // `process.stdout.fd === 1` / `process.stderr.fd === 2` are set by
+  // `getStdioWriteStream`. These have always been numeric-fd objects in
+  // Bun, so they were already accepted by `nodeToBun`'s `.fd` lookup — but
+  // this PR routes them through the new `extractStreamFd` + `streamsToQuiesce`
+  // path too, and a later refactor could accidentally drop them. A
+  // sub-bun runner actually performs the passthrough spawn and prints
+  // whether it succeeded to *its* stdout, which the outer test captures.
+  const RUNNER = `
+    const { spawn } = require("child_process");
+    const child = spawn(${JSON.stringify(bunExe())}, ["-e", 'process.stderr.write("from-grandchild")'], {
+      stdio: ["ignore", process.stdout, process.stderr],
+    });
+    child.on("error", err => { process.stderr.write("SPAWN-ERROR:" + err.message); process.exit(2); });
+    child.on("exit", code => process.exit(code));
+  `;
+  using runner = spawn(bunExe(), ["-e", RUNNER], {
     stdio: ["ignore", "pipe", "pipe"],
     env: bunEnv,
   });
-  const [stdout, stderr] = await Promise.all([collect(proc.stdout!), collect(proc.stderr!)]);
+  const [stdout, stderr, code] = await Promise.all([
+    collect(runner.stdout!),
+    collect(runner.stderr!),
+    new Promise<number | null>(r => {
+      if (runner.exitCode != null) return r(runner.exitCode);
+      runner.once("exit", c => r(c));
+    }),
+  ]);
+  // Grandchild writes "from-grandchild" to its stderr (which is the
+  // runner's process.stderr, which is this test's runner.stderr).
   expect(stdout).toBe("");
-  expect(stderr).toBe("from-child\n");
+  expect(stderr).toBe("from-grandchild");
+  expect(code).toBe(0);
+});
+
+test("spawn failure (ENOENT) does not leave a passed-in source stream stuck", async () => {
+  // The quiesce step (setFlowing(false) + pause) MUST NOT run before
+  // Bun.spawn succeeds: `setFlowing(false)` has no user-recoverable
+  // counterpart, so running it on the failure path would leave
+  // `pSource.stdout` permanently unreadable. Assert the stream is still
+  // fully consumable after a failed spawn.
+  using pSource = spawn(
+    bunExe(),
+    ["-e", 'setTimeout(() => { process.stdout.write("hello world"); process.stdout.end(); }, 50)'],
+    { stdio: ["ignore", "pipe", "pipe"], env: bunEnv },
+  );
+  const sourceStderr = collect(pSource.stderr!);
+
+  const failed = spawn("/this/binary/does/not/exist", [], {
+    stdio: [pSource.stdout!, "pipe", "pipe"],
+    env: bunEnv,
+  });
+  const spawnErr = await new Promise<NodeJS.ErrnoException>(r => failed.once("error", r));
+  expect(spawnErr.code).toBe("ENOENT");
+
+  // pSource.stdout should still flow normally after the failed spawn.
+  const [data, stderr] = await Promise.all([collect(pSource.stdout!), sourceStderr]);
+  expect(stderr).toBe("");
+  expect(data).toBe("hello world");
 });
 
 function collect(stream: NodeJS.ReadableStream): Promise<string> {

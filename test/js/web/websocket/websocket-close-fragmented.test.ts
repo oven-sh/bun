@@ -140,30 +140,26 @@ describe("WebSocket", () => {
   // itself and leave no JUnit output. Spawning a child isolates the
   // expected crash so the parent test can assert on the child's exit
   // code.
-  test(
-    "close() with reason that transcodes beyond 123 UTF-8 bytes does not crash",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", CLOSE_LONG_REASON_FIXTURE],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      // With the fix: the fixture reaches the close listener, prints
-      // `close:1000`, and exits cleanly. Without the fix: the child aborts
-      // inside `WebSocket::close` before the listener fires — stdout is
-      // empty and exitCode is non-zero (SIGILL from the Rust panic).
-      expect({ stdout: stdout.trim(), exitCode }).toEqual({
-        stdout: "close:1000",
-        exitCode: 0,
-      });
-    },
-    // The pre-fix failure mode routes through the debug crash handler
-    // (SIGILL → llvm-symbolizer), which takes ~6s in ASAN builds. 30s
-    // gives CI headroom; the happy path is ~1s.
-    30_000,
-  );
+  test("close() with reason that transcodes beyond 123 UTF-8 bytes does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", CLOSE_LONG_REASON_FIXTURE],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // With the fix: the fixture reaches the close listener, prints
+    // `close:1000`, and exits cleanly. Without the fix: the child aborts
+    // inside `WebSocket::close` before the listener fires — stdout is
+    // empty and exitCode is non-zero (SIGILL from the Rust panic).
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: "close:1000",
+      exitCode: 0,
+    });
+  }, // The pre-fix failure mode routes through the debug crash handler
+  // (SIGILL → llvm-symbolizer), which takes ~6s in ASAN builds. 30s
+  // gives CI headroom; the happy path is ~1s.
+  30_000);
 });
 
 // Raw-socket WebSocket handshake + close(1000, reason-transcoding-to-126-UTF-8-bytes).

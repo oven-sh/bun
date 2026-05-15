@@ -112,11 +112,7 @@ impl ClientContext {
 
         let ptr = INSTANCE.load(Ordering::Acquire);
 
-        let Some(ptr) = NonNull::new(ptr) else {
-            panic!("Ptr is null even after initialization");
-        };
-
-        Some(ptr)
+        NonNull::new(ptr)
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.

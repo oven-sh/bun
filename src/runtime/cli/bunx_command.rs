@@ -1071,6 +1071,21 @@ impl BunxCommand {
                             bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
                             if opts.no_install {
+                                // `--no-install` normally falls through to run
+                                // the stale cached binary with a warning. But
+                                // `--minimum-release-age` is a supply-chain
+                                // gate: running the cached binary would
+                                // silently bypass it, because re-resolution
+                                // (where the filter is applied) is what
+                                // `--no-install` specifically opts out of.
+                                // Refuse to run instead.
+                                if age_gate_forces_refresh {
+                                    Output::err_generic(
+                                        "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: the cached binary for <b>{}<r> cannot be re-verified under the age gate without resolving a new version. Drop <b>--no-install<r> to allow re-resolution.",
+                                        (BStr::new(&update_request.name),),
+                                    );
+                                    Global::exit(1);
+                                }
                                 Output::warn(format_args!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
                                     BStr::new(&update_request.name),

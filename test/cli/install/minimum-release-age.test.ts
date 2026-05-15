@@ -1,5 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 /**
@@ -2577,8 +2579,6 @@ minimumReleaseAgeExcludes = ["regular-package"]
       using tmp = tempDir("bunx-min-age-tmp-warm", {});
 
       const uid = process.getuid?.() ?? 0;
-      const { mkdirSync, writeFileSync, chmodSync } = require("node:fs");
-      const { join } = require("node:path");
       const binDir = join(String(tmp), `bunx-${uid}-regular-package@latest`, "node_modules", ".bin");
       mkdirSync(binDir, { recursive: true });
       const binPath = join(binDir, "regular-package");
@@ -2599,6 +2599,37 @@ minimumReleaseAgeExcludes = ["regular-package"]
       // The sentinel must not appear — cached binary must not have run.
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       expect(stderr.toLowerCase()).toContain("minimum-release-age");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("--no-install + --minimum-release-age refuses to run cached binary", async () => {
+      // When both flags are set on a warm cache, the normal `--no-install`
+      // fallback (warn and run the stale cached binary) would silently bypass
+      // the age gate — `--no-install` opts out of the re-resolution where
+      // the filter is applied. bunx must error out instead.
+      using dir = tempDir("bunx-min-age-noinstall", {});
+      using cacheDir = tempDir("bunx-min-age-cache-noinstall", {});
+      using tmp = tempDir("bunx-min-age-tmp-noinstall", {});
+
+      const uid = process.getuid?.() ?? 0;
+      const binDir = join(String(tmp), `bunx-${uid}-regular-package@latest`, "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      const binPath = join(binDir, "regular-package");
+      writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+      chmodSync(binPath, 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", "--no-install", "--minimum-release-age=3155760000", "regular-package"],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+      expect(stderr).toContain("--no-install");
+      expect(stderr).toContain("--minimum-release-age");
       expect(exitCode).not.toBe(0);
     });
   });

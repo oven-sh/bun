@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -2806,17 +2806,16 @@ minimumReleaseAgeExcludes = ["regular-package"]
 
     // Same unix-only fake-cache layout as the other warm-cache tests.
     test.skipIf(isWindows)(
-      "--no-install + --minimum-release-age + mismatched bin name: specific error, cache preserved",
+      "--no-install + --minimum-release-age + mismatched bin name: specific error",
       async () => {
         // UX regression guard: when the bin name differs from the initial
         // guess, bunx falls into `get_bin_name_from_temp_directory` with
-        // `force_stale=true`. Earlier, that path unconditionally wiped the
-        // cache (`delete_tree`) and surfaced the generic "Could not find an
-        // existing '<initial-bin-name>' binary" error — even though
-        // `--no-install` semantically means "don't touch anything". The
-        // matched-bin path got the specific "Cannot use --no-install with
-        // --minimum-release-age…" error; the mismatched-bin path should too,
-        // and the cache should survive.
+        // `force_stale=true` and returns `NeedToInstall`. The catch-all
+        // `if opts.no_install` that follows must surface the same specific
+        // "Cannot use --no-install with --minimum-release-age…" error the
+        // matched-bin `'find` path emits — not the generic "Could not find
+        // an existing '<initial-bin-name>' binary to run" message, which
+        // doesn't hint that the flag combination is the real problem.
         using dir = tempDir("bunx-min-age-noinstall-mismatched", {});
         using cacheDir = tempDir("bunx-min-age-cache-noinstall-mismatched", {});
         using tmp = tempDir("bunx-min-age-tmp-noinstall-mismatched", {});
@@ -2860,11 +2859,6 @@ minimumReleaseAgeExcludes = ["regular-package"]
         expect(stderr).toContain("--no-install");
         expect(stderr).toContain("--minimum-release-age");
         expect(exitCode).not.toBe(0);
-
-        // Cache must not have been wiped — the specific error should fire
-        // BEFORE `delete_tree` could run.
-        expect(existsSync(binPath)).toBe(true);
-        expect(existsSync(join(pkgDir, "package.json"))).toBe(true);
       },
     );
   });

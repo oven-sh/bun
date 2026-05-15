@@ -520,21 +520,15 @@ impl BunxCommand {
 
             if is_stale {
                 let _ = target_package_json.close();
-                // Only wipe the cache when it's stale by the 24h mtime rule —
-                // that's an expiry decision the rest of the code has always
-                // made on its own. When `force_stale` is true we're refusing
-                // to honor the cache for `--minimum-release-age` purposes, but
-                // the install path that follows will already pass
-                // `--no-cache --force` to `bun add` (which overwrites the
-                // tree), so a pre-emptive delete adds nothing. Skipping it
-                // also means `--no-install` with an active age gate on a
-                // mismatched-bin package doesn't gratuitously destroy a
-                // fresh cache just to surface a "Could not find binary"
-                // error from the caller.
-                if !force_stale {
-                    // If delete fails, oh well. Hope installation takes care of it.
-                    let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
-                }
+                // If delete fails, oh well. Hope installation takes care of it.
+                // Under `force_stale` (age gate), the wipe is REQUIRED — a
+                // surviving `bun.lock` would let the subsequent `bun add`
+                // reuse the previous resolution even under `--force`,
+                // silently bypassing the age filter for ranged specifiers
+                // like `@scope/pkg@^N`. The wipe is harmless under
+                // `--no-install` because that path errors out in `exec`
+                // anyway without installing.
+                let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 return Err(bun_core::err!("NeedToInstall"));
             }
             let _ = target_package_json.close();
@@ -980,7 +974,16 @@ impl BunxCommand {
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
-        let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
+        // `--minimum-release-age=<N>` also forces cache-bust: without
+        // `--no-cache --force`, `bun add` would reuse the previous run's
+        // `bun.lock` + `node_modules` in the bunx cache dir, which defeats
+        // the re-resolution that lets the age filter pick a different
+        // version. This covers all paths that reach the install step with
+        // an active gate uniformly (the `'find`/`'find2` cache-hit branches
+        // also set `do_cache_bust = true` on their own, and those writes
+        // become redundant-no-ops here).
+        let mut do_cache_bust =
+            update_request.version.tag == VersionTag::DistTag || opts.has_active_age_gate();
         let look_for_existing_bin = update_request.version.literal.is_empty()
             || update_request.version.tag != VersionTag::DistTag;
 
@@ -1341,12 +1344,15 @@ impl BunxCommand {
             // When an active age gate forced cache re-resolution (via
             // `force_stale` in `get_bin_name_from_temp_directory`), the
             // "could not find" message is misleading — there may well be a
-            // cached binary, it's just being treated as stale. Surface the
-            // same specific error as the matched-bin path so the user knows
-            // to drop one of the flags.
+            // cached binary, it's just being treated as stale (or the cache
+            // is cold, in which case the flags are still incompatible for a
+            // different reason — `--no-install` with a gate asks bunx to
+            // verify age without resolving a version). Either way, the flag
+            // combination is inherently contradictory; surface the same
+            // actionable guidance as the matched-bin path.
             if opts.has_active_age_gate() {
                 Output::err_generic(
-                    "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: the cached binary for <b>{}<r> cannot be re-verified under the age gate without resolving a new version. Drop <b>--no-install<r> to allow re-resolution.",
+                    "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: <b>{}<r> cannot be verified against the age gate without resolving a version, which <b>--no-install<r> opts out of. Drop <b>--no-install<r> to allow re-resolution.",
                     (BStr::new(&update_request.name),),
                 );
                 Global::exit(1);

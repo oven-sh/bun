@@ -82,7 +82,7 @@ differentiates this from "find more unsafe."
 
 **~35,000 lines** of audit content across **44+ plan documents**, **15+ synthesis documents**, **5 miri-backed UB witnesses** (4 dedicated detail files + 1 summary-only trace), **8 trybuild + proptest test fixtures** (rustfmt-clean, dirent regression test 14/14 pass), an **ast-grep rule** that fires on 2 real Bun sites with 0 false positives in its test corpus, a **dylint crate scaffold** for the same pattern, a **redacted draft SECURITY.md proposal**, and a **soundness-debt dashboard** with quantified risk-scoring per finding.
 
-Every high-priority finding has a file:line citation. Every miri-backed claim has a runtime trace; remaining T1s that need Loom / scheduling / integration harnesses are called out as not yet miri-reproduced. Every demotion (from the Codex adversarial review passes) is catalogued with evidence in `CODEX_PASS3_FINAL_REVIEW.md`. The Pass-4 risk-scoring document (`audit/synthesis/PASS4-risk-scoring.md`) gives every T1 a BLAST × LIKELIHOOD × DISCOVERABILITY score — 22 sites at maximum (125), accounting for 75% of total risk.
+High-priority findings carry file:line citations. Miri-backed claims have runtime traces; remaining T1s that need Loom / scheduling / integration harnesses are called out as not yet miri-reproduced. The Codex adversarial review passes catalog demotions with evidence in `CODEX_PASS3_FINAL_REVIEW.md`. The Pass-4 risk-scoring document (`audit/synthesis/PASS4-risk-scoring.md`) gives the T1/T1-equivalent dashboard BLAST × LIKELIHOOD × DISCOVERABILITY scores — 22 sites at maximum (125), accounting for 75% of total risk.
 
 ## What's submitted
 

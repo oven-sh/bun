@@ -61,9 +61,9 @@ The final defensible public tally: **40 T1/T1-equivalent entries, including 6 ce
 ├── phase0_*                           ← Bootstrap artifacts (scope decision, tool inventory).
 ├── audit/
 │   ├── classification/                ← Tier rollups + master classification.
-│   ├── plans/                         ← 33+ per-cluster / per-crate plan docs (largest dir).
+│   ├── plans/                         ← 40 per-cluster / per-crate plan docs (largest dir).
 │   ├── synthesis/                     ← Cross-cutting analyses (invariants, archeology, etc.).
-│   └── tests/                         ← Real, compilable trybuild + proptest fixtures.
+│   └── tests/                         ← Rust compile-fail, proptest, Kani, and regression fixtures.
 ├── verification/                      ← 5 miri reproductions w/ verbatim traces.
 └── phase1/cluster-summary.json        ← Phase-1 enumeration summary.
 ```
@@ -156,7 +156,7 @@ These should land FIRST in any remediation PR sequence.
 
 ## Plan documents — what's in `audit/plans/`
 
-33+ files. Group by prefix:
+40 files. Group by prefix:
 
 | Prefix | What it is |
 |--------|-----------|

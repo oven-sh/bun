@@ -413,24 +413,38 @@ impl ConcurrentTask {
 }
 
 impl FSEventsLoop {
-    pub fn cf_thread_loop(&mut self) {
+    /// Runs for the lifetime of the CF thread. Takes `*mut Self` (not
+    /// `&mut self`) because the JS thread concurrently forms `&mut FSEventsLoop`
+    /// in `register_watcher`/`unregister_watcher`/`Drop` while this thread is
+    /// parked in `CFRunLoopRun()` — two live `&mut` to one allocation is UB
+    /// regardless of synchronization (LLVM `noalias` lets it treat the
+    /// `self.loop_` write here as invisible to the JS thread's read in
+    /// `enqueue_task_concurrent`, which then calls `CFRunLoopWakeUp(NULL)`).
+    /// Matches the Zig shape: `fn CFThreadLoop(this: *FSEventsLoop)`.
+    ///
+    /// SAFETY: `this` is the heap allocation from `init()`; it outlives this
+    /// thread (joined in `Drop`).
+    pub unsafe fn cf_thread_loop(this: *mut Self) {
         bun_core::Output::Source::configure_named_thread(zstr!("CFThreadLoop"));
 
         let cf = CoreFoundation::get();
 
-        // SAFETY: CF fn pointers loaded via dlsym; signal_source is valid
+        // SAFETY: CF fn pointers loaded via dlsym; `this` valid per fn contract.
+        // Raw-pointer place expressions (`(*this).field`) do not materialize
+        // `&mut FSEventsLoop`, so no `noalias` conflict with the JS thread.
         unsafe {
-            self.loop_ = (cf.run_loop_get_current)();
+            let loop_ = (cf.run_loop_get_current)();
+            (*this).loop_ = loop_;
 
-            (cf.run_loop_add_source)(self.loop_, self.signal_source, *cf.run_loop_default_mode);
+            (cf.run_loop_add_source)(loop_, (*this).signal_source, *cf.run_loop_default_mode);
 
-            self.sem.post();
+            (*this).sem.post();
 
             (cf.run_loop_run)();
-            (cf.run_loop_remove_source)(self.loop_, self.signal_source, *cf.run_loop_default_mode);
-        }
+            (cf.run_loop_remove_source)(loop_, (*this).signal_source, *cf.run_loop_default_mode);
 
-        self.loop_ = ptr::null_mut();
+            (*this).loop_ = ptr::null_mut();
+        }
     }
 
     // Runs in CF thread, executed after `enqueueTaskConcurrent()`. Body
@@ -507,13 +521,21 @@ impl FSEventsLoop {
         // SAFETY: this is a valid freshly-boxed pointer
         unsafe {
             (*this).signal_source = signal_source;
-            // PORT NOTE: Zig std.Thread.spawn → std::thread::spawn. The raw `this`
-            // pointer is moved into the closure; the FSEventsLoop is heap-allocated
-            // and outlives the thread (joined in Drop).
-            let this_addr = this as usize;
+            // PORT NOTE: Zig std.Thread.spawn → std::thread::spawn. `*mut T` is
+            // `!Send`, so wrap it — do NOT launder through `usize` (int→ptr
+            // casts strip provenance; the CF thread's writes to `self.loop_`
+            // become invisible to the JS thread under `noalias`, and
+            // `enqueue_task_concurrent` faults on `CFRunLoopWakeUp(NULL)`).
+            struct SendPtr(*mut FSEventsLoop);
+            // SAFETY: `FSEventsLoop` is heap-allocated and the CF thread is the
+            // sole writer to `loop_`/`fsevent_stream`/`paths`/`cf_paths`;
+            // cross-thread fields go through `mutex`/`sem`/the lock-free queue.
+            unsafe impl Send for SendPtr {}
+            let send = SendPtr(this);
             (*this).thread = Some(std::thread::spawn(move || {
-                // SAFETY: see above — `this` is a valid heap allocation for the thread's lifetime.
-                unsafe { (*(this_addr as *mut FSEventsLoop)).cf_thread_loop() }
+                let send = send;
+                // SAFETY: `send.0` is valid for the thread's lifetime (joined in Drop).
+                unsafe { FSEventsLoop::cf_thread_loop(send.0) }
             }));
 
             // sync threads

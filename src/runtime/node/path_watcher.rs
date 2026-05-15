@@ -683,10 +683,18 @@ impl Linux {
         manager.platform_fd.set(Fd::from_native(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
-        let mgr_ptr = std::ptr::from_mut::<PathWatcherManager>(manager) as usize;
+        // `*const T` is `!Send`, so wrap it — do NOT launder through `usize`
+        // (int→ptr casts strip provenance; accesses through the result are UB).
+        struct SendPtr(*const PathWatcherManager);
+        // SAFETY: manager is process-global (&'static), never freed; the reader
+        // thread only takes `&PathWatcherManager` and all cross-thread state is
+        // behind `manager.mutex` / atomics.
+        unsafe impl Send for SendPtr {}
+        let send = SendPtr(std::ptr::from_mut::<PathWatcherManager>(manager).cast_const());
         match std::thread::Builder::new().spawn(move || {
+            let send = send;
             // SAFETY: manager is process-global (&'static), never freed.
-            Linux::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
+            Linux::thread_main(unsafe { &*send.0 })
         }) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
@@ -1226,10 +1234,18 @@ impl Kqueue {
         };
         manager.platform_fd.set(kq);
         // Daemon reader — the manager is process-global and never torn down.
-        let mgr_ptr = manager as *mut PathWatcherManager as usize;
+        // `*const T` is `!Send`, so wrap it — do NOT launder through `usize`
+        // (int→ptr casts strip provenance; accesses through the result are UB).
+        struct SendPtr(*const PathWatcherManager);
+        // SAFETY: manager is process-global (&'static), never freed; the reader
+        // thread only takes `&PathWatcherManager` and all cross-thread state is
+        // behind `manager.mutex` / atomics.
+        unsafe impl Send for SendPtr {}
+        let send = SendPtr((manager as *mut PathWatcherManager).cast_const());
         match std::thread::Builder::new().spawn(move || {
+            let send = send;
             // SAFETY: manager is process-global (&'static), never freed.
-            Kqueue::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
+            Kqueue::thread_main(unsafe { &*send.0 })
         }) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {

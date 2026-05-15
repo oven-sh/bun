@@ -6,12 +6,12 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
-use bun_core::{self as bun, FeatureFlags, env_var};
+use bun_core::{self as bun, env_var, FeatureFlags};
 use bun_core::{PathString, String as BunString, ZStr};
 use bun_io::Write as _;
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_resolver::fs::{FileSystem, Path as FsPath, RealFS};
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Zig: `std.hash.Wyhash` (final4 variant). Must match exactly so on-disk
@@ -39,7 +39,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const EXPECTED_VERSION: u32 = 20;
+const EXPECTED_VERSION: u32 = 21;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

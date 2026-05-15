@@ -3,16 +3,16 @@
 use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ffi::c_void;
 
-use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
+use crate::webcore::Blob;
 use bun_ast::Index;
 use bun_ast::{Loader, Target};
-use bun_bundler::BundleV2;
 use bun_bundler::options;
+use bun_bundler::BundleV2;
 use bun_collections::{StringArrayHashMap, StringHashMap, StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{strings, String as BunString, ZigString};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
@@ -41,6 +41,7 @@ pub mod js_bundler {
             options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
             options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
             options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
+            options::JSX::Runtime::Preserve => api::JsxRuntime::Preserve,
         }
     }
 
@@ -695,8 +696,9 @@ pub mod js_bundler {
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Invalid jsx.runtime: '{}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'",
-                            bstr::BStr::new(slice.slice())
+                            "Invalid jsx.runtime: '{}'. Must be one of: {}",
+                            bstr::BStr::new(slice.slice()),
+                            options::JSX::RUNTIME_LIST_FOR_DISPLAY
                         )));
                     }
                     drop(slice);

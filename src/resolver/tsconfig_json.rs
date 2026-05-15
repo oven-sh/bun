@@ -507,7 +507,6 @@ impl TSConfigJSON {
                     // bytes, so a longer value can't match — lowercase into a
                     // fixed stack buffer (returns `None` when it can't fit).
                     if let Some((str_lower, len)) = strings::ascii_lowercase_buf::<12>(str) {
-                        // - We don't support "preserve" yet
                         if let Some(runtime) = options::jsx::RUNTIME_MAP.get(&str_lower[..len]) {
                             result.jsx.runtime = runtime.runtime;
                             result.jsx_flags.insert(JsxField::Runtime);
@@ -524,7 +523,10 @@ impl TSConfigJSON {
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_utf8_string_literal() {
-                    if str.len() >= b"solid-js".len() && &str[..b"solid-js".len()] == b"solid-js" {
+                    if result.jsx.runtime != options::jsx::Runtime::Preserve
+                        && str.len() >= b"solid-js".len()
+                        && &str[..b"solid-js".len()] == b"solid-js"
+                    {
                         result.jsx.runtime = options::jsx::Runtime::Solid;
                         result.jsx_flags.insert(JsxField::Runtime);
                     }

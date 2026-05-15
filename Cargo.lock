@@ -2053,7 +2053,6 @@ dependencies = [
  "bstr",
  "bun_analytics",
  "bun_core",
- "bun_crash_handler",
  "bun_dispatch",
  "bun_event_loop",
  "bun_io",

@@ -2,6 +2,7 @@
 #include <JavaScriptCore/VM.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
+#include "ZigGlobalObject.h"
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
 using Task = JSC::DeferredWorkTimer::Task;
@@ -87,7 +88,14 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
     holder.unlockEarly();
 
     if (pendingTicket && !pendingTicket->isCancelled()) {
+        auto& vm = job->vm();
+        auto* globalObject = job->ticket->target()->realm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         job->task(job->ticket.ptr());
+        if (JSC::Exception* exception = scope.exception()) {
+            if (scope.clearExceptionExceptTermination())
+                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
     }
 
     delete job;

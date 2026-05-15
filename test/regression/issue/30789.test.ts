@@ -90,7 +90,6 @@ registry = "http://localhost:${server.port}/"
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).not.toContain("error:");
-  expect(exitCode).toBe(0);
 
   // The up-arrow (U+2191, `E2 86 91`) and right-arrow (U+2192, `E2 86 92`)
   // must appear as their valid multi-byte UTF-8 sequences.
@@ -104,4 +103,8 @@ registry = "http://localhost:${server.port}/"
   // The full arrow line (with ANSI stripped) should round-trip cleanly.
   const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
   expect(stripAnsi(out)).toContain(`↑ ${PKG} ${OLD} → ${NEW}`);
+
+  // Exit code asserted last so the content diffs above surface first on
+  // failure (per root CLAUDE.md).
+  expect(exitCode).toBe(0);
 });

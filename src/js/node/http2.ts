@@ -2727,15 +2727,21 @@ function emitConnectNT(self, socket) {
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
     let error_instance: Error | number | undefined = undefined;
-    if (stream.listenerCount("error") > 0) {
-      if (typeof error === "number") {
+    if (typeof error === "number") {
+      // RFC 9113 §8.1: NO_ERROR and CANCEL are non-error closures. For those we
+      // always record rstCode so it is observable from 'close'. For real error
+      // codes we only record rstCode (and build an Error) when an 'error'
+      // listener exists; otherwise _destroy would synthesize an unhandled
+      // ERR_HTTP2_STREAM_ERROR and crash the process.
+      const isErrorCode = error !== NGHTTP2_NO_ERROR && error !== NGHTTP2_CANCEL;
+      if (!isErrorCode || stream.listenerCount("error") > 0) {
         stream.rstCode = error;
-        if (error != 0) {
+        if (isErrorCode) {
           error_instance = streamErrorFromCode(error);
         }
-      } else {
-        error_instance = error;
       }
+    } else if (stream.listenerCount("error") > 0) {
+      error_instance = error;
     }
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close

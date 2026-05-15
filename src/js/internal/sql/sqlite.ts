@@ -175,16 +175,49 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             }
             continue;
           }
-          case "DELETE":
-          case "REPLACE": {
-            // DELETE and REPLACE aren't tracked in the `SQLCommand` enum
-            // (the adapter uses `lastToken` to report the command name),
-            // but we still need to remember we saw one so a leading
-            // `WITH` ahead of `DELETE`/`REPLACE INTO ...` doesn't falsely
-            // flip `canReturnRows`. REPLACE is the SQLite alias for
-            // `INSERT OR REPLACE` — same row-returning semantics as
-            // INSERT (no rows unless RETURNING).
+          case "DELETE": {
+            // DELETE isn't tracked in the `SQLCommand` enum (the adapter
+            // uses `lastToken` to report the command name), but we still
+            // need to remember we saw it so a leading `WITH` ahead of
+            // `DELETE FROM ...` doesn't falsely flip `canReturnRows`.
             sawDML = true;
+            lastToken = token;
+            token = "";
+            continue;
+          }
+          case "REPLACE": {
+            // `REPLACE` is ambiguous: as a statement it's the SQLite
+            // alias for `INSERT OR REPLACE INTO …` and must be followed
+            // by `INTO`; as a scalar function (`replace(X, Y, Z)`) the
+            // next non-whitespace char is `(`. SQL allows whitespace
+            // between a function name and its arg list, so we can't just
+            // treat `REPLACE` as a keyword — we'd falsely flag
+            // `SELECT REPLACE (name, 'a', 'b') FROM t` as DML and make a
+            // `WITH … SELECT REPLACE (…)` query return zero rows.
+            //
+            // `i` points at the whitespace immediately AFTER `REPLACE`
+            // in source order; peek forward past any further whitespace
+            // for an `INTO` token to disambiguate.
+            let peek = i + "REPLACE".length + 1;
+            while (peek < text_len && (text[peek] === " " || text[peek] === "\t" || text[peek] === "\n" || text[peek] === "\r" || text[peek] === "\f" || text[peek] === "\v")) {
+              peek++;
+            }
+            if (
+              peek + 4 <= text_len &&
+              text[peek] === "I" &&
+              text[peek + 1] === "N" &&
+              text[peek + 2] === "T" &&
+              text[peek + 3] === "O" &&
+              (peek + 4 === text_len ||
+                text[peek + 4] === " " ||
+                text[peek + 4] === "\t" ||
+                text[peek + 4] === "\n" ||
+                text[peek + 4] === "\r" ||
+                text[peek + 4] === "\f" ||
+                text[peek + 4] === "\v")
+            ) {
+              sawDML = true;
+            }
             lastToken = token;
             token = "";
             continue;

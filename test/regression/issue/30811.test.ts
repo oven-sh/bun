@@ -97,6 +97,44 @@ describe("#30811: SQLite row-count classifier", () => {
     ]);
   });
 
+  test("REPLACE as scalar function inside WITH ... SELECT still returns rows", async () => {
+    // `REPLACE` is both the SQLite `INSERT OR REPLACE INTO …` statement
+    // keyword AND the built-in scalar function `replace(X, Y, Z)`. SQL
+    // permits whitespace between a function name and its arg list, so
+    // `SELECT REPLACE (name, 'a', 'x')` produces a standalone `REPLACE`
+    // token. Without disambiguation, the `sawDML` flag would fire and
+    // a leading `WITH` would leave `canReturnRows` false, silently
+    // returning zero rows. The fix is to peek forward past whitespace
+    // and only treat `REPLACE` as DML when followed by `INTO`.
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (name TEXT)`;
+    await sql`INSERT INTO t VALUES ('apple'), ('banana')`;
+
+    // Space before `(` on the function call.
+    const spaced = await sql.unsafe(
+      `WITH cte AS (SELECT REPLACE (name, 'a', 'x') AS n FROM t) SELECT * FROM cte ORDER BY n`,
+    );
+    expect(spaced.count).toBe(2);
+    expect(Array.from(spaced)).toEqual([{ n: "bxnxnx" }, { n: "xpple" }]);
+
+    // No space before `(` (normal style). Should also work, and did
+    // before this fix since `REPLACE(` was glued into a single token.
+    const tight = await sql.unsafe(
+      `WITH cte AS (SELECT REPLACE(name, 'a', 'x') AS n FROM t) SELECT * FROM cte ORDER BY n`,
+    );
+    expect(tight.count).toBe(2);
+    expect(Array.from(tight)).toEqual([{ n: "bxnxnx" }, { n: "xpple" }]);
+
+    // `replace` as an unquoted column alias inside a WITH ... SELECT.
+    // SQLite allows this (REPLACE isn't actually reserved for grammar
+    // purposes outside `REPLACE INTO`).
+    const aliased = await sql.unsafe(
+      `WITH cte AS (SELECT name AS replace FROM t ORDER BY name) SELECT * FROM cte`,
+    );
+    expect(aliased.count).toBe(2);
+    expect(Array.from(aliased)).toEqual([{ replace: "apple" }, { replace: "banana" }]);
+  });
+
   test("leading SQL comments do not hide the statement keyword", async () => {
     // Queries tagged with a leading `/* … */` or `-- …\n` comment
     // (sqlcommenter / APM query tagging) had their leading `SELECT`

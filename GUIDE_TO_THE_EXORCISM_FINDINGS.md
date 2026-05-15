@@ -64,7 +64,7 @@ The final defensible public tally: **40 T1/T1-equivalent entries, including 6 ce
 │   ├── plans/                         ← 40 per-cluster / per-crate plan docs (largest dir).
 │   ├── synthesis/                     ← Cross-cutting analyses (invariants, archeology, etc.).
 │   └── tests/                         ← Rust compile-fail, proptest, Kani, and regression fixtures.
-├── verification/                      ← 5 miri reproductions w/ verbatim traces.
+├── verification/                      ← 5 miri-backed witness entries (4 detail files + 1 summary-only trace).
 └── phase1/cluster-summary.json        ← Phase-1 enumeration summary.
 ```
 
@@ -121,9 +121,9 @@ The final defensible public tally: **40 T1/T1-equivalent entries, including 6 ce
 
 ---
 
-## The 5 miri-confirmed bugs (skim these first)
+## The 5 miri-backed UB witnesses (skim these first)
 
-Each has a verbatim `cargo +nightly miri run` error message. Each is reproducible in seconds from a minimal cargo project.
+Each has a verbatim `cargo +nightly miri run` error message. Four currently have dedicated detail files with minimized reproduction scaffolding; the PUB-INSTALL-3 yarn trace is summary-only in `verification/miri-confirmed-summary.md` and should be split out before using the miri corpus as a standalone public artifact.
 
 | # | Bug | Source | Miri error |
 |---|-----|--------|------------|
@@ -133,7 +133,7 @@ Each has a verbatim `cargo +nightly miri run` error message. Each is reproducibl
 | 4 | UB-RT-001 (`encoding.rs` Vec<u8>→Vec<u16>) | `src/runtime/webcore/encoding.rs:303-310` | `incorrect layout on deallocation` |
 | 5 | PUB-INSTALL-3 (yarn.rs uninit Dependency) | `src/install/yarn.rs:918-925` | `reading uninitialized memory` |
 
-Detail files: `verification/miri-confirmed-*.md`.
+Detail files: `verification/miri-confirmed-*.md` plus the summary-only PUB-INSTALL-3 entry in `verification/miri-confirmed-summary.md`.
 
 ---
 

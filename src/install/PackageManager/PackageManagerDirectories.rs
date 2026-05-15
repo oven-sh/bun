@@ -1088,21 +1088,21 @@ pub fn populate_linked_names_cache(this: &mut PackageManager) {
 /// `buf` and return it. Otherwise `None`. Scoped names (`@scope/name`)
 /// are handled because `join_abs_string_buf_z` preserves the `/`.
 ///
-/// Performance: when `linked_names` has been populated (via
-/// `populate_linked_names_cache` at install start), this is a single
-/// hashmap check with no syscalls on POSIX. On Windows the readdir
-/// yields WTF-16 names we can't key into the UTF-8 map, but
-/// `linked_names_any_on_windows` preserves the zero-syscall fast
-/// path for the "no links on this machine" case.
-/// Cache-only lookup against the already-populated `linked_names` set.
 /// Shared `&PackageManager` so it's safe to call from any install-worker
 /// thread: `populate_linked_names_cache` ran once on the main thread
-/// before workers started, and the map is read-only thereafter.
+/// before workers started, and the map / `global_link_dir_path` /
+/// `linked_names_any_on_windows` are read-only thereafter. This is the
+/// entry point workers must use — forming `&mut PackageManager` on a
+/// task thread is UB per the `Task::run` SAFETY contract.
 ///
-/// Returns `None` without syscalls when the cache isn't populated, when
-/// the package isn't registered, or when we're on Windows (the readdir
-/// yields WTF-16 and can't be keyed into the UTF-8 map — use the
-/// `&mut` fallback below for the GetFileAttributesW path).
+/// Performance:
+/// - **POSIX**: single hashmap check, zero syscalls. Short-circuits to
+///   `None` if `linked_names` is empty or doesn't contain the name.
+/// - **Windows**: the readdir in `populate_linked_names_cache` yields
+///   WTF-16 we can't key into the UTF-8 map, so a per-call
+///   `GetFileAttributesW` + dangling-junction check is required when
+///   `linked_names_any_on_windows` is set. With no active links the
+///   fast-path flag is false and we return `None` with no syscalls.
 pub fn linked_package_path<'a>(
     this: &'a PackageManager,
     pkg_name: &[u8],
@@ -1201,9 +1201,23 @@ pub fn linked_package_path_mut<'a>(
         return None;
     }
 
-    // Windows fast path. `use_cache` is always false on Windows, so
-    // without this every call falls through to GetFileAttributesW.
-    // `populate_linked_names_cache` already paid the readdir cost.
+    // POSIX fast path: the readdir in populate already UTF-8-keyed the
+    // registered names into linked_names, so after populate has run we
+    // can answer without touching the filesystem. Per-entry
+    // `has_active_link` calls in isolated_install.rs go through this
+    // function; without this check every npm/git/tarball entry would
+    // pay a per-call lstat even on machines with zero active links (the
+    // CI / most-dev-machines case).
+    #[cfg(not(windows))]
+    {
+        if this.linked_names_populated && !this.linked_names.contains_key(pkg_name) {
+            return None;
+        }
+    }
+
+    // Windows fast path. `populate_linked_names_cache` already paid the
+    // readdir cost and recorded whether any link-shaped entry was seen;
+    // short-circuit GetFileAttributesW when none exist.
     #[cfg(windows)]
     {
         if this.linked_names_populated && !this.linked_names_any_on_windows {

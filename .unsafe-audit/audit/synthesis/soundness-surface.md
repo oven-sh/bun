@@ -35,7 +35,7 @@ These are unsafe paths reachable from arbitrary JS code running under `bun`:
 
 ## High-leverage soundness questions
 
-### Q1 — Can untrusted HTTP input reach a UB-producing `unsafe` site?
+### Question 1 — Can untrusted HTTP input reach a UB-producing `unsafe` site?
 
 The HTTP receive path is `bun_uws_sys` → `bun_http_jsc::request_handler` → ... → user JS code. The receive-side state machines (HTTP/1.1 header parser via `picohttpparser`, HTTP/2 frame decoder via `lshpack`, HTTP/3 via `lsquic` + `lsqpack`) live in C in `vendor/`. **Their soundness is not in scope for this audit**, but our Rust wrappers (`bun_picohttp` 67 sites, `bun_http_jsc` 287 sites) ARE.
 
@@ -46,21 +46,21 @@ The pattern to verify per cluster:
 
 **Phase 5 plans for `bun_uws_sys` and `bun_http_jsc` will include audit checklists per callback signature** to verify the proof obligation for each.
 
-### Q2 — Can untrusted JS code free a Strong handle from the wrong thread?
+### Question 2 — Can untrusted JS code free a Strong handle from the wrong thread?
 
 Per Invariant I-002 (`bun_jsc::Strong` thread affinity), the answer should be no — `Strong` is `!Send`. But there are places where the handle is "moved" via `*mut Self` cross-thread (the worker pool, FetchTasklet). The audit looks for sites where a `Strong` field's lifetime crosses into a worker thread without a documented hand-off mechanism.
 
 This is the kind of bug that ONLY appears under load. Static analysis alone won't catch it; the audit's contribution is **identifying the candidate sites** and proposing instrumentation (e.g., a debug-build runtime check on `Strong::drop` that asserts thread identity matches the constructor).
 
-### Q3 — Does the AST arena ever drop a `Drop`-bearing value?
+### Question 3 — Does the AST arena ever drop a `Drop`-bearing value?
 
 Per Invariant I-005, this is forbidden. Phase 2 (per-site) will enumerate all types allocated in `bun_alloc::MimallocArena` and verify their `Drop` is trivial OR they're freed before the arena resets.
 
-### Q4 — Can `bun:ffi` users bypass the unsafe-audit conclusions?
+### Question 4 — Can `bun:ffi` users bypass the unsafe-audit conclusions?
 
 By design, `bun:ffi` lets users write arbitrary unsafe code from JavaScript. The audit cannot bound user-supplied unsafe. The audit can, however, harden the `bun:ffi` boundary itself — verifying that the TinyCC JIT compiler invocation (`bun_tcc_sys`) doesn't UB on adversarial user input, and that the dispatch table for `bun:ffi`-registered callbacks doesn't carry stale function pointers.
 
-### Q5 — Are there `pub unsafe fn`s reachable from `pub fn` callers within a crate?
+### Question 5 — Are there `pub unsafe fn`s reachable from `pub fn` callers within a crate?
 
 Every such site is a soundness-surface marker — the safe API is asserting the invariant for its caller. Phase 2 enumeration per `pub unsafe fn` site will verify:
 

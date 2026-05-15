@@ -465,4 +465,4 @@ br create --priority 5 --title "[A-003] harden SAFETY comments in bun_libarchive
 | Per-crate hardening beads (A-003) | ~14 |
 | **Total** | **~43** |
 
-This is a workable bead graph for one or two engineers working through it over a few weeks, OR for an agent swarm to chew through in parallel via /multi-agent-swarm-workflow.
+This is a workable bead graph for sequential or parallel remediation. The graph is intentionally partitioned by finding class so agents can take disjoint clusters without mixing source-level fixes, audit-artifact edits, and verification work.

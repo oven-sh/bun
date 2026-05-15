@@ -2270,24 +2270,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_unicode"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_collections",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_url"
 version = "0.0.0"
 dependencies = [

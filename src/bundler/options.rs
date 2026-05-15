@@ -798,7 +798,7 @@ fn default_loaders_match_table() {
         b"".as_slice(),
         b".",
         b".rs",
-        b".zig",
+        b".lua",
         b".json6",
         b".markdow",
         b".markdownn",

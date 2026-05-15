@@ -1,13 +1,6 @@
 import assert from "node:assert";
 import util from "node:util";
-import {
-  CodeStyle,
-  joinIndented,
-  NamedType,
-  reindent,
-  toASCIILiteral,
-  toQuotedLiteral,
-} from "./base";
+import { CodeStyle, joinIndented, NamedType, reindent, toASCIILiteral, toQuotedLiteral } from "./base";
 
 abstract class EnumType extends NamedType {}
 
@@ -15,10 +8,7 @@ abstract class EnumType extends NamedType {}
  * If `values[x]` is an array, all elements of that array will map to the same underlying integral
  * value (that is, `x`). Essentially, they become different spellings of the same enum value.
  */
-export function enumeration(
-  name: string,
-  values: readonly (string | readonly string[])[],
-): EnumType {
+export function enumeration(name: string, values: readonly (string | readonly string[])[]): EnumType {
   const uniqueValues: string[] = values.map((v, i) => {
     if (!Array.isArray(v)) return v;
     if (v.length === 0) throw RangeError(`enum value cannot be empty (index ${i})`);
@@ -88,8 +78,7 @@ export function enumeration(
       } else if (quotedValues.length == 2) {
         humanReadableName = quotedValues[0] + " or " + quotedValues[1];
       } else {
-        humanReadableName =
-          quotedValues.slice(0, -1).join(", ") + ", or " + quotedValues[quotedValues.length - 1];
+        humanReadableName = quotedValues.slice(0, -1).join(", ") + ", or " + quotedValues[quotedValues.length - 1];
       }
 
       return reindent(`
@@ -171,24 +160,6 @@ export function enumeration(
             value.toWTFString(&globalObject)
           );
         }
-      `);
-    }
-
-    get hasZigSource() {
-      return true;
-    }
-    get zigSource() {
-      return reindent(`
-        pub const ${name} = enum(u32) {
-          ${joinIndented(
-            10,
-            uniqueValues.map(value => `@${toQuotedLiteral(value)},`),
-          )}
-        };
-
-        pub const Bindgen${name} = bindgen.BindgenTrivial(${name});
-        const bun = @import("bun");
-        const bindgen = bun.bun_js.bindgen;
       `);
     }
   })();

@@ -233,9 +233,6 @@ export interface CodegenOutputs {
   /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
   bindgenV2Cpp: string[];
 
-  /** The bindgenv2 legacy outputs (retained for reference). */
-  bindgenV2Zig: string[];
-
   /**
    * Stamp output from `bun install` at repo root.
    * The esbuild tool and the cppbind lezer parser live here. Any
@@ -268,7 +265,6 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
     cppHeaders: [],
     cppAll: [],
     bindgenV2Cpp: [],
-    bindgenV2Zig: [],
     rootInstall,
   };
 
@@ -828,8 +824,7 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
 
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const zigOutputs = allOutputs.filter(p => p.endsWith(".zig"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".zig"));
+  const other = allOutputs.filter(p => !p.endsWith(".cpp"));
   assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
   n.build({
@@ -852,8 +847,6 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
-  o.bindgenV2Zig.push(...zigOutputs);
-  o.rustInputs.push(...zigOutputs);
 }
 
 function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {

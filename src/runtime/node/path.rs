@@ -135,10 +135,8 @@ fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
     T::lit(s)
 }
 
-/// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
-/// https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
-///
-/// Compares ASCII values case-insensitively, non-ASCII values are compared directly
+/// Compares ASCII values case-insensitively, non-ASCII values are compared directly.
+/// Adapted from https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
 fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if !T::IS_U16 {
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
@@ -157,10 +155,8 @@ fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
         .all(|(x, y)| to_lower_t(*x) == to_lower_t(*y))
 }
 
-/// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
-/// https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
-///
-/// Lowers ASCII values, non-ASCII values are returned directly
+/// Lowers ASCII values, non-ASCII values are returned directly.
+/// Adapted from https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
 #[inline]
 fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
     if !T::IS_U16 {
@@ -3165,8 +3161,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                     u16_buf[n] = 0;
                     &u16_buf[..=n]
                 };
-                // Zig's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`
-                // (external upstream stdlib reference):
+                // The Windows process environment block can carry hidden
+                // drive-cwd entries with keys like `=${resolvedDevice}`; see
                 // https://github.com/ziglang/zig/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.zig#L2126-L2130
                 //
                 // TODO: Enable test once spawnResult.stdout works on Windows.

@@ -102,7 +102,6 @@ impl<Elem: Copy + 'static> Tables<Elem> {
     }
 }
 
-// TODO(port): grapheme_tables is generated — re-run generator with .rs output.
 pub use grapheme_tables::TABLE;
 
 /// Determines if there is a grapheme break between two codepoints.

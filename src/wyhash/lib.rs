@@ -1,9 +1,12 @@
 //
-// `Wyhash11` is a copy of Wyhash from the Zig standard library, version v0.11.0-dev.2609+5e19250a1
-// (the older 32-byte-round, 5-prime variant).
+// `Wyhash11` is the older 32-byte-round, 5-prime Wyhash variant. It matches the
+// stdlib hash that Bun originally shipped (https://github.com/ziglang/zig stdlib
+// at v0.11.0-dev.2609+5e19250a1) and is kept for stable hash-output compatibility.
 //
-// `Wyhash` is the current upstream Zig `std.hash.Wyhash` (final4 variant, 48-byte rounds, 4 secrets)
-// ported from vendor/zig/lib/std/hash/wyhash.zig — used by RuntimeTranspilerCache, `bun.hash()`, router.
+// `Wyhash` is the final4 variant (48-byte rounds, 4 secrets), matching the current
+// upstream https://github.com/ziglang/zig `std.hash.Wyhash` and the canonical
+// https://github.com/wangyi-fudan/wyhash. Used by RuntimeTranspilerCache,
+// `bun.hash()`, and the router.
 //
 // THESE ARE DIFFERENT ALGORITHMS. They produce different outputs for the same input.
 //

@@ -7,8 +7,8 @@
  * fix is available, and configure fails with cleanup instructions.
  *
  * Add an entry here whenever you land a workaround that's waiting on an
- * upstream release (LLVM fix, macOS update, Zig release, vendored dep
- * bump, etc.). The entry is the reminder.
+ * upstream release (LLVM fix, macOS update, Rust toolchain release,
+ * vendored dep bump, etc.). The entry is the reminder.
  *
  * ## Writing an `expectedToBeFixed` predicate
  *

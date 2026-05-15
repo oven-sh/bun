@@ -2,8 +2,8 @@
 //! To use this module, you must have Tracy installed on your system.
 //! On macOS, you can install it with `brew install tracy`.
 //!
-//! This file is based on the code from Zig's transpiler source.
-//! Thank you to the Zig team
+//! These bindings are adapted from the Tracy integration in
+//! https://github.com/ziglang/zig/blob/master/src/tracy.zig.
 
 #![allow(dead_code)]
 

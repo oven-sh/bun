@@ -56,17 +56,11 @@ export abstract class NamedType extends Type {
   get cppSource(): string | null {
     return null;
   }
-  get zigSource(): string | null {
-    return null;
-  }
   // These getters are faster than `.cppHeader != null` etc.
   get hasCppHeader(): boolean {
     return false;
   }
   get hasCppSource(): boolean {
-    return false;
-  }
-  get hasZigSource(): boolean {
     return false;
   }
   getHeaders(result: Set<string>): void {
@@ -100,9 +94,7 @@ export function headersForTypes(types: readonly Type[]): string[] {
 }
 
 export function dedent(text: string): string {
-  const commonIndent = Math.min(
-    ...Array.from(text.matchAll(/\n( *)[^ \n]/g) ?? []).map(m => m[1].length),
-  );
+  const commonIndent = Math.min(...Array.from(text.matchAll(/\n( *)[^ \n]/g) ?? []).map(m => m[1].length));
   text = text.trim();
   if (commonIndent > 0 && commonIndent !== Infinity) {
     text = text.replaceAll("\n" + " ".repeat(commonIndent), "\n");

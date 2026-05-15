@@ -56,6 +56,11 @@ pub struct Options {
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
     pub no_install: bool,
+    /// Raw value of `--minimum-release-age=<N>`, forwarded verbatim to the
+    /// spawned `bun add` so the same validation path runs. Stored as the
+    /// opaque argv slice (borrowed from `argv`) to avoid re-parsing the
+    /// number here.
+    pub minimum_release_age: Option<&'static [u8]>,
     // PORT NOTE: `std.mem.Allocator` param field dropped — global mimalloc.
 }
 
@@ -69,6 +74,7 @@ impl Default for Options {
             verbose_install: false,
             silent_install: false,
             no_install: false,
+            minimum_release_age: None,
         }
     }
 }
@@ -152,6 +158,21 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.specified_package = Some(package_value);
+                } else if positional == b"--minimum-release-age" {
+                    // Spaced form: `--minimum-release-age <N>`.
+                    // Stored verbatim; `bun add` re-parses and validates.
+                    i += 1;
+                    if i >= argv.len() {
+                        Output::err_generic(
+                            "--minimum-release-age requires a value",
+                            format_args!(""),
+                        );
+                        Global::exit(1);
+                    }
+                    opts.minimum_release_age = Some(argv[i].as_bytes());
+                } else if positional.starts_with(b"--minimum-release-age=") {
+                    let value = &positional[b"--minimum-release-age=".len()..];
+                    opts.minimum_release_age = Some(value);
                 }
             } else {
                 if !found_subcommand_name {
@@ -1231,7 +1252,9 @@ impl BunxCommand {
             install_param.as_slice(),
             b"--no-summary",
         ];
-        let mut args: BoundedArray<&[u8], 8> =
+        // Capacity breakdown: 4 base + 2 cache-bust + 1 verbose + 1 silent
+        // + 1 minimum-release-age.
+        let mut args: BoundedArray<&[u8], 9> =
             BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
 
         if do_cache_bust {
@@ -1249,6 +1272,21 @@ impl BunxCommand {
 
         if opts.silent_install {
             args.append(b"--silent").expect("unreachable"); // upper bound is known
+        }
+
+        // Forward `--minimum-release-age=<N>` to `bun add` so the supply-chain
+        // age gate applies to `bunx`. The value is opaque bytes — `bun add`
+        // re-parses and validates. The owned `Vec` is declared here (above
+        // the append) so its backing buffer outlives `args.slice()` below.
+        let min_age_combined: Vec<u8>;
+        if let Some(value) = opts.minimum_release_age {
+            let prefix: &[u8] = b"--minimum-release-age=";
+            let mut buf = Vec::with_capacity(prefix.len() + value.len());
+            buf.extend_from_slice(prefix);
+            buf.extend_from_slice(value);
+            min_age_combined = buf;
+            args.append(min_age_combined.as_slice())
+                .expect("unreachable"); // upper bound is known
         }
 
         let argv_to_use = args.slice();

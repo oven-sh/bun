@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 
 /**
  * Comprehensive test suite for the minimum-release-age security feature.
@@ -2471,6 +2471,82 @@ minimumReleaseAgeExcludes = ["regular-package"]
       const regularPkg = receivedPackages.find((p: { name: string }) => p.name === "regular-package");
       expect(regularPkg).toBeDefined();
       expect(regularPkg.version).toBe("3.0.0");
+    });
+  });
+
+  // Regression test for https://github.com/oven-sh/bun/issues/30748 —
+  // `bunx --minimum-release-age` used to be silently accepted without being
+  // forwarded to the `bun add` subprocess, so the age gate had no effect.
+  describe("bunx", () => {
+    // `bunx` caches installs under TMPDIR and packages under BUN_INSTALL_CACHE_DIR;
+    // both must be isolated per test so the age-gated subprocess actually runs
+    // (a hit in either cache would let `bunx` skip the install step entirely).
+    const bunxEnv = () => ({
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: tmpdirSync("bunx-min-age-cache."),
+      BUN_TMPDIR: tmpdirSync("bunx-min-age-tmp."),
+      TMPDIR: tmpdirSync("bunx-min-age-tmp."),
+      TEMP: tmpdirSync("bunx-min-age-tmp."),
+      npm_config_registry: mockRegistryUrl,
+    });
+
+    test("--minimum-release-age=<seconds> is forwarded to bun add", async () => {
+      using dir = tempDir("bunx-min-age-eq", {});
+      // 100 years — nothing in `regular-package` can satisfy this, so the
+      // spawned `bun add` must error. The pre-fix behavior was to silently
+      // ignore the flag and install `3.0.0`.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "x",
+          "--minimum-release-age=3155760000",
+          "regular-package",
+        ],
+        cwd: String(dir),
+        env: bunxEnv(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr.toLowerCase()).toContain("minimum-release-age");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("--minimum-release-age <seconds> (spaced) is forwarded to bun add", async () => {
+      using dir = tempDir("bunx-min-age-spaced", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "x",
+          "--minimum-release-age",
+          "3155760000",
+          "regular-package",
+        ],
+        cwd: String(dir),
+        env: bunxEnv(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr.toLowerCase()).toContain("minimum-release-age");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("--minimum-release-age with no value errors", async () => {
+      using dir = tempDir("bunx-min-age-no-value", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", "--minimum-release-age"],
+        cwd: String(dir),
+        env: bunxEnv(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("--minimum-release-age requires a value");
+      expect(exitCode).not.toBe(0);
     });
   });
 });

@@ -556,6 +556,15 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub temp_refs_to_declare: List<'a, TempRef>,
     pub temp_ref_count: i32,
 
+    // Counter used to generate unique storage names for auto-accessor
+    // WeakMaps created during decorator lowering. Must be module-scoped
+    // because each `accessor foo` in a subclass needs its own WeakMap
+    // binding — reusing `_foo` for both a base and derived class causes
+    // `super()` to populate the same WeakMap that the subclass then
+    // tries to add to (collision: "Cannot add the same private member
+    // more than once").
+    pub accessor_storage_counter: usize,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -9311,6 +9320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            accessor_storage_counter: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

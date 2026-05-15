@@ -1344,8 +1344,8 @@ class WebSocketServer extends EventEmitter {
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
     const response = socket._httpMessage;
-    const server = socket.server[kBunInternals];
-    const req = socket[kBunInternals];
+    const server = socket.server?.[kBunInternals] || request?.socket?.server?.[kBunInternals];
+    const req = socket[kBunInternals] || request?.socket?.[kBunInternals];
 
     if (this._state > RUNNING) return abortHandshake(response, 503);
 

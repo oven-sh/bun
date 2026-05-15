@@ -906,6 +906,11 @@ pub fn global_link_dir_and_path(this: &mut PackageManager) -> (Dir, &[u8]) {
 /// dangling link (producer dir moved/deleted without `bun unlink`)
 /// would otherwise make the installer skip the registry download
 /// and then fail ENOENT in the worker with no fallback.
+///
+/// POSIX-only. On Windows the whole populate_linked_names_cache flow
+/// short-circuits to the reparse-point fast path and falls through to
+/// the per-call `GetFileAttributesW` check in `linked_package_path`.
+#[cfg(not(windows))]
 fn is_linked_entry(kind: sys::EntryKind, dir_fd: Fd, name: &bun_core::ZStr) -> bool {
     let is_symlink = match kind {
         sys::EntryKind::SymLink => true,

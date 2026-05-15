@@ -2,7 +2,7 @@
 
 This document records per-fix verification for the three changes that ship in the companion fix PR ([`claude/unsafe-exorcist-demo`](https://github.com/Dicklesworthstone/bun/tree/claude/unsafe-exorcist-demo)).
 
-**Scope discipline.** Of the 6 P0 + 37 T1 findings the audit catalogs, this PR lands the **3 lowest-risk, miri-verified fixes**. The remaining ~40 fixes are deliberately staged as separate, more carefully reviewed PRs per the audit's PR-landing-order document ([`.unsafe-audit/PASS4_FINDINGS_INDEX.md` § "Pass-4 PR landing order"](../../PASS4_FINDINGS_INDEX.md)). Better three perfect than ten with risk.
+**Scope discipline.** Of the 6 P0 + 37 T1 findings the audit catalogs, this PR lands the **3 lowest-risk fixes with focused local verification and miri-backed evidence where applicable**. The remaining ~40 fixes are deliberately staged as separate, more carefully reviewed PRs per the audit's PR-landing-order document ([`.unsafe-audit/PASS4_FINDINGS_INDEX.md` § "Pass-4 PR landing order"](../../PASS4_FINDINGS_INDEX.md)). Better three perfect than ten with risk.
 
 ---
 
@@ -28,7 +28,7 @@ This document records per-fix verification for the three changes that ship in th
   - `StoreSlice<Arg>`, `StoreSlice<ArrayBinding>`, `StoreSlice<Binding>`, `StoreSlice<Case>`, `StoreSlice<ClauseItem>`, `StoreSlice<EnumValue>`, `StoreSlice<Property>`, `StoreSlice<Stmt>`, `StoreSlice<StoreStr>`, `StoreSlice<TemplatePart>`.
   - All are AST POD types that are `Send + Sync` (verified by `cargo +nightly check -p bun_ast -p bun_js_parser -p bun_bundler`).
 - **Sister-type symmetry.** `StoreRef<T>` (lines 39-40 of the same file) already has identical bounds with a comment that explicitly explains the laundering concern. This fix brings `StoreSlice` into parity.
-- **Trybuild compile-fail fixture** (`.unsafe-audit/audit/tests/storeslice_send_compilefail.rs`) verifies that `StoreSlice<Cell<u32>>: Send + Sync` compiles BEFORE the fix and fails to compile AFTER the fix with `E0277: Cell<u32> cannot be shared between threads safely`.
+- **Trybuild compile-fail fixture** (`.unsafe-audit/audit/tests/storeslice_send_compilefail.rs`) is designed to verify that `StoreSlice<Cell<u32>>: Send + Sync` compiles BEFORE the fix and fails to compile AFTER the fix with `E0277: Cell<u32> cannot be shared between threads safely`. It is evidence scaffold, not a claim that the fixture has been wired into Bun CI.
 
 ### Verification
 
@@ -36,9 +36,9 @@ This document records per-fix verification for the three changes that ship in th
 |-------|--------|
 | `cargo +nightly check -p bun_ast` | ✓ clean |
 | `cargo +nightly check -p bun_ast -p bun_js_parser -p bun_bundler` (downstream) | ✓ clean (16.5s) |
-| `cargo +nightly miri test -p bun_ast --lib` | ✓ 5/5 pass under `-Zmiri-strict-provenance` |
+| `cargo +nightly miri test -p bun_ast --lib` | ✓ 5/5 pass under `-Zmiri-strict-provenance` (regression coverage, not the StoreSlice bug witness) |
 | Sibling-type symmetry with `StoreRef<T>` | ✓ matches lines 39-40 verbatim modulo type name |
-| Trybuild compile-fail fixture | ✓ designed; landed in audit/tests/ for future trybuild wiring |
+| Trybuild compile-fail fixture | ✓ designed; landed in audit/tests/ for optional trybuild wiring |
 
 ---
 
@@ -62,7 +62,7 @@ For every input value `int ∈ [0, 4096)`:
 | `1..=133` (dense kernel range) | `SystemErrno::EPERM..ENOTRECOVERABLE` | Same — `init` returns `Some(variant)` matching the transmute | ✓ |
 | `134..=4095` (sparse / future kernel) | **Undefined behavior** (niche violation) | `SystemErrno::SUCCESS` (documented fallback) | ✓ (UB → defined fallback; this is the intended semantic change) |
 
-The new path is **strictly safer** for the same set of valid inputs and **better defined** for the previously-UB-producing inputs. Codegen for valid inputs lowers `init`'s range-check + match to a single bounded `transmute`-equivalent under `-Copt-level=2`.
+The new path is **strictly safer** for the same set of valid inputs and **defined** for the previously-UB-producing inputs. This patch does not rely on a disassembly/codegen claim; the conversion runs only on the syscall-error decoding path, and the soundness improvement is the reason for the change.
 
 **Mirroring policy.** The `unwrap_or(SystemErrno::SUCCESS)` fallback matches the existing policy in `e_from_negated` (lib.rs:289) for the same enum. No new policy is introduced — only consistency.
 
@@ -73,7 +73,7 @@ The new path is **strictly safer** for the same set of valid inputs and **better
 | `cargo +nightly check -p bun_errno` | ✓ clean |
 | `cargo +nightly miri test -p bun_errno --lib` | ✓ 3/3 pass under `-Zmiri-strict-provenance` |
 | Miri-confirmed pre-fix UB | ✓ documented in [`miri-confirmed-linux-errno-transmute.md`](../../verification/miri-confirmed-linux-errno-transmute.md) |
-| Codegen equivalence (valid inputs) | inline `init` + LLVM range-prop → same `transmute` for valid `[0, 134)` |
+| Codegen equivalence (valid inputs) | Not asserted; focused cargo + miri verification covers correctness, and the path is cold/error-handling |
 | Policy consistency with `e_from_negated` | ✓ same fallback, same trait |
 
 ---
@@ -86,7 +86,7 @@ The new path is **strictly safer** for the same set of valid inputs and **better
 
 ### Diff (semantic)
 
-`GuardedLock<'a, Value, M>` was unconditionally `Send` (and `Sync` for compatible `Value`/`M`) because its only field was `guarded: &'a GuardedBy<...>`. Add `_not_send: PhantomData<*const ()>` to make it `!Send + !Sync`, mirroring sibling `MutexGuard` (Mutex.rs:114-120) which has the same marker with the same rationale.
+`GuardedLock<'a, Value, M>` could auto-derive `Send` whenever `GuardedBy<Value, M>: Sync` (this module explicitly re-asserts `Sync` under `Value: Send, M: RawMutex + Sync`) because its only field was `guarded: &'a GuardedBy<...>`. Add `_not_send: PhantomData<*const ()>` to make it `!Send + !Sync`, mirroring sibling `MutexGuard` (Mutex.rs:114-120) which has the same marker with the same rationale.
 
 ### Isomorphism evidence
 
@@ -101,7 +101,7 @@ The new path is **strictly safer** for the same set of valid inputs and **better
 |-------|--------|
 | `cargo +nightly check -p bun_threading` | ✓ clean |
 | `cargo +nightly check -p bun_ast -p bun_install -p bun_threading` (downstream consumers) | ✓ clean |
-| `cargo +nightly miri test -p bun_threading --lib` | ✓ 2/2 pass under `-Zmiri-strict-provenance` |
+| `cargo +nightly miri test -p bun_threading --lib` | ✓ 2/2 pass under `-Zmiri-strict-provenance` (regression coverage, not a pre-fix bug witness) |
 | Two construction sites updated (`try_lock` line 74, `lock` line 103) | ✓ both add `_not_send: PhantomData` |
 | Sister-type symmetry with `MutexGuard` | ✓ same marker, same explanatory comment shape |
 

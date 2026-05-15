@@ -1,6 +1,14 @@
-# Security Policy
+# Draft Security Policy Proposal
 
-This document describes how to report security vulnerabilities in Bun, the soundness commitments the project makes for its Rust runtime, and what is in and out of contract for security purposes.
+> **Audit artifact, not adopted project policy.** This is a redacted,
+> publication-safe SECURITY.md proposal produced by the unsafe-code audit. It
+> deliberately avoids listing unfixed findings, but it has **not** been adopted
+> by Bun maintainers and must not be treated as Bun's official vulnerability
+> disclosure policy until maintainers review and install it.
+
+This document proposes how Bun could describe security vulnerability reporting,
+Rust soundness commitments, and what is in and out of contract for security
+purposes.
 
 Bun is a JavaScript runtime, bundler, test runner, and package manager. The runtime is implemented primarily in Rust (with C++ bindings to JavaScriptCore for JavaScript execution); the safety properties documented here apply to the Rust portion of the codebase and to its FFI boundaries with vendored C/C++ dependencies.
 
@@ -8,11 +16,14 @@ Bun is a JavaScript runtime, bundler, test runner, and package manager. The runt
 
 ## Reporting a vulnerability
 
-If you believe you have found a security vulnerability in Bun, **please do not open a public GitHub issue**. Use one of the following private channels instead:
+If you believe you have found a security vulnerability in Bun, use Bun's
+currently published security reporting channel. A recommended policy for
+maintainers to adopt is:
 
 1. **GitHub Security Advisory** — Preferred. Use the [Report a vulnerability](https://github.com/oven-sh/bun/security/advisories/new) button on the repository's Security tab. This creates a private advisory thread visible only to maintainers.
-2. **Email** — `security@bun.com` (PGP key on request).
-3. **Acknowledgement** — Expect a response within 72 hours. Critical findings (memory-safety bugs reachable from an attacker-supplied input) will be triaged within 24 hours.
+2. **Email** — use the address published by the Bun project, if any.
+3. **Acknowledgement target** — maintainers should publish an expected response
+   window for critical reports; this audit artifact does not set one.
 
 When reporting, please include:
 
@@ -21,14 +32,16 @@ When reporting, please include:
 - **The Bun version** (`bun --revision`) and OS / arch.
 - **Whether the issue is exploitable from untrusted input** (a public package, a malicious HTTP request, a crafted file dropped into a project directory, etc.) or only from already-trusted code paths.
 
-### What we ask in return
+### What maintainers should ask in return
 
-- **Coordinated disclosure.** Please contact us before public disclosure so we can validate the report, prepare fixes, and coordinate credit in a security advisory.
+- **Coordinated disclosure.** Contact maintainers before public disclosure so
+  they can validate the report, prepare fixes, and coordinate credit in a
+  security advisory.
 - **No exploitation against production deployments.** Test in your own environment.
 
 ---
 
-## Soundness commitments
+## Proposed soundness commitments
 
 Bun's Rust code is held to the following soundness commitments:
 
@@ -53,16 +66,18 @@ Bun's Rust code uses several house patterns that the audit relies on. Contributo
 
 ### 3. Verification
 
-Each Bun release is verified by:
+Recommended release-gate verification:
 
 - **`cargo +nightly miri test`** on a subset of crates where it is supported (FFI-heavy and JS-engine crates are infeasible under miri's isolation; per-crate runs are feasible for `bun_ast`, `bun_alloc`, `bun_ptr`, `bun_threading`, `bun_wyhash`, `bun_md`, `bun_errno` and others).
 - **`bun bd test` end-to-end suite** on Linux x64, macOS aarch64/x64, and Windows x64.
 - **Cross-target `cargo check`** via `bun run rust:check-all` to ensure `#[cfg(...)]`-gated code compiles on every supported platform.
-- **CI matrix** on every PR. See `.github/workflows/`.
+- **CI matrix** on every PR. Bun currently uses Buildkite configuration under
+  `.buildkite/`; any GitHub Actions example in this audit should be treated as
+  a template, not the current source of truth.
 
 ### 4. SAFETY-comment coverage
 
-The audit baseline as of `428f61eb3486` (2026-05-15) found that 9,450 of 11,044 `unsafe`-bearing sites have a nearby proof marker (a `// SAFETY:` comment within 4 lines). The remaining 1,594 sites are tracked for hardening. Coverage is reported per release.
+The audit baseline as of `428f61eb3486` (2026-05-15) found that 9,450 of 11,044 `unsafe`-bearing sites have a nearby proof marker (a `// SAFETY:` comment within 4 lines). The remaining 1,594 sites are tracked for hardening. Coverage can be reported per release if maintainers adopt this policy.
 
 ---
 
@@ -86,13 +101,15 @@ Classification (current):
 | Bucket | Count | Status |
 |--------|------:|--------|
 | (A) Strictly unavoidable | ~9,800 | Hardened via SAFETY comments and clippy lints |
-| (B) Performance-only | ~27 | Gated behind a future `safe-only` Cargo feature; pending benchmark logs |
+| (B) Performance-only | ~27 | Intended for a `safe-only` Cargo feature; pending benchmark logs |
 | (C) Refactorable | ~110 firm | Mechanical safe rewrites tracked as cleanup PRs |
 | Tier 1 memory-safety findings | 37 | See public soundness-debt dashboard |
 | Tier 2 unsafe-contract defects | ~32 | Architecture-level; tracked separately |
 | Tier 3 watchlist | ~58 | Latent / threat-model-dependent |
 
-The full audit dashboard (with risk scoring and trend) will be published at `audit/soundness-debt-dashboard.md` once the first wave of Tier-1 fixes lands.
+The full audit dashboard (with risk scoring and trend) can be published at
+`audit/soundness-debt-dashboard.md` if maintainers choose to carry this
+reporting format forward.
 
 ---
 
@@ -122,15 +139,22 @@ The audit's per-finding plans (under `audit/plans/`) cite the specific invariant
 
 ---
 
-## What is in contract for security
+## Proposed security contract
 
-Bun makes the following security commitments to its users:
+Bun could make the following security commitments to its users:
 
 ### Memory safety
 
-- The Rust runtime maintains Rust's safety guarantees for all code paths reachable from safe Rust callers and from JavaScript code that does not use `bun:ffi`.
-- The HTTP server (`Bun.serve`), HTTP client (`fetch`), file system APIs (`node:fs`), and package manager (`bun install`) must not corrupt memory in response to any input — malformed network traffic, malicious lockfiles, hostile archives, etc. — that they accept. Findings against this commitment are P0 security issues.
-- The bundler and transpiler must not corrupt memory in response to any source-code input.
+- The Rust runtime should maintain Rust's safety guarantees for all code paths
+  reachable from safe Rust callers and from JavaScript code that does not use
+  `bun:ffi`.
+- The HTTP server (`Bun.serve`), HTTP client (`fetch`), file system APIs
+  (`node:fs`), and package manager (`bun install`) should not corrupt memory in
+  response to accepted inputs: malformed network traffic, malicious lockfiles,
+  hostile archives, etc. Findings against this commitment are candidate P0
+  security issues.
+- The bundler and transpiler should not corrupt memory in response to source
+  code input.
 
 ### Confidentiality of secrets
 
@@ -159,7 +183,10 @@ The following surfaces are part of Bun's API but are explicitly **privileged-by-
 | `bun:ffi.ptr(fn)` / FFI finalizer registration | JS-supplied number becomes a typed-array finalizer function pointer | Caller guarantees the pointer is a valid finalizer with the right ABI. |
 | `bun:ffi.JSCallback` | JS function becomes a C-callable function pointer | The pointer is valid only until the JSCallback is closed; calling after close is the caller's bug. |
 
-If a finding shows that `bun:ffi` corrupts memory **without** the user violating the contract above, that is a security bug. If the user violated the contract (passed an invalid address, freed memory while a buffer was live, etc.), that is operating as designed.
+If a finding shows that `bun:ffi` corrupts memory **without** the user violating
+the contract above, it should be treated as a security bug. If the user violated
+the contract (passed an invalid address, freed memory while a buffer was live,
+etc.), that is operating as designed.
 
 We document this here so that auditors and reporters can distinguish "Bun bug" from "bun:ffi user error" without ambiguity.
 
@@ -169,7 +196,7 @@ The `bun build --compile` output embeds the source code and runtime into a singl
 
 ### Vendored C/C++ dependencies
 
-Bun vendors and statically links to a number of C/C++ libraries (BoringSSL, libuv, lol-html, lsquic, mimalloc, simdutf, zlib-ng, zstd, tinycc, picohttpparser, libarchive, libdeflate, and others; see `vendor/` and `scripts/build/deps/*.ts`). The audit covers Bun's Rust-side bindings to these libraries; **it does not re-audit the libraries themselves**. If you find a vulnerability in a vendored library, please report it upstream as well as to us — we will track the upstream fix and update our vendored copy.
+Bun vendors and statically links to a number of C/C++ libraries (BoringSSL, libuv, lol-html, lsquic, mimalloc, simdutf, zlib-ng, zstd, tinycc, picohttpparser, libarchive, libdeflate, and others; see `vendor/` and `scripts/build/deps/*.ts`). The audit covers Bun's Rust-side bindings to these libraries; **it does not re-audit the libraries themselves**. If you find a vulnerability in a vendored library, report it upstream as well as through Bun's published security channel so maintainers can track the upstream fix and update the vendored copy.
 
 ### The JavaScript engine
 
@@ -207,18 +234,24 @@ The audit dir (in the `.unsafe-audit/` directory of an audit checkout, not gener
 - `verification-log.md` — per-crate miri/check log.
 - `AUDIT_SUMMARY.md` — top-level summary.
 
-We publish a redacted public version of the soundness-debt dashboard on each release; see the Soundness Reporting section of our release notes.
+The audit proposes publishing a redacted public version of the soundness-debt
+dashboard on each release; maintainers can decide whether to adopt that release
+note format.
 
 ---
 
 ## Acknowledgments
 
-This audit was reviewed by:
+Suggested reviewers before adoption:
 
 - The Bun core maintainer team.
-- The `rust-unsafe-code-exorcist` skill ([jeffreys-skills.md](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist)), applied across multiple passes by Claude Code and Codex (GPT-5.x) operating adversarially against each other.
+- Rust unsafe-code reviewers familiar with Stacked Borrows / Tree Borrows,
+  JavaScriptCore FFI, and Bun's Zig-to-Rust porting constraints.
+- The `rust-unsafe-code-exorcist` audit artifacts
+  ([jeffreys-skills.md](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist)),
+  applied across multiple passes by Claude Code and Codex (GPT-5.x) operating
+  adversarially against each other.
 
 Previous security advisories are listed at <https://github.com/oven-sh/bun/security/advisories>.
 
 ---
-

@@ -32,8 +32,18 @@ audit/kani-runs/
 # (we re-fuzz on demand; the corpora live with the targets)
 fuzz/corpus/
 
-# Drift snapshots — keep only the daily summary, not the full raw scan
-drift/*/raw-scan/
+# Pass-5 scratch fuzz projects/corpora. Keep summary findings, not generated
+# cargo-fuzz workdirs, target dirs, or corpora in the audit artifact PR.
+fuzz-inverse/
+fuzz-lockfile/
+
+# Continuous-mode scratch output. The canonical baseline is
+# unsafe-inventory.jsonl; do not duplicate it under baseline/. Drift runs
+# generate thousands of per-crate intermediate files and belong local-only
+# unless summarized manually.
+baseline/
+drift/
+continuous-mode.toml
 
 # Temp files
 *.tmp

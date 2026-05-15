@@ -4,7 +4,7 @@
 
 ## The headline
 
-**6 supply-chain attack primitives** + **~37 confirmed memory-safety bugs** + **5 miri-verified runtime UB traces**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with every claim Codex-tightened to survive maintainer review.
+**6 supply-chain attack primitives** + **~37 confirmed / high-confidence memory-safety findings** + **5 miri-backed UB witnesses**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with major public-facing claims adversarially reviewed by Claude and Codex for maintainer-grade defensibility.
 
 Two pull requests opened: [#30763](https://github.com/oven-sh/bun/pull/30763) (audit artifacts + agent-ergonomic guide) and [#30765](https://github.com/oven-sh/bun/pull/30765) (3 highest-confidence fixes, isomorphism-verified).
 
@@ -15,9 +15,9 @@ Two pull requests opened: [#30763](https://github.com/oven-sh/bun/pull/30763) (a
 A blanket "Bun has too much unsafe" critique doesn't survive the audit. The work documents in painstaking detail that **most of Bun's unsafe is load-bearing**:
 
 - **The `*mut Self` callback pattern** (~1,610 sites) is required by Rust's Stacked Borrows aliasing model when a C callback may free `self`. Bun's own `src/CLAUDE.md` documents it explicitly. The `impl_streaming_writer_parent!` macro encodes three legitimate modes (`mut`/`shared`/`ptr`). **The audit found zero anti-pattern violations** in this cluster.
-- **The `bun_jsc::Strong/Weak` JS handle pattern** is correctly `!Send + !Sync` — verified architecturally.
+- **The core `bun_jsc::Strong/Weak` JS handle discipline** is thread-affinity-aware and audited as `!Send + !Sync` where the core handle contract requires it. Related JSC task / weak-reference wrapper findings remain tracked separately as unsafe-contract hazards; this is not a blanket clean bill for all JSC-adjacent types.
 - **The `bun_core::atomic_cell.rs` discipline** (default to AcqRel, name-explicit opt-in to Relaxed) audited clean across 101 atomic sites — **zero too-weak orderings.**
-- **The `bun_core::heap` lifecycle helpers** (`into_raw`/`take`/`destroy`) audited across 537 sites — **zero use-after-free, zero double-free, zero mismatched-allocator bugs.**
+- **The `bun_core::heap` lifecycle helpers** (`into_raw`/`take`/`destroy`) audited across the raw-pointer-lifecycle cluster without finding direct use-after-free, double-free, or mismatched-allocator bugs in that helper discipline. Separate dealloc-through-shared-provenance findings remain tracked outside this helper cluster.
 
 ### 2. Bun's maintainers have already removed thousands of unsafe blocks
 
@@ -28,7 +28,7 @@ A smoking-gun maintainer commit message: *"Zig has UB here; one SIMD scan is che
 ### 3. The audit found genuine bugs at every severity tier
 
 #### Six P0 supply-chain attack primitives
-A malicious `bun.lockb` or `yarn.lock` planted in a repo causes UB on `bun install`. Each is reproducible from a hand-crafted lockfile:
+A malicious `bun.lockb` or `yarn.lock` planted in a repo reaches parser paths that the audit classifies as UB on `bun install`. The high-level attack shapes are reproducible from crafted lockfile inputs; the miri-backed witnesses are noted explicitly below.
 
 - **PUB-INSTALL-1**: `Meta::has_install_script` — `#[repr(u8)]` enum with 3 valid values, read directly from disk bytes. Bytes 3-255 → niche-violating UB. **Miri-confirmed:** `enum value has invalid tag: 0x2a`
 - **PUB-INSTALL-2**: `Meta::origin` — same shape, different enum
@@ -36,7 +36,7 @@ A malicious `bun.lockb` or `yarn.lock` planted in a repo causes UB on `bun insta
 - **PUB-INSTALL-4**: `Tree.rs` `get_unchecked` over attacker-controlled dependency ID
 - **F-NEW-1 / F-NEW-2**: `bun_semver::String::slice` / `eql` packed `(off, len)` from disk bytes → `get_unchecked` OOB up to ~6 GiB
 
-#### Five miri-verified runtime UB traces
+#### Five miri-backed UB witnesses
 Every one captured verbatim:
 
 | Bug | Miri output |
@@ -47,7 +47,7 @@ Every one captured verbatim:
 | `webcore/encoding.rs` `Vec<u8>→Vec<u16>` allocator-layout | `incorrect layout on deallocation: size 6 alignment 1, but gave size 6 alignment 2` |
 | PUB-INSTALL-3 yarn.rs uninit slice | `reading uninitialized memory` |
 
-These are not "the audit thinks this is UB" — these are "miri concretely shows it is UB."
+These are not "the audit thinks this is UB" claims for the five listed witnesses: miri concretely flags the underlying Rust UB pattern. Four have dedicated sibling detail files; the PUB-INSTALL-3 yarn trace is currently summary-only in `verification/miri-confirmed-summary.md` and should get its own detail file before the miri corpus is used as a standalone public artifact.
 
 #### Plus 30+ confirmed Tier-1 bugs across the codebase
 Bundler parallel-callback aliasing (5 same-shape sites confirmed under Stacked / Tree Borrows), `picohttp` NUL-write through `SharedReadOnly` provenance, 8 dealloc-through-shared-provenance sites in HTTP/FS/JSC, signal-handler async-signal-safety violations in `crash_handler`, dirent-parser bugs on macOS/Linux/FreeBSD, a `fmt::Raw` UTF-8 invariant violation reachable from argv, and the `WebSocketClient::cancel` re-entry the maintainers fixed in the sibling type but missed in the original.
@@ -73,31 +73,31 @@ A grep-based audit can't produce these. The depth of work needed to certify "thi
 
 ## What the audit produced
 
-**~35,000 lines** of audit content across **44+ plan documents**, **15+ synthesis documents**, **5 miri-verified reproducer cargo projects**, **8 trybuild + proptest test fixtures** (rustfmt-clean, dirent regression test 14/14 pass), an **ast-grep clippy rule** that fires on 2 real Bun sites with 0 false positives, a **dylint crate scaffold** for the same pattern, a **production-grade SECURITY.md draft**, and a **soundness-debt dashboard** with quantified risk-scoring per finding.
+**~35,000 lines** of audit content across **44+ plan documents**, **15+ synthesis documents**, **5 miri-backed UB witnesses** (4 dedicated detail files + 1 summary-only trace), **8 trybuild + proptest test fixtures** (rustfmt-clean, dirent regression test 14/14 pass), an **ast-grep rule** that fires on 2 real Bun sites with 0 false positives in its test corpus, a **dylint crate scaffold** for the same pattern, a **redacted draft SECURITY.md proposal**, and a **soundness-debt dashboard** with quantified risk-scoring per finding.
 
-Every finding has a file:line citation. Every miri-eligible bug has a runtime trace. Every demotion (from the Codex adversarial review passes) is catalogued with evidence in `CODEX_PASS3_FINAL_REVIEW.md`. The Pass-4 risk-scoring document (`audit/synthesis/PASS4-risk-scoring.md`) gives every T1 a BLAST × LIKELIHOOD × DISCOVERABILITY score — 22 sites at maximum (125), accounting for 75% of total risk.
+Every high-priority finding has a file:line citation. Every miri-backed claim has a runtime trace; remaining T1s that need Loom / scheduling / integration harnesses are called out as not yet miri-reproduced. Every demotion (from the Codex adversarial review passes) is catalogued with evidence in `CODEX_PASS3_FINAL_REVIEW.md`. The Pass-4 risk-scoring document (`audit/synthesis/PASS4-risk-scoring.md`) gives every T1 a BLAST × LIKELIHOOD × DISCOVERABILITY score — 22 sites at maximum (125), accounting for 75% of total risk.
 
 ## What's submitted
 
 | PR | Branch | Content |
 |----|--------|---------|
 | [#30763](https://github.com/oven-sh/bun/pull/30763) | `claude/unsafe-exorcist-audit` | Audit artifacts + `GUIDE_TO_THE_EXORCISM_FINDINGS.md` agent-ergonomic navigator. 110 files, 49,274 insertions. Zero source changes. |
-| [#30765](https://github.com/oven-sh/bun/pull/30765) | `claude/unsafe-exorcist-demo` | The 3 highest-confidence fixes (`StoreSlice<T>` Send/Sync bounds, `linux_errno` checked path, `GuardedLock` `!Send` marker). 29 additions, 6 deletions across 3 files. 10/10 miri tests pass clean. |
+| [#30765](https://github.com/oven-sh/bun/pull/30765) | `claude/unsafe-exorcist-demo` | The 3 highest-confidence fixes (`StoreSlice<T>` Send/Sync bounds, `linux_errno` checked path, `GuardedLock` `!Send` marker). 29 additions, 6 deletions across 3 files. Focused cargo checks pass; 10/10 per-crate miri tests pass clean as regression coverage on the touched crates. |
 
-The remaining ~40 fixes are documented in the audit's per-cluster plans for incremental future PRs.
+The remaining ~40 fixes are documented in the audit's per-cluster plans for immediate follow-up PRs.
 
 ## Why this matters
 
-Bun is a JavaScript runtime in production use by thousands of teams. Its supply-chain attack surface is non-trivial: every developer who clones a Bun project and runs `bun install` is implicitly trusting the lockfile bytes. The 6 P0s the audit identified mean a malicious package author can plant a `bun.lockb` that triggers UB on `bun install` — a primitive that, even before exploitation, is the kind of bug that gets CVE numbers.
+Bun is a JavaScript runtime in production use by thousands of teams. Its supply-chain attack surface is non-trivial: every developer who clones a Bun project and runs `bun install` is implicitly trusting the lockfile bytes. The 6 P0s the audit identified mean a malicious package author can plant crafted lockfile bytes that reach UB-class parser paths on `bun install`; exploit development is not claimed here, but the bug class merits coordinated security triage.
 
 The audit is the kind of work that's been historically only possible from a security firm engagement. This was produced by a coding agent applying a structured methodology — the audit is itself a demonstration of what skilled agentic work can do, where the skill is the IP and the audit is the case study.
 
 ## How to engage
 
 - **Bun maintainers:** read `GUIDE_TO_THE_EXORCISM_FINDINGS.md` in PR #30763 first. The maintainer-empathy review (`REVIEWER_RESPONSES.md`) answers your likely pushback questions cluster-by-cluster.
-- **Security researchers:** the 5 miri reproducers each take ~30 seconds to run. Start at `.unsafe-audit/verification/miri-confirmed-summary.md`.
+- **Security researchers:** start at `.unsafe-audit/verification/miri-confirmed-summary.md`. Four witnesses have dedicated detail files; the PUB-INSTALL-3 yarn trace is currently summary-only and should be split out before standalone publication of the miri corpus.
 - **Engineers running the same skill on their project:** the skill is at [jeffreys-skills.md/skills/rust-unsafe-code-exorcist](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist). The audit shows what its output looks like at scale.
 
-The audit's 5 miri traces are the **strongest possible standard of evidence** for the bug claims. If a maintainer reads the audit and concludes "this is overreaching" — open the linked detail file. Each one has a minimal cargo project and a verbatim miri error message. Reproduce in seconds.
+The audit's 5 miri-backed traces are strong runtime evidence for the listed UB witnesses. If a maintainer reads the audit and concludes "this is overreaching," open the linked detail file or summary entry: the evidence includes the minimized Rust pattern and the verbatim miri error message.
 
 Bun deserves this audit. The skill made it possible.

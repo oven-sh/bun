@@ -1,6 +1,6 @@
 # Miri-Confirmed UB Summary — Pass 4 Verification
 
-**Standard of evidence:** every bug listed here has a concrete `cargo +nightly miri run` trace, captured verbatim in a sibling file in this directory. Bug claims are no longer "static-analysis hypothesis" — they are runtime-detected UB with miri's word.
+**Standard of evidence:** every bug listed here has a concrete `cargo +nightly miri run` trace. Four traces have dedicated sibling detail files in this directory; PUB-INSTALL-3 is currently captured in this summary only and should be split into its own detail file before using the miri corpus as a standalone public artifact. These claims are no longer "static-analysis hypothesis" — they are runtime-detected UB with miri's word for the minimized witness pattern.
 
 ## The 5 miri-confirmed bugs
 
@@ -21,7 +21,7 @@ For each bug:
 
 ## What this verification does NOT prove
 
-- That these bugs trigger in production. PUB-INSTALL-1, PUB-INSTALL-3, UB-RT-001 are JS-reachable / supply-chain-reachable; they can trigger. But linear_fifo and linux_errno have no live callers today — they're latent bugs that will trigger as soon as a caller does the obvious thing the source has documented as the calling convention.
+- That all of these bugs trigger in production today. PUB-INSTALL-1, PUB-INSTALL-3, and UB-RT-001 have JS/supply-chain reachability evidence; exploitability beyond reaching UB is not claimed here. Linear_fifo and linux_errno have no known live callers today — they're latent bugs that will trigger as soon as a caller does the obvious thing the source has documented as the calling convention.
 - That mimalloc's permissiveness wouldn't paper over UB-RT-001 in production. miri's `incorrect layout on deallocation` is the abstract `GlobalAlloc` contract; mimalloc-specific behavior is more permissive in practice. The bug is still UB by Rust's abstract machine.
 - That the bundler B-1..B-5 cluster (parallel `&mut LinkerContext` aliasing) reproduces under miri — that requires actual multi-thread reasoning and the right scheduling, both of which miri can model but the reproducer would need a Loom-style integration. Pass-5 work.
 
@@ -35,7 +35,7 @@ For each bug:
 | 6 ptr_intrinsic UB-candidates (Unaligned cast, etc.) | Each can be miri-reproduced individually; pass 5 work |
 | 8 U2 dealloc-through-SharedReadOnly | The pattern is the same; one reproducer covers all 8 |
 
-For the audit's marketing claim: **five concrete miri traces is more than enough evidence that the bugs are real**. A pass-5 audit could add more if needed.
+For the audit's marketing claim: **five concrete miri traces is strong evidence that the listed UB patterns are real**. A pass-5 audit can add more where a finding is scheduler-dependent or needs integration wiring.
 
 ## Reproducer pattern
 

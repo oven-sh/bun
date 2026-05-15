@@ -331,11 +331,26 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             // slashes and ASCII case are normalized too.
                             // PORT NOTE: `std.mem.tokenizeScalar` skips empty
                             // segments; mirror with `split` + `filter`.
+                            let debug_pm_bin = std::env::var_os("BUN_DEBUG_PM_BIN_MATCH").is_some();
+                            if debug_pm_bin {
+                                eprintln!(
+                                    "BUN_DEBUG_PM_BIN_MATCH: output_path={:?}",
+                                    bstr::BStr::new(output_path)
+                                );
+                            }
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
-                                if path_entries_equal(entry, output_path) {
+                                let eq = path_entries_equal(entry, output_path);
+                                if debug_pm_bin {
+                                    eprintln!(
+                                        "BUN_DEBUG_PM_BIN_MATCH: entry={:?} eq={}",
+                                        bstr::BStr::new(entry),
+                                        eq
+                                    );
+                                }
+                                if eq {
                                     break 'warner;
                                 }
                             }

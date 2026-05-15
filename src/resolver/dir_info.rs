@@ -344,7 +344,7 @@ pub fn hash_map_instance() -> NonNull<HashMap> {
         null_mut(),
         new.as_ptr(),
         Ordering::Release,
-        Ordering::Relaxed,
+        Ordering::Acquire,
     );
 
     match rez {

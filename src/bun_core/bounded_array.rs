@@ -103,14 +103,38 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         unsafe { &*(&raw const self.buffer[0..len] as *const [T]) }
     }
 
-    /// Adjust the slice's length to `len`.
-    /// Does not initialize added items if any.
+    /// Shrink the slice's length to `len`.
+    ///
+    /// Returns `Overflow` if `len` is greater than the current length, because growing
+    /// would expose uninitialized elements as `T` through the safe `slice`/`const_slice`
+    /// views — that's unsound. To grow the slice, use one of the safe growth helpers
+    /// (`append`, `append_slice`, `append_n_times`, `add_one`), or use
+    /// `unused_capacity_slice` + [`Self::set_len_unchecked`] for a raw write-then-commit
+    /// pattern.
+    //
+    // PORT NOTE: the Zig original was unchecked-grow (`self.len = len`). Keeping the
+    // same name + safe signature but refusing to grow matches the rest of the module's
+    // design — the uninit-returning helpers are the only growth path that doesn't
+    // violate the `[0..len]` initialization invariant.
     pub fn resize(&mut self, len: usize) -> Result<(), OverflowError> {
-        if len > BUFFER_CAPACITY {
+        if len > self.len {
             return Err(OverflowError::Overflow);
         }
         self.len = len;
         Ok(())
+    }
+
+    /// Set `len` directly without touching the buffer. UB to read the slice afterward
+    /// unless `[0..len]` has been initialized first (e.g. via `unused_capacity_slice`
+    /// followed by `MaybeUninit::write` for each new slot).
+    ///
+    /// # Safety
+    /// - `len <= BUFFER_CAPACITY`
+    /// - Elements at indices `[old_len .. len]` have been initialized with a valid `T`
+    ///   before any subsequent read through the safe slice views.
+    pub unsafe fn set_len_unchecked(&mut self, len: usize) {
+        debug_assert!(len <= BUFFER_CAPACITY);
+        self.len = len;
     }
 
     /// Remove all elements from the slice.

@@ -156,8 +156,7 @@ describe("WebSocket", () => {
       stdout: "close:1000",
       exitCode: 0,
     });
-  }, // (SIGILL → llvm-symbolizer), which takes ~6s in ASAN builds. 30s // The pre-fix failure mode routes through the debug crash handler
-  // gives CI headroom; the happy path is ~1s.
+  }, // gives CI headroom; the happy path is ~1s. // (SIGILL → llvm-symbolizer), which takes ~6s in ASAN builds. 30s // The pre-fix failure mode routes through the debug crash handler
   30_000);
 });
 

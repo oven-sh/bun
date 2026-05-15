@@ -197,19 +197,18 @@ pub struct LoadedBundle {
     pub bundle_json: Vec<u8>,
 }
 
-/// `--provenance-file` path: read an externally-generated Sigstore bundle
-/// from disk, check its DSSE-envelope subject matches the package being
-/// published (name + sha512), and return it for attachment. Ported from
-/// `libnpmpublish` `verifyProvenance` — npm additionally runs
-/// `sigstore.verify()` over the bundle (chain + tlog); we do the subject
-/// match only, leaving full verification to the registry.
-pub fn load_and_verify_bundle(
-    path: &[u8],
+/// `--provenance-file` path: verify an externally-generated Sigstore bundle's
+/// DSSE-envelope subject matches the package being published (name + sha512)
+/// and return it for attachment. Ported from `libnpmpublish` `verifyProvenance`
+/// — npm additionally runs `sigstore.verify()` over the bundle (chain + tlog);
+/// we do the subject match only, leaving full verification to the registry.
+///
+/// The caller reads the file (via `bun_sys::File`, not `std::fs`) and passes
+/// the bytes — keeps this crate I/O-free apart from the HTTP calls in [`attest`].
+pub fn verify_bundle(
+    bytes: Vec<u8>,
     expected_subject: &serde_json::Value,
 ) -> Result<LoadedBundle, SigstoreError> {
-    let bytes = std::fs::read(String::from_utf8_lossy(path).as_ref())
-        .map_err(|e| SigstoreError::Usage(format!("Invalid provenance provided: {e}")))?;
-
     let bundle: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|e| SigstoreError::Usage(format!("Invalid provenance provided: {e}")))?;
 

@@ -973,7 +973,18 @@ impl PublishCommand {
 
         // `--provenance-file`: verify subject matches, skip generation.
         if !cfg.provenance_file.is_empty() {
-            return match bun_sigstore::load_and_verify_bundle(cfg.provenance_file, &subject) {
+            let bytes = match File::read_from(Fd::cwd(), cfg.provenance_file) {
+                Ok(b) => b,
+                Err(e) => {
+                    Output::err(
+                        e,
+                        "Invalid provenance provided: failed to read {}",
+                        (bstr::BStr::new(cfg.provenance_file),),
+                    );
+                    Global::crash();
+                }
+            };
+            return match bun_sigstore::verify_bundle(bytes, &subject) {
                 Ok(att) => {
                     Output::prettyln(format_args!(
                         "<green>✓<r> Attached provenance bundle from <b>{}<r>",

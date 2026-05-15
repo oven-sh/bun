@@ -543,6 +543,74 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("core-js type compatibility", () => {
+    // See: https://github.com/oven-sh/bun/issues/26868
+    // @core-js/types (non-pure) augments global PromiseConstructor, which is
+    // what triggers the TS2430 conflict fixed in #26868. It also declares
+    // DOM interfaces for iterable-dom-collections that are empty without
+    // lib.dom.d.ts.
+    const coreJsDOMInterfaces = [
+      "Attr",
+      "CSSRule",
+      "CSSValue",
+      "ClientRect",
+      "DOMPoint",
+      "DOMRect",
+      "DataTransferItem",
+      "Element",
+      "HTMLOptionElement",
+      "MimeType",
+      "Node",
+      "PaintRequest",
+      "SVGLength",
+      "SVGNumber",
+      "SVGPathSeg",
+      "SVGTransform",
+      "SourceBuffer",
+      "StyleSheet",
+      "TextTrack",
+      "TextTrackCue",
+      "Touch",
+    ] as const;
+
+    typeTest("no conflicts with @core-js/types", {
+      packages: ["@core-js/types@4.0.0-alpha.1"],
+      options: {
+        // bun-types provides all type declarations without TypeScript's
+        // standard lib. Using lib: [] ensures we test bun-types' own
+        // signatures without TypeScript's lib.es2024 masking bugs via
+        // duplicate overloads.
+        lib: [],
+      },
+      files: {
+        "core-js-compat.ts": `
+          /// <reference types="@core-js/types" />
+
+          // Verify usage works with both bun-types and core-js-types loaded
+          const buf = new ArrayBuffer(1024, { maxByteLength: 2048 });
+          buf.resize(2048);
+
+          const { promise, resolve, reject } = Promise.withResolvers<string>();
+          resolve("hello");
+        `,
+      },
+      emptyInterfaces: new Set([...expectedEmptyInterfacesWhenNoDOM, ...coreJsDOMInterfaces]),
+      diagnostics: diagnostics => {
+        // Keep diagnostics from the test file, bun-types, or interface
+        // merge conflicts (2430). Exclude internal core-js issues like
+        // circular self-references.
+        const relevantDiagnostics = diagnostics.filter(
+          d =>
+            d.line === null ||
+            d.line.startsWith("core-js-compat.ts") ||
+            d.line?.includes("bun-types") ||
+            d.code === 2430,
+        );
+        expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+  });
+
   describe("lib configuration", () => {
     typeTest("checks with no lib at all", {
       options: {

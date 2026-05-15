@@ -2564,11 +2564,11 @@ impl<'a> Repl<'a> {
 
         // Don't complete when the cursor is in the middle of an identifier —
         // replacing only the left half would duplicate the right half (e.g.
-        // `con|sole` + Tab -> `consolesole`). Insert an indent instead,
-        // matching typical shell behaviour.
+        // `con|sole` + Tab -> `consolesole`). Do nothing rather than insert
+        // whitespace here: every other indent-fallback in this function runs
+        // with the cursor at/after a token boundary, but this branch is by
+        // definition inside one, and injecting spaces would split it.
         if cursor < line.len() && is_ident_part(line[cursor]) {
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
             self.refresh_line();
             return;
         }
@@ -2637,11 +2637,16 @@ impl<'a> Repl<'a> {
                     }
                 };
                 let completion = slice.slice();
-                // Replace the prefix with the completion
-                while self.line_editor.cursor > word_start {
-                    self.line_editor.backspace();
+                // Only insert if the result is a valid dot-access identifier;
+                // e.g. a sole `"foo-bar"` key would otherwise produce
+                // `obj.foo-bar` which parses as subtraction.
+                if is_dot_accessible(completion) {
+                    // Replace the prefix with the completion
+                    while self.line_editor.cursor > word_start {
+                        self.line_editor.backspace();
+                    }
+                    let _ = self.line_editor.insert_slice(completion);
                 }
-                let _ = self.line_editor.insert_slice(completion);
                 self.refresh_line();
             }
         } else if len <= 50 {

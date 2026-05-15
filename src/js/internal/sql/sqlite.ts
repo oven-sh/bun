@@ -175,11 +175,15 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             }
             continue;
           }
-          case "DELETE": {
-            // DELETE isn't tracked in the `SQLCommand` enum (the adapter
-            // uses `lastToken` to report the command name), but we still
-            // need to remember we saw it so a leading `WITH` ahead of a
-            // DELETE doesn't falsely flip `canReturnRows`.
+          case "DELETE":
+          case "REPLACE": {
+            // DELETE and REPLACE aren't tracked in the `SQLCommand` enum
+            // (the adapter uses `lastToken` to report the command name),
+            // but we still need to remember we saw one so a leading
+            // `WITH` ahead of `DELETE`/`REPLACE INTO ...` doesn't falsely
+            // flip `canReturnRows`. REPLACE is the SQLite alias for
+            // `INSERT OR REPLACE` — same row-returning semantics as
+            // INSERT (no rows unless RETURNING).
             sawDML = true;
             lastToken = token;
             token = "";
@@ -270,6 +274,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         sawDML = true;
         break;
       case "DELETE":
+      case "REPLACE":
         sawDML = true;
         break;
       case "WHERE":

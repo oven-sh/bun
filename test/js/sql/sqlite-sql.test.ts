@@ -1291,7 +1291,7 @@ describe("SQLite-specific features", () => {
     const rows = await sql<{ id: number }[]>`SELECT id FROM t ORDER BY id`;
     expect(rows).toEqual([{ id: 1 }, { id: 4 }]);
   });
-  test("WITH ... INSERT/UPDATE/DELETE without RETURNING reports affected row count", async () => {
+  test("WITH ... INSERT/UPDATE/DELETE/REPLACE without RETURNING reports affected row count", async () => {
     await using sql = new SQL("sqlite://:memory:");
     await sql`CREATE TABLE src (id INTEGER PRIMARY KEY, name TEXT)`;
     await sql`CREATE TABLE dst (id INTEGER PRIMARY KEY, name TEXT)`;
@@ -1323,6 +1323,14 @@ describe("SQLite-specific features", () => {
     const delResult =
       await sql`WITH cte AS (SELECT id FROM src WHERE id > 1) DELETE FROM dst WHERE id IN (SELECT id FROM cte)`;
     expect(delResult.count).toBe(2);
+
+    // WITH ... REPLACE INTO (SQLite alias for INSERT OR REPLACE) without
+    // RETURNING reports affected row count.
+    await sql`DELETE FROM dst`;
+    await sql`INSERT INTO dst VALUES (1, 'x'), (2, 'y')`;
+    const repResult =
+      await sql`WITH cte AS (SELECT id, name FROM src) REPLACE INTO dst SELECT id, name FROM cte`;
+    expect(repResult.count).toBe(3);
 
     // WITH ... INSERT ... RETURNING still returns the inserted rows.
     await sql`DELETE FROM dst`;

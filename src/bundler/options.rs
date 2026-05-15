@@ -842,6 +842,7 @@ impl ESMConditions {
             import_condition_map.insert(*condition, ());
             require_condition_map.insert(*condition, ());
             default_condition_amp.insert(*condition, ());
+            style_condition_map.insert(*condition, ());
         }
 
         for default in defaults {

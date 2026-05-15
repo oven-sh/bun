@@ -892,16 +892,31 @@ impl<const SSL: bool> NewSocket<SSL> {
         // moved to a guard so all early-returns run them. The outer
         // `_outer_deref` above owns the final `deref()`; LIFO drop order
         // (cleanup → _outer_deref) mirrors Zig's three defers exactly.
-        let cleanup = scopeguard::guard((this.as_ctx_ptr(), needs_deref), |(p, nd)| {
-            // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-            unsafe {
-                // Zig defer order (reverse-declaration): needs_deref → markInactive.
-                if nd {
-                    (*p).deref();
+        //
+        // The deferred `mark_inactive()` is gated on the `Handlers` pointer
+        // captured before the user callback runs: `onConnectError` can
+        // synchronously re-enter `connect()` and — via `do_connect()`'s
+        // `UnixOrHost::Fd` branch — reach `on_open()`/`mark_active()` for a
+        // *fresh* `Handlers` allocation before this guard drops. Without the
+        // gate the deferred `mark_inactive()` would tear down that newly
+        // activated connection. When no reconnect happened the socket never
+        // opened, so `IS_ACTIVE` is unset and the call is a no-op either way.
+        let pre_callback_handlers = handlers.as_ptr();
+        let cleanup = scopeguard::guard(
+            (this.as_ctx_ptr(), needs_deref, pre_callback_handlers),
+            |(p, nd, h)| {
+                // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
+                unsafe {
+                    // Zig defer order (reverse-declaration): needs_deref → markInactive.
+                    if nd {
+                        (*p).deref();
+                    }
+                    if (*p).handlers.get().map(|n| n.as_ptr()) == Some(h) {
+                        (*p).mark_inactive();
+                    }
                 }
-                (*p).mark_inactive();
-            }
-        });
+            },
+        );
 
         if vm.is_shutting_down() {
             drop(cleanup);

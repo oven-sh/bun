@@ -1,5 +1,6 @@
 #include "config.h"
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/DeferredWorkTimerInlines.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/TopExceptionScope.h>

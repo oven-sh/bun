@@ -8931,9 +8931,9 @@ declare module "bun" {
     resize(width: number, height: number): Promise<void>;
 
     /** Navigate back in session history. */
-    back(): Promise<void>;
+    goBack(): Promise<void>;
     /** Navigate forward in session history. */
-    forward(): Promise<void>;
+    goForward(): Promise<void>;
     /** Reload the current page. */
     reload(): Promise<void>;
 

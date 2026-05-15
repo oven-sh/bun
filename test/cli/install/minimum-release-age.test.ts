@@ -2,6 +2,10 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
+// Every test here spawns the bun binary; debug/ASAN builds are slow enough
+// that the default 5s per-test timeout flakes. Match sibling install suites.
+setDefaultTimeout(1000 * 60 * 5);
+
 /**
  * Comprehensive test suite for the minimum-release-age security feature.
  * Tests all branches of the implementation including stability checks,
@@ -73,7 +77,6 @@ describe("minimum-release-age", () => {
   };
 
   beforeAll(async () => {
-    setDefaultTimeout(1000 * 60 * 5);
     // Start mock registry server
     mockRegistryServer = Bun.serve({
       port: 0,

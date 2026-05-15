@@ -404,13 +404,16 @@ test.concurrent("createHook: util.promisify(setTimeout) still resolves after .en
     const sleepImm = util.promisify(setImmediate);
 
     (async () => {
+      // Unref() the watchdogs so the subprocess exits as soon as the test's
+      // useful work is done — otherwise these ref'd 1s timers gate the whole
+      // subprocess's wall-clock on success.
       const value = await Promise.race([
         sleep(30, 'hello'),
-        new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), 1000)),
+        new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), 1000).unref()),
       ]);
       const immValue = await Promise.race([
         sleepImm('world'),
-        new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT imm')), 1000)),
+        new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT imm')), 1000).unref()),
       ]);
       console.log(JSON.stringify({ value, immValue }));
     })();

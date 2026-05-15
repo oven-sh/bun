@@ -1865,6 +1865,14 @@ pub struct Dirent {
     pub path: bun_core::String,
     // not publicly exposed
     pub kind: DirentKind,
+    /// When true, emit `name` as a `Buffer` instead of a `String`. Set when
+    /// `readdir` was called with `{ encoding: "buffer" }`. The bytes in `name`
+    /// are stored as Latin-1 in that case to preserve raw filesystem bytes 1:1.
+    pub name_as_buffer: bool,
+    /// When true, emit `path`/`parentPath` as a `Buffer` instead of a `String`.
+    /// Set when the caller passed a `Buffer` as the `path` argument to
+    /// `readdir`, matching Node.js semantics.
+    pub path_as_buffer: bool,
 }
 
 pub type DirentKind = bun_sys::FileKind;
@@ -1882,6 +1890,8 @@ unsafe extern "C" {
         name: &mut bun_core::String,
         path: &mut bun_core::String,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
+        name_as_buffer: bool,
+        path_as_buffer: bool,
     ) -> JSValue;
 }
 
@@ -1917,6 +1927,8 @@ impl Dirent {
                 &mut self.name,
                 &mut self.path,
                 cached_previous_path_jsvalue,
+                self.name_as_buffer,
+                self.path_as_buffer,
             )
         })
     }

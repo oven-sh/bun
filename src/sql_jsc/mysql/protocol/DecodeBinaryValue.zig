@@ -30,6 +30,20 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
             return SQLDataCell{ .tag = .int4, .value = .{ .int4 = try reader.int(i16) } };
         },
+        // YEAR is encoded as a 2-byte little-endian unsigned 16-bit integer in
+        // the binary result row (same wire shape as MYSQL_TYPE_SHORT, no length
+        // prefix). Without an explicit branch here the `else` arm reads
+        // `column_length` bytes — that is the ColumnDefinition41 display width
+        // (typically 4 for YEAR(4)) and over-reads by 2 bytes, misaligning the
+        // cursor for every subsequent column in the row (#30854).
+        .MYSQL_TYPE_YEAR => {
+            if (raw) {
+                var data = try reader.read(2);
+                defer data.deinit();
+                return SQLDataCell.raw(&data);
+            }
+            return SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = try reader.int(u16) } };
+        },
         .MYSQL_TYPE_INT24 => {
             if (raw) {
                 var data = try reader.read(3);

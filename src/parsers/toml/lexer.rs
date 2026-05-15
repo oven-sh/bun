@@ -1083,7 +1083,7 @@ impl<'a> Lexer<'a> {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
+                                        Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
@@ -1123,7 +1123,7 @@ impl<'a> Lexer<'a> {
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
+                                        Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);

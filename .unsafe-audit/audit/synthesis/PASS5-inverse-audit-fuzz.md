@@ -283,25 +283,28 @@ from a code path that should be allocation-free and side-effect-free.
 
 ## Conclusion
 
-**~6.16 M total executions across two 120-second runs, one crash.**
+**~6.16 M total executions across two 120-second runs, one crash class.**
 
-The single crash is a debug-only diagnostic-path panic reachable only when
-the caller hasn't initialized `bun_core::output::Source` for the current
+The single crash class is a debug-only diagnostic-path panic reachable only
+when the caller hasn't initialized `bun_core::output::Source` for the current
 thread — a precondition Bun's main and worker threads always satisfy, but
-the parser's contract doesn't advertise. The release-build path is
-clean: u64 overflow silently coerces to zero, no panic.
+the parser's contract doesn't advertise. For this overflow path, release
+builds do not hit the diagnostic and instead silently coerce overflow to
+zero.
 
 Post-filter (excluding 20+ digit runs), **6,140,701 mutated inputs ran
-clean** — strong evidence that the rest of the `bun_semver::Version`
-parser surface (separator handling, tag parsing, build-metadata,
-pre-release identifiers, UTF-8 quirks) does not crash on adversarial input.
+without finding an additional crash**. This is useful negative evidence for
+the exercised `bun_semver::Version` parser surface (separator handling, tag
+parsing, build-metadata, pre-release identifiers, UTF-8 quirks), but it is a
+fuzz result, not a proof of panic-freedom.
 
-This **partially supports** the audit's headline claim ("Bun's safe APIs
-don't crash on adversarial inputs"). The qualification: a debug-only
+This **partially supports** the inverse-audit goal ("safe-signature parser
+APIs should not crash on adversarial inputs"). The qualification: a debug-only
 diagnostic in the parser introduces a fragile precondition (thread-local
 output state) that isn't documented in the function's safe signature. The
 fix is straightforward (drop the diagnostic or replace the unwrap-to-zero
-with a real error). The release build is clean.
+with a real error). The fuzz run did not identify a release-mode crash in
+this target.
 
 ## Re-running
 

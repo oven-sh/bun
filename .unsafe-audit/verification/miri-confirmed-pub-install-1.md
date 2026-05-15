@@ -2,7 +2,7 @@
 
 **Status:** UB detected by `cargo +nightly miri run`.
 **Bug:** pass-3 PUB-INSTALL-1 — `Meta::has_install_script` is `#[repr(u8)] enum HasInstallScript` (3 valid values: `Old=0`, `False=1`, `True=2`) read directly from attacker-controlled `bun.lockb` bytes. Byte values 3-255 produce niche-violating UB.
-**Source:** `/data/projects/bun/src/install/lockfile/Package/Meta.rs:38-46` + `/data/projects/bun/src/install/lockfile/Package.rs` deserialization
+**Source:** `src/install/lockfile/Package/Meta.rs:38-46` + `src/install/lockfile/Package.rs` deserialization
 
 ## The reproduction
 

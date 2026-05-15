@@ -47,7 +47,7 @@ Twelve of the 122 sites required reading a transitive caller (one or two steps u
 
 ## The three load-bearing patterns — `bun_io::PipeWriter`'s macro
 
-The cluster has a documented source of truth: `impl_streaming_writer_parent!` in `/data/projects/bun/src/io/PipeWriter.rs`. This macro stamps the parent-vtable shims that wire uWS / libuv I/O callbacks into a parent type (`FileSink`, `IOWriter`, `WindowsNamedPipe`, `StaticPipeWriter`). The macro's `borrow` parameter encodes the three discipline modes, and the module-level comment is the explicit specification of when each is required (`src/io/PipeWriter.rs:2562–2596`):
+The cluster has a documented source of truth: `impl_streaming_writer_parent!` in `src/io/PipeWriter.rs`. This macro stamps the parent-vtable shims that wire uWS / libuv I/O callbacks into a parent type (`FileSink`, `IOWriter`, `WindowsNamedPipe`, `StaticPipeWriter`). The macro's `borrow` parameter encodes the three discipline modes, and the module-level comment is the explicit specification of when each is required (`src/io/PipeWriter.rs:2562–2596`):
 
 ```
 // `borrow = mut`    → bodies form `&mut *this` (unique access for the
@@ -340,4 +340,4 @@ End-to-end miri on the full Bun test suite is infeasible (JS engine, fs, network
 
 ## Appendix — full sample list
 
-See `/data/projects/bun/.unsafe-audit/cluster_a001_samples.jsonl` (122 sites) for the stratified sample driving this analysis. Each row is `{crate, file, line, category, full_text, ...}` and is reproducible by re-running the stratification script with `random.seed(42)`.
+See `.unsafe-audit/cluster_a001_samples.jsonl` (122 sites) for the stratified sample driving this analysis. Each row is `{crate, file, line, category, full_text, ...}` and is reproducible by re-running the stratification script with `random.seed(42)`.

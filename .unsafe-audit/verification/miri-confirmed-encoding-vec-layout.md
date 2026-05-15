@@ -2,7 +2,7 @@
 
 **Status:** UB detected by `cargo +nightly miri run`.
 **Bug:** pass-2 UB-RT-001 — reinterprets a `Vec<u8>` allocation as `Vec<u16>` via `Vec::from_raw_parts`. The original allocation was made with `Layout(size, align=1)`; the `Vec<u16>::drop` deallocates with `Layout(size, align=2)`. The layouts don't match.
-**Source:** `/data/projects/bun/src/runtime/webcore/encoding.rs:303-310`
+**Source:** `src/runtime/webcore/encoding.rs:303-310`
 **JS-reachable via:** `Buffer.from(x).toString("ucs2")`
 
 ## The reproduction

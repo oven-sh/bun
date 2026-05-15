@@ -12,7 +12,7 @@ mentions inside `Vec::from_raw_parts` / comments and were filtered out).
 - aliasing with a live `&mut` reborrow
 - lifetime cliff (`from_raw_parts` over a `Drop`-soon temporary).
 
-Inventory: `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`
+Inventory: `.unsafe-audit/unsafe-inventory.jsonl`
 Sample extract: `/tmp/slice_real.jsonl` (270 rows).
 
 ---
@@ -441,8 +441,8 @@ Co-cluster mention.
 
 ### 2.6 `bun_runtime::api::BunObject` (3 sites)
 
-| Site | Function | Length source |
-|---|---|---|
+| Site | Function | Length source | Verdict |
+|---|---|---|---|
 | `S-005028` | `bun_resolve_sync_with_paths` | C++ caller passes `(paths_ptr, paths_len)` — `BunString[]` array of `paths_len` entries; C++ side reads `Array.prototype.length` of JS array | A-FFI-CONTRACT |
 | `S-005030` | `Bun__escapeHTML16` | C++ passes `str.span16().data()/length()` | A-FFI-CONTRACT |
 | `S-005031` | `Bun__escapeHTML8` | C++ passes `str.span8().data()/length()` | A-FFI-CONTRACT |

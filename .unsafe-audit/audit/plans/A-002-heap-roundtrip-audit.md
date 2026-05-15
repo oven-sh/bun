@@ -6,7 +6,7 @@ cluster of unsafe sites in the Bun runtime. Targets `Box::from_raw` /
 `bun_core::heap::{alloc, alloc_nn, into_raw, into_raw_nn, release, take,
 destroy, leak}` and their FFI hand-off / refcount-finalizer pairings.
 
-Scope counts (from `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`,
+Scope counts (from `.unsafe-audit/unsafe-inventory.jsonl`,
 filtered by category tags):
 
 | Category            | Sites |
@@ -841,7 +841,7 @@ Inventory regenerated from:
 
 ```bash
 jq -c 'select((.categories | index("bun_heap_lifecycle")) // (.categories | index("smart_ptr_raw")))' \
-    /data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl > /tmp/audit-A-002.jsonl
+    .unsafe-audit/unsafe-inventory.jsonl > /tmp/audit-A-002.jsonl
 ```
 
 Per-crate breakdown:

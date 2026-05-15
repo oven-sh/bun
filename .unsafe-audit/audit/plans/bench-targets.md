@@ -2,7 +2,7 @@
 
 Companion to `B-001-and-B-002-perf-only.md`. Maps every B-candidate-hot and
 (B-UNMEASURED) site to the Bun benchmark that exercises its hot path. All
-benches live in `/data/projects/bun/bench/` and are runnable via the standard
+benches live in `bench/` and are runnable via the standard
 `bun run <snippet>` invocation.
 
 Codex pass 2 note: any older `B-PROVEN-HOT` label in this file should be read

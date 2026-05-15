@@ -6,9 +6,9 @@ clients, WebSocket upgrade + framing, proxy CONNECT tunneling, header
 encoding, chunked-transfer parsing, decompression, and SSL/TLS callbacks.
 
 Inputs:
-- `/data/projects/bun/src/http/` (170 sites, 23 files)
-- `/data/projects/bun/src/http_jsc/` (287 sites, 8 files)
-- `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl` lines for
+- `src/http/` (170 sites, 23 files)
+- `src/http_jsc/` (287 sites, 8 files)
+- `.unsafe-audit/unsafe-inventory.jsonl` lines for
   `crate ∈ {bun_http, bun_http_jsc}`
 - Prior pass-2 hits on `src/http/AsyncHTTP.rs:117` and `src/http/lib.rs:176`
   (`PASS2-ptr-cast-deep-dive.md` §U2: dealloc-through-SharedReadOnly UB)

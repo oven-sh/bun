@@ -661,7 +661,7 @@ Every concrete claim in this document cites a file:line. Quick index for verifie
 
 ## Appendix B — inventory cross-reference
 
-Inventory at `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl` has 332 `bun_sys` entries. Distribution:
+Inventory at `.unsafe-audit/unsafe-inventory.jsonl` has 332 `bun_sys` entries. Distribution:
 
 | Category            | Count |
 | ------------------- | ----- |

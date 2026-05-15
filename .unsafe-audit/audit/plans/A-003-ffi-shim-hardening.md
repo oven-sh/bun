@@ -46,7 +46,7 @@ Each PR is purely a comment-and-doc change. Compile time is unaffected; the only
 
 ## Crate 1 — `bun_mimalloc_sys` (12 unsafe sites)
 
-**Primary file:** `/data/projects/bun/src/mimalloc_sys/mimalloc.rs` (the `lib.rs` is a 2-line module declaration; all sites are in `mimalloc.rs`).
+**Primary file:** `src/mimalloc_sys/mimalloc.rs` (the `lib.rs` is a 2-line module declaration; all sites are in `mimalloc.rs`).
 
 **Wrapping style.** Hand-written, with a single opaque `Heap` type produced by `bun_opaque::opaque_ffi!`. The crate defines:
 
@@ -134,7 +134,7 @@ The hardened comment lengthens the source by ten lines but makes the audit oblig
 
 ## Crate 2 — `bun_libarchive_sys` (45 unsafe sites in `bindings.rs`; 81 more in the `bun_libarchive` helper crate)
 
-**Primary file:** `/data/projects/bun/src/libarchive_sys/bindings.rs` (~93 KB; the `lib.rs` is a 2-line re-export and the `.zig` sibling is the original Zig port that no longer compiles).
+**Primary file:** `src/libarchive_sys/bindings.rs` (~93 KB; the `lib.rs` is a 2-line re-export and the `.zig` sibling is the original Zig port that no longer compiles).
 
 **Wrapping style.** Hand-written, leans on Rust's `unsafe extern "C" { safe fn … }` to declare value-typed symbols as `safe fn` whenever the C side has no pointer preconditions. Examples from the extern block:
 
@@ -232,7 +232,7 @@ let bytes = core::ptr::slice_from_raw_parts(ptr, size);
 
 ## Crate 3 — `bun_libuv_sys` (133 unsafe sites in `libuv.rs`)
 
-**Primary file:** `/data/projects/bun/src/libuv_sys/libuv.rs` (~134 KB). The crate is Windows-only (`#[cfg(windows)]` at the module body); a small POSIX-visible header lives in `lib.rs` exporting `uv_dirent_type_t` and the synthetic `UV_E*` errno constants.
+**Primary file:** `src/libuv_sys/libuv.rs` (~134 KB). The crate is Windows-only (`#[cfg(windows)]` at the module body); a small POSIX-visible header lives in `lib.rs` exporting `uv_dirent_type_t` and the synthetic `UV_E*` errno constants.
 
 **Wrapping style.** Hand-written. The defining structural choice is **layout-prefixed handle types**: every concrete handle (`Pipe`, `Timer`, `uv_async_t`, …) is `#[repr(C)]` and begins with `uv_handle_t`'s fields, so a `*mut Pipe` is castable to `*mut uv_handle_t` and the cast is enforced by the `unsafe trait UvHandle` marker. This pattern shapes every shim in the file.
 

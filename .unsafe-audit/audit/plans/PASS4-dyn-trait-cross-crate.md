@@ -683,57 +683,57 @@ The T2 with the most upstream risk: T2-S1 (`ConcurrentPromiseTask` cleanup is bl
 
 (absolute paths, for the report's caller)
 
-- `/data/projects/bun/src/install_types/resolver_hooks.rs`
-- `/data/projects/bun/src/resolver/package_json.rs`
-- `/data/projects/bun/src/crash_handler/lib.rs`
-- `/data/projects/bun/src/runtime/crypto/CryptoHasher.rs`
-- `/data/projects/bun/src/spawn/lib.rs`
-- `/data/projects/bun/src/spawn/static_pipe_writer.rs`
-- `/data/projects/bun/src/runtime/api/bun/subprocess.rs`
-- `/data/projects/bun/src/jsc/ConcurrentPromiseTask.rs`
-- `/data/projects/bun/src/jsc/WorkTask.rs`
-- `/data/projects/bun/src/jsc/JSCell.rs`
-- `/data/projects/bun/src/jsc/VirtualMachine.rs`
-- `/data/projects/bun/src/jsc/webcore_types.rs` (Blob, StoreRef)
-- `/data/projects/bun/src/ast/nodes.rs` (StoreRef vs StoreSlice vs StoreStr)
-- `/data/projects/bun/src/bun_core/util.rs` (Once, RacyCell, ThreadLock)
-- `/data/projects/bun/src/bun_core/lib.rs` (RawSlice)
-- `/data/projects/bun/src/bun_core/string/StringJoiner.rs`
-- `/data/projects/bun/src/bun_alloc/MimallocArena.rs`
-- `/data/projects/bun/src/bun_alloc/MaxHeapAllocator.rs`
-- `/data/projects/bun/src/bun_alloc/lib.rs` (BSSList)
-- `/data/projects/bun/src/threading/work_pool.rs` (`owned_task!` macro)
-- `/data/projects/bun/src/threading/guarded.rs`
-- `/data/projects/bun/src/threading/channel.rs`
-- `/data/projects/bun/src/threading/RwLock.rs`
-- `/data/projects/bun/src/threading/ThreadPool.rs`
-- `/data/projects/bun/src/bundler/Chunk.rs`
-- `/data/projects/bun/src/bundler/LinkerContext.rs`
-- `/data/projects/bun/src/bundler/LinkerGraph.rs`
-- `/data/projects/bun/src/bundler/ThreadPool.rs`
-- `/data/projects/bun/src/bundler/lib.rs`
-- `/data/projects/bun/src/resolver/fs.rs`
-- `/data/projects/bun/src/resolver/lib.rs`
-- `/data/projects/bun/src/http/ssl_config.rs`
-- `/data/projects/bun/src/http/lshpack.rs`
-- `/data/projects/bun/src/http/h3_client/PendingConnect.rs`
-- `/data/projects/bun/src/http/HTTPThread.rs`
-- `/data/projects/bun/src/sql_jsc/jsc.rs`
-- `/data/projects/bun/src/runtime/node/path_watcher.rs`
-- `/data/projects/bun/src/runtime/dns_jsc/dns.rs`
-- `/data/projects/bun/src/runtime/shell/IOReader.rs`
-- `/data/projects/bun/src/runtime/shell/IOWriter.rs`
-- `/data/projects/bun/src/runtime/webcore/blob/copy_file.rs` (pre-existing TODO)
-- `/data/projects/bun/src/runtime/webcore/Blob.rs`
-- `/data/projects/bun/src/runtime/api/glob.rs`, `JSTranspiler.rs`, `image/Image.rs` (Context implementors)
-- `/data/projects/bun/src/runtime/webcore/blob/{read_file,write_file}.rs` (Context implementors)
-- `/data/projects/bun/src/ptr/lib.rs` (BackRef)
-- `/data/projects/bun/src/ptr/parent_ref.rs` (ParentRef)
-- `/data/projects/bun/src/ptr/raw_ref_count.rs` (RawRefCount thread-lock)
-- `/data/projects/bun/src/opaque/lib.rs` (`opaque_ffi!` macro `!Send + !Sync` default)
-- `/data/projects/bun/src/dispatch/lib.rs` (`link_interface!` macro)
-- `/data/projects/bun/src/semver/SemverQuery.rs`
-- `/data/projects/bun/src/standalone_graph/StandaloneModuleGraph.rs`
+- `src/install_types/resolver_hooks.rs`
+- `src/resolver/package_json.rs`
+- `src/crash_handler/lib.rs`
+- `src/runtime/crypto/CryptoHasher.rs`
+- `src/spawn/lib.rs`
+- `src/spawn/static_pipe_writer.rs`
+- `src/runtime/api/bun/subprocess.rs`
+- `src/jsc/ConcurrentPromiseTask.rs`
+- `src/jsc/WorkTask.rs`
+- `src/jsc/JSCell.rs`
+- `src/jsc/VirtualMachine.rs`
+- `src/jsc/webcore_types.rs` (Blob, StoreRef)
+- `src/ast/nodes.rs` (StoreRef vs StoreSlice vs StoreStr)
+- `src/bun_core/util.rs` (Once, RacyCell, ThreadLock)
+- `src/bun_core/lib.rs` (RawSlice)
+- `src/bun_core/string/StringJoiner.rs`
+- `src/bun_alloc/MimallocArena.rs`
+- `src/bun_alloc/MaxHeapAllocator.rs`
+- `src/bun_alloc/lib.rs` (BSSList)
+- `src/threading/work_pool.rs` (`owned_task!` macro)
+- `src/threading/guarded.rs`
+- `src/threading/channel.rs`
+- `src/threading/RwLock.rs`
+- `src/threading/ThreadPool.rs`
+- `src/bundler/Chunk.rs`
+- `src/bundler/LinkerContext.rs`
+- `src/bundler/LinkerGraph.rs`
+- `src/bundler/ThreadPool.rs`
+- `src/bundler/lib.rs`
+- `src/resolver/fs.rs`
+- `src/resolver/lib.rs`
+- `src/http/ssl_config.rs`
+- `src/http/lshpack.rs`
+- `src/http/h3_client/PendingConnect.rs`
+- `src/http/HTTPThread.rs`
+- `src/sql_jsc/jsc.rs`
+- `src/runtime/node/path_watcher.rs`
+- `src/runtime/dns_jsc/dns.rs`
+- `src/runtime/shell/IOReader.rs`
+- `src/runtime/shell/IOWriter.rs`
+- `src/runtime/webcore/blob/copy_file.rs` (pre-existing TODO)
+- `src/runtime/webcore/Blob.rs`
+- `src/runtime/api/glob.rs`, `JSTranspiler.rs`, `image/Image.rs` (Context implementors)
+- `src/runtime/webcore/blob/{read_file,write_file}.rs` (Context implementors)
+- `src/ptr/lib.rs` (BackRef)
+- `src/ptr/parent_ref.rs` (ParentRef)
+- `src/ptr/raw_ref_count.rs` (RawRefCount thread-lock)
+- `src/opaque/lib.rs` (`opaque_ffi!` macro `!Send + !Sync` default)
+- `src/dispatch/lib.rs` (`link_interface!` macro)
+- `src/semver/SemverQuery.rs`
+- `src/standalone_graph/StandaloneModuleGraph.rs`
 
 ---
 

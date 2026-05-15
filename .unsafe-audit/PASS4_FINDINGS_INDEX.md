@@ -15,7 +15,7 @@
 | P4-G | dyn Trait + cross-crate Send/Sync | **0 new** | — | — | 162 dyn sites + 164 unsafe impl Send/Sync across 76 files audited; no new dyn-trait T1. Re-confirms the already-counted `StoreSlice<T>` T1 rather than demoting it. | [plan](audit/plans/PASS4-dyn-trait-cross-crate.md) |
 | P4-H | Soundness archeology | (synthesis) | — | — | **2,989 unsafe blocks already removed by maintainers**; every Tier-1 audit finding maps to a maintainer commit class | [synthesis](audit/synthesis/PASS4-soundness-archeology.md) |
 | P4-I | Audit-driven tests + clippy lints | (deliverables) | — | — | 8 test fixtures (rustfmt-clean, dirent 14/14 pass); ast-grep rule (fires on 2 real Bun U2 sites, 0 false positives); dylint scaffold | `audit/tests/` |
-| P4-J | Risk scoring + SECURITY.md + soundness debt | (synthesis) | — | — | 40 current T1/T1-equivalent entries / 2,507 risk-pts / 24 risk-band P0 (81% of risk); top-6 remediation owners = 83% of risk; production-grade SECURITY.md draft | [risk-scoring](audit/synthesis/PASS4-risk-scoring.md), [dashboard](soundness-debt-dashboard.md), [SECURITY](draft-SECURITY.md) |
+| P4-J | Risk scoring + SECURITY.md + soundness debt | (synthesis) | — | — | 40 current T1/T1-equivalent entries / 2,507 risk-pts / 24 risk-band P0 (81% of risk); top-6 remediation owners = 83% of risk; scrubbed SECURITY.md proposal | [risk-scoring](audit/synthesis/PASS4-risk-scoring.md), [dashboard](soundness-debt-dashboard.md), [SECURITY](SECURITY-public-ready.md) |
 | P4-K | spawn + crash_handler + sql | **0 memory-safety T1** | 7 | 10 | Author's TODO identifies real crash-path async-signal-safety defects, but mutex/RefCell re-entry is tracked as critical crash-reliability debt, not counted in the memory-safety T1 risk table. `report()` fork/execve/_exit path verified async-signal-safe. | [plan](audit/plans/PASS4-spawn-crash-sql.md) |
 
 ## NEW Pass-4 P0 findings
@@ -93,7 +93,7 @@ The 5 miri-confirmed traces cover: 2 of the 6 P0s (PUB-INSTALL-1, PUB-INSTALL-3)
 - **5 miri verification documents** in `verification/`
 - **8 test fixtures + ast-grep lint + dylint scaffold** in `audit/tests/`
 - **`AUDIT_SUMMARY.md`, `PASS2_FINDINGS_INDEX.md`, `PASS3_FINDINGS_INDEX.md`, `PASS4_FINDINGS_INDEX.md`** (this file)
-- **`draft-SECURITY.md`, `soundness-debt-dashboard.md`, `beads-to-create.md`**
+- **`SECURITY-public-ready.md`, `soundness-debt-dashboard.md`, `beads-to-create.md`**
 - **17+ git commits** in the nested `.unsafe-audit/.git` repo
 
 ## Pass-4 PR landing order recommendation

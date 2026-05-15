@@ -11,8 +11,8 @@ This document tallies the (A) / (B) / (C) verdict for every cluster in the audit
 Codex pass 2 is the first adversarial reclassification pass. It preserves the
 overall shape of this table but applies these corrections:
 
-- C-001 has **22+ firm** safe rewrites until the `const fn` `StoreRef::from_static`
-  site is excluded or solved.
+- C-001 has **23 technically refactorable** sites, but only **22 firm demo-PR**
+  sites until the `const fn` `StoreRef::from_static` site is excluded or solved.
 - C-002 should use **`strum::FromRepr`**, not `num_enum`.
 - C-003 assertion rewrites must use Bun's no-dependency auto-trait proof pattern
   or explicitly add an assertion dependency; `static_assertions` is not present
@@ -41,13 +41,13 @@ contract that is weaker than the implementation requires.
 
 | Cluster | Sites | Verdict | Confidence | Plan |
 |---------|------:|---------|------------|------|
-| **C-001** NonNull::new_unchecked from reference source | 40 | **(C) REFACTORABLE** for 28 sites; (A) for 12 | High | [plans/C-001-nonnull-from-reference.md](../plans/C-001-nonnull-from-reference.md) |
+| **C-001** NonNull::new_unchecked from reference source | 40 | **(C) REFACTORABLE** for 23 sites (22 firm demo-PR sites after excluding `StoreRef::from_static` const blocker); (A) for 17 | High | [plans/C-001-nonnull-from-reference.md](../plans/C-001-nonnull-from-reference.md) |
 | **C-002** mem::transmute<int, enum> with bounded input | ~30 | **(C) REFACTORABLE** for most; **pre-existing-ub** for any with unbounded input | High (pending agent completion) | plans/C-002-transmute-to-enum.md |
 | **C-003** propagating `unsafe impl<T: Send>` | ~40 | **(C) REFACTORABLE** via NonNull + PhantomData; (A) for raw-ptr-to-C-state | Medium (pending agent completion) | plans/C-003-send-sync-impls.md |
 | **C-004** custom helper functions wrapping single unsafe ops | ~200 | Mix (C)/(A); per-caller analysis required | Medium | plans/C-004-helper-functions.md (deferred) |
 | **C-005** `Self::xxx(this)` in pure-Rust callers | TBD | **(C) REFACTORABLE** where call graph permits | Low (needs rustdoc JSON) | plans/C-005-pure-rust-this.md (deferred) |
 | **A-001** Zig-port `*mut Self` at FFI callbacks | ~1,610 | **(A) STRICTLY_UNAVOIDABLE** for most; (C) for pure-Rust subset | High | plans/A-001-zig-port-mut-self.md |
-| **A-002** `bun_core::heap::take`/`destroy` round-trips | 204 | **(A) STRICTLY_UNAVOIDABLE** | High | plans/A-002-heap-roundtrips.md (deferred) |
+| **A-002** `bun_core::heap::take`/`destroy` round-trips | 204 | **(A) STRICTLY_UNAVOIDABLE** | High | [plans/A-002-heap-roundtrip-audit.md](../plans/A-002-heap-roundtrip-audit.md) (deferred) |
 | **A-003** `*_sys` FFI shim crates | ~1,200+ | **(A) STRICTLY_UNAVOIDABLE** | High | plans/A-003-ffi-shim-hardening.md |
 | **B-001** `unreachable_unchecked` in match tails | ~12 | **(B) CANDIDATE** until measurement | Medium | plans/B-001-and-B-002-perf-only.md |
 | **B-002** `get_unchecked` on bounded indices | 13 | **(B) CANDIDATE** until measurement | Medium | plans/B-001-and-B-002-perf-only.md |
@@ -97,7 +97,7 @@ Phase 6 runs an adversarial reclassifier that tries to defeat every (A) and find
 - **A-001 adversarial:** "Could `pin-project-lite`-style structural pinning replace some of these?" — Answer: no, the issue is dealloc tag invalidation, not movement.
 - **A-002 adversarial:** "Could `slab` or `slotmap` replace `Box::from_raw`?" — Answer: only for sites where the C side accepts a `usize` token; most FFI passes `void*`.
 - **A-003 adversarial:** "Could `cxx`-style bindings reduce the unsafe surface?" — Answer: `cxx` only works for C++ with specific patterns; Bun's bindings are too varied. `bindgen` already generates the headers; the unsafe `extern` is the irreducible kernel.
-- **C-001 adversarial:** "Are any of the 28 'safe' sites actually load-bearing for a subtle invariant?" — Per the C-001 plan, each of the 28 has been verified to have a Rust-reference source, which is non-null by construction. No subtle invariant identified.
+- **C-001 adversarial:** "Are any of the 23 technically refactorable sites actually load-bearing for a subtle invariant?" — Per the C-001 plan, each site is either sourced from a Rust reference or has an existing non-null witness. One `StoreRef::from_static` site remains excluded from the firm demo batch because its safe replacement is blocked by `const fn` availability on Bun's pinned toolchain.
 - **C-002 adversarial:** "Could the `strum::FromRepr` rewrite hide a real out-of-range value the unsafe transmute silently `unreachable_unchecked!`'d through?" — Yes, and that's a feature: the rewrite turns UB into a panic or checked fallback, which is bug-finding, not bug-hiding.
 - **CODEX-P2 adversarial:** "If WindowsWaker currently stores `Option<BackRef<_>>`, is `zeroed_unchecked()` actually UB?" — The safe placeholder exists, so this does not need a layout-law debate. Replace the stale branch with `Async::Waker::placeholder()` and verify Windows check.
 

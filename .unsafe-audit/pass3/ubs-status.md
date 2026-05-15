@@ -8,7 +8,7 @@
 Command shape:
 
 ```sh
-ubs --only=rust --format=jsonl --ci --skip-size-check /data/projects/bun/src
+ubs --only=rust --format=jsonl --ci --skip-size-check src
 ```
 
 Output file: `pass3/ubs-rust.jsonl`.
@@ -32,7 +32,7 @@ Command shape:
 ```sh
 ubs --only=rust --format=json --ci --skip-size-check \
   --beads-jsonl=pass3/ubs-targeted-findings.jsonl \
-  --files=<12 pass-3 evidence files> /data/projects/bun/src
+  --files=<12 pass-3 evidence files> src
 ```
 
 Output files:

@@ -52,7 +52,7 @@ The final defensible tally: **6 P0 + 37 T1 + ~32 T2 + ~58 T3**.
 ├── CODEX_PASS3_SUMMARY.md             ← Codex adversarial pass 3.
 ├── CODEX_PASS3_FINAL_REVIEW.md        ← READ THIS for tier discipline.
 ├── REVIEWER_RESPONSES.md              ← Maintainer-empathy review.
-├── draft-SECURITY.md                  ← Production-grade SECURITY.md template.
+├── SECURITY-public-ready.md           ← Scrubbed SECURITY.md proposal for maintainer review.
 ├── soundness-debt-dashboard.md        ← Stakeholder-facing dashboard.
 ├── beads-to-create.md                 ← Bead commands (not yet filed).
 ├── ci-matrix.yml                      ← Proposed CI matrix entry.
@@ -238,7 +238,7 @@ Real, compilable regression catchers.
 | `dirent_parser_regression.rs` | 14 standalone-passing tests for the Linux/macOS/FreeBSD dirent-parser bugs. |
 | `clippy_lint_from_ref_cast_mut/` | ast-grep YAML rule + dylint crate scaffold + positive/negative test corpora. |
 
-The ast-grep rule fires on the 2 real Bun U2 sites (`src/http/AsyncHTTP.rs:117`, `src/http/lib.rs:176`) with **zero false positives**.
+The ast-grep rule fires on the 2 real Bun U2 sites (`src/http/AsyncHTTP.rs:117`, `src/http/lib.rs:176`) with **zero false positives in the tested corpus**.
 
 ---
 
@@ -339,4 +339,4 @@ If you find a claim in this audit that seems wrong, the right move is:
 2. Read 20-30 lines of context at that file:line on current `HEAD`
 3. If the claim doesn't hold up — file an issue or PR against the audit dir. The audit is itself in a `git`-tracked subtree; corrections are welcome.
 
-The audit is intentionally over-documented because the standard the user demanded ("100% accurate and defensible") leaves no room for hand-waving. Every claim cites; every reproducer runs.
+The audit is intentionally over-documented because the standard is high-confidence, reviewer-defensible evidence rather than hand-waving. Every claim cites; every reproducer runs or is explicitly labeled as not yet standalone.

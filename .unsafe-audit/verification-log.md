@@ -7,8 +7,8 @@ Real runs performed on 2026-05-15. Toolchain: nightly 1.97.0 with miri component
 The first audit pass reported that `cargo metadata` failed because Bun's `vendor/lolhtml/c-api/Cargo.toml` is fetched at build time and isn't checked in. We bypassed this by creating an audit-only stub:
 
 ```
-/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml  (stub package "lol_html_c_api")
-/data/projects/bun/vendor/lolhtml/c-api/src/lib.rs  (empty)
+vendor/lolhtml/c-api/Cargo.toml  (stub package "lol_html_c_api")
+vendor/lolhtml/c-api/src/lib.rs  (empty)
 ```
 
 This is sufficient for `cargo metadata` / `cargo check` / `cargo +nightly miri test` to run on individual crates that don't transitively call into lol-html. The stub is NOT a substitute for the real vendor dep — it's there to unblock verification only.

@@ -1,7 +1,7 @@
 # PASS 3 — Reachability from `pub` API & Test Coverage of Unsafe Sites
 
 **Audit date:** 2026-05-15
-**Inventory:** `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl` (11,044 sites, 84 of 108 workspace crates)
+**Inventory:** `.unsafe-audit/unsafe-inventory.jsonl` (11,044 sites, 84 of 108 workspace crates)
 **Inputs reused:** Pass 1 inventory, Pass 2 SAFETY-comment gap baseline (windowed-marker heuristic, window=4), and workspace dependency data from `cargo metadata --format-version 1 --no-deps`.
 
 This pass answers two cross-cutting questions:
@@ -698,7 +698,7 @@ Total hardening surface across these priorities: roughly 600–800 specific chan
 Reproduction commands (top of report shows methodology in detail):
 
 ```
-cd /data/projects/bun
+cd .
 jq -s 'group_by(.crate) | map({crate: .[0].crate, sites: length, files: (map(.file)|unique|length)}) | sort_by(-.sites)' \
    .unsafe-audit/unsafe-inventory.jsonl
 rg --files-with-matches '\.workspace = true' src -t toml \

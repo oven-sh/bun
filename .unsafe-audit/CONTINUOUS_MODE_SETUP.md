@@ -32,8 +32,8 @@ small summary file.
 
 Add this to crontab (`crontab -e`):
 
-```
-0 3 * * * bash ~/.claude/skills/rust-unsafe-code-exorcist/scripts/cron-drift-check.sh /data/projects/bun/.unsafe-audit /data/projects/bun >> /var/log/bun-unsafe-drift.log 2>&1
+```cron
+0 3 * * * bash ~/.claude/skills/rust-unsafe-code-exorcist/scripts/cron-drift-check.sh .unsafe-audit . >> /var/log/bun-unsafe-drift.log 2>&1
 ```
 
 That runs the drift check at 03:00 daily and appends output to a log. This audit
@@ -54,8 +54,8 @@ The script exits early when `enabled = false`.
 
 ```bash
 bash ~/.claude/skills/rust-unsafe-code-exorcist/scripts/cron-drift-check.sh \
-  /data/projects/bun/.unsafe-audit \
-  /data/projects/bun
+  .unsafe-audit \
+  .
 ```
 
 Outputs a single-day drift report to `.unsafe-audit/drift/$(date -u +%Y-%m-%d)/`.

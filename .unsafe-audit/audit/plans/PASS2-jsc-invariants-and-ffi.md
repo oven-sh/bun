@@ -181,7 +181,7 @@ explicit (`unsafe trait`) or split JS-thread state from worker-thread state with
 2. **Defensive path.** Even in the shutdown branch, enqueue to the main thread via the existing concurrent-task queue. If the main thread is *also* shutting down and never drains, the leaked `Box<FetchTasklet>` is acceptable at process exit (mimalloc cleans up). The current "deinit directly on HTTP thread" optimization saves one task-enqueue at the cost of taking a JSC contract risk.
 3. **Long-term.** Replace `StrongOptional` / `Weak` fields with `Strong` payloads parked in a thread-safe `take()` slot dropped post-shutdown by the VM's main `onExit` sequencer.
 
-**File location for bead:** `pre-existing-ub-7` in `/data/projects/bun/.unsafe-audit/beads-to-create.md`.
+**File location for bead:** `pre-existing-ub-7` in `.unsafe-audit/beads-to-create.md`.
 
 ### 1.6 Strong sites in async closures — none found
 
@@ -218,7 +218,7 @@ From `src/CLAUDE.md`:
 | `src/runtime/webcore/Body.rs:641-657` | `JSValue` | Routes through `BodyValue` arms; `JSValue` arm extracts `Strong` value via `Strong::swap` (does not double-ref) | PASS |
 | `src/runtime/webcore/FormData.rs:125` | `JSValue` | Builds Headers + appends to a new `JSFormData`; standard transfer | PASS |
 | `src/runtime/webcore/ArrayBufferSink.rs:196` | `JSValue` | Generic sink wrap; adopting | PASS |
-| `src/runtime/webcore/dns_jsc/dns.rs:623,3322,...` | `JSValue` | `to_js_response` family — sampled three; all PASS |
+| `src/runtime/webcore/dns_jsc/dns.rs:623,3322,...` | `JSValue` | `to_js_response` family — sampled three | PASS |
 | `src/runtime/webcore/ResumableSink.rs:30,614` | trait `to_js(this: *mut (), global) -> JSValue` | The trait method's pointer-payload signature *forces* the transfer pattern — caller passes `*mut ()` once | PASS |
 | `src/runtime/api/glob.rs:42` (`BunString::from_js` followed by storage) | `Glob` field | Not a `to_js` site; verified separately under §3 | (not a to_js site) |
 | `src/runtime/ffi/FFIObject.rs:115-154` (`to_js` for the `FFI` host-object) | `JSValue` | Iterates `FIELDS`, calls `JSFunction::create` per host fn — JSC adopts each function value; no ref/unref imbalance | PASS |
@@ -875,7 +875,7 @@ A future Phase-3 audit may want to re-cross-reference these against the current 
 
 ## Section 9 — Audit methodology notes
 
-This pass was performed by direct `rg` + read of every cited site; no `cargo expand`, no Miri runs (the runtime cannot be Miri-tested per the project's invariants doc), no fuzzing harness. Counts are exact at the time of audit; line numbers verified verbatim against `/data/projects/bun/src/...` at commit `428f61eb34` (HEAD on `main` per the gitStatus context).
+This pass was performed by direct `rg` + read of every cited site; no `cargo expand`, no Miri runs (the runtime cannot be Miri-tested per the project's invariants doc), no fuzzing harness. Counts are exact at the time of audit; line numbers verified verbatim against `src/...` at commit `428f61eb34` (HEAD on `main` per the gitStatus context).
 
 Two things would meaningfully improve a future pass:
 

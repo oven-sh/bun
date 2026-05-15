@@ -12,7 +12,7 @@ failures, 6 total.`
 
 ## Formal claim
 
-For Pattern P1 in `/data/projects/bun/.unsafe-audit/audit/plans/C-001-nonnull-from-reference.md`, the cluster plan asserts that the following rewrite is **isomorphic** — identical address, identical readback, identical codegen:
+For Pattern P1 in `.unsafe-audit/audit/plans/C-001-nonnull-from-reference.md`, the cluster plan asserts that the following rewrite is **isomorphic** — identical address, identical readback, identical codegen:
 
 ```rust
 // Before (10 sites, e.g. S-000286 src/ast/nodes.rs:82)
@@ -57,7 +57,7 @@ Kani's job here is to **mechanically certify the address-level equivalence** ove
 
 ## Harness file
 
-`/data/projects/bun/.unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs` (273 lines)
+`.unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs` (273 lines)
 
 Six harnesses:
 
@@ -184,7 +184,7 @@ Verification failed for - c001_p1_ref_equivalence_u8
 Complete - 0 successfully verified harnesses, 1 failures, 1 total.
 ```
 
-The break was reverted; the working harness is what ships in `/data/projects/bun/.unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs`.
+The break was reverted; the working harness is what ships in `.unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs`.
 
 This is **proof that the harness is wired correctly** — it discriminates a true counter-example from a sound rewrite, and it pinpoints the failing assertion line. Without this step, the green result would be epistemically empty.
 
@@ -227,7 +227,7 @@ edition = "2021"
 [lib]
 path = "src/lib.rs"
 EOF
-cp /data/projects/bun/.unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs \
+cp .unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs \
    /tmp/kani-c001-proof/src/lib.rs
 cd /tmp/kani-c001-proof && cargo kani
 ```
@@ -241,7 +241,7 @@ Complete - 6 successfully verified harnesses, 0 failures, 6 total.
 
 ## Files
 
-- Harness:  `/data/projects/bun/.unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs`
-- Report (this file): `/data/projects/bun/.unsafe-audit/audit/plans/PASS5-kani-nonnull-proof.md`
-- Cluster plan (input): `/data/projects/bun/.unsafe-audit/audit/plans/C-001-nonnull-from-reference.md`
+- Harness:  `.unsafe-audit/audit/tests/kani_nonnull_from_equivalence.rs`
+- Report (this file): `.unsafe-audit/audit/plans/PASS5-kani-nonnull-proof.md`
+- Cluster plan (input): `.unsafe-audit/audit/plans/C-001-nonnull-from-reference.md`
 - Run log (transient): `/tmp/kani-full-output.txt`, `/tmp/kani-sanity-failed.txt`

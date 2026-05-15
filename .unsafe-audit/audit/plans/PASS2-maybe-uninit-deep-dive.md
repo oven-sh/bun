@@ -1,7 +1,7 @@
 # PASS-2 Deep Dive: `maybe_uninit` Cluster
 
 **Inventory query:**
-`jq -c 'select((.categories | index("maybe_uninit")) or (.categories | index("mem_zeroed")) or (.categories | index("mem_uninitialized")))' unsafe-inventory.jsonl`
+`jq -c 'select((.categories | index("maybe_uninit")) or (.categories | index("mem_zeroed")) or (.categories | index("mem_uninitialized")))' .unsafe-audit/unsafe-inventory.jsonl`
 
 **Site count:** 190 (172 `maybe_uninit`, 8 `mem_zeroed`, 0 `mem_uninitialized`,
 others have overlapping tags such as `ptr_cast` / `fd_syscall` / `raw_cast`).
@@ -44,7 +44,7 @@ No double-drops, no `assume_init_drop` -after- `assume_init` move-out, no
 
 ## Pattern Taxonomy
 
-Across the 190 sites, every block falls into one of nine syntactic shapes.
+Across the 190 sites, every block falls into one of ten syntactic shapes.
 I list them in order of risk.
 
 ### Pattern A — `MaybeUninit::<T>::uninit().assume_init()` for "any bit-pattern valid" T

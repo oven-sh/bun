@@ -1,6 +1,6 @@
 # Beads to create (Phase 8)
 
-Bead-creation commands prepared for Phase 11. **NOT YET EXECUTED.** When the user authorizes bead-filing, these commands run against `/data/projects/bun/.beads/` (creates a new beads store if none exists).
+Bead-creation commands prepared for Phase 11. **NOT YET EXECUTED.** When the user authorizes bead-filing, these commands run against `.beads/` (creates a new beads store if none exists).
 
 For each cluster, the bead graph is:
 - **Parent epic bead** with the cluster summary

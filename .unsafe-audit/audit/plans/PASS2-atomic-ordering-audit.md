@@ -2,7 +2,7 @@
 
 **Scope.** All Rust atomic ordering choices in Bun's `src/` tree. Pass-2 was
 seeded by the 101 unsafe sites tagged `atomic` in
-`/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`, then widened to
+`.unsafe-audit/unsafe-inventory.jsonl`, then widened to
 every `Ordering::*` occurrence in the workspace (1,075 occurrences across 184
 files) because Rust's atomic types have a safe public API — the most
 interesting bugs are in safe code, not in `unsafe` blocks.
@@ -368,7 +368,7 @@ discipline is the work of someone who knew what they were doing.
 
 ### B-001-atomic — TOO-STRONG SeqCst → AcqRel/Release/Relaxed (perf)
 
-Bundle the 40+ representative TOO-STRONG sites above into a single PR or
+Bundle the 40 representative TOO-STRONG sites above into a single PR or
 small series. Order suggested by impact-per-line-changed:
 
 1. **`src/ptr/ref_count.rs`** — 3 sites in the hot deref path; replicates
@@ -422,7 +422,7 @@ that would benefit from a similar comment:
 To independently re-run this audit:
 
 ```sh
-cd /data/projects/bun
+cd .
 jq -c 'select(.categories | index("atomic"))' .unsafe-audit/unsafe-inventory.jsonl > /tmp/atomic-sites.jsonl
 wc -l /tmp/atomic-sites.jsonl                     # → 101
 rg -t rust -o 'Ordering::(Relaxed|Acquire|Release|AcqRel|SeqCst)' src/ \

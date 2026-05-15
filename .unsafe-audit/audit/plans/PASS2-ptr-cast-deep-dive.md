@@ -4,7 +4,7 @@ Sub-categorization, soundness analysis, strict-provenance compliance scan,
 candidate pre-existing UB list, and recommended mechanical refactors for the
 largest single semantic category in Bun's Rust `unsafe` inventory.
 
-Source data: `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`
+Source data: `.unsafe-audit/unsafe-inventory.jsonl`
 (11,044 unsafe sites total; 2,231 carry the `ptr_cast` category).
 
 ---
@@ -40,7 +40,7 @@ needles in the haystack are:
    `dealloc` is a write under SB semantics. Sites: `src/http/AsyncHTTP.rs:117`,
    `src/http/lib.rs:176`, `src/runtime/node/node_fs.rs:2397`,
    `src/bun_alloc/lib.rs:3267`, `src/bun_core/string/mod.rs:1765`,
-   `src/jsc/lib.rs:2013`, and `src/jsc/ZigString.rs:70,102`.
+   `src/jsc/lib.rs:2022` (was `:2013` pre-`fe2635b460` cargo fmt; Pass-5 accuracy sweep), and `src/jsc/ZigString.rs:70,102`.
 
 2. **One invalid `&mut` formation**: `src/runtime/cli/pack_command.rs:3009`
    forms `&mut T` from a `*const T` cast through `ptr::from_ref(...).cast_mut()`.
@@ -473,8 +473,8 @@ allocation as `NonNull<[u8]>` or `Box<[u8]>` in `root_path`, not as a
 - `src/bun_alloc/lib.rs:3267` (S-000183) — fallback allocator free path
 - `src/bun_core/string/mod.rs:1765` (S-001432) — `String::deinit_global` for
   `is_globally_allocated()` Latin-1 buffers
-- `src/jsc/lib.rs:2013` (S-003614) — generic mimalloc free for `byte_slice()`
-  view
+- `src/jsc/lib.rs:2022` (S-003614) — generic mimalloc free for `byte_slice()`
+  view (was `:2013` pre-`fe2635b460` cargo fmt; Pass-5 accuracy sweep)
 - `src/jsc/ZigString.rs:70` (S-003965) — `to_external_u16` reject path
   (`ptr.cast_mut()` from `*const u16` parameter — actually U3, not U2)
 - `src/jsc/ZigString.rs:102` (S-003968) — `ZigString__free` C entry
@@ -731,12 +731,12 @@ once, at the function entry where ownership semantics are unambiguous.
 
 This deep-dive extends:
 
-- `/data/projects/bun/.unsafe-audit/AUDIT_SUMMARY.md` — overall inventory.
-- `/data/projects/bun/.unsafe-audit/CODEX_PASS2_SUMMARY.md` — PASS-2
+- `.unsafe-audit/AUDIT_SUMMARY.md` — overall inventory.
+- `.unsafe-audit/CODEX_PASS2_SUMMARY.md` — PASS-2
   coordinator summary.
-- `/data/projects/bun/.unsafe-audit/audit/plans/B-001-and-B-002-perf-only.md` —
+- `.unsafe-audit/audit/plans/B-001-and-B-002-perf-only.md` —
   perf-only (non-soundness) cluster.
-- `/data/projects/bun/.unsafe-audit/audit/plans/C-001-nonnull-from-reference.md` —
+- `.unsafe-audit/audit/plans/C-001-nonnull-from-reference.md` —
   the prior NonNull-from-reference deep-dive overlaps subcluster P05 here.
 
 New candidate beads to file (see `beads-to-create.md` for format):

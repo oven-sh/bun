@@ -1,7 +1,7 @@
 # Phase 1 — Enumeration Summary
 
 **Generated:** 2026-05-14
-**Inventory:** `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl` (11,044 sites)
+**Inventory:** `.unsafe-audit/unsafe-inventory.jsonl` (11,044 sites)
 **Cluster summary:** `phase1/cluster-summary.json`
 
 ## Totals

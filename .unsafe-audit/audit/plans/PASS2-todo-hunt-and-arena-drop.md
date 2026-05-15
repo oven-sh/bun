@@ -1,6 +1,6 @@
 # Pass-2: TODO Hunt, Arena-Drop Hazards, `zeroed_unchecked`, and `ManuallyDrop`/`mem::forget` Audit
 
-Scope: full `/data/projects/bun/src/**.rs`.
+Scope: full `src/**.rs`.
 Methodology: targeted `rg` enumeration → per-site contextual read (20-30 lines) → verdict against UB / Drop-in-arena / niche / forget-without-reclaim hazard classes.
 Pre-flagged carve-outs (per task brief, already documented by Codex P2 and excluded from "new finding" counts): `Renamer<'r>` parallel chunk gen (`Chunk.rs:130-132`) and Windows `BundleThread::uninitialized` waker (`BundleThread.rs:147-155`).
 
@@ -27,7 +27,7 @@ The carve-out TODOs (`Chunk.rs:130-132`, `BundleThread.rs:147-155`) are real —
 
 ### 1.1 `src/bundler/Chunk.rs:130-132` (primary site)
 
-```
+```rust
 unsafe impl Send for Chunk {}
 unsafe impl Sync for Chunk {}
 // TODO(ub-audit): `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
@@ -47,7 +47,7 @@ Audit trail:
 
 ### 1.2 `src/bundler/linker_context/generateCompileResultForJSChunk.rs:54-59`
 
-```
+```rust
 // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
 // contract is documented on `pending_part_range_prologue`. The `&mut`
 // borrows below are scoped to the impl call so they do not overlap the
@@ -75,7 +75,7 @@ Full scan: `rg -n '\b(FIXME|XXX|HACK)\b' --type rust src/` returns 24 distinct m
 
 ### 2.1 `src/runtime/cli/open.rs:505-513` — `FIXME(windows-leak)` — REAL BOUNDED LEAK
 
-```
+```rust
 // FIXME(windows-leak): Zig's autoClose (open.zig:329-335) used std.process.Child
 // directly (CreateProcessW) and never created a uv loop. The sync::spawn substitution
 // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
@@ -89,7 +89,7 @@ Severity: low. User-triggered cold path. Would deserve a follow-up: thread the c
 
 ### 2.2 `src/event_loop/MiniEventLoop.rs:543, 603-607` — `FIXME TODO` panic in `increment_pending_unref_counter`
 
-```
+```rust
 panic!("FIXME TODO");
 ```
 
@@ -101,7 +101,7 @@ panic!("FIXME TODO");
 
 ### 2.4 `src/runtime/webcore/fetch/FetchTasklet.rs:479-481` — `XXX` re Zig coercion vs Rust signatures
 
-```
+```rust
 unsafe fn deinit(this: *mut FetchTasklet) {
 ```
 
@@ -109,7 +109,7 @@ unsafe fn deinit(this: *mut FetchTasklet) {
 
 ### 2.5 `src/runtime/shell/subproc.rs:1722` — `FIXME: SHOULD THIS BE HERE?`
 
-```
+```rust
 BufferedOutput::ArrayBuffer { buf: _buf, .. } => {
     // FIXME: SHOULD THIS BE HERE?
     // ArrayBuffer.Strong drops itself.
@@ -120,7 +120,7 @@ BufferedOutput::ArrayBuffer { buf: _buf, .. } => {
 
 ### 2.6 `src/jsc/VirtualMachine.rs:1524` — `FIXME: should call event_loop().tick() in global_exit`
 
-```
+```rust
 // FIXME: we should be doing this, but we're not, but unfortunately
 // doing it causes like 50+ tests to break
 // self.event_loop().tick();
@@ -192,7 +192,7 @@ A *separate* concern (clearly documented in comments at lines 142-146): the `Ast
 
 ### 3.4 CSS Chunk asts (`src/bundler/Chunk.rs:1323-1331`)
 
-```
+```rust
 impl Drop for CssChunk {
     fn drop(&mut self) {
         core::mem::forget(core::mem::take(&mut self.asts));
@@ -210,7 +210,7 @@ Same pattern. The `condition_import_records` arm explicitly notes that uniquely-
 
 ### 3.6 `printer_ast` in `LinkerContext.rs:2273-2277`
 
-```
+```rust
 let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
 ```
 
@@ -218,7 +218,7 @@ let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.t
 
 ### 3.7 `bundler/linker_context/scanImportsAndExports.rs:604-611` — Arena-backed StringBuilder
 
-```
+```rust
 let mut builder = core::mem::ManuallyDrop::new(bun_core::StringBuilder {
     len: 0,
     cap: string_buffer.len(),
@@ -346,7 +346,7 @@ The `#[cfg(windows)]` arm zeros a `Waker { loop_: &'static EventLoop }`. `&'stat
 
 ### 5.5 Static initializer leak: `src/bundler/bundle_v2.rs:3984` — INTENTIONAL
 
-```
+```rust
 if enable_reloading {
     core::mem::forget(this);
 }
@@ -356,7 +356,7 @@ Documented: under `--watch`, the watcher thread holds `*mut BundleV2` via the re
 
 ### 5.6 `DependencyVersionValue::npm` — **BOUNDED LEAK** (new finding)
 
-```
+```rust
 #[repr(C)]
 pub union DependencyVersionValue {
     pub uninitialized: (),
@@ -372,7 +372,7 @@ pub union DependencyVersionValue {
 
 The Zig comment claim ("arena-freed") does not hold in the Rust port: `Box<Query>` uses the global allocator. There is no `Drop for DependencyVersion`, no `ManuallyDrop::drop(&mut value.npm)` anywhere in `src/install/`. Search confirms zero matches:
 
-```
+```sh
 rg 'ManuallyDrop::drop\(&mut.*\.npm\)|deinit_dep_version|VersionValue.*deinit' --type rust src/
 # (no output)
 ```

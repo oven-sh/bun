@@ -20,7 +20,7 @@ high level only; this pass walks the top-density files and the categorically
 risky patterns end-to-end.
 
 **Methodology.** The full inventory at
-`/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl` was filtered to
+`.unsafe-audit/unsafe-inventory.jsonl` was filtered to
 `crate == "bun_runtime"`, grouped by submodule and category, and the top-20
 unsafe-dense files were sampled at ±50 lines around the densest sections.
 Every `unsafe impl Send`/`unsafe impl Sync`, every `core::mem::transmute`,
@@ -473,7 +473,7 @@ A future pass-3 should sample the un-audited 85 % with the explicit goal of
 finding sites that deviate from these templates — a deviation is the
 strongest signal that a bug lives there.
 
-## Appendix A: representative sites (40 total)
+## Appendix A: representative sites (45 total)
 
 | # | File:line | Category | Verdict |
 |---:|---|---|---|

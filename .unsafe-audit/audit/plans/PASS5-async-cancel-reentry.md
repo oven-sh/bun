@@ -141,7 +141,7 @@ Each finding cites file:line in the Rust port (not the legacy `.zig`).
 
 ### Finding 1 — `H2FrameParser::set_stream_priority` — **CANCEL-T1**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/h2_frame_parser.rs:5387`
+**File.** `src/runtime/api/bun/h2_frame_parser.rs:5387`
 
 **Shape.**
 ```rust
@@ -218,7 +218,7 @@ weight/parent/exclusive/silent into locals BEFORE materializing
 
 ### Finding 2 — `H2FrameParser::send_trailers` — **CANCEL-T1**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/h2_frame_parser.rs:5826`
+**File.** `src/runtime/api/bun/h2_frame_parser.rs:5826`
 
 **Shape.**
 ```rust
@@ -280,7 +280,7 @@ access, or narrow the borrow to read-only locals before invoking JS.
 
 ### Finding 3 — `H2FrameParser::request` (options block) — **CANCEL-T1**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/h2_frame_parser.rs:6478`
+**File.** `src/runtime/api/bun/h2_frame_parser.rs:6478`
 
 **Shape (excerpted).**
 ```rust
@@ -376,7 +376,7 @@ is real, but T1 it remains.
 
 ### Finding 4 — `H2FrameParser::emit_abort_to_all_streams` — **CANCEL-T2**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/h2_frame_parser.rs:6396`
+**File.** `src/runtime/api/bun/h2_frame_parser.rs:6396`
 
 **Shape.**
 ```rust
@@ -430,7 +430,7 @@ inner sweep from finding the stream. Even without an explicit
 
 ### Finding 5 — `H2FrameParser::emit_error_to_all_streams` — **CANCEL-T2**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/h2_frame_parser.rs:6435`
+**File.** `src/runtime/api/bun/h2_frame_parser.rs:6435`
 
 Identical analysis to Finding 4, mirror function. Same borrow-stack UB
 without observable symptom; same remediation. T2.
@@ -439,7 +439,7 @@ without observable symptom; same remediation. T2.
 
 ### Finding 6 — `H2FrameParser::send_data` defer-block — **CANCEL-T2**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/h2_frame_parser.rs:5561`
+**File.** `src/runtime/api/bun/h2_frame_parser.rs:5561`
 
 **Shape (final block, line 5702-5724).**
 ```rust
@@ -493,7 +493,7 @@ gone (matches sendData fix Zig already did).
 
 ### Finding 7 — `H2FrameParser::request` header-encode error path — **CANCEL-T2**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/h2_frame_parser.rs:6677`
+**File.** `src/runtime/api/bun/h2_frame_parser.rs:6677`
 
 **Shape.** Inside the header iteration loop at line 6539, when
 `encode_header_into_list` fails with a non-OOM error (line 6668), the
@@ -531,7 +531,7 @@ Demote to **negative** finding.
 
 ### Finding 8 — `websocket_client::WebSocketClient::cancel` — **CANCEL-T1**
 
-**File.** `/data/projects/bun/src/http_jsc/websocket_client.rs:223`
+**File.** `src/http_jsc/websocket_client.rs:223`
 
 **Shape.**
 ```rust
@@ -588,7 +588,7 @@ close, no `&mut self` across the close.
 
 ### Finding 9 — `FetchTasklet::abort_listener` ↔ `ResumableSink::cancel` — **CANCEL-T2**
 
-**File.** `/data/projects/bun/src/runtime/webcore/fetch/FetchTasklet.rs:1818`
+**File.** `src/runtime/webcore/fetch/FetchTasklet.rs:1818`
 
 **Shape.**
 ```rust
@@ -635,7 +635,7 @@ through both borrows.
 
 ### Finding 10 — `ReadableStreamSource::cancel` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/webcore/ReadableStream.rs:874`
+**File.** `src/runtime/webcore/ReadableStream.rs:874`
 
 ```rust
 pub fn cancel(&mut self) {
@@ -670,7 +670,7 @@ post-callback work, **negative**.
 
 ### Finding 11 — `NetworkSink::abort` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/webcore/streams.rs:2276`
+**File.** `src/runtime/webcore/streams.rs:2276`
 
 ```rust
 pub fn abort(&mut self) {
@@ -696,7 +696,7 @@ state through Drop. Safe.
 
 ### Finding 12 — `HTTPServerWritable::abort` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/webcore/streams.rs:1864`
+**File.** `src/runtime/webcore/streams.rs:1864`
 
 ```rust
 pub fn abort(&mut self) {
@@ -718,7 +718,7 @@ microtask but does not invoke user JS synchronously. **Negative.**
 
 ### Finding 13 — `H3ClientStream::abort` — **CANCEL-T2**
 
-**File.** `/data/projects/bun/src/http/h3_client/Stream.rs:93`
+**File.** `src/http/h3_client/Stream.rs:93`
 
 ```rust
 pub fn abort(&mut self) {
@@ -755,7 +755,7 @@ All three are safe. WTFTimer is the canonical pattern.
 
 ### Finding 15 — `NodeHTTPResponse::abort` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/server/NodeHTTPResponse.rs:1159`
+**File.** `src/runtime/server/NodeHTTPResponse.rs:1159`
 
 Takes `&self`. Has `if self.is_done()` idempotency guard at line 1160.
 `raw_response.end_without_body(true)` at line 1177 may dispatch the
@@ -767,7 +767,7 @@ and the trailing `on_request_complete()` is the only post-call use.
 
 ### Finding 16 — `FSWatcher::on_abort` / `emit_abort` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/node/node_fs_watcher.rs:716, 790`
+**File.** `src/runtime/node/node_fs_watcher.rs:716, 790`
 
 `emit_abort` takes `&self` and uses `Cell` for the `closed` flag. The
 trait sig `on_abort(&mut self, reason)` exists at line 719 only to
@@ -785,7 +785,7 @@ satisfy `AbortListener`; the body reborrows as `&self` and calls
 
 ### Finding 17 — `DevServer::DeferredRequest::abort` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/bake/DevServer.rs:3047`
+**File.** `src/runtime/bake/DevServer.rs:3047`
 
 `saved.ctx.set_signal_aborted(...)` may fire JS abort listeners on the
 ServerRequestContext's signal. Those listeners are user-controlled JS;
@@ -797,7 +797,7 @@ from JS back to `&mut DeferredRequest`. **Negative.**
 
 ### Finding 18 — `Resolver::cancel` (DNS / c-ares) — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/dns_jsc/dns.rs:5839`
+**File.** `src/runtime/dns_jsc/dns.rs:5839`
 
 ```rust
 pub fn cancel(&self, global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
@@ -818,7 +818,7 @@ is exclusive to this caller during the call. **Negative.**
 
 ### Finding 19 — `Subprocess::kill` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/api/bun/subprocess.rs:702`
+**File.** `src/runtime/api/bun/subprocess.rs:702`
 
 Sends a Unix signal via `Process::kill(sig)`. No synchronous user
 callbacks. `&self`. **Negative.**
@@ -838,7 +838,7 @@ async at the OS level. **Negative.**
 
 ### Finding 21 — `ManagedTask::cancel` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/event_loop/ManagedTask.rs:36`
+**File.** `src/event_loop/ManagedTask.rs:36`
 
 Replaces the callback with `noop`. No user code invoked. **Negative.**
 
@@ -846,7 +846,7 @@ Replaces the callback with `noop`. No user code invoked. **Negative.**
 
 ### Finding 22 — `NapiAsyncWork::cancel` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/runtime/napi/napi_body.rs:1919`
+**File.** `src/runtime/napi/napi_body.rs:1919`
 
 Atomic CAS only. **Negative.**
 
@@ -854,7 +854,7 @@ Atomic CAS only. **Negative.**
 
 ### Finding 23 — `PendingConnect::cancel` (QUIC) — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/uws_sys/quic/PendingConnect.rs:35`
+**File.** `src/uws_sys/quic/PendingConnect.rs:35`
 
 Trivial FFI wrapper around `us_quic_pending_connect_cancel`. The C
 side is responsible for not re-entering Rust synchronously during
@@ -864,7 +864,7 @@ cancel. **Negative.**
 
 ### Finding 24 — `LibUVReq::cancel` — **NEGATIVE**
 
-**File.** `/data/projects/bun/src/libuv_sys/libuv.rs:836`
+**File.** `src/libuv_sys/libuv.rs:836`
 
 `uv_cancel` is the libuv request cancellation primitive; the callback
 (if any) is delivered later via the libuv event loop, not
@@ -874,7 +874,7 @@ synchronously. **Negative.**
 
 ### Finding 25 — `WebSocketUpgradeClient::cancel` — **NEGATIVE (canonical safe pattern)**
 
-**File.** `/data/projects/bun/src/http_jsc/websocket_client/WebSocketUpgradeClient.rs:605`
+**File.** `src/http_jsc/websocket_client/WebSocketUpgradeClient.rs:605`
 
 ```rust
 pub unsafe fn cancel(this: *mut Self) {
@@ -924,7 +924,7 @@ port's analog of `flushQueue` / `handleDataFrame` is.
 
 ### `ResumableSink::cancel` — FIXED in Rust port
 
-**File.** `/data/projects/bun/src/runtime/webcore/ResumableSink.rs:407`
+**File.** `src/runtime/webcore/ResumableSink.rs:407`
 
 ```rust
 pub fn cancel(&mut self, reason: JSValue) {

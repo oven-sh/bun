@@ -1067,4 +1067,4 @@ rg -n '&mut \*c_ptr|&mut \*linker|ctx\.c\(\)|assume_mut' src/bundler/
 
 The full text-bucket map of every cited line in this report can be
 regenerated from the JSONL inventory at
-`/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`.
+`.unsafe-audit/unsafe-inventory.jsonl`.

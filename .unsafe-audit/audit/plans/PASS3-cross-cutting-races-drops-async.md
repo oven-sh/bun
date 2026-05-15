@@ -50,7 +50,7 @@ Total: **21** distinct findings across the six parts after reclassification: 1 T
 
 ### 1.0 Inventory
 
-The `ptr` crate (`/data/projects/bun/src/ptr/`) ships **five** refcount-like
+The `ptr` crate (`src/ptr/`) ships **five** refcount-like
 primitives:
 
 | Type | File | Storage | Thread-safe? | Memory order |
@@ -1306,7 +1306,7 @@ read/write paths, `Bun.file()`, etc. Track as a follow-up.
 
 This audit was driven by:
 
-- `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl` — 11044 sites
+- `.unsafe-audit/unsafe-inventory.jsonl` — 11044 sites
   categorised by `categories: ["send_impl", "atomic", "pin_unchecked", …]`.
 - `jq -r '. | select(.categories | index("send_impl"))' …` — extracting
   Send/Sync impls.

@@ -2,8 +2,8 @@
 
 **Targets:**
 
-- `bun_uws_sys` — 253 unsafe sites (path: `/data/projects/bun/src/uws_sys/`)
-- `bun_libuv_sys` — 133 unsafe sites (path: `/data/projects/bun/src/libuv_sys/libuv.rs`)
+- `bun_uws_sys` — 253 unsafe sites (path: `src/uws_sys/`)
+- `bun_libuv_sys` — 133 unsafe sites (path: `src/libuv_sys/libuv.rs`)
 - **Total audited: 386 sites.**
 
 **Mandate.** Where A-003 produced library-level templates, PASS3 walks every

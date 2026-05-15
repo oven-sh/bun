@@ -6,10 +6,10 @@
 
 | Crate | Path | Source-level `unsafe` markers (grep, comment-stripped) |
 | --- | --- | --- |
-| `bun_css` | `/data/projects/bun/src/css/` | **125** (inventory under-reports as 116 — verified by direct grep) |
-| `bun_js_parser` | `/data/projects/bun/src/js_parser/` | **56** (inventory under-reports as 49 — verified by direct grep) |
+| `bun_css` | `src/css/` | **125** (inventory under-reports as 116 — verified by direct grep) |
+| `bun_js_parser` | `src/js_parser/` | **56** (inventory under-reports as 49 — verified by direct grep) |
 
-Inventory file checked: `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`. The shipped JSONL omits a handful of sites in `lexer.rs`, `parser.rs`, and `lib.rs` (e.g. `lexer.rs:494`, `lexer.rs:1198`, `parser.rs:1163`); a more reliable enumeration is `grep -rn '\bunsafe\b' --include='*.rs'`. Both crates have been re-walked file-by-file for this audit.
+Inventory file checked: `.unsafe-audit/unsafe-inventory.jsonl`. The shipped JSONL omits a handful of sites in `lexer.rs`, `parser.rs`, and `lib.rs` (e.g. `lexer.rs:494`, `lexer.rs:1198`, `parser.rs:1163`); a more reliable enumeration is `grep -rn '\bunsafe\b' --include='*.rs'`. Both crates have been re-walked file-by-file for this audit.
 
 **Prior pass coverage avoided:**
 
@@ -209,7 +209,7 @@ pub enum ImportRecordList<'a> {
 }
 ```
 
-The `Borrowed` arm wraps a global-heap `Vec<ImportRecord>` — if that's the active variant, `Drop` on the duplicate Vec **would** double-drop element bytes if `ImportRecord: Drop`. Verified at `bun_ast::import_record::ImportRecord` (`/data/projects/bun/src/ast/import_record.rs:16-44`) that **`ImportRecord` has no Drop**: every field is `Range` / `Path<'static>` (Phase-A `&'static [u8]`s) / `ImportKind` / `Tag` / `Option<Loader>` (no inner Drop) / `Index` / `u32` / `&'static [u8]` / `Flags`. No `Vec` / `Box` / `String` / file descriptor. **Therefore the duplicate Vec's `Drop` is a no-op element-wise.**
+The `Borrowed` arm wraps a global-heap `Vec<ImportRecord>` — if that's the active variant, `Drop` on the duplicate Vec **would** double-drop element bytes if `ImportRecord: Drop`. Verified at `bun_ast::import_record::ImportRecord` (`src/ast/import_record.rs:16-44`) that **`ImportRecord` has no Drop**: every field is `Range` / `Path<'static>` (Phase-A `&'static [u8]`s) / `ImportKind` / `Tag` / `Option<Loader>` (no inner Drop) / `Index` / `u32` / `&'static [u8]` / `Flags`. No `Vec` / `Box` / `String` / file descriptor. **Therefore the duplicate Vec's `Drop` is a no-op element-wise.**
 
 Resolution: **sound today**, but the contract on `from_bump_slice` is over-strong — it accepts `&mut [T]` for *any* `T`, while only being sound for `T: Pod` (no Drop) **or** truly bump-arena-allocated `T`. **T2** — the type signature should be split into two: `from_bump_slice_pod<T: NoDrop>` and `from_bump_slice_arena<T>` (with the arena-only contract spelled out). Tagging in `bun_collections::vec_ext` would prevent a future addition of a Drop-bearing field to `ImportRecord` (or any other type that flows through this helper) from silently turning into double-drop UB.
 
@@ -425,7 +425,7 @@ if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref:
 ### 3.2 T2 (over-strong type signatures / missing contracts)
 
 **T2-CSS-001 — `Vec::from_bump_slice` accepts any `T`**
-- **File:** `/data/projects/bun/src/collections/vec_ext.rs:243-254`
+- **File:** `src/collections/vec_ext.rs:243-254`
 - **Risk:** The function is sound only for `T: Pod` (no Drop) or for slices that genuinely come from a bump arena. Callers at `js_parser/parse/parse_entry.rs:1430, :1615` and the bundler pass it `ImportRecord` slices from `ImportRecordList::Borrowed(&mut Vec<ImportRecord>)`, which is heap-backed. Sound today only because `ImportRecord` lacks a Drop impl.
 - **Fix:** Split into two functions:
   - `from_bump_slice_pod<T>(items: &mut [T]) where T: Copy` (or a marker-trait that asserts no Drop).
@@ -433,28 +433,28 @@ if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref:
 - **Tier rationale:** No current UB. Adding a Drop-bearing field to `ImportRecord` (e.g. `original_path: Box<[u8]>`) would silently turn this into double-free across all callers.
 
 **T2-JS-001 — `MacroContext::get_remap` returns `Option<&'static MacroRemapEntry>` over arena data**
-- **File:** `/data/projects/bun/src/js_parser/lib.rs:197-208`
+- **File:** `src/js_parser/lib.rs:197-208`
 - **Risk:** The `'static` is a placeholder for `Transpiler.options`'s lifetime. In the off-thread `RuntimeTranspilerStore` worker, the backing storage is finite-lifetime, and the `deinit(self)` paired with `init` is what scopes it. Type system does not connect the returned reference to the `&'a MacroContext`.
 - **Fix:** Either change the return type to `Option<&MacroRemapEntry>` (tied to `&self`) and let downstream `'a` flow through, or document the contract more strongly and ensure no caller holds the result across `MacroContext::deinit`.
 
 **T2-CSS-002 — `ToCssResultInternal::exports/references` typed `'static`**
-- **File:** `/data/projects/bun/src/css/css_parser.rs:2320-2324` and the `transmute` at `:2717-2726`.
+- **File:** `src/css/css_parser.rs:2320-2324` and the `transmute` at `:2717-2726`.
 - **Risk:** The HashMaps store arena-owned byte slices keyed and valued; serialising or persisting them after the arena drops is UAF. Today's bundler consumes them same-frame.
 - **Fix:** Re-thread `'bump` on the result struct once the rest of the AST grows the parameter (already TODO'd at the field declarations).
 
 **T2-CSS-003 — `PropertyUsage::custom_properties: Box<[&'static [u8]]>`**
-- **File:** `/data/projects/bun/src/css/css_parser.rs:2453`
+- **File:** `src/css/css_parser.rs:2453`
 - **Risk:** Stored on `StyleSheet.local_properties`. Lives as long as the StyleSheet. If the StyleSheet is moved / serialised away from its arena (currently it isn't), UAF.
 - **Fix:** Same as T2-CSS-002 — re-thread `'bump`.
 
 ### 3.3 T3 (latent-shape watchlist)
 
 **T3-JS-001 — `LexerType::end -= 1` in `rescan_close_brace_as_template_token`**
-- **File:** `/data/projects/bun/src/js_parser/lexer.rs:3450`
+- **File:** `src/js_parser/lexer.rs:3450`
 - **Risk:** Underflow if `self.end == 0`. Currently unreachable because the function precondition is `self.token == T::TCloseBrace`. Add a `debug_assert!(self.end > 0)`.
 
 **T3-CSS-001 — `ImportRule` / `ImportConditions` layout pun lacks `const_assert`**
-- **File:** `/data/projects/bun/src/css/rules/import.rs:236-254`
+- **File:** `src/css/rules/import.rs:236-254`
 - **Risk:** Adding or reordering a field between `layer` and `media` in either struct would silently corrupt the layout pun. **Add:**
   ```rust
   const _: () = {
@@ -468,24 +468,24 @@ if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref:
   ```
 
 **T3-CSS-002 — `IdentOrRef` bit-63 invariant gated on `debug_assert!`**
-- **File:** `/data/projects/bun/src/css/values/ident.rs:338-339, 353`
+- **File:** `src/css/values/ident.rs:338-339, 353`
 - **Risk:** On a future target where user-space pointers may have bit 63 set (none current; raised by Linux 5-level paging discussions for the future). Promote to `assert!` (one cmp/jns; negligible).
 
 **T3-CSS-003 — `IdentFns` / `CustomIdentFns` / `DashedIdentFns` `from_raw_parts(self as *const u8, N)` lacks `const_assert`**
-- **File:** `/data/projects/bun/src/css/values/ident.rs:433` (inside `arena_slice_newtype!` macro expansion)
+- **File:** `src/css/values/ident.rs:433` (inside `arena_slice_newtype!` macro expansion)
 - **Risk:** Adding a field to the newtype would silently read padding / OOB. Add `const _: () = assert!(N == size_of::<Self>())`.
 
 **T3-CSS-004 — `unsafe impl Send/Sync for DeclarationBlock<'bump>` and `CssRule<R>`**
-- **File:** `/data/projects/bun/src/css/declaration.rs:53-54`, `/data/projects/bun/src/css/rules/mod.rs:173-174`
+- **File:** `src/css/declaration.rs:53-54`, `src/css/rules/mod.rs:173-174`
 - **Risk:** Relies on "post-parse, immutable". If a future code path mutates the AST across threads, the embedded `&Bump` is `!Sync` and the program is UB.
 - **Defence:** Wrap the AST in a `MutationFrozen<T>` type whose `Send`/`Sync` impls are conditional on `T: Send` only after a `freeze()` token has been issued. Or split parse-time / immutable-tree types.
 
 **T3-JS-001 — `ToExprWrapper` static fn-ptr can be mis-typed across `P` monomorphisations**
-- **File:** `/data/projects/bun/src/js_parser/p.rs:3041-3055`, `/data/projects/bun/src/ast/binding.rs:156-203`
+- **File:** `src/js_parser/p.rs:3041-3055`, `src/ast/binding.rs:156-203`
 - **Risk:** Today the wrapper is stored per-`P` field so the monomorphisation cannot drift. If refactored onto a shared parent struct, the cast back to `P<TS, SCAN_ONLY>` would silently mis-type. Defence: parameterise `ToExprWrapper<TS: bool, SCAN: bool>` with a `PhantomData<P<'_, TS, SCAN>>`.
 
 **T3-JS-002 — `lower_decorators::class_copy` / `prop_copy` / `prop_full_copy` `unsafe` is invariant-on-`AstAlloc::deallocate`-is-no-op**
-- **File:** `/data/projects/bun/src/js_parser/lower/lower_decorators.rs:81-130`
+- **File:** `src/js_parser/lower/lower_decorators.rs:81-130`
 - **Risk:** If anyone ever makes `AstAlloc::deallocate` actually deallocate (e.g. for global-heap fallback paths), the double-free risk lights up everywhere these helpers are called. Defence: centralise into `bun_ast::arena_dup<T: ArenaSafe>(x: &T) -> T` with a marker trait `ArenaSafe` that the type system enforces.
 
 ### 3.4 Tier totals

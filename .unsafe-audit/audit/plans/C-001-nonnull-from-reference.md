@@ -39,7 +39,7 @@ Of the 40 `NonNull::new_unchecked` call sites under audit:
 | **A** — pointer is a `*mut T` function parameter on an `unsafe fn from_raw`/`adopt`/`new` whose safety contract requires non-null, or it is a raw C-callback parameter. Replacing the call does not reduce the unsafe surface (the function header is the unsafe boundary). | **17** | Optional: rewrite to `NonNull::new(p).expect(…)` to keep the unsafe local to a single, named operation; preferred lint-clean form on hot paths is `debug_assert!(!p.is_null()); unsafe { NonNull::new_unchecked(p) }`. Defer to Phase-2 unless we want a uniform constructor pattern. |
 | **A-FFI** — pointer returned from C with no Rust-side null check (e.g. libspng `spng_get_png_buffer`, libjpeg-turbo `tj3Compress8`, mimalloc vtable) | 0 | All FFI-return sites in this cluster run *after* an explicit `.is_null()` early-return, so they classify as C-CHECKED, not A-FFI. The cluster contains no naked FFI-return wraps. |
 
-**Headline number: 23 of 40 sites (58%) can be made safe at the call site without touching their semantics.** The remaining 17 (A) sites are bounded inside `unsafe fn from_raw(p: *mut T)` / `unsafe fn adopt(p: *mut T)` constructors, or inside lock-free internals — the unsafe at the call site is redundant with the function-header unsafe; tightening it is a stylistic win, not a soundness one.
+**Headline number: 23 of 40 sites (58%) can be made safe at the call site without touching their semantics; 22 are firm demo-PR sites until the `StoreRef::from_static` const blocker is solved.** The remaining 17 (A) sites are bounded inside `unsafe fn from_raw(p: *mut T)` / `unsafe fn adopt(p: *mut T)` constructors, or inside lock-free internals — the unsafe at the call site is redundant with the function-header unsafe; tightening it is a stylistic win, not a soundness one.
 
 ## Per-site rewrite table
 
@@ -60,9 +60,9 @@ Twelve representative sites, one or two per crate. The classification column is 
 | 11 | S-006698 | `src/runtime/image/codec_jpeg.rs:371` | `bun_runtime` | C-CHECKED | `NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len))` after `if !out_ptr.is_null() { tj3Free(...) }` on the error path and a `success` invariant above | `NonNull::slice_from_raw_parts(NonNull::new(out_ptr).expect("tj3Compress8 returned null on success"), out_len)`. `NonNull::slice_from_raw_parts` is stable since 1.70 and is the directly-equivalent safe-construction API. The C-side contract ("non-null on success") becomes an `expect` rather than UB. |
 | 12 | S-009059 | `src/runtime/valkey_jsc/js_valkey.rs:1519` | `bun_runtime` | C-NULLABLE | `ctx: Some(core::ptr::NonNull::new_unchecked(holder.cast::<c_void>()))` (where `holder = bun_core::heap::into_raw(Box::new(Holder { ... }))` on line 1511) | `ctx: Some(NonNull::new(holder.cast::<c_void>()).expect("heap::into_raw never null"))`. The outer `unsafe` block is still needed for the `(*holder).task = ...` field write (`holder` is a raw `*mut Holder`), but the `NonNull` construction lifts out: `let ctx_nn = NonNull::new(holder.cast::<c_void>()).expect("heap::into_raw never null"); unsafe { (*holder).task = jsc::AnyTask::AnyTask { ctx: Some(ctx_nn), callback: ... }; }`. |
 
-The remaining 28 sites fit cleanly into one of these patterns. The pattern catalogue is at the bottom of this file.
+The full 40-site cluster fits cleanly into the patterns below: 23 technically refactorable sites (10 C-NULLABLE + 13 C-CHECKED, with one const-fn blocker excluded from the firm demo batch) and 17 (A) constructor / callback-contract sites.
 
-## Pattern catalogue (covers the remaining 28 sites)
+## Pattern catalogue (covers all 40 sites)
 
 ### Pattern P1: `NonNull::from(&T)` / `NonNull::from(&mut T)` (C-NULLABLE)
 

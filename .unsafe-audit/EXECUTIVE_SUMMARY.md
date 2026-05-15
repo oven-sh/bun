@@ -8,7 +8,7 @@
 
 Two pull requests opened: [#30763](https://github.com/oven-sh/bun/pull/30763) (audit artifacts + agent-ergonomic guide) and [#30765](https://github.com/oven-sh/bun/pull/30765) (3 highest-confidence fixes, isomorphism-verified).
 
-## What the audit proves
+## What the audit supports
 
 ### 1. Bun's port to Rust ships with deliberate, structured unsafe-discipline
 
@@ -28,6 +28,7 @@ A smoking-gun maintainer commit message: *"Zig has UB here; one SIMD scan is che
 ### 3. The audit found genuine bugs at every severity tier
 
 #### Six P0 supply-chain attack primitives
+
 A malicious `bun.lockb` or `yarn.lock` planted in a repo reaches parser paths that the audit classifies as UB on `bun install`. The high-level attack shapes are reproducible from crafted lockfile inputs; the miri-backed witnesses are noted explicitly below.
 
 - **PUB-INSTALL-1**: `Meta::has_install_script` — `#[repr(u8)]` enum with 3 valid values, read directly from disk bytes. Bytes 3-255 → niche-violating UB. **Miri-confirmed:** `enum value has invalid tag: 0x2a`
@@ -37,6 +38,7 @@ A malicious `bun.lockb` or `yarn.lock` planted in a repo reaches parser paths th
 - **F-NEW-1 / F-NEW-2**: `bun_semver::String::slice` / `eql` packed `(off, len)` from disk bytes → `get_unchecked` OOB up to ~6 GiB
 
 #### Five miri-backed UB witnesses
+
 Every one captured verbatim:
 
 | Bug | Miri output |
@@ -50,11 +52,13 @@ Every one captured verbatim:
 These are not "the audit thinks this is UB" claims for the five listed witnesses: miri concretely flags the underlying Rust UB pattern. Four have dedicated sibling detail files; the PUB-INSTALL-3 yarn trace is currently summary-only in `verification/miri-confirmed-summary.md` and should get its own detail file before the miri corpus is used as a standalone public artifact.
 
 #### Plus 30+ confirmed Tier-1 bugs across the codebase
+
 Bundler parallel-callback aliasing (5 same-shape sites confirmed under Stacked / Tree Borrows), `picohttp` NUL-write through `SharedReadOnly` provenance, 8 dealloc-through-shared-provenance sites in HTTP/FS/JSC, signal-handler async-signal-safety violations in `crash_handler`, dirent-parser bugs on macOS/Linux/FreeBSD, a `fmt::Raw` UTF-8 invariant violation reachable from argv, and the `WebSocketClient::cancel` re-entry the maintainers fixed in the sibling type but missed in the original.
 
 ### 4. The strong-negative findings are themselves valuable
 
-The audit's most distinctive output is the SET OF CLEAN SUBSYSTEMS it explicitly certifies:
+The audit's most distinctive output is the set of subsystems it explicitly
+reviewed and found clean under this pass:
 
 | Subsystem | T1 found | Audit verdict |
 |-----------|---------:|---------------|
@@ -65,11 +69,13 @@ The audit's most distinctive output is the SET OF CLEAN SUBSYSTEMS it explicitly
 | `dyn Trait` + cross-crate Send/Sync | 0 | 162 dyn sites + 164 unsafe impls audited clean |
 | PipeWriter parent-vtable discipline | 0 | All 5 callsite-modes match parent lifecycle |
 | 537 raw_ptr_lifecycle sites | 0 UAFs / 0 double-frees / 0 mismatched-allocators | Discipline holds |
-| 298 `slice::from_raw_parts` sites | 0 CVE-class buffer overruns | Defense-in-depth holds |
+| 298 `slice::from_raw_parts` sites | 0 CVE-class buffer overruns found in this pass | Defense-in-depth holds |
 | 101 atomic sites | 0 happens-before bugs | Discipline holds |
 | `bun_jsc::Strong/Weak` thread affinity | confirmed `!Send + !Sync` | Architectural property holds |
 
-A grep-based audit can't produce these. The depth of work needed to certify "this subsystem has been audited and is clean" is exactly what differentiates this from "find more unsafe."
+A grep-based audit can't produce these. The depth of work needed to say "this
+subsystem has been reviewed and no finding survived the pass" is exactly what
+differentiates this from "find more unsafe."
 
 ## What the audit produced
 

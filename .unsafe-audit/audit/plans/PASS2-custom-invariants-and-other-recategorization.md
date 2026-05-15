@@ -1,7 +1,7 @@
 # PASS-2 — A-CUSTOM-INVARIANT Send/Sync audit + "other" recategorization
 
 **Scope.** Two deep-dive efforts on top of the Phase-1 inventory
-(`/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`):
+(`.unsafe-audit/unsafe-inventory.jsonl`):
 
 1. **Per-site audit of the ~73 `unsafe impl Send/Sync` sites classified
    `A-CUSTOM-INVARIANT`** in `audit/plans/C-003-send-sync-impls.md` — the
@@ -107,7 +107,7 @@ Re-derive by elimination from the 157 inventory rows tagged `send_impl` or
 ```bash
 jq -c 'select(.categories | (index("send_impl") or index("sync_impl"))) \
        | {id, crate, file, line, normalized}' \
-   /data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl > /tmp/sendsync_all.jsonl
+   .unsafe-audit/unsafe-inventory.jsonl > /tmp/sendsync_all.jsonl
 wc -l /tmp/sendsync_all.jsonl    # 157
 ```
 
@@ -867,80 +867,80 @@ than mis-categorized recurring patterns.
 
 ## Appendix B. Files referenced
 
-* `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`
-* `/data/projects/bun/.unsafe-audit/audit/plans/C-003-send-sync-impls.md`
-* `/data/projects/bun/.unsafe-audit/audit/synthesis/codex-pass2-adversarial-reclassification.md`
-* `/data/projects/bun/src/ast/nodes.rs:39-40, 167-168, 339-340`
-* `/data/projects/bun/src/bundler/Chunk.rs:114-152`
-* `/data/projects/bun/src/bundler/LinkerContext.rs:233-240, 1615-1633`
-* `/data/projects/bun/src/bundler/linker.rs:97-107`
-* `/data/projects/bun/src/bundler/linker_context/prepareCssAstsForChunk.rs:30-51`
-* `/data/projects/bun/src/bundler/linker_context/scanImportsAndExports.rs:495-509`
-* `/data/projects/bun/src/bun_alloc/lib.rs:113-124, 2167-2183`
-* `/data/projects/bun/src/bun_alloc/MimallocArena.rs:88-120`
-* `/data/projects/bun/src/bun_core/atomic_cell.rs:50-66, 494-504`
-* `/data/projects/bun/src/bun_core/util.rs:2269-2283, 2330-2340, 2681-2692`
-* `/data/projects/bun/src/jsc/JSCell.rs:89-128`
-* `/data/projects/bun/src/jsc/VirtualMachine.rs:600-612`
-* `/data/projects/bun/src/jsc/webcore_types.rs:75-96, 596-616, 1180-1201`
-* `/data/projects/bun/src/jsc/ConcurrentPromiseTask.rs:30-55`
-* `/data/projects/bun/src/jsc/WorkTask.rs:35-58`
-* `/data/projects/bun/src/jsc/hot_reloader.rs:405-422`
-* `/data/projects/bun/src/jsc/Debugger.rs:575-593`
-* `/data/projects/bun/src/jsc/web_worker.rs:580-590`
-* `/data/projects/bun/src/jsc/TopExceptionScope.rs:19-31`
-* `/data/projects/bun/src/threading/channel.rs:35-49`
-* `/data/projects/bun/src/threading/guarded.rs:26-38`
-* `/data/projects/bun/src/threading/Mutex.rs:201-265`
-* `/data/projects/bun/src/threading/Condition.rs:210-224`
-* `/data/projects/bun/src/threading/Semaphore.rs:13-23`
-* `/data/projects/bun/src/threading/RwLock.rs:149-158`
-* `/data/projects/bun/src/threading/ThreadPool.rs:323-337, 1480-1494`
-* `/data/projects/bun/src/runtime/dns_jsc/dns.rs:101-107, 2370-2386`
-* `/data/projects/bun/src/runtime/node/fs_events.rs:200-209, 245-253`
-* `/data/projects/bun/src/runtime/node/path_watcher.rs:100-109`
-* `/data/projects/bun/src/runtime/shell/IOReader.rs:70-83`
-* `/data/projects/bun/src/runtime/shell/IOWriter.rs:230-244`
-* `/data/projects/bun/src/runtime/shell/builtin/rm.rs:700-714`
-* `/data/projects/bun/src/runtime/bake/production.rs:60-74`
-* `/data/projects/bun/src/runtime/api/js_bundle_completion_task.rs:100-106`
-* `/data/projects/bun/src/semver/SemverQuery.rs:117-132, 240-262`
-* `/data/projects/bun/src/resolver/fs.rs:1820-1840`
-* `/data/projects/bun/src/resolver/lib.rs:890-898`
-* `/data/projects/bun/src/standalone_graph/StandaloneModuleGraph.rs:75-90, 180-190`
-* `/data/projects/bun/src/spawn/process.rs:1265-1280`
-* `/data/projects/bun/src/sys/lib.rs:175-192, 5880-5891`
-* `/data/projects/bun/src/io/windows_event_loop.rs:365-378`
-* `/data/projects/bun/src/install/windows-shim/main.rs:200-214`
-* `/data/projects/bun/src/install/patch_install.rs:340-360`
-* `/data/projects/bun/src/boringssl/lib.rs:115-126`
-* `/data/projects/bun/src/http/h3_client/PendingConnect.rs:170-179`
-* `/data/projects/bun/src/http/HTTPThread.rs:300-314`
-* `/data/projects/bun/src/http/lshpack.rs:195-204`
-* `/data/projects/bun/src/http/ssl_config.rs:430-445`
-* `/data/projects/bun/src/sql_jsc/jsc.rs:482-492`
-* `/data/projects/bun/src/crash_handler/lib.rs:605-617`
-* `/data/projects/bun/src/perf/tracy.rs:665-673`
-* `/data/projects/bun/src/runtime/napi/napi_body.rs:1985-1994`
-* `/data/projects/bun/src/runtime/node/node_process.rs:80-91`
-* `/data/projects/bun/src/bun_core/Global.rs:810-816`
-* `/data/projects/bun/src/bun_core/string/mod.rs:1255-1265`
-* `/data/projects/bun/src/bun_core/string/StringJoiner.rs:15-90`
-* `/data/projects/bun/src/bun_core/lib.rs:200-212`
-* `/data/projects/bun/src/css/declaration.rs:43-54`
-* `/data/projects/bun/src/css/rules/mod.rs:165-174`
-* `/data/projects/bun/src/collections/array_hash_map.rs:1550-1559`
-* `/data/projects/bun/src/collections/bit_set.rs:1385-1392`
-* `/data/projects/bun/src/collections/multi_array_list.rs:440-453`
-* `/data/projects/bun/src/js_parser/defines_table.rs:195-210`
-* `/data/projects/bun/src/js_parser/lib.rs:375-385`
-* `/data/projects/bun/src/bundler/bundle_v2.rs:1520-1544`
-* `/data/projects/bun/src/bundler/BundleThread.rs:160-190, 380-390`
-* `/data/projects/bun/src/bundler/LinkerGraph.rs:75-97`
-* `/data/projects/bun/src/bundler/ThreadPool.rs:43-78`
-* `/data/projects/bun/src/bundler/lib.rs:320-342`
-* `/data/projects/bun/src/ptr/lib.rs:620-628`
-* `/data/projects/bun/src/ptr/parent_ref.rs:400-407`
+* `.unsafe-audit/unsafe-inventory.jsonl`
+* `.unsafe-audit/audit/plans/C-003-send-sync-impls.md`
+* `.unsafe-audit/audit/synthesis/codex-pass2-adversarial-reclassification.md`
+* `src/ast/nodes.rs:39-40, 167-168, 339-340`
+* `src/bundler/Chunk.rs:114-152`
+* `src/bundler/LinkerContext.rs:233-240, 1615-1633`
+* `src/bundler/linker.rs:97-107`
+* `src/bundler/linker_context/prepareCssAstsForChunk.rs:30-51`
+* `src/bundler/linker_context/scanImportsAndExports.rs:495-509`
+* `src/bun_alloc/lib.rs:113-124, 2167-2183`
+* `src/bun_alloc/MimallocArena.rs:88-120`
+* `src/bun_core/atomic_cell.rs:50-66, 494-504`
+* `src/bun_core/util.rs:2269-2283, 2330-2340, 2681-2692`
+* `src/jsc/JSCell.rs:89-128`
+* `src/jsc/VirtualMachine.rs:600-612`
+* `src/jsc/webcore_types.rs:75-96, 596-616, 1180-1201`
+* `src/jsc/ConcurrentPromiseTask.rs:30-55`
+* `src/jsc/WorkTask.rs:35-58`
+* `src/jsc/hot_reloader.rs:405-422`
+* `src/jsc/Debugger.rs:575-593`
+* `src/jsc/web_worker.rs:580-590`
+* `src/jsc/TopExceptionScope.rs:19-31`
+* `src/threading/channel.rs:35-49`
+* `src/threading/guarded.rs:26-38`
+* `src/threading/Mutex.rs:201-265`
+* `src/threading/Condition.rs:210-224`
+* `src/threading/Semaphore.rs:13-23`
+* `src/threading/RwLock.rs:149-158`
+* `src/threading/ThreadPool.rs:323-337, 1480-1494`
+* `src/runtime/dns_jsc/dns.rs:101-107, 2370-2386`
+* `src/runtime/node/fs_events.rs:200-209, 245-253`
+* `src/runtime/node/path_watcher.rs:100-109`
+* `src/runtime/shell/IOReader.rs:70-83`
+* `src/runtime/shell/IOWriter.rs:230-244`
+* `src/runtime/shell/builtin/rm.rs:700-714`
+* `src/runtime/bake/production.rs:60-74`
+* `src/runtime/api/js_bundle_completion_task.rs:100-106`
+* `src/semver/SemverQuery.rs:117-132, 240-262`
+* `src/resolver/fs.rs:1820-1840`
+* `src/resolver/lib.rs:890-898`
+* `src/standalone_graph/StandaloneModuleGraph.rs:75-90, 180-190`
+* `src/spawn/process.rs:1265-1280`
+* `src/sys/lib.rs:175-192, 5880-5891`
+* `src/io/windows_event_loop.rs:365-378`
+* `src/install/windows-shim/main.rs:200-214`
+* `src/install/patch_install.rs:340-360`
+* `src/boringssl/lib.rs:115-126`
+* `src/http/h3_client/PendingConnect.rs:170-179`
+* `src/http/HTTPThread.rs:300-314`
+* `src/http/lshpack.rs:195-204`
+* `src/http/ssl_config.rs:430-445`
+* `src/sql_jsc/jsc.rs:482-492`
+* `src/crash_handler/lib.rs:605-617`
+* `src/perf/tracy.rs:665-673`
+* `src/runtime/napi/napi_body.rs:1985-1994`
+* `src/runtime/node/node_process.rs:80-91`
+* `src/bun_core/Global.rs:810-816`
+* `src/bun_core/string/mod.rs:1255-1265`
+* `src/bun_core/string/StringJoiner.rs:15-90`
+* `src/bun_core/lib.rs:200-212`
+* `src/css/declaration.rs:43-54`
+* `src/css/rules/mod.rs:165-174`
+* `src/collections/array_hash_map.rs:1550-1559`
+* `src/collections/bit_set.rs:1385-1392`
+* `src/collections/multi_array_list.rs:440-453`
+* `src/js_parser/defines_table.rs:195-210`
+* `src/js_parser/lib.rs:375-385`
+* `src/bundler/bundle_v2.rs:1520-1544`
+* `src/bundler/BundleThread.rs:160-190, 380-390`
+* `src/bundler/LinkerGraph.rs:75-97`
+* `src/bundler/ThreadPool.rs:43-78`
+* `src/bundler/lib.rs:320-342`
+* `src/ptr/lib.rs:620-628`
+* `src/ptr/parent_ref.rs:400-407`
 
 ---
 

@@ -144,7 +144,9 @@ On the current audit branch they are **VERIFIED bugs in live form** — this mat
 
 **None.** Every defensible T1 finding from PASS4_FINDINGS_INDEX.md + CODEX_PASS3_FINAL_REVIEW.md still has an intact bug shape at the cited (or drifted) location.
 
-The Codex P3 final review and P4 corrections already pulled the audit's claim list down to a defensible set; this Pass-5 sweep finds zero false positives, plus the presentation/severity corrections above.
+The Codex P3 final review and P4 corrections already pulled the audit's claim
+list down to a defensible set; this Pass-5 sweep found no fully-invalidated
+findings, plus the presentation/severity corrections above.
 
 ---
 

@@ -1,23 +1,23 @@
 # PASS4 — `bun_shell_parser` deep audit
 
-**Crate:** `bun_shell_parser` (`/data/projects/bun/src/shell_parser/`)
+**Crate:** `bun_shell_parser` (`src/shell_parser/`)
 **Surface:** Bun's shell-command parser for the `Bun.$` template-literal API.
 **Inventory entries claimed:** 11 (filtering JSONL by `"crate":"bun_shell_parser"`).
 **Actual `unsafe` block / fn sites enumerated by `grep`:** 12 (8 in `braces.rs`, 4 in `parse.rs`).
 **Files audited (full or near-full reads):**
 
-- `/data/projects/bun/src/shell_parser/lib.rs` (44 lines — read in full)
-- `/data/projects/bun/src/shell_parser/braces.rs` (1497 lines — every `unsafe` site read with ≥25 lines of context)
-- `/data/projects/bun/src/shell_parser/parse.rs` (4874 lines — all `unsafe` sites, all lexer entry points, all int-cast `try_from(...).expect("int cast")` sites, all `looks_like_*` / `eat_js_*` paths read with context)
-- `/data/projects/bun/src/shell_parser/json_fmt.rs` (319 lines — read in full; no `unsafe`)
+- `src/shell_parser/lib.rs` (44 lines — read in full)
+- `src/shell_parser/braces.rs` (1497 lines — every `unsafe` site read with ≥25 lines of context)
+- `src/shell_parser/parse.rs` (4874 lines — all `unsafe` sites, all lexer entry points, all int-cast `try_from(...).expect("int cast")` sites, all `looks_like_*` / `eat_js_*` paths read with context)
+- `src/shell_parser/json_fmt.rs` (319 lines — read in full; no `unsafe`)
 
 **Cross-checked against:**
 
-- `/data/projects/bun/src/runtime/shell/shell_body.rs` (the runtime side that *constructs* the lexer input, populates `string_refs`, and consumes `LexResult` for JSC)
-- `/data/projects/bun/src/runtime/shell/states/Expansion.rs` (the runtime caller of `braces::Lexer::tokenize` + `braces::expand`)
-- `/data/projects/bun/src/runtime/api/BunObject.rs` (the user-facing `Bun.braces` entry that exercises `ast_to_json`)
-- `/data/projects/bun/src/js/builtins/shell.ts` (JS-side template handler — feeds `raw` strings + interpolation values to `createParsedShellScript`)
-- `/data/projects/bun/test/js/bun/shell/shell-sentinel-hardening.test.ts` (existing prior-art regression test that already exercises the `\x08`-sentinel adversarial case)
+- `src/runtime/shell/shell_body.rs` (the runtime side that *constructs* the lexer input, populates `string_refs`, and consumes `LexResult` for JSC)
+- `src/runtime/shell/states/Expansion.rs` (the runtime caller of `braces::Lexer::tokenize` + `braces::expand`)
+- `src/runtime/api/BunObject.rs` (the user-facing `Bun.braces` entry that exercises `ast_to_json`)
+- `src/js/builtins/shell.ts` (JS-side template handler — feeds `raw` strings + interpolation values to `createParsedShellScript`)
+- `test/js/bun/shell/shell-sentinel-hardening.test.ts` (existing prior-art regression test that already exercises the `\x08`-sentinel adversarial case)
 
 The audit was scoped per the prompt: NO finding is in this document unless I can either (a) construct a concrete adversarial input that drives the path, or (b) state the precise missing/wrong invariant. Padding has been actively avoided.
 
@@ -435,7 +435,7 @@ Pure-safe code. The two `unsafe` blocks in `braces.rs::ast_to_json` / `ast_atom_
 
 ### 5.10 Sentinel rejection is regression-tested
 
-`/data/projects/bun/test/js/bun/shell/shell-sentinel-hardening.test.ts` is a dedicated regression suite that already exercises the most adversarial inputs (`"\x08__bun_abc"`, `"\x08__bunstr_abc"`, sentinel injection via `{ raw: ... }` with OOB index 9999).
+`test/js/bun/shell/shell-sentinel-hardening.test.ts` is a dedicated regression suite that already exercises the most adversarial inputs (`"\x08__bun_abc"`, `"\x08__bunstr_abc"`, sentinel injection via `{ raw: ... }` with OOB index 9999).
 
 ---
 

@@ -1,7 +1,7 @@
 # C-002 — `mem::transmute` cluster (integer-to-enum and friends)
 
 Audit scope: every site tagged `mem_transmute` in
-`/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`. Total: **30 sites
+`.unsafe-audit/unsafe-inventory.jsonl`. Total: **30 sites
 across 14 files**. The cluster name is shorthand; the JSON tag groups four
 distinct unsafe shapes that all happen to flow through `core::mem::transmute`
 or `core::mem::transmute_copy`. The classification matters far more than the

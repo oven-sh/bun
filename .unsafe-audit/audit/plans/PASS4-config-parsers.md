@@ -666,7 +666,7 @@ characterises the contract.
 
 ## 8. Methodology notes & limits
 
-- **Inventory source:** `/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`
+- **Inventory source:** `.unsafe-audit/unsafe-inventory.jsonl`
   (11044 sites total). Filtered to `crate ∈ {bun_dotenv, bun_ini,
   bun_parsers, bun_bunfig}`.
 - **Inventory completeness check:** Raw `grep -c unsafe` on `yaml.rs`

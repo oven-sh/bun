@@ -225,7 +225,7 @@ cargo +nightly miri test
 
 Some Bun crates cannot be run under miri because they touch FFI to JSC, libuv, BoringSSL, or simdutf in ways that exceed miri's isolation. Per-crate runs on `bun_ast`, `bun_alloc`, `bun_ptr`, `bun_threading`, `bun_wyhash`, `bun_md`, and `bun_errno` are the canonical safe-Rust foundation.
 
-The audit dir (in the `.unsafe-audit/` directory of an audit checkout, not generally published) contains:
+The audit artifacts (published in the audit PR as `.unsafe-audit/`) contain:
 
 - `unsafe-inventory.jsonl` — every unsafe site with metadata.
 - `audit/sites/` — per-site write-ups for the higher-risk findings.
@@ -247,10 +247,7 @@ Suggested reviewers before adoption:
 - The Bun core maintainer team.
 - Rust unsafe-code reviewers familiar with Stacked Borrows / Tree Borrows,
   JavaScriptCore FFI, and Bun's Zig-to-Rust porting constraints.
-- The `rust-unsafe-code-exorcist` audit artifacts
-  ([jeffreys-skills.md](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist)),
-  applied across multiple passes by Claude Code and Codex (GPT-5.x) operating
-  adversarially against each other.
+- The public audit artifacts and verification logs in this PR.
 
 Previous security advisories are listed at <https://github.com/oven-sh/bun/security/advisories>.
 

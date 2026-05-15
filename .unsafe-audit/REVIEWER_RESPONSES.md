@@ -102,13 +102,17 @@ maintainers explicitly signposted.
 
 2. **`uv_guess_handle` rewrite changes the fallback semantics.** The plan
    replaces:
+
    ```rust
    if (Unknown..=File).contains(&raw) { transmute(raw) } else { Unknown }
    ```
+
    with:
+
    ```rust
    HandleType::try_from(raw).unwrap_or(HandleType::Unknown)
    ```
+
    Functionally equivalent today, but `try_from`'s "not in discriminant set"
    judgment is generated from the enum, not from the literal `Unknown..=File`
    range. If a future libuv adds `HandleType::Stream2` (discriminant 18) and
@@ -384,7 +388,7 @@ or similar through the standard parser path. The fact that no caller
 exploits it today is a function of the rest of the codebase not having
 any `Cell<u32>`-shaped AST payloads — change one type in
 `bun_ast::nodes`, and the laundering channel opens. **Land this as a
-standalone two-character PR within 24 hours of the audit closing.**
+standalone two-character PR.**
 
 ---
 

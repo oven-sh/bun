@@ -2,7 +2,7 @@
 
 **Status:** UB detected by `cargo +nightly miri run`.
 **Bug:** pass-2 pre-existing-ub-001 — `impl GetErrno for usize` transmutes `(int as u16) → SystemErrno` where `SystemErrno` has dense discriminants only in `0..=~133` but the SAFETY comment claims `int ∈ [0, 4096)`.
-**Source:** `/data/projects/bun/src/errno/linux_errno.rs:175-188`
+**Source:** `src/errno/linux_errno.rs:175-188`
 
 ## The reproduction
 

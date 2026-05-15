@@ -10,7 +10,7 @@
 `bun_standalone_graph` 24, `bun_io` 15, `bun_ptr` 15…). Each sampled site read with
 15 lines of context to verify: (a) source of the pointer, (b) bound on any
 index/offset, (c) alignment guarantee, (d) Drop ordering. Inventory at
-`/data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl`; per-op samples at
+`.unsafe-audit/unsafe-inventory.jsonl`; per-op samples at
 `/tmp/audit_samples/*.jsonl`.
 
 ---
@@ -61,7 +61,7 @@ index/offset, (c) alignment guarantee, (d) Drop ordering. Inventory at
 
 **Hard UB-risk findings ready for `pre-existing-ub-N`:** **6**
 
-1. `pre-existing-ub-ptr-1` — `standalone_graph::slice_to[_mut|_z]` debug-asserts in-bounds but reads/writes via `from_raw_parts[_mut]` in release with attacker-influenced offsets.
+1. `pre-existing-ub-ptr-1` — `standalone_graph::slice_to[_mut/_z]` debug-asserts in-bounds but reads/writes via `from_raw_parts[_mut]` in release with attacker-influenced offsets.
 2. `pre-existing-ub-ptr-2` — `bun_core::Unaligned::slice_align_cast[_mut]` debug-asserts pointer alignment, then forms `&[T]`/`&mut [T]` over the bytes — instant UB on access if a release-build caller violates the contract. Lit caller: `ArrayBuffer::as_u16` / `as_u32`.
 3. `pre-existing-ub-ptr-3` — `bun_io::Request::store_callback_seq_cst` uses `write_volatile` + SeqCst fence to publish a `fn` pointer cross-thread. Volatile is not atomic per the Rust memory model; should be `AtomicPtr` with `Release`/`Acquire`.
 4. `pre-existing-ub-ptr-4` — `sys::SysQuietWriterAdapter::adapter_write_all` computes `this.pos + bytes.len() > this.cap` with no overflow guard; an oversized `bytes` makes the comparison wrap, bypassing the drain branch, then `copy_nonoverlapping` writes past `buf.add(pos)`.
@@ -847,7 +847,7 @@ To reproduce the inventory slice:
 
 ```sh
 jq -c 'select((.categories | index("ptr_intrinsic")) // (.categories | index("ptr_arith")))' \
-  /data/projects/bun/.unsafe-audit/unsafe-inventory.jsonl
+  .unsafe-audit/unsafe-inventory.jsonl
 ```
 
 Per-op samples are at `/tmp/audit_samples/{read,write,copy_nonoverlapping,
@@ -889,4 +889,3 @@ After PR-PTR-{1..5} the cluster's residual risk is at the level of "kernel /
 libuv trust boundary" — i.e., the unsafe is acting as a Rust-side FFI shim
 over a C-side contract we cannot statically verify. That's the irreducible
 floor for any runtime with this much OS-syscall and FFI traffic.
-

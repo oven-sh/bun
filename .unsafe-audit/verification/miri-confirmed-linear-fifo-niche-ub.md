@@ -2,7 +2,7 @@
 
 **Status:** UB detected by `cargo +nightly miri run`.
 **Bug:** pass-2 F-1 / pre-existing-ub-13 — `bun_collections::linear_fifo::assume_init_slice<T>` reinterprets `&[MaybeUninit<T>]` as `&[T]` over the entire backing buffer (including uninit slots) for niche-bearing T.
-**Source:** `/data/projects/bun/src/collections/linear_fifo.rs:67-71`
+**Source:** `src/collections/linear_fifo.rs:67-71`
 
 ## The reproduction
 

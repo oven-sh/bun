@@ -674,7 +674,7 @@ third-party native plugins. No gate.
 ## Bench targets per cluster
 
 Per the goal of measuring deltas, the following Bun benchmarks exercise each
-cluster's hot path. All run via `bun /data/projects/bun/bench/runner.mjs <snippet>`:
+cluster's hot path. All run via `bun bench/runner.mjs <snippet>`:
 
 | Cluster member                         | Bench target                                                         |
 | -------------------------------------- | -------------------------------------------------------------------- |

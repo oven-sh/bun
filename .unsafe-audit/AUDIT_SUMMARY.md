@@ -9,7 +9,7 @@
 
 ## Headline
 
-```
+```text
 Total unsafe sites:        11,044
 By kind:
   unsafe { ... } blocks     9,754  (88%)
@@ -152,7 +152,7 @@ After the user's "MUCH BETTER" critique, a second wave of parallel deep-dive age
 
 1. **`Vec<u8>` → `Vec<u16>` reinterpret in `src/runtime/webcore/encoding.rs:303-310`** (`UB-RT-001`) — violates `Vec::from_raw_parts` allocator-layout contract. **Reachable from JS via `Buffer.from(x).toString("ucs2")`.** [Detail](audit/plans/PASS2-bun-runtime-deep-dive.md).
 
-2. **8 dealloc-through-`SharedReadOnly`-provenance sites** in `http/AsyncHTTP.rs:117`, `http/lib.rs:176`, `runtime/node/node_fs.rs:2397`, `bun_alloc/lib.rs:3267`, `bun_core/string/mod.rs:1765`, `jsc/lib.rs:2013`, `jsc/ZigString.rs:70,102`. All call `Box::from_raw` / `heap::destroy` / `mi_free` through a `*mut T` derived from `core::ptr::from_ref(slice).cast_mut()`. **Bun's own `src/CLAUDE.md` warns about this exact bug class at the high level (Invariant I-001) — the audit found 8 places where the syntactic variant is used and the SAFETY comments don't catch the provenance issue.** [Detail](audit/plans/PASS2-ptr-cast-deep-dive.md) finding U2.
+2. **8 dealloc-through-`SharedReadOnly`-provenance sites** in `http/AsyncHTTP.rs:117`, `http/lib.rs:176`, `runtime/node/node_fs.rs:2397`, `bun_alloc/lib.rs:3267`, `bun_core/string/mod.rs:1765`, `jsc/lib.rs:2022` (was `:2013` pre-`fe2635b460` cargo fmt; Pass-5 accuracy sweep), `jsc/ZigString.rs:70,102`. All call `Box::from_raw` / `heap::destroy` / `mi_free` through a `*mut T` derived from `core::ptr::from_ref(slice).cast_mut()`. **Bun's own `src/CLAUDE.md` warns about this exact bug class at the high level (Invariant I-001) — the audit found 8 places where the syntactic variant is used and the SAFETY comments don't catch the provenance issue.** [Detail](audit/plans/PASS2-ptr-cast-deep-dive.md) finding U2.
 
 3. **`pack_command.rs:3009` `&mut T` from `*const T`** (finding `U1`) — `unsafe { &mut *std::ptr::from_ref(ctx.command_ctx).cast_mut() }`. UB under both Stacked Borrows AND Tree Borrows.
 
@@ -273,7 +273,7 @@ The remaining clusters (C-001 PR-2 13-site batch, C-003 PR-2/3/4, B-001/B-002 `s
 
 ## Audit artifacts
 
-```
+```text
 .unsafe-audit/
 ├── AUDIT_SUMMARY.md                       ← you are here
 ├── phase0_scope_decision.md               ← what's in / out / why
@@ -342,8 +342,8 @@ The remaining clusters (C-001 PR-2 13-site batch, C-003 PR-2/3/4, B-001/B-002 `s
 1. **User reviews this artifact** and the per-cluster plans, starting with the Tier 1 findings in `PASS2_FINDINGS_INDEX.md`.
 2. **Run one final quiet convergence pass** after incorporating pass-3 UBS output and applying the Codex corrections to stale plan/bead text.
 3. **User picks demo-PR clusters at Phase 11** — recommended first pick: the compact Tier 1 point fixes (`StoreSlice`, errno, encoding, `linear_fifo`) before the larger pass-3 contract migrations.
-4. **Optional: file beads via `br create`** in `/data/projects/bun/.beads/` for incremental landing. Commands prepared in `beads-to-create.md`.
-5. **Push artifacts to GitHub** — held until explicit user authorization. Multi-harness comparison must happen first.
+4. **Optional: file beads via `br create`** in `.beads/` for incremental landing. Commands prepared in `beads-to-create.md`.
+5. **Keep PR #30763 updated only with review-tightening corrections** — the audit artifacts are now published for review; additional public pushes should stay limited to accuracy, hygiene, and verification updates.
 
 ## About this skill
 

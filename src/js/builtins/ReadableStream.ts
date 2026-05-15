@@ -178,7 +178,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
         }
 
         if (typeof view === "string") {
-          return new TextEncoder().encode(view);
+          return new TextEncoder().encode(view).buffer;
         }
       }
       default: {

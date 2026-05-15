@@ -568,3 +568,25 @@ test("Response.clone().arrayBuffer() returns an ArrayBuffer for multi-chunk bina
   expect(new Uint8Array(clonedBuf)).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
   expect(new Uint8Array(originalBuf)).toEqual(new Uint8Array(clonedBuf));
 });
+
+// https://github.com/oven-sh/bun/issues/30797
+test("Response.clone().arrayBuffer() returns an ArrayBuffer for a single string chunk body", async () => {
+  const stream = new ReadableStream({
+    async pull(controller) {
+      await 1;
+      controller.enqueue("hi");
+      controller.close();
+    },
+  });
+
+  const response = new Response(stream);
+  const cloned = response.clone();
+
+  const originalBuf = await response.arrayBuffer();
+  const clonedBuf = await cloned.arrayBuffer();
+
+  expect(originalBuf).toBeInstanceOf(ArrayBuffer);
+  expect(clonedBuf).toBeInstanceOf(ArrayBuffer);
+  expect(new TextDecoder().decode(clonedBuf)).toBe("hi");
+  expect(new TextDecoder().decode(originalBuf)).toBe("hi");
+});

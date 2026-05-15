@@ -14,7 +14,7 @@ This audit was produced by [`/rust-unsafe-code-exorcist`](https://jeffreys-skill
 |-------------|-----------|
 | The headline numbers + executive narrative | [`.unsafe-audit/AUDIT_SUMMARY.md`](.unsafe-audit/AUDIT_SUMMARY.md) |
 | The defensible final bug count and tier discipline | [`.unsafe-audit/PASS4_FINDINGS_INDEX.md`](.unsafe-audit/PASS4_FINDINGS_INDEX.md) |
-| The 5 miri-confirmed runtime UB traces | [`.unsafe-audit/verification/miri-confirmed-summary.md`](.unsafe-audit/verification/miri-confirmed-summary.md) |
+| The 5 miri-backed runtime UB witnesses | [`.unsafe-audit/verification/miri-confirmed-summary.md`](.unsafe-audit/verification/miri-confirmed-summary.md) |
 | The quantified prioritization (BLAST × LIKELIHOOD × DISCOVERABILITY) | [`.unsafe-audit/audit/synthesis/PASS4-risk-scoring.md`](.unsafe-audit/audit/synthesis/PASS4-risk-scoring.md) |
 | How Bun's own commit history corroborates the findings | [`.unsafe-audit/audit/synthesis/PASS4-soundness-archeology.md`](.unsafe-audit/audit/synthesis/PASS4-soundness-archeology.md) |
 | The PR-landing order for fixes | [`.unsafe-audit/PASS4_FINDINGS_INDEX.md` § "Pass-4 PR landing order"](.unsafe-audit/PASS4_FINDINGS_INDEX.md) |

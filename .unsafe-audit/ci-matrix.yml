@@ -1,7 +1,8 @@
 # Bun unsafe-audit CI matrix entry
 #
-# This is the proposed addition to Bun's CI (`.github/workflows/`) — NOT installed
-# unilaterally. Phase 11 will offer to land this only after user approval.
+# This is a proposed CI shape for the unsafe-audit verification harness. It is
+# not installed by PR #30763 or PR #30765; landing it should be a separate,
+# maintainer-reviewed CI PR.
 #
 # Bun's existing CI is on Buildkite (`.buildkite/`), not GitHub Actions, so this
 # template is provided in YAML form for reference; the actual integration would

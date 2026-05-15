@@ -1,11 +1,11 @@
-# Bun unsafe-code audit — Pass 1 + Codex pass 2/3/4 addenda
+# Bun unsafe-code audit — Pass 1 + Codex pass 2/3/4/5 addenda
 
-> An audit of every `unsafe` site in [oven-sh/bun](https://github.com/oven-sh/bun), produced by [`/rust-unsafe-code-exorcist`](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist). Pass 1 was produced by Claude Code; pass 2 is a Codex adversarial addendum; pass 3 is a higher-severity safe-API soundness pass; pass 4 adds risk scoring, miri confirmations, and the corrected dashboard.
+> An audit of every `unsafe` site in [oven-sh/bun](https://github.com/oven-sh/bun), produced by [`/rust-unsafe-code-exorcist`](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist). Pass 1 was produced by Claude Code; pass 2 is a Codex adversarial addendum; pass 3 is a higher-severity safe-API soundness pass; pass 4 adds risk scoring, miri confirmations, and the corrected dashboard; pass 5 adds verification/proof/fuzzing artifacts and the first companion fix PR.
 
 **Audit run:** 2026-05-14
 **Project:** Bun — JavaScript runtime, recently [ported from Zig to Rust](https://github.com/oven-sh/bun/commit/23427dbc12fdcff30c23a96a3d6a66d62fdc091d) (commit `23427db`, ~16 hours before this audit ran).
 **Scope:** All Rust under `src/` — 108 workspace crates, 1,432 `.rs` files. Vendored C/C++ libraries and the C++ JSC bindings are out of scope.
-**Mode:** `audit-and-refactor` with `refactor-on-approve` execution authorization. Phase 11 will offer cluster-selection to land a demonstration PR; no source edits have been made.
+**Mode:** `audit-and-refactor`. The audit artifacts live in PR #30763; the first compact remediation branch lives in companion PR #30765 with three highest-confidence source fixes (`StoreSlice<T>`, `linux_errno`, `GuardedLock`).
 
 ## Headline
 
@@ -234,40 +234,43 @@ This is a pass-1 audit; we're explicit about its limits. The maintainer-empathy 
 
 4. **End-to-end `cargo +nightly miri test` is infeasible.** Bun's test suite touches the JS engine, filesystem, network, and JSC's GC heavily; miri's isolation cannot accommodate it. **Mitigation:** the verify harness (`verify.sh`) runs miri PER-CRATE on the rewrite-touched code only.
 
-5. **Miri has not exercised the adversarial inputs for the Tier 1 bugs yet.** The current runs give useful negative evidence for seven tested crates, but the existing tests do not construct `StoreSlice<Cell<_>>`, invalid errno discriminants, niche-bearing `LinearFifo` invalid-reference checks under miri, or `FFI.close` call-after-close. The remediation PRs need targeted tests.
+5. **Miri coverage is targeted, not exhaustive.** Later passes added five
+   miri-backed UB witnesses and a Kani proof artifact, but no whole-Bun miri
+   run is feasible. The remaining remediation PRs still need targeted tests for
+   each source fix or contract migration.
 
 6. **The "11,044 sites" count is per-reborrow-site, not per-function.** A single `unsafe fn` body that does five `unsafe { &mut *this }` reborrows counts as 5 sites in this audit. The headline ratios ("~98% justified, ~2% refactorable") are accurate for the per-site framing but should not be read as "98% of unsafe **functions** are justified." Subsequent passes that aggregate per-function (or per-`pub fn` API surface) will produce a different — likely smaller — denominator and the (C) percentage will rise correspondingly.
 
 7. **Phase 6 adversarial reclassification is now materially stronger.** Codex pass 2 corrected stale claims; Codex pass 3 found broader safe-API contract defects. A final quiet pass is still needed for convergence, but the audit should no longer frame the result as "only two bugs."
 
-8. **C-005 (Pure-Rust `Self::xxx(this)` refactors) deferred.** Without rustdoc JSON's call graph, we can't reliably distinguish "called only from pure Rust" from "called from an FFI callback path." This is the highest-value remaining cluster after C-001/C-002/C-003; subsequent passes will tackle it.
+8. **C-005 (Pure-Rust `Self::xxx(this)` refactors) deferred.** Without rustdoc JSON's call graph, we can't reliably distinguish "called only from pure Rust" from "called from an FFI callback path." This is the highest-value remaining cluster after C-001/C-002/C-003; subsequent passes should tackle it.
 
 These gaps are explicit so future passes (especially the user's planned multi-harness comparison) address them without surprise.
 
-## Demonstration PR (Phase 11 deliverable, pending user approval)
+## Demonstration / remediation PRs
 
-**Recommended landing order** (tiered after the pass-2 final corrections):
+**Current state:** companion PR #30765 already lands the first compact set:
+`StoreSlice<T>` Send/Sync bounds, the `linux_errno` checked conversion, and the
+`GuardedLock` `!Send` marker. The remaining recommended landing order is:
 
-1. **`StoreSlice<T>` Send/Sync bound fix** — 2-line patch.
-2. **`linux_errno.rs` `impl GetErrno for usize` fix** — checked enum conversion.
-3. **`encoding.rs` `Vec<u8>` -> `Vec<u16>` fix** — remove raw-parts reinterpret.
-4. **`linear_fifo` MaybeUninit fix** — stop exposing full backing buffers as `[T]`; operate on `MaybeUninit<T>` storage and assume-init only initialized windows.
-5. **`pack_command.rs:3009` fix** — thread true mutable/raw ownership through the call chain.
-6. **8 shared-provenance dealloc/free fixes** — retain original owner pointer instead of freeing through shared slices.
-7. **`standalone_graph::slice_to_*` checks** — release-mode bounds before slice formation.
-8. **`Unaligned::slice_align_cast` checks** — runtime checked alignment API.
-9. **`bun_io::Request` callback publication** — replace volatile+fence with atomic pointer publication.
-10. **`SysQuietWriterAdapter` overflow fix** — checked arithmetic before copy.
-11. **Windows shim metadata bound check** — real release guard before `ptr::copy`.
-12. **`SerializedSourceMap::header()` length check** — checked accessor before `read_unaligned`.
-13. **`bun:ffi` close hardening** — invalidate `JSFFIFunction` wrappers on `FFI.close`; validate `closeCallback` membership.
-14. **Windows waker placeholder** — replace stale `zeroed_unchecked()` branch with the existing placeholder.
-15. **Pass-3 contract PRs** — bundler B-1..B-5 reference-shape refactor, task-trait `Send`/`unsafe trait` migration, output writer closure API, and scratch-buffer non-escaping APIs.
+1. **`encoding.rs` `Vec<u8>` -> `Vec<u16>` fix** — remove raw-parts reinterpret.
+2. **`linear_fifo` MaybeUninit fix** — stop exposing full backing buffers as `[T]`; operate on `MaybeUninit<T>` storage and assume-init only initialized windows.
+3. **`pack_command.rs:3009` fix** — thread true mutable/raw ownership through the call chain.
+4. **8 shared-provenance dealloc/free fixes** — retain original owner pointer instead of freeing through shared slices.
+5. **`standalone_graph::slice_to_*` checks** — release-mode bounds before slice formation.
+6. **`Unaligned::slice_align_cast` checks** — runtime checked alignment API.
+7. **`bun_io::Request` callback publication** — replace volatile+fence with atomic pointer publication.
+8. **`SysQuietWriterAdapter` overflow fix** — checked arithmetic before copy.
+9. **Windows shim metadata bound check** — real release guard before `ptr::copy`.
+10. **`SerializedSourceMap::header()` length check** — checked accessor before `read_unaligned`.
+11. **`bun:ffi` close hardening** — invalidate `JSFFIFunction` wrappers on `FFI.close`; validate `closeCallback` membership.
+12. **Windows waker placeholder** — replace stale `zeroed_unchecked()` branch with the existing placeholder.
+13. **Pass-3 contract PRs** — bundler B-1..B-5 reference-shape refactor, task-trait `Send`/`unsafe trait` migration, output writer closure API, and scratch-buffer non-escaping APIs.
 
-The first dozen are small point fixes or tightly-scoped bug groups. The pass-3
-contract migrations are larger and should be split by subsystem. Single
-audit-demo branch (`claude/unsafe-exorcist-demo`) can hold the commits; the
-maintainer can cherry-pick PR-by-PR.
+The first several remaining items are small point fixes or tightly-scoped bug
+groups. The pass-3 contract migrations are larger and should be split by
+subsystem. Keep code fixes out of the audit-artifact PR and land them as
+separate source PRs like #30765.
 
 The remaining clusters (C-001 PR-2 13-site batch, C-003 PR-2/3/4, B-001/B-002 `safe-only` feature, A-001/A-002/A-003 hardening) file as beads for incremental landing.
 
@@ -328,7 +331,7 @@ The remaining clusters (C-001 PR-2 13-site batch, C-003 PR-2/3/4, B-001/B-002 `s
 | Cluster | Plan quality | Risk | Demo-PR ready |
 |---------|:---:|:---:|:---:|
 | C-001 | High | Low | Yes after excluding/solving const site |
-| C-002 | High | Low–Med | Yes with `strum::FromRepr`, not `num_enum` |
+| C-002 | High | Low–Med | Yes with checked conversion (`SystemErrno::init` in PR #30765; `FromRepr` remains a viable plan shape elsewhere) |
 | C-003 | High | Med | Yes after assertion-mechanism decision |
 | CODEX-P2 Windows waker | High | Low | Yes, pending Windows check |
 | CODEX-P3 cross-thread task boundaries | High | Med-High | Design PR needed; not a one-line fix |
@@ -339,11 +342,10 @@ The remaining clusters (C-001 PR-2 13-site batch, C-003 PR-2/3/4, B-001/B-002 `s
 
 ## What's next
 
-1. **User reviews this artifact** and the per-cluster plans, starting with the Tier 1 findings in `PASS2_FINDINGS_INDEX.md`.
-2. **Run one final quiet convergence pass** after incorporating pass-3 UBS output and applying the Codex corrections to stale plan/bead text.
-3. **User picks demo-PR clusters at Phase 11** — recommended first pick: the compact Tier 1 point fixes (`StoreSlice`, errno, encoding, `linear_fifo`) before the larger pass-3 contract migrations.
+1. **Keep PR #30763 audit-only.** Future pushes there should be limited to accuracy, hygiene, verification, and reviewer-response updates.
+2. **Keep PR #30765 source-only.** It currently carries the first three compact fixes; do not mix audit artifacts or lockfile churn into it.
+3. **Land the remaining compact point fixes as separate source PRs** before the larger pass-3 contract migrations.
 4. **Optional: file beads via `br create`** in `.beads/` for incremental landing. Commands prepared in `beads-to-create.md`.
-5. **Keep PR #30763 updated only with review-tightening corrections** — the audit artifacts are now published for review; additional public pushes should stay limited to accuracy, hygiene, and verification updates.
 
 ## About this skill
 

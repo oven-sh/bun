@@ -121,7 +121,10 @@ None of these line drifts changes the bug shape; all of these have intact SAFETY
 
 ## VERIFIED-STILL-LIVE-ON-AUDIT-BRANCH
 
-These three are listed in the audit notes as "already fixed in PR #30765 — the audit author's own remediation". On the current audit branch (`claude/unsafe-exorcist-audit`, HEAD `3e71554346`), the fixes are **not** merged in; they live on `claude/unsafe-exorcist-demo`.
+These three are listed in the audit notes as "already fixed in PR #30765 — the
+audit author's own remediation". On the current audit branch
+(`claude/unsafe-exorcist-audit`), the fixes are **not** merged in; they live on
+`claude/unsafe-exorcist-demo`.
 
 | ID | Branch with fix | Fix commit |
 |----|-----------------|------------|

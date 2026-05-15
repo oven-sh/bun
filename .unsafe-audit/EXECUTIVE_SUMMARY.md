@@ -4,7 +4,7 @@
 
 ## The headline
 
-**6 supply-chain attack primitives** + **~37 confirmed / high-confidence memory-safety findings** + **5 miri-backed UB witnesses**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with major public-facing claims adversarially reviewed by Claude and Codex for maintainer-grade defensibility.
+**6 supply-chain attack primitives** + **40 T1/T1-equivalent findings** (memory-safety, security, and crash-reliability items kept explicitly separated) + **5 miri-backed UB witnesses**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with major public-facing claims adversarially reviewed by Claude and Codex for maintainer-grade defensibility.
 
 Two pull requests opened: [#30763](https://github.com/oven-sh/bun/pull/30763) (audit artifacts + agent-ergonomic guide) and [#30765](https://github.com/oven-sh/bun/pull/30765) (3 highest-confidence fixes, isomorphism-verified).
 

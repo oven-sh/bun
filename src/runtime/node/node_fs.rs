@@ -650,8 +650,12 @@ mod _async_tasks {
                 let mut node_fs = NodeFS::default();
                 // SAFETY: caller keeps `path` alive until completion
                 let path = unsafe { &*this.path };
+                // SAFETY: `path` borrows the caller-owned buffer which the
+                // task scheduler guarantees to live until this callback
+                // completes (documented `AsyncMkdirp.path` contract).
+                let path_ps = unsafe { PathString::init(path) };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::String(PathString::init(path)),
+                    path: PathLike::String(path_ps),
                     recursive: true,
                     ..Default::default()
                 });
@@ -2337,7 +2341,10 @@ mod _async_tasks {
             // basename was allocated as `Box<[u8]>` of len+1 (NUL included) in
             // enqueue(); reconstruct that exact layout for drop on scope exit.
             let basename = scopeguard::guard(basename, |basename| {
-                let z = basename.slice_assume_z();
+                // SAFETY: `basename` was built by `init(&leaked[..len])` in
+                // `enqueue()` over a `Box<[u8]>` whose final byte is the NUL
+                // pushed before leak; `[len]` is therefore NUL.
+                let z = unsafe { basename.slice_assume_z() };
                 let len_with_nul = z.len() + 1;
                 let ptr = z.as_bytes().as_ptr().cast_mut();
                 // SAFETY: paired with the `Box::leak(owned.into_boxed_slice())` in
@@ -2356,8 +2363,12 @@ mod _async_tasks {
             // refcount. `from_raw_mut` was used at enqueue, so write provenance is
             // present; this work-pool callback is the sole holder of `&mut` to the
             // parent's per-result fields (it pushes to a lock-free queue).
+            //
+            // SAFETY (slice_assume_z): `basename` PathString was built over a
+            // `Box<[u8]>` that explicitly pushed a NUL before leaking (see
+            // `enqueue()`); `[len]` is NUL.
             unsafe { readdir_task.assume_mut() }.perform_work(
-                basename.slice_assume_z(),
+                unsafe { basename.slice_assume_z() },
                 &mut buf,
                 false,
             );
@@ -2414,7 +2425,10 @@ mod _async_tasks {
             // Leak the boxed `[bytes.., 0]` allocation; the Box<[u8]> backing is
             // reconstructed and freed in `ReaddirSubtask::run_owned`.
             let leaked: &'static mut [u8] = Box::leak(owned);
-            let basename_ps = PathString::init(&leaked[..len]);
+            // SAFETY: `leaked` is `&'static mut [u8]` (ownership transferred
+            // via `Box::leak`); the boxed slice is reconstructed and freed
+            // in `ReaddirSubtask::run_owned`.
+            let basename_ps = unsafe { PathString::init(&leaked[..len]) };
             // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
             // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
             // MUST run in release builds; only the `> 0` invariant check is debug-only.
@@ -2456,7 +2470,9 @@ mod _async_tasks {
                 // Leak the boxed `[bytes.., 0]` allocation; reconstructed and freed
                 // in `free_root_path()`.
                 let leaked: &'static mut [u8] = Box::leak(owned.into_boxed_slice());
-                PathString::init(&leaked[..len])
+                // SAFETY: `leaked` is `&'static mut [u8]` via `Box::leak`;
+                // the allocation is reclaimed in `free_root_path()`.
+                unsafe { PathString::init(&leaked[..len]) }
             };
             let mut task = Self::new(AsyncReaddirRecursiveTask {
                 promise: JSPromiseStrong::init(global_object),
@@ -2550,7 +2566,9 @@ mod _async_tasks {
             let this = unsafe { &mut *Self::from_task_ptr(task) };
             let mut buf = PathBuffer::uninit();
             let root_path = this.root_path;
-            this.perform_work(root_path.slice_assume_z(), &mut buf, true);
+            // SAFETY: `root_path` was built over a `Box<[u8]>` that explicitly
+            // pushed a NUL before leaking (see `create()`); `[len]` is NUL.
+            this.perform_work(unsafe { root_path.slice_assume_z() }, &mut buf, true);
         }
 
         pub fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
@@ -6527,7 +6545,11 @@ impl NodeFS {
             // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
             // fall back to lstat to determine the real file kind.
             let kind = if T::IS_DIRENT && current.kind == sys::FileKind::Unknown {
-                match sys::lstatat(fd, current.name.slice_assume_z()) {
+                // SAFETY: `current.name` comes from `dir_iterator::IteratorResult`;
+                // on the POSIX/Windows dirent paths that reach this branch, the
+                // dirent scratch buffer has a NUL at `[d_namlen]` (kernel
+                // contract / `from_w_path` writes one).
+                match sys::lstatat(fd, unsafe { current.name.slice_assume_z() }) {
                     Ok(st) => sys::kind_from_mode(st.st_mode as Mode),
                     Err(_) => current.kind,
                 }
@@ -6731,7 +6753,11 @@ impl NodeFS {
                     sys::FileKind::Unknown => {
                         if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
                         // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
-                        match sys::lstatat(fd, current.name.slice_assume_z()) {
+                        // SAFETY: `current.name` comes from `dir_iterator`;
+                        // the dirent/name scratch buffer has a NUL at `[len]`
+                        // (kernel contract on POSIX; `from_w_path` writes one
+                        // on Windows).
+                        match sys::lstatat(fd, unsafe { current.name.slice_assume_z() }) {
                             Ok(st) => {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
@@ -6911,7 +6937,9 @@ impl NodeFS {
                         // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
                         sys::FileKind::Unknown => {
                             if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
-                            match sys::lstatat(fd, current.name.slice_assume_z()) {
+                            // SAFETY: see above — `current.name` from
+                            // `dir_iterator` has a NUL at `[len]`.
+                            match sys::lstatat(fd, unsafe { current.name.slice_assume_z() }) {
                                 Ok(st) => {
                                     let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                     effective_kind = real_kind;
@@ -9178,8 +9206,12 @@ impl NodeFS {
                     while len > 0 && bytes[len - 1] != paths::SEP {
                         len -= 1;
                     }
+                    // SAFETY: `bytes` is `dest.as_bytes()` (caller-owned
+                    // `&ZStr`); the PathString is consumed synchronously by
+                    // `mkdir_recursive` and does not escape this scope.
+                    let parent_ps = unsafe { PathString::init(&bytes[..len]) };
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::String(PathString::init(&bytes[..len])),
+                        path: PathLike::String(parent_ps),
                         recursive: true,
                         ..Default::default()
                     });
@@ -9674,9 +9706,13 @@ pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char)
     // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
     let node_fs: &mut NodeFS =
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
+    // SAFETY: `path_bytes` borrows the C-string buffer supplied by the
+    // caller, which must outlive this synchronous call; the PathString is
+    // consumed by `mkdir_recursive` before we return.
+    let path_ps = unsafe { PathString::init(path_bytes) };
     !matches!(
         node_fs.mkdir_recursive(&args::Mkdir {
-            path: PathLike::String(PathString::init(path_bytes)),
+            path: PathLike::String(path_ps),
             recursive: true,
             ..Default::default()
         }),

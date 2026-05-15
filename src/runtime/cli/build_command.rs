@@ -911,6 +911,13 @@ impl BuildCommand {
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
                             let mut pathbuf = PathBuffer::uninit();
+                            // SAFETY: `map_basename` borrows either
+                            // `basename(&f.dest_path)` (Box<[u8]> owned by an
+                            // OutputFile) or a local `Vec<u8>` — both live to
+                            // the end of this match arm, and the PathString
+                            // is consumed synchronously by
+                            // `write_file_with_path_buffer` below.
+                            let file_ps = unsafe { bun_core::PathString::init(map_basename) };
                             match bun_sys::write_file_with_path_buffer(
                                 &mut pathbuf,
                                 bun_sys::WriteFileArgs {
@@ -919,9 +926,7 @@ impl BuildCommand {
                                     },
                                     encoding: bun_sys::WriteFileEncoding::Buffer,
                                     dirfd: root_dir.fd,
-                                    file: bun_sys::PathOrFileDescriptor::Path(
-                                        bun_core::PathString::init(map_basename),
-                                    ),
+                                    file: bun_sys::PathOrFileDescriptor::Path(file_ps),
                                     ..Default::default()
                                 },
                             ) {

@@ -553,9 +553,16 @@ impl LinkerGraph {
 
                 // Check if this entry point has an original name (from virtual entry resolution)
                 if let Some(original_name) = entry_point_original_names.get(i.get()) {
-                    *path_string = PathString::init(original_name);
+                    // SAFETY: `original_name` borrows `Box<[u8]>` owned by
+                    // `entry_point_original_names: &IndexStringMap`; that
+                    // map lives on the caller's frame for the duration of
+                    // the link. The entry_points columns consume this
+                    // PathString before returning from `load`.
+                    *path_string = unsafe { PathString::init(original_name) };
                 } else {
-                    *path_string = PathString::init(source.path.text);
+                    // SAFETY: `source.path.text` is `&'static [u8]`
+                    // (Source.path is `Path<'static>`).
+                    *path_string = unsafe { PathString::init(source.path.text) };
                 }
 
                 *source_index = source.index.0;
@@ -574,7 +581,9 @@ impl LinkerGraph {
 
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,
-                    output_path: PathString::init(source.path.text),
+                    // SAFETY: `source.path.text` is `&'static [u8]` (Source.path
+                    // is `Path<'static>`).
+                    output_path: unsafe { PathString::init(source.path.text) },
                     output_path_was_auto_generated: true,
                 });
             }

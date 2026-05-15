@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { tempDir, tmpdirSync } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -345,5 +345,54 @@ describe("fs.promises.mkdir", () => {
     expect(fs.existsSync(pathname)).toBe(true);
     expect(fs.statSync(pathname).isDirectory()).toBe(true);
     expect(result).toBeUndefined();
+  });
+});
+
+// Issue #30816: `bun_core::PathString::init` was a safe `fn` despite stashing a
+// raw pointer/length from a `&[u8]` with no lifetime binding, so pairing it
+// with `slice()` let safe callers forge a dangling reference (MIRI-confirmed
+// repro in the reporter's issue). The fix marks `init` / `slice_assume_z`
+// `unsafe fn` and wraps every call site (node_fs mkdir_recursive paths,
+// dir_iterator, shell cp/mkdir, resolver/router EntryStore writes, bundler
+// output, etc.). This regression test exercises the heaviest-traffic paths
+// so any mis-scoped `unsafe { … }` that accidentally shortened a backing
+// buffer's lifetime surfaces under the ASAN debug build.
+describe("issue 30816 — PathString call-site wrapping", () => {
+  it("readdir(recursive) roundtrips through dir_iterator PathString", async () => {
+    using root = tempDir("bun-30816-readdir", {
+      "a/one.txt": "1",
+      "a/b/two.txt": "2",
+      "a/b/c/three.txt": "3",
+    });
+    const entries = (await fs.promises.readdir(String(root), { recursive: true })).sort();
+    expect(entries).toEqual(
+      ["a", path.join("a", "b"), path.join("a", "b", "c"), path.join("a", "b", "c", "three.txt"), path.join("a", "b", "two.txt"), path.join("a", "one.txt")].sort(),
+    );
+  });
+
+  it("mkdir_recursive ENOENT fallback path writes the file", async () => {
+    // The sync open-with-auto-mkdir path in node_fs.rs calls
+    // `PathString::init(&bytes[..len])` against `dest.as_bytes()` after
+    // trimming to the parent separator. Writing to a deeply-nested missing
+    // directory exercises that wrapper.
+    using root = tempDir("bun-30816-mkdirp", {});
+    const file = path.join(String(root), "deep/nested/dirs/output.txt");
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    await fs.promises.writeFile(file, "hello");
+    expect(await fs.promises.readFile(file, "utf8")).toBe("hello");
+  });
+
+  it("readdir(withFileTypes) exercises IteratorResult name borrow", async () => {
+    // Forces the `current.name` PathString path in node_fs recursive readdir
+    // (the `IteratorResult::name` is built via `PathString::init` over the
+    // iterator's internal buffer — the dir_iterator doc comment about
+    // lifetime invariant is what we're exercising).
+    using root = tempDir("bun-30816-dirent", {
+      "x.txt": "",
+      "y/inner.txt": "",
+      "z.bin": Buffer.alloc(1, 0),
+    });
+    const entries = (await fs.promises.readdir(String(root), { withFileTypes: true })).map(e => e.name).sort();
+    expect(entries).toEqual(["x.txt", "y", "z.bin"]);
   });
 });

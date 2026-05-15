@@ -448,6 +448,11 @@ impl OutputFile {
                 }
 
                 let mut path_buf = PathBuffer::uninit();
+                // SAFETY: `rel_path` is either `&self.dest_path` (Box<[u8]>
+                // field) or a slice from `resolve_path::relative` backed by
+                // a thread-local buffer; both outlive this synchronous
+                // `write_file_with_path_buffer` call.
+                let file_ps = unsafe { PathString::init(rel_path) };
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     bun_sys::WriteFileArgs {
@@ -459,7 +464,7 @@ impl OutputFile {
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(PathString::init(rel_path)),
+                        file: bun_sys::PathOrFileDescriptor::Path(file_ps),
                     },
                 )?;
             }

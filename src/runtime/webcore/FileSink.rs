@@ -696,7 +696,13 @@ impl FileSink {
         let io_path = match &options.input_path {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
             PathOrFileDescriptor::Path(slice) => {
-                bun_io::PathOrFileDescriptor::Path(bun_core::PathString::init(slice.slice()))
+                // SAFETY: `slice` is a refcounted `zig_string::Slice` held by
+                // `options.input_path` in the caller's frame; its bytes live
+                // across the synchronous `open_for_writing` call below, and
+                // the resulting `PathString` is not retained past it.
+                bun_io::PathOrFileDescriptor::Path(unsafe {
+                    bun_core::PathString::init(slice.slice())
+                })
             }
         };
         let result = bun_io::open_for_writing(

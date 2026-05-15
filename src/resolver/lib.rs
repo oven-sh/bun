@@ -86,7 +86,7 @@ pub use __phase_a_body::{
     SideEffectsData,
 };
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
-pub use ::bun_install_types::resolver_hooks as install_types;
+pub use bun_install_types::resolver_hooks as install_types;
 
 /// Minimal real subset of `src/resolver/fs.zig` so `bun_resolver::fs::X` paths
 /// resolve for downstream crates during B-2. Full Phase-A draft remains in
@@ -1449,7 +1449,10 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink = PathString::init(FilenameStore::instance().append_slice(real)?);
+                    // SAFETY: `FilenameStore::append_slice` returns `&'static [u8]`
+                    // (process-lifetime BSSStringList singleton).
+                    cache.symlink =
+                        unsafe { PathString::init(FilenameStore::instance().append_slice(real)?) };
                 }
                 return Ok(cache);
             }
@@ -1510,8 +1513,10 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        PathString::init(FilenameStore::instance().append_slice(symlink)?);
+                    // SAFETY: `FilenameStore::append_slice` returns `&'static [u8]`.
+                    cache.symlink = unsafe {
+                        PathString::init(FilenameStore::instance().append_slice(symlink)?)
+                    };
                 }
 
                 Ok(cache)
@@ -2604,7 +2609,7 @@ pub mod cache {
     }
 }
 
-pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
+pub use bun_paths::{is_package_path, is_package_path_not_absolute};
 
 pub mod __phase_a_body {
     use super::{is_package_path, is_package_path_not_absolute};
@@ -2618,16 +2623,16 @@ pub mod __phase_a_body {
     //   • HardcodedModule alias table              — bun_resolve_builtins
     //   • StandaloneModuleGraph                    — trait below; impl in bun_standalone_graph
     //   • perf / crash_handler                     — real bun_perf / bun_crash_handler
-    use ::bun_install_types::resolver_hooks as Install;
-    use ::bun_install_types::resolver_hooks::{
+    use bun_install_types::resolver_hooks as Install;
+    use bun_install_types::resolver_hooks::{
         AutoInstaller, EnqueueResult, Features as InstallFeatures, PreinstallState, Resolution,
         TaskCallbackContext, WakeHandler,
     };
-    use ::bun_semver as Semver;
+    use bun_semver as Semver;
     // Re-exported so downstream (bun_bundler) can name the trait in
     // `Transpiler::get_package_manager`'s return type without a direct
     // `bun_install_types` dep (LAYERING: pass-through, no new edge).
-    pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
+    pub use bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 
     // LAYERING: `PackageManager.initWithRuntime` (Zig resolver.zig:540) lives in
     // `bun_install`, which depends on this crate. The lazy-init body is defined
@@ -2648,7 +2653,7 @@ pub mod __phase_a_body {
         ) -> NonNull<dyn AutoInstaller>;
     }
     use crate::cache::Set as CacheSet;
-    use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
+    use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
     /// Resolver's view of a compiled-standalone-binary module graph. The concrete
     /// `bun_standalone_graph::Graph` (which depends on `bun_bundler`) implements
@@ -2679,11 +2684,11 @@ pub mod __phase_a_body {
     /// `Dependency` namespace as the body spells it (Zig: `Dependency.Version` /
     /// `Dependency.Behavior`). Re-exports the canonical `bun_install_types` items.
     pub mod Dependency {
-        pub use ::bun_install_types::resolver_hooks::{
+        pub use bun_install_types::resolver_hooks::{
             Behavior, Dependency, DependencyVersion as Version, DependencyVersionTag,
         };
         pub mod version {
-            pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
+            pub use bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
         }
     }
 
@@ -2692,17 +2697,17 @@ pub mod __phase_a_body {
     /// re-exports of `bun_install_types` (no local stubs).
     pub(crate) mod __forward_decls {
         pub(crate) use crate::cache::{Entry as FsCacheEntry, Fs as FsCache, Set as CacheSet};
-        pub(crate) use ::bun_install_types::resolver_hooks as Install;
-        pub(crate) use ::bun_install_types::resolver_hooks::Resolution;
+        pub(crate) use bun_install_types::resolver_hooks as Install;
+        pub(crate) use bun_install_types::resolver_hooks::Resolution;
     }
     // bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
     // `dirname` (`Option`-returning, `std.fs.path.dirname` semantics) and
     // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
     // glob / explicit re-export below, no local re-implementation.
     mod bun_paths {
-        pub(super) use ::bun_paths::resolve_path::PosixToWinNormalizer;
-        pub(super) use ::bun_paths::resolve_path::is_sep_any;
-        pub(super) use ::bun_paths::*;
+        pub(super) use bun_paths::resolve_path::PosixToWinNormalizer;
+        pub(super) use bun_paths::resolve_path::is_sep_any;
+        pub(super) use bun_paths::*;
 
         /// Value-dispatch over `Platform` to the const-generic `PlatformT`
         /// monomorphizations in `resolve_path`. The resolver body threads
@@ -2710,7 +2715,7 @@ pub mod __phase_a_body {
         /// `comptime _platform: Platform` callsites that took a function param).
         macro_rules! dispatch_platform {
             ($p:expr, |$P:ident| $body:expr) => {{
-                use ::bun_paths::resolve_path::{self as rp, platform};
+                use bun_paths::resolve_path::{self as rp, platform};
                 match $p {
                     rp::Platform::Loose => {
                         type $P = platform::Loose;
@@ -2825,7 +2830,7 @@ pub mod __phase_a_body {
     // `open` / `open_dir_for_iteration` / `get_fd_path` / `OpenDirOptions` /
     // `iterate_dir` are now provided by the `pub use ::bun_sys::*` glob.
     mod bun_sys {
-        pub(super) use ::bun_sys::*;
+        pub(super) use bun_sys::*;
 
         /// Port of `std.fs.openDirAbsoluteZ` — `open(path, O_DIRECTORY|O_RDONLY|O_CLOEXEC[|O_NOFOLLOW])`.
         /// `opts.iterate` is a no-op on POSIX (Zig only used it to pick `iterate=true`
@@ -2862,7 +2867,7 @@ pub mod __phase_a_body {
         // `iterate_dir` / `dir_iterator::WrappedIterator` are real ports in
         // `::bun_sys::dir_iterator` (POSIX getdents / Windows NtQueryDirectoryFile)
         // and reach this module via the `pub use ::bun_sys::*` glob above.
-        pub(super) use ::bun_sys::RawFd;
+        pub(super) use bun_sys::RawFd;
     }
 
     /// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
@@ -3117,7 +3122,7 @@ pub mod __phase_a_body {
         // `bun_options_types::bundle_enums::ForceNodeEnv`. Re-exported so the
         // `options::ForceNodeEnv` / `bundle_options::ForceNodeEnv` paths and the
         // field on the local `BundleOptions` subset stay source-compatible.
-        pub use ::bun_options_types::ForceNodeEnv;
+        pub use bun_options_types::ForceNodeEnv;
 
         /// Port of `bundler/options.zig` `Framework` (Bake) — only the
         /// `built_in_modules` field, which is the sole resolver-read member.
@@ -3280,11 +3285,11 @@ pub mod __phase_a_body {
         pub const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;
     }
     use self::bun_paths as ResolvePath;
-    use ::bun_ast::import_record as ast;
-    use ::bun_core::Output;
-    use ::bun_core::{Environment, FeatureFlags, Generation};
     use bun_ast::Msg;
+    use bun_ast::import_record as ast;
     use bun_collections::{BoundedArray, MultiArrayList};
+    use bun_core::Output;
+    use bun_core::{Environment, FeatureFlags, Generation};
     use bun_core::{MutableString, PathString};
     use bun_dotenv::env_loader as DotEnv;
     use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
@@ -3301,7 +3306,7 @@ pub mod __phase_a_body {
     pub use crate::data_url::DataURL;
     pub use crate::dir_info as DirInfo;
     pub use crate::dir_info::DirInfoRef;
-    pub use ::bun_options_types::global_cache::GlobalCache;
+    pub use bun_options_types::global_cache::GlobalCache;
 
     // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
     // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
@@ -4865,7 +4870,7 @@ pub mod __phase_a_body {
                     // "import 'data:text/javascript,console.log(123)';"
                     // "@import 'data:text/css,body{background:white}';"
                     let mime = data_url.decode_mime_type();
-                    use ::bun_http_types::MimeType::Category;
+                    use bun_http_types::MimeType::Category;
                     if matches!(
                         mime.category,
                         Category::Javascript | Category::Css | Category::Json | Category::Text
@@ -5345,7 +5350,11 @@ pub mod __phase_a_body {
                                     bstr::BStr::new(path.text())
                                 ));
                             }
-                            query.entry().set_cache_symlink(PathString::init(symlink));
+                            // SAFETY: `symlink` = `FilenameStore::append_slice(...)?`
+                            // above — `&'static [u8]`.
+                            query
+                                .entry()
+                                .set_cache_symlink(unsafe { PathString::init(symlink) });
                             if !result.file_fd.is_valid() && store_fd {
                                 result.file_fd = query.entry().cache().fd;
                             }
@@ -7375,14 +7384,19 @@ pub mod __phase_a_body {
 
                     let absolute_out_path: &[u8] = {
                         if entry_query.entry().abs_path.is_empty() {
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                            // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *entry_query.entry }.abs_path = PathString::init(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(abs_esm_path)
-                                    .expect("unreachable"),
-                            );
+                            // SAFETY (entry): EntryStore-owned slot; resolver mutex
+                            // held. RHS fully evaluated before LHS `&mut Entry` is
+                            // materialized.
+                            // SAFETY (init): `DirnameStore::append_slice` returns
+                            // `&'static [u8]` — process-lifetime BSSStringList.
+                            unsafe { &mut *entry_query.entry }.abs_path = unsafe {
+                                PathString::init(
+                                    self.fs_ref()
+                                        .dirname_store
+                                        .append_slice(abs_esm_path)
+                                        .expect("unreachable"),
+                                )
+                            };
                         }
                         entry_query.entry().abs_path.slice()
                     };
@@ -8756,14 +8770,19 @@ pub mod __phase_a_body {
                             if lookup.entry().abs_path.is_empty() {
                                 let parts = [dir_info.abs_path, &base[..]];
                                 let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
-                                // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                                // evaluated before LHS `&mut Entry` is materialized.
-                                unsafe { &mut *lookup.entry }.abs_path = PathString::init(
-                                    self.fs_ref()
-                                        .dirname_store
-                                        .append_slice(out_buf_)
-                                        .expect("unreachable"),
-                                );
+                                // SAFETY (entry): EntryStore-owned slot; resolver
+                                // mutex held. RHS fully evaluated before LHS
+                                // `&mut Entry` is materialized.
+                                // SAFETY (init): `DirnameStore::append_slice`
+                                // returns `&'static [u8]`.
+                                unsafe { &mut *lookup.entry }.abs_path = unsafe {
+                                    PathString::init(
+                                        self.fs_ref()
+                                            .dirname_store
+                                            .append_slice(out_buf_)
+                                            .expect("unreachable"),
+                                    )
+                                };
                             }
                             lookup.entry().abs_path.slice()
                         };
@@ -9249,14 +9268,19 @@ pub mod __phase_a_body {
                             let abs_path_parts = [query.entry().dir, query.entry().base()];
                             let joined =
                                 self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                            // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *query.entry }.abs_path = PathString::init(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(joined)
-                                    .expect("unreachable"),
-                            );
+                            // SAFETY (entry): EntryStore-owned slot; resolver
+                            // mutex held. RHS fully evaluated before LHS
+                            // `&mut Entry` is materialized.
+                            // SAFETY (init): `DirnameStore::append_slice` returns
+                            // `&'static [u8]`.
+                            unsafe { &mut *query.entry }.abs_path = unsafe {
+                                PathString::init(
+                                    self.fs_ref()
+                                        .dirname_store
+                                        .append_slice(joined)
+                                        .expect("unreachable"),
+                                )
+                            };
                         }
                         crate::path_string_static(&query.entry().abs_path)
                     };
@@ -9361,22 +9385,30 @@ pub mod __phase_a_body {
                                                 && entry_dir[entry_dir.len() - 1] == SEP
                                             {
                                                 let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                                PathString::init(
-                                                    self.fs_ref()
-                                                        .filename_store
-                                                        .append_parts(&parts)
-                                                        .expect("unreachable"),
-                                                )
+                                                // SAFETY: `FilenameStore::append_parts`
+                                                // returns `&'static [u8]`.
+                                                unsafe {
+                                                    PathString::init(
+                                                        self.fs_ref()
+                                                            .filename_store
+                                                            .append_parts(&parts)
+                                                            .expect("unreachable"),
+                                                    )
+                                                }
                                                 // the trailing path CAN be missing here
                                             } else {
                                                 let parts: [&[u8]; 3] =
                                                     [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                                PathString::init(
-                                                    self.fs_ref()
-                                                        .filename_store
-                                                        .append_parts(&parts)
-                                                        .expect("unreachable"),
-                                                )
+                                                // SAFETY: `FilenameStore::append_parts`
+                                                // returns `&'static [u8]`.
+                                                unsafe {
+                                                    PathString::init(
+                                                        self.fs_ref()
+                                                            .filename_store
+                                                            .append_parts(&parts)
+                                                            .expect("unreachable"),
+                                                    )
+                                                }
                                             };
                                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
                                             // fully evaluated above — sole `&mut Entry` for this write.
@@ -9457,17 +9489,22 @@ pub mod __phase_a_body {
                     // now that we've found it, we allocate it.
                     return Some(LoadResult {
                         path: {
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
-                            // evaluated (shared reads) before the LHS `&mut Entry` is
-                            // materialized for the write — no overlapping unique borrow.
+                            // SAFETY (entry): EntryStore-owned slot; resolver mutex held.
+                            // RHS is fully evaluated (shared reads) before the LHS
+                            // `&mut Entry` is materialized for the write — no
+                            // overlapping unique borrow.
+                            // SAFETY (init): `DirnameStore::append_slice` returns
+                            // `&'static [u8]`.
                             unsafe { &mut *query.entry }.abs_path =
                                 if query.entry().abs_path.is_empty() {
-                                    PathString::init(
-                                        self.fs_ref()
-                                            .dirname_store
-                                            .append_slice(&buffer[..])
-                                            .expect("unreachable"),
-                                    )
+                                    unsafe {
+                                        PathString::init(
+                                            self.fs_ref()
+                                                .dirname_store
+                                                .append_slice(&buffer[..])
+                                                .expect("unreachable"),
+                                        )
+                                    }
                                 } else {
                                     query.entry().abs_path
                                 };
@@ -9746,7 +9783,11 @@ pub mod __phase_a_body {
                                     .ok();
                                     logs.add_note(buf);
                                 }
-                                lookup.entry().set_cache_symlink(PathString::init(symlink));
+                                // SAFETY: `symlink` = `dirname_store.append_slice(...)`
+                                // above — `&'static [u8]`.
+                                lookup
+                                    .entry()
+                                    .set_cache_symlink(unsafe { PathString::init(symlink) });
                                 info.abs_real_path = symlink;
                             }
                         }

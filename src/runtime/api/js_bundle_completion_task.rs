@@ -503,13 +503,17 @@ impl JSBundleCompletionTask {
                         // SAFETY: `Buffer` arm checked above.
                         _ => unsafe { core::hint::unreachable_unchecked() },
                     };
+                    // SAFETY: `write_path` borrows `&sourcemap_full_path`
+                    // (a local `Box<[u8]>`) or `map_basename` (a local
+                    // `Box<[u8]>`); both outlive the synchronous
+                    // `write_file_with_path_buffer` call below and the
+                    // PathString is not retained past it.
+                    let file_ps = unsafe { bun_core::PathString::init(write_path) };
                     let write_args = fs_args::WriteFile {
                         encoding: Encoding::Buffer,
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
-                        file: PathOrFileDescriptor::Path(PathLike::String(
-                            bun_core::PathString::init(write_path),
-                        )),
+                        file: PathOrFileDescriptor::Path(PathLike::String(file_ps)),
                         flush: false,
                         data: StringOrBuffer::EncodedSlice(
                             bun_core::zig_string::Slice::from_utf8_never_free(bytes),

@@ -322,8 +322,12 @@ impl ShellMkdirTask {
         };
 
         let mut node_fs = NodeFS::default();
+        // SAFETY: `filepath` is either a `ZStr` view over `this.filepath`
+        // (owned `Vec<u8>`) or a `join_z` result backed by the thread-local
+        // path buffer; both outlive `mkdir_recursive_impl` in this frame.
+        let path_ps = unsafe { bun_core::PathString::init(filepath.as_bytes()) };
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_core::PathString::init(filepath.as_bytes())),
+            path: PathLike::String(path_ps),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,

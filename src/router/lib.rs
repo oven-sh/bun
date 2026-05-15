@@ -1247,9 +1247,12 @@ impl Route {
                     .expect("unreachable");
 
                 // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
+                // SAFETY (entry): sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
+                // SAFETY (init): `abs_path_str` is `&'static [u8]` — DirnameStore
+                // is a process-lifetime BSSStringList singleton that never frees.
+                unsafe { &mut *entry }
+                    .set_abs_path(unsafe { bun_core::PathString::init(abs_path_str) });
             }
 
             #[cfg(windows)]
@@ -1265,10 +1268,13 @@ impl Route {
                     .dirname_store()
                     .append(normalized)
                     .expect("unreachable");
-                PathString::init(interned)
+                // SAFETY: `interned` is `&'static [u8]` from DirnameStore.
+                unsafe { PathString::init(interned) }
             };
+            // SAFETY: `abs_path_str` is `&'static [u8]` from DirnameStore
+            // (see `.append(_abs)` above).
             #[cfg(not(windows))]
-            let abs_path = PathString::init(abs_path_str);
+            let abs_path = unsafe { PathString::init(abs_path_str) };
 
             #[cfg(all(debug_assertions, windows))]
             {
@@ -1293,8 +1299,11 @@ impl Route {
             Some(Route {
                 name,
                 basename,
-                public_path: PathString::init(public_path),
-                match_name: PathString::init(match_name),
+                // SAFETY: `public_path` / `match_name` are `&'static [u8]`,
+                // interned via `DirnameStore::append*` earlier in this fn
+                // (see PORT NOTE above).
+                public_path: unsafe { PathString::init(public_path) },
+                match_name: unsafe { PathString::init(match_name) },
                 full_hash: if is_index {
                     index_route_hash()
                 } else {

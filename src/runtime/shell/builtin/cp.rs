@@ -710,13 +710,14 @@ impl ShellCpTask {
         self.src_absolute = Some(src.as_bytes().to_vec());
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
+        // SAFETY: `self.src_absolute` / `self.tgt_absolute` are `Option<Vec<u8>>`
+        // fields just set above on `&mut self`; the `Cp` args are consumed
+        // by the synchronous cp dispatch below and do not outlive `self`.
+        let src_ps = unsafe { bun_core::PathString::init(self.src_absolute.as_deref().unwrap()) };
+        let dest_ps = unsafe { bun_core::PathString::init(self.tgt_absolute.as_deref().unwrap()) };
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_core::PathString::init(
-                self.src_absolute.as_deref().unwrap(),
-            )),
-            dest: bun_jsc::node::PathLike::String(bun_core::PathString::init(
-                self.tgt_absolute.as_deref().unwrap(),
-            )),
+            src: bun_jsc::node::PathLike::String(src_ps),
+            dest: bun_jsc::node::PathLike::String(dest_ps),
             flags: crate::node::fs::args::CpFlags {
                 mode: crate::node::fs::constants::Copyfile::from_raw(0),
                 recursive: self.opts.recursive,

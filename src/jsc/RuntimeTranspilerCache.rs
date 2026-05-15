@@ -802,28 +802,50 @@ impl RuntimeTranspilerCache {
         let mut cache_file_path_buf = PathBuffer::uninit();
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         debug_assert!(!cache_file_path.is_empty());
-        Self::from_file_with_cache_file_path(
-            PathString::init(cache_file_path.as_bytes()),
-            input_hash,
-            feature_hash,
-            input_stat_size,
-        )
+        // SAFETY: `cache_file_path` is a `ZStr` borrowing the local
+        // `cache_file_path_buf` on the current stack; it outlives the
+        // synchronous `from_file_with_cache_file_path` call and is
+        // NUL-terminated (ZStr invariant).
+        let cache_path_ps = unsafe { PathString::init(cache_file_path.as_bytes()) };
+        // SAFETY: `cache_path_ps` was built from a `ZStr` — its backing
+        // buffer has a NUL at `[len]`.
+        unsafe {
+            Self::from_file_with_cache_file_path(
+                cache_path_ps,
+                input_hash,
+                feature_hash,
+                input_stat_size,
+            )
+        }
     }
 
-    pub fn from_file_with_cache_file_path(
+    /// # Safety
+    /// `cache_file_path` must have been constructed from a NUL-terminated
+    /// buffer (see `PathString::slice_assume_z`). All in-tree callers go
+    /// through `get_cache_file_path`, which returns a `ZStr`.
+    pub unsafe fn from_file_with_cache_file_path(
         cache_file_path: PathString,
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
     ) -> Result<Entry, bun_core::Error> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
-        let cache_fd = sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
+        // SAFETY: caller contract — `cache_file_path` is NUL-terminated and
+        // its backing bytes outlive this call.
+        let cache_fd = sys::open(
+            unsafe { cache_file_path.slice_assume_z() },
+            sys::O::RDONLY,
+            0,
+        )?;
         // Zig: `defer cache_fd.close()` — close on all exit paths.
         let _close_guard = sys::CloseOnDrop::new(cache_fd);
         // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
         // cache file. Disarmed via `into_inner` on the success path below.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
-            let _ = sys::unlink(p.slice_assume_z());
+            // SAFETY: `p` is the same PathString handed in — NUL-terminated
+            // per the function contract; its buffer still lives because
+            // callers hold it on the stack across this call.
+            let _ = sys::unlink(unsafe { p.slice_assume_z() });
         });
 
         let file = sys::File::from_fd(cache_fd);
@@ -930,9 +952,13 @@ impl RuntimeTranspilerCache {
             }
         });
 
+        // SAFETY: `cache_file_path` is a `ZStr` borrowing the local
+        // `cache_file_path_buf` stack buffer; it outlives the synchronous
+        // `Entry::save` call below.
+        let cache_path_ps = unsafe { PathString::init(cache_file_path.as_bytes()) };
         Entry::save(
             cache_dir_fd,
-            PathString::init(cache_file_path.as_bytes()),
+            cache_path_ps,
             input_byte_length,
             input_hash,
             features_hash,

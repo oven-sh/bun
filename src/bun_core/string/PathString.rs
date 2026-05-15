@@ -82,6 +82,12 @@ impl PathString {
         self.len()
     }
 
+    /// View the packed pointer+length as a byte slice.
+    ///
+    /// Safe to call: the soundness invariant is upheld by [`PathString::init`]
+    /// (now `unsafe fn`) and [`init_owned`], which between them enforce that
+    /// the backing bytes outlive every `PathString` copy. A `PathString` with
+    /// a null pointer (`Self::EMPTY`) yields an empty slice.
     #[inline]
     pub fn slice(&self) -> &[u8] {
         // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
@@ -91,26 +97,57 @@ impl PathString {
             // Rust forbids slice::from_raw_parts(null, 0); return a valid empty slice.
             return &[];
         }
-        // SAFETY: PathString::init was given a live &[u8] of this len; caller
-        // guarantees the borrowed memory outlives this PathString.
+        // SAFETY: the constructor (`init` / `init_owned`) has guaranteed that
+        // `ptr..ptr+len` points to a live allocation that outlives `self`.
         unsafe { core::slice::from_raw_parts(ptr as *const u8, self.len()) }
     }
 
+    /// View the packed pointer+length as a NUL-terminated byte slice.
+    ///
+    /// # Safety
+    /// The backing buffer must contain a NUL byte at `[len]`. Callers that
+    /// constructed the `PathString` via [`PathString::init`] must have passed
+    /// a NUL-terminated slice (the `&[u8]` excludes the NUL but the NUL must
+    /// be at the byte following it). Callers that constructed via
+    /// [`init_owned`] must have included the NUL in the `Vec<u8>`.
     #[inline]
-    pub fn slice_assume_z(&self) -> &ZStr {
+    pub unsafe fn slice_assume_z(&self) -> &ZStr {
         // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
         // fine here. if it is null, the len will be 0.
         let ptr = self.ptr();
         if ptr == 0 {
             return ZStr::EMPTY;
         }
-        // SAFETY: caller asserts the backing buffer has a NUL at [len].
+        // SAFETY: caller asserts the backing buffer has a NUL at [len], and
+        // (via `init`'s safety contract) that the bytes outlive `self`.
         unsafe { ZStr::from_raw(ptr as *const u8, self.len()) }
     }
 
-    /// Create a PathString from a borrowed slice. No allocation occurs.
+    /// Pack the pointer and length of a borrowed slice into the `PathString`
+    /// backing integer. No allocation; no copy.
+    ///
+    /// # Safety
+    /// The bytes of `str` MUST outlive every subsequent use of the returned
+    /// `PathString` (or any `Copy` of it) via [`slice`] / [`slice_assume_z`].
+    /// `PathString` is `#[repr(transparent)]` over an integer and carries no
+    /// lifetime — the type system cannot enforce this, so the caller must.
+    ///
+    /// Typical sound uses:
+    /// - `str` is `&'static` (string literal, `Box::leak`, a process-lifetime
+    ///   intern like `FilenameStore` / `DirnameStore`, embedded-executable data);
+    /// - `str` borrows a buffer that is guaranteed to live until the
+    ///   `PathString` is dropped / consumed (e.g. the same stack frame, a
+    ///   container field that owns the bytes, a caller-maintained buffer
+    ///   passed across a task boundary).
+    ///
+    /// If the `PathString` needs to own its bytes (because no such buffer
+    /// exists), use [`init_owned`] instead.
+    ///
+    /// [`slice`]: Self::slice
+    /// [`slice_assume_z`]: Self::slice_assume_z
+    /// [`init_owned`]: Self::init_owned
     #[inline]
-    pub fn init(str: &[u8]) -> Self {
+    pub unsafe fn init(str: &[u8]) -> Self {
         // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
         // fine here. if it is null, the len will be 0.
         let ptr = (str.as_ptr() as usize as PathStringBackingInt) & Self::PTR_MASK; // @truncate
@@ -137,9 +174,11 @@ impl PathString {
         // ownership-transfer-to-raw API; the matching `heap::take` lives
         // in `deinit_owned`.
         let raw: *mut [u8] = crate::heap::into_raw(bytes.into_boxed_slice());
-        // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
-        // ptr+len into the backing int.
-        Self::init(unsafe { &*raw })
+        // SAFETY: `raw` is a fresh `Box<[u8]>` allocation given to us by
+        // `heap::into_raw`; its bytes outlive this call (ownership was
+        // transferred to the raw pointer, and the matching `deinit_owned`
+        // releases them). Reborrow only to pack ptr+len into the backing int.
+        unsafe { Self::init(&*raw) }
     }
 
     /// Free a heap allocation previously adopted by [`init_owned`]. No-op for
@@ -196,5 +235,13 @@ const _: () = {
         );
     }
 };
+
+// Issue #30816: `init` / `slice_assume_z` are now `unsafe fn` so the
+// lifetime / NUL-termination contract lives on the API boundary instead of
+// ~50 scattered call-site notes. Rust silently coerces safe `fn` to
+// `unsafe fn`, so a positive `const _: unsafe fn(..) = PathString::init`
+// binding would NOT catch a regression. The call-site `unsafe { .. }`
+// wrappers are the guardrail; reviewers should reject any PR that drops
+// the `unsafe` keyword from either fn's signature.
 
 // ported from: src/string/PathString.zig

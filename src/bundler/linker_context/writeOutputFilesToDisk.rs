@@ -376,9 +376,15 @@ pub fn write_output_files_to_disk(
                                     0o644
                                 },
                                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(PathString::init(
-                                    &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
-                                )),
+                                // SAFETY: `fdpath` is a stack buffer in the
+                                // enclosing frame; the PathString is
+                                // consumed synchronously by
+                                // `write_file_with_path_buffer` below.
+                                file: PathOrFileDescriptor::Path(unsafe {
+                                    PathString::init(
+                                        &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
+                                    )
+                                }),
                             },
                         ) {
                             Ok(_) => {}
@@ -449,7 +455,12 @@ pub fn write_output_files_to_disk(
                     0o644
                 },
                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                file: PathOrFileDescriptor::Path(PathString::init(&chunk.final_rel_path)),
+                // SAFETY: `chunk.final_rel_path` is a `Box<[u8]>` field on
+                // Chunk, which outlives this synchronous
+                // `write_file_with_path_buffer` call.
+                file: PathOrFileDescriptor::Path(unsafe {
+                    PathString::init(&chunk.final_rel_path)
+                }),
             },
         ) {
             Err(e) => {

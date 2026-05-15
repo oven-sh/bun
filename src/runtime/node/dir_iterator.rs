@@ -35,6 +35,14 @@ impl From<IteratorError> for bun_core::Error {
     }
 }
 
+/// Streaming-iterator result.
+///
+/// # Lifetime invariant
+/// `name` is a borrowed `PathString` that aliases the parent iterator's
+/// internal buffer (getdents/readdir scratch on POSIX, `name_data` on
+/// Windows/WASI). It is **valid only until the next `.next()` call on the
+/// parent iterator**, which overwrites the buffer. Callers that need to
+/// keep the name must copy `name.slice()` before advancing the iterator.
 pub struct IteratorResult {
     pub name: PathString,
     pub kind: EntryKind,
@@ -221,8 +229,11 @@ mod platform {
                     14 /* DT_WHT */ => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
+                // SAFETY: `name` borrows `self.buf` (dirent scratch);
+                // the returned `IteratorResult` is only valid until the
+                // next `next()` call per the type's lifetime invariant.
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -321,8 +332,11 @@ mod platform {
                     14 /* DT_WHT */ => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
+                // SAFETY: `name` borrows `self.buf` (dirent scratch); valid
+                // only until the next `next()` call per `IteratorResult`'s
+                // lifetime invariant.
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -427,8 +441,11 @@ mod platform {
                     // the type when needed (lazy stat pattern for performance).
                     _ => EntryKind::Unknown,
                 };
+                // SAFETY: `name` borrows `self.buf` (dirent scratch); valid
+                // only until the next `next()` call per `IteratorResult`'s
+                // lifetime invariant.
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -490,8 +507,11 @@ mod platform {
         ) -> IteratorResult {
             // Trust that Windows gives us valid UTF-16LE
             let name_utf8 = strings::paths::from_w_path(&mut name_data[..], dir_info_name);
+            // SAFETY: `name_utf8` borrows `name_data`, the iterator's
+            // per-entry scratch buffer. Valid only until the next `next()`
+            // call per `IteratorResult`'s lifetime invariant.
             IteratorResult {
-                name: PathString::init(name_utf8.as_bytes()),
+                name: unsafe { PathString::init(name_utf8.as_bytes()) },
                 kind,
             }
         }
@@ -843,8 +863,11 @@ mod platform {
                     }
                     _ => EntryKind::Unknown,
                 };
+                // SAFETY: `name` borrows `self.buf` (getdents scratch); valid
+                // only until the next `next()` call per `IteratorResult`'s
+                // lifetime invariant.
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }

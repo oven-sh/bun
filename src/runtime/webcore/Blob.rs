@@ -4212,8 +4212,12 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
         // Zig: `std.fs.path.dirname(path_string)` → `bun_core::dirname` (Option-returning).
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
+            // SAFETY: `dirname` reborrows `path_string: &ZStr` (caller-owned);
+            // the `PathString` is consumed synchronously by `mkdir_recursive`
+            // and not retained past this scope.
+            let dirname_ps = unsafe { bun_core::PathString::init(dirname) };
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_core::PathString::init(dirname)),
+                path: node::PathLike::String(dirname_ps),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4346,11 +4350,14 @@ fn write_file_with_empty_source_to_destination(
                                         break 'err;
                                     }
                                 };
+                                // SAFETY: `dirpath` reborrows bytes owned by
+                                // `file.pathlike` on the caller's stack; the
+                                // `PathString` is consumed synchronously by
+                                // `mkdir_recursive` and does not escape.
+                                let dirpath_ps = unsafe { bun_core::PathString::init(dirpath) };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: node::PathLike::String(bun_core::PathString::init(
-                                            dirpath,
-                                        )),
+                                        path: node::PathLike::String(dirpath_ps),
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()

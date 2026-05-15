@@ -22,7 +22,7 @@
 | P3-sys | bun_sys (332 sites) + cfg-gated | 6 | 3 | 16 | [plan](audit/plans/PASS3-bun-sys-and-cfg-gated.md) |
 | P3-cross | refcount races / Drop order / dyn Trait / async | 1 confirmed T1 (`StoreSlice<T>`) | 8 | 12 | [plan](audit/plans/PASS3-cross-cutting-races-drops-async.md) |
 | P3-reach | Reachability + test coverage | (index, not bugs) | (index) | (index) | [synthesis](audit/synthesis/PASS3-reachability-and-test-coverage.md) |
-| **Pass-3 total** | | Raw agent total: **39 T1 + 4 P0 + 3 P1 + 2 P2**; corrected dashboard total is **37 current T1** across all passes after Codex demotions | **32+ T2** | **58+ T3** | |
+| **Pass-3 total** | | Raw agent total: **39 T1 + 4 P0 + 3 P1 + 2 P2**; Pass-3 corrected snapshot is **~37 strict/near-strict memory-safety T1** after Codex demotions | **32+ T2** | **58+ T3** | |
 
 ## The 4 Pass-3 supply-chain P0 findings (highest priority)
 

@@ -293,6 +293,56 @@ test.concurrent(
   },
 );
 
+test.concurrent(
+  "createHook fires events for require('node:timers').setTimeout regardless of module-load order",
+  async () => {
+    // `node:timers` snapshots the global timer functions into its default
+    // export at evaluation time. A dependency `require()`ing the module
+    // BEFORE the user enables hooks would otherwise leave those exports
+    // pointing at the unwrapped natives. `installTimerHooks` writes its
+    // wrappers back into the module's exports to close this gap.
+    const { stdout, stderr, exitCode } = await runScript(`
+    // Load node:timers FIRST so it snapshots the natives before .enable().
+    const timers = require('node:timers');
+    const async_hooks = require('async_hooks');
+    const events = [];
+    async_hooks.createHook({
+      init: (id, type) => events.push(['init', id, type]),
+      before: (id) => events.push(['before', id]),
+      after: (id) => events.push(['after', id]),
+      destroy: (id) => events.push(['destroy', id]),
+    }).enable();
+
+    // Call via the module export — must still emit lifecycle events.
+    timers.setTimeout(() => { events.push(['timers-cb']); }, 10);
+
+    // Give the timer room to fire, then print.
+    setTimeout(() => {
+      setImmediate(() => setImmediate(() => {
+        console.log(JSON.stringify(events));
+      }));
+    }, 40);
+  `);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout.trim());
+    // The module-export call must fire init.
+    const timersCbIdx = parsed.findIndex(e => e[0] === "timers-cb");
+    expect(timersCbIdx).toBeGreaterThanOrEqual(0);
+    // Walk backwards from the callback invocation: the nearest prior
+    // 'before' is the before for the timers.setTimeout timer. If the
+    // wrapper was bypassed, timers-cb would sit outside any before/after.
+    const beforeTimersIdx = findLastIndex(parsed.slice(0, timersCbIdx), e => e[0] === "before");
+    expect(beforeTimersIdx).toBeGreaterThanOrEqual(0);
+    const timerAsyncId = parsed[beforeTimersIdx][1];
+    // And the matching after must be just past the callback.
+    const afterIdx = parsed.findIndex(
+      (e, i) => i > timersCbIdx && e[0] === "after" && e[1] === timerAsyncId,
+    );
+    expect(afterIdx).toBeGreaterThan(timersCbIdx);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("createHook: references captured before .enable() bypass the hook layer", async () => {
   // Known limitation, documented in `installTimerHooks`: wrapping is
   // installed on `globalThis` lazily on the first `.enable()`. A caller

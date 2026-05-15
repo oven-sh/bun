@@ -396,8 +396,12 @@ const kTimerKind = Symbol("bun.asyncHooksTimerKind");
 
 // Tracks the current `executionAsyncId()` while inside a before/after pair so
 // observers can correlate resources. Trigger IDs fall back to the outer scope
-// at `init()` time.
-let currentExecutionAsyncId = 1;
+// at `init()` time. Default is 0 (matching `AsyncResource.prototype.asyncId()`
+// which is currently a stub that also returns 0) — Node uses 1 for the root
+// context but `AsyncResource.asyncId() === executionAsyncId()` is a real
+// invariant (see `test-async-hooks-recursive-stack-runInAsyncScope.js`), so
+// we keep both sides at 0 at the root until `AsyncResource` is wired up.
+let currentExecutionAsyncId = 0;
 let currentTriggerAsyncId = 0;
 
 // A pending-destroy queue flushed on nextTick — matches Node's batching so
@@ -581,6 +585,31 @@ function installTimerHooks() {
   g.clearTimeout = wrapClearTimer(origClearTimeout, "Timeout");
   g.clearInterval = wrapClearTimer(origClearInterval, "Timeout");
   g.clearImmediate = wrapClearTimer(origClearImmediate, "Immediate");
+
+  // `node:timers` snapshots the global timer functions into its default
+  // export at evaluation time. If a dependency `require()`d the module
+  // before `createHook(...).enable()` — common in the wild since plenty of
+  // packages import `timers` at top-level — its exports still point at the
+  // unwrapped natives and would bypass hook emission. Overwrite them in
+  // place so `require('node:timers').setTimeout(...)` fires hooks regardless
+  // of load order. `require()` here reuses the cached module if present
+  // and populates it with wrapped globals if it hasn't been loaded yet.
+  try {
+    const timersMod = require("node:timers");
+    timersMod.setTimeout = g.setTimeout;
+    timersMod.setInterval = g.setInterval;
+    timersMod.setImmediate = g.setImmediate;
+    timersMod.clearTimeout = g.clearTimeout;
+    timersMod.clearInterval = g.clearInterval;
+    timersMod.clearImmediate = g.clearImmediate;
+  } catch {
+    // Safety net: if requiring `node:timers` during `installTimerHooks()`
+    // fails (e.g. initialization ordering corner cases), we still have the
+    // globalThis patches — direct `setTimeout(…)` calls continue to work.
+    // `node:timers/promises` is not patched here; its module-level `const`
+    // captures of `globalThis.setImmediate`/etc. at load time are a known
+    // limitation (see warning text).
+  }
 }
 
 function createHook(hook) {

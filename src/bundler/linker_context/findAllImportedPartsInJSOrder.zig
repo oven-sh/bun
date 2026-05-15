@@ -56,6 +56,7 @@ pub fn findImportedPartsInJSOrder(
         c: *LinkerContext,
         entry_point: Chunk.EntryPoint,
         chunk_index: u32,
+        part_entry_bits: [][]AutoBitSet,
 
         fn appendOrExtendRange(
             ranges: *std.array_list.Managed(PartRange),
@@ -75,6 +76,17 @@ pub fn findImportedPartsInJSOrder(
                 .part_index_begin = part_index,
                 .part_index_end = part_index + 1,
             }) catch unreachable;
+        }
+
+        /// Check if a part is live for this chunk's entry points. When we have
+        /// per-entry-point part liveness tracking, we check if the part is live
+        /// for any of the entry points in this chunk. Otherwise, fall back to
+        /// the global is_live flag.
+        fn isPartLiveForChunk(v: *const @This(), source_index: Index.Int, part_index: u32, part: Part) bool {
+            if (!part.is_live) return false;
+            if (v.part_entry_bits.len == 0) return true;
+            // Check if this part is live for any entry point that belongs to this chunk
+            return v.entry_bits.hasIntersection(&v.part_entry_bits[source_index][part_index]);
         }
 
         // Traverse the graph using this stable order and linearize the files with
@@ -100,7 +112,7 @@ pub fn findImportedPartsInJSOrder(
             const can_be_split = v.flags[source_index].wrap == .none;
 
             const parts = v.parts[source_index].slice();
-            if (can_be_split and is_file_in_chunk and parts[js_ast.namespace_export_part_index].is_live) {
+            if (can_be_split and is_file_in_chunk and v.isPartLiveForChunk(source_index, js_ast.namespace_export_part_index, parts[js_ast.namespace_export_part_index])) {
                 appendOrExtendRange(&v.part_ranges, source_index, js_ast.namespace_export_part_index);
             }
 
@@ -108,7 +120,7 @@ pub fn findImportedPartsInJSOrder(
 
             for (parts, 0..) |part, part_index_| {
                 const part_index = @as(u32, @truncate(part_index_));
-                const is_part_in_this_chunk = is_file_in_chunk and part.is_live;
+                const is_part_in_this_chunk = is_file_in_chunk and v.isPartLiveForChunk(source_index, part_index, part);
                 for (part.import_record_indices.slice()) |record_id| {
                     const record: *const ImportRecord = &records[record_id];
                     if (record.source_index.isValid() and (record.kind == .stmt or is_part_in_this_chunk)) {
@@ -175,6 +187,7 @@ pub fn findImportedPartsInJSOrder(
         .c = this,
         .entry_point = chunk.entry_point,
         .chunk_index = chunk_index,
+        .part_entry_bits = this.graph.part_entry_bits,
     };
     defer {
         part_ranges_shared.* = visitor.part_ranges;

@@ -16,7 +16,7 @@ channel = "nightly-2026-05-06"
 # comes with the toolchain install regardless; they're listed here so a dev
 # running `bun run rust:check-all` or `cargo check --target` from any host
 # still gets prebuilt std for every Tier 1/2 triple.
-components = ["rust-src", "rustfmt", "miri", "clippy", "rustfmt"]
+components = ["rust-src", "rustfmt", "miri", "clippy"]
 targets = [
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-gnu",

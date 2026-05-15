@@ -1292,7 +1292,7 @@ impl<'a> Repl<'a> {
             // PORT NOTE: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle
-            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            unsafe { vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise)) };
 
             // If execution was forbidden by SIGINT, clear it and report
             if vm.jsc_vm().execution_forbidden() {
@@ -1343,7 +1343,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm_mut(vm).tick();
+                        unsafe { vm_mut(vm).tick() };
                         return;
                     }
                 };
@@ -1452,7 +1452,7 @@ impl<'a> Repl<'a> {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
-            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            unsafe { vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise)) };
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {
@@ -1489,8 +1489,8 @@ impl<'a> Repl<'a> {
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
         vm_mut(vm).tick();
         while vm.is_event_loop_alive() {
-            vm_mut(vm).tick();
-            vm_mut(vm).auto_tick_active();
+            unsafe { vm_mut(vm).tick() };
+            unsafe { vm_mut(vm).auto_tick_active() };
         }
 
         if print_result {
@@ -1546,7 +1546,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm_mut(vm).tick();
+            unsafe { vm_mut(vm).tick() };
         }
     }
 
@@ -1591,7 +1591,7 @@ impl<'a> Repl<'a> {
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
             // PORT NOTE: reshaped for borrowck — disable_signals_during_wait called on each path
-            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            unsafe { vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise)) };
             if vm.jsc_vm().execution_forbidden() {
                 vm_set_execution_forbidden(vm.jsc_vm, false);
                 global.clear_termination_exception();
@@ -1628,7 +1628,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm_mut(vm).tick();
+                        unsafe { vm_mut(vm).tick() };
                         return;
                     }
                 };
@@ -1803,11 +1803,13 @@ impl<'a> Repl<'a> {
         // is `&VirtualMachine` in this port, so go through `vm_mut` (see its
         // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
-            vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
-                &mut vm_mut(vm).transpiler,
-            ));
+            unsafe {
+                vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
+                    &mut vm_mut(vm).transpiler,
+                ));
+            }
         }
-        opts.macro_context = vm_mut(vm).transpiler.macro_context.as_mut();
+        opts.macro_context = unsafe { vm_mut(vm).transpiler.macro_context.as_mut() };
 
         // Create log for errors
         let mut log = bun_ast::Log::init();

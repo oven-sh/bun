@@ -90,63 +90,68 @@ describeSkipOnWindows("spawn({ stdio: [..., childB.stdin, ...] }) pipes A's stdo
   expect(filterExit).toBe(0);
 });
 
-describeSkipOnWindows("spawn({ stdio: [otherProc.stdout, ...] }) pipes A's stdout into B's stdin (reverse direction)", async () => {
-  // Flip the direction: pSource owns the pipe (its stdout is piped), and
-  // pFilter is spawned with pSource.stdout as its stdin. Node supports both
-  // shapes; before the fix Bun raised the same unsupported-stream-stdio
-  // error here too.
-  using pSource = spawn(bunExe(), ["-e", 'process.stdout.write("hello world")'], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: bunEnv,
-  });
-  const sourceStderr = collect(pSource.stderr!);
-  // `markStreamsAsStdio` unregisters the FilePoll on `pSource.stdout`, so
-  // without the close-accounting fix in `#handleOnExit` this `'close'`
-  // promise never resolves even after `pSource` exits — guard that path.
-  const sourceClose = new Promise<void>(r => pSource.once("close", () => r()));
+describeSkipOnWindows(
+  "spawn({ stdio: [otherProc.stdout, ...] }) pipes A's stdout into B's stdin (reverse direction)",
+  async () => {
+    // Flip the direction: pSource owns the pipe (its stdout is piped), and
+    // pFilter is spawned with pSource.stdout as its stdin. Node supports both
+    // shapes; before the fix Bun raised the same unsupported-stream-stdio
+    // error here too.
+    using pSource = spawn(bunExe(), ["-e", 'process.stdout.write("hello world")'], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const sourceStderr = collect(pSource.stderr!);
+    // `markStreamsAsStdio` unregisters the FilePoll on `pSource.stdout`, so
+    // without the close-accounting fix in `#handleOnExit` this `'close'`
+    // promise never resolves even after `pSource` exits — guard that path.
+    const sourceClose = new Promise<void>(r => pSource.once("close", () => r()));
 
-  using pFilter = spawn(bunExe(), ["-e", UPPER], {
-    stdio: [pSource.stdout!, "pipe", "pipe"],
-    env: bunEnv,
-  });
-  const filterStdout = collect(pFilter.stdout!);
-  const filterStderr = collect(pFilter.stderr!);
+    using pFilter = spawn(bunExe(), ["-e", UPPER], {
+      stdio: [pSource.stdout!, "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const filterStdout = collect(pFilter.stdout!);
+    const filterStderr = collect(pFilter.stderr!);
 
-  const [out, filterErr, sourceErr, sourceExit, filterExit] = await Promise.all([
-    filterStdout,
-    filterStderr,
-    sourceStderr,
-    new Promise<number | null>(r => {
-      if (pSource.exitCode != null) return r(pSource.exitCode);
-      pSource.once("exit", code => r(code));
-    }),
-    new Promise<number | null>(r => {
-      if (pFilter.exitCode != null) return r(pFilter.exitCode);
-      pFilter.once("exit", code => r(code));
-    }),
-  ]);
-  // `'close'` should also fire — otherwise libraries like `execa` that
-  // await close (not exit) hang indefinitely.
-  await Promise.race([
-    sourceClose,
-    new Promise<void>((_, reject) => setTimeout(() => reject(new Error("pSource 'close' never fired")), 5000)),
-  ]);
-  expect(filterErr).toBe("");
-  expect(sourceErr).toBe("");
-  expect(out).toBe("HELLO WORLD");
-  expect(sourceExit).toBe(0);
-  expect(filterExit).toBe(0);
-});
+    const [out, filterErr, sourceErr, sourceExit, filterExit] = await Promise.all([
+      filterStdout,
+      filterStderr,
+      sourceStderr,
+      new Promise<number | null>(r => {
+        if (pSource.exitCode != null) return r(pSource.exitCode);
+        pSource.once("exit", code => r(code));
+      }),
+      new Promise<number | null>(r => {
+        if (pFilter.exitCode != null) return r(pFilter.exitCode);
+        pFilter.once("exit", code => r(code));
+      }),
+    ]);
+    // `'close'` should also fire — otherwise libraries like `execa` that
+    // await close (not exit) hang indefinitely.
+    await Promise.race([
+      sourceClose,
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("pSource 'close' never fired")), 5000)),
+    ]);
+    expect(filterErr).toBe("");
+    expect(sourceErr).toBe("");
+    expect(out).toBe("HELLO WORLD");
+    expect(sourceExit).toBe(0);
+    expect(filterExit).toBe(0);
+  },
+);
 
-describeSkipOnWindows("spawn({ stdio: [..., process.stdout, process.stderr] }) forwards via the stream→fd path", async () => {
-  // `process.stdout.fd === 1` / `process.stderr.fd === 2` are set by
-  // `getStdioWriteStream`. These have always been numeric-fd objects in
-  // Bun, so they were already accepted by `nodeToBun`'s `.fd` lookup — but
-  // this PR routes them through the new `extractStreamFd` + `streamsToQuiesce`
-  // path too, and a later refactor could accidentally drop them. A
-  // sub-bun runner actually performs the passthrough spawn and prints
-  // whether it succeeded to *its* stdout, which the outer test captures.
-  const RUNNER = `
+describeSkipOnWindows(
+  "spawn({ stdio: [..., process.stdout, process.stderr] }) forwards via the stream→fd path",
+  async () => {
+    // `process.stdout.fd === 1` / `process.stderr.fd === 2` are set by
+    // `getStdioWriteStream`. These have always been numeric-fd objects in
+    // Bun, so they were already accepted by `nodeToBun`'s `.fd` lookup — but
+    // this PR routes them through the new `extractStreamFd` + `streamsToQuiesce`
+    // path too, and a later refactor could accidentally drop them. A
+    // sub-bun runner actually performs the passthrough spawn and prints
+    // whether it succeeded to *its* stdout, which the outer test captures.
+    const RUNNER = `
     const { spawn } = require("child_process");
     const child = spawn(${JSON.stringify(bunExe())}, ["-e", 'process.stderr.write("from-grandchild")'], {
       stdio: ["ignore", process.stdout, process.stderr],
@@ -154,24 +159,25 @@ describeSkipOnWindows("spawn({ stdio: [..., process.stdout, process.stderr] }) f
     child.on("error", err => { process.stderr.write("SPAWN-ERROR:" + err.message); process.exit(2); });
     child.on("exit", code => process.exit(code));
   `;
-  using runner = spawn(bunExe(), ["-e", RUNNER], {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: bunEnv,
-  });
-  const [stdout, stderr, code] = await Promise.all([
-    collect(runner.stdout!),
-    collect(runner.stderr!),
-    new Promise<number | null>(r => {
-      if (runner.exitCode != null) return r(runner.exitCode);
-      runner.once("exit", c => r(c));
-    }),
-  ]);
-  // Grandchild writes "from-grandchild" to its stderr (which is the
-  // runner's process.stderr, which is this test's runner.stderr).
-  expect(stdout).toBe("");
-  expect(stderr).toBe("from-grandchild");
-  expect(code).toBe(0);
-});
+    using runner = spawn(bunExe(), ["-e", RUNNER], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      collect(runner.stdout!),
+      collect(runner.stderr!),
+      new Promise<number | null>(r => {
+        if (runner.exitCode != null) return r(runner.exitCode);
+        runner.once("exit", c => r(c));
+      }),
+    ]);
+    // Grandchild writes "from-grandchild" to its stderr (which is the
+    // runner's process.stderr, which is this test's runner.stderr).
+    expect(stdout).toBe("");
+    expect(stderr).toBe("from-grandchild");
+    expect(code).toBe(0);
+  },
+);
 
 describeSkipOnWindows("spawn failure (ENOENT) does not leave a passed-in source stream stuck", async () => {
   // The quiesce step (setFlowing(false) + pause) MUST NOT run before

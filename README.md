@@ -313,7 +313,7 @@ bun upgrade --canary
   - [Install a package under a different name](https://bun.com/guides/install/npm-alias)
   - [Install dependencies with Bun in GitHub Actions](https://bun.com/guides/install/cicd)
   - [Using bun install with Artifactory](https://bun.com/guides/install/jfrog-artifactory)
-  - [Configure git to diff Bun's lockb lockfile](https://bun.com/guides/install/git-diff-bun-lockfile)
+  - [Configure git to diff Bun's `lockb` lockfile](https://bun.com/guides/install/git-diff-bun-lockfile)
   - [Override the default npm registry for bun install](https://bun.com/guides/install/custom-registry)
   - [Using bun install with an Azure Artifacts npm registry](https://bun.com/guides/install/azure-artifacts)
   - [Migrate from npm install to bun install](https://bun.com/guides/install/from-npm-install-to-bun-install)

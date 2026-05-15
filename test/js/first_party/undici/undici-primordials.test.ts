@@ -57,6 +57,7 @@ it("undici", () => {
     "RetryHandler",
     "WebSocket",
     "buildConnector",
+    "cacheStores",
     "caches",
     "connect",
     "createRedirectInterceptor",

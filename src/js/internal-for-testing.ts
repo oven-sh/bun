@@ -174,7 +174,11 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
   1,
 );
 
-export const createSocketPair: () => [number, number] = $newZigFunction("runtime/socket/socket.zig", "jsCreateSocketPair", 0);
+export const createSocketPair: () => [number, number] = $newZigFunction(
+  "runtime/socket/socket.zig",
+  "jsCreateSocketPair",
+  0,
+);
 
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
@@ -230,7 +234,11 @@ interface setSocketOptionsFn {
   (socket: Bun.Socket, recvBuffer: 2, size: number): void;
 }
 
-export const setSocketOptions: setSocketOptionsFn = $newZigFunction("runtime/socket/socket.zig", "jsSetSocketOptions", 3);
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction(
+  "runtime/socket/socket.zig",
+  "jsSetSocketOptions",
+  3,
+);
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,
@@ -267,6 +275,14 @@ export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $new
   "TestingAPIs.sysErrorNameFromLibuv",
   1,
 );
+
+export const sigactionLayout: () =>
+  | undefined
+  | {
+      installed: { handler: number; flags: number };
+      readback: { handler: number; flags: number };
+      sizeof: number;
+    } = $newZigFunction("sys.zig", "TestingAPIs.sigactionLayout", 0);
 
 export const stringsInternals = {
   /**

@@ -2776,6 +2776,30 @@ if (isDockerEnabled()) {
       10000,
     );
 
+    // Regression: src/sql_jsc/postgres/PostgresSQLQuery.zig:234 `push()` appends each
+    // DataRow JSValue into the codegen-backed `pending_value` cached array. The Rust port
+    // stubbed push() as a no-op under the mistaken belief that `pending_value` is not a
+    // field (it is — generated from `values: ["pendingValue", ...]` in sql.classes.ts).
+    // This test asserts the Zig spec: every streamed row must land in the result array,
+    // in order, with no rows dropped — for both objects mode and .values() mode.
+    test("multi-row results accumulate every row in pending_value (push contract)", async () => {
+      await using sql = postgres(options);
+
+      // objects mode (default): each DataRow → { n: i } pushed into pending_value
+      const rows = await sql`select generate_series(1, 500) as n`;
+      expect(rows.length).toBe(500);
+      for (let i = 0; i < 500; i++) {
+        expect(rows[i].n).toBe(i + 1);
+      }
+
+      // .values() mode: result_mode = .values, rows are arrays-of-columns
+      const vals = await sql`select generate_series(1, 500) as n`.values();
+      expect(vals.length).toBe(500);
+      for (let i = 0; i < 500; i++) {
+        expect(vals[i][0]).toBe(i + 1);
+      }
+    });
+
     // t('Debug', async() => {
     //   let result
     //   const sql = postgres({

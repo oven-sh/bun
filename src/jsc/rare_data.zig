@@ -936,7 +936,7 @@ pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEv
 const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http_jsc/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
-const EditorContext = @import("../cli/open.zig").EditorContext;
+const EditorContext = @import("../runtime/cli/open.zig").EditorContext;
 const FSWatcher = @import("../runtime/node/node_fs_watcher.zig").FSWatcher;
 const ValkeyContext = @import("../runtime/valkey_jsc/valkey.zig").ValkeyContext;
 

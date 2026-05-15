@@ -233,6 +233,150 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60000);
 
+// Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
+// Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)
+// the jsc.Strong handle on the fetch() promise before calling resolve()/reject().
+// A port that reads-without-consuming (e.g. value_or_empty()) and forgets to
+// clear the slot would leave one protected Promise root per fetch() call alive
+// for the lifetime of the VM. This asserts the swap() consume semantics by
+// checking protectedObjectTypeCounts.Promise returns to baseline after both
+// the resolve and reject Holder paths have run.
+test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet Holder.swap)", async () => {
+  const script = /* js */ `
+    import { heapStats } from "bun:jsc";
+    import { createServer } from "node:net";
+
+    const protectedPromises = () => {
+      Bun.gc(true);
+      return heapStats().protectedObjectTypeCounts.Promise ?? 0;
+    };
+
+    // resolve path: real HTTP server (FetchTasklet.zig:601 — Holder.resolve)
+    using ok = Bun.serve({ port: 0, fetch: () => new Response("hi") });
+
+    // reject path: TCP server that hangs up before sending headers, so
+    // result.isSuccess() == false → Holder.reject (FetchTasklet.zig:614)
+    const bad = createServer(sock => sock.destroy()).listen(0, "127.0.0.1");
+    await new Promise(r => bad.once("listening", r));
+    const badURL = "http://127.0.0.1:" + bad.address().port + "/";
+
+    // warm up both paths so any one-time lazily-protected promises are counted
+    // in the baseline rather than the delta
+    for (let i = 0; i < 4; i++) {
+      await fetch(ok.url).then(r => r.text());
+      await fetch(badURL).then(() => { throw new Error("expected reject"); }, () => {});
+    }
+    await new Promise(r => setImmediate(r));
+    const baseline = protectedPromises();
+
+    const N = 64;
+    for (let i = 0; i < N; i++) {
+      await fetch(ok.url).then(r => r.text());
+      await fetch(badURL).then(() => { throw new Error("expected reject"); }, () => {});
+    }
+    // let any enqueued AnyTask Holder callbacks finish before measuring
+    await new Promise(r => setImmediate(r));
+    const after = protectedPromises();
+
+    bad.close();
+
+    console.log(JSON.stringify({ baseline, after, delta: after - baseline }));
+    // Zig swap() releases the root; after settling, no fetch promise should
+    // remain protected. Allow tiny slack for unrelated event-loop promises.
+    if (after - baseline > 4) {
+      throw new Error(
+        "fetch() promise Strong leaked: protected Promise count grew by " +
+          (after - baseline) + " over " + (N * 2) + " fetches (baseline=" + baseline + ", after=" + after + ")",
+      );
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(stdout.trim());
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30000);
+
+// Regression: src/collections/hive_array.zig:65-76 (HiveArray.put) + src/bun.zig HiveRef.unref.
+// Zig's HiveRef.unref() calls `value.deinit()` BEFORE `pool.put()`, and `put()` itself runs
+// no destructor (just `value.* = undefined`). So Body.Value.deinit() — which derefs the
+// intrusive WTFStringImpl +1, frees InternalBlob bytes, and decrements the Blob.Store ref —
+// is the only thing standing between a finalized Request and a leak of its pooled body.
+// A port that maps "deinit then put" to "put runs Drop glue" leaks any Body.Value variant
+// whose cleanup is a manual deinit() rather than a Drop impl (WTFStringImpl is a Copy raw
+// pointer; Blob holds a manually-refcounted Store).
+// Body.Value.HiveAllocator pool_size is 256, so cycle 512 Requests to cover both the
+// in-hive slot path and the fallback-allocator path.
+describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not leak)", () => {
+  for (const kind of ["String"] as const) {
+    // TODO(zig-rust-divergence): Rust port skips Body.Value.deinit() on pool
+    // return; see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
+    test.todo(
+      kind,
+      async () => {
+        const script = `
+        const payload = Buffer.alloc(128 * 1024, 0x61); // 128 KiB of 'a'
+        const str = payload.toString("latin1");
+        const sharedBlob = new Blob([payload]);
+
+        function makeBody() {
+          ${
+            // unique → fresh WTFStringImpl each time
+            kind === "String" ? `return str + Math.random();` : `return sharedBlob;`
+          }
+        }
+
+        function cycle() {
+          const live = [];
+          for (let i = 0; i < 512; i++) {
+            live.push(new Request("http://x/", { method: "POST", body: makeBody() }));
+          }
+          // Drop all references; finalize() -> body.unref() -> (Zig spec) value.deinit() -> pool.put()
+          live.length = 0;
+          Bun.gc(true);
+        }
+
+        for (let i = 0; i < 8; i++) cycle();
+        Bun.gc(true);
+        const baseline = process.memoryUsage.rss();
+
+        for (let i = 0; i < 32; i++) cycle();
+        Bun.gc(true);
+        const final = process.memoryUsage.rss();
+
+        const deltaMB = (final - baseline) / 1024 / 1024;
+        console.log(JSON.stringify({ kind: "${kind}", baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
+        // 32 cycles * 512 Requests * 128 KiB = 2 GiB through the pool. If deinit() is
+        // skipped for any heap-backed variant, RSS climbs by ~2 GiB; with the
+        // Zig semantics it stays flat. 64 MiB is well above GC/allocator noise.
+        if (deltaMB > 64) {
+          throw new Error("Request body (${kind}) leaked " + Math.round(deltaMB) + " MB over 32 cycles of 512 Requests");
+        }
+      `;
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--smol", "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        console.log(stdout.trim());
+        if (exitCode !== 0) console.error(stderr);
+        expect(stderr).not.toContain("leaked");
+        expect(exitCode).toBe(0);
+      },
+      60000,
+    );
+  }
+});
+
 test("should not leak using readable stream", async () => {
   const buffer = Buffer.alloc(1024 * 128, "b");
   using server = Bun.serve({
@@ -252,4 +396,62 @@ test("should not leak using readable stream", async () => {
   const [exited, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
   expect(stdout + stderr).toContain("done");
   expect(exited).toBe(0);
+});
+
+// Regression: POSTing a ReadableStream body whose underlying source's `pull`
+// awaits a timer makes the request-body ResumableSink pause on backpressure
+// (the chunk arrives after the sink went paused). If the server responds
+// without reading the body, the HTTP layer never drains/resumes the sink, so
+// `ondrain` never fires and the JS `drainReaderIntoSink` continuation (which
+// captures the reader/stream graph) plus the FetchTasklet's startRequestStream
+// ref used to leak forever — one ReadableStream/Controller/Reader per fetch.
+test("should not leak request-body ReadableStream when server ignores the body", async () => {
+  const script = `
+    const { heapStats } = require("bun:jsc");
+    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const url = "http://localhost:" + server.port;
+
+    function makeBody() {
+      return new ReadableStream({
+        async pull(c) {
+          await Bun.sleep(5);
+          c.enqueue(new Uint8Array(8));
+          c.close();
+        },
+      });
+    }
+    function readableStreamCount() {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.ReadableStream || 0;
+    }
+
+    for (let i = 0; i < 5; i++) await fetch(url, { method: "POST", body: makeBody() });
+    await Bun.sleep(20);
+    const baseline = readableStreamCount();
+
+    for (let i = 0; i < 25; i++) await fetch(url, { method: "POST", body: makeBody() });
+    await Bun.sleep(50);
+    const after = readableStreamCount();
+
+    server.stop(true);
+    console.log(JSON.stringify({ baseline, after }));
+    // Each leaked fetch retains a ReadableStream; 25 leaked fetches would put
+    // \`after\` ~25 above \`baseline\`. A small slack absorbs in-flight transients.
+    if (after > baseline + 3) {
+      console.error("LEAK: ReadableStream count grew from " + baseline + " to " + after);
+      process.exit(1);
+    }
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).toContain('"after"');
+  expect(stderr).not.toContain("LEAK");
+  expect(exitCode).toBe(0);
 });

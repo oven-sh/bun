@@ -828,7 +828,19 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
         return 1;
       }
       if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        return force_fast_shutdown ? 1 : 0;
+        /* The close_notify could not be flushed (BIO write failed: kernel
+         * buffer full or peer already gone). There is no retry path —
+         * SSL_SENT_SHUTDOWN is already set, so on_writable/on_data
+         * short-circuit through is_shut_down and never re-dispatch the
+         * alert. Returning 0 here would keep s->ssl (and BoringSSL's
+         * write_buffer holding the encoded alert) alive until the next
+         * socket event, which may never arrive — observed as an LSan
+         * leak in node-https-checkServerIdentity.test.ts when the child
+         * exits right after server.close(). The deferred-close contract
+         * documented in us_internal_ssl_close only applies to the
+         * SSL_shutdown()==0 case where the alert *was* flushed; here it
+         * never went out, so close now. */
+        return 1;
       }
       s->ssl_fatal_error = 1;
       return 1;
@@ -1127,6 +1139,16 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
 
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
+
+  /* Fast-path connect attaches SSL eagerly on a SEMI_SOCKET (see
+   * us_socket_group_connect_resolved_dns); on_open hasn't fired yet so
+   * SNI/ALPN aren't on the SSL. SSL_write here would serialize the
+   * ClientHello without them. Report 0 so the caller buffers; on_open →
+   * ssl_update_handshake drains it. Mirrors the SEMI_SOCKET guard in
+   * us_internal_ssl_close above. */
+  if ((us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    return 0;
+  }
 
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 

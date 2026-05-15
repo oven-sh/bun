@@ -15,7 +15,7 @@ import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
+import { getJS2NativeCPP, getJS2NativeRust, getJS2NativeZig } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
@@ -483,6 +483,9 @@ writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCP
 // zig will complain if this file is outside of the module
 const js2nativeZigPath = path.join(import.meta.dir, "../jsc/bindings/GeneratedJS2Native.zig");
 writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
+
+// Rust sibling: include!()'d by src/runtime/generated_js2native.rs
+writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
 
 const generatedDTSPath = path.join(CODEGEN_DIR, "generated.d.ts");
 writeIfNotChanged(

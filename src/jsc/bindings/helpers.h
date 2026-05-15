@@ -284,6 +284,17 @@ static ZigString toZigString(WTF::StringImpl& str)
               str.length() };
 }
 
+// Overload for `StringImpl*` so callers like `toZigString(string.impl())` resolve here
+// instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
+// with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
+static ZigString toZigString(const WTF::StringImpl* str)
+{
+    return (!str || str->isEmpty())
+        ? ZigStringEmpty
+        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+              str->length() };
+}
+
 static ZigString toZigString(WTF::StringView& str)
 {
     return str.isEmpty()
@@ -372,10 +383,12 @@ static const WTF::String toStringStatic(ZigString str)
         return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
     }
 
+    // Rust `&'static str` / `&'static [u8]` literals are NOT null-terminated,
+    // so the previous `ASCIILiteral::fromLiteralUnsafe` path (which `strlen`s
+    // and asserts a trailing NUL) over-reads. Intern via a length-bounded span
+    // instead — same atom-table caching, no NUL dependency.
     auto* untagged = untag(str.ptr);
-    ASSERT(untagged[str.len] == 0);
-    ASCIILiteral ascii = ASCIILiteral::fromLiteralUnsafe(reinterpret_cast<const char*>(untagged));
-    return WTF::String(ascii);
+    return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)

@@ -741,14 +741,30 @@ _RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma13fma_wi
 
 # ----------------------------------------------------------------------------
 # Rust memchr AVX2 (via lolhtml deps). Gate: is_x86_feature_detected!.
-# (6 symbols)
+# (11 symbols)
 # ----------------------------------------------------------------------------
 _RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB2_3One13find_raw_avx2       [AVX, AVX2]
+_RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB2_3One14rfind_raw_avx2      [AVX, AVX2]
 _RNvMs2_NtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB5_3Two13find_raw_avx2    [AVX, AVX2]
 _RNvMs6_NtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB5_5Three13find_raw_avx2  [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw9find_avx2               [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw9find_avx2              [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw9find_avx2              [AVX, AVX2]
+_RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memrchr_raw9find_avx2              [AVX, AVX2]
+# packedpair::Finder — only constructed when Finder::with_pair() sees avx2 in
+# is_x86_feature_detected!(); the *_impl fns are #[target_feature(enable="avx2")]
+# and only reached via that constructed Finder.
+_RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx210packedpairNtB2_6Finder14with_pair_impl       [AVX, AVX2]
+_RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx210packedpairNtB2_6Finder9find_impl             [AVX, AVX2]
+_RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx210packedpairNtB2_6Finder19find_prefilter_impl  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Rust blake2b_simd AVX2 (via rust-argon2). Gate: is_x86_feature_detected!("avx2")
+# in blake2b_simd::Platform::detect().
+# (1 symbol)
+# ----------------------------------------------------------------------------
+_RNvNt<rust-hash>12blake2b_simd4avx214compress1_loop  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------

@@ -1008,8 +1008,7 @@ pub fn populate_linked_names_cache(this: &mut PackageManager) {
         // dirs. `open_dir_for_iteration` below will reject non-dirs as
         // EACCES/ENOTDIR and we'll just skip them.
         if name[0] == b'@'
-            && (entry.kind == sys::EntryKind::Directory
-                || entry.kind == sys::EntryKind::Unknown)
+            && (entry.kind == sys::EntryKind::Directory || entry.kind == sys::EntryKind::Unknown)
         {
             #[cfg(windows)]
             {
@@ -1044,11 +1043,7 @@ pub fn populate_linked_names_cache(this: &mut PackageManager) {
                     // with `bun add -g`, which drops real directories
                     // under the same path. A real directory there means
                     // a global install, not a link.
-                    if !is_linked_entry(
-                        scope_entry.kind,
-                        scope_fd,
-                        scope_entry.name.as_zstr(),
-                    ) {
+                    if !is_linked_entry(scope_entry.kind, scope_fd, scope_entry.name.as_zstr()) {
                         continue;
                     }
                     let mut full: Vec<u8> = Vec::with_capacity(name.len() + 1 + sub_name.len());

@@ -2032,7 +2032,10 @@ pub fn init(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
-        wr!(linked_names, bun_collections::StringHashMap::<()>::default());
+        wr!(
+            linked_names,
+            bun_collections::StringHashMap::<()>::default()
+        );
         wr!(linked_names_populated, false);
         wr!(linked_names_any_on_windows, false);
         wr!(on_wake, WakeHandler::default());
@@ -2478,7 +2481,10 @@ pub(crate) fn init_with_runtime_once(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
-        wr!(linked_names, bun_collections::StringHashMap::<()>::default());
+        wr!(
+            linked_names,
+            bun_collections::StringHashMap::<()>::default()
+        );
         wr!(linked_names_populated, false);
         wr!(linked_names_any_on_windows, false);
         wr!(on_wake, WakeHandler::default());

@@ -1065,7 +1065,10 @@ impl Task {
                             // symlink-only contract isn't available, so without this the
                             // `.bun/<storepath>` body stays pinned to the (stale) tarball
                             // cache while the top-level symlink points at the producer.
-                            if InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed)) != InstallMethod::Symlink {
+                            if InstallMethod::from_u8(
+                                installer.supported_backend.load(Ordering::Relaxed),
+                            ) != InstallMethod::Symlink
+                            {
                                 let mut linked_buf = PathBuffer::uninit();
                                 let producer_path_opt = {
                                     // SAFETY: matches how `manager_ref.get()` /
@@ -1092,9 +1095,8 @@ impl Task {
                                     // SAFETY: `linked_buf` is on this stack frame and lives
                                     // until the end of this arm; the pointer is valid for
                                     // the remainder of the Step::LinkPackage match arm.
-                                    let producer_path: &[u8] = unsafe {
-                                        core::slice::from_raw_parts(ptr, len)
-                                    };
+                                    let producer_path: &[u8] =
+                                        unsafe { core::slice::from_raw_parts(ptr, len) };
 
                                     let folder_dir = match bun_sys::open_dir_for_iteration(
                                         Fd::cwd(),

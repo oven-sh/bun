@@ -195,24 +195,30 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
     /// On error, this returns null.
     /// Returning null signals to the parent function that the connection failed.
+    ///
+    /// The signature is safe: `websocket` is an opaque back-reference
+    /// stored in a field (no deref happens in this function), and the
+    /// remaining FFI pointers have been lifted to `&[BunString]` slices by
+    /// the extern-C shim below. The focused `unsafe {}` blocks inside the
+    /// body cover the genuinely unsafe operations (reads through the live
+    /// VM pointer, pre-connect `&mut *client` derivations, `Self::deref`
+    /// on the error paths, raw `SSL_CTX*` creation).
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn connect(
+    pub fn connect(
         global: &JSGlobalObject,
         websocket: *mut CppWebSocket,
         host: &BunString,
         port: u16,
         pathname: &BunString,
         client_protocol: &BunString,
-        header_names: *const BunString,
-        header_values: *const BunString,
-        header_count: usize,
+        header_names: &[BunString],
+        header_values: &[BunString],
         // Proxy parameters
         proxy_host: Option<&BunString>,
         proxy_port: u16,
         proxy_authorization: Option<&BunString>,
-        proxy_header_names: *const BunString,
-        proxy_header_values: *const BunString,
-        proxy_header_count: usize,
+        proxy_header_names: &[BunString],
+        proxy_header_values: &[BunString],
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: Option<Box<SSLConfig>>,
         // Whether the target URL is wss:// (separate from ssl template parameter)
@@ -241,8 +247,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Headers8Bit::init only returns AllocError; handle OOM as a crash per
         // the OOM contract instead of masking it as a connection failure.
-        // SAFETY: header_names/header_values point to header_count live BunStrings per extern-C contract.
-        let extra_headers = unsafe { Headers8Bit::init(header_names, header_values, header_count) };
+        let extra_headers = Headers8Bit::init(header_names, header_values);
 
         let proxy_host_slice: Option<Utf8Slice> = proxy_host.map(|ph| ph.to_utf8());
         let target_authorization_slice: Option<Utf8Slice> =
@@ -290,12 +295,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // Parse proxy headers (temporary, freed after building CONNECT request)
             // Headers8Bit::init / to_headers only return AllocError; OOM should
             // crash, not silently become a connection failure.
-            // SAFETY: proxy_header_names/values point to proxy_header_count live BunStrings per extern-C contract.
-            let proxy_extra_headers = unsafe {
-                Headers8Bit::init(proxy_header_names, proxy_header_values, proxy_header_count)
-            };
+            let proxy_extra_headers = Headers8Bit::init(proxy_header_names, proxy_header_values);
 
-            let proxy_hdrs: Option<Headers> = if proxy_header_count > 0 {
+            let proxy_hdrs: Option<Headers> = if !proxy_header_names.is_empty() {
                 Some(proxy_extra_headers.to_headers())
             } else {
                 None
@@ -1802,24 +1804,24 @@ struct Headers8Bit<'a> {
 }
 
 impl<'a> Headers8Bit<'a> {
-    /// # Safety
-    /// `names_ptr` and `values_ptr` must each be null or point to `len` valid
-    /// `BunString`s alive for `'a`.
-    unsafe fn init(names_ptr: *const BunString, values_ptr: *const BunString, len: usize) -> Self {
+    /// Decode parallel name/value `BunString` slices into interleaved UTF-8
+    /// slices. Both inputs must have the same length; callers that reach
+    /// this from the C ABI should convert their `(ptr, len)` pairs with
+    /// `bun_core::ffi::slice` inside an `unsafe {}` block before calling.
+    fn init(names: &'a [BunString], values: &'a [BunString]) -> Self {
+        debug_assert_eq!(names.len(), values.len());
+        let len = names.len();
         if len == 0 {
             return Self {
                 slices: Vec::new(),
                 _marker: core::marker::PhantomData,
             };
         }
-        // SAFETY: per fn contract.
-        let names_in = unsafe { bun_core::ffi::slice(names_ptr, len) };
-        let values_in = unsafe { bun_core::ffi::slice(values_ptr, len) };
 
         let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);
         for i in 0..len {
-            slices.push(names_in[i].to_utf8());
-            slices.push(values_in[i].to_utf8());
+            slices.push(names[i].to_utf8());
+            slices.push(values[i].to_utf8());
         }
 
         Self {
@@ -2168,32 +2170,40 @@ macro_rules! export_http_client {
             ) -> *mut HTTPClient<$ssl> {
                 // SAFETY: extern-C contract — caller (WebCore::WebSocket C++)
                 // guarantees `header_names`/`header_values` point to
-                // `header_count` live `BunString`s (and likewise for the proxy
-                // header arrays), and that `websocket` is a live back-ref.
-                match unsafe {
-                    HTTPClient::<$ssl>::connect(
-                        global,
-                        websocket,
-                        host,
-                        port,
-                        pathname,
-                        client_protocol,
-                        header_names,
-                        header_values,
-                        header_count,
-                        proxy_host,
-                        proxy_port,
-                        proxy_authorization,
-                        proxy_header_names,
-                        proxy_header_values,
-                        proxy_header_count,
-                        ssl_config,
-                        target_is_secure,
-                        target_authorization,
-                        unix_socket_path,
-                        offer_permessage_deflate,
-                    )
-                } {
+                // `header_count` live `BunString`s (and likewise for the
+                // proxy header arrays). Lift the `(ptr, len)` pairs to
+                // `&[BunString]` here so the inner `connect` can stay
+                // safe. `ffi::slice` tolerates `(null, 0)`.
+                let header_names = unsafe { bun_core::ffi::slice(header_names, header_count) };
+                let header_values = unsafe { bun_core::ffi::slice(header_values, header_count) };
+                let proxy_header_names = unsafe {
+                    bun_core::ffi::slice(proxy_header_names, proxy_header_count)
+                };
+                let proxy_header_values = unsafe {
+                    bun_core::ffi::slice(proxy_header_values, proxy_header_count)
+                };
+                // `websocket` is an opaque back-reference; `connect` only
+                // stores it on the client and never derefs it here.
+                match HTTPClient::<$ssl>::connect(
+                    global,
+                    websocket,
+                    host,
+                    port,
+                    pathname,
+                    client_protocol,
+                    header_names,
+                    header_values,
+                    proxy_host,
+                    proxy_port,
+                    proxy_authorization,
+                    proxy_header_names,
+                    proxy_header_values,
+                    ssl_config,
+                    target_is_secure,
+                    target_authorization,
+                    unix_socket_path,
+                    offer_permessage_deflate,
+                ) {
                     Some(p) => p,
                     None => ptr::null_mut(),
                 }

@@ -487,6 +487,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = {
   open(socket) {
     $debug("Bun.Socket open");
+    if (socket.data === undefined) return;
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
     $debug("self[kupgraded]", String(self[kupgraded]));
@@ -509,6 +510,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
   data(socket, buffer) {
     $debug("Bun.Socket data");
+    if (socket.data === undefined) return;
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
@@ -516,6 +518,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
   drain(socket) {
     $debug("Bun.Socket drain");
+    if (socket.data === undefined) return;
     const { self } = socket.data;
     const callback = self[kwriteCallback];
     self.connecting = false;
@@ -533,6 +536,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
   end(socket) {
     $debug("Bun.Socket end");
+    if (socket.data === undefined) return;
     const { self } = socket.data;
     if (self[kended]) return;
     self[kended] = true;
@@ -542,6 +546,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
   close(socket, err) {
     $debug("Bun.Socket close");
+    if (socket.data === undefined) return;
     let { self } = socket.data;
     if (err) $debug(err);
     if (self[kclosed]) return;
@@ -554,6 +559,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
+    if (socket.data === undefined) return;
     const { self } = socket.data;
     if (!success && verifyError?.code === "ECONNRESET") {
       // will be handled in onConnectEnd
@@ -608,11 +614,13 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
   timeout(socket) {
     $debug("Bun.Socket timeout");
+    if (socket.data === undefined) return;
     const { self } = socket.data;
     self.emit("timeout", self);
   },
   connectError(socket, error) {
     $debug("Bun.Socket connectError");
+    if (socket.data === undefined) return;
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
     req!.oncomplete(error.errno, self._handle, req, true, true);

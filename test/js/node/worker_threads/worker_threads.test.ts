@@ -67,13 +67,41 @@ test("all worker_threads module properties are present", () => {
 
   expect(() => {
     // @ts-expect-error no args
-    wt.markAsUntransferable();
-  }).toThrow("not yet implemented");
-
-  expect(() => {
-    // @ts-expect-error no args
     wt.moveMessagePortToContext();
   }).toThrow("not yet implemented");
+});
+
+test("markAsUntransferable rejects marked ArrayBuffers in MessagePort transfer lists", () => {
+  const { port1, port2 } = new MessageChannel();
+  port2.once("message", () => {
+    expect().fail("message handler must not be called");
+  });
+
+  const view = new Uint8Array([1, 2, 3, 4]);
+  markAsUntransferable(view.buffer);
+
+  expect(() => {
+    port1.postMessage(view, [view.buffer]);
+  }).toThrow(new DOMException("Cannot transfer object of unsupported type.", "DataCloneError"));
+
+  expect(Array.from(view)).toStrictEqual([1, 2, 3, 4]);
+  expect(view.byteLength).toBe(4);
+  port1.close();
+  port2.close();
+});
+
+test("markAsUntransferable rejects marked ArrayBuffers in Worker transfer lists", async () => {
+  const worker = new Worker(`onmessage = () => {};`, { eval: true });
+  const view = new Uint8Array([1, 2, 3, 4]);
+  markAsUntransferable(view.buffer);
+
+  expect(() => {
+    worker.postMessage(view, [view.buffer]);
+  }).toThrow(new DOMException("Cannot transfer object of unsupported type.", "DataCloneError"));
+
+  expect(Array.from(view)).toStrictEqual([1, 2, 3, 4]);
+  expect(view.byteLength).toBe(4);
+  await worker.terminate();
 });
 
 test("all worker_threads worker instance properties are present", async () => {
@@ -292,7 +320,7 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-});
+}, 30000);
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {

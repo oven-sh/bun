@@ -447,7 +447,7 @@ if (process.env.NODE_TEST_KNOWN_GLOBALS !== '0') {
 const mustCallChecks = [];
 
 function runCallChecks(exitCode) {
-  if (exitCode !== 0) return;
+  if (exitCode !== 200) return;
 
   const failed = mustCallChecks.filter(function(context) {
     if ('minimum' in context) {
@@ -467,6 +467,7 @@ function runCallChecks(exitCode) {
   });
 
   if (failed.length) process.exit(1);
+  process.exit(0);
 }
 
 function mustCall(fn, exact) {
@@ -506,6 +507,7 @@ function _mustCallInner(fn, criteria = 1, field) {
   };
 
   // Add the exit listener only once to avoid listener leak warnings
+  process.exitCode = 200
   if (mustCallChecks.length === 0) process.on('exit', runCallChecks);
 
   mustCallChecks.push(context);

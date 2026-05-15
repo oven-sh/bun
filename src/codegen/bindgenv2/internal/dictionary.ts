@@ -43,7 +43,10 @@ interface DictionaryOptions {
   generateConversionFunction?: boolean;
 }
 
-export function dictionary(nameOrOptions: string | DictionaryOptions, members: DictionaryMembers): DictionaryType {
+export function dictionary(
+  nameOrOptions: string | DictionaryOptions,
+  members: DictionaryMembers,
+): DictionaryType {
   let name: string;
   let userFacingName: string;
   let generateConversionFunction = false;
@@ -56,7 +59,9 @@ export function dictionary(nameOrOptions: string | DictionaryOptions, members: D
     generateConversionFunction = !!nameOrOptions.generateConversionFunction;
   }
   validateName(name);
-  const fullMembers = Object.entries(members).map(([name, value]) => new FullDictionaryMember(name, value));
+  const fullMembers = Object.entries(members).map(
+    ([name, value]) => new FullDictionaryMember(name, value),
+  );
 
   return new (class extends DictionaryType {
     get name() {
@@ -280,7 +285,11 @@ class FullDictionaryMember {
   }
 }
 
-function memberConversion(userFacingDictName: string, memberInfo: FullDictionaryMember, memberIndex: number): string {
+function memberConversion(
+  userFacingDictName: string,
+  memberInfo: FullDictionaryMember,
+  memberIndex: number,
+): string {
   const i = memberIndex;
   const internalName = memberInfo.internalName;
   const idlType = memberInfo.type.idlType;

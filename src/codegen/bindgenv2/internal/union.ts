@@ -1,5 +1,14 @@
 import assert from "node:assert";
-import { CodeStyle, dedent, headersForTypes, joinIndented, NamedType, reindent, Type, validateName } from "./base";
+import {
+  CodeStyle,
+  dedent,
+  headersForTypes,
+  joinIndented,
+  NamedType,
+  reindent,
+  Type,
+  validateName,
+} from "./base";
 
 export interface NamedAlternatives {
   readonly [name: string]: Type;

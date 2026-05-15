@@ -44,10 +44,10 @@ static inline JSC::EncodedJSValue createRustFunction(JSGlobalObject* globalObjec
     return result;
 }
 
-#define DEFINE_PATH_FUNCTION(jsFunctionName, Function, isWindows)               \
-    JSC_DEFINE_HOST_FUNCTION(jsFunctionName,                                    \
-        (JSC::JSGlobalObject * globalObject, JSC::CallFrame * callFrame))       \
-    {                                                                           \
+#define DEFINE_PATH_FUNCTION(jsFunctionName, Function, isWindows)                \
+    JSC_DEFINE_HOST_FUNCTION(jsFunctionName,                                     \
+        (JSC::JSGlobalObject * globalObject, JSC::CallFrame * callFrame))        \
+    {                                                                            \
         return createRustFunction<isWindows, Function>(globalObject, callFrame); \
     }
 

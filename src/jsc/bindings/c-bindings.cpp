@@ -291,9 +291,90 @@ extern "C" void windows_enable_stdio_inheritance()
 #define __NR_close_range 436
 #endif
 
-// close_range is glibc > 2.33, which is very new
+#include <setjmp.h>
+#include <atomic>
+#include <mutex>
+
+// On Android (and any Linux where a seccomp filter with SECCOMP_RET_TRAP is
+// installed — the zygote does this on every process), close_range(2) is not
+// on the syscall allowlist. The kernel delivers SIGSYS instead of ENOSYS,
+// which kills the process before the caller can fall back to the fcntl/close
+// loop. See https://github.com/oven-sh/bun/issues/30766.
+//
+// To detect this we run a one-time probe with a temporary SIGSYS handler
+// that siglongjmps out. The probe uses (~0U, ~0U, 0) so the kernel sees a
+// syntactically valid call and is guaranteed to either return (with EINVAL
+// on kernels that implement close_range, since start > end) or trap — it
+// never actually touches any descriptors.
+//
+// Seccomp filter state is inherited across fork/vfork, so caching the probe
+// result in the parent is safe for the spawn-child callers in bun-spawn.cpp
+// and BunProcess.cpp. std::call_once serializes the probe so only one thread
+// at a time installs the temporary handler.
+namespace {
+std::atomic<bool> g_close_range_supported { true };
+std::once_flag g_close_range_probe_once;
+sigjmp_buf g_close_range_probe_jmp;
+
+void close_range_sigsys_handler(int, siginfo_t*, void*)
+{
+    siglongjmp(g_close_range_probe_jmp, 1);
+}
+
+void run_close_range_probe()
+{
+    struct sigaction sa {};
+    sa.sa_sigaction = close_range_sigsys_handler;
+    // SA_NODEFER lets the handler see another SIGSYS if one is already in
+    // flight; SA_RESETHAND makes the handler fire at most once so we can't
+    // loop if siglongjmp somehow fails to transfer control.
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_RESETHAND;
+    sigemptyset(&sa.sa_mask);
+    struct sigaction old {};
+    if (sigaction(SIGSYS, &sa, &old) != 0) {
+        // Couldn't install handler — leave the default (Supported=true) so
+        // any SIGSYS propagates. This matches historical behavior on
+        // non-seccomp kernels.
+        return;
+    }
+
+    bool supported;
+    if (sigsetjmp(g_close_range_probe_jmp, 1) == 0) {
+        // (~0U, ~0U, 0) returns EINVAL on kernels that implement the
+        // syscall (first > last), ENOSYS on kernels without it, or traps
+        // under seccomp. Anything other than ENOSYS means "not blocked".
+        long r = syscall(__NR_close_range, ~0U, ~0U, 0U);
+        supported = (r == 0) || (errno != ENOSYS);
+    } else {
+        // SIGSYS trapped via siglongjmp — seccomp is blocking the syscall.
+        supported = false;
+    }
+
+    // Restore previous SIGSYS disposition. SA_RESETHAND already reset us to
+    // SIG_DFL if the handler fired, so re-install the caller's handler
+    // unconditionally.
+    sigaction(SIGSYS, &old, nullptr);
+
+    g_close_range_supported.store(supported, std::memory_order_release);
+}
+
+bool close_range_supported()
+{
+    std::call_once(g_close_range_probe_once, run_close_range_probe);
+    return g_close_range_supported.load(std::memory_order_acquire);
+}
+} // namespace
+
+// close_range is glibc > 2.33, which is very new; the Linux syscall itself
+// is 5.9+. Even when the kernel supports it, a seccomp-bpf filter (notably
+// Android's zygote) may trap it with SIGSYS. We probe once and fall back to
+// the classic close()/fcntl() loop on all subsequent calls if blocked.
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+    if (!close_range_supported()) [[unlikely]] {
+        errno = ENOSYS;
+        return -1;
+    }
     return syscall(__NR_close_range, start, end, flags);
 }
 #else // OS(FREEBSD)
@@ -322,10 +403,18 @@ extern "C" void on_before_reload_process_linux()
     unset_cloexec(STDOUT_FILENO);
     unset_cloexec(STDERR_FILENO);
 
-    // close all file descriptors except stdin, stdout, stderr and possibly IPC.
-    // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
-    // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
-    bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+    // Mark all file descriptors except stdin, stdout, stderr as close-on-exec.
+    // If close_range is unavailable (old kernels, or Android where seccomp
+    // traps it) fall back to an fcntl loop so we still honor the contract
+    // "don't leak fds across exec". Best-effort either way.
+    if (bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
+        int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+        if (maxfd < 0 || maxfd > 65536) maxfd = 65536;
+        for (int fd = 3; fd < maxfd; fd++) {
+            int flags = fcntl(fd, F_GETFD);
+            if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+        }
+    }
 
     // reset all signals to default
     sigset_t signal_set;

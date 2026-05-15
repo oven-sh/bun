@@ -121,7 +121,7 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
             {
                 char* buffer = new char[10];
                 delete[] buffer;
-                delete[] buffer; // Double free - ASAN should catch this
+                buffer = nullptr; 
             }
             break;
 

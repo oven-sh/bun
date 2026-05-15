@@ -14,8 +14,8 @@
     "docker:run": "docker run --rm --publish 3000:3000 --env-file ../../.env.docker blog"
   },
   "dependencies": {
-    "next": "^13.3.0",
-    "qs": "^6.10.1",
+    "next": "16.1.7"",
+    "qs": "6.14.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^8.0.4",

@@ -2294,8 +2294,8 @@ impl PublishCommand {
 
             // Second `_attachments` entry: the Sigstore bundle. Mirrors
             // libnpmpublish — key `{name}-{version}.sigstore`; `data` is the
-            // bundle JSON *as a string* (not base64), `length` = byte length
-            // of that string. See npm/cli `workspaces/libnpmpublish/lib/publish.js`.
+            // bundle JSON *as a string* (not base64). See npm/cli
+            // `workspaces/libnpmpublish/lib/publish.js`.
             if let Some(prov) = provenance {
                 // Use the full `package_version` (including any `+build`
                 // metadata) so the stem matches the `.tgz` key above — npm's

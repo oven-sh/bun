@@ -1,4 +1,4 @@
-import { frameworkRouterInternals } from "bun:internal-for-testing";
+import { crash_handler, frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import path from "path";
@@ -208,5 +208,17 @@ describe("match() param collection", () => {
 
     // The failing-then-succeeding case must not leak the failed pattern's push.
     expect(router.match("/nested/a/b").params).toEqual({ slug: "b" });
+  });
+
+  // Direct probe of the `BoundedArray::resize` contract change from #30861.
+  // `FrameworkRouter` is one user of the type; this assertion targets the
+  // type itself via a Rust test binding in `crash_handler_jsc.rs` so the
+  // soundness guarantee is locked in independently of the router.
+  test("BoundedArray::resize refuses to grow", () => {
+    // Seeded with `len = 1`, then `resize(4)` asks to grow over uninit slots.
+    // Pre-fix: accepted (returns `Ok`), leaving three uninit `u8`s in `[1..4]`
+    // that safe `.as_slice()` would then expose as `&[u8]`. Post-fix:
+    // `Err(Overflow)`.
+    expect(crash_handler.boundedArrayResizeGrowReturnsErr()).toBe(true);
   });
 });

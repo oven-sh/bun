@@ -230,7 +230,7 @@ export interface BundlerTestInput {
   deprecatedNamespaceObjectSetters?: boolean;
   inject?: string[];
   jsx?: {
-    runtime?: "automatic" | "classic";
+    runtime?: "automatic" | "classic" | "preserve";
     importSource?: string; // for automatic
     factory?: string; // for classic
     fragment?: string; // for classic
@@ -902,7 +902,6 @@ function expectBundled(
               emitDCEAnnotations && `--emit-dce-annotations`,
               deprecatedNamespaceObjectSetters === false && `--no-deprecated-namespace-object-setters`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
-              // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
               keepNames && `--keep-names`,
@@ -928,8 +927,7 @@ function expectBundled(
               conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
-              `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
-              // jsx.preserve && "--jsx=preserve",
+              `--jsx=${jsx.runtime === "preserve" ? "preserve" : jsx.runtime === "classic" ? "transform" : "automatic"}`,
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               jsx.sideEffects && `--jsx-side-effects`,

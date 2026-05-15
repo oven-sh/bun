@@ -6,6 +6,8 @@
 
 **Codex review note (2026-05-15):** the raw agent totals below were useful triage output, but several Pass 3 entries were over-tiered. The corrected adjudication is in [CODEX_PASS3_FINAL_REVIEW.md](CODEX_PASS3_FINAL_REVIEW.md). The four install P0s remain high-confidence. The bundler B-1..B-5 group is promoted to confirmed high-confidence Stacked Borrows / Tree Borrows UB. The `UvHandle::close` transmute, the four JSC `pass3-ub-*` items, `pending_tasks`, `ThreadSafeRefCount::ref_`, `FetchTasklet::abort_task`, WebSocket deflate H3, `WeakPtrData`, `JsCell<T>`, and `RacyCell<T>` are demoted or reworded as described below. Do not use the raw "39 T1" count as a final marketing number.
 
+**Supersession note:** this is a Pass-3 snapshot. The current public headline is the Pass-4/5 dashboard count: **40 T1/T1-equivalent entries**, with strict memory-safety bugs separated from non-memory-UB security and crash-reliability items. Use [PASS4_FINDINGS_INDEX.md](PASS4_FINDINGS_INDEX.md), [PASS5_ACCURACY_SWEEP.md](PASS5_ACCURACY_SWEEP.md), and [audit/synthesis/PASS4-risk-scoring.md](audit/synthesis/PASS4-risk-scoring.md) for final public counts.
+
 ## Pass-3 agents completed
 
 | Agent | Crate / topic | T1 + P0 | T2 | T3 | Plan |
@@ -101,9 +103,10 @@ Pass 2 found `linear_fifo::assume_init_slice` (F-1); pass 3 found:
 | Pass 1 | 2 |
 | Pass 2 (Claude + Codex P2 + Codex P3) | ~18 |
 | Pass 3 (raw before Codex demotions, 4 P0 + 39 T1) | ~43 |
-| **Total confirmed/high-confidence T1 after Codex corrections** | **~37** |
+| **Pass-3 snapshot after Codex corrections** | **~37 strict/near-strict memory-safety T1** |
+| **Current Pass-4/5 public dashboard** | **40 T1/T1-equivalent entries** |
 
-Plus ~32+ T2 (architecture defects) and ~58+ T3 (latent watchlist) from pass 3 alone. The `+` reflects Codex-demoted entries that should no longer inflate T1.
+Plus ~32+ T2 (architecture defects) and ~58+ T3 (latent watchlist) from pass 3 alone. The `+` reflects Codex-demoted entries that should no longer inflate strict memory-safety T1. The later 40-entry dashboard includes non-memory-UB security and crash-reliability items explicitly marked as T1-equivalent rather than silently folding them into memory-safety counts.
 
 ## Pass-3 NEGATIVE findings (bugs ruled out)
 

@@ -103,7 +103,7 @@ Classification (current):
 | (A) Strictly unavoidable | ~9,800 | Hardened via SAFETY comments and clippy lints |
 | (B) Performance-only | ~27 | Intended for a `safe-only` Cargo feature; pending benchmark logs |
 | (C) Refactorable | ~110 firm | Mechanical safe rewrites tracked as cleanup PRs |
-| Tier 1 memory-safety findings | 37 | See public soundness-debt dashboard |
+| T1 / T1-equivalent findings | 40 | Memory-safety, security, and crash-reliability items are separated in the public soundness-debt dashboard |
 | Tier 2 unsafe-contract defects | ~32 | Architecture-level; tracked separately |
 | Tier 3 watchlist | ~58 | Latent / threat-model-dependent |
 

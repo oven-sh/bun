@@ -3224,7 +3224,16 @@ class ServerHttp2Session extends Http2Session {
     return this[bunHTTP2Socket]?.ref();
   }
   setTimeout(msecs, callback) {
-    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
+    if (this.destroyed) return this;
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+    }
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.setTimeout === "function") socket.setTimeout(msecs);
+    if (callback !== undefined) {
+      this.once("timeout", callback);
+    }
+    return this;
   }
 
   ping(payload, callback) {
@@ -3678,7 +3687,16 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.setNextStreamID(id);
   }
   setTimeout(msecs, callback) {
-    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
+    if (this.destroyed) return this;
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+    }
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.setTimeout === "function") socket.setTimeout(msecs);
+    if (callback !== undefined) {
+      this.once("timeout", callback);
+    }
+    return this;
   }
   ping(payload, callback) {
     if (typeof payload === "function") {
@@ -4149,8 +4167,11 @@ class Http2Server extends net.Server {
     return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+    }
     this.timeout = ms;
-    if (typeof callback === "function") {
+    if (callback !== undefined) {
       this.on("timeout", callback);
     }
     return this;
@@ -4255,8 +4276,11 @@ class Http2SecureServer extends tls.Server {
     return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+    }
     this.timeout = ms;
-    if (typeof callback === "function") {
+    if (callback !== undefined) {
       this.on("timeout", callback);
     }
     return this;

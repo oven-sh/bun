@@ -3240,7 +3240,10 @@ mod spawn_process_body {
             // that are read *after* the wait, so falling through to the memfd block
             // below is required.
             let status: Status = 'blk: {
-                if no_orphans && (cfg!(any(target_os = "linux", target_os = "android")) || cfg!(target_os = "macos")) {
+                if no_orphans
+                    && (cfg!(any(target_os = "linux", target_os = "android"))
+                        || cfg!(target_os = "macos"))
+                {
                     let ppid = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
                     #[cfg(target_os = "macos")]
                     let r: Option<Maybe<Status>> = wait_mac_kqueue(
@@ -3261,7 +3264,11 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+                    #[cfg(not(any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "macos"
+                    )))]
                     let r: Option<Maybe<Status>> = {
                         let _ = ppid;
                         None

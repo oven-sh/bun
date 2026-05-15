@@ -366,6 +366,7 @@ test("prepare stack trace call sites", () => {
 });
 
 test("sanity check", () => {
+  let frame0;
   function f1() {
     f2();
   }
@@ -378,25 +379,7 @@ test("sanity check", () => {
     let e = new Error("bad error!");
     let prevPrepareStackTrace = Error.prepareStackTrace;
     Error.prepareStackTrace = (e, s) => {
-      // getThis returns undefined in strict mode
-      expect(s[0].getThis()).toBe(undefined);
-      expect(s[0].getTypeName()).toBe("undefined");
-      // getFunction returns undefined in strict mode
-      expect(s[0].getFunction()).toBe(undefined);
-      expect(s[0].getFunctionName()).toBe("f3");
-      expect(s[0].getMethodName()).toBe("f3");
-      expect(typeof s[0].getLineNumber()).toBe("number");
-      expect(typeof s[0].getColumnNumber()).toBe("number");
-      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
-
-      expect(s[0].getEvalOrigin()).toBe(undefined);
-      expect(s[0].isToplevel()).toBe(true);
-      expect(s[0].isEval()).toBe(false);
-      expect(s[0].isNative()).toBe(false);
-      expect(s[0].isConstructor()).toBe(false);
-      expect(s[0].isAsync()).toBe(false);
-      expect(s[0].isPromiseAll()).toBe(false);
-      expect(s[0].getPromiseIndex()).toBe(null);
+      frame0 = s[0];
     };
     Error.captureStackTrace(e);
     expect(e.stack === undefined).toBe(true);
@@ -404,6 +387,26 @@ test("sanity check", () => {
   }
 
   f1();
+
+  // getThis returns undefined in strict mode
+  expect(frame0.getThis()).toBe(undefined);
+  expect(frame0.getTypeName()).toBe("undefined");
+  // getFunction returns undefined in strict mode
+  expect(frame0.getFunction()).toBe(undefined);
+  expect(frame0.getFunctionName()).toBe("f3");
+  expect(frame0.getMethodName()).toBe("f3");
+  expect(typeof frame0.getLineNumber()).toBe("number");
+  expect(typeof frame0.getColumnNumber()).toBe("number");
+  expect(frame0.getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+
+  expect(frame0.getEvalOrigin()).toBe(undefined);
+  expect(frame0.isToplevel()).toBe(true);
+  expect(frame0.isEval()).toBe(false);
+  expect(frame0.isNative()).toBe(false);
+  expect(frame0.isConstructor()).toBe(false);
+  expect(frame0.isAsync()).toBe(false);
+  expect(frame0.isPromiseAll()).toBe(false);
+  expect(frame0.getPromiseIndex()).toBe(null);
 });
 
 test("CallFrame isEval works as expected", () => {
@@ -433,22 +436,25 @@ test("CallFrame isTopLevel returns false for Function constructor", () => {
   noInline(sloppyFn);
   const that = {};
 
+  let frames;
   Error.prepareStackTrace = (e, s) => {
-    expect(s[0].getFunctionName()).toBe(sloppyFn.displayName);
-    expect(s[0].getFunction()).toBe(sloppyFn);
-
-    expect(s[0].isToplevel()).toBe(false);
-    expect(s[0].isEval()).toBe(false);
-
-    // Strict-mode functions shouldn't have getThis or getFunction
-    // available.
-    expect(s[1].getThis()).toBe(undefined);
-    expect(s[1].getFunction()).toBe(undefined);
+    frames = s;
   };
 
   sloppyFn.call(that);
 
   Error.prepareStackTrace = prevPrepareStackTrace;
+
+  expect(frames[0].getFunctionName()).toBe(sloppyFn.displayName);
+  expect(frames[0].getFunction()).toBe(sloppyFn);
+
+  expect(frames[0].isToplevel()).toBe(false);
+  expect(frames[0].isEval()).toBe(false);
+
+  // Strict-mode functions shouldn't have getThis or getFunction
+  // available.
+  expect(frames[1].getThis()).toBe(undefined);
+  expect(frames[1].getFunction()).toBe(undefined);
 });
 
 test("CallFrame.p.getThisgetFunction: strict/sloppy mode interaction", () => {
@@ -458,18 +464,22 @@ test("CallFrame.p.getThisgetFunction: strict/sloppy mode interaction", () => {
   const sloppyFn = new Function("x", "x()");
   const that = {};
 
+  let frames;
   Error.prepareStackTrace = (e, s) => {
-    // The first strict mode function encounted during stack unwinding
-    // stops subsequent frames from having getThis\getFunction.
-    for (const t of s) {
-      expect(t.getThis()).toBe(undefined);
-      expect(t.getFunction()).toBe(undefined);
-    }
+    frames = s;
   };
 
   sloppyFn.call(that, strictFn);
 
   Error.prepareStackTrace = prevPrepareStackTrace;
+
+  // The first strict mode function encounted during stack unwinding
+  // stops subsequent frames from having getThis\getFunction.
+  expect(frames.length).toBeGreaterThan(0);
+  for (const t of frames) {
+    expect(t.getThis()).toBe(undefined);
+    expect(t.getFunction()).toBe(undefined);
+  }
 });
 
 test("CallFrame.p.isConstructor", () => {
@@ -534,6 +544,7 @@ test("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
   var parentLineNumber = -1;
+  var fileNames = [];
   function functionWithAName() {
     // This is V8's behavior.
     let prevPrepareStackTrace = Error.prepareStackTrace;
@@ -542,8 +553,7 @@ test("err.stack should invoke prepareStackTrace", () => {
       lineNumber = s[0].getLineNumber();
       functionName = s[0].getFunctionName();
       parentLineNumber = s[1].getLineNumber();
-      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
-      expect(s[1].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+      fileNames = [s[0].getFileName(), s[1].getFileName()];
     };
     const e = new Error();
     e.stack;
@@ -553,8 +563,10 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(548);
-  expect(parentLineNumber).toBe(553);
+  expect(lineNumber).toBe(558);
+  expect(parentLineNumber).toBe(563);
+  expect(fileNames[0].includes("capture-stack-trace.test.js")).toBe(true);
+  expect(fileNames[1].includes("capture-stack-trace.test.js")).toBe(true);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {
@@ -730,12 +742,9 @@ test("Error.prepareStackTrace propagates exceptions", () => {
 
 test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
+  let urls;
   const prepare = mock((e, s) => {
-    expect(s[0].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
-    expect(s[1].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
-    expect(s[2].getScriptNameOrSourceURL()).toBe("[native code]");
-    expect(s[3].getScriptNameOrSourceURL()).toBe(import.meta.path);
-    expect(s[4].getScriptNameOrSourceURL()).toBe(import.meta.path);
+    urls = s.slice(0, 5).map(f => f.getScriptNameOrSourceURL());
   });
   Error.prepareStackTrace = prepare;
   let evalScript = `(function() {
@@ -753,15 +762,20 @@ test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 
   expect(prepare).toHaveBeenCalledTimes(1);
+  expect(urls).toEqual([
+    "https://zombo.com/welcome-to-zombo.js",
+    "https://zombo.com/welcome-to-zombo.js",
+    "[native code]",
+    import.meta.path,
+    import.meta.path,
+  ]);
 });
 
 test("CallFrame.p.isAsync", async () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
+  let isAsyncResults;
   const prepare = mock((e, s) => {
-    expect(s[0].isAsync()).toBeFalse();
-    expect(s[1].isAsync()).toBeTrue();
-    expect(s[2].isAsync()).toBeTrue();
-    expect(s[3].isAsync()).toBeTrue();
+    isAsyncResults = s.slice(0, 4).map(f => f.isAsync());
   });
   Error.prepareStackTrace = prepare;
   async function foo() {
@@ -783,6 +797,7 @@ test("CallFrame.p.isAsync", async () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 
   expect(prepare).toHaveBeenCalledTimes(1);
+  expect(isAsyncResults).toEqual([false, true, true, true]);
 });
 
 test("captureStackTrace with constructor function not in stack returns error string", () => {

@@ -2845,7 +2845,7 @@ fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
 /// LPT*), but only real consoles accept `GetConsoleMode` / wait-on-input
 /// semantics — the others behave like files that return EOF on read.
 #[cfg(windows)]
-fn is_windows_console_input(handle: windows_sys::Win32::Foundation::HANDLE) -> bool {
+fn is_windows_console_input(handle: *mut core::ffi::c_void) -> bool {
     const FILE_TYPE_CHAR: u32 = 0x0002;
     // SAFETY: FFI call; `handle` is the stdin handle, valid while the REPL runs.
     if unsafe { GetFileType(handle) } != FILE_TYPE_CHAR {
@@ -2856,24 +2856,18 @@ fn is_windows_console_input(handle: windows_sys::Win32::Foundation::HANDLE) -> b
     unsafe { GetConsoleMode(handle, &mut mode) != 0 }
 }
 
-// Win32 primitives declared here (not routed through `windows_sys` aggregate
-// modules) to match the Zig side of this fix and avoid dragging a larger
-// dependency surface into the REPL crate.
+// Win32 primitives declared here locally to avoid dragging extra dependency
+// surface into the REPL crate. `HANDLE` on Windows is `*mut c_void`
+// (`FdNative`); see `bun_core::util::FdNative` for the authoritative alias.
 #[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    fn WaitForSingleObject(
-        hHandle: windows_sys::Win32::Foundation::HANDLE,
-        dwMilliseconds: u32,
-    ) -> u32;
+    fn WaitForSingleObject(hHandle: *mut core::ffi::c_void, dwMilliseconds: u32) -> u32;
     fn Sleep(dwMilliseconds: u32);
-    fn GetFileType(hFile: windows_sys::Win32::Foundation::HANDLE) -> u32;
-    fn GetConsoleMode(
-        hConsoleHandle: windows_sys::Win32::Foundation::HANDLE,
-        lpMode: *mut u32,
-    ) -> i32;
+    fn GetFileType(hFile: *mut core::ffi::c_void) -> u32;
+    fn GetConsoleMode(hConsoleHandle: *mut core::ffi::c_void, lpMode: *mut u32) -> i32;
     fn PeekNamedPipe(
-        hNamedPipe: windows_sys::Win32::Foundation::HANDLE,
+        hNamedPipe: *mut core::ffi::c_void,
         lpBuffer: *mut core::ffi::c_void,
         nBufferSize: u32,
         lpBytesRead: *mut u32,

@@ -2665,7 +2665,11 @@ impl ExpectCustomAsymmetricMatcher {
         Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, this.flags, true)
     }
 
-    /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
+    /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue.
+    ///
+    /// Errors are swallowed here because the C++ caller (`matchAsymmetricMatcherAndGetFlags`) does not check for a pending
+    /// JS exception after this call — it only inspects the bool return value. Leaving the exception pending would trip
+    /// `releaseAssertNoException` in a downstream `ThrowScope` destructor. Clear the exception to match the C ABI contract.
     ///
     /// # Safety
     /// `this` must point to a live `Self` and `global_this` must point to a live
@@ -2678,7 +2682,11 @@ impl ExpectCustomAsymmetricMatcher {
         received: JSValue,
     ) -> bool {
         // SAFETY: called from C++ with valid pointers
-        unsafe { Self::execute_impl(&*this, this_value, &*global_this, received) }.unwrap_or(false)
+        unsafe { Self::execute_impl(&*this, this_value, &*global_this, received) }.unwrap_or_else(|_| {
+            // SAFETY: same pointer validity as above
+            unsafe { (*global_this).clear_exception() };
+            false
+        })
     }
 
     #[bun_jsc::host_fn(method)]

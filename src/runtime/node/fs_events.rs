@@ -188,6 +188,7 @@ pub struct CoreFoundation {
         CFIndex,
         *const c_void,
     ) -> CFArrayRef,
+    pub retain: unsafe extern "C" fn(CFTypeRef) -> CFTypeRef,
     pub release: unsafe extern "C" fn(CFTypeRef),
 
     pub run_loop_add_source: unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
@@ -290,6 +291,8 @@ fn init_core_foundation() -> CoreFoundation {
     CoreFoundation {
         handle: fsevents_cf_handle,
         array_create: dlsym(fsevents_cf_handle, c"CFArrayCreate")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        retain: dlsym(fsevents_cf_handle, c"CFRetain")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         release: dlsym(fsevents_cf_handle, c"CFRelease")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
@@ -496,7 +499,17 @@ impl FSEventsLoop {
 
         // SAFETY: CF fn pointers loaded via dlsym; signal_source is valid
         unsafe {
-            let loop_ = (cf.run_loop_get_current)();
+            // `CFRunLoopGetCurrent()` follows the Get-rule — we don't own a
+            // reference. When this thread exits, the pthread TSD destructor
+            // releases the thread's run loop, so a JS-thread
+            // `enqueue_task_concurrent()` racing thread exit (between
+            // `CFRunLoopSourceSignal` and `CFRunLoopWakeUp` on the `_stop`
+            // enqueue) would pass a freed pointer to `CFRunLoopWakeUp` and
+            // fault at `CFRuntimeBase._rc` (+0xC). Retain here; `shutdown()`
+            // releases after `thread.join()` so the run loop outlives every
+            // JS-thread reader. `CFRunLoopWakeUp` on a stopped-but-alive loop
+            // is a documented no-op.
+            let loop_ = (cf.retain)((cf.run_loop_get_current)());
             // Release pairs with the Acquire in `enqueue_task_concurrent`;
             // additionally ordered-before any JS-thread read by `sem.post()`
             // below → `sem.wait()` in `init()`.
@@ -509,8 +522,9 @@ impl FSEventsLoop {
             (cf.run_loop_run)();
             (cf.run_loop_remove_source)(loop_, signal_source, *cf.run_loop_default_mode);
         }
-
-        self.loop_.store(ptr::null_mut(), Ordering::Release);
+        // Leave `self.loop_` set — `shutdown()` releases it after `join()`.
+        // Nulling it here would reintroduce the race this retain closes
+        // (JS thread could load null between signal and wake).
     }
 
     // Runs in CF thread, executed after `enqueueTaskConcurrent()`. Body
@@ -646,7 +660,11 @@ impl FSEventsLoop {
         self.tasks.push(concurrent);
         // Acquire pairs with the CF thread's Release in `cf_thread_loop`;
         // additionally ordered-after that store by the `sem` handshake in
-        // `init()`, so the first enqueue always sees a non-null run loop.
+        // `init()`, so every enqueue sees a non-null run loop. `cf_thread_loop`
+        // retains the CFRunLoop, so even if the CF thread fully exits between
+        // the signal and the wake below (processing `_stop` off the `push`
+        // alone), `loop_` stays alive — `CFRunLoopWakeUp` on a stopped loop
+        // is a no-op. `shutdown()` releases it after `thread.join()`.
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);
         // SAFETY: CF fn pointers loaded via dlsym; handles valid per above.
@@ -994,6 +1012,15 @@ impl FSEventsLoop {
         let _ = thread.join();
 
         let cf = CoreFoundation::get();
+        // `cf_thread_loop` retained the run loop so it outlives the CF thread
+        // (whose pthread TSD destructor would otherwise free it between
+        // `CFRunLoopSourceSignal` and `CFRunLoopWakeUp` in the `_stop` enqueue
+        // above). The thread has now joined; drop our reference.
+        let loop_ = self.loop_.swap(ptr::null_mut(), Ordering::Relaxed);
+        debug_assert!(!loop_.is_null());
+        // SAFETY: retained in `cf_thread_loop`; sole owner after join.
+        unsafe { (cf.release)(loop_) };
+
         let signal_source = self.signal_source.swap(ptr::null_mut(), Ordering::Relaxed);
         debug_assert!(!signal_source.is_null());
         // SAFETY: signal_source is a valid CF object until released here

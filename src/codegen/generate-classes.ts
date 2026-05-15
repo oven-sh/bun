@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
-import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
+import { writeIfNotChanged } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};

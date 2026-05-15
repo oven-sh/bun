@@ -95,9 +95,9 @@ impl PmFetchCommand {
 
         for i in 0..packages_len {
             let pkg_id = i as PackageID;
-            // Re-read each iteration: enqueue helpers mutate `pm` and may
-            // reallocate the packages array (tarball/github resolutions can
-            // append a package via `process_extracted_tarball_package`).
+            // Re-read each iteration: the enqueue calls below take `&mut pm`,
+            // so we can't hold a borrowed slice into `pm.lockfile.packages`
+            // across iterations (the array itself is stable for this loop).
             let resolution = pm.lockfile.packages.slice().items_resolution()[i];
 
             if !resolution.tag.can_enqueue_install_task() {

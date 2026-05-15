@@ -204,7 +204,6 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
 - `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
 - `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
-- `vendor/zig/` - Zig toolchain (legacy; nothing in the build invokes it — slated for removal)
 - `vendor/zlib/` - zlib-ng (compression, zlib-compat mode)
 - `vendor/zstd/` - Zstandard (compression)
 

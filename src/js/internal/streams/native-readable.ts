@@ -44,6 +44,7 @@ interface NativePtr {
   pull: (view: any, closer: any) => any;
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
+  getFd: () => number;
 }
 
 let debugId = 0;
@@ -67,6 +68,18 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+
+  // Expose the underlying pipe fd (when available) so this stream can be
+  // passed to `child_process.spawn` as stdio — for example `spawn(..., {
+  // stdio: [proc.stdout, 'pipe', 'inherit'] })` to pipe one subprocess's
+  // stdout into another's stdin. `nodeToBun` extracts `.fd` from node-ish
+  // stream stdio; Node's equivalent is `subprocess.stdout._handle.fd`.
+  if (typeof bunNativePtr?.getFd === "function") {
+    const fd = bunNativePtr.getFd();
+    if (typeof fd === "number" && fd >= 0) {
+      stream.fd = fd;
+    }
+  }
 
   if (typeof options.highWaterMark === "number") {
     stream[kHighWaterMark] = options.highWaterMark;

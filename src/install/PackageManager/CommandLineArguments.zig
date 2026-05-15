@@ -231,7 +231,7 @@ ca_file_name: string = "",
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
-    no_save_package_json: bool = false,
+no_save_package_json: bool = false,
 
 node_linker: ?Options.NodeLinker = null,
 

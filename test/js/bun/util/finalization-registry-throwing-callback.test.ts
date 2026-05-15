@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("FinalizationRegistry cleanup callback that throws is reported as uncaught, not a crash", async () => {
+test.concurrent("FinalizationRegistry cleanup callback that throws is reported as uncaught, not a crash", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -29,12 +29,12 @@ test("FinalizationRegistry cleanup callback that throws is reported as uncaught,
 
   const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
+  expect(err).toContain("calling ArrayBuffer constructor without new is invalid");
   expect(proc.signalCode).toBeNull();
   expect([0, 1]).toContain(exitCode);
-  expect(err).toContain("calling ArrayBuffer constructor without new is invalid");
 });
 
-test("FinalizationRegistry cleanup callback exception reaches process.on('uncaughtException')", async () => {
+test.concurrent("FinalizationRegistry cleanup callback exception reaches process.on('uncaughtException')", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -62,7 +62,7 @@ test("FinalizationRegistry cleanup callback exception reaches process.on('uncaug
 
   const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
+  expect(out.trim()).toBe("caught");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-  expect(out.trim()).toBe("caught");
 });

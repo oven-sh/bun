@@ -380,10 +380,12 @@ declare module "bun" {
       prepare?: boolean | undefined;
 
       /**
-       * MySQL only. When enabled, MySQL reports the number of rows matched by
-       * the `WHERE` clause in `affectedRows`, rather than the number of rows
-       * actually changed. This is the default behavior of the `mysql2` and
-       * `mariadb` drivers and matches what most Node.js MySQL code expects.
+       * MySQL / MariaDB. When enabled, the server reports the number of rows
+       * matched by the `WHERE` clause in `affectedRows`, rather than the
+       * number of rows actually changed. This is the default behavior of the
+       * `mysql2` and `mariadb` drivers and matches what most Node.js MySQL
+       * code expects. Applies to both `adapter: "mysql"` and
+       * `adapter: "mariadb"`; no effect on `adapter: "postgres"`.
        *
        * Set to `false` to use the server's changed-rows semantics: an
        * `UPDATE` that matches a row but does not change any column value

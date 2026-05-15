@@ -43,9 +43,9 @@
 
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isPosix, tempDir, tmpdirSync } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isPosix, tempDir, tmpdirSync } from "harness";
 
 // Shared by the baseline process and the inner --changed test: print one
 // `HANDLER <sig> <addr>` line per CPU-fault signal via the internal probe
@@ -138,7 +138,10 @@ describe.skipIf(!isPosix)("CLI sync-spawn preserves JSC's fault-signal handlers"
     // One tracked change so --changed actually selects the probe and, more
     // importantly, actually runs the git subprocesses it needs to compute
     // the diff — those are the sync spawns under test.
-    writeFileSync(join(cwd, "probe.test.ts"), `import { test } from "bun:test";\n${probe}\ntest("noop", () => {});\n// touched\n`);
+    writeFileSync(
+      join(cwd, "probe.test.ts"),
+      `import { test } from "bun:test";\n${probe}\ntest("noop", () => {});\n// touched\n`,
+    );
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--changed", "probe.test.ts"],

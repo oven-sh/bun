@@ -87,7 +87,7 @@ Every high-priority finding has a file:line citation. Every miri-backed claim ha
 
 | PR | Branch | Content |
 |----|--------|---------|
-| [#30763](https://github.com/oven-sh/bun/pull/30763) | `claude/unsafe-exorcist-audit` | Audit artifacts + `GUIDE_TO_THE_EXORCISM_FINDINGS.md` agent-ergonomic navigator. 110 files, 49,274 insertions. Zero source changes. |
+| [#30763](https://github.com/oven-sh/bun/pull/30763) | `claude/unsafe-exorcist-audit` | Audit artifacts + `GUIDE_TO_THE_EXORCISM_FINDINGS.md` agent-ergonomic navigator. Zero source changes. |
 | [#30765](https://github.com/oven-sh/bun/pull/30765) | `claude/unsafe-exorcist-demo` | The 3 highest-confidence fixes (`StoreSlice<T>` Send/Sync bounds, `linux_errno` checked path, `GuardedLock` `!Send` marker). 29 additions, 6 deletions across 3 files. Focused cargo checks pass; 10/10 per-crate miri tests pass clean as regression coverage on the touched crates. |
 
 The remaining ~40 fixes are documented in the audit's per-cluster plans for immediate follow-up PRs.

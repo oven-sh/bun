@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // The `export` builtin sorts by key only (Entry.compare in
-// src/shell/builtin/export.zig compares `this.key.slice()`), not by the full
+// src/runtime/shell/builtin/export.zig compares `this.key.slice()`), not by the full
 // `KEY=VALUE` line. Sorting full lines with JS `.sort()` diverges whenever one
 // key is a strict prefix of another whose next byte is < '=' (0x3D) — e.g.
 // `ProgramFiles` vs `ProgramFiles(x86)` on Windows. Use a key-only comparator
@@ -19,7 +19,7 @@ describe("export", () => {
   // The `export` builtin with no arguments must list exported variables in
   // lexicographic key order. The shell inherits the process environment, so we
   // spawn a child with a small, deliberately unsorted environment to make the
-  // ordering observable. Guards the sort in src/shell/builtin/export.zig.
+  // ordering observable. Guards the sort in src/runtime/shell/builtin/export.zig.
   test("no arguments prints variables sorted lexicographically by key", async () => {
     const script = `
       import { $ } from "bun";
@@ -28,8 +28,8 @@ describe("export", () => {
     `;
 
     // Note: Windows treats environment variable names case-insensitively
-    // (src/shell/EnvMap.zig), so the lowercase probe must not case-fold onto
-    // any of the uppercase keys.
+    // (src/runtime/shell/EnvMap.zig), so the lowercase probe must not case-fold
+    // onto any of the uppercase keys.
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: {

@@ -902,7 +902,10 @@ pub const StandaloneModuleGraph = struct {
                 return cloned_executable_fd;
             },
             .linux => {
-                // ELF section approach: find .bun section and expand it
+                // Prefer the ELF section approach for newer templates that embed
+                // BUN_COMPILED in a .bun section. Older downloaded target
+                // templates still use the legacy trailer format, so fall back to
+                // appending when the section is absent.
                 const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
                 if (input_result.err) |err| {
                     Output.prettyErrorln("Error reading executable: {f}", .{err});
@@ -917,38 +920,98 @@ pub const StandaloneModuleGraph = struct {
                 };
                 defer elf_file.deinit();
 
-                elf_file.writeBunSection(bytes) catch |err| {
-                    Output.prettyErrorln("Error writing .bun section to ELF: {}", .{err});
-                    cleanup(zname, cloned_executable_fd);
-                    return bun.invalid_fd;
+                const legacy = brk: {
+                    elf_file.writeBunSection(bytes) catch |err| {
+                        if (err == error.BunSectionNotFound) {
+                            break :brk true;
+                        }
+
+                        Output.prettyErrorln("Error writing .bun section to ELF: {}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        return bun.invalid_fd;
+                    };
+
+                    break :brk false;
                 };
                 input_result.bytes.deinit();
 
-                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                if (!legacy) {
+                    switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
+                        .err => |err| {
+                            Output.prettyErrorln("Error seeking to start of temporary file: {f}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            return bun.invalid_fd;
+                        },
+                        else => {},
+                    }
+
+                    // Write the modified ELF data back to the file
+                    const write_file = bun.sys.File{ .handle = cloned_executable_fd };
+                    switch (write_file.writeAll(elf_file.data.items)) {
+                        .err => |err| {
+                            Output.prettyErrorln("Error writing ELF file: {f}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            return bun.invalid_fd;
+                        },
+                        .result => {},
+                    }
+                    // Truncate the file to the exact size of the modified ELF
+                    _ = Syscall.ftruncate(cloned_executable_fd, @intCast(elf_file.data.items.len));
+
+                    if (comptime !Environment.isWindows) {
+                        _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
+                    }
+                    return cloned_executable_fd;
+                }
+
+                var total_byte_count: usize = undefined;
+                const seek_position = @as(u64, @intCast(brk: {
+                    const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
+                        .result => |res| res,
+                        .err => |err| {
+                            Output.prettyErrorln("{f}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            return bun.invalid_fd;
+                        },
+                    };
+
+                    break :brk @max(fstat.size, 0);
+                }));
+
+                total_byte_count = seek_position + bytes.len + 8;
+
+                switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {f}", .{err});
+                        Output.prettyErrorln(
+                            "{f}\nwhile seeking to end of temporary file (pos: {d})",
+                            .{
+                                err,
+                                seek_position,
+                            },
+                        );
                         cleanup(zname, cloned_executable_fd);
                         return bun.invalid_fd;
                     },
                     else => {},
                 }
 
-                // Write the modified ELF data back to the file
-                const write_file = bun.sys.File{ .handle = cloned_executable_fd };
-                switch (write_file.writeAll(elf_file.data.items)) {
-                    .err => |err| {
-                        Output.prettyErrorln("Error writing ELF file: {f}", .{err});
-                        cleanup(zname, cloned_executable_fd);
-                        return bun.invalid_fd;
-                    },
-                    .result => {},
+                var remain = bytes;
+                while (remain.len > 0) {
+                    switch (Syscall.write(cloned_executable_fd, remain)) {
+                        .result => |written| remain = remain[written..],
+                        .err => |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{f}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+                            return bun.invalid_fd;
+                        },
+                    }
                 }
-                // Truncate the file to the exact size of the modified ELF
-                _ = Syscall.ftruncate(cloned_executable_fd, @intCast(elf_file.data.items.len));
 
+                _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
                 if (comptime !Environment.isWindows) {
                     _ = bun.c.fchmod(cloned_executable_fd.native(), 0o777);
                 }
+
                 return cloned_executable_fd;
             },
             else => {

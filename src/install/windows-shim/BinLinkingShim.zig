@@ -192,13 +192,63 @@ pub const Shebang = struct {
             break :line contents[2..line_i];
         };
 
-        var tokenizer = std.mem.tokenizeScalar(u8, line, ' ');
+        var tokenizer = std.mem.tokenizeAny(u8, line, " \t");
         const first = tokenizer.next() orelse return parseFromBinPath(bin_path);
         if (eqlComptime(first, "/usr/bin/env") or eqlComptime(first, "/bin/env")) {
-            const rest = tokenizer.rest();
-            const program = tokenizer.next() orelse return parseFromBinPath(bin_path);
+            // `env` accepts options and NAME=VALUE assignments before the command.
+            // We need to skip past all of those to find the actual interpreter.
+            //
+            // The shim doesn't emulate env's behavior (no vars are set, no dir is
+            // changed); we only need the interpreter name and its trailing args.
+            //
+            // Reference: npm's cmd-shim regex handles `-S` and `NAME=VALUE` only.
+            // https://github.com/npm/cmd-shim/blob/main/lib/index.js
+            // We additionally handle any `-flag` and the value-taking flags
+            // `-u NAME`, `-C DIR`, `-a ARG` from GNU env.
+            const program = program: while (true) {
+                const token = tokenizer.next() orelse return parseFromBinPath(bin_path);
+
+                // `env -S` is the common real-world case (e.g. @google/gemini-cli).
+                // The kernel passes everything after the interpreter path as a
+                // single argument; -S tells env to re-split it. It "consumes"
+                // the entire rest of the line, not a single token, so from our
+                // perspective it's just another flag to step over. Also covers
+                // -i, -v, -0, --debug, --, and anything we haven't heard of.
+                if (token[0] == '-') {
+                    // These take a separate value token. Without this, `-u node`
+                    // would be read as "run node" instead of "unset $node".
+                    if (bun.strings.eqlAnyComptime(token, &.{
+                        "-u", "--unset", "-C", "--chdir", "-a", "--argv0",
+                    })) {
+                        _ = tokenizer.next();
+                    }
+                    continue;
+                }
+
+                // `env FOO=bar node` sets $FOO before running node. npm's regex
+                // handles this. Interpreter names never contain `=`, so any `=`
+                // past position 0 means this is an assignment, not our target.
+                if (token.len > 1 and bun.strings.containsChar(token[1..], '=')) continue;
+
+                break :program token;
+            };
+
             const is_node_or_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
-            return try Shebang.init(rest, is_node_or_bun);
+
+            // The launcher is the span from `program` to end-of-line. Both
+            // `program` and `rest` are subslices of `line`, so this is safe.
+            //
+            //     line:   ...-S node --no-warnings
+            //                   [prog]
+            //                        [   rest   ]
+            //                   [   launcher    ]
+            const rest = tokenizer.rest();
+            const launcher = if (rest.len > 0)
+                program.ptr[0 .. (@intFromPtr(rest.ptr) + rest.len) - @intFromPtr(program.ptr)]
+            else
+                program;
+
+            return try Shebang.init(launcher, is_node_or_bun);
         }
 
         return try Shebang.init(line, false);
@@ -241,7 +291,7 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
 
     if (options.shebang) |s| {
         flags.is_node = bun.strings.hasPrefixComptime(s.launcher, "node") and
-            (s.launcher.len == 4 or s.launcher[4] == ' ');
+            (s.launcher.len == 4 or s.launcher[4] == ' ' or s.launcher[4] == '\t');
         if (flags.is_node) std.debug.assert(flags.is_node_or_bun);
 
         const encoded = bun.strings.convertUTF8toUTF16InBuffer(

@@ -122,7 +122,7 @@ The new path is **strictly safer** for the same set of valid inputs and **define
 
 ## What is NOT in this PR
 
-The audit's current public dashboard catalogs 40 T1/T1-equivalent entries, including 6 ceiling-score supply-chain entries, with strict memory-safety, non-UB security, and crash-reliability items labelled separately. This PR lands 3 tightly verified fixes. The remaining fixes are deliberately staged as separate PRs:
+The audit's current public dashboard catalogs 40 T1/T1-equivalent entries, including 6 ceiling-score supply-chain entries, with strict memory-safety and explicitly-labelled non-UB security items separated. Critical crash-reliability items are tracked outside that T1 risk table. This PR lands 3 tightly verified fixes. The remaining fixes are deliberately staged as separate PRs:
 
 | Cluster | Audit ID(s) | Reason for separate PR |
 |---------|-------------|------------------------|

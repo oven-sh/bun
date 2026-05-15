@@ -37,7 +37,7 @@ Findings are classified into tiers with explicit per-tier evidentiary bars. The 
 
 **Demoted findings are listed explicitly** in [`CODEX_PASS3_FINAL_REVIEW.md`](.unsafe-audit/CODEX_PASS3_FINAL_REVIEW.md). Read that file before quoting any "T1 count" — the raw agent totals were larger than the post-Codex defensible count.
 
-The final defensible public tally: **40 T1/T1-equivalent entries, including 6 ceiling-score supply-chain entries, plus ~32 T2 + ~58 T3**. The 40-entry dashboard keeps strict memory-safety findings, non-UB security defects, and crash-reliability items labelled separately; do not quote it as "40 memory-safety bugs."
+The final defensible public tally: **40 T1/T1-equivalent entries, including 6 ceiling-score supply-chain entries, plus ~32 T2 + ~58 T3**. The 40-entry dashboard keeps strict memory-safety findings and explicitly-labelled non-UB security defects separate; critical crash-reliability items are tracked outside this T1 risk table. Do not quote it as "40 memory-safety bugs."
 
 ---
 

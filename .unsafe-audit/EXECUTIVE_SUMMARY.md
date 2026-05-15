@@ -4,7 +4,7 @@
 
 ## The headline
 
-**6 ceiling-score supply-chain attack primitives** + **40 T1/T1-equivalent findings** (memory-safety, security, and crash-reliability items kept explicitly separated) + **5 miri-backed UB witnesses**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with major public-facing claims adversarially reviewed by Claude and Codex for maintainer-grade defensibility.
+**6 ceiling-score supply-chain attack primitives** + **40 T1/T1-equivalent findings** (memory-safety plus explicitly-labelled non-UB security items; critical crash-reliability items are tracked separately) + **5 miri-backed UB witnesses**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with major public-facing claims adversarially reviewed by Claude and Codex for maintainer-grade defensibility.
 
 Two pull requests opened: [#30763](https://github.com/oven-sh/bun/pull/30763) (audit artifacts + agent-ergonomic guide) and [#30765](https://github.com/oven-sh/bun/pull/30765) (3 highest-confidence fixes, with isomorphism / semantic-repair evidence).
 

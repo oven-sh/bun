@@ -32,8 +32,9 @@ Classification (first-pass; Codex pass 2/3 corrections are linked below):
                contain multiple source sites). Pass 3/4 produced a corrected
                strict/near-strict memory-safety T1 set around 37 after
                demotions; Pass 4/5's public dashboard reports 40
-               T1/T1-equivalent entries after adding non-UB security and
-               crash-reliability items with their labels preserved:
+               T1/T1-equivalent entries after adding explicitly-labelled
+               non-UB security items. Critical crash-reliability items are
+               tracked separately, not folded into this count:
        1. src/errno/linux_errno.rs:175-188 (S-001781) — `usize → SystemErrno`
           transmute with kernel range claim wider than enum discriminants
        2. src/ast/nodes.rs `unsafe impl<T> Send/Sync for StoreSlice<T>` —

@@ -2246,9 +2246,7 @@ impl BlobExt for Blob {
             // shared `&Data` borrow this line takes on the JS thread is
             // sound under Rust's aliasing model (no `&mut Data` materialized).
             let last_modified = match &store.data {
-                store::Data::File(f) => f
-                    .last_modified
-                    .load(core::sync::atomic::Ordering::Relaxed),
+                store::Data::File(f) => f.last_modified.load(core::sync::atomic::Ordering::Relaxed),
                 _ => unreachable!("checked via matches! above"),
             };
             if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
@@ -2257,9 +2255,7 @@ impl BlobExt for Blob {
             // Fresh shared borrow after the possible mutation by
             // `resolve_file_stat`; prior borrow is dropped.
             let last_modified = match &store.data {
-                store::Data::File(f) => f
-                    .last_modified
-                    .load(core::sync::atomic::Ordering::Relaxed),
+                store::Data::File(f) => f.last_modified.load(core::sync::atomic::Ordering::Relaxed),
                 _ => jsc::INIT_TIMESTAMP,
             };
             return JSValue::js_number(last_modified as f64);
@@ -5114,10 +5110,8 @@ pub fn write_file_internal(
         // Shared borrow: `last_modified` is `AtomicU64`, `store(Relaxed)`
         // takes `&self` — no `&mut Data` materialized.
         if let store::Data::File(file) = &blob_store.data {
-            file.last_modified.store(
-                jsc::INIT_TIMESTAMP,
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            file.last_modified
+                .store(jsc::INIT_TIMESTAMP, core::sync::atomic::Ordering::Relaxed);
         }
     }
 

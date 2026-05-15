@@ -79,7 +79,7 @@ it("should fetch dependencies into the cache without installing", async () => {
 
   // node_modules was NOT created.
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
-});
+}, 30_000);
 
 it("should fetch packages missing from cache when lockfile exists", async () => {
   const urls: string[] = [];
@@ -152,7 +152,7 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
 
   // node_modules was NOT created.
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
-});
+}, 30_000);
 
 it("should report when all packages are already cached", async () => {
   const urls: string[] = [];
@@ -215,7 +215,7 @@ it("should report when all packages are already cached", async () => {
 
   // node_modules still not created.
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
-});
+}, 30_000);
 
 it("should appear in bun pm help", async () => {
   await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));

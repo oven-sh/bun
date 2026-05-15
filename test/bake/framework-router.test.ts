@@ -133,3 +133,71 @@ test("discovers from filesystem paths", () => {
     ],
   });
 });
+
+// https://github.com/oven-sh/bun/issues/30861
+//
+// The `match()` catch-all path pushes one parameter per path segment through
+// the matched-params `BoundedArray`. The Rust fix makes `resize` shrink-only
+// and routes the push through `append` instead. Because `append` — unlike the
+// pre-fix `resize(param_num + 1)` — does NOT truncate, the reset of `params`
+// on entry to each pattern's `matches()` also had to become explicit; without
+// it, entries left behind by a dynamic pattern that matched partway and then
+// returned `false` would leak into the next pattern that succeeds.
+describe("match() param collection", () => {
+  test("catch-all collects each segment as a separate param", () => {
+    const dir = tempDirWithFiles("fsr-match-catchall", {
+      "[...slug].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/one/two/three").params).toEqual({ slug: "three" });
+    expect(router.match("/a").params).toEqual({ slug: "a" });
+    expect(router.match("/a/b/c/d/e/f").params).toEqual({ slug: "f" });
+  });
+
+  test("single-param route still matches", () => {
+    const dir = tempDirWithFiles("fsr-match-param", {
+      "[name].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/hello").params).toEqual({ name: "hello" });
+  });
+
+  test("unmatched path returns null", () => {
+    const dir = tempDirWithFiles("fsr-match-miss", {
+      "known.tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    expect(router.match("/unknown/path")).toBeNull();
+  });
+
+  // Concrete trigger for the append-without-truncate hazard:
+  //
+  //   /[name].tsx          — root-level single-segment param
+  //   /nested/[...slug].tsx — catch-all under /nested
+  //
+  // `match_slow` iterates dynamic patterns in insertion order. On the path
+  // `/nested/a/b` the `[name]` pattern runs first, pushes `name="nested"`,
+  // and then fails (one Param can only consume one segment, but the path
+  // still has more to cover). The catch-all pattern runs second and matches.
+  //
+  // Pre-fix (append without clear on entry): the stale `name="nested"`
+  // entry leaks into the result → `{ name: "nested", slug: "b" }`.
+  // Post-fix (`params.clear()` at the top of `matches()`): only the
+  // catch-all's own entries survive → `{ slug: "b" }`.
+  test("stale params from a failed prior pattern don't leak", () => {
+    const dir = tempDirWithFiles("fsr-match-stale", {
+      "[name].tsx": "1",
+      "nested/[...slug].tsx": "1",
+    });
+    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+
+    // Sanity: the param-only route still works for single-segment paths.
+    expect(router.match("/x").params).toEqual({ name: "x" });
+
+    // The failing-then-succeeding case must not leak the failed pattern's push.
+    expect(router.match("/nested/a/b").params).toEqual({ slug: "b" });
+  });
+});

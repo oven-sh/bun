@@ -72,6 +72,9 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
     // < Bun v1.0.4 stopped right here when reading the lockfile
     // So we add an extra 8 byte tag to say "hey, there's more data here"
     if (this.workspace_versions.count() > 0) {
+        this.workspace_versions.sort(HashSortCtx(PackageNameHash, Semver.Version){ .keys = this.workspace_versions.keys() });
+        this.workspace_paths.sort(HashSortCtx(PackageNameHash, String){ .keys = this.workspace_paths.keys() });
+
         try writer.writeAll(std.mem.asBytes(&has_workspace_package_ids_tag));
 
         // We need to track the "version" field in "package.json" of workspace member packages
@@ -111,8 +114,10 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
         );
     }
 
-    if (this.trusted_dependencies) |trusted_dependencies| {
+    if (this.trusted_dependencies) |*trusted_dependencies| {
         if (trusted_dependencies.count() > 0) {
+            trusted_dependencies.sort(HashSortCtx(u32, void){ .keys = trusted_dependencies.keys() });
+
             try writer.writeAll(std.mem.asBytes(&has_trusted_dependencies_tag));
 
             try Lockfile.Buffers.writeArray(
@@ -129,6 +134,8 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
     }
 
     if (this.overrides.map.count() > 0) {
+        this.overrides.sort(this);
+
         try writer.writeAll(std.mem.asBytes(&has_overrides_tag));
 
         try Lockfile.Buffers.writeArray(
@@ -159,6 +166,8 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
     if (this.patched_dependencies.entries.len > 0) {
         for (this.patched_dependencies.values()) |patched_dep| bun.assert(!patched_dep.patchfile_hash_is_null);
 
+        this.patched_dependencies.sort(HashSortCtx(PackageNameAndVersionHash, PatchedDep){ .keys = this.patched_dependencies.keys() });
+
         try writer.writeAll(std.mem.asBytes(&has_patched_dependencies_tag));
 
         try Lockfile.Buffers.writeArray(
@@ -181,6 +190,8 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
     }
 
     if (this.catalogs.hasAny()) {
+        this.catalogs.sort(this);
+
         try writer.writeAll(std.mem.asBytes(&has_catalogs_tag));
 
         try Lockfile.Buffers.writeArray(
@@ -607,6 +618,19 @@ pub fn load(
 
     // const end = try reader.readInt(u64, .little);
     return res;
+}
+
+/// Generic sort context for sorting ArrayHashMaps by their key values.
+/// Used to ensure deterministic serialization order for maps keyed by hashes.
+fn HashSortCtx(comptime K: type, comptime V: type) type {
+    _ = V;
+    return struct {
+        keys: []const K,
+
+        pub fn lessThan(ctx: @This(), a_index: usize, b_index: usize) bool {
+            return std.math.order(ctx.keys[a_index], ctx.keys[b_index]) == .lt;
+        }
+    };
 }
 
 const string = []const u8;

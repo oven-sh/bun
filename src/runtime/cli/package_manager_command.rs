@@ -326,13 +326,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 'warner: {
                     if Output::enable_ansi_colors_stderr() {
                         if let Some(path) = env_var::PATH.get() {
+                            // Trim trailing path separators so that e.g.
+                            // "/home/user/.bun/bin/" matches "/home/user/.bun/bin".
+                            let normalized_output = trim_trailing_path_separators(output_path);
                             // PORT NOTE: `std.mem.tokenizeScalar` skips empty
                             // segments; mirror with `split` + `filter`.
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
-                                if strings::eql(entry, output_path) {
+                                let trimmed = trim_trailing_path_separators(entry);
+                                if strings::eql(trimmed, normalized_output) {
                                     break 'warner;
                                 }
                             }
@@ -696,6 +700,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         }
     }
+}
+
+/// Trim trailing `/` and `\` characters from a PATH entry so that e.g.
+/// "/home/user/.bun/bin/" matches "/home/user/.bun/bin".
+fn trim_trailing_path_separators(s: &[u8]) -> &[u8] {
+    let mut end = s.len();
+    while end > 0 && (s[end - 1] == b'/' || s[end - 1] == b'\\') {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 fn print_node_modules_folder_structure(

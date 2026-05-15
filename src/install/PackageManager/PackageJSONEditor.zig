@@ -683,7 +683,14 @@ pub fn edit(
                         break :uninitialized try allocator.dupe(u8, "latest");
                     }
 
-                    if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
+                    // If the user explicitly typed a dist-tag (e.g. `bun update pkg@latest`),
+                    // treat it like an npm spec: overwrite the existing package.json entry so
+                    // install re-resolves against that dist-tag. A bare `bun update pkg` (no spec)
+                    // parses to `.dist_tag` with an empty literal and should keep the existing pin.
+                    const user_typed_dist_tag = request.version.tag == .dist_tag and
+                        request.version.literal.slice(request.version_buf).len > 0;
+
+                    if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm or user_typed_dist_tag) {
                         break :uninitialized switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, "latest"),
                             else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),

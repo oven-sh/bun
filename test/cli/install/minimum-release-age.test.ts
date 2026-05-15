@@ -1,8 +1,8 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 /**
  * Comprehensive test suite for the minimum-release-age security feature.

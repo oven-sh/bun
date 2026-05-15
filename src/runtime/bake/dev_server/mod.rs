@@ -204,7 +204,7 @@ pub enum MessageId {
     ///   - `u32`: File index of the dependency file
     ///   - `u32`: File index of the imported file
     Visualizer = b'v',
-    /// Payload for `memory_visualizer.html`.]
+    /// Payload for `memory_visualizer.html`.
     /// This can be accessed via `/_bun/memory_visualizer`.
     ///
     /// - u32: incremental_graph_client

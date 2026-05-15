@@ -79,26 +79,6 @@ function DOMJITType(type) {
   }[type];
 }
 
-function ZigDOMJITArgType(type) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "i32",
-    ["JSUint8Array"]: "*jsc.JSUint8Array",
-    ["JSString"]: "*jsc.JSString",
-    ["JSValue"]: "jsc.JSValue",
-  }[type];
-}
-
-function ZigDOMJITArgTypeDefinition(type, index) {
-  return `arg${index}: ${ZigDOMJITArgType(type)}`;
-}
-
-function ZigDOMJITFunctionType(thisName, { args, returns }) {
-  return `fn (*${thisName}, *jsc.JSGlobalObject, ${args
-    .map(ZigDOMJITArgType)
-    .join(", ")}) callconv(jsc.conv) ${ZigDOMJITArgType("JSValue")}`;
-}
-
 function DOMJITReturnType(type) {
   return {
     ["bool"]: "bool",
@@ -863,59 +843,6 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
 `);
 
   return rows.map(a => a.trim()).join("\n");
-}
-
-function renderCallbacksZig(typeName, callbacks: Record<string, string>) {
-  if (Object.keys(callbacks).length === 0) return "";
-
-  var out =
-    "\n" +
-    `pub const Callbacks = struct {
-      instance: jsc.JSValue,` +
-    "\n";
-
-  for (const name in callbacks) {
-    const get = symbolName(typeName, "_callback_get_" + name);
-    const set = symbolName(typeName, "_callback_set_" + name);
-    out += `
-      extern fn ${get}(jsc.JSValue) callconv(jsc.conv) jsc.JSValue;
-      extern fn ${set}(jsc.JSValue, jsc.JSValue) callconv(jsc.conv) void;
-      pub const ${pascalCase(name)}Callback = jsc.Codegen.CallbackWrapper(${get}, ${set});
-      pub fn ${camelCase(name)}(cb: @This(), thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, args: []const jsc.JSValue) ?jsc.JSValue {
-        return ${pascalCase(name)}Callback.call(.{.instance = cb.instance}, thisValue, globalObject, args);
-      }
-    `;
-  }
-
-  out = out.trim();
-
-  out += `
-  extern fn ${symbolName(typeName, "_setAllCallbacks")}(jsc.JSValue, ${Object.keys(callbacks)
-    .map((a, i) => `callback${i}: jsc.JSValue`)
-    .join(", ")}) callconv(jsc.conv) void;
-
-  pub inline fn set(this: @This(), values: struct {
-    ${Object.keys(callbacks)
-      .map((name, i) => `${camelCase(name)}: jsc.JSValue = .zero,`)
-      .join("\n")}
-  }) void {
-    ${symbolName(typeName, "_setAllCallbacks")}(this.instance, ${Object.keys(callbacks)
-      .map((name, i) => `values.${camelCase(name)}`)
-      .join(", ")},);
-  }
-  `;
-
-  out += "\n};\n";
-
-  out += `
-
-  pub fn callbacks(_: *const ${typeName}, instance: jsc.JSValue) Callbacks {
-    return .{.instance = instance };
-  }
-
-`;
-
-  return "\n" + out;
 }
 
 function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) {

@@ -1189,15 +1189,40 @@ impl Task {
                                         }
                                     };
                                     if is_stale_link {
-                                        #[cfg(windows)]
-                                        {
-                                            if let Some(_e) = sys::rmdir(local.slice_z()).err() {
-                                                let _ = sys::unlink(local.slice_z());
+                                        let remove_err: Option<sys::Error> = {
+                                            #[cfg(windows)]
+                                            {
+                                                'win: {
+                                                    if let Some(_e) = sys::rmdir(local.slice_z()).err() {
+                                                        if let Some(e) = sys::unlink(local.slice_z()).err() {
+                                                            break 'win Some(e);
+                                                        }
+                                                    }
+                                                    break 'win None;
+                                                }
                                             }
-                                        }
-                                        #[cfg(not(windows))]
-                                        {
-                                            let _ = sys::unlink(local.slice_z());
+                                            #[cfg(not(windows))]
+                                            {
+                                                sys::unlink(local.slice_z()).err()
+                                            }
+                                        };
+                                        if let Some(e) = remove_err {
+                                            if e.get_errno() != sys::Errno::ENOENT {
+                                                // Do NOT proceed: the subsequent
+                                                // FileCopier writes through `dest`
+                                                // (node_modules/.bun/<storepath>/…)
+                                                // would resolve through the still-
+                                                // live symlink into the shared
+                                                // `<cache>/links/` entry under every
+                                                // consumer on the machine. Fail the
+                                                // task so the user sees the
+                                                // AV/sharing-violation or EACCES
+                                                // instead of silently mutating the
+                                                // shared cache.
+                                                return Ok(Yield::failure(
+                                                    TaskError::LinkPackage(e),
+                                                ));
+                                            }
                                         }
                                     }
 

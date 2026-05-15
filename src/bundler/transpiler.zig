@@ -230,6 +230,37 @@ pub const Transpiler = struct {
         this.fs.deinit();
     }
 
+    pub const PerFileFeatures = struct {
+        jsx: options.JSX.Pragma,
+        emit_decorator_metadata: bool,
+        experimental_decorators: bool,
+    };
+
+    /// Resolve per-file JSX and decorator settings from the nearest
+    /// enclosing tsconfig.json, falling back to the root config.
+    pub fn perFileFeatures(t: *Transpiler, path: Fs.Path) PerFileFeatures {
+        var out: PerFileFeatures = .{
+            .jsx = t.options.jsx,
+            .emit_decorator_metadata = t.options.emit_decorator_metadata,
+            .experimental_decorators = t.options.experimental_decorators,
+        };
+        if (path.isFile() and std.fs.path.isAbsolute(path.name.dir)) {
+            if (t.resolver.readDirInfo(path.name.dir) catch null) |dir_info| {
+                if (dir_info.enclosing_tsconfig_json) |tsconfig| {
+                    out.jsx = tsconfig.mergeJSX(out.jsx);
+                    out.jsx.development = switch (t.options.force_node_env) {
+                        .development => true,
+                        .production => false,
+                        .unspecified => t.options.jsx.development,
+                    };
+                    out.emit_decorator_metadata = out.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
+                    out.experimental_decorators = out.experimental_decorators or tsconfig.experimental_decorators;
+                }
+            }
+        }
+        return out;
+    }
+
     pub fn configureLinkerWithAutoJSX(transpiler: *Transpiler, auto_jsx: bool) void {
         transpiler.linker = Linker.init(
             transpiler.allocator,

@@ -2334,6 +2334,20 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
+                    // `link_package` will source from the producer dir via
+                    // `linked_package_path`; skip the cache-fetch dance entirely
+                    // (mirrors how `.folder` is handled — no registry traffic
+                    // needed when the body comes from an on-disk producer).
+                    // Without this, the main thread still enqueues a download
+                    // whose extracted bytes the worker never reads, and an
+                    // offline / unpublished-package install (the canonical
+                    // `bun link` case) would fail at the fetch step instead of
+                    // succeeding from the producer on disk.
+                    if has_active_link {
+                        installer.start_task(entry_id);
+                        continue;
+                    }
+
                     // SAFETY: each arm reads the union field that `pkg_res_tag`
                     // (== `pkg_res.tag`) names as active.
                     let cache_subpath_z: &bun_core::ZStr = match pkg_res_tag {

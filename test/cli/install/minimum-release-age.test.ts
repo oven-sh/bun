@@ -2496,12 +2496,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
       // spawned `bun add` must error. The pre-fix behavior was to silently
       // ignore the flag and install `3.0.0`.
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "x",
-          "--minimum-release-age=3155760000",
-          "regular-package",
-        ],
+        cmd: [bunExe(), "x", "--minimum-release-age=3155760000", "regular-package"],
         cwd: String(dir),
         env: bunxEnv(),
         stdout: "pipe",
@@ -2516,13 +2511,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
     test("--minimum-release-age <seconds> (spaced) is forwarded to bun add", async () => {
       using dir = tempDir("bunx-min-age-spaced", {});
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "x",
-          "--minimum-release-age",
-          "3155760000",
-          "regular-package",
-        ],
+        cmd: [bunExe(), "x", "--minimum-release-age", "3155760000", "regular-package"],
         cwd: String(dir),
         env: bunxEnv(),
         stdout: "pipe",

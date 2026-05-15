@@ -53,7 +53,7 @@ pub fn print_diff_main(
     writer: &mut impl Write,
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — profile in Phase B (all intermediate Vecs below were arena-allocated in Zig)
+    // PERF(port): was arena bulk-free — profile in Phase B (all intermediate Vecs below were originally arena-allocated)
     if not {
         match config.enable_ansi_colors {
             true => write!(
@@ -294,9 +294,9 @@ mod base_styles {
     };
 }
 
-// TODO(port): Zig selects this namespace via `switch (mode)` at comptime. Since MODE is const
-// Mode::BgDiffOnly, only that arm is materialized here. The .bg_always and .fg_diff arms differ
-// only in inserted_equal/removed_equal; .fg omits inserted_diff/removed_diff entirely.
+// TODO(port): the original selected this namespace via `switch (mode)` at compile time. Since
+// MODE is const Mode::BgDiffOnly, only that arm is materialized here. The .bg_always and .fg_diff
+// arms differ only in inserted_equal/removed_equal; .fg omits inserted_diff/removed_diff entirely.
 mod styles {
     use super::{Style, base_styles};
     pub const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;
@@ -317,7 +317,7 @@ pub enum DiffSegmentMode {
 }
 
 // TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
-// in Zig these were arena-backed slices. Revisit ownership in Phase B.
+// these were originally arena-backed slices. Revisit ownership in Phase B.
 #[derive(Clone)]
 pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
@@ -420,7 +420,7 @@ fn print_truncated_line(
     }
 
     if config.enable_ansi_colors {
-        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97 — Zig printDiff.zig:177
+        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97
     }
     // The context is shown on both sides, so we truncate line.len - 2 * context
     write!(
@@ -677,7 +677,7 @@ pub fn print_diff(
 
     let mut was_skipped = false;
     for (i, segment) in diff_segments.iter().enumerate() {
-        // PORT NOTE: Zig `defer { removed_line_number += ...; inserted_line_number += ...; }` —
+        // PORT NOTE: the deferred `removed_line_number += ...; inserted_line_number += ...;` is
         // applied at the end of the loop body and before `continue` below.
 
         if (was_skipped && !segment.skip) || (has_skipped_segments && i == 0 && !segment.skip) {
@@ -748,5 +748,3 @@ pub fn print_diff(
 
     print_diff_footer(writer, config, removed_diff_lines, inserted_diff_lines)
 }
-
-// ported from: src/test_runner/diff/printDiff.zig

@@ -1,7 +1,6 @@
-//! Branch-prediction hints — Rust port of Zig's `@branchHint`.
+//! Branch-prediction hints.
 
-/// Mark the surrounding branch as cold/unlikely. Port of Zig
-/// `@branchHint(.unlikely)` / `@branchHint(.cold)` (docs/PORTING.md:211).
+/// Mark the surrounding branch as cold/unlikely (see docs/PORTING.md:211).
 ///
 /// Calling a `#[cold]` callee makes LLVM treat the *call site's* basic block
 /// as cold and lay it out off the hot path. `#[inline(never)]` is required:

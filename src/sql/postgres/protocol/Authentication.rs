@@ -187,12 +187,10 @@ impl Authentication {
         }
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // See src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, bun_core::Error> {
         Self::decode_internal(&mut NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/postgres/protocol/Authentication.zig

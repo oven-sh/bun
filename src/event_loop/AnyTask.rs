@@ -23,7 +23,7 @@ pub struct AnyTask {
 
 impl Default for AnyTask {
     fn default() -> Self {
-        // Zig: field defaults to `= undefined`; provide a sentinel that panics
+        // The original left fields uninitialized; provide a sentinel that panics
         // if run before being overwritten.
         Self {
             ctx: None,
@@ -38,7 +38,7 @@ impl AnyTask {
     }
 
     pub fn run(&mut self) -> JsResult<()> {
-        // Zig: @setRuntimeSafety(false) — no Rust equivalent; bounds/overflow checks
+        // The original disabled runtime safety checks here; bounds/overflow checks
         // are already off in release and the body has none anyway.
         let callback = self.callback;
         let ctx = self.ctx;
@@ -47,11 +47,9 @@ impl AnyTask {
 }
 
 impl AnyTask {
-    /// Zig: `AnyTask.New(T, Callback).init(ctx)`.
-    ///
     /// Builds an [`AnyTask`] from a typed `*mut T` context and a typed
     /// callback, erasing both to `c_void` in one place. This is the direct
-    /// stable-Rust analogue of Zig's `comptime Callback` generator: instead of
+    /// stable-Rust analogue of the original compile-time `Callback` generator: instead of
     /// monomorphising a `wrap` shim per `(Type, Callback)` pair, the typed
     /// `fn` pointer itself is reinterpreted as the erased one — `*mut T` and
     /// `*mut c_void` are ABI-identical for all `T: Sized`, so
@@ -73,5 +71,3 @@ impl AnyTask {
         }
     }
 }
-
-// ported from: src/event_loop/AnyTask.zig

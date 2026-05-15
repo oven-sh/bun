@@ -17,7 +17,6 @@
 // `grow_capacity`, manual `Drop`, and `SmallListIntoIter` (~800 lines of
 // `unsafe`) were a direct port of servo/rust-smallvec; that loop is now closed
 // back onto the upstream crate.
-// ported from: src/css/small_list.zig
 
 pub use bun_collections::SmallList;
 
@@ -28,9 +27,9 @@ pub use bun_collections::SmallList;
 // trait at the call site instead.)
 
 // ─── getFallbacks ──────────────────────────────────────────────────────────
-// The Zig version uses `@hasDecl(T, "getImage")` and `T == TextShadow` comptime
-// dispatch with a comptime-computed return type. In Rust this becomes a trait
-// with associated type for the return.
+// The original used duck-typed compile-time dispatch on the element type with a
+// computed return type. In Rust this becomes a trait with an associated type
+// for the return.
 
 pub trait GetFallbacks<const N: usize>: Sized {
     type Output;
@@ -40,7 +39,7 @@ pub trait GetFallbacks<const N: usize>: Sized {
     ) -> Self::Output;
 }
 
-/// Duck-typed protocol from the Zig source (`@hasDecl(T, "getImage")`): any
+/// Duck-typed protocol: any
 /// value type that carries an `Image` and can produce color/prefix fallbacks
 /// of itself. Implemented by `values::image::Image` and
 /// `properties::background::Background`.
@@ -61,7 +60,7 @@ pub trait ImageFallback: Sized {
 // `ImageFallback for Image` is implemented alongside the type in
 // `crate::values::image` to avoid a duplicate impl here.
 
-/// Port of Zig `SmallList(T, N).getFallbacks` for the `@hasDecl(T, "getImage")`
+/// `SmallList(T, N).getFallbacks` for the image-fallback
 /// branch. The TextShadow branch is `get_fallbacks_text_shadow`.
 ///
 /// Free-standing (was an inherent on `SmallList<T,1>`) so it can live in this

@@ -1,7 +1,7 @@
 #include "V8Isolate.h"
 #include "V8HandleScope.h"
 #include "shim/GlobalInternals.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "real_v8.h"
 #include "v8_compatibility_assertions.h"
 

@@ -3,14 +3,12 @@
 //! Can't think of a better name.
 
 // NOTE: Should not be used with slice types. Use `CowSlice` or `CowSliceZ` instead.
-// TODO(port): the Zig `@typeInfo(T) == .pointer && .size == .slice` @compileError guard
-// has no direct Rust equivalent on a generic param; enforced by convention/docs.
+// TODO(port): there is no compile-time guard rejecting slice types on a
+// generic param; enforced by convention/docs.
 
-// The Zig `VTable: type` param + `Handler` adapter (with `@hasDecl` + `@compileError`
-// checks for `copy`/`deinit`) collapses to a `T: Clone` bound:
-//   - `VTable.copy(&T, allocator) -> T`  →  `T::clone(&self)`  (allocator param deleted; non-AST crate)
-//   - `VTable.deinit(&mut T, allocator)` →  implicit `Drop` on `T`
-// Per PORTING.md §Comptime reflection: `@hasDecl` + `@compileError` → trait bound.
+// Cloning and dropping are expressed as a `T: Clone` bound:
+//   - copy → `T::clone(&self)` (no allocator param; non-AST crate)
+//   - deinit → implicit `Drop` on `T`
 
 pub enum Cow<'a, T: Clone> {
     Borrowed(&'a T),
@@ -27,10 +25,9 @@ impl<'a, T: Clone> Cow<'a, T> {
     }
 
     pub fn replace(&mut self, newval: T) {
-        // Zig: `if (this.* == .owned) this.deinit(allocator);` then assign.
-        // In Rust, assigning over `*self` drops the old value automatically
-        // (no-op for `Borrowed`, runs `T::drop` for `Owned`), so the explicit
-        // branch is unnecessary.
+        // Assigning over `*self` drops the old value automatically (no-op for
+        // `Borrowed`, runs `T::drop` for `Owned`), so no explicit free is
+        // needed first.
         *self = Cow::Owned(newval);
     }
 
@@ -65,10 +62,7 @@ impl<'a, T: Clone> Cow<'a, T> {
     }
 
     // `pub fn deinit(this, allocator)` → intentionally omitted.
-    // The Zig body only calls `Handler.deinit(&this.owned, allocator)` when
-    // `.owned`; Rust's auto-generated enum Drop glue already drops the `Owned(T)`
+    // Rust's auto-generated enum Drop glue already drops the `Owned(T)`
     // payload. Per PORTING.md: deinit bodies that only free owned fields are
     // deleted entirely; `Drop` cannot take an allocator param.
 }
-
-// ported from: src/ptr/Cow.zig

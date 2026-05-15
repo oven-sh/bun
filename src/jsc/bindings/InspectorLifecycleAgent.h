@@ -36,7 +36,7 @@ public:
 
     // Public API
     void reportReload();
-    void reportError(ZigException&);
+    void reportError(BunException&);
     Protocol::ErrorStringOr<void> preventExit();
     Protocol::ErrorStringOr<void> stopPreventingExit();
 

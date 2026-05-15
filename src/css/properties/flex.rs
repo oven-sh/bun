@@ -9,9 +9,8 @@ use css::css_values::length::LengthValue as Length;
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
-use css::{PrintErr, Printer, VendorPrefix};
-// Zig: `const isFlex2009 = css.prefixes.Feature.isFlex2009;`
 use css::prefixes::is_flex_2009;
+use css::{PrintErr, Printer, VendorPrefix};
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
@@ -563,7 +562,7 @@ impl FlexHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // TODO(port): Zig used local closures with `@field(self, prop)` comptime reflection.
+        // TODO(port): the original used local closures with compile-time field-name reflection.
         // Ported as macro_rules! token-pasting on field idents.
         macro_rules! maybe_flush {
             ($prop:ident, $val:expr, $vp:expr) => {{
@@ -582,7 +581,7 @@ impl FlexHandler {
                 maybe_flush!($prop, $val, $vp);
 
                 // Otherwise, update the value and add the prefix
-                // PORT NOTE: Zig threaded `context.arena` into `css.generic.deepClone`;
+                // PORT NOTE: `context.arena` was originally threaded into `generic.deepClone`;
                 // every payload here is `Clone` (Copy enums / f32 / i32 / LengthPercentageOrAuto),
                 // so `.clone()` is the faithful equivalent.
                 if let Some(field) = &mut self.$prop {
@@ -669,7 +668,7 @@ impl FlexHandler {
             Property::Unparsed(val) => {
                 if Self::is_flex_property(&val.property_id) {
                     self.flush(dest, context);
-                    // PORT NOTE: Zig pushed `property.deepClone(context.arena)`. `Property`
+                    // PORT NOTE: the original pushed `property.deepClone(context.arena)`. `Property`
                     // has no blanket `deep_clone` yet; reconstruct from the matched payload.
                     let bump = dest.bump();
                     dest.push(Property::Unparsed(val.deep_clone(bump)));
@@ -718,8 +717,8 @@ impl FlexHandler {
         let mut order = self.order.take();
         let mut flex_order = self.flex_order.take();
 
-        // TODO(port): Zig `legacyProperty` / `singleProperty` use `@unionInit(Property, name, ...)`
-        // (comptime token-pasting). Ported as macro_rules! taking the Property variant ident.
+        // TODO(port): `legacyProperty` / `singleProperty` originally used compile-time
+        // token-pasting on Property variant names. Ported as macro_rules! taking the variant ident.
         macro_rules! legacy_property {
             ($variant:ident, $key:expr) => {{
                 if let Some(value) = $key {
@@ -768,7 +767,7 @@ impl FlexHandler {
         }
 
         if direction.is_some() && wrap.is_some() {
-            // PORT NOTE: reshaped for borrowck — Zig took simultaneous &mut into both Options.
+            // PORT NOTE: reshaped for borrowck — the original took simultaneous &mut into both Options.
             let dir_val = direction.as_mut().unwrap();
             let wrap_val = wrap.as_mut().unwrap();
             let dir: &FlexDirection = &dir_val.0;
@@ -825,7 +824,7 @@ impl FlexHandler {
             // prop_2012 = Some, prop_2009 = BoxOrdinalGroup special case
             ($variant:ident, $key:expr, prop_2012 = $p2012:ident, prop_2009 = (BoxOrdinalGroup, $v2009:ident), feature = $feature:ident) => {{
                 single_property!(@inner $variant, $key, $feature, |val, _prefix, prefixes_2009: VendorPrefix| {
-                    // Zig: if T == BoxOrdinalGroup -> Some(val as i32)
+                    // if T == BoxOrdinalGroup -> Some(val as i32)
                     let s: Option<i32> = Some(val);
                     if let Some(v) = s {
                         dest.push(Property::$v2009((v, prefixes_2009)));
@@ -876,8 +875,8 @@ impl FlexHandler {
                 }
             }};
         }
-        // TODO(port): single_property! macro encodes Zig's comptime `prop_2009`/`prop_2012` branches.
-        // The Zig version gates the entire 2009 block on `comptime prop_2009 != null`; here the macro
+        // TODO(port): single_property! macro encodes the compile-time `prop_2009`/`prop_2012` branches.
+        // The original gates the entire 2009 block on `prop_2009 != null` at compile time; here the macro
         // arms with `prop_2009 = None` pass a no-op closure, so the `prefix.contains(NONE)` check
         // still runs but has no effect. Phase B should verify this matches behavior exactly.
 
@@ -999,5 +998,3 @@ impl FlexHandler {
         )
     }
 }
-
-// ported from: src/css/properties/flex.zig

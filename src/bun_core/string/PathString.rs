@@ -17,8 +17,8 @@ const PATH_INT_LEN_BITS: u32 = {
 
 const USE_SMALL_PATH_STRING_: bool = (usize::BITS - PATH_INT_LEN_BITS) >= 53;
 
-// const PathStringBackingIntType = if (use_small_path_string_) u64 else u128;
-// Zig picks the backing integer at comptime: u64 if 53 ptr bits + len bits fit
+// PathStringBackingIntType = if use_small_path_string_ { u64 } else { u128 }.
+// The backing integer is u64 if 53 ptr bits + len bits fit
 // (MAX_PATH_BYTES ≤ 2048 → ≤ 11 len bits); u128 otherwise (Linux/Android
 // MAX_PATH_BYTES=4096 → 13 len bits → 64-13=51 < 53; Windows → way more).
 // Stable Rust cannot select a type from a const bool, so cfg by OS — this list
@@ -39,7 +39,7 @@ type PathStringBackingInt = u128;
 )))]
 type PathStringBackingInt = u64; // macOS / FreeBSD / OpenBSD / NetBSD / DragonFly / Solaris / iOS
 
-// Bit widths of the packed fields (Zig packed-struct order: ptr in low bits, len in high bits).
+// Bit widths of the packed fields (packed-struct order: ptr in low bits, len in high bits).
 const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ {
     53
 } else {
@@ -60,8 +60,8 @@ const LEN_BITS: u32 = if USE_SMALL_PATH_STRING_ {
 pub struct PathString(PathStringBackingInt);
 
 impl PathString {
-    // pub const PathInt / PointerIntType — Zig exposed these as type aliases; in
-    // Rust the packed accessors below replace them.
+    // The packed accessors below replace the `PathInt` / `PointerIntType` type
+    // aliases that the original implementation exposed.
     pub const USE_SMALL_PATH_STRING: bool = USE_SMALL_PATH_STRING_;
 
     const PTR_MASK: PathStringBackingInt = (1 as PathStringBackingInt)
@@ -84,8 +84,8 @@ impl PathString {
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
-        // fine here. if it is null, the len will be 0.
+        // "cast causes pointer to be null" is fine here. if it is null, the
+        // len will be 0.
         let ptr = self.ptr();
         if ptr == 0 {
             // Rust forbids slice::from_raw_parts(null, 0); return a valid empty slice.
@@ -98,8 +98,8 @@ impl PathString {
 
     #[inline]
     pub fn slice_assume_z(&self) -> &ZStr {
-        // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
-        // fine here. if it is null, the len will be 0.
+        // "cast causes pointer to be null" is fine here. if it is null, the
+        // len will be 0.
         let ptr = self.ptr();
         if ptr == 0 {
             return ZStr::EMPTY;
@@ -111,18 +111,17 @@ impl PathString {
     /// Create a PathString from a borrowed slice. No allocation occurs.
     #[inline]
     pub fn init(str: &[u8]) -> Self {
-        // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
-        // fine here. if it is null, the len will be 0.
-        let ptr = (str.as_ptr() as usize as PathStringBackingInt) & Self::PTR_MASK; // @truncate
-        let len = (str.len() as PathStringBackingInt) << POINTER_BITS; // @truncate into PathInt
+        // "cast causes pointer to be null" is fine here. if it is null, the
+        // len will be 0.
+        let ptr = (str.as_ptr() as usize as PathStringBackingInt) & Self::PTR_MASK; // truncate
+        let len = (str.len() as PathStringBackingInt) << POINTER_BITS; // truncate into PathInt
         Self(ptr | len)
     }
 
     /// Take ownership of `bytes`, store its raw pointer/len, and forget the
     /// allocation. The returned PathString must be paired with
     /// [`deinit_owned`] (typically by the containing struct's `Drop`) to avoid
-    /// a leak — this mirrors Zig, where `Bytes.deinit` runs
-    /// `default_allocator.free(stored_name.slice())`.
+    /// a leak — `Bytes.deinit` is responsible for freeing the stored slice.
     ///
     /// PathString itself stays `Copy` (it is a packed pointer), so ownership
     /// is a contract on the *container*, not enforced by the type.
@@ -168,8 +167,8 @@ impl PathString {
 
     pub const EMPTY: Self = Self(0);
 
-    /// Zig: `pub const empty: PathString = PathString{};` — value form of
-    /// [`EMPTY`] for call sites that read better as a constructor.
+    /// Value form of [`EMPTY`] for call sites that read better as a
+    /// constructor.
     #[inline(always)]
     pub const fn empty() -> Self {
         Self::EMPTY
@@ -196,5 +195,3 @@ const _: () = {
         );
     }
 };
-
-// ported from: src/string/PathString.zig

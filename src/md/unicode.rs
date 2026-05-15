@@ -1,4 +1,4 @@
-// PORT NOTE: Zig `u21` (codepoint) → `u32`; Zig `u2` (count) → `u8`.
+// PORT NOTE: codepoint stored as `u32`, count as `u8`.
 // Rust has no arbitrary-bit-width integers; the next natural width is used.
 
 pub struct FoldInfo {
@@ -526,5 +526,3 @@ mod tests {
         assert_eq!(1u8, info.n_codepoints);
     }
 }
-
-// ported from: src/md/unicode.zig

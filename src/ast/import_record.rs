@@ -1,4 +1,4 @@
-//! `src/options_types/import_record.zig` — `ImportRecord` and friends.
+//! `ImportRecord` and friends.
 //!
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
@@ -9,8 +9,7 @@ use crate::Range;
 use bun_paths::fs::Path;
 
 // Re-exported here (canonical at crate root) so callers that path through
-// `bun_ast::import_record::{ImportKind, Index, Loader}` — mirroring the Zig
-// `import_record.zig` namespace — keep resolving.
+// `bun_ast::import_record::{ImportKind, Index, Loader}` keep resolving.
 pub use crate::{ImportKind, Index, Loader};
 
 pub struct ImportRecord {
@@ -24,18 +23,19 @@ pub struct ImportRecord {
 
     pub source_index: Index,
 
-    /// `js_printer::printBundledImport` reads this. The Zig field was removed
-    /// from `ImportRecord` but the printer body referencing it is dead (never
-    /// analysed by Zig's lazy compilation). Kept here so the eagerly-compiled
-    /// Rust port of that body type-checks; always 0 in practice.
+    /// `js_printer::printBundledImport` reads this. The field was removed from
+    /// `ImportRecord` upstream but the printer body referencing it is dead.
+    /// Kept here so the eagerly-compiled body type-checks; always 0 in
+    /// practice.
     // TODO(port): delete once `printBundledImport` is confirmed dead and removed.
     pub module_id: u32,
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
     /// Used for metafile generation.
-    // TODO(port): lifetime — Zig `[]const u8` defaulting to "", never freed in this file.
-    // Likely a borrow into parser-owned source text; using &'static [u8] as Phase-A placeholder.
+    // TODO(port): lifetime — defaults to "", never freed in this file. Likely
+    // a borrow into parser-owned source text; using &'static [u8] as a
+    // Phase-A placeholder.
     pub original_path: &'static [u8],
 
     /// Pack all boolean flags into 2 bytes to reduce padding overhead.
@@ -152,8 +152,6 @@ pub enum PrintMode {
     NapiModule,
 }
 
-// NOTE: no `impl Default for ImportRecord` — Zig gives `range`, `path`, `kind` no defaults,
-// so `.{}` is invalid there. Construction sites must supply required fields explicitly
+// NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no
+// sensible defaults. Construction sites must supply required fields explicitly
 // (struct-update or a `new(range, path, kind)` helper).
-
-// ported from: src/options_types/import_record.zig

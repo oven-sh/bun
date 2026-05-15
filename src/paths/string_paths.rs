@@ -13,8 +13,8 @@ use bun_core::string::immutable as strings;
 use bun_core::{WStr, ZStr};
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths.
-// Zig used `comptime T: type`; bound on `crate::PathChar` (provides
-// `from_u8`/`IS_U16`) plus `Into<u32>` + `NoUninit` for `strings::contains_char_t`.
+// Bound on `crate::PathChar` (provides `from_u8`/`IS_U16`) plus `Into<u32>` +
+// `NoUninit` for `strings::contains_char_t`.
 pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
 impl Ch for u8 {}
 impl Ch for u16 {}
@@ -24,8 +24,8 @@ impl Ch for u16 {}
 /// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
 /// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
 /// returned lifetime to it; the NUL is debug-asserted (release relies on the
-/// caller upholding the documented `wbuf[len] == 0` precondition — same
-/// contract as Zig `[:0]const u16` slicing). Mirrors [`ZStr::from_buf`].
+/// caller upholding the documented `wbuf[len] == 0` precondition).
+/// Mirrors [`ZStr::from_buf`].
 #[inline(always)]
 pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
@@ -56,7 +56,7 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
 /// an absolute path contain a drive letter.
 ///
 /// Thin wrapper over the canonical [`crate::strings`] impl that additionally
-/// debug-asserts the Zig precondition `Platform.windows.isAbsoluteT(chars)`
+/// debug-asserts the precondition `Platform::Windows.is_absolute_t(chars)`
 /// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
 #[inline]
 pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
@@ -79,8 +79,8 @@ pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
     if !cfg!(windows) {
         return path;
     }
-    // PORT NOTE: Zig dispatched hasPrefixComptime vs hasPrefixComptimeUTF16 on T;
-    // collapsed to a local `has_prefix_ascii_t` (widens each ASCII byte via T::from_u8).
+    // PORT NOTE: prefix matching is collapsed to a local `has_prefix_ascii_t`
+    // (widens each ASCII byte via T::from_u8).
     if has_prefix_ascii_t(path, &windows::NT_OBJECT_PREFIX_U8) {
         return &path[windows::NT_OBJECT_PREFIX.len()..];
     }
@@ -226,8 +226,8 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 }
 
 pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
-    // PORT NOTE: reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
-    // here we capture the length and re-derive the mutable slice.
+    // PORT NOTE: reshaped for borrowck — capture the length and re-derive the
+    // mutable slice instead of re-slicing wbuf in place.
     let len = {
         let mut path_to_use = normalize_slashes_only_t::<u16, b'\\', true>(wbuf, path);
 
@@ -284,9 +284,9 @@ pub fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS
     path
 }
 
-// TODO(port): `desired_slash` was `comptime u8` in Zig; kept as runtime arg here since
-// const-generic value can't be forwarded from a runtime call site without duplication.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// TODO(port): `desired_slash` is kept as a runtime arg since a const-generic
+// value can't be forwarded from a runtime call site without duplication.
+// PERF(port): profile in Phase B.
 pub fn normalize_slashes_only<'a>(
     buf: &'a mut [u8],
     utf8: &'a [u8],
@@ -356,9 +356,8 @@ pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     debug_assert!(!wbuf.is_empty());
 
     let cap = wbuf.len().saturating_sub(1 + (ADD_TRAILING_LASH as usize));
-    // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
-    // route through `crate::strings::convert_utf8_to_utf16_in_buffer` (same
-    // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
+    // PORT NOTE: route through `crate::strings::convert_utf8_to_utf16_in_buffer`
+    // (simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
     let mut count = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8).len();
 
     // Many Windows APIs expect normalized path slashes, particularly when the
@@ -494,5 +493,3 @@ pub fn basename<T: Ch>(input: &[T]) -> &[T] {
         crate::basename_posix::<T>(input)
     }
 }
-
-// ported from: src/string/immutable/paths.zig

@@ -6,10 +6,8 @@ use bun_core::String as BunString;
 
 bun_core::declare_scope!(NewWriter, hidden);
 
-/// Zig's `NewWriterWrap` passes `offsetFn`/`writeFn`/`pwriteFn` as comptime
-/// fn-pointer params. In Rust those become required methods on a trait that
-/// `Context` implements; `NewWriter(Context)` then just calls them through the
-/// trait bound.
+/// Required methods a writer context must implement; `NewWriterWrap` calls
+/// them through the trait bound.
 pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyMySQLError>;
@@ -90,16 +88,15 @@ impl<C: WriterContext> NewWriterWrap<C> {
         self.write(&[value])
     }
 
-    /// Zig: `Query.zig` calls `writer.writeNullBitmap(this.params)` on the
-    /// `NewWriter` value. The Zig source never defines this on `NewWriterWrap`
-    /// (lazy compilation: the params branch is never instantiated for COM_QUERY
-    /// in practice), but Rust must have it to typecheck. Mirrors the bitmap
-    /// logic from `PreparedStatement.zig::writeNullBitmap`, keyed on
+    /// `Query` calls `writer.write_null_bitmap(this.params)` on the
+    /// `NewWriter` value. The params branch is never instantiated for
+    /// COM_QUERY in practice, but Rust must have it to typecheck. Mirrors the
+    /// bitmap logic from `PreparedStatement::write_null_bitmap`, keyed on
     /// `Data::Empty` instead of `Value::Null`.
     pub fn write_null_bitmap(self, params: &[crate::shared::Data]) -> Result<(), AnyMySQLError> {
         let bitmap_bytes = (params.len() + 7) / 8;
-        // PERF(port): Zig sized this from `(u16::MAX / 8) + 1` on the stack;
-        // here a small Vec keeps stack usage bounded for the never-taken path.
+        // PERF(port): a small Vec keeps stack usage bounded for the
+        // never-taken path.
         let mut null_bitmap = vec![0u8; bitmap_bytes];
         for (i, param) in params.iter().enumerate() {
             if matches!(param, crate::shared::Data::Empty) {
@@ -134,22 +131,16 @@ impl<C: WriterContext> NewWriterWrap<C> {
     }
 }
 
-/// In Zig, `NewWriter(Context)` returns `Context` unchanged when it already has
-/// `is_wrapped`, otherwise wraps it via `NewWriterWrap`. Rust cannot branch on a
-/// type-level decl, so callers that already hold a `NewWriterWrap<C>` should use
-/// it directly; this alias covers the wrapping case.
-// TODO(port): @hasDecl(Context, "is_wrapped") short-circuit — Phase B: ensure no
-// caller double-wraps; if needed, model via a `MySQLWriter` trait with a blanket
-// impl for `NewWriterWrap<C>`.
+/// Callers that already hold a `NewWriterWrap<C>` should use it directly; this
+/// alias covers the wrapping case.
+// TODO(port): ensure no caller double-wraps; if needed, model via a
+// `MySQLWriter` trait with a blanket impl for `NewWriterWrap<C>`.
 pub type NewWriter<C> = NewWriterWrap<C>;
 
-/// Zig's `writeWrap(Container, writeFn)` returns a struct with a `write` method
-/// that auto-wraps a raw context into `NewWriterWrap` before forwarding to
-/// `writeFn`. In Rust this is a free helper that the per-packet `write` impls
-/// call directly.
-// TODO(port): Zig used @hasDecl to detect already-wrapped contexts at the call
-// site. Rust callers should pass `impl WriterContext` and let this helper wrap
-// unconditionally; already-wrapped values go straight to `write_fn`.
+/// Free helper that wraps a raw context into `NewWriterWrap` before forwarding
+/// to `write_fn`. The per-packet `write` impls call this directly.
+// TODO(port): callers should pass `impl WriterContext` and let this helper
+// wrap unconditionally; already-wrapped values go straight to `write_fn`.
 #[inline]
 pub fn write_wrap<Container, C, F>(
     this: &mut Container,
@@ -162,5 +153,3 @@ where
 {
     write_fn(this, NewWriterWrap { wrapped: context })
 }
-
-// ported from: src/sql/mysql/protocol/NewWriter.zig

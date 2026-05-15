@@ -3,8 +3,8 @@
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::Output;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::UnsafeStringViewJsc as _;
+use bun_jsc::unsafe_string_view::UnsafeStringView;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
@@ -51,7 +51,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
-    // Zig: `std.fs.File.stdin().readerStreaming(&[1]u8)` — unbuffered byte reader.
+    // Unbuffered byte reader over stdin.
     let mut reader = Output::stdin_reader();
     loop {
         let Ok(byte) = reader.take_byte() else { break };
@@ -108,7 +108,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    // Zig: `std.fs.File.stdin().readerStreaming(&[1024]u8)` — byte reader.
+    // Buffered byte reader over stdin.
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
@@ -177,7 +177,7 @@ pub mod prompt {
         Io,
     }
 
-    /// `reader: anytype` in the Zig — the only method called is `readByte()`.
+    /// Originally a generic `reader: anytype` parameter — the only method called is `readByte()`.
     /// Bound on a small trait exposing `read_byte() -> Result<u8, _>`; the only
     /// concrete impl is the process-global `BufferedStdin`.
     pub trait ReadByte {
@@ -341,7 +341,7 @@ pub mod prompt {
 
         // PERF(port): was stack-fallback allocator backing this Vec
         let mut input: Vec<u8> = Vec::with_capacity(2048);
-        // Note: Zig returned `.null` on OOM here; Rust `Vec::with_capacity` aborts on OOM.
+        // Note: original returned `.null` on OOM here; Rust `Vec::with_capacity` aborts on OOM.
 
         // PERF(port): was assume_capacity
         input.push(first_byte);
@@ -367,7 +367,7 @@ pub mod prompt {
             }
 
             input.ensure_total_capacity(4096);
-            // Note: Zig returned `.null` on OOM here; Rust `reserve` aborts on OOM.
+            // Note: original returned `.null` on OOM here; Rust `reserve` aborts on OOM.
 
             if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
                 &mut *reader,
@@ -402,7 +402,7 @@ pub mod prompt {
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        let mut result = ZigString::init(&input);
+        let mut result = UnsafeStringView::init(&input);
         result.mark_utf8();
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if

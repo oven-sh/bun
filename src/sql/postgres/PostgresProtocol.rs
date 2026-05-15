@@ -1,14 +1,12 @@
 use crate::postgres::types::int_types::int4;
 
-// `std.mem.toBytes(Int32(n))` — Zig's `Int32` casts `n` to `int4` (u32) and
-// `@byteSwap`s it to network order; `toBytes` then bit-casts to `[4]u8`. The net
-// result is just the big-endian byte representation of `n`.
+// Big-endian (network order) byte representation of `n`.
 #[inline(always)]
 const fn to_bytes(n: int4) -> [u8; 4] {
     n.to_be_bytes()
 }
 
-// `[_]u8{tag} ++ toBytes(Int32(n))` — Zig comptime array concat.
+// `[tag] ++ to_bytes(n)` concatenated at compile time.
 #[inline(always)]
 const fn tag_len(tag: u8, n: int4) -> [u8; 5] {
     let b = to_bytes(n);
@@ -82,5 +80,3 @@ pub use crate::postgres::protocol::stack_reader::StackReader;
 pub use crate::postgres::protocol::startup_message::StartupMessage;
 pub use crate::postgres::protocol::write_wrap::WriteWrap;
 pub use crate::shared::column_identifier::ColumnIdentifier;
-
-// ported from: src/sql/postgres/PostgresProtocol.zig

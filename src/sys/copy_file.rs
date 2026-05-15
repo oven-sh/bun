@@ -7,9 +7,8 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use crate::Tag;
 use crate::{E, Fd};
 
-// PORT NOTE: Zig was `const debug = bun.Output.scoped(.copy_file, .hidden)`.
-// `declare_scope!` uses the ident as both static name AND tag string, but
-// `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
+// PORT NOTE: `declare_scope!` uses the ident as both static name AND tag string,
+// but `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
 // correct env-var tag and a non-colliding static name.
 // TODO(port): `scoped_log!` stringifies its scope ident for the `[tag]`
 // prefix, so log lines show `[debug]` instead of `[copy_file]`; fix when
@@ -39,8 +38,7 @@ pub enum CopyFileRangeError {
     PermissionDenied,
     #[error("FileBusy")]
     FileBusy,
-    // TODO(port): Zig unioned `posix.PReadError || posix.PWriteError || posix.UnexpectedError`
-    // here; in Rust those collapse into `bun_core::Error` via `From`.
+    // The various read/write/unexpected error sets collapse into `bun_core::Error` via `From`.
 }
 bun_core::named_error_set!(CopyFileRangeError);
 
@@ -154,7 +152,7 @@ pub fn copy_file_with_state(
                 // Don't worry about EINTR here.
                 E::EINTR => {}
 
-                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                // PORT NOTE: on Linux EOPNOTSUPP == ENOTSUP.
                 E::EACCES | E::EBADF | E::EINVAL | E::ENOTSUP | E::ENOSYS | E::EPERM => {
                     bun_core::scoped_log!(debug, "ioctl_ficlonerange is NOT supported");
                     CAN_USE_IOCTL_FICLONE_.store(-1, Ordering::Relaxed);
@@ -293,7 +291,6 @@ pub fn can_use_copy_file_range_syscall() -> bool {
             return false;
         }
 
-        // Zig: `kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)`
         if kernel_at_least(4, 5) {
             bun_core::scoped_log!(debug, "copy_file_range is supported");
             CAN_USE_COPY_FILE_RANGE.store(1, Ordering::Relaxed);
@@ -336,7 +333,6 @@ pub fn can_use_ioctl_ficlone() -> bool {
             return false;
         }
 
-        // Zig: `kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)`
         if kernel_at_least(4, 5) {
             bun_core::scoped_log!(debug, "ioctl_ficlonerange is supported");
             CAN_USE_IOCTL_FICLONE_.store(1, Ordering::Relaxed);
@@ -395,7 +391,7 @@ pub fn copy_file_range(
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                 }
                 // syscall added in Linux 4.5, use fallback
-                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                // PORT NOTE: on Linux EOPNOTSUPP == ENOTSUP.
                 E::ENOTSUP | E::ENOSYS => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                     bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
@@ -429,7 +425,7 @@ pub fn copy_file_range(
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
             // they might not support it
-            // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+            // PORT NOTE: on Linux EOPNOTSUPP == ENOTSUP.
             E::ENOTSUP | E::ENOSYS => {
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
@@ -445,7 +441,7 @@ pub fn copy_file_range(
 }
 
 pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
-    // PERF(port): Zig used `undefined` (uninitialized) 32 KiB stack buffer — profile in Phase B
+    // PERF(port): originally an uninitialized 32 KiB stack buffer — profile in Phase B
     let mut buf = [0u8; 8 * 4096];
     let adjusted_count = buf.len().min(len);
     match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
@@ -479,9 +475,8 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
 /// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
 /// PORT NOTE: `bun_analytics::generate_header::Platform` (T6) is the canonical
 /// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
-/// move-down) so this crate stays leaf. Compare matches Zig
-/// `std.SemanticVersion.orderWithoutTag` (lexicographic on major→minor→patch,
-/// patch defaults to 0 in the comparand).
+/// move-down) so this crate stays leaf. Compare is lexicographic on
+/// major→minor→patch, with patch defaulting to 0 in the comparand.
 #[inline]
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();
@@ -493,5 +488,3 @@ fn kernel_at_least(major: u32, minor: u32) -> bool {
 pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error {
     e.into()
 }
-
-// ported from: src/sys/copy_file.zig

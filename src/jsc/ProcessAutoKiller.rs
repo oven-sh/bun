@@ -7,8 +7,8 @@ bun_core::declare_scope!(AutoKiller, hidden);
 #[derive(Default)]
 pub struct ProcessAutoKiller {
     /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
-    /// on remove/drop). Stored as raw ptr to preserve identity-hash semantics
-    /// of Zig `AutoArrayHashMap(*Process, void)`.
+    /// on remove/drop). Stored as raw ptr to preserve pointer-identity hash
+    /// semantics for the set membership check.
     pub processes: ArrayHashMap<*mut Process, ()>,
     pub enabled: bool,
     pub ever_enabled: bool,
@@ -63,12 +63,12 @@ impl ProcessAutoKiller {
     }
 
     /// Spec: `onSubprocessSpawn(*ProcessAutoKiller, *bun.spawn.Process)`.
-    /// Takes a raw `*mut Process` (not `&Process`) to preserve Zig's pointer
-    /// identity semantics for the map key without a const→mut provenance cast.
+    /// Takes a raw `*mut Process` (not `&Process`) to preserve pointer-identity
+    /// semantics for the map key without a const→mut provenance cast.
     pub fn on_subprocess_spawn(&mut self, process: *mut Process) {
         if self.enabled {
-            // Zig: `put(...) catch return` — alloc failure means we never took
-            // a ref, so just bail. `put` here is fallible only on OOM.
+            // Alloc failure means we never took a ref, so just bail.
+            // `put` here is fallible only on OOM.
             if self.processes.put(process, ()).is_err() {
                 return;
             }
@@ -104,5 +104,3 @@ impl Drop for ProcessAutoKiller {
         // `self.processes` storage freed by its own Drop.
     }
 }
-
-// ported from: src/jsc/ProcessAutoKiller.zig

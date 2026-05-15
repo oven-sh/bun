@@ -44,12 +44,10 @@ use bun_ast::{
     B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt, Symbol,
 };
 
-// Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // Zig: `inline fn parseExprOrBindings(p, level, errors: ?*DeferredErrors, expr: *Expr) !void`
     #[inline]
     pub fn parse_expr_or_bindings(
         &mut self,
@@ -59,14 +57,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.parse_expr_common(level, errors, EFlags::None, expr)
     }
-    // Zig: `inline fn parseExpr(p, level) !Expr`
     #[inline]
     pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
         let mut expr = Expr::EMPTY;
         self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
         Ok(expr)
     }
-    // Zig: `inline fn parseExprWithFlags(p, level, flags, expr: *Expr) !void`
     #[inline]
     pub fn parse_expr_with_flags(
         &mut self,
@@ -91,7 +87,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
         // PORT NOTE: reshaped for borrowck — `errors` is reborrowed via as_deref_mut
-        // for each call site instead of Zig's single pointer pass-through.
+        // for each call site instead of a single pointer pass-through.
 
         // There is no formal spec for "__PURE__" comments but from reverse-
         // engineering, it looks like they apply to the next CallExpression or
@@ -210,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            // PORT NOTE: Zig hoisted `opts` above the loop; it is fully
+            // PORT NOTE: original hoisted `opts` above the loop; it is fully
             // reinitialized here every iteration before any read, so declare
             // per-iteration.
             let mut opts = PropertyOpts {
@@ -439,7 +435,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = true;
 
         // Forbid "await" and "yield", but only for arrow functions
-        // PORT NOTE: Zig saved/restored via toBytes/bytesToValue; clone is equivalent.
+        // PORT NOTE: original saved/restored by raw byte copy; clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         p.fn_or_arrow_data_parse.arrow_arg_errors = arrow_arg_errors;
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
@@ -496,7 +492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
         }
         let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
-        // PORT NOTE: Zig kept `items_list` alive and aliased `.items`; bump_slice is equivalent (arena-owned).
+        // PORT NOTE: original kept `items_list` alive and aliased `.items`; bump_slice is equivalent (arena-owned).
 
         // The parenthetical construct must end with a close parenthesis
         p.lexer.expect(T::TCloseParen)?;
@@ -763,9 +759,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
             } else {
-                // PORT NOTE: Zig used toUTF8AllocWithTypeWithoutInvalidSurrogatePairs which
-                // errors on lone surrogates. The Rust port replaces them with U+FFFD; the
-                // surrogate-error diagnostic path is dropped until the strict variant lands.
+                // PORT NOTE: original used a UTF-8 conversion that errored on lone surrogates.
+                // The Rust port replaces them with U+FFFD; the surrogate-error diagnostic path
+                // is dropped until the strict variant lands.
                 let alias_utf8 = strings::to_utf8_alloc_with_type(estr.slice16());
                 let leaked: &'a [u8] = p.arena.alloc_slice_copy(&alias_utf8);
                 return Ok(leaked);
@@ -956,7 +952,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )),
             ..Default::default()
         };
-        // PORT NOTE: reshaped for borrowck — Zig mutated `result.stmt_or_expr.expr` in place.
+        // PORT NOTE: reshaped for borrowck — original mutated `result.stmt_or_expr.expr` in place.
         if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
             p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
         }
@@ -1353,7 +1349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let supported_attribute: Option<SupportedAttribute> = 'brk: {
                     // Parse the key
                     if p.lexer.is_identifier_or_keyword() {
-                        // PORT NOTE: Zig used `inline for` over enum values + @tagName.
+                        // PORT NOTE: original used a compile-time loop over enum values.
                         if p.lexer.identifier == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
                         }
@@ -1391,7 +1387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(attr) = supported_attribute {
                     match attr {
                         SupportedAttribute::Type => {
-                            // This logic is duplicated in js_ast.zig fn importRecordTag()
+                            // This logic is duplicated where ImportRecordTag is computed.
                             let type_attr = string_literal_text;
                             if type_attr == b"macro" {
                                 path.is_macro = true;
@@ -1672,5 +1668,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 }
-
-// ported from: src/js_parser/ast/parse.zig

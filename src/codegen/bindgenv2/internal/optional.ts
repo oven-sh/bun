@@ -19,8 +19,8 @@ export function optional(payload: Type): OptionalType {
     get bindgenType() {
       return bindgenOptional(payload);
     }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
+    bunType(style?: CodeStyle) {
+      return payload.optionalBunType(style);
     }
     toCpp(value: any): string {
       if (value === undefined) {
@@ -49,8 +49,8 @@ export function nullable(payload: Type): NullableType {
     get bindgenType() {
       return bindgenOptional(payload);
     }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
+    bunType(style?: CodeStyle) {
+      return payload.optionalBunType(style);
     }
     toCpp(value: any): string {
       if (value == null) {
@@ -72,8 +72,8 @@ export function looseNullable(payload: Type): LooseNullableType {
     get bindgenType() {
       return bindgenOptional(payload);
     }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
+    bunType(style?: CodeStyle) {
+      return payload.optionalBunType(style);
     }
     toCpp(value: any): string {
       if (!value) {
@@ -92,7 +92,7 @@ const Undefined = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenNull`;
   }
-  zigType(style?: CodeStyle) {
+  bunType(style?: CodeStyle) {
     return "void";
   }
   toCpp(value: undefined): string {
@@ -108,7 +108,7 @@ const Null = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenNull`;
   }
-  zigType(style?: CodeStyle) {
+  bunType(style?: CodeStyle) {
     return "void";
   }
   toCpp(value: null): string {

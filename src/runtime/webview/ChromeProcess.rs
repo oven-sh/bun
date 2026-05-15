@@ -3,7 +3,7 @@
 //! host process — Chrome IS the IPC peer. One fewer hop than WKWebView.
 //!
 //! Parent death → Chrome's pipe read EOFs → Chrome exits. Same lifetime
-//! coupling as HostProcess.zig's socket EOF path.
+//! coupling as HostProcess.rs's socket EOF path.
 //!
 //! fd layout (child):
 //!   3 = Chrome reads CDP commands from us  (parent writes → child reads)
@@ -38,14 +38,14 @@ declare_scope!(Chrome, hidden);
 
 pub struct ChromeProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw to
-    // match Zig `*bun.spawn.Process`.
+    // model `*bun.spawn.Process`.
     process: NonNull<Process>,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
 // Only accessed from the JS thread (exported fns are called from C++ on the
 // mutator thread; on_process_exit runs on the event loop thread which is the
-// same thread). Relaxed ordering matches the Zig non-atomic var.
+// same thread). Relaxed ordering matches the original non-atomic var.
 static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
@@ -307,7 +307,7 @@ fn find_playwright_shell() -> Option<ZBox> {
         if entry.kind != bun_sys::EntryKind::Directory {
             continue;
         }
-        // Zig spec: `bun.DirIterator.iterate(fd, .u8)` — request UTF-8 names
+        // Spec: `bun.DirIterator.iterate(fd, .u8)` — request UTF-8 names
         // even on Windows. `slice_u8()` is the cross-platform `&[u8]` borrow.
         let name = entry.name.slice_u8();
         if !name.starts_with(PREFIX) {
@@ -358,7 +358,10 @@ fn find_playwright_shell() -> Option<ZBox> {
     }
 
     // Fall back to the non-cft linux arm64 layout.
-    #[cfg(all(any(target_os = "linux", target_os = "android"), target_arch = "aarch64"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        target_arch = "aarch64"
+    ))]
     {
         let bin_parts2: [&[u8]; 3] = [
             cache_dir,
@@ -516,10 +519,10 @@ fn spawn(
         // TODO(port): narrow error set — outer Result + inner bun_sys::Result
         let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast())??;
 
-        // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
+        // PORT NOTE: reshaped for borrowck — the original errdefer stays armed past
         // this point (and would re-close fds on the WatchFailed path below);
         // we disarm here and close explicitly on that path instead.
-        // TODO(port): verify Zig errdefer double-close of fds[1] on WatchFailed is intentional/idempotent.
+        // TODO(port): verify the original errdefer double-close of fds[1] on WatchFailed is intentional/idempotent.
         let fds = scopeguard::ScopeGuard::into_inner(fds);
 
         // Parent doesn't need the child's end. POSIX_SPAWN_CLOEXEC_DEFAULT
@@ -549,8 +552,8 @@ fn spawn(
             }
             Err(e) => {
                 scoped_log!(Chrome, "watch failed: {}", e);
-                // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
-                // then reclaim the Box (Zig: `bun.destroy(self)`).
+                // SAFETY: drop the strong ref we hold (`process.deref()`),
+                // then reclaim the Box (`bun.destroy(self)`).
                 unsafe {
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
@@ -595,7 +598,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     // discoverable. Edge uses the same CDP + file format as Chrome.
     // NB: do NOT route Windows through bun_core::getenv_z — it is stubbed to
     // None on cfg(windows) (TODO(b2-blocked) in bun_core/util.rs), which made
-    // this whole function dead on Windows. Zig's bun.getenvZ walks the env
+    // this whole function dead on Windows. `bun.getenvZ` walks the env
     // block case-insensitively and returns a real value; std::env::var is the
     // working equivalent here (LOCALAPPDATA is always valid Unicode).
     #[cfg(windows)]
@@ -633,7 +636,12 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
         b"BraveSoftware\\Brave-Browser\\User Data\\DevToolsActivePort",
         b"Microsoft\\Edge\\User Data\\DevToolsActivePort",
     ];
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
     let candidates: &[&[u8]] = &[];
 
     let mut path_buf = path_buffer_pool::get();
@@ -701,5 +709,3 @@ pub extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> u
     }
     0
 }
-
-// ported from: src/runtime/webview/ChromeProcess.zig

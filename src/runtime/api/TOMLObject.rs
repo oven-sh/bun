@@ -29,7 +29,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // for now...
             let buffer_writer = js_printer::BufferWriter::init();
             let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-            // PORT NOTE: Zig passed `*js_printer.BufferPrinter` as a comptime type param; dropped per (comptime X: type, arg: X) rule
+            // PORT NOTE: original took the printer via a comptime type param; dropped — the concrete `BufferPrinter` is used directly here.
             if let Err(_) = js_printer::print_json(
                 &mut writer,
                 parse_result.into(),
@@ -50,5 +50,3 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         },
     )
 }
-
-// ported from: src/runtime/api/TOMLObject.zig

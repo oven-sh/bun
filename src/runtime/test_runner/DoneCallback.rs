@@ -4,7 +4,7 @@ use bun_core::String as BunString;
 use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
 use crate::test_runner::expect::JSValueTestExt as _;
 
-#[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
+#[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js (jsc.Codegen.JSDoneCallback)
 pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub r#ref: Option<RefDataPtr>,
@@ -17,7 +17,7 @@ impl DoneCallback {
 
         // `RefDataPtr` = `RefPtr<RefData>` has NO `Drop` impl (see
         // src/ptr/ref_count.rs) — must explicitly decrement before the Box
-        // frees the allocation. Zig: `if (this.ref) |ref| ref.deref();`.
+        // frees the allocation. `if (this.ref) |ref| ref.deref();`.
         if let Some(r) = self.r#ref.take() {
             r.deref();
         }
@@ -51,7 +51,7 @@ impl DoneCallback {
 }
 
 /// Raw C-ABI shim for [`BunTest::bun_test_done_callback`] so it can be passed
-/// as a `JSHostFn` pointer to `JSFunction::create` (Zig used comptime
+/// as a `JSHostFn` pointer to `JSFunction::create` (the original used comptime
 /// `toJSHostFn`; Rust mints the thunk explicitly and routes the result through
 /// `to_js_host_fn_result` for `JsResult` → `JSValue` mapping + debug exception
 /// assertions).
@@ -66,5 +66,3 @@ bun_jsc::jsc_host_abi! {
         bun_jsc::to_js_host_fn_result(global, BunTest::bun_test_done_callback(global, callframe))
     }
 }
-
-// ported from: src/test_runner/DoneCallback.zig

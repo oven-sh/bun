@@ -1,14 +1,13 @@
 //! Private utilities used in smart pointer implementations.
 //!
-//! TODO(port): This module is Zig comptime type-reflection machinery that lets
-//! `Owned(P)` / `Shared(P)` accept `*T`, `[]T`, `?*T`, `?[]T` as a single
-//! generic `P` and then introspect optionality / constness / element type via
-//! `@typeInfo`. Per PORTING.md §Pointers, `bun.ptr.Owned/Shared/AtomicShared`
-//! map directly to `Box<T>` / `Rc<T>` / `Arc<T>` (and `Box<[T]>`,
-//! `Option<Box<T>>` etc. are spelled at the use site), so the reflection layer
-//! has no Rust counterpart. The skeleton below preserves shape for diffing;
-//! Phase B should likely delete this module once the `bun_ptr` callers are
-//! migrated to std smart pointers.
+//! TODO(port): This module is type-reflection machinery for introspecting
+//! optionality / constness / element type of generic pointer params. Per
+//! PORTING.md §Pointers, `bun.ptr.Owned/Shared/AtomicShared` map directly to
+//! `Box<T>` / `Rc<T>` / `Arc<T>` (and `Box<[T]>`, `Option<Box<T>>` etc. are
+//! spelled at the use site), so the reflection layer has no Rust counterpart.
+//! The skeleton below preserves shape for diffing; Phase B should likely
+//! delete this module once the `bun_ptr` callers are migrated to std smart
+//! pointers.
 
 use core::marker::PhantomData;
 
@@ -19,12 +18,10 @@ pub enum Kind {
 }
 
 /// A possibly optional slice or single-item pointer type descriptor.
-/// E.g., `*u8`, `[]u8`, `?*u8`, `?[]u8` in Zig.
 ///
-/// TODO(port): In Zig this carries three `type` fields (`Pointer`,
-/// `NonOptionalPointer`, `Child`) populated by `@typeInfo`. Rust cannot store
-/// types as values; the generics here are a best-effort placeholder so
-/// downstream signatures that mention `PointerInfo` have something to name.
+/// TODO(port): Rust cannot store types as values; the generics here
+/// (`Pointer`, `NonOptionalPointer`, `Child`) are a best-effort placeholder
+/// so downstream signatures that mention `PointerInfo` have something to name.
 pub struct PointerInfo<Pointer, NonOptionalPointer, Child> {
     /// A possibly optional slice or single-item pointer type.
     /// E.g., `*u8`, `[]u8`, `?*u8`, `?[]u8`.
@@ -45,34 +42,26 @@ pub struct PointerInfo<Pointer, NonOptionalPointer, Child> {
 
 impl<Pointer, NonOptionalPointer, Child> PointerInfo<Pointer, NonOptionalPointer, Child> {
     pub fn kind(&self) -> Kind {
-        // TODO(port): Zig: `switch (@typeInfo(self.NonOptionalPointer).pointer.size)`.
-        // Rust has no `@typeInfo`; in the std-smart-pointer mapping the caller
-        // already knows whether it has `Box<T>` vs `Box<[T]>`.
-        unreachable!("comptime reflection — resolved at type level in Rust")
+        // TODO(port): in the std-smart-pointer mapping the caller already
+        // knows whether it has `Box<T>` vs `Box<[T]>`.
+        unreachable!("type reflection — resolved at type level in Rust")
     }
 
     pub fn is_optional(&self) -> bool {
-        // TODO(port): Zig: `@typeInfo(self.Pointer) == .optional`.
-        unreachable!("comptime reflection — resolved at type level in Rust")
+        unreachable!("type reflection — resolved at type level in Rust")
     }
 
     pub fn is_const(&self) -> bool {
-        // TODO(port): Zig: `@typeInfo(self.NonOptionalPointer).pointer.is_const`.
-        unreachable!("comptime reflection — resolved at type level in Rust")
+        unreachable!("type reflection — resolved at type level in Rust")
     }
 
     pub fn parse(_options: ParseOptions) -> Self {
-        // TODO(port): Zig body walks `@typeInfo(Pointer)`:
-        //   - unwrap `.optional` to get `NonOptionalPointer`
-        //   - assert `.pointer`, extract `Child`
-        //   - reject `.many` / `.c` sizes, `is_volatile`, non-default
-        //     alignment, `is_allowzero`, sentinel-terminated
-        //   - reject `.slice` if `!options.allow_slices`
-        //   - reject `is_const` if `!options.allow_const`
-        // None of these checks are expressible in Rust's type system as a
-        // value-level function; they are subsumed by choosing `Box<T>` /
-        // `Box<[T]>` / `Option<Box<T>>` directly at the call site.
-        unreachable!("comptime reflection — resolved at type level in Rust")
+        // TODO(port): the original validated pointer shape (single vs slice,
+        // optionality, constness, no sentinel/volatile/allowzero). None of
+        // these checks are expressible in Rust's type system as a value-level
+        // function; they are subsumed by choosing `Box<T>` / `Box<[T]>` /
+        // `Option<Box<T>>` directly at the call site.
+        unreachable!("type reflection — resolved at type level in Rust")
     }
 }
 
@@ -91,13 +80,10 @@ impl Default for ParseOptions {
     }
 }
 
-// TODO(port): `pub fn AddConst(Pointer: type) type` mutates `@typeInfo` to set
-// `.pointer.is_const = true` (recursing through `.optional`) and rebuilds the
-// type via `@Type`. Rust has no type-level function for this; the moral
-// equivalent is an associated type on a trait. Kept as a marker so callers
-// (`Owned::asConst` etc.) have a name to reference during Phase B.
+// TODO(port): a type-level "add const to pointer" transform has no Rust
+// type-level function; the moral equivalent is an associated type on a trait.
+// Kept as a marker so callers (`Owned::asConst` etc.) have a name to reference
+// during Phase B.
 pub trait AddConst {
     type Output;
 }
-
-// ported from: src/ptr/meta.zig

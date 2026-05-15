@@ -10,8 +10,8 @@ use bun_boringssl_sys::SSL_CTX;
 
 use crate::create_bun_socket_error_t;
 
-/// `[mtime_sec, mtime_nsec, size]` for the SSL cache-key digest (spec
-/// `SocketContext.zig:81`: `bun.sys.stat(path)` → `st.mtime() ++ st.size`).
+/// `[mtime_sec, mtime_nsec, size]` for the SSL cache-key digest
+/// (`stat(path)` → `mtime ++ size`).
 /// Body moved DOWN from `bun_sys` — it only needs `libc::stat`, which this
 /// crate already links, so the former link-time hook bought nothing. Returns
 /// `None` on stat failure (digest feeds zeros — `create_ssl_context` will then
@@ -84,8 +84,8 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // `[sec_field, nsec_field, size]` — the digest only needs *some*
     // deterministic encoding of mtime, not the libuv POSIX-epoch split the
     // deleted `__bun_uws_stat_file` produced. The SSL-context cache keyed on
-    // this digest is in-memory process-lifetime only (spec `SocketContext.zig`
-    // — no on-disk persistence), so cross-version byte-compat of the key is
+    // this digest is in-memory process-lifetime only (no on-disk persistence),
+    // so cross-version byte-compat of the key is
     // irrelevant; only stability *within* a process matters.
     let ticks = (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime);
     let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
@@ -268,7 +268,7 @@ impl BunSocketContextOptions {
 }
 
 /// Thin SHA-256 wrapper over the raw `bun_boringssl_sys` FFI so `digest()`
-/// reads the same as the Zig (`Sha256.init`/`update`/`final`). No higher-tier
+/// reads as `Sha256.init`/`update`/`final`. No higher-tier
 /// `bun_boringssl::Sha256` exists yet; this stays local until one does.
 struct Sha256(core::mem::MaybeUninit<bun_boringssl_sys::SHA256_CTX>);
 impl Sha256 {
@@ -308,5 +308,3 @@ pub mod c {
         pub safe fn us_ssl_ctx_live_count() -> c_long;
     }
 }
-
-// ported from: src/uws_sys/SocketContext.zig

@@ -58,7 +58,7 @@ impl Data {
     pub fn zdeinit(&mut self) {
         match self {
             Data::Owned(owned) => {
-                // Zero bytes before deinit — Zig `bun.freeSensitive`.
+                // Zero bytes before deinit — secure wipe for sensitive data.
                 let s = owned.slice_mut();
                 // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
                 unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
@@ -107,8 +107,6 @@ impl Data {
     }
 }
 
-// PORT NOTE: Zig `deinit` freed `Owned`'s buffer. In Rust, `Vec<T>: Drop`
-// already frees on drop, so an explicit `impl Drop for Data` is redundant (and
-// would prevent moving fields out in `to_owned`). The other variants own no heap.
-
-// ported from: src/sql/shared/Data.zig
+// PORT NOTE: cleanup just frees `Owned`'s buffer. `Vec<T>: Drop` already frees
+// on drop, so an explicit `impl Drop for Data` is redundant (and would prevent
+// moving fields out in `to_owned`). The other variants own no heap.

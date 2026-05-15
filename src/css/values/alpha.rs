@@ -13,8 +13,7 @@ pub struct AlphaValue {
 
 impl AlphaValue {
     pub fn parse(input: &mut Parser) -> Result<AlphaValue> {
-        // For some reason NumberOrPercentage.parse makes zls crash, using this instead.
-        // PORT NOTE: the Zig used `@call(.auto, @field(...))` as a zls workaround; direct call in Rust.
+        // PORT NOTE: there was previously an indirect-call workaround for an editor bug; direct call in Rust.
         let val: NumberOrPercentage = match NumberOrPercentage::parse(input) {
             Result::Ok(v) => v,
             Result::Err(e) => return Result::Err(e),
@@ -31,7 +30,7 @@ impl AlphaValue {
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig used css.implementEql (comptime field reflection); single f32 field → direct compare.
+        // PORT NOTE: `css.implementEql` field reflection; single f32 field → direct compare.
         lhs.v == rhs.v
     }
 
@@ -39,9 +38,7 @@ impl AlphaValue {
     // generics::CssHash blanket impl covers f32-payload structs.
 
     pub fn deep_clone(&self) -> Self {
-        // PORT NOTE: Zig used css.implementDeepClone; struct is Copy so this is a trivial copy.
+        // PORT NOTE: `css.implementDeepClone`; struct is Copy so this is a trivial copy.
         *self
     }
 }
-
-// ported from: src/css/values/alpha.zig

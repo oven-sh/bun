@@ -1,7 +1,5 @@
-// Zig's `fn NewTimer() type { ... }` is a comptime type-returning fn that
-// selects between a WASM stub and `std.time.Timer`. In Rust we collapse the
-// type-fn + `pub const Timer = NewTimer();` into cfg-gated definitions of
-// `Timer` directly.
+// Cfg-gated definitions of `Timer`: a WASM stub and a real
+// `std::time::Instant`-backed implementation.
 
 #[cfg(target_family = "wasm")]
 pub struct Timer;
@@ -12,9 +10,9 @@ impl Timer {
         Ok(Self)
     }
 
-    // TODO(port): Zig used `@compileError` here, which fires lazily only if the
-    // fn is referenced. Rust's `compile_error!` fires unconditionally, so we
-    // keep the fn signatures for structural parity and trap at runtime instead.
+    // TODO(port): a `compile_error!` would fire unconditionally even if the
+    // fn is never referenced, so we keep the fn signatures for structural
+    // parity and trap at runtime instead.
     pub fn read(&self) -> u64 {
         unreachable!("FeatureFlags.tracing should be disabled in WASM");
     }
@@ -28,9 +26,8 @@ impl Timer {
     }
 }
 
-// Non-WASM: Zig used `std.time.Timer` directly. Rust has no identical type, so
-// wrap `std::time::Instant` with the same method surface (`start`/`read`/`lap`/
-// `reset`, ns as u64).
+// Non-WASM: wrap `std::time::Instant` with a small monotonic-timer surface
+// (`start`/`read`/`lap`/`reset`, ns as u64).
 #[cfg(not(target_family = "wasm"))]
 pub struct Timer {
     started: std::time::Instant,
@@ -60,5 +57,3 @@ impl Timer {
         self.started = std::time::Instant::now();
     }
 }
-
-// ported from: src/perf/system_timer.zig

@@ -45,10 +45,10 @@ pub mod install_stubs {
     }
 }
 // TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque
-// FORWARD_DECL: legacy `options::Framework` and friends. The Zig
-// `package_json.zig:loadFramework*` block references `options.Framework`, which
-// no longer exists in `options.zig` (removed upstream); the loaders have no
-// callers. Port the field-shape locally so the bodies compile as-written —
+// FORWARD_DECL: legacy `options::Framework` and friends. The `loadFramework*`
+// block references `options.Framework`, which no longer exists (removed
+// upstream); the loaders have no callers. Port the field-shape locally so the
+// bodies compile as-written —
 // MOVE_DOWN to `bun_options_types` if/when `bun_bundler` revives these.
 pub mod options {
     use bun_options_types::schema::api;
@@ -71,7 +71,7 @@ pub mod options {
         pub fn init() -> Env {
             Env::default()
         }
-        /// `options.zig` Env::setBehaviorFromPrefix.
+        /// `Env::setBehaviorFromPrefix`.
         pub fn set_behavior_from_prefix(&mut self, prefix: Box<[u8]>) {
             self.behavior = EnvBehavior::disable;
             self.prefix = Box::default();
@@ -147,8 +147,8 @@ use bun_glob as glob;
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 pub type BrowserMap = StringMap;
-/// Values are owned (Zig: `[]const u8` borrowing the package.json source
-/// buffer). Owned `Box<[u8]>` here so callers (CLI bunfig → bundler options)
+/// Values are owned `Box<[u8]>` (rather than borrowed slices into the
+/// package.json source buffer) so callers (CLI bunfig → bundler options)
 /// can populate without `unsafe` lifetime-extension casts.
 pub type MacroImportReplacementMap = StringArrayHashMap<Box<[u8]>>;
 pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
@@ -165,11 +165,9 @@ pub struct DependencyMap {
 }
 
 impl Clone for DependencyMap {
-    /// Zig copies `DependencyMap` by value (the inner `ArrayHashMap` is a
-    /// pointer + len, so the copy aliases the same backing storage). Rust
-    /// owns the storage, so we deep-clone the small key/value vecs instead —
-    /// `SemverString`/`Dependency` are POD over `source_buf`, so semantics
-    /// match the Zig shallow copy.
+    /// `ArrayHashMap` owns its storage, so deep-clone the small key/value vecs
+    /// — `SemverString`/`Dependency` are POD over `source_buf`, so semantics
+    /// match a shallow copy.
     fn clone(&self) -> Self {
         Self {
             map: self.map.clone().expect("OOM"),
@@ -178,10 +176,10 @@ impl Clone for DependencyMap {
     }
 }
 
-// PORT NOTE: Zig had `DependencyMap.HashMap` as a nested decl; Rust inherent impls cannot carry associated type aliases (stable), so use a free alias.
+// PORT NOTE: Rust inherent impls cannot carry associated type aliases (stable), so use a free alias.
 pub type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
-// TODO(port): ArrayHashMap context param — Zig used String.ArrayHashContext with store_hash=false
+// TODO(port): ArrayHashMap context param — needs a SemverString hash context with store_hash=false
 
 pub struct PackageJSON {
     pub name: Box<[u8]>,
@@ -189,9 +187,9 @@ pub struct PackageJSON {
     /// PORT NOTE: owns the file bytes that `source.contents` (and the
     /// `&'static [u8]` map values below) borrow. Replaces the prior
     /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
-    /// Zig (`package_json.zig:615`) used `bun.default_allocator` and never
-    /// freed on success because the DirInfo cache is process-lifetime; here the
-    /// `PackageJSON` itself is the owner so the bytes free if it ever drops.
+    /// The DirInfo cache is process-lifetime so success-path bytes are never
+    /// freed in practice; here the `PackageJSON` itself is the owner so the
+    /// bytes free if it ever drops.
     // TODO(port): lifetime — once `bun_ast::Source::contents` becomes
     // `Cow<'static, [u8]>`, fold this into `source` and drop the re-borrow.
     pub source_contents: Box<[u8]>,
@@ -243,10 +241,9 @@ pub struct PackageJSON {
 
 // PORT NOTE: hand-rolled `Default` because `#[derive(Default)]` would zero
 // `package_manager_package_id` (a valid lockfile id — typically the root
-// package). Spec `package_json.zig:68` declares the field default as
-// `Install.invalid_package_id` (= `u32::MAX`); `node_fallbacks.rs` relies on
-// `..Default::default()` matching that. Likewise `arch`/`os` default to
-// `*::all()` (zig:65-66).
+// package). The field default is `Install.invalid_package_id` (= `u32::MAX`);
+// `node_fallbacks.rs` relies on `..Default::default()` matching that. Likewise
+// `arch`/`os` default to `*::all()`.
 impl Default for PackageJSON {
     fn default() -> Self {
         PackageJSON {
@@ -443,8 +440,8 @@ impl SideEffects {
 // exposes the inherent forwarder (tsconfig_json.rs).
 // `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
-/// The Zig body calls the threadlocal-buffer `abs`/`join`/`normalize` and
-/// immediately dupes the result. Thin extension trait that delegates to
+/// Thin extension trait over the threadlocal-buffer `abs`/`join`/`normalize`
+/// helpers that delegates to
 /// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
 /// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
 /// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
@@ -458,7 +455,7 @@ pub trait FileSystemPackageJsonExt {
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn abs_owned(&self, parts: &[&[u8]]) -> Box<[u8]> {
-        // PORT NOTE: Zig `FileSystem.abs` joins against `top_level_dir` into a
+        // PORT NOTE: `FileSystem.abs` joins against `top_level_dir` into a
         // threadlocal buffer; caller immediately dupes. Return owned to avoid
         // laundering the threadlocal borrow into `'static`.
         let out = resolve_path::resolve_path::join_abs_string::<
@@ -470,7 +467,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
         resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
     }
     fn normalize(&self, str: &[u8]) -> Box<[u8]> {
-        // PORT NOTE: Zig `FileSystem.normalize` (fs.zig) is
+        // PORT NOTE: `FileSystem.normalize` is
         // `path_handler.normalizeString(str, true, .auto)` — collapses `.`/`..`/dup-separators
         // only; it does NOT join against cwd. Writes into a threadlocal buffer;
         // caller immediately dupes. Return owned to avoid laundering the
@@ -563,7 +560,7 @@ impl PackageJSON {
         }
 
         let mut buffer: Vec<Box<[u8]>> = vec![Box::default(); valid_count * 2];
-        // TODO(port): Zig used a single allocation split into keys/values; Rust uses two Vecs
+        // TODO(port): could use a single allocation split into keys/values; for now two Vecs
         let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
         let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
         let _ = buffer; // unused after reshaping
@@ -742,9 +739,9 @@ impl PackageJSON {
             || framework.fallback.is_enabled()
     }
 
-    // PORT NOTE: Zig `comptime load_framework: LoadFramework` lowered to a runtime
-    // arg — `LoadFramework` is a plain enum (no `ConstParamTy`), and the only
-    // use is the trailing `match`. PERF(port): was comptime — irrelevant (dead).
+    // PORT NOTE: `load_framework` is a runtime arg — `LoadFramework` is a plain
+    // enum (no `ConstParamTy`), and the only use is the trailing `match`.
+    // PERF(port): irrelevant (dead).
     pub fn load_framework_with_preference<const READ_DEFINES: bool>(
         package_json: &PackageJSON,
         pair: &mut FrameworkRouterPair<'_>,
@@ -879,7 +876,7 @@ impl PackageJSON {
                                 }
                                 extensions.push(e_str.data.slice());
                             }
-                            // TODO(port): `extensions` is computed but never assigned anywhere (matches Zig)
+                            // TODO(port): `extensions` is computed but never assigned anywhere (intentional; preserved as-is)
                             let _ = extensions;
                         }
                     }
@@ -1059,8 +1056,8 @@ impl PackageJSON {
         // singletons so the two `&mut` projections below do not alias each other,
         // and no other `&mut *r.fs` / `&mut *r.log` retag occurs while they are
         // live in this function. Caller upholds the single-thread `Resolver`
-        // aliasing contract (Zig had no borrow split here either — `r.fs`/`r.log`
-        // are accessed freely throughout `parse`).
+        // aliasing contract (`r.fs`/`r.log` are accessed freely throughout
+        // `parse`, with no borrow split).
         let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
@@ -1133,10 +1130,10 @@ impl PackageJSON {
         // SAFETY: `entry_contents: Box<[u8]>` is the unique owner of these bytes.
         // On the success path it is *moved* (not leaked) into
         // `package_json.source_contents` at the bottom of this fn, so the heap
-        // allocation lives for the life of the returned `PackageJSON` (Zig:
-        // `bun.default_allocator`, never freed — "DirInfo cache is reused
-        // globally"). On every early `return None` below `entry_contents` drops
-        // and frees normally (Zig: `allocator.free(entry.contents)`), after
+        // allocation lives for the life of the returned `PackageJSON` (the
+        // DirInfo cache is reused globally, so it's effectively never freed).
+        // On every early `return None` below `entry_contents` drops
+        // and frees normally, after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
@@ -1185,7 +1182,7 @@ impl PackageJSON {
             exports: None,
             imports: None,
         };
-        // PORT NOTE: shadow as `&Source` so the body matches the Zig shape; the
+        // PORT NOTE: shadow as `&Source` so the body reads naturally; the
         // owned value is reconstructed at the bottom (Source isn't `Clone`).
         let json_source = &json_source;
 
@@ -1574,8 +1571,8 @@ impl PackageJSON {
                     package_json.dependencies.map = DependencyHashMap::default();
                     // TODO(port): lifetime — source_buf borrows json_source.contents
                     package_json.dependencies.source_buf = contents_static;
-                    // PORT NOTE: Zig used `SemverString.ArrayHashContext` (compares against
-                    // `source_buf`); ArrayHashMap has no `*_context` variant yet — the
+                    // PORT NOTE: a `SemverString` hash-context (compares against
+                    // `source_buf`) would be more faithful; ArrayHashMap has no `*_context` variant yet — the
                     // generic `put_assume_capacity` path is sufficient because keys are
                     // `SemverString` (offset+len into `source_buf`, hashed by content).
                     package_json
@@ -1610,7 +1607,7 @@ impl PackageJSON {
                                     let sliced_str =
                                         Semver::SlicedString::init(version_str, version_str);
 
-                                    // Zig's `Dependency.parse` accepts `?*PackageManager`;
+                                    // `Dependency.parse` accepts an optional `PackageManager`;
                                     // the parser body lives in install-tier so route through
                                     // the AutoInstaller vtable when one is wired. When it
                                     // isn't, still record the dependency name (with an
@@ -1633,8 +1630,8 @@ impl PackageJSON {
                                             name_hash,
                                             behavior: group.behavior,
                                         };
-                                        // Zig: `putAssumeCapacityContext(name, dep, ctx)` where
-                                        // `ctx = SemverString.ArrayHashContext{arg_buf, existing_buf}`.
+                                        // `putAssumeCapacityContext(name, dep, ctx)` with the
+                                        // SemverString hash context over `(arg_buf, existing_buf)`.
                                         let buf = package_json.dependencies.source_buf;
                                         let ctx = Semver::semver_string::ArrayHashContext {
                                             arg_buf: buf,
@@ -1723,15 +1720,15 @@ impl PackageJSON {
     }
 }
 
-// TODO(b2-blocked): `self.hash` field referenced in Zig but not declared on
+// TODO(b2-blocked): `self.hash` field referenced but not declared on
 // PackageJSON; gate until the field lands.
 
 impl PackageJSON {
     pub fn hash_module(&self, module: &[u8]) -> u32 {
         let mut hasher = Wyhash::init(0);
-        // PORT NOTE: Zig referenced `this.hash`, which is not a declared field on
-        // `PackageJSON` in either tree (dead body). Hash the package name as the
-        // stable per-package seed instead so `hash_module` is deterministic.
+        // PORT NOTE: the original referenced `this.hash`, which was never a
+        // declared field on `PackageJSON` (dead body). Hash the package name as
+        // the stable per-package seed instead so `hash_module` is deterministic.
         hasher.update(&self.name);
         hasher.update(module);
 
@@ -1808,8 +1805,8 @@ impl<'a> Visitor<'a> {
             }
             js_ast::ExprData::EObject(e_obj) => {
                 let prop_len = e_obj.properties.len_u32() as usize;
-                // PORT NOTE: reshaped for borrowck — Zig used MultiArrayList column slices;
-                // EntryDataMapList is a Vec<MapEntry> placeholder until
+                // PORT NOTE: reshaped for borrowck — `EntryDataMapList` is a
+                // Vec<MapEntry> (AoS) placeholder until
                 // bun_collections::MultiArrayList lands. Push whole entries instead of
                 // writing through three parallel column slices.
                 // TODO(b2-blocked): bun_collections::MultiArrayList column accessors
@@ -1923,7 +1920,7 @@ pub enum EntryData {
     Invalid,
     Null,
     Boolean(bool),
-    String(Box<[u8]>), // TODO(port): lifetime — borrows source contents in Zig
+    String(Box<[u8]>), // TODO(port): lifetime — conceptually borrows the source contents
     Array(Box<[Entry]>),
     Map(EntryDataMap),
 }
@@ -1951,7 +1948,7 @@ pub type EntryDataMapList = Vec<MapEntry>;
 
 #[derive(Clone)]
 pub struct MapEntry {
-    pub key: Box<[u8]>, // TODO(port): lifetime — borrows source contents in Zig
+    pub key: Box<[u8]>, // TODO(port): lifetime — conceptually borrows the source contents
     pub key_range: bun_ast::Range,
     pub value: Entry,
 }
@@ -1998,9 +1995,9 @@ pub struct ESModule<'a> {
 #[derive(Clone)]
 pub struct Resolution {
     pub status: Status,
-    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
-    // buffer. In Rust the source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
-    // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
+    // PORT NOTE: the source-buffer case (`EntryData::String(Box<[u8]>)`) is
+    // owned by a possibly-temporary `Entry`, so borrowing would dangle. Copy
+    // out into an owned buffer.
     // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub path: Box<[u8]>,
     pub debug: ResolutionDebug,
@@ -2127,7 +2124,7 @@ impl<'a> Package<'a> {
     /// Allocate a fresh string buffer and clone `name`/`version`/`subpath`
     /// into it as offset-encoded `Semver::String`s. Mirrors the inline
     /// `count` → `allocate` → `clone` Builder dance the resolver does at the
-    /// auto-install pending sites (resolver.zig), exposed as the `esm.copy`
+    /// auto-install pending sites in the resolver, exposed as the `esm.copy`
     /// helper that `PendingResolution::init` expects.
     pub fn copy(self) -> Result<(PackageExternal, Vec<u8>), bun_core::Error> {
         let mut builder = Semver::semver_string::Builder::default();
@@ -2323,8 +2320,9 @@ fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -
 
 #[derive(Clone, Default)]
 pub struct ReverseResolution {
-    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
-    // buffer. Copy out into an owned buffer (see `Resolution.path` note above).
+    // PORT NOTE: copy out into an owned buffer rather than returning slices
+    // into threadlocal PathBuffers / the package.json source buffer (see
+    // `Resolution.path` note above).
     // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub subpath: Box<[u8]>,
     pub token: bun_ast::Range,
@@ -2341,8 +2339,8 @@ struct ModuleBufs {
 }
 
 thread_local! {
-    // PORT NOTE: bun.ThreadlocalBuffers — Zig heap-allocates the buffer struct on first use and
-    // stores only a pointer in TLS so the static-TLS template stays small (PE/COFF has no
+    // PORT NOTE: heap-allocate the buffer struct on first use and store only a
+    // pointer in TLS so the static-TLS template stays small (PE/COFF has no
     // TLS-BSS; ELF PT_TLS MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
     // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
     // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
@@ -2370,9 +2368,9 @@ fn module_bufs() -> *mut ModuleBufs {
     })
 }
 
-// PORT NOTE: Zig used `r: *const ESModule` (const ptr) but mutated `r.module_type.*`
-// and `r.debug_logs.?.*` through interior pointers. In Rust those fields are `&'a mut T`,
-// so reading/writing them requires `&mut self`. All resolution methods take `&mut self`.
+// PORT NOTE: `r.module_type.*` and `r.debug_logs.?.*` are mutated through
+// interior pointers; in Rust those fields are `&'a mut T`, so reading/writing
+// them requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
     pub fn resolve(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
         let r = self.resolve_exports(package_url, subpath, exports);
@@ -2459,8 +2457,9 @@ impl<'a> ESModule<'a> {
             };
         }
 
-        // PORT NOTE: Zig returned a slice into the threadlocal resolved_path_buf_percent.
-        // Copy out — see `Resolution.path` note. PERF(port): avoid alloc in Phase B.
+        // PORT NOTE: copy out rather than returning a slice into the threadlocal
+        // resolved_path_buf_percent — see `Resolution.path` note. PERF(port):
+        // avoid alloc in Phase B.
         result.path = Box::<[u8]>::from(resolved_path);
         result
     }
@@ -2687,9 +2686,9 @@ impl<'a> ESModule<'a> {
                     ));
                     log.increase_indent();
                 }
-                // PORT NOTE: Zig had `defer log.decrease_indent()` capturing the unwrapped
-                // `*DebugLogs`. Rust scopeguard cannot hold the &mut across the recursive
-                // `&mut self` calls below; manual decrease at each return below.
+                // PORT NOTE: a scopeguard cannot hold the `&mut DebugLogs` across
+                // the recursive `&mut self` calls below; manually decrease the
+                // indent at each return below.
                 // TODO(port): errdefer — verify all return paths decrease_indent.
                 macro_rules! dedent {
                     () => {
@@ -2902,8 +2901,8 @@ impl<'a> ESModule<'a> {
                 let mut did_find_map_entry = false;
                 let mut last_map_entry_i: usize = 0;
 
-                // PORT NOTE: Zig used MultiArrayList column slices; Phase-A `EntryDataMapList`
-                // is `Vec<MapEntry>` so iterate AoS directly.
+                // PORT NOTE: Phase-A `EntryDataMapList` is `Vec<MapEntry>` (AoS),
+                // so iterate it directly.
                 for (i, entry) in object.list.iter().enumerate() {
                     let key: &[u8] = &entry.key;
                     if self.conditions.contains_key(key) {
@@ -3129,7 +3128,7 @@ impl<'a> ESModule<'a> {
         };
 
         if !strings::ends_with_char_or_is_zero_length(query, b'*') {
-            // PORT NOTE: Zig used MultiArrayList column slices; iterate Vec<MapEntry> directly.
+            // PORT NOTE: iterate `Vec<MapEntry>` (AoS) directly.
             for entry in map.list.iter() {
                 if let Some(result) =
                     self.resolve_target_reverse(query, &entry.key, &entry.value, ReverseKind::Exact)
@@ -3151,7 +3150,7 @@ impl<'a> ESModule<'a> {
                 }
             }
 
-            // TODO(port): Zig used `.reverse` here but ReverseKind has no `.reverse` variant — preserved as Prefix? Actually Zig defines {exact, pattern, prefix}; `.reverse` is a typo in Zig source
+            // TODO(port): the original used `.reverse` here, but ReverseKind only defines {exact, pattern, prefix} — `.reverse` was a typo upstream; preserved as Prefix.
             if let Some(result) = self.resolve_target_reverse(
                 query,
                 &expansion.key,
@@ -3162,7 +3161,7 @@ impl<'a> ESModule<'a> {
             }
         }
 
-        // TODO(port): Zig fn falls through with no return (implicit unreachable); returning None
+        // TODO(port): the original fell through with no return (implicit unreachable); returning None
         None
     }
 
@@ -3251,7 +3250,7 @@ impl<'a> ESModule<'a> {
                 }
             }
             EntryData::Map(map) => {
-                // PORT NOTE: Zig used MultiArrayList column slices; iterate Vec<MapEntry> directly.
+                // PORT NOTE: iterate `Vec<MapEntry>` (AoS) directly.
                 for entry in map.list.iter() {
                     let map_key: &[u8] = &entry.key;
                     if self.conditions.contains_key(map_key) {
@@ -3325,5 +3324,3 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
 
     None
 }
-
-// ported from: src/resolver/package_json.zig

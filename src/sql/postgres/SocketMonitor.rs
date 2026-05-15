@@ -1,9 +1,8 @@
 bun_core::declare_scope!(SocketMonitor, visible);
 
 /// Stamps out a debug-only socket-traffic dump module. The reader and writer
-/// variants were byte-identical modulo the env var checked and the log message;
-/// Zig kept two files because file-scope structs can't be cheaply parameterized,
-/// but `macro_rules!` collapses them in the Rust port.
+/// variants are byte-identical modulo the env var checked and the log message;
+/// `macro_rules!` collapses them into one definition.
 macro_rules! debug_socket_monitor {
     ($env:path, $msg:literal) => {
         use core::sync::atomic::{AtomicBool, Ordering};
@@ -13,21 +12,19 @@ macro_rules! debug_socket_monitor {
 
         bun_core::declare_scope!(Postgres, visible);
 
-        // Zig used a bare module-level `var file: std.fs.File = undefined;`
-        // initialized once by `load`. PORTING.md §Concurrency: OnceLock for
+        // Initialized once by `load`. PORTING.md §Concurrency: OnceLock for
         // write-once globals.
         static FILE: OnceLock<File> = OnceLock::new();
 
         pub static ENABLED: AtomicBool = AtomicBool::new(false);
 
-        // Zig: `pub var check = std.once(load);` — callers do `check.call()`.
         // Rust's `Once` does not capture the fn; callers do `CHECK.call_once(load)`.
         pub static CHECK: Once = Once::new();
 
         pub fn load() {
             if let Some(monitor) = $env.get() {
                 ENABLED.store(true, Ordering::Relaxed);
-                // Zig called `std.fs.cwd().createFile(monitor, .{ .truncate = true })`.
+                // Create (truncate) the file relative to cwd.
                 let f = match File::create(bun_sys::Fd::cwd(), monitor, /* truncate = */ true) {
                     Ok(f) => f,
                     Err(_) => {
@@ -93,7 +90,3 @@ pub fn read(data: &[u8]) {
         }
     }
 }
-
-// ported from: src/sql/postgres/SocketMonitor.zig
-// ported from: src/sql/postgres/DebugSocketMonitorReader.zig
-// ported from: src/sql/postgres/DebugSocketMonitorWriter.zig

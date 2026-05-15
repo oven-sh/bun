@@ -1,6 +1,6 @@
 use bun_core::strings;
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)] // values fit in a u2
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UseDirective {
     // TODO: Remove this, and provide `UseDirective.Optional` instead
@@ -11,7 +11,7 @@ pub enum UseDirective {
     Server = 2,
 }
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)] // values fit in a u2
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Boundering {
     Client = UseDirective::Client as u8,
@@ -75,5 +75,3 @@ impl UseDirective {
         None
     }
 }
-
-// ported from: src/js_parser/ast/UseDirective.zig

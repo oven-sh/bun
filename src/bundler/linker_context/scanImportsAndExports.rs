@@ -1,6 +1,6 @@
-//! Port of `src/bundler/linker_context/scanImportsAndExports.zig`.
+//! Linker scan pass: resolve imports/exports across the module graph.
 //
-// PORT NOTE: the Zig body takes ~20 simultaneous mutable column slices
+// PORT NOTE: the original body takes ~20 simultaneous mutable column slices
 // (`this.graph.ast.items(.field)`) and freely interleaves them with
 // `&mut LinkerContext` method calls. Rust's borrowck forbids both holding
 // overlapping `&mut [T]` columns from the same `MultiArrayList` and holding
@@ -117,8 +117,8 @@ pub fn scan_imports_and_exports(
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
     let parts_list: *mut [PartList] = ast.parts;
-    // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
-    // pointer (matches `BundledAst.css: Option<*mut BundlerStyleSheet>`).
+    // Element is a *mutable* nullable pointer
+    // (matches `BundledAst.css: Option<*mut BundlerStyleSheet>`).
     let css_asts: *mut [CssCol] = ast.css;
 
     let input_files: *mut [Source] = input.source;
@@ -132,7 +132,7 @@ pub fn scan_imports_and_exports(
     let cjs_export_copies: *mut [Box<[Ref]>] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
-    // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
+    // PORT NOTE: original copied `symbols` to a local and deferred a write-back.
     // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
 
     {
@@ -489,11 +489,11 @@ pub fn scan_imports_and_exports(
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
         //
-        // PORT NOTE: Zig dispatched via `worker_pool.each(arena, this,
+        // PORT NOTE: original dispatched via `worker_pool.each(arena, this,
         // doStep5, reachable_files)` (parallel fan-out, blocks until done).
         // `do_step5` only touches distinct SoA rows per `source_index` (the
         // columns are pre-sized and never reallocate during this step),
-        // matching the Zig invariant. We pass `*mut LinkerContext` through a
+        // matching the original invariant. We pass `*mut LinkerContext` through a
         // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
         // for reads and writes per-row cells via raw `split_raw()` pointers —
         // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
@@ -591,7 +591,7 @@ pub fn scan_imports_and_exports(
             };
 
             // Allocate the identifier-name buffer from the linker arena so it is
-            // reclaimed when the link pass ends (Zig: `this.arena().alloc(u8, ...)`).
+            // reclaimed when the link pass ends.
             // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
             // which is arena-lifetime by construction.
             let string_buffer: &mut [u8] = this
@@ -602,8 +602,8 @@ pub fn scan_imports_and_exports(
             // `ptr`/`cap` and frees it via the global arena. Here the
             // backing buffer is arena-owned (bumpalo), so dropping would hand
             // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
-            // the arena reclaims the storage on reset, matching Zig's implicit
-            // no-destructor semantics.
+            // the arena reclaims the storage on reset, matching the original
+            // implicit no-destructor semantics.
             let mut builder = core::mem::ManuallyDrop::new(bun_core::StringBuilder {
                 len: 0,
                 cap: string_buffer.len(),
@@ -674,7 +674,7 @@ pub fn scan_imports_and_exports(
                 }
             }
 
-            // PORT NOTE: Zig `defer bun.assert(builder.len == builder.cap)` —
+            // PORT NOTE: deferred `assert(builder.len == builder.cap)` —
             // moved to end-of-scope assert (no early returns inside this block).
             debug_assert!(builder.len == builder.cap);
 
@@ -798,8 +798,8 @@ pub fn scan_imports_and_exports(
                         // PERF(port): was appendAssumeCapacity
                         dependencies.push(Dependency {
                             // PORT NOTE: `crate::Index` ↔ `bun_ast::Index` are both
-                            // `#[repr(transparent)] u32` newtypes ported from the
-                            // same Zig `ast.Index`; bridge by `.value` until B-3
+                            // `#[repr(transparent)] u32` newtypes mirroring the
+                            // same `ast.Index`; bridge by `.value` until B-3
                             // collapses them to a single re-export.
                             source_index: bun_ast::Index(target_source_index.get()),
                             part_index: *part_index,
@@ -1156,7 +1156,7 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DependencyWrapper — port of the inner Zig struct.
+// DependencyWrapper — port of the inner helper struct.
 // ──────────────────────────────────────────────────────────────────────────
 struct DependencyWrapper<'a> {
     flags: &'a mut [js_meta::Flags],
@@ -1242,7 +1242,7 @@ impl DependencyWrapper<'_> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ExportStarContext — port of the inner Zig struct. Holds raw column ptrs.
+// ExportStarContext — port of the inner helper struct. Holds raw column ptrs.
 // ──────────────────────────────────────────────────────────────────────────
 struct ExportStarContext {
     import_records_list: *mut [ImportRecordList],
@@ -1370,7 +1370,7 @@ impl ExportStarContext {
             self.add_exports(resolved_exports, target_id, other_source_index);
         }
 
-        // PORT NOTE: Zig `defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1)`
+        // PORT NOTE: deferred `source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1)`
         // — inlined at scope end (no early returns after the push).
         self.source_index_stack.truncate(stack_end_pos - 1);
     }
@@ -1387,8 +1387,8 @@ mod __css_validation {
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
-    // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
-    // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
+    // Keep the column element as a raw `*mut` (matches `BundledAst.css`),
+    // so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
     /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
@@ -1719,5 +1719,3 @@ mod __css_validation {
         }
     }
 }
-
-// ported from: src/bundler/linker_context/scanImportsAndExports.zig

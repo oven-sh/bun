@@ -28,8 +28,8 @@
 //! - The `*mut SSL` needed by `on_handshake` is snapshotted into `self.ssl` in
 //!   `start()` so it can be read without going through `wrapper`.
 //!
-//! This mirrors the Zig spec, which freely aliases `*WebSocketProxyTunnel` across
-//! callbacks.
+//! This preserves the original behavior, which freely aliases
+//! `*WebSocketProxyTunnel` across callbacks.
 
 use core::cell::Cell;
 use core::ptr;
@@ -232,7 +232,7 @@ impl WebSocketProxyTunnel {
 
         // Configure SNI with hostname.
         //
-        // PORT NOTE: the Zig spec does this inside `onOpen`, which `SslWrapper::start()`
+        // PORT NOTE: this was originally done inside `onOpen`, which `SslWrapper::start()`
         // invokes immediately before `handle_traffic()`. We hoist it here because
         // `start()` holds `&mut SslWrapper` across the `on_open` dispatch, and any
         // read of `(*ctx).wrapper` from inside the callback would invalidate that
@@ -244,12 +244,12 @@ impl WebSocketProxyTunnel {
                 if !strings::is_ip_address(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
-                    // Zig `ssl_ptr.configureHTTPClient(host)` =
+                    // `ssl_ptr.configureHTTPClient(host)` =
                     // SNI + verify-hostname. The boringssl-crate ext-method
                     // hasn't landed yet; route through bun_http's
                     // tier-neutral helper which does SNI + ALPN(h1) (no
                     // verify-hostname — that is checked manually in
-                    // `on_handshake`, matching the Zig path).
+                    // `on_handshake`).
                     bun_http::configure_http_client_with_alpn(
                         ssl_ptr.as_ptr(),
                         hostname_z.as_ptr(),
@@ -600,7 +600,7 @@ impl WebSocketProxyTunnel {
 impl Drop for WebSocketProxyTunnel {
     fn drop(&mut self) {
         // Field cleanup is automatic: wrapper (Option<SslWrapper>), write_buffer (StreamBuffer),
-        // sni_hostname (Option<Box<[u8]>>) all impl Drop. The Zig deinit's `bun.destroy(this)`
+        // sni_hostname (Option<Box<[u8]>>) all impl Drop. Final destruction
         // is handled by IntrusiveRc / `deref()` via heap::take.
     }
 }
@@ -614,5 +614,3 @@ pub extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     // SAFETY: called from C++ with a live tunnel pointer
     unsafe { (*tunnel).set_connected_web_socket(ws) };
 }
-
-// ported from: src/http_jsc/websocket_client/WebSocketProxyTunnel.zig

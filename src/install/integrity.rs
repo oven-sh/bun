@@ -1,6 +1,6 @@
 use core::fmt;
 
-use bun_base64::zig_base64::STANDARD_NO_PAD as base64;
+use bun_base64::std_base64::STANDARD_NO_PAD as base64;
 use bun_core::strings;
 use bun_sha_hmac::sha as Crypto;
 
@@ -48,7 +48,7 @@ pub const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
-    // TODO(port): narrow error set (Zig: `!Integrity` inferred — only error.InvalidCharacter)
+    // TODO(port): narrow error set (only error.InvalidCharacter is possible)
     pub fn parse_sha_sum(buf: &[u8]) -> Result<Integrity, bun_core::Error> {
         if buf.is_empty() {
             return Ok(Integrity {
@@ -248,7 +248,7 @@ impl fmt::Display for Integrity {
     }
 }
 
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive (any u8 is a valid bit
+// PORT NOTE: this tag is non-exhaustive (any u8 is a valid bit
 // pattern, since this is read from on-disk lockfiles). A Rust `#[repr(u8)] enum`
 // would be UB for unknown discriminants, so we use a transparent newtype with
 // associated consts instead.
@@ -276,7 +276,7 @@ impl Tag {
     }
 
     pub fn parse(buf: &[u8]) -> (Tag, usize) {
-        // PORT NOTE: Zig used strings.ExactSizeMatcher(8); a byte-slice match is
+        // PORT NOTE: was a fixed-size string matcher; a byte-slice match is
         // equivalent and const-propagated.
         let Some(i) = strings::index_of_char(&buf[0..buf.len().min(7)], b'-') else {
             return (Tag::UNKNOWN, 0);
@@ -429,7 +429,7 @@ impl Streaming {
     }
 }
 
-// Zig had a `comptime` block asserting Integrity::default().value is all-zero.
+// Compile-time assertion that Integrity::default().value is all-zero.
 const _: () = {
     let buf = EMPTY_DIGEST_BUF;
     let mut i = 0;
@@ -438,5 +438,3 @@ const _: () = {
         i += 1;
     }
 };
-
-// ported from: src/install/integrity.zig

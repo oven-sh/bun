@@ -13,7 +13,7 @@ use super::Kind;
 pub mod js {
     // One `${snake}_get_cached` / `${snake}_set_cached` pair per cached prop,
     // each wrapping `TimeoutPrototype__${prop}{Get,Set}CachedValue` and mapping
-    // `.zero` → `None` on the get side (matches Zig `${name}GetCached`).
+    // `.zero` → `None` on the get side (matches `${name}GetCached`).
     bun_jsc::codegen_cached_accessors!(
         "Timeout";
         arguments,
@@ -35,7 +35,7 @@ impl TimeoutObject {
         global: &JSGlobalObject,
         id: i32,
         kind: Kind,
-        interval: u32, // Zig: u31
+        interval: u32, // valid range is [0, i32::MAX]
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
@@ -113,5 +113,3 @@ impl TimeoutObject {
         js::idle_start_set_cached(this_value, global, value);
     }
 }
-
-// ported from: src/runtime/timer/TimeoutObject.zig

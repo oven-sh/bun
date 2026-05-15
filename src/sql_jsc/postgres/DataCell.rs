@@ -1,4 +1,4 @@
-//! Port of src/sql_jsc/postgres/DataCell.zig
+//! Postgres data cell decoding for the JS bridge.
 
 use core::mem::size_of;
 
@@ -14,13 +14,12 @@ use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub use crate::shared::sql_data_cell::SQLDataCell;
-// Zig nested-type style (`SQLDataCell.Tag.Bytea`) → flat re-exports; see sed
-// rewrite below replacing `SQLDataCell::X` with bare `X`.
+// Flat re-exports so callers can write `Tag::Bytea` etc. without the
+// `SQLDataCell::` qualifier.
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
 use bun_sql::shared::column_identifier::ColumnIdentifier;
 
-// TODO(port): narrow error set — Zig used inferred error sets that flow into
-// AnyPostgresError. Phase B should confirm AnyPostgresError covers all variants
+// TODO(port): narrow error set — confirm AnyPostgresError covers all variants
 // referenced via `err!(...)` here.
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -106,9 +105,9 @@ fn try_slice(slice: &[u8], count: usize) -> &[u8] {
 
 const MAX_ARRAY_NESTING_DEPTH: usize = 100;
 
-// PERF(port): `array_type` and `is_json_sub_array` were `comptime` in Zig (per-variant
-// monomorphization). Demoted to runtime here because they are only used in value
-// position (branch selectors), never type position. Profile in Phase B.
+// PERF(port): `array_type` and `is_json_sub_array` were per-variant
+// monomorphized in the original. Demoted to runtime here because they are only
+// used in value position (branch selectors), never type position.
 fn parse_array(
     bytes: &[u8],
     bigint: bool,
@@ -521,9 +520,10 @@ fn parse_array(
                             let mut has_exponent = false;
                             let mut has_negative_sign = false;
                             let mut has_positive_sign = false;
-                            // PORT NOTE: reshaped for borrowck — Zig mutates `slice` mid-loop while
-                            // iterating it (the Infinity arm). We capture the advance amount and
-                            // apply after the loop.
+                            // PORT NOTE: reshaped for borrowck — the Infinity arm
+                            // would otherwise need to mutate `slice` mid-loop while
+                            // iterating it. Capture the advance amount and apply it
+                            // after the loop.
                             let mut advance_after: Option<usize> = None;
                             for (index, &byte) in slice.iter().enumerate() {
                                 match byte {
@@ -739,9 +739,9 @@ fn parse_array(
 }
 
 // Helper: typed-array binary path shared by .int4_array / .float4_array.
-// PORT NOTE: Zig used `inline ... => |tag|` to capture the comptime tag and call
-// `tag.toJSTypedArrayType()` / `tag.byteArrayType()` / `tag.pgArrayType()` in type
-// position. Those return types, so we monomorphize over the element type here.
+// Monomorphized over the element type so the compiler resolves
+// `tag.toJSTypedArrayType()` / `tag.byteArrayType()` / `tag.pgArrayType()`
+// per element kind.
 fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     tag: types::Tag,
     bytes: &[u8],
@@ -805,14 +805,14 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         return Err(AnyPostgresError::InvalidBinaryData);
     }
 
-    // Zig: `tag.pgArrayType().init(bytes).slice()` byte-swaps the wire
-    // header and elements in place inside the recv buffer. The Rust port
-    // cannot soundly mutate through a pointer derived from `bytes: &[u8]`
-    // — the `readonly` LLVM parameter attribute lets the optimizer elide
-    // those writes, which in the release-asan build left the header `len`
-    // un-byte-swapped (3 → 0x03000000) and produced a 192MB OOB memcpy in
-    // SQLClient.cpp. Parse into an owned buffer instead; freed via
-    // `free_value = 1` after C++ has copied it into the JS typed array.
+    // The original implementation byte-swapped the wire header and elements
+    // in place inside the recv buffer. We cannot soundly mutate through a
+    // pointer derived from `bytes: &[u8]` — the `readonly` LLVM parameter
+    // attribute lets the optimizer elide those writes, which in the
+    // release-asan build left the header `len` un-byte-swapped
+    // (3 → 0x03000000) and produced a 192MB OOB memcpy in SQLClient.cpp.
+    // Parse into an owned buffer instead; freed via `free_value = 1` after
+    // C++ has copied it into the JS typed array.
     let array_len = array_len as usize;
     let elem_size = size_of::<Elem>();
     let out_bytes = array_len * elem_size;
@@ -822,8 +822,7 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         let mut out: Box<[u8]> = vec![0u8; out_bytes].into_boxed_slice();
         for i in 0..array_len {
             // Wire layout per element for the 4-byte types this path
-            // supports (int4/float4): [elem_size length prefix][elem_size value]
-            // — same stride `slice()` walks in the Zig spec.
+            // supports (int4/float4): [elem_size length prefix][elem_size value].
             let src_off = 20 + i * element_stride + (element_stride - elem_size);
             // `bytes.len() >= 20 + array_len*element_stride` was validated
             // above; `out` has `array_len*elem_size` bytes. The trait's
@@ -1224,9 +1223,9 @@ pub fn from_bytes(
 // #define pg_ntoh32(x)        (x)
 // #define pg_ntoh64(x)        (x)
 
-// PORT NOTE: Zig's pg_ntoT used @typeInfo to accept either an array or an int and
-// recurse through @bitCast. All call sites pass a uN already, so we drop the
-// reflection and provide direct byte-swap helpers.
+// PORT NOTE: the original pg_ntoT helpers used reflection to accept either an
+// array or an int. All call sites pass a uN already, so we provide direct
+// byte-swap helpers instead.
 #[inline]
 fn pg_ntoh16(x: u16) -> u16 {
     x.swap_bytes()
@@ -1310,7 +1309,7 @@ fn parse_binary_numeric<'a>(
     if decimal_pos <= 0 {
         decimal_pos = 1;
     }
-    let _ = decimal_pos; // matches Zig: computed but unused below
+    let _ = decimal_pos; // computed but unused below; kept for parity with the algorithm
     // Output all digits before the decimal point
 
     let mut scale_start: i32 = 0;
@@ -1322,7 +1321,7 @@ fn parse_binary_numeric<'a>(
         let mut first_non_zero = false;
 
         while idx <= weight as usize {
-            // PORT NOTE: Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
+            // PORT NOTE: compare in i32 to avoid usize→i16 truncation on `idx < ndigits`.
             let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) {
                 read_be!(u16)
             } else {
@@ -1387,9 +1386,9 @@ fn parse_binary_numeric<'a>(
     Ok(PGNummericString::Dynamic(result.as_slice()))
 }
 
-// PORT NOTE: Zig's `parseBinary(comptime tag, comptime ReturnType, bytes)` returns a
-// type that varies per arm. Rust cannot express that as a single fn without an output
-// trait, so it is split per-tag. Call sites in this file are updated.
+// PORT NOTE: the original `parseBinary` returned a type that varied per arm.
+// Rust cannot express that as a single fn without an output trait, so it is
+// split per-tag. Call sites in this file are updated accordingly.
 pub fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
     Ok(f64::from_bits(parse_binary_int8(bytes)? as u64))
 }
@@ -1460,7 +1459,7 @@ pub struct Putter<'a> {
 }
 
 impl<'a> Putter<'a> {
-    /// Mirrors Zig field defaults: `binary = false`, `bigint = false`, `count = 0`.
+    /// Field defaults: `binary = false`, `bigint = false`, `count = 0`.
     /// (Cannot `impl Default` — `list`/`fields`/`global_object` are borrows with no default.)
     pub fn new(
         list: &'a mut [SQLDataCell],
@@ -1612,5 +1611,3 @@ unsafe extern "C" {
         buffer_size: usize,
     ) -> usize;
 }
-
-// ported from: src/sql_jsc/postgres/DataCell.zig

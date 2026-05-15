@@ -10,7 +10,7 @@
 
 #include "bun-uws/src/SocketKinds.h"
 #include "ipc_protocol.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -39,16 +39,16 @@ namespace WK {
 using namespace JSC;
 using namespace WebViewProto;
 
-// Spawn + process-exit watch in Zig (reuses bun.spawn.Process / EVFILT_PROC).
-extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+// Spawn + process-exit watch in Rust (reuses bun.spawn.Process / EVFILT_PROC).
+extern "C" int32_t Bun__WebViewHost__ensure(Bun::GlobalObject*, bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
-extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Bun::GlobalObject*, void* impl);
+extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Bun::GlobalObject*, void* ptr, size_t length);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
-extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
-extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
+extern "C" void Bun__EventLoop__enter(Bun::GlobalObject*);
+extern "C" void Bun__EventLoop__exit(Bun::GlobalObject*);
 // runCallback does its own nested enter/exit + reportActiveExceptionAsUnhandled
 // on throw — one bad onNavigated callback won't poison the rest of the batch.
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject*, JSC::EncodedJSValue cb,
@@ -127,11 +127,11 @@ void HostClient::updateKeepAlive()
         WebCore::clientData(global->vm())->bunVM, want ? 1 : -1);
 }
 
-bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
+bool HostClient::ensureSpawned(Bun::GlobalObject* globalObject, bool stdoutInherit, bool stderrInherit)
 {
     if (sock && !dead) return true;
 
-    // Host died (rejectAllAndMarkDead ran). The Zig side cleared its
+    // Host died (rejectAllAndMarkDead ran). The Rust side cleared its
     // instance in onProcessExit, so Bun__WebViewHost__ensure will spawn a
     // fresh child. Clear stale state and try again — the old rx/txQueue
     // bytes are for the dead socket.
@@ -142,12 +142,12 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
         txQueue.clear();
     }
 
-    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit);
+    int fd = Bun__WebViewHost__ensure(globalObject, stdoutInherit, stderrInherit);
     if (fd < 0) {
         dead = true;
         return false;
     }
-    global = zig;
+    global = globalObject;
 
     // Socket group — once. Embedded; lazily linked into the loop on first
     // socket. on_open won't fire (us_socket_from_fd doesn't call it) but a
@@ -212,7 +212,7 @@ void HostClient::onWritable()
 
 // Open + mmap the child-written shm segment. The child already munmapped
 // its side before sendReply, so we're the sole mapper. O_RDWR + PROT_WRITE
-// because the Zig allocator wrapper poisons with @memset(undefined) in
+// because the host's debug allocator wrapper poisons the bytes in
 // safe builds BEFORE the vtable free (which munmap's) — a PROT_READ
 // mapping SIGBUS'd on that poison. MAP_SHARED is required for POSIX shm
 // objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
@@ -665,7 +665,7 @@ void close(JSWebView* view)
 } // namespace WK
 } // namespace Bun
 
-// Called from Zig's onProcessExit (EVFILT_PROC). The socket onClose may or
+// Called from the Rust onProcessExit (EVFILT_PROC). The socket onClose may or
 // may not have fired (crash = no FIN). Idempotent with onClose.
 extern "C" void Bun__WebViewHost__childDied(int32_t signo)
 {
@@ -678,9 +678,9 @@ extern "C" void Bun__WebViewHost__childDied(int32_t signo)
 
 #else // !OS(DARWIN)
 
-// HostProcess.zig references this unconditionally via @extern; Zig's dead-code
+// HostProcess.rs references this unconditionally via an extern decl; dead-code
 // elimination doesn't trigger because the TaggedPointer dispatch switch in
-// process.zig pulls in all ProcessExitHandler arms. spawn() itself is gated
+// the process module pulls in all ProcessExitHandler arms. spawn() itself is gated
 // on Environment.isMac so this is never called.
 extern "C" void Bun__WebViewHost__childDied(int32_t) {}
 

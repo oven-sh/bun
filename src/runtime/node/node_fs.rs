@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{self as bstr, PathString, String as BunString, ZStr, ZigString};
+use bun_core::{self as bstr, PathString, String as BunString, UnsafeStringView, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
@@ -30,7 +30,7 @@ use bun_threading::UnboundedQueue;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 // ──────────────────────────────────────────────────────────────────────────
-// `Maybe(T)` shim — Zig's `bun.jsc.Maybe(T)` provides associated helpers
+// `Maybe(T)` shim — `bun.jsc.Maybe(T)` provides associated helpers
 // (`.success`, `.errnoSys*`, `.getErrno`) on top of the bare `Result<T, Error>`
 // alias that `bun_sys::Maybe<T>` is. `crate::node::Maybe` is now the same
 // `Result` alias (Phase F), so this is just the file-local extension trait
@@ -129,7 +129,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
     }
 }
 
-/// `bun.jsc.Maybe(void).success` — Zig's unit-success constructor. Only the
+/// `bun.jsc.Maybe(void).success` — the unit-success constructor. Only the
 /// `()` instantiation needs the constant, so bound it separately.
 pub trait MaybeSuccess: Sized {
     const SUCCESS: Self;
@@ -165,8 +165,8 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
     }
 }
 
-// Local namespace shim: dependents in this file spell `ConcurrentTask::create*`
-// (the Zig spelling). The Rust crate exports the *struct* as `ConcurrentTask`
+// Local namespace shim: dependents in this file spell `ConcurrentTask::create*`.
+// The Rust crate exports the *struct* as `ConcurrentTask`
 // inside a same-named module, so re-export the free constructors here under the
 // module name the call sites expect.
 mod ConcurrentTask {
@@ -188,24 +188,22 @@ mod ConcurrentTask {
     }
 }
 
-/// `webcore.Blob.SizeType` — Zig is `u52` (src/runtime/webcore/Blob.zig:60).
+/// `webcore.Blob.SizeType` — semantically a 52-bit integer.
 /// Rust has no native `u52`, so the *storage* width is `u64`, but **never** use
 /// `BlobSizeType::MAX` to mean the spec maximum — that yields `u64::MAX`, which
-/// wraps to `-1` under `as i64` and silently breaks every bounds check that the
-/// Zig spec wrote as `std.math.maxInt(jsc.WebCore.Blob.SizeType)`. Use
+/// wraps to `-1` under `as i64` and silently breaks every bounds check. Use
 /// [`BLOB_SIZE_MAX`] instead.
 type BlobSizeType = u64;
 /// `std.math.maxInt(jsc.WebCore.Blob.SizeType)` == `maxInt(u52)` == 2^52 - 1.
 const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 
-/// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer. Zig
-/// stored this as `?*AbortSignal` and called `.ref()`/`.unref()` manually.
-/// Now backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
+/// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
+/// Backed by `bun_ptr::ExternalShared<AbortSignal>` (alias re-exported
 /// from `bun_jsc`): `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → `&AbortSignal`.
 use bun_jsc::AbortSignalRef;
 
-// PORT NOTE: Zig referenced these via `bun.api.node.*`. The Phase-A draft
-// pulled them through `bun_jsc::node` (a re-export shim that no longer exists
+// PORT NOTE: the Phase-A draft pulled these through `bun_jsc::node`
+// (a re-export shim that no longer exists
 // once `node.rs` owns the module tree). Round 2 wires them to the real
 // sibling modules under `super::` so this file compiles standalone.
 use super::stat::Stats;
@@ -216,12 +214,10 @@ use super::types::{
     VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
-// canonical path used by `cli/build_command.rs` et al. (mirrors Zig's
-// `bun.api.node.fs.PathOrFileDescriptor`).
+// canonical path used by `cli/build_command.rs` et al.
 pub use super::types::PathOrFileDescriptor;
 
-/// Local alias for the many `node::foo` call sites below — keeps the diff
-/// against `node_fs.zig` readable while routing to `super::*`.
+/// Local alias for the many `node::foo` call sites below — routes to `super::*`.
 mod node {
     pub use super::super::statfs::StatFS;
     pub use super::super::time_like::from_js as time_like_from_js;
@@ -231,7 +227,7 @@ mod node {
     /// `node::mode_from_js` — forwards to the real impl in
     /// `super::types::mode_from_js` (now un-gated). Kept as a thin alias so
     /// the dozens of call sites in `args::*::from_js` keep spelling
-    /// `node::mode_from_js` like the .zig source.
+    /// `node::mode_from_js`.
     #[inline]
     pub fn mode_from_js(
         ctx: &bun_jsc::JSGlobalObject,
@@ -260,8 +256,8 @@ use bun_sys_jsc::ErrorJsc as _;
 
 /// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
 /// `Default` (its `callback` field has no sensible default). Build one with
-/// the intrusive `node` zeroed and the supplied callback. Mirrors Zig's
-/// `.{ .callback = ... }` struct init where unset fields default.
+/// the intrusive `node` zeroed and the supplied callback; unset fields take
+/// their defaults.
 #[inline]
 fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
     WorkPoolTask {
@@ -271,11 +267,9 @@ fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
 }
 
 pub use super::node_fs_constant as constants;
-// `Watcher` / `StatWatcher` mirror Zig's `pub const Watcher = @import(
-// "./node_fs_watcher.zig");` / `pub const StatWatcher = @import(
-// "./node_fs_stat_watcher.zig");`. The sibling modules are declared in
-// `node.rs`; re-export them under the names the `args::Watch` / `watch()`
-// bodies below expect.
+// `Watcher` / `StatWatcher` are sibling modules declared in `node.rs`;
+// re-export them under the names the `args::Watch` / `watch()` bodies
+// below expect.
 #[allow(non_snake_case)]
 pub use super::node_fs_stat_watcher as StatWatcher;
 #[allow(non_snake_case)]
@@ -283,12 +277,10 @@ pub use super::node_fs_watcher as Watcher;
 
 /// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
 /// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
-/// entry points keep their `&mut Binding` signature source-compatible with
-/// `node_fs.zig`.
+/// entry points keep their `&mut Binding` signature.
 pub use super::node_fs_binding::Binding;
 
-/// `jsc.JSPromise.Strong` — re-exported under its Rust crate name. The Zig
-/// source spells this `JSPromise.Strong` (a nested decl), which Rust models as
+/// `jsc.JSPromise.Strong` — re-exported under its Rust crate name as
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
 use bun_jsc::JSPromiseStrong;
 
@@ -308,8 +300,7 @@ use bun_sys as Syscall;
 #[cfg(windows)]
 use bun_sys::sys_uv as Syscall;
 
-/// In-place RAII wrapper for a libuv `fs_t` request (Zig: `var req: uv.fs_t =
-/// uv.fs_t.uninitialized; defer req.deinit();`).
+/// In-place RAII wrapper for a libuv `fs_t` request that calls `deinit()` on Drop.
 ///
 /// `scopeguard::guard(fs_t, |mut r| r.deinit())` is *wrong* here: its `Drop`
 /// `ManuallyDrop::take`s the value into the closure parameter, relocating the
@@ -354,8 +345,8 @@ impl core::ops::DerefMut for UvFsReq {
 // Local cross-crate shims
 //
 // These wrap symbols whose canonical home moved under the Rust crate split so
-// the hundreds of call sites below — which mirror `node_fs.zig` 1:1 — don't
-// have to be rewritten per-line. Each is a thin forwarder.
+// the hundreds of call sites below don't have to be rewritten per-line. Each
+// is a thin forwarder.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.strings.withoutNTPrefix` — lives in `bun_core::paths`
@@ -365,7 +356,7 @@ fn without_nt_prefix<T: bun_paths::string_paths::Ch>(path: &[T]) -> &[T] {
     bun_paths::string_paths::without_nt_prefix(path)
 }
 
-/// `bun.paths.OSPathLiteral("")` — Zig comptime string→`[:0]const OSPathChar`.
+/// `bun.paths.OSPathLiteral("")` — empty NUL-terminated OS path constant.
 /// Only the empty-string case is used in this file. `OSPathSliceZ` is a DST
 /// (`ZStr`/`WStr`), so callers borrow it.
 #[inline]
@@ -394,7 +385,7 @@ fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::Graph> {
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
 /// `core::result::Result`, which has no `aborted()` constructor; inline the
-/// sentinel error directly so call sites stay shaped like the Zig source.
+/// sentinel error directly so call sites keep their shape.
 #[inline]
 fn abort_err() -> sys::Error {
     sys::Error {
@@ -417,9 +408,8 @@ fn errno_sys_p_maybe(rc: c_int, syscall: sys::Tag, file_path: &[u8]) -> Option<M
 }
 
 /// `bun.sys.Error.withPathLike` — `with_path()` for a `PathOrFileDescriptor`.
-/// On `Fd`, the upstream Zig records the fd; here we just attach the path
-/// slice when available (matches the read/write callers in this file, which
-/// only reach this with `Path`).
+/// On `Fd` we just attach the path slice when available (matches the
+/// read/write callers in this file, which only reach this with `Path`).
 #[inline]
 fn with_path_like(err: sys::Error, p: &PathOrFileDescriptor) -> sys::Error {
     match p {
@@ -466,15 +456,15 @@ fn err_from_static(name: &'static str) -> bun_core::Error {
     bun_core::Error::intern(name)
 }
 
-/// `bun.sys.preallocate_supported` / `preallocate_length` — the Zig consts
-/// were dropped in the lib.rs port (only `preallocate_file()` remains). Mirror
-/// the original values from `sys.zig` so the write-file fast path keeps its
-/// guard. 2 MiB matches `node_fs.zig`'s threshold.
+/// `bun.sys.preallocate_supported` / `preallocate_length` — these consts
+/// were dropped in the lib.rs port (only `preallocate_file()` remains). Keep
+/// the original values so the write-file fast path keeps its guard. The
+/// 2 MiB threshold is preserved.
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
-/// `PathString.PathInt` — Zig packed-struct field width. `bun_core::PathString`
-/// stores it as `u32` on the Rust side (see `PathString.rs` POINTER_BITS).
+/// `PathString.PathInt` — packed-struct field width. `bun_core::PathString`
+/// stores it as `u32` (see `PathString.rs` POINTER_BITS).
 type PathInt = u32;
 
 /// `Syscall.mkdirOSPath` / `Syscall.openatOSPath` — on POSIX `OSPathSliceZ` is
@@ -503,10 +493,9 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// `bun.sys.directoryExistsAt` — Zig dispatches on `anytype` element width
-/// (sys.zig:3601 → `existsAtType` picks `toNTPath16` for `[*]const u16`). On
-/// Windows `OSPathSliceZ` is already `&WStr`, so forward to the wide overload
-/// instead of narrowing to UTF-8 and re-widening. POSIX is a forwarder.
+/// `bun.sys.directoryExistsAt` — dispatches on path element width. On Windows
+/// `OSPathSliceZ` is already `&WStr`, so forward to the wide overload instead
+/// of narrowing to UTF-8 and re-widening. POSIX is a forwarder.
 #[inline]
 fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     #[cfg(not(windows))]
@@ -660,7 +649,7 @@ mod _async_tasks {
                         (this.completion)(
                             this.completion_ctx,
                             // `with_path` already clones into a fresh `Box<[u8]>`; pass the
-                            // existing path slice (Zig duped it explicitly).
+                            // existing path slice.
                             Err(err.with_path(&err.path)),
                         );
                     }
@@ -756,9 +745,8 @@ mod _async_tasks {
             let loop_ = uv::Loop::get();
             task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
 
-            // PORT NOTE: Zig's `comptime switch (FunctionEnum)` monomorphises this
-            // to a single arm. Rust resolves the match at compile time too (`F` is
-            // a const generic), but each arm's body needs `A` re-asserted to its
+            // PORT NOTE: Rust resolves the match at compile time (`F` is a
+            // const generic), but each arm's body needs `A` re-asserted to its
             // concrete `args::*` type — same identity-cast pattern as
             // `NodeFS::dispatch` (per the `async_::*` aliases, `A == $Args` for the
             // matched `F`).
@@ -990,9 +978,9 @@ mod _async_tasks {
             // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
             this.result =
                 NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result.int());
-            // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
-            // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
-            // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
+            // `sys::Error::path` is a `Box<[u8]>` boxed at the `errno_sys_p`
+            // construction site, so no clone is needed for it to outlive
+            // `node_fs.sync_error_buf` — `node_fs` may drop.
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
@@ -1063,8 +1051,8 @@ mod _async_tasks {
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
             let this_ref = unsafe { &mut *this };
-            // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
-            // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
+            // `bun_sys::Error` frees its path on Drop.
+            // KeepAlive takes `EventLoopCtx`.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
@@ -1079,12 +1067,11 @@ mod _async_tasks {
 
     /// Trait abstracting over Argument types' deinit/toThreadSafe.
     ///
-    /// Zig: every Arguments struct defines `toThreadSafe(self: *@This())` (clone
-    /// any borrowed JS-backed slices so the work-pool callback may run off-thread)
-    /// and most define `deinitAndUnprotect` (free those clones and `unprotect` any
-    /// retained `JSValue`s). The Zig spec dispatches via `@hasDecl`; in Rust the
-    /// trait methods are **required** so missing impls are a compile error rather
-    /// than a silent UAF/leak.
+    /// Every Arguments struct defines `toThreadSafe(&mut self)` (clone any
+    /// borrowed JS-backed slices so the work-pool callback may run off-thread)
+    /// and most define `deinitAndUnprotect` (free those clones and `unprotect`
+    /// any retained `JSValue`s). The trait methods are **required** so missing
+    /// impls are a compile error rather than a silent UAF/leak.
     pub trait FsArgument: Sized + Unprotect {
         const HAVE_ABORT_SIGNAL: bool = false;
         /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
@@ -1094,8 +1081,8 @@ mod _async_tasks {
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
         fn to_thread_safe(&mut self);
         /// Consume `self`, protect any JS-backed buffers, and return a guard that
-        /// unprotects on drop. The Rust replacement for Zig's
-        /// `args.toThreadSafe()` / `defer args.deinitAndUnprotect()` pair —
+        /// unprotects on drop. Replaces the
+        /// `args.toThreadSafe()` / `args.deinitAndUnprotect()` pair —
         /// string/slice ownership is handled by each field's `Drop` (PathLike,
         /// StringOrBuffer, Vec); only the JS-side `unprotect()` needs the guard.
         #[inline]
@@ -1109,8 +1096,8 @@ mod _async_tasks {
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` / `to_thread_safe`
-    /// methods each `args::*` struct already defines (1:1 with `Arguments.*` in
-    /// `node_fs.zig`). [`Unprotect`] is implemented per-type alongside.
+    /// methods each `args::*` struct already defines (1:1 with `Arguments.*`).
+    /// [`Unprotect`] is implemented per-type alongside.
     macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
@@ -1118,9 +1105,9 @@ mod _async_tasks {
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
         } )+
     };
-    // Fd-only types — Zig has only `toThreadSafe(_: *const @This()) void {}`
-    // and no `deinitAndUnprotect`; spec node_fs.zig:325 falls back to
-    // `deinit()` (a no-op — these hold only `FD`/scalars).
+    // Fd-only types — `toThreadSafe` is a no-op and there is no
+    // `deinitAndUnprotect`; the fallback `deinit()` is a no-op too (these
+    // hold only `FD`/scalars).
     ( @fd $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
@@ -1195,8 +1182,8 @@ mod _async_tasks {
         }
     }
 
-    /// Convert an async-FS result payload to a `JSValue`. Mirrors Zig's
-    /// `globalObject.toJS(res)` (a generic `anytype` dispatcher that calls
+    /// Convert an async-FS result payload to a `JSValue`. Mirrors
+    /// `globalObject.toJS(res)` (a generic dispatcher that calls
     /// `res.toJSNewlyCreated(globalObject)` if it exists, else `res.toJS(...)`).
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
@@ -1238,10 +1225,10 @@ mod _async_tasks {
             Ok(crate::node::types::FdJsc::to_js(*self, global))
         }
     }
-    impl FsReturn for ZigString {
+    impl FsReturn for UnsafeStringView {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(bun_jsc::ZigStringJsc::to_js(self, global))
+            Ok(bun_jsc::UnsafeStringViewJsc::to_js(self, global))
         }
     }
     impl FsReturn for StringOrBuffer {
@@ -1291,9 +1278,9 @@ mod _async_tasks {
     }
 
     /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the
-    /// generic `AsyncFSTask<R, A, F>`. The Zig source mapped each instantiation to
-    /// a distinct `task_tag::*` via the comptime type-name lookup; the const-
-    /// generic `F` carries that information and `NodeFSFunctionEnum::task_tag()`
+    /// generic `AsyncFSTask<R, A, F>`. Each instantiation maps to a distinct
+    /// `task_tag::*`; the const-generic `F` carries that information and
+    /// `NodeFSFunctionEnum::task_tag()`
     /// is `const fn`, so the per-`F` tag is computed at monomorphisation time.
     impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
         for AsyncFSTask<R, A, F>
@@ -1310,7 +1297,7 @@ mod _async_tasks {
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
         pub promise: JSPromiseStrong,
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop —
-        /// replaces Zig's explicit `args.deinitAndUnprotect()` in `destroy()`.
+        /// replaces an explicit `args.deinitAndUnprotect()` in `destroy()`.
         pub args: ThreadSafe<A>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
         pub task: WorkPoolTask,
@@ -1377,9 +1364,9 @@ mod _async_tasks {
 
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
-            // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
-            // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
-            // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
+            // `sys::Error::path` is a `Box<[u8]>` boxed at the `errno_sys_p`
+            // construction site, so no clone is needed for it to outlive
+            // `node_fs.sync_error_buf` — `node_fs` may drop.
 
             // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
             // documented accessor for off-thread (work-pool) callers; the
@@ -1445,9 +1432,9 @@ mod _async_tasks {
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
             let this_ref = unsafe { &mut *this };
-            // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
+            // `bun_sys::Error` frees its path on Drop.
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-            // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
+            // KeepAlive takes `EventLoopCtx`.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
@@ -1463,8 +1450,7 @@ mod _async_tasks {
     pub type AsyncCpTask = NewAsyncCpTask<false>;
     pub type ShellAsyncCpTask = NewAsyncCpTask<true>;
 
-    // Zig path was `bun.shell.Interpreter.Builtin.Cp.ShellCpTask`. The Rust shell
-    // port flattens builtins under `crate::shell::builtins::*`. The
+    // The Rust shell port flattens builtins under `crate::shell::builtins::*`. The
     // `cp_on_copy`/`cp_on_finish` hooks are inherent methods on that type
     // (cp.rs), called directly below — no trait indirection.
     type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
@@ -1486,8 +1472,7 @@ mod _async_tasks {
         /// If this task is called by the shell then we shouldn't call this as
         /// it is not threadsafe and is unnecessary as the process will be kept
         /// alive by the shell instance.
-        // PORT NOTE: Zig made the field conditional via `if (!is_shell) … else void`.
-        // Rust keeps the field unconditionally and simply skips `ref_()`/`unref()`
+        // PORT NOTE: Rust keeps the field unconditionally and simply skips `ref_()`/`unref()`
         // on the `IS_SHELL` path (`KeepAlive::default()` is inert until ref'd).
         pub r#ref: KeepAlive,
         // PERF(port): was arena bulk-free — profile in Phase B
@@ -1517,9 +1502,8 @@ mod _async_tasks {
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
         /// original write provenance for `on_subtask_done`'s `&mut` promotion.
         pub cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>>,
-        /// Single owned allocation laid out as `<src>\0<dest>\0`. Zig stores two
-        /// `bun.OSPathSliceZ` (sentinel slices) into a single `default_allocator`
-        /// buffer; here ownership is encoded directly as `Box<[OSPathChar]>` and
+        /// Single owned allocation laid out as `<src>\0<dest>\0`.
+        /// Ownership is encoded directly as `Box<[OSPathChar]>` and
         /// the two NUL-terminated views are reconstructed via `src()` / `dest()`.
         path_buf: Box<[OSPathChar]>,
         src_len: usize,
@@ -1694,7 +1678,7 @@ mod _async_tasks {
             // PORT NOTE: `EventLoopHandle::Mini` stores `*mut MiniEventLoop<'static>` (a
             // non-owning erased backref, see `bun_event_loop::AnyEventLoop`). Taking the
             // raw pointer here avoids forcing every caller's `MiniEventLoop` borrow to be
-            // `'static` — Zig passed `*MiniEventLoop` and the task never outlives it.
+            // `'static` — the task never outlives the event loop.
             mini: *mut MiniEventLoop<'static>,
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
@@ -1745,9 +1729,8 @@ mod _async_tasks {
             }
             // The CAS above guarantees exactly one thread reaches this write; the
             // `subtask_count` AcqRel fence in `on_subtask_done` publishes it to the
-            // JS-thread reader. (Zig clones `err.path` here to outlive the caller's
-            // stack buffer; in Rust `sys::Error::path` is already `Box<[u8]>`, so
-            // move-assign suffices.)
+            // JS-thread reader. (`sys::Error::path` is already `Box<[u8]>`,
+            // so move-assign suffices and no clone is needed.)
             self.result.set(result);
         }
 
@@ -1783,7 +1766,7 @@ mod _async_tasks {
             // form `&mut *this` on the JS thread.
             if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
                 // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
-                // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
+                // adapt the signature inline.
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     js: ConcurrentTask::from_callback(this, |p| unsafe {
                         (&mut *p).run_from_js_thread().map_err(Into::into)
@@ -1807,7 +1790,7 @@ mod _async_tasks {
             if IS_SHELL {
                 // SAFETY: shelltask is set by create_with_shell_task/create_mini and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder, mirroring Zig which read the union value once.
+                // `Ok(())` placeholder.
                 let result = core::mem::replace(self.result.get_mut(), Ok(()));
                 let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
                 // SAFETY: shelltask is non-null in the IS_SHELL specialization and
@@ -1828,7 +1811,7 @@ mod _async_tasks {
             let success = matches!(*self.result.get_mut(), Ok(_));
             let promise_value = self.promise.value();
             // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
-            // resolve/reject (matching Zig). The `JSPromise` itself lives on the JS heap
+            // resolve/reject. The `JSPromise` itself lives on the JS heap
             // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = match self.result.get_mut() {
@@ -1870,18 +1853,17 @@ mod _async_tasks {
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
             let this_ref = unsafe { &mut *this };
-            // PORT NOTE: Zig `err.deinit()` freed the path slice; Rust `bun_sys::Error`
-            // owns `Box<[u8]>` and frees on Drop (in `heap::take` below).
+            // `bun_sys::Error` owns `Box<[u8]>` and frees on Drop (in `heap::take` below).
             if !IS_SHELL {
                 this_ref
                     .r#ref
                     .unref(event_loop_handle_to_ctx(this_ref.evtloop));
             }
             // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
-            // PORT NOTE: intentional spec divergence — Zig `NewAsyncCpTask.deinit` only
-            // calls `args.deinit()` (no-op for `.buffer`), leaking the `protect()` taken by
-            // `args.toThreadSafe()` when `src`/`dest` are Buffers. `Drop for ThreadSafe<args::Cp>`
-            // releases that protect here, fixing the leak.
+            // PORT NOTE: intentional behavior change — older `NewAsyncCpTask.deinit`
+            // only called `args.deinit()` (no-op for `.buffer`), leaking the `protect()`
+            // taken by `args.toThreadSafe()` when `src`/`dest` are Buffers.
+            // `Drop for ThreadSafe<args::Cp>` releases that protect here, fixing the leak.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
             drop(unsafe { bun_core::heap::take(this) });
@@ -1928,17 +1910,18 @@ mod _async_tasks {
                         src,
                         dest,
                         if IS_SHELL {
-                            // Shell always forces copy (overwrite allowed). Spec
-                            // (node_fs.zig:758) passes `Copyfile.force` here, but
-                            // that value is `COPYFILE_FICLONE_FORCE` and was a
-                            // no-op in Zig's Windows `_copySingleFileSync` (which
-                            // never checks `isForceClone`). The Rust port added an
-                            // ENOSYS guard for `is_force_clone()` on Windows (see
+                            // Shell always forces copy (overwrite allowed). The
+                            // historical implementation passed `Copyfile.force`
+                            // here, but that value is `COPYFILE_FICLONE_FORCE`
+                            // and was a no-op in the Windows
+                            // `_copySingleFileSync` (which never checked
+                            // `isForceClone`). An ENOSYS guard for
+                            // `is_force_clone()` on Windows was later added (see
                             // the comment at the top of that branch), so passing
                             // `FORCE` would make every shell `cp file dest` fail
                             // with ENOSYS. Mode `0` yields the same effective
-                            // behaviour the Zig path had: `shouldnt_overwrite()`
-                            // is false and `CopyFileW` overwrites.
+                            // behaviour: `shouldnt_overwrite()` is false and
+                            // `CopyFileW` overwrites.
                             constants::Copyfile::from_raw(0)
                         } else {
                             constants::Copyfile::from_raw(
@@ -2049,7 +2032,7 @@ mod _async_tasks {
             let this_ref = unsafe { &*this };
             // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
             // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
-            // so reconstruct as `&OSPathSliceZ` (Zig: `src_buf[0..src_dir_len :0]`).
+            // so reconstruct as `&OSPathSliceZ`.
             let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
             // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
             let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
@@ -2063,9 +2046,8 @@ mod _async_tasks {
                 ) {
                     match err.get_errno() {
                         E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
-                            // Zig copies `src` into `sync_error_buf` and `.withPath()`s it so
-                            // the borrowed slice outlives the stack frame. `errno_sys_p`
-                            // already boxed `src.as_bytes()` into `err.path`, so just forward.
+                            // `errno_sys_p` already boxed `src.as_bytes()` into
+                            // `err.path` so it outlives the stack frame; just forward.
                             this_ref.finish_concurrently(err);
                             return false;
                         }
@@ -2096,7 +2078,7 @@ mod _async_tasks {
                 FD::INVALID,
                 dest.as_slice(),
                 &mut buf[..],
-                // node_fs.zig:861 `.{ .add_nt_prefix = false }` — `normdest` feeds
+                // `add_nt_prefix = false` — `normdest` feeds
                 // `mkdirRecursiveOSPath` / `CopyFileW` which expect Win32 paths,
                 // not `\??\` NT object paths.
                 sys::NormalizePathWindowsOpts {
@@ -2126,8 +2108,8 @@ mod _async_tasks {
                 }
             }
 
-            // PORT NOTE: `DirIterator.iterate(dir, kind)` (Zig runtime arg) maps to a
-            // const-generic `PathType` in the Rust port. On POSIX directory entries
+            // PORT NOTE: `DirIterator.iterate(dir, kind)` maps to a
+            // const-generic `PathType`. On POSIX directory entries
             // are always UTF-8, so monomorphise on `PathType::U8` and let the
             // Windows branch (gated above) handle the wide path.
             #[cfg(windows)]
@@ -2283,7 +2265,6 @@ mod _async_tasks {
                     res.clear();
                 }
                 ResultListEntryValue::Buffers(res) => {
-                    // Zig: `bun.default_allocator.free(item.buffer.byteSlice())`.
                     // `MarkedArrayBuffer::destroy` frees the owned byte slice when
                     // `owns_buffer` (set by `Buffer::from_string` in
                     // `ReaddirEntry::append_entry*`).
@@ -2402,8 +2383,7 @@ mod _async_tasks {
         }
 
         pub fn enqueue(&mut self, basename: &ZStr) {
-            // Spec (node_fs.zig:1058) does `bun.default_allocator.dupeZ(u8, basename)` —
-            // the subtask runs on another thread after the caller's `name_to_copy_z`
+            // The subtask runs on another thread after the caller's `name_to_copy_z`
             // (which points into a per-iteration buffer) has been overwritten, so we
             // must heap-own the bytes here. Freed in ReaddirSubtask::call's cleanup.
             let mut owned = Vec::with_capacity(basename.len() + 1);
@@ -2415,8 +2395,7 @@ mod _async_tasks {
             // reconstructed and freed in `ReaddirSubtask::run_owned`.
             let leaked: &'static mut [u8] = Box::leak(owned);
             let basename_ps = PathString::init(&leaked[..len]);
-            // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
-            // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
+            // The fetch_add is load-bearing (refcounts the in-flight subtask). It
             // MUST run in release builds; only the `> 0` invariant check is debug-only.
             let prev = self.subtask_count.fetch_add(1, Ordering::Relaxed);
             debug_assert!(prev > 0);
@@ -2442,8 +2421,7 @@ mod _async_tasks {
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
-            // Zig: `bun.default_allocator.dupeZ(u8, args.path.slice())`. The
-            // subtasks call `root_path.slice_assume_z()` from the work pool after
+            // The subtasks call `root_path.slice_assume_z()` from the work pool after
             // `args.to_thread_safe()` may have rehomed the original slice, so we
             // must own a NUL-terminated copy. Freed in `finish_concurrently()` or
             // `destroy()` via `free_root_path()`.
@@ -2487,17 +2465,16 @@ mod _async_tasks {
             // SAFETY: `readdir_with_entries_recursive_async` takes `args` and
             // `async_task` separately even though `args == &async_task.args`. The
             // callee never mutates `args` (only `async_task.{root_fd, enqueue}`),
-            // so erase the field borrow through a raw pointer to satisfy borrowck —
-            // mirrors the Zig spec, which passed both freely.
+            // so erase the field borrow through a raw pointer to satisfy borrowck.
             let args_ptr: *const args::Readdir = &raw const *self.args;
             macro_rules! impl_tag {
                 ($T:ty, $variant:ident) => {{
-                    // Zig: `var stack = std.heap.stackFallback(8192, …)` — the
-                    // first ~8 KiB of entries lived on the stack so small
-                    // directories (the common case) never touched the heap until
-                    // `writeResults` cloned with exact capacity. `Vec::new()` here
-                    // instead grew through every power-of-two size class on the
-                    // heap; under mimalloc-debug each fresh-page realloc runs
+                    // Originally a stack-fallback allocator: the first ~8 KiB of
+                    // entries lived on the stack so small directories (the common
+                    // case) never touched the heap until `writeResults` cloned
+                    // with exact capacity. A bare `Vec::new()` here instead grew
+                    // through every power-of-two size class on the heap; under
+                    // mimalloc-debug each fresh-page realloc runs
                     // `mi_mem_is_zero` over the whole arena page, which dominated
                     // the recursive-readdir perf profile (~15% self-time).
                     // Pre-reserve the same 8 KiB budget so we take a single
@@ -2555,18 +2532,17 @@ mod _async_tasks {
 
         pub fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
             if !result.is_empty() {
-                // Zig cloned because `result` was backed by a stack-fallback
-                // allocator and could not outlive `perform_work`'s frame. In Rust
+                // Originally cloned because `result` was backed by a stack-fallback
+                // allocator and could not outlive `perform_work`'s frame. Now
                 // `result` is already a heap `Vec`, so cloning is a redundant
                 // alloc+memcpy; just take ownership and trim the over-reservation
-                // from `perform_work` so the queued entry holds exact capacity
-                // (matches Zig's `initCapacity(len)` semantics).
+                // from `perform_work` so the queued entry holds exact capacity.
                 let mut clone: Vec<T> = core::mem::take(result);
                 clone.shrink_to_fit();
                 self.result_list_count
                     .fetch_add(clone.len(), Ordering::Relaxed);
-                // Zig `@unionInit(Value, @tagName(Field), clone)` →
-                // `IntoResultListEntry::into_variant` (trait dispatch on `T`).
+                // `IntoResultListEntry::into_variant` selects the matching
+                // `ResultListEntryValue` variant via trait dispatch on `T`.
                 let list = Box::new(ResultListEntry {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
@@ -2609,8 +2585,6 @@ mod _async_tasks {
                 // be read by the iterator.
                 let mut to_destroy: Option<*mut ResultListEntry> = None;
 
-                // Zig: `inline else => |tag| { var results = &@field(result_list, @tagName(tag));
-                // results.ensureTotalCapacityPrecise(count); … results.appendSliceAssumeCapacity(field) }`.
                 // `reserve_exact`/`append_from` dispatch on the runtime tag.
                 let cap = self.result_list_count.swap(0, Ordering::Relaxed);
                 self.result_list.reserve_exact(cap);
@@ -2731,15 +2705,15 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
             let this_ref = unsafe { &mut *this };
             debug_assert!(this_ref.root_fd == FD::INVALID); // should already have closed it
-            // Zig `err.deinit()` — `bun_sys::Error` frees on Drop; nothing to do.
+            // `bun_sys::Error` frees on Drop; nothing to do.
             let _ = this_ref.pending_err.take();
-            // Zig passed `bunVM()`; Rust `KeepAlive::unref` takes the type-erased
-            // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
+            // `KeepAlive::unref` takes the type-erased `EventLoopCtx`.
+            // Resolve via the global JS-loop hook (single JS thread).
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
             // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
             this_ref.free_root_path();
             this_ref.clear_result_list();
-            // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via heap::take below).
+            // `JSPromiseStrong` releases on Drop (via heap::take below).
             // SAFETY: paired with Box::leak in create()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -2747,9 +2721,8 @@ mod _async_tasks {
 
     /// Maps a readdir element type to its `ResultListEntryValue` variant.
     ///
-    /// PORT NOTE: Zig used `@unionInit(ResultListEntry.Value, @tagName(tag), clone)`
-    /// inside `writeResults`, dispatching on `comptime ResultType`. Rust can't
-    /// switch on a generic `T`, so the per-type wrapping lives on this trait.
+    /// PORT NOTE: Rust can't switch on a generic `T`, so the per-type wrapping
+    /// lives on this trait instead of a type-name dispatch in `writeResults`.
     pub trait IntoResultListEntry: Sized {
         fn into_variant(v: Vec<Self>) -> ResultListEntryValue;
     }
@@ -2893,10 +2866,10 @@ pub mod args {
         }
     }
 
-    /// Shared layout for `fs.writev` / `fs.readv` arguments. Zig keeps two
-    /// byte-identical copy-pasted structs (`Arguments.Writev` / `Arguments.Readv`,
-    /// node_fs.zig:1364-1468); we keep one concrete struct and re-export both
-    /// names as type aliases so every `args::Writev` / `args::Readv` caller
+    /// Shared layout for `fs.writev` / `fs.readv` arguments. Historically two
+    /// byte-identical copy-pasted structs (`Arguments.Writev` / `Arguments.Readv`);
+    /// we keep one concrete struct and re-export both names as type aliases so
+    /// every `args::Writev` / `args::Readv` caller
     /// (UVFSRequest params, `readv`/`writev`/`preadv_inner`/`pwritev_inner`,
     /// uv dispatch arms) is untouched.
     pub struct FdVectorIo {
@@ -2908,7 +2881,7 @@ pub mod args {
         #[inline]
         fn unprotect(&mut self) {
             self.buffers.value.unprotect();
-            // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
+            // `self.buffers.buffers` is a `Vec`, which frees on drop.
         }
     }
     impl FdVectorIo {
@@ -2984,7 +2957,7 @@ pub mod args {
     fs_args_path_forwarders!(Chown; path);
     impl Chown {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chown> {
-            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers every
+            // `Drop for PathLike` covers every
             // error return below (including `try validateInteger`).
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let uid: UidT = 'brk: {
@@ -3056,16 +3029,15 @@ pub mod args {
         }
     }
 
-    /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
+    /// `wrapTo<T>(in: i64) -> T` where `T` is unsigned.
     /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
     /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
     /// the per-platform wrap rather than pulling `num_traits`.
     #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
-        // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
-        // — modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
-        // and `4294967295 → 0`. Match the spec exactly.
+        // Modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
+        // and `4294967295 → 0`.
         T::from(in_.rem_euclid(u32::MAX as i64) as u32)
     }
     #[cfg(windows)]
@@ -3085,7 +3057,7 @@ pub mod args {
     fs_args_path_forwarders!(Lutimes; path);
     impl Lutimes {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
-            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
+            // `Drop for PathLike` covers the
             // `try timeLikeFromJS` throws below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let atime = node::time_like_from_js(
@@ -3127,7 +3099,7 @@ pub mod args {
     fs_args_path_forwarders!(Chmod; path);
     impl Chmod {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
-            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
+            // `Drop for PathLike` covers the
             // `try modeFromJS` throw below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mode_arg = arguments.next().unwrap_or(JSValue::UNDEFINED);
@@ -3186,7 +3158,7 @@ pub mod args {
     fs_args_path_forwarders!(StatFS; path);
     impl StatFS {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<StatFS> {
-            // Zig: `errdefer path.deinit()` — `Drop for PathLike` covers the
+            // `Drop for PathLike` covers the
             // `try get_boolean_strict` throw below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let big_int = 'brk: {
@@ -3224,7 +3196,7 @@ pub mod args {
     fs_args_path_forwarders!(Stat; path);
     impl Stat {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
-            // Zig: `errdefer path.deinit()` (node_fs.zig:1756) → `Drop for PathLike`.
+            // `Drop for PathLike` runs on early return.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut throw_if_no_entry = true;
             let big_int = 'brk: {
@@ -3316,9 +3288,9 @@ pub mod args {
     fs_args_path_forwarders!(Symlink; target_path, new_path);
     impl Symlink {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Symlink> {
-            // Zig: `errdefer old_path.deinit()` (node_fs.zig:1883) → `Drop for PathLike`.
+            // `Drop for PathLike` runs on early return.
             let old_path = PathLike::from_js_required(ctx, arguments, "target")?;
-            // Zig: `errdefer new_path.deinit()` (node_fs.zig:1888) → `Drop for PathLike`.
+            // `Drop for PathLike` runs on early return.
             let new_path = PathLike::from_js_required(ctx, arguments, "path")?;
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',
@@ -3415,7 +3387,7 @@ pub mod args {
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
     /// object with an `.encoding` property. Any other value (including `undefined`
     /// / `null` / numbers / functions) is silently ignored and `default` is returned.
-    /// Mirrors the copy-pasted block in Zig's `Readlink/Realpath/MkdirTemp.fromJS`.
+    /// Mirrors the copy-pasted block in `Readlink/Realpath/MkdirTemp.fromJS`.
     pub(super) fn parse_encoding_arg(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -3848,8 +3820,8 @@ pub mod args {
             } else {
                 Encoding::Utf8
             };
-            // `errdefer args.deinit()` (node_fs.zig:2491) → `Drop for StringOrBuffer`
-            // on `args.buffer` releases the slice on any `?`-propagated JsError.
+            // `Drop for StringOrBuffer` on `args.buffer` releases the slice
+            // on any `?`-propagated JsError.
             let mut args = Write {
                 fd,
                 buffer,
@@ -4038,7 +4010,7 @@ pub mod args {
                 ));
             }
             let length_int: i64 = length_float as i64;
-            // Zig (node_fs.zig:2621) compares `i64 > usize` with sign-aware peer
+            // The reference behavior compares `i64 > usize` with sign-aware peer
             // widening, so negative `length_int` falls through to the `< 0` arm
             // below. Guard the `as usize` cast so it doesn't wrap-to-huge here.
             if length_int > 0 && length_int as usize > buf_len {
@@ -4167,7 +4139,7 @@ pub mod args {
     }
     impl Drop for ReadFile {
         fn drop(&mut self) {
-            // Zig `deinit()`: release the AbortSignal ref taken in `from_js`.
+            // Release the AbortSignal ref taken in `from_js`.
             // `path: PathOrFileDescriptor` releases via its inner `PathLike` Drop.
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
@@ -4187,8 +4159,7 @@ pub mod args {
             self.path.to_thread_safe();
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
-            // `errdefer path.deinit()` → `Drop` on `path` covers every
-            // `?`-propagated JsError below (matches node_fs.zig).
+            // `Drop` on `path` covers every `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!(
                     "path must be a string or a file descriptor"
@@ -4257,7 +4228,7 @@ pub mod args {
     }
     impl Drop for WriteFile {
         fn drop(&mut self) {
-            // Zig `deinit()`: release the AbortSignal ref taken in `from_js`.
+            // Release the AbortSignal ref taken in `from_js`.
             // `file`/`data` release via their own `Drop` (PathLike/StringOrBuffer).
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
@@ -4284,8 +4255,7 @@ pub mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<WriteFile> {
-            // `errdefer path.deinit()` → `Drop` on `path` covers every
-            // `?`-propagated JsError below (matches node_fs.zig).
+            // `Drop` on `path` covers every `?`-propagated JsError below.
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!(
                     "path must be a string or a file descriptor"
@@ -4346,7 +4316,7 @@ pub mod args {
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             let allow_string_object = false;
-            // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
+            // the pattern is to call toThreadSafe after Arguments.*.fromJS
             let is_async = false;
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
@@ -4388,8 +4358,8 @@ pub mod args {
                 if arg.is_string() {
                     encoding = Encoding::assert(arg, ctx, encoding).unwrap_or(encoding);
                 } else if arg.is_object() {
-                    // PORT NOTE: Zig calls `getEncoding(arg, ctx)` (two args) — relies on
-                    // Zig's default-param coercion to `Encoding.utf8`. Preserve behaviour.
+                    // PORT NOTE: equivalent to `getEncoding(arg, ctx)` defaulting to
+                    // `Encoding.utf8` on parse failure. Preserve behaviour.
                     if let Ok(e) = get_encoding(arg, ctx, encoding) {
                         encoding = e;
                     }
@@ -4523,7 +4493,7 @@ pub mod args {
             self.to_thread_safe();
             ThreadSafe::adopt(self)
         }
-        // Zig `deinit()` was gated on `flags.deinit_paths`; in Rust the
+        // Cleanup was historically gated on `flags.deinit_paths`; the
         // `PathLike::String` arm's `Drop` is a no-op for borrowed `PathString`
         // payloads (the only `deinit_paths: false` caller — shell `cp`), so the
         // flag is vestigial and the explicit hook is gone.
@@ -4667,7 +4637,7 @@ pub mod ret {
     pub type Link = ();
     pub type Lstat = StatOrNotFound;
     pub type Mkdir = StringOrUndefined;
-    pub type Mkdtemp = ZigString;
+    pub type Mkdtemp = UnsafeStringView;
     pub type Open = FD;
     pub type WriteFile = ();
     pub type Readv = Read;
@@ -4687,8 +4657,8 @@ pub mod ret {
         pub buffer_val: JSValue,
     }
     impl ReadPromise {
-        const FIELD_BYTES_READ: ZigString = ZigString::init_static(b"bytesRead");
-        const FIELD_BUFFER: ZigString = ZigString::init_static(b"buffer");
+        const FIELD_BYTES_READ: UnsafeStringView = UnsafeStringView::init_static(b"bytesRead");
+        const FIELD_BUFFER: UnsafeStringView = UnsafeStringView::init_static(b"buffer");
         pub fn to_js(&self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| {
                 if !v.is_empty_or_undefined_or_null() {
@@ -4711,8 +4681,9 @@ pub mod ret {
         pub buffer_val: JSValue,
     }
     impl WritePromise {
-        const FIELD_BYTES_WRITTEN: ZigString = ZigString::init_static(b"bytesWritten");
-        const FIELD_BUFFER: ZigString = ZigString::init_static(b"buffer");
+        const FIELD_BYTES_WRITTEN: UnsafeStringView =
+            UnsafeStringView::init_static(b"bytesWritten");
+        const FIELD_BUFFER: UnsafeStringView = UnsafeStringView::init_static(b"buffer");
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
         pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| {
@@ -4776,8 +4747,7 @@ pub mod ret {
                     // build an empty array, push `item.toJS(globalObject)` for
                     // each. Ownership of every `Buffer`'s bytes transfers to
                     // JSC via `MarkedArrayBuffer::to_js`; the boxed slice
-                    // itself is freed when `items` drops (Zig: `defer
-                    // bun.default_allocator.free(this.buffers)`).
+                    // itself is freed when `items` drops.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     for (i, item) in items.iter().enumerate() {
                         let res = item.to_js(global_object)?;
@@ -4835,8 +4805,7 @@ pub use ret as Return;
 
 // `#[repr(C)]` pins `sync_error_buf` (a `[u8; N]`, nominal align = 1) at
 // offset 0. The struct's overall alignment is ≥ `align_of::<*const ()>()`
-// (from the `vm` field), so the buffer's address inherits that alignment —
-// the Rust equivalent of Zig's `sync_error_buf: bun.PathBuffer align(@alignOf(u16))`.
+// (from the `vm` field), so the buffer's address inherits that alignment.
 // This is load-bearing on Windows where `sync_error_buf` is reinterpreted as
 // `&mut [u16]` / `&mut WPathBuffer` (see `mkdir_recursive_os_path_impl` and
 // the `os_path_kernel32` callers); a misaligned `&mut [u16]` is instant UB.
@@ -4860,15 +4829,15 @@ impl Default for NodeFS {
     }
 }
 
-// `pub type ReturnType = ret;` (Zig: `pub const ReturnType = Return;`) — Rust
-// inherent `type` aliases can't name a module. Expose it as a `pub use` at the
+// `pub type ReturnType = ret;` — Rust inherent `type` aliases can't name a
+// module. Expose it as a `pub use` at the
 // containing module level instead so `NodeFS::ReturnType::Foo` callers (none
 // yet in-tree) keep working via `node::fs::ReturnType::Foo`.
 pub use ret as ReturnType;
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
-        // PORT: Zig passes `osPathKernel32(...)` (wide on Windows) into
+        // PORT: the spec passes `osPathKernel32(...)` (wide on Windows) into
         // `Syscall.access(OSPathSliceZ)`. The Rust `bun_sys::access` Windows
         // arm takes `&ZStr` and performs the kernel32 widening internally
         // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
@@ -4964,8 +4933,8 @@ impl NodeFS {
             if stat_size > stack_buf_len * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
-                // PORT NOTE: Zig used `bun.default_allocator.alloc(u8, clamped_size)` —
-                // uninitialised heap. `Vec::resize` here was a debug-build hot path
+                // PORT NOTE: this requires uninitialised heap memory.
+                // `Vec::resize` here was a debug-build hot path
                 // (byte-by-byte `extend_with`); use `expand_to_capacity` to match the spec
                 // (the slab is write-only — `Syscall::read` fills it from the kernel).
                 use bun_collections::vec_ext::VecExt as _;
@@ -4981,7 +4950,7 @@ impl NodeFS {
         // buf_to_free dropped at scope exit
 
         let mut remain = stat_size.max(0) as u64;
-        // VERIFY-FIX(round1): Zig `while (cond) {} else {}` runs the else only when
+        // VERIFY-FIX(round1): the reference `while/else` runs the else only when
         // the loop exits because `cond` became false — never on `break`. The
         // `if remain == 0` check below was wrong: `break 'toplevel` after
         // `remain` had already saturated to 0 would still enter the else. Track
@@ -5174,8 +5143,8 @@ impl NodeFS {
                     // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
                     // that wrote into a discarded temporary so the deferred ftruncate
                     // always saw 0. The scopeguard variant also double-borrowed `wrote`.
-                    // The Zig `defer` runs after `copy_file_using_read_write_loop` returns
-                    // into this scope; there are no early returns between open(dest) and
+                    // The deferred cleanup runs after `copy_file_using_read_write_loop`
+                    // returns into this scope; there are no early returns between open(dest) and
                     // that call, so inlining the cleanup after is equivalent.
                     let mut wrote: u64 = 0;
                     if args.mode.shouldnt_overwrite() {
@@ -5361,8 +5330,8 @@ impl NodeFS {
             // *after* the copy loops below mutate it. As a `usize` captured by-copy
             // the guard always saw 0, and the `&mut (wrote as u64)` call sites
             // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
-            // by reference while the loops `get`/`set`, matching Zig's `var wrote: u64`
-            // observed by `defer` at scope-exit time.
+            // by reference while the loops `get`/`set`, so the final value is
+            // observed at scope-exit time.
             let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
@@ -5916,11 +5885,10 @@ impl NodeFS {
 
         // SAFETY: `NodeFS` is `#[repr(C)]` with `sync_error_buf` at offset 0 and
         // struct alignment ≥ pointer-align (from `vm`), so this address is
-        // ≥ `align_of::<OSPathChar>()`-aligned (the Rust spelling of Zig's
-        // `align(@alignOf(u16))` field annotation). On Windows
+        // ≥ `align_of::<OSPathChar>()`-aligned. On Windows
         // `OSPathBuffer = [u16; PATH_MAX_WIDE]` (65 534 B) which fits inside
         // `PathBuffer` (`MAX_PATH_BYTES` = 98 302 B); on POSIX it is the same
-        // type. The `assert!` below mirrors Zig's `@alignCast` safety check.
+        // type. The `assert!` below is the alignment safety check.
         // Keep the raw `*mut PathBuffer` so error-return paths can re-derive a fresh
         // `&mut PathBuffer` without reborrowing `&mut self` (which would alias
         // `working_mem` under stacked borrows). On every such path `working_mem` is
@@ -5943,8 +5911,8 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        // PORT NOTE: Zig restores `working_mem[i] = SEP` here, *before*
-                        // the errno match, but Zig's `[:0]u16` sentinel is advisory.
+                        // PORT NOTE: the reference restores `working_mem[i] = SEP` here,
+                        // *before* the errno match, but its NUL sentinel is advisory.
                         // Rust's `OSPathSliceZ` (`WStr`/`ZStr`) carries a hard
                         // `ptr[len] == 0` invariant, and the EEXIST/`_` arms below still
                         // read `parent`. Defer the SEP-restore into each arm so `parent`
@@ -6113,10 +6081,10 @@ impl NodeFS {
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
             // UTF-8 string owned by the request; `UvFsReq::drop` runs
             // `uv_fs_req_cleanup` in place after we've copied the bytes out.
-            return Ok(
-                ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes())
-                    .expect("oom"),
-            );
+            return Ok(UnsafeStringView::dupe_for_js(
+                unsafe { bun_core::ffi::cstr(req.path) }.to_bytes(),
+            )
+            .expect("oom"));
         }
 
         #[cfg(not(windows))]
@@ -6125,10 +6093,10 @@ impl NodeFS {
             // generated name back into the buffer in-place.
             let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
             if !rc.is_null() {
-                return Ok(
-                    ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(rc) }.to_bytes())
-                        .expect("oom"),
-                );
+                return Ok(UnsafeStringView::dupe_for_js(
+                    unsafe { bun_core::ffi::cstr(rc) }.to_bytes(),
+                )
+                .expect("oom"));
             }
 
             // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
@@ -6186,9 +6154,8 @@ impl NodeFS {
                 ..Default::default()
             });
         }
-        // node_fs.zig:4333 — `req.ptrAs(*align(1) bun.StatFS).*`: libuv stores
-        // a `uv_statfs_t*` in `req.ptr` on success. The struct is unaligned in
-        // the request buffer, hence `read_unaligned`.
+        // libuv stores a `uv_statfs_t*` in `req.ptr` on success. The struct is
+        // unaligned in the request buffer, hence `read_unaligned`.
         // SAFETY: `rc >= 0` ⇒ libuv populated `req.ptr` with a valid
         // `uv_statfs_t` (= `RawStatFS` on Windows); we copy it out by value
         // before `uv_fs_req_cleanup` releases the backing storage.
@@ -6205,8 +6172,7 @@ impl NodeFS {
         debug_assert!(args.position.is_none());
         // `ArrayBuffer` is a `Copy` descriptor over JSC-owned heap bytes; copy the
         // descriptor locally and use the existing safe `byte_slice_mut` accessor
-        // instead of rebuilding a `&mut [u8]` from a `&[u8]` borrow by hand
-        // (matches Zig's `args.buffer.slice()` returning `[]u8`).
+        // instead of rebuilding a `&mut [u8]` from a `&[u8]` borrow by hand.
         let mut view = args.buffer.buffer;
         let mut buf = view.byte_slice_mut();
         let off = (args.offset as usize).min(buf.len());
@@ -6404,9 +6370,9 @@ impl NodeFS {
 
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
         let position = args.position.unwrap();
-        // node_fs.zig:4511 — `@ptrCast(args.buffers.buffers.items)`: `PlatformIoVec`
-        // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
-        // kernel never writes through `iov_base` for pwritev(2).
+        // `PlatformIoVec` and `PlatformIoVecConst` are layout-identical
+        // (`{ *void, usize }`); the kernel never writes through `iov_base`
+        // for pwritev(2).
         // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
         let vecs: &[sys::PlatformIoVecConst] = unsafe {
             core::slice::from_raw_parts(
@@ -6426,8 +6392,8 @@ impl NodeFS {
     }
 
     fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        // node_fs.zig:4526 — `@ptrCast(args.buffers.buffers.items)` reinterprets
-        // the mutable iovec slice as `iovec_const` for writev(2); the kernel
+        // The mutable iovec slice is reinterpreted as `iovec_const` for writev(2);
+        // the kernel
         // never writes through `iov_base`. `PlatformIoVec` and
         // `PlatformIoVecConst` are layout-identical (`{ *void, usize }`), so
         // pass the slice through `Syscall::writev` as-is.
@@ -6484,7 +6450,7 @@ impl NodeFS {
         basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
-        // node_fs.zig:4568 — `comptime is_u16 = isWindows && (T == bun.String || T == Dirent)`.
+        // `is_u16 = isWindows && (T == String || T == Dirent)`.
         // On Windows, String/Dirent results read native UTF-16 entry names via the
         // wide iterator so surrogate pairs survive; Buffer results (and all POSIX)
         // use the u8 iterator.
@@ -6494,7 +6460,7 @@ impl NodeFS {
         }
 
         let mut dirent_path = BunString::DEAD;
-        // Zig `defer dirent_path.deref()` — cannot express as a scope guard in Rust
+        // `dirent_path.deref()` cannot be expressed as a scope guard
         // (the loop body needs `&mut dirent_path`); deref is idempotent on DEAD/EMPTY
         // so it is called inline on every exit path below instead.
 
@@ -6505,8 +6471,7 @@ impl NodeFS {
                     for item in entries.iter_mut() {
                         item.destroy_entry();
                     }
-                    // PORT NOTE: Zig also `entries.deinit()` here; the caller owns the
-                    // Vec in Rust, but matching the Zig contract we drain it so the
+                    // PORT NOTE: the caller owns the Vec; drain it so the
                     // caller's `T::into_readdir` never sees freed entries.
                     entries.clear();
                     dirent_path.deref();
@@ -6541,7 +6506,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Windows UTF-16 arm of `readdir_with_entries` (node_fs.zig:4644-4660).
+    /// Windows UTF-16 arm of `readdir_with_entries`.
     /// Only reachable when `T::IS_U16` (String/Dirent); Buffer is `IS_U16 = false`.
     #[cfg(windows)]
     fn readdir_with_entries_u16<T: ReaddirEntry>(
@@ -6554,9 +6519,8 @@ impl NodeFS {
 
         let mut iterator = DirIterator::WrappedIteratorW::init(fd);
 
-        // node_fs.zig:4578 — only allocated when the requested encoding isn't
-        // utf8: the wide name is transcoded to UTF-8 first (matching libuv) and
-        // then re-encoded.
+        // Only allocated when the requested encoding isn't utf8: the wide name
+        // is transcoded to UTF-8 first (matching libuv) and then re-encoded.
         let mut re_encoding_buffer = if args.encoding != Encoding::Utf8 {
             Some(paths::path_buffer_pool::get())
         } else {
@@ -6585,8 +6549,8 @@ impl NodeFS {
             }
 
             let utf16_name = current.name.slice();
-            // Spec (node_fs.zig:4649): the u16 Dirent arm uses `current.kind`
-            // directly — no lstatat fallback (NTFS never returns DT_UNKNOWN).
+            // The u16 Dirent arm uses `current.kind` directly — no lstatat
+            // fallback (NTFS never returns DT_UNKNOWN).
             T::append_entry_w(
                 entries,
                 utf16_name,
@@ -6611,7 +6575,7 @@ impl NodeFS {
     ) -> Maybe<()> {
         // PORT NOTE: `root_path` is never mutated for the lifetime of the task, but
         // borrowck can't see that across `async_task.enqueue(&mut self, …)`. Detach
-        // the slice via raw-pointer round-trip — same bytes Zig's `[]const u8` saw.
+        // the slice via raw-pointer round-trip; same bytes either way.
         // SAFETY: `async_task.root_path`'s backing storage is fixed at `create()` and
         // outlives every `enqueue` call below.
         let root_basename: &[u8] =
@@ -6688,8 +6652,8 @@ impl NodeFS {
             };
             let utf8_name = current.name.slice();
 
-            // PORT NOTE: Zig compared `root_path.sliceAssumeZ().ptr == basename.ptr` to
-            // detect "this subtask is the root". The Rust caller passes `is_root`
+            // PORT NOTE: comparing `root_path.sliceAssumeZ().ptr == basename.ptr`
+            // detected "this subtask is the root". The Rust caller passes `is_root`
             // explicitly, which is the same predicate (root subtask's basename *is*
             // root_path).
             let name_to_copy: &[u8] = if is_root {
@@ -6757,7 +6721,7 @@ impl NodeFS {
                     dirent_path_prev = BunString::clone_utf8(path_u8);
                 }
             }
-            // async path: spec uses raw `bun.String.cloneUTF8` (node_fs.zig:4810/4819) — do not apply encoding.
+            // async path: spec uses raw `bun.String.cloneUTF8` — do not apply encoding.
             T::append_entry_recursive(
                 entries,
                 utf8_name,
@@ -6780,14 +6744,14 @@ impl NodeFS {
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         use std::collections::VecDeque;
-        // PERF(port): Zig used `std.heap.stackFallback(128)` for the fifo and
-        // `stackFallback(8192*2)` for basename storage. Rust has no portable
+        // PERF(port): originally a stack-fallback allocator for the fifo and
+        // basename storage. Rust has no portable
         // stack-fallback allocator; VecDeque<Vec<u8>> heap-allocates from the
         // first push. Revisit with `smallvec`/arena once profiled.
         let mut stack: VecDeque<Vec<u8>> = VecDeque::new();
         // Sentinel: an item whose ptr == root_basename.ptr means "root". We
-        // can't compare `Vec<u8>` ptrs against `root_basename` the way Zig
-        // compared `[:0]const u8.ptr`, so use Option: `None` = root.
+        // can't compare `Vec<u8>` ptrs against `root_basename` directly, so
+        // use Option: `None` = root.
         stack.push_back(Vec::new()); // empty == root marker (handled below)
         let mut first_is_root = true;
 
@@ -6801,8 +6765,7 @@ impl NodeFS {
         });
         // Re-borrow through the guard so `root_fd` stays observable at drop.
         let root_fd: &mut FD = &mut *_close_root;
-        // PORT NOTE: Zig kept `root_fd` as a plain local and closed it in a
-        // bare `defer`. Rust's guard captures `&mut`, so all reads below go
+        // PORT NOTE: Rust's guard captures `&mut`, so all reads below go
         // through the same place.
 
         while let Some(item) = stack.pop_front() {
@@ -6810,11 +6773,9 @@ impl NodeFS {
             first_is_root = false;
             // basename: root_basename for the first iteration, else the queued
             // relative path (NUL-terminated by construction).
-            // PORT NOTE: Zig stored `[:0]const u8` slices and freed them via
-            // `basename_allocator`; here `item` is an owned Vec<u8> (with
-            // trailing NUL stripped below) and is dropped at end-of-loop.
-            // Exclude the trailing NUL we appended at the push site — Zig's `[:0]const u8.len`
-            // already excludes the sentinel, so `joinZBuf` there saw clean bytes.
+            // PORT NOTE: `item` is an owned Vec<u8> (with trailing NUL stripped
+            // below) and is dropped at end-of-loop. Exclude the trailing NUL
+            // we appended at the push site so `joinZBuf` sees clean bytes.
             let basename_bytes: &[u8] = if is_root {
                 root_basename.as_bytes()
             } else {
@@ -6900,8 +6861,8 @@ impl NodeFS {
                         // we know for sure it's a directory
                         sys::FileKind::Directory => {
                             if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
-                            // PORT NOTE: Zig `basename_allocator.dupeZ` — store with trailing NUL
-                            // so the next iteration can hand it to `openat` as a `&ZStr`.
+                            // PORT NOTE: store with a trailing NUL so the next
+                            // iteration can hand it to `openat` as a `&ZStr`.
                             let mut owned = Vec::with_capacity(name_to_copy.len() + 1);
                             owned.extend_from_slice(name_to_copy);
                             owned.push(0);
@@ -6943,7 +6904,7 @@ impl NodeFS {
                         );
                     }
                 }
-                // sync path: spec uses `WebCore.encoding.toBunString(.., args.encoding)` (node_fs.zig:4962-4982).
+                // sync path: spec uses `WebCore.encoding.toBunString(.., args.encoding)`.
                 T::append_entry_recursive(
                     entries,
                     utf8_name,
@@ -7095,7 +7056,7 @@ impl NodeFS {
         flavor: Flavor,
         string_type: ReadFileStringType,
     ) -> Maybe<ret::ReadFileWithOptions> {
-        // PERF(port): `flavor`/`string_type` were comptime monomorphization in Zig.
+        // PERF(port): `flavor`/`string_type` were originally monomorphized at compile time.
         let path_is_path = matches!(args.path, PathOrFileDescriptor::Path(_));
         let fd_maybe_windows: FD = match &args.path {
             PathOrFileDescriptor::Path(p) => {
@@ -7178,8 +7139,8 @@ impl NodeFS {
         // If we manage to read the entire file, we don't need to call stat() at all.
         // This will make it slightly slower to read e.g. 512 KB files, but usually the OS won't return a full 512 KB in one read anyway.
         //
-        // Zig: `var async_stack_buffer: [if (flavor == .sync) 0 else 256*1024]u8`,
-        // and in the sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
+        // The async case carries a 256 KiB stack buffer; the sync case borrows
+        // `vm.rareData().pipeReadBuffer()` (a per-VM
         // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
         // zero-length so the loop is skipped and we fall through to fstat.
         // Rust can't put 256 KB on the stack portably, so the async path
@@ -7331,8 +7292,8 @@ impl NodeFS {
         if !temporary_read_buffer_before_stat_call.is_empty() {
             buf.extend_from_slice(temporary_read_buffer_before_stat_call);
         }
-        // PORT NOTE: Zig `buf.expandToCapacity()` then indexed `buf.items.ptr[total..cap]`
-        // to read into uninitialised tail. `Vec::resize(cap, 0)` is *not* equivalent in
+        // PORT NOTE: this reads into the uninitialised tail of the buffer.
+        // `Vec::resize(cap, 0)` is *not* equivalent in
         // debug builds: it goes through `extend_with`'s byte-by-byte loop (no memset
         // specialisation), which dominated `readFileSync` of large files. Match the spec
         // exactly via `VecExt::expand_to_capacity` (the tail is write-only — `Syscall::read`
@@ -7343,16 +7304,16 @@ impl NodeFS {
         unsafe { buf.expand_to_capacity() };
 
         // Two-phase read: first up to `size`, then keep going until EOF.
-        // PORT NOTE: Zig spelled this as `while (total < size) { ... } else { while (true) { ... } }`.
-        // Rust has no while/else; use an explicit `phase` flag — `phase == 0` is the
+        // PORT NOTE: originally a while/else loop. Rust has no while/else; use
+        // an explicit `phase` flag — `phase == 0` is the
         // size-bounded loop, `phase == 1` is the unbounded tail.
         let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
         loop {
             if args.aborted() {
                 return Err(abort_err());
             }
-            // Spec parity (node_fs.zig:5327-5377): when `total == min(buf.capacity, max_size)`
-            // the next read receives an empty slice → returns 0 → `did_succeed = true; break`.
+            // When `total == min(buf.capacity, max_size)`, the next read receives
+            // an empty slice → returns 0 → `did_succeed = true; break`.
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
@@ -7396,7 +7357,7 @@ impl NodeFS {
                 }
             }
         }
-        let _ = phase; // phase only mirrors Zig's while/else split for source parity
+        let _ = phase; // phase only mirrors the original while/else split for source parity
 
         let final_len = if string_type == ReadFileStringType::NullTerminated {
             total + 1
@@ -7418,7 +7379,7 @@ impl NodeFS {
                 }
             };
         }
-        let _ = did_succeed; // Zig used this only to gate the `defer buf.clearAndFree()`;
+        let _ = did_succeed; // historically gated a deferred `buf.clearAndFree()`;
         // Rust drops `buf` on every error-return above.
 
         match args.encoding {
@@ -7645,9 +7606,9 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            // Zig: `req.ptrAs(?[*:0]u8)` — `fs_t.ptr` *is* the nullable C
-            // string pointer (libuv stores the realpath result directly), so
-            // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
+            // `fs_t.ptr` *is* the nullable C string pointer (libuv stores the
+            // realpath result directly), so `ptr_as::<c_char>()` yields the
+            // value, not a pointer-to-Option.
             // SAFETY: `rc.errno()` was None ⇒ libuv populated `req.ptr`.
             let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
             if ptr.is_null() {
@@ -7662,8 +7623,8 @@ impl NodeFS {
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
                 //
-                // PORT NOTE: Zig (`buf[buf.len-1] = 0; buf.len -= 1;`) writes the
-                // NUL back to keep its `[:0]u8` sentinel invariant. In Rust `buf`
+                // PORT NOTE: the reference impl writes the NUL back to keep a
+                // sentinel invariant. In Rust `buf`
                 // is an immutable view and every consumer below copies by length,
                 // so we just shrink the slice — writing through `ptr.cast_mut()`
                 // while `buf` is live would be Stacked-Borrows UB.
@@ -7766,7 +7727,7 @@ impl NodeFS {
 
     pub fn rmdir(&mut self, args: &args::RmDir, _: Flavor) -> Maybe<ret::Rmdir> {
         if args.recursive {
-            // Zig passed args.path.slice() to std.fs.Dir.openDir/deleteFile/deleteDir,
+            // The reference impl passed args.path.slice() to stdlib helpers,
             // which on Windows resolve a rooted-but-driveless path ("/tmp/foo")
             // against the cwd drive via wToPrefixedFileW → RtlGetFullPathName_U.
             // Our dt_* helpers go through Syscall::*at → to_nt_path /
@@ -7778,7 +7739,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory) {
+            if let Err(err) = delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory) {
                 let mut errno: E = map_anyerror_to_errno(err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
@@ -7809,12 +7770,12 @@ impl NodeFS {
             // See the matching comment in `rmdir`: pre-resolve the path on
             // Windows so rooted-but-driveless paths ("/tmp/foo") get the cwd
             // drive prepended before reaching the dt_* / Syscall::*at helpers,
-            // which (unlike Zig's std.fs.Dir.*) do not do that themselves.
+            // which do not do that themselves.
             #[cfg(windows)]
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File) {
+            if let Err(err) = delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File) {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force {
                         return Ok(());
@@ -7829,9 +7790,9 @@ impl NodeFS {
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
-        // PORT NOTE: Zig used `std.posix.unlinkZ/rmdirZ` (which return Zig error
-        // sets) and then mapped that error set through a *narrow* table to an
-        // errno, defaulting to `EFAULT`. The Rust port goes straight to
+        // PORT NOTE: the reference impl used `unlinkZ/rmdirZ` (which return
+        // named error sets) and then mapped that error set through a *narrow*
+        // table to an errno, defaulting to `EFAULT`. The Rust port goes straight to
         // `bun_sys::unlink`/`libc::rmdir` (raw errno), so route the result
         // through `map_rm_errno_narrow` to preserve the EFAULT fallthrough
         // (e.g. `EISDIR` with `recursive=false` must surface as `EFAULT`).
@@ -7839,9 +7800,9 @@ impl NodeFS {
             let e1 = err1.get_errno();
             // empirically, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
-            // PORT NOTE: Zig checks `error.IsDir|NotDir|AccessDenied`; the
-            // vendored std.posix.unlinkZ maps `.PERM => PermissionDenied`
-            // (not AccessDenied), so raw EPERM is *not* in this set.
+            // PORT NOTE: the spec checks `error.IsDir|NotDir|AccessDenied`; the
+            // stdlib maps `.PERM => PermissionDenied` (not AccessDenied), so
+            // raw EPERM is *not* in this set.
             if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES) {
                 // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
                 if let Some(Err(err2)) = Maybe::<()>::errno_sys_p(
@@ -7915,7 +7876,6 @@ impl NodeFS {
         let mut to_buf = PathBuffer::uninit();
         #[cfg(windows)]
         {
-            // node_fs.zig:5943-6014.
             const UV_FS_SYMLINK_DIR: c_int = 0x0001;
             const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
             #[derive(Clone, Copy, PartialEq, Eq)]
@@ -8027,8 +7987,8 @@ impl NodeFS {
     }
 
     fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
-        // Zig stores `len` as `u63` so the `i64` cast is always in range; mask to
-        // the same `u63` envelope here rather than `try_from().unwrap()`-panicking
+        // `len` is semantically a `u63` so the `i64` cast is always in range; mask
+        // to the same `u63` envelope here rather than `try_from().unwrap()`-panicking
         // on a hostile `> i64::MAX` value.
         let len_i64 = (len & ((1u64 << 63) - 1)) as i64;
         #[cfg(windows)]
@@ -8073,7 +8033,7 @@ impl NodeFS {
 
     pub fn truncate(&mut self, args: &args::Truncate, _: Flavor) -> Maybe<ret::Truncate> {
         match &args.path {
-            // Zig: `args.len` is `u63`; mask off the top bit so the i64 cast can't panic.
+            // `args.len` is semantically a `u63`; mask off the top bit so the i64 cast can't panic.
             PathOrFileDescriptor::Fd(fd) => {
                 Syscall::ftruncate(*fd, (args.len & ((1u64 << 63) - 1)) as i64)
             }
@@ -8213,7 +8173,7 @@ impl NodeFS {
         match args.create_fs_watcher() {
             // SAFETY: `create_fs_watcher` returns a freshly-heap-allocated
             // `*mut FSWatcher` whose ownership is held by the JS wrapper
-            // (`js_this`); reading `js_this` here mirrors Zig's
+            // (`js_this`); reading `js_this` here mirrors the
             // `result.js_this` field access on the by-value return.
             Ok(result) => Ok(unsafe { (*result).js_this() }),
             Err(err) => Err(err),
@@ -8268,8 +8228,8 @@ impl NodeFS {
         }
         #[cfg(not(windows))]
         {
-            // PORT NOTE: Zig has no POSIX arm here — every call site is inside
-            // an `if (Environment.isWindows)` branch. On POSIX `OSPathChar == u8`,
+            // PORT NOTE: every call site is Windows-only.
+            // On POSIX `OSPathChar == u8`,
             // so the input is already the canonical byte slice; tie both inputs
             // to the same `'a` so the borrow checker accepts the passthrough.
             let _ = &mut self.sync_error_buf;
@@ -8376,9 +8336,8 @@ impl NodeFS {
                         if matches!(err.get_errno(), E::EACCES | E::EPERM) && args.flags.force {
                             break 'try_with_clonefile;
                         }
-                        // Zig copies `src` into `sync_error_buf` and `.withPath()`s it so
-                        // the borrowed slice outlives `src_buf`. `errno_sys_p` already boxed
-                        // `src.as_bytes()` into the inner `Error::path`, so just propagate.
+                        // `errno_sys_p` already boxed `src.as_bytes()` into the
+                        // inner `Error::path` so it outlives `src_buf`; just propagate.
                         return err;
                     }
                     // Other errors may be due to clonefile() not being supported
@@ -8401,8 +8360,7 @@ impl NodeFS {
             Ok(_) => {}
         }
 
-        // PORT NOTE: Zig used `.u16` iterator on Windows so `name.slice()` is `[]u16`.
-        // The OSPathBuffer copy below is generic over `OSPathChar`, so on Windows
+        // PORT NOTE: the OSPathBuffer copy below is generic over `OSPathChar`, so on Windows
         // this needs the wide iterator; the u8 path is correct for POSIX.
         #[cfg(windows)]
         let mut iterator = DirIterator::WrappedIteratorW::init(fd);
@@ -9025,8 +8983,8 @@ impl NodeFS {
             if mode.is_force_clone() {
                 // Windows has no copy-on-write `clonefile` equivalent surfaced
                 // here; `COPYFILE_FICLONE_FORCE` must fail rather than silently
-                // fall back to a non-CoW `CopyFileW`. NOTE: the Zig Windows
-                // block (node_fs.zig:6836+) has no such guard and falls through
+                // fall back to a non-CoW `CopyFileW`. NOTE: a previous version
+                // had no such guard and fell through
                 // to `CopyFileW`; this is an intentional divergence to match
                 // Node.js' documented FICLONE_FORCE contract and the
                 // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
@@ -9037,8 +8995,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            // Spec (node_fs.zig:6837-6838) precomputes both ENOENT fallbacks once,
-            // before any branch. Re-deriving them inline inside `unwrap_or_else`
+            // Both ENOENT fallbacks are precomputed once, before any branch.
+            // Re-deriving them inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
             // a borrow into `sync_error_buf`).
             let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(
@@ -9077,7 +9035,7 @@ impl NodeFS {
                     )
                 } == 0
                 {
-                    // Zig `windows.GetLastError()` returns the `Win32Error`
+                    // `bun_sys::windows::get_last_error()` returns the `Win32Error`
                     // enum, not the raw DWORD — use the typed wrapper so the
                     // associated-const match arms type-check.
                     let mut err = windows::Win32Error::get();
@@ -9160,7 +9118,7 @@ impl NodeFS {
     }
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
-    /// `_copySingleFileSync` (node_fs.zig:6528-6555 / 6624-6651 / 6770-6794).
+    /// `_copySingleFileSync`.
     /// Tries `open(dest, flags, default_permission)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
@@ -9226,8 +9184,7 @@ impl NodeFS {
     /// Const-generic dispatch from `NodeFSFunctionEnum` to the matching
     /// `NodeFS::<method>`.
     ///
-    /// PORT NOTE: Zig spells this `@field(NodeFS, @tagName(FunctionEnum))(self,
-    /// args, .async)`. Rust has no field-by-string reflection, so the
+    /// PORT NOTE: Rust has no field-by-string reflection, so the
     /// `(R, A, F)` triple is bound by [`NodeFSDispatch`] impls (one per
     /// `NodeFSFunctionEnum` variant); the `where Op<{F}>: NodeFSDispatch<R, A>`
     /// bound proves `R == ret::*` / `A == args::*` for this `F` so no identity
@@ -9255,7 +9212,7 @@ impl NodeFS {
 
     /// Variant of [`Self::uv_dispatch`] for `uv_callbackreq` — passes the live
     /// `uv::fs_t` through so the handler can read `req.ptr` (only `statfs`
-    /// needs it; node_fs.zig:276-288).
+    /// needs it).
     #[cfg(windows)]
     #[inline]
     pub fn uv_dispatch_req<R, A, const F: NodeFSFunctionEnum>(
@@ -9373,9 +9330,8 @@ pub enum RealpathVariant {
     Emulated,
 }
 
-// PORT NOTE: was `pub enum StringType` inside `impl NodeFS` (Zig allowed
-// nested type decls in struct bodies). Hoisted out — Rust forbids enums in
-// inherent impls.
+// PORT NOTE: was a nested type decl inside `impl NodeFS`. Hoisted out —
+// Rust forbids enums in inherent impls.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum ReadFileStringType {
     Default,
@@ -9390,9 +9346,7 @@ impl MkdirCtx for () {}
 
 /// Trait abstracting over the three readdir entry types.
 ///
-/// PORT NOTE: Zig dispatched on `comptime ExpectedType` inside the loop body
-/// (`switch (ExpectedType) { Dirent => …, Buffer => …, bun.String => … }`).
-/// Rust can't switch on a generic `T` at runtime, so the per-type append
+/// PORT NOTE: Rust can't switch on a generic `T` at runtime, so the per-type append
 /// logic is moved onto this trait. `IS_DIRENT` mirrors the
 /// `ExpectedType == jsc.Node.Dirent` predicate so the caller knows whether
 /// it must compute/maintain `dirent_path`.
@@ -9404,7 +9358,7 @@ pub trait ReaddirEntry: Sized {
     /// UTF-16 `DirIterator` arm on Windows (`readdir_with_entries` only).
     const IS_U16: bool;
     fn destroy_entry(&mut self);
-    /// Windows-only: append from a UTF-16 directory entry name (node_fs.zig:4644-4660).
+    /// Windows-only: append from a UTF-16 directory entry name.
     /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch for
     /// `strings::from_w_path` when `encoding != utf8`. Only ever invoked when
     /// `IS_U16` is true — `Buffer`'s impl is a `@compileError`-equivalent
@@ -9429,9 +9383,9 @@ pub trait ReaddirEntry: Sized {
     );
     /// Recursive readdir: `utf8_name` is the bare entry name, `name_to_copy`
     /// is the path *relative to the recursion root* (what Node returns).
-    /// `apply_encoding` distinguishes the sync path (node_fs.zig:4962-4982,
-    /// which honours `args.encoding` via `WebCore.encoding.toBunString`) from
-    /// the async path (node_fs.zig:4800-4821, which uses raw
+    /// `apply_encoding` distinguishes the sync path
+    /// (which honours `args.encoding` via `WebCore.encoding.toBunString`) from
+    /// the async path (which uses raw
     /// `bun.String.cloneUTF8` and ignores the requested encoding).
     fn append_entry_recursive(
         entries: &mut Vec<Self>,
@@ -9469,7 +9423,6 @@ impl ReaddirEntry for BunString {
         encoding: Encoding,
         re_encoding_buffer: Option<&mut PathBuffer>,
     ) {
-        // node_fs.zig:4655-4662
         match encoding {
             Encoding::Buffer => unreachable!(),
             // in node.js, libuv converts to utf8 before node.js converts those bytes into other stuff
@@ -9529,8 +9482,8 @@ impl ReaddirEntry for Dirent {
         _encoding: Encoding,
         _re_encoding_buffer: Option<&mut PathBuffer>,
     ) {
-        // node_fs.zig:4648-4654 — Windows Dirent always clones the raw UTF-16
-        // name (no re-encoding) and skips the lstatat() DT_UNKNOWN fallback.
+        // Windows Dirent always clones the raw UTF-16 name (no re-encoding)
+        // and skips the lstatat() DT_UNKNOWN fallback.
         entries.push(Dirent {
             name: BunString::clone_utf16(utf16_name),
             path: dirent_path.dupe_ref(),
@@ -9583,8 +9536,7 @@ impl ReaddirEntry for Buffer {
         _: Encoding,
         _: Option<&mut PathBuffer>,
     ) {
-        // node_fs.zig:4660 `else => @compileError("unreachable")` — Buffer never
-        // takes the u16 iterator (`IS_U16 = false`); the call site is gated on
+        // Buffer never takes the u16 iterator (`IS_U16 = false`); the call site is gated on
         // `T::IS_U16` so this arm is statically dead.
         unreachable!()
     }
@@ -9601,9 +9553,9 @@ impl ReaddirEntry for Buffer {
     }
 }
 
-// VERIFY-FIX(round1): the Zig source has three distinct error→errno tables for
-// rmdir-recursive (node_fs.zig:5757-5788), rm-recursive (node_fs.zig:5789-5824),
-// and rm non-recursive unlinkZ/rmdirZ (node_fs.zig:5842-5887). Phase-A collapsed
+// VERIFY-FIX(round1): the reference impl has three distinct error→errno tables
+// for rmdir-recursive, rm-recursive, and rm non-recursive
+// unlinkZ/rmdirZ. Phase-A collapsed
 // them into one, which silently mapped AccessDenied→EPERM for `rm` (Node returns
 // EACCES there) and widened the narrow table. Split back out per call site.
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
@@ -9626,8 +9578,8 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     }
 }
 
-// `rm` recursive (zigDeleteTree) — same shape as the rmdir table above except
-// AccessDenied maps to EACCES, not EPERM (node_fs.zig:5789-5824).
+// `rm` recursive (delete_tree) — same shape as the rmdir table above except
+// AccessDenied maps to EACCES, not EPERM.
 fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
@@ -9649,15 +9601,15 @@ fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
 }
 
 // `rm` non-recursive unlinkZ/rmdirZ fallback — narrower table; anything not
-// listed here falls through to EFAULT (node_fs.zig:5842-5859 / 5870-5887).
+// listed here falls through to EFAULT.
 //
 // The Rust port calls `bun_sys::unlink`/`libc::rmdir` which yield a raw errno
-// rather than a Zig error name, so this composes `std.posix.unlinkZ`'s
-// errno→error map with the Zig switch above. Notably the vendored stdlib maps
+// rather than a named error, so this composes the stdlib `unlinkZ`'s
+// errno→error map with the named-error switch. Notably the vendored stdlib maps
 // `.PERM => error.PermissionDenied` (NOT `error.AccessDenied`), and
-// `PermissionDenied` is absent from the narrow Zig switch, so raw EPERM —
+// `PermissionDenied` is absent from the narrow switch, so raw EPERM —
 // like EISDIR/ENOTDIR/ENOTEMPTY — falls through to EFAULT here to match the
-// composed Zig behavior bit-for-bit.
+// composed behavior bit-for-bit.
 fn map_rm_errno_narrow(e: E) -> E {
     match e {
         E::EACCES => E::EACCES,
@@ -9685,23 +9637,23 @@ pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// zigDeleteTree — copied from std.fs.Dir.deleteTree. Returns `FileNotFound`
+// delete_tree — recursive directory removal. Returns `FileNotFound`
 // instead of ignoring it, which is required to match the behavior of Node.js's
 // `fs.rm` { recursive: true, force: false }.
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: the Zig original is a near-verbatim copy of `std.fs.Dir.deleteTree`
-// operating on `std.fs.Dir` and Zig's named error sets. PORTING.md bans `std::fs`,
+// PORT NOTE: the original was a near-verbatim port of a stdlib `deleteTree`
+// operating on directory handles and named error sets. PORTING.md bans `std::fs`,
 // so this re-implements the same algorithm on top of `bun_sys` primitives
 // (`openat` + `unlinkat`) and *errno* values, then maps the errno back to the
-// Zig-error-set name strings the callers' `map_anyerror_to_errno*` tables expect.
+// error name strings the callers' `map_anyerror_to_errno*` tables expect.
 // The structure (16-slot stack, treat_as_dir flip-flop, close-then-deleteDir,
 // retry-on-DirNotEmpty) is preserved exactly.
 
 #[inline]
 fn dt_err(errno: E) -> bun_core::Error {
     // Reverse of the `map_anyerror_to_errno*` tables above — round-trip through
-    // the Zig error-set name so existing callers don't have to change.
+    // the error name so existing callers don't have to change.
     err_from_static(match errno {
         E::ENOENT => "FileNotFound",
         E::EACCES => "AccessDenied",
@@ -9812,19 +9764,18 @@ struct DeleteTreeStackItem {
     iter: DirIterator::WrappedIterator,
 }
 
-pub fn zig_delete_tree(
+pub fn delete_tree(
     self_: sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> Result<(), bun_core::Error> {
-    let initial_iterable_dir =
-        match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
-            Some(d) => d,
-            None => return Ok(()),
-        };
+    let initial_iterable_dir = match delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
+        Some(d) => d,
+        None => return Ok(()),
+    };
 
-    // PERF(port): Zig used a fixed `[16]StackItem` array + `initBuffer`. Rust's
-    // Vec gives the same cap behaviour (`unusedCapacitySlice().len >= 1`) when
+    // PERF(port): originally a fixed `[16]StackItem` array. A `Vec`
+    // gives the same cap behaviour (`unusedCapacitySlice().len >= 1`) when
     // pre-reserved to 16, with the bonus that the iterator buffers (8 KB each)
     // live on the heap instead of the stack.
     let mut stack: Vec<DeleteTreeStackItem> = Vec::with_capacity(16);
@@ -9855,8 +9806,9 @@ pub fn zig_delete_tree(
             // PORT NOTE: `entry.name` borrows the iterator's internal buffer and
             // is invalidated by the next `next()` call. We copy it once here so
             // it survives both the push-onto-stack and the deleteDir-after-close
-            // paths — Zig got away with a borrow because its `StackItem.name`
-            // pointed straight into the parent iterator's still-live buffer.
+            // paths — the original got away with a borrow because its
+            // `StackItem.name` pointed straight into the parent iterator's
+            // still-live buffer.
             let entry_name: Vec<u8> = entry.name.slice().to_vec();
             let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
             'handle_entry: loop {
@@ -9881,7 +9833,7 @@ pub fn zig_delete_tree(
                         }
                     } else {
                         let top_dir = sys::Dir::from_fd(stack[top_idx].iter.iter.dir);
-                        zig_delete_tree_min_stack_size_with_kind_hint(
+                        delete_tree_min_stack_size_with_kind_hint(
                             top_dir,
                             &entry_name,
                             entry.kind,
@@ -9896,7 +9848,7 @@ pub fn zig_delete_tree(
                             treat_as_dir = true;
                             continue 'handle_entry;
                         }
-                        // PORT NOTE: Zig's std.fs error set distinguishes IsDir
+                        // PORT NOTE: the named error set distinguishes IsDir
                         // from "EPERM because it's a directory" (Linux returns
                         // EISDIR; macOS returns EPERM). We only get errno, so
                         // forward EPERM as PermissionDenied — caller maps it.
@@ -9926,8 +9878,8 @@ pub fn zig_delete_tree(
             Ok(()) => {}
             Err(E::ENOENT) => {}
             Err(E::ENOTEMPTY) => need_to_retry = true,
-            // PORT NOTE: Zig also matched `error.EXIST` → DirNotEmpty here via
-            // std.fs's deleteDir; mirror that for OSes that report EEXIST.
+            // PORT NOTE: `error.EXIST` was also matched as DirNotEmpty here;
+            // mirror that for OSes that report EEXIST.
             Err(E::EEXIST) => need_to_retry = true,
             Err(e) => return Err(dt_err(e)),
         }
@@ -9961,7 +9913,7 @@ pub fn zig_delete_tree(
                         Err(E::ENOTDIR) => {
                             #[cfg(debug_assertions)]
                             unreachable!();
-                            // Zig: `else => return error.Unexpected` → caller's `else =>` arm = EFAULT.
+                            // `error.Unexpected` → caller's `else =>` arm = EFAULT.
                             #[cfg(not(debug_assertions))]
                             return Err(err_from_static("Unexpected"));
                         }
@@ -9983,7 +9935,7 @@ pub fn zig_delete_tree(
     Ok(())
 }
 
-fn zig_delete_tree_open_initial_subpath(
+fn delete_tree_open_initial_subpath(
     self_: sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
@@ -9994,9 +9946,9 @@ fn zig_delete_tree_open_initial_subpath(
         if treat_as_dir {
             return match dt_open_dir(self_, sub_path) {
                 Ok(d) => Ok(Some(d)),
-                // PORT NOTE: Zig surfaced NotDir/FileNotFound here (no fall-
+                // PORT NOTE: NotDir/FileNotFound are surfaced here (no fall-
                 // through to deleteFile) — that's the deliberate divergence
-                // from std.fs.Dir.deleteTree this copy exists for.
+                // from a generic `deleteTree` this copy exists for.
                 Err(e) => Err(dt_err(e)),
             };
         } else {
@@ -10012,13 +9964,13 @@ fn zig_delete_tree_open_initial_subpath(
     }
 }
 
-fn zig_delete_tree_min_stack_size_with_kind_hint(
+fn delete_tree_min_stack_size_with_kind_hint(
     self_: sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> Result<(), bun_core::Error> {
     'start_over: loop {
-        let mut dir = match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
+        let mut dir = match delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
             None => return Ok(()),
         };
@@ -10031,9 +9983,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         let mut dir_name_buf = PathBuffer::uninit();
         let mut dir_name_len = sub_path.len().min(dir_name_buf.len());
         dir_name_buf[..dir_name_len].copy_from_slice(&sub_path[..dir_name_len]);
-        // PORT NOTE: Zig kept `dir_name: []const u8` aliasing either `sub_path`
+        // PORT NOTE: the original kept `dir_name` aliasing either `sub_path`
         // or `dir_name_buf`. Rust's borrow checker won't let that alias survive
-        // the `@memcpy` reassignment below, so track `(is_sub_path, len)` and
+        // the buffer reassignment below, so track `(is_sub_path, len)` and
         // re-slice on each use.
         let mut dir_name_is_sub_path = true;
 
@@ -10086,7 +10038,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                             Err(E::ENOTDIR) => {
                                 #[cfg(debug_assertions)]
                                 unreachable!();
-                                // Zig: `else => return error.Unexpected` → caller's `else =>` arm = EFAULT.
+                                // `error.Unexpected` → caller's `else =>` arm = EFAULT.
                                 #[cfg(not(debug_assertions))]
                                 break 'scan_dir Err(err_from_static("Unexpected"));
                             }
@@ -10185,10 +10137,8 @@ pub enum NodeFSFunctionEnum {
 }
 
 impl NodeFSFunctionEnum {
-    /// Maps each async-FS function to its event-loop [`TaskTag`]. The Zig
-    /// source did this via comptime `@typeName` lookup against the
-    /// `Task.Tag.@"NameOfTask"` table; Rust spells it out (the `tags!` macro
-    /// in `bun_event_loop::task_tag` declares one constant per variant).
+    /// Maps each async-FS function to its event-loop [`TaskTag`]. The `tags!`
+    /// macro in `bun_event_loop::task_tag` declares one constant per variant.
     pub const fn task_tag(self) -> bun_event_loop::TaskTag {
         use bun_event_loop::task_tag;
         match self {
@@ -10236,8 +10186,7 @@ impl NodeFSFunctionEnum {
         }
     }
 
-    /// `"Async" ++ typeBaseName(ArgumentType) ++ "Task"` — Zig built this via
-    /// comptime string concat on `@typeName(ArgumentType)`. Rust has no
+    /// `"Async" ++ typeBaseName(ArgumentType) ++ "Task"` — Rust has no
     /// `type_name::<T>()` in `const`, so key off the `F` discriminant instead
     /// (each `F` is bound to exactly one `args::*` type via `async_::*`).
     pub const fn heap_label(self) -> &'static str {
@@ -10300,8 +10249,8 @@ impl NodeFSFunctionEnum {
     }
 }
 
-/// `i52` — Zig's odd-width integer used for `ReadPosition` coercion bounds and
-/// `JSValue.to(i52)` (JSValue.zig:199).
+/// `i52` — odd-width integer used for `ReadPosition` coercion bounds and
+/// `JSValue.to(i52)`.
 #[allow(non_camel_case_types)]
 struct i52;
 impl i52 {
@@ -10309,11 +10258,9 @@ impl i52 {
     #[allow(dead_code)]
     const MAX: i64 = (1i64 << 51) - 1;
     /// `JSValue.to(i52)` — `@truncate(@intCast(toInt64()))`. Truncate to the low
-    /// 52 bits and sign-extend bit 51 (matches Zig `@truncate` semantics).
+    /// 52 bits and sign-extend bit 51.
     #[inline]
     fn from_js(v: JSValue) -> i64 {
         (v.to_int64() << 12) >> 12
     }
 }
-
-// ported from: src/runtime/node/node_fs.zig

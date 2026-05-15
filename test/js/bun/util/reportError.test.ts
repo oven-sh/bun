@@ -65,13 +65,13 @@ error
   );
 });
 
-// Regression: Zig's `bun.String.format` (string.zig:508 → ZigString.zig:609 →
-// fmt.zig `formatUTF16Type` → unicode.zig `copyUTF16IntoUTF8`) emits the WTF-8
+// Regression: `bun.String` formatting (UnsafeStringView →
+// `formatUTF16Type` → `copyUTF16IntoUTF8`) emits the WTF-8
 // bytes for an unpaired surrogate as the replacement char EF BF BD and writes
 // them byte-safely. The Rust `Display for bun.String` (bun_core/string/mod.rs)
 // instead does `core::str::from_utf8_unchecked` on the result of
 // `to_utf8_without_ref()` — if that ever yields a non-UTF-8 byte (e.g. raw
-// WTF-8 ED A0 80 from `toUTF8Alloc`, see immutable.zig:2312), formatting is UB.
+// WTF-8 ED A0 80 from `toUTF8Alloc`, see src/bun_core/string/immutable.rs), formatting is UB.
 // This pins the Zig-observable contract: an uncaught Error whose message AND a
 // stack-frame function name both contain a lone surrogate must (a) not crash
 // the printer and (b) render each lone surrogate as exactly U+FFFD (EF BF BD).
@@ -82,7 +82,7 @@ test("native error printer handles lone surrogates in message and stack frame na
   const fixture = String.raw`
     function thrower() { throw new Error("MSG_PRE\uD800MSG_POST"); }
     // Force the native ZigStackFrame NameFormatter path: give the frame a
-    // function_name containing a lone high surrogate. (src/jsc/ZigStackFrame.zig
+    // function_name containing a lone high surrogate. (src/jsc/BunStackFrame.rs
     // NameFormatter.format -> "{f}" on bun.String)
     Object.defineProperty(thrower, "name", { value: "FN_PRE\uD800FN_POST" });
     thrower();
@@ -106,7 +106,7 @@ test("native error printer handles lone surrogates in message and stack frame na
   const WTF8_D800 = Buffer.from([0xed, 0xa0, 0x80]);
 
   // Zig spec: message line is printed via `printErrorNameAndMessage`
-  // (VirtualMachine.zig) using `{f}` on the bun.String, yielding EF BF BD.
+  // (src/jsc/VirtualMachine.rs) on the bun.String, yielding EF BF BD.
   const wantMsg = Buffer.concat([Buffer.from("MSG_PRE"), FFFD, Buffer.from("MSG_POST")]);
   expect(stderrBuf.indexOf(wantMsg)).toBeGreaterThanOrEqual(0);
 

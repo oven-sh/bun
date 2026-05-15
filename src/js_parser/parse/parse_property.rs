@@ -25,8 +25,7 @@ use js_ast::{
 };
 use js_lexer::T;
 
-// Zig: `fn ParseProperty(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -147,7 +146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             PropertyKind::Get => {
                 if args.len() > 0 {
                     let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
-                    // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
+                    // TODO(port): original used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
                         Some(p.source),
@@ -264,8 +263,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             // Every match arm below assigns `key` (or `continue 'restart` /
-            // `return`) before any read; Zig's `var key: Expr = undefined` pre-
-            // init is unnecessary here.
+            // `return`) before any read; an uninitialized `key` pre-init is
+            // unnecessary here.
             let mut key: Expr;
             let key_range = p.lexer.range();
             let mut is_computed = false;
@@ -811,5 +810,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/parseProperty.zig

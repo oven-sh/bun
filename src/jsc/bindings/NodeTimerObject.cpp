@@ -6,9 +6,9 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/Heap.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
-#include "ZigGeneratedClasses.h"
+#include "BunGeneratedClasses.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"

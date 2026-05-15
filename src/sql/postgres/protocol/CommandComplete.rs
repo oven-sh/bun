@@ -14,13 +14,12 @@ impl Default for CommandComplete {
     }
 }
 
-// Zig `deinit` only called `this.command_tag.deinit()`; `Data` owns its own
-// `Drop`, so no explicit `Drop` impl is needed here.
+// `Data` owns its own `Drop`, so no explicit `Drop` impl is needed here.
 
 impl CommandComplete {
-    // PORT NOTE: Zig body is the out-param-constructor pattern (`this.* = .{...}`),
-    // which PORTING.md normally reshapes to `fn(...) -> Result<Self, E>`. Kept as
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // PORT NOTE: out-param-constructor pattern, which PORTING.md normally
+    // reshapes to `fn(...) -> Result<Self, E>`. Kept as `&mut self` to match
+    // the DecoderWrap shape — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
         mut reader: NewReader<Container>,
@@ -33,7 +32,7 @@ impl CommandComplete {
         Ok(())
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // See src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
         context: Container,
@@ -41,5 +40,3 @@ impl CommandComplete {
         self.decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/postgres/protocol/CommandComplete.zig

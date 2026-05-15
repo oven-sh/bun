@@ -17,14 +17,12 @@ impl fmt::Display for ErrorResponse {
     }
 }
 
-// Zig `deinit` only frees owned fields (per-element `message.deinit()` then
-// `messages.deinit(bun.default_allocator)`); Vec<FieldMessage> + FieldMessage's
-// Drop handle both automatically, so no explicit Drop impl is needed.
+// Vec<FieldMessage> + FieldMessage's Drop free everything automatically, so no
+// explicit Drop impl is needed.
 
 impl ErrorResponse {
-    // PORT NOTE: reshaped from `(this: *@This(), ...) !void` out-param constructor
-    // to `-> Result<Self, E>`; the Zig `remaining_bytes == 0` branch left `this.*`
-    // at its default-init state, so we return `Self::default()` there.
+    // PORT NOTE: reshaped from an out-param constructor to `-> Result<Self, E>`;
+    // the `remaining_bytes == 0` branch returns `Self::default()`.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, bun_core::Error> {
@@ -43,16 +41,13 @@ impl ErrorResponse {
         Ok(Self::default())
     }
 
-    // Zig DecoderWrap takes a raw `context` and wraps it as `NewReader{.wrapped=context}`.
+    // Wraps the raw `context` as `NewReader { wrapped: context }`.
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // See src/sql/postgres/protocol/DecoderWrap.rs
 }
 
-// Zig `pub const toJS = @import("../../../sql_jsc/...").toJS;` alias deleted —
 // `to_js` lives on an extension trait in the `bun_sql_jsc` crate.
-
-// ported from: src/sql/postgres/protocol/ErrorResponse.zig

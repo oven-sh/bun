@@ -13,11 +13,11 @@ export const String = new (class extends Type {
   get bindgenType() {
     return "bindgen.BindgenString";
   }
-  zigType(style?: CodeStyle) {
+  bunType(style?: CodeStyle) {
     return "bun.string.WTFString";
   }
-  optionalZigType(style?: CodeStyle) {
-    return this.zigType(style) + ".Optional";
+  optionalBunType(style?: CodeStyle) {
+    return this.bunType(style) + ".Optional";
   }
   toCpp(value: string): string {
     assert(typeof value === "string");
@@ -32,11 +32,11 @@ export const LooseString = new (class extends Type {
   get bindgenType() {
     return String.bindgenType;
   }
-  zigType(style?: CodeStyle) {
-    return String.zigType(style);
+  bunType(style?: CodeStyle) {
+    return String.bunType(style);
   }
-  optionalZigType(style?: CodeStyle) {
-    return String.optionalZigType(style);
+  optionalBunType(style?: CodeStyle) {
+    return String.optionalBunType(style);
   }
   toCpp(value: string): string {
     return String.toCpp(value);

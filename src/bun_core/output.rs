@@ -1,8 +1,8 @@
-//! Port of `src/bun_core/output.zig`.
+//! `bun.Output` — formatted, color-tag-aware console output.
 //!
-//! Most of the public surface in the Zig original is `(comptime fmt: string, args: anytype)`
-//! printf-style entry points whose format string is rewritten at comptime (`prettyFmt`,
-//! newline appending, tag prefixing). In Rust these collapse into:
+//! Most of the public surface is printf-style entry points whose format string
+//! is rewritten at compile time (`pretty_fmt`, newline appending, tag
+//! prefixing). These collapse into:
 //!   * a non-generic `print_to(dest, core::fmt::Arguments)` plumbing layer, and
 //!   * thin `macro_rules!` wrappers (`pretty!`, `pretty_errorln!`, `note!`, …) that perform
 //!     the compile-time format-string rewrite via `pretty_fmt!`.
@@ -137,7 +137,7 @@ impl File {
         output_sink().quiet_writer_from_fd(self.0)
     }
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
-    /// swallowed per Zig `bun.Output` semantics). Progress.rs uses this.
+    /// swallowed per `bun.Output` semantics). Progress.rs uses this.
     #[inline]
     pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
         let mut qw = self.quiet_writer();
@@ -177,7 +177,7 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
 
 /// `bun.Output.debugWarn` — yellow `debug warn:` prefix to stderr in debug
 /// builds, through the Bun output sink (so colour/redirect logic applies),
-/// followed by an explicit flush. Zig output.zig:1189-1194.
+/// followed by an explicit flush.
 ///
 /// Function form takes a single [`PrettyFmtInput`] payload — callers pass
 /// `format_args!("template {}", x)` (the dominant convention across the
@@ -199,14 +199,14 @@ pub fn warn(payload: impl PrettyFmtInput) {
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
 }
 
-/// `bun.Output.note` — blue `note:` prefix to stderr (output.zig:1179).
+/// `bun.Output.note` — blue `note:` prefix to stderr.
 #[inline]
 pub fn note(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
     pretty_errorln!("<blue>note<r><d>:<r> {}", buf);
 }
 
-/// Function-form of `Output.debug` (Zig: `pub fn debug(comptime fmt, args)`).
+/// Function-form of `Output.debug`.
 /// The macro form is `crate::debug!`; this fn variant takes a single
 /// pre-formatted payload for call sites that build the message dynamically.
 #[inline]
@@ -240,7 +240,7 @@ pub fn pretty_error(payload: impl PrettyFmtInput) {
 }
 
 /// Test-harness initializer: configure the output sinks without touching the
-/// real stdio FDs (Zig: `Output.initTest`). Safe to call repeatedly.
+/// real stdio FDs (`Output.initTest`). Safe to call repeatedly.
 pub fn init_test() {
     if SOURCE_SET.get() {
         return;
@@ -255,8 +255,8 @@ pub fn init_test() {
 
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
 /// Thin alias over [`crate::output::stdio::restore`] (the real impl, also in
-/// this crate); the indirection exists only because Zig spells the path both
-/// `Output.Source.Stdio.restore` and `Output.Stdio.restore`.
+/// this crate); the indirection exists only because the public surface spells
+/// the path both `Output.Source.Stdio.restore` and `Output.Stdio.restore`.
 pub mod source {
     pub mod stdio {
         #[inline]
@@ -327,7 +327,7 @@ pub struct Source {
     pub buffered_stream_backing: QuietWriterAdapter,
     pub buffered_error_stream_backing: QuietWriterAdapter,
     // Self-referential: point into `*_backing.new_interface`. Replaced with accessor
-    // methods in Rust; raw fields kept to mirror Zig field order.
+    // methods; raw fields kept to preserve struct layout.
     // (LIFETIMES.tsv: BORROW_FIELD — self-ref into buffered_*_backing)
     buffered_stream: *mut io::Writer,
     buffered_error_stream: *mut io::Writer,
@@ -340,7 +340,7 @@ pub struct Source {
 
     pub raw_stream: StreamType,
     pub raw_error_stream: StreamType,
-    // Zig: `[]u8 = &([_]u8{})` — borrowed WASM-mode write buffers, never freed by this
+    // Borrowed WASM-mode write buffers, never freed by this
     // file. Not owned → raw fat ptr (BORROW_FIELD-style), not `Box<[u8]>`.
     pub out_buffer: *mut [u8],
     pub err_buffer: *mut [u8],
@@ -389,9 +389,9 @@ impl Source {
         out.raw_error_stream = err_stream;
         // stdout_buffer / stderr_buffer left uninitialized (overwritten by adapter writes)
 
-        // PORT NOTE: reshaped for borrowck — the Zig wrote `out.* = .{ ...undefined... }`
-        // then patched the self-referential pointers. In Rust we construct the backings
-        // directly and expose accessors instead of storing interior pointers.
+        // PORT NOTE: reshaped for borrowck — instead of writing the whole
+        // struct then patching self-referential pointers, construct the
+        // backings directly and expose accessors.
         out.buffered_stream_backing = out
             .raw_stream
             .quiet_writer()
@@ -460,7 +460,7 @@ impl Source {
     }
 
     pub fn is_no_color() -> bool {
-        // Zig output.zig:99 — parsed bool, default false. NO_COLOR=0 → false.
+        // Parsed bool, default false. NO_COLOR=0 → false.
         env_var::NO_COLOR.get().unwrap_or(false)
     }
 
@@ -895,11 +895,11 @@ pub static IS_GITHUB_ACTION: AtomicBool = AtomicBool::new(false);
 pub static STDERR_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
 pub static STDOUT_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
 
-/// Downstream alias (Zig: `Output.OutputStreamDescriptor`). Several call sites
+/// Downstream alias for `Output.OutputStreamDescriptor`. Several call sites
 /// refer to it as `Output::DescriptorType` for brevity.
 pub type DescriptorType = OutputStreamDescriptor;
 
-/// Safe getter (Zig: `Output.stderr_descriptor_type`).
+/// Safe getter for `Output.stderr_descriptor_type`.
 #[inline]
 pub fn stderr_descriptor_type() -> OutputStreamDescriptor {
     STDERR_DESCRIPTOR_TYPE
@@ -907,7 +907,7 @@ pub fn stderr_descriptor_type() -> OutputStreamDescriptor {
         .copied()
         .unwrap_or(OutputStreamDescriptor::Unknown)
 }
-/// Safe getter (Zig: `Output.stdout_descriptor_type`).
+/// Safe getter for `Output.stdout_descriptor_type`.
 #[inline]
 pub fn stdout_descriptor_type() -> OutputStreamDescriptor {
     STDOUT_DESCRIPTOR_TYPE
@@ -1019,7 +1019,7 @@ pub fn disable_buffering() {
 }
 
 /// RAII: `disable_buffering()` now, `enable_buffering()` on drop. Covers the
-/// Zig `Output.disableBuffering(); defer Output.enableBuffering();` pair used
+/// `Output.disable_buffering()` / `Output.enable_buffering()` pair used
 /// around child-process exec where the child writes directly to inherited
 /// stdio and Bun's buffer must not interleave.
 #[must_use = "dropping immediately re-enables buffering; bind to `let _scope = ...`"]
@@ -1044,9 +1044,10 @@ pub fn disable_buffering_scope() -> DisableBufferingScope {
 
 #[cold]
 pub fn panic(args: fmt::Arguments<'_>) -> ! {
-    // PORT NOTE: Zig branched on enable_ansi_colors_stderr to pick the comptime-colored
-    // vs stripped format string. In Rust callers use `panic!(pretty_fmt!(...))` directly;
-    // this fn is kept for non-macro callers and writes the (already-formatted) args.
+    // PORT NOTE: the original branched on enable_ansi_colors_stderr to pick a
+    // colored vs stripped format string. Callers now use `panic!(pretty_fmt!(...))`
+    // directly; this fn is kept for non-macro callers and writes the
+    // (already-formatted) args.
     if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
         core::panic!("{args}");
     } else {
@@ -1065,9 +1066,9 @@ pub fn raw_error_writer() -> StreamType {
 // TODO: investigate migrating this to the buffered one.
 //
 // TODO(port): these accessors hand out a `&'static mut` to a thread-local
-// `Source` field. The Zig original returned `*Writer` and callers used it
-// briefly. Returning `&'static mut` is *unsound* if two are alive at once, but
-// matches the Zig contract until callers migrate to `with_error_writer(|w| ..)`.
+// `Source` field, used briefly by callers. Returning `&'static mut` is
+// *unsound* if two are alive at once, but matches the existing contract until
+// callers migrate to `with_error_writer(|w| ..)`.
 //
 // `source_writer_escape` centralises the escape: one `unsafe` for all five
 // public `*_writer*()` accessors (nonnull-asref reduction: 5 sites → 1).
@@ -1165,9 +1166,8 @@ pub fn flush() {
 
 /// RAII guard that calls [`flush`] on `Drop`.
 ///
-/// This is the Rust spelling of Zig's `defer Output.flush();` — hold one of
-/// these across a scope with early returns to guarantee buffered stdout/stderr
-/// is drained on every exit path.
+/// Hold one of these across a scope with early returns to guarantee buffered
+/// stdout/stderr is drained on every exit path.
 #[must_use = "FlushGuard flushes on Drop; binding to `_` drops it immediately"]
 pub struct FlushGuard(());
 
@@ -1179,7 +1179,7 @@ impl Drop for FlushGuard {
 }
 
 /// Returns a guard that flushes buffered stdout & stderr when it goes out of
-/// scope. Equivalent to Zig's `defer Output.flush();`.
+/// scope.
 #[inline]
 pub fn flush_guard() -> FlushGuard {
     FlushGuard(())
@@ -1244,10 +1244,10 @@ impl fmt::Display for ElapsedFormatter {
     }
 }
 
-// PORT NOTE: Zig's `printElapsedToWithCtx` passed the raw `<r><d>[...]<r>`
-// template to a `(comptime fmt, args)` printer (`prettyError`/`pretty`), which
-// then routed through `prettyTo` to branch on `enable_ansi_colors_{stdout,stderr}`.
-// In Rust the `pretty_fmt!` rewrite must happen at the macro call site, so the
+// PORT NOTE: `print_elapsed_to_with_ctx` originally passed the raw
+// `<r><d>[...]<r>` template to a generic printer which routed through
+// `pretty_to` to branch on `enable_ansi_colors_{stdout,stderr}`.
+// Here the `pretty_fmt!` rewrite must happen at the macro call site, so the
 // public entry points (`print_elapsed`/`print_elapsed_stdout` below) inline the
 // match and call `pretty_error!`/`pretty!` directly — those macros emit both the
 // colored and stripped variants and let `pretty_to` pick at runtime. The
@@ -1328,10 +1328,10 @@ pub fn print_timer(timer: &mut impl ReadTimer) {
 /// `write_fmt`, which evaluates user `Display` impls that can re-enter this
 /// module (e.g. `debug_warn` → `print_to`, or `flush()`). If we materialized a
 /// `&mut io::Writer` here, the re-entrant call would produce a second `&mut`
-/// aliasing the first while it is still live — UB. Zig's `destWriter()`
-/// (output.zig:731-737) returns a raw `*std.Io.Writer` with no exclusivity
-/// contract, so callers must do the same and route writes through the vtable
-/// fn pointers directly (see `write_fmt_raw`).
+/// aliasing the first while it is still live — UB. The contract returns a raw
+/// `*mut io::Writer` with no exclusivity guarantee, so callers must do the
+/// same and route writes through the vtable fn pointers directly (see
+/// `write_fmt_raw`).
 #[inline(never)]
 fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) -> R {
     debug_assert!(SOURCE_SET.get());
@@ -1411,9 +1411,9 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
         let _ = (dest, args);
         return;
     }
-    // PERF(port): Zig had a comptime `hasNoArgs` fast path that emitted a single
-    // `writeBytes(dest, comptime_str)` per call site. `fmt::Arguments::as_str()` returns
-    // Some only when there are no interpolations, so this preserves the optimization.
+    // PERF(port): no-args templates take the `write_bytes` fast path.
+    // `fmt::Arguments::as_str()` returns Some only when there are no
+    // interpolations, so this preserves the optimization.
     if let Some(s) = args.as_str() {
         return write_bytes(dest, s.as_bytes());
     }
@@ -1438,8 +1438,7 @@ pub fn print_errorable(args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
 #[macro_export]
 macro_rules! println {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {{
-        // `:expr` (not `:literal`) so `concat!(..)` templates compile —
-        // Zig `comptime fmt: string` accepts `"a" ++ "b"` (output.zig:781).
+        // `:expr` (not `:literal`) so `concat!(..)` templates compile.
         // `concat!` accepts a nested `concat!`, so the trailing-`{}` join works.
         const __NL: &str = $crate::output::_needs_nl($fmt);
         $crate::output::print_to(
@@ -1461,8 +1460,8 @@ macro_rules! debug {
     };
 }
 
-/// NOTE: unlike Zig output.zig:794-797, this fn form cannot inspect the
-/// comptime template and therefore *always* appends `\n`. Callers must NOT
+/// NOTE: unlike the macro form, this fn cannot inspect the
+/// compile-time template and therefore *always* appends `\n`. Callers must NOT
 /// pass a template that already ends in `\n`. Prefer the `debug!` macro.
 #[inline]
 pub fn _debug(args: fmt::Arguments<'_>) {
@@ -1538,8 +1537,8 @@ impl ScopedLogger {
     }
 
     fn evaluate_is_visible(&self) {
-        // BUN_DEBUG_<tagname> — Zig builds this with comptime `++` (no length cap),
-        // so size the buffer from the tag instead of a fixed `[u8; 64]`.
+        // BUN_DEBUG_<tagname> — there is no length cap on the tag, so size the
+        // buffer from the tag instead of a fixed `[u8; 64]`.
         let tag = self.tagname.as_bytes();
         let prefix = b"BUN_DEBUG_";
         let key_len = prefix.len() + tag.len();
@@ -1623,11 +1622,11 @@ impl ScopedLogger {
         // (single arg evaluation) via `_scoped_use_ansi()`.
         let result = out.write_fmt(args);
         if result.is_err() {
-            // Zig: write failure → disable scope and skip the flush.
+            // Write failure → disable scope and skip the flush.
             self.really_disable.store(true, Ordering::Relaxed);
             return;
         }
-        // TODO(port): Zig also disables on flush failure; QuietWriter::flush()
+        // TODO(port): also disable on flush failure; QuietWriter::flush()
         // currently returns () via the SysHooks vtable so flush errors are not
         // observable here. Surface a Result once bun_sys exposes it.
         out.flush();
@@ -1645,7 +1644,7 @@ macro_rules! declare_scope {
     ($name:ident, hidden) => {
         #[allow(non_upper_case_globals)]
         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
-            // TODO(port): lowercase tagname at compile time (Zig did std.ascii.toLower)
+            // TODO(port): lowercase tagname at compile time
             stringify!($name),
             $crate::output::Visibility::Hidden,
         );
@@ -1671,9 +1670,8 @@ macro_rules! scoped_log {
         if cfg!(debug_assertions) && $scope.is_visible() {
             const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
-            // exactly once (Zig builds the args tuple once — output.zig:922-933).
-            // Prefix `[tag]` is built at runtime from `$scope.tagname` lowercased
-            // (Zig: output.zig:826-835 lowercases via `std.ascii.toLower`).
+            // exactly once.
+            // Prefix `[tag]` is built at runtime from `$scope.tagname` lowercased.
             if $crate::output::_scoped_use_ansi() {
                 $scope.log(::core::format_args!(
                     concat!(
@@ -1731,9 +1729,8 @@ macro_rules! define_scoped_log {
 }
 
 /// `Display` adapter that lowercases an ASCII tag on the fly. Used by
-/// `scoped_log!` so the printed `[tag]` prefix matches Zig's
-/// `std.ascii.toLower`-folded `tagname` (output.zig:826-835) without needing a
-/// compile-time lowercasing proc-macro.
+/// `scoped_log!` so the printed `[tag]` prefix is lowercase-folded
+/// without needing a compile-time lowercasing proc-macro.
 #[doc(hidden)]
 pub struct _LowerTag(pub &'static str);
 impl fmt::Display for _LowerTag {
@@ -1773,9 +1770,9 @@ pub fn clear_to_end() {
 // <r> - reset
 const CSI: &str = "\x1b[";
 
-/// Lowercase lookup wrapper (Zig: `Output.color_map.get(name)`). The table
+/// Lowercase lookup wrapper for `Output.color_map.get(name)`. The table
 /// itself lives in `bun_output_tags` (shared with the `pretty_fmt!` proc-macro
-/// so there is exactly one copy); this fn-module mirrors the Zig
+/// so there is exactly one copy); this fn-module mirrors the
 /// `ComptimeStringMap` `.get()` surface.
 pub mod color_map {
     #[inline]
@@ -1805,8 +1802,8 @@ pub fn pretty(payload: impl PrettyFmtInput) {
 
 /// `bun.Output.prettyln(fmt, args)` — `pretty()` with a trailing newline.
 /// Function form: performs the `<tag>` → ANSI rewrite at runtime on the rendered
-/// payload and appends `\n` if the result does not already end in one (matches
-/// Zig output.zig:1090-1093). Prefer the `prettyln!` macro for literal templates.
+/// payload and appends `\n` if the result does not already end in one.
+/// Prefer the `prettyln!` macro for literal templates.
 /// `inline(always)` for the same .text-layout reason as [`pretty`].
 #[inline(always)]
 pub fn prettyln(payload: impl PrettyFmtInput) {
@@ -1819,15 +1816,14 @@ pub fn prettyln(payload: impl PrettyFmtInput) {
 
 /// Compile-time `<tag>` → ANSI escape rewriter.
 ///
-/// In Zig this was a `comptime` function building a `[:0]const u8`. In Rust the
-/// equivalent must be a proc-macro because it consumes a string literal and emits
+/// Implemented as a proc-macro because it consumes a string literal and emits
 /// a new string literal usable as a `format_args!` template.
 ///
 /// `pretty_fmt!("<red>{s}<r>", true)`  → `"\x1b[31m{}\x1b[0m"`
 /// `pretty_fmt!("<red>{s}<r>", false)` → `"{}"`
 ///
-/// The reference algorithm is `pretty_fmt_runtime` below (kept 1:1 with the Zig
-/// body so the proc-macro can be tested against it).
+/// The reference algorithm is `pretty_fmt_runtime` below (kept 1:1 so the
+/// proc-macro can be tested against it).
 pub use bun_core_macros::pretty_fmt;
 
 /// Input accepted by [`pretty_fmt`]: either a `&str`/`&[u8]` template or a
@@ -1865,8 +1861,8 @@ impl PrettyFmtInput for fmt::Arguments<'_> {
 }
 
 /// `Output.prettyFmt` — runtime `<tag>` → ANSI rewrite. Const-generic
-/// `ENABLE_ANSI_COLORS` mirrors the Zig `comptime is_enabled: bool` parameter
-/// so callers can do `Output::pretty_fmt::<ENABLE_ANSI_COLORS>("…")`.
+/// `ENABLE_ANSI_COLORS` so callers can do
+/// `Output::pretty_fmt::<ENABLE_ANSI_COLORS>("…")`.
 ///
 /// For a runtime bool (e.g. from `enable_ansi_colors_stderr()`), see
 /// [`pretty_fmt_rt`].
@@ -1917,9 +1913,8 @@ impl fmt::Display for PrettyBuf {
 }
 
 // ── FmtTuple ──────────────────────────────────────────────────────────────
-// Zig `fn print(comptime fmt: []const u8, args: anytype)` takes a tuple of
-// arguments and substitutes positionals. The Rust port models `args: anytype`
-// as `impl FmtTuple` so call sites can pass `()`, `(a,)`, `(a, b)`, … or a
+// Models a positional-argument tuple for runtime template substitution as
+// `impl FmtTuple` so call sites can pass `()`, `(a,)`, `(a, b)`, … or a
 // pre-built `fmt::Arguments<'_>` (treated as a single positional).
 
 /// Positional-argument bundle for runtime template substitution.
@@ -2080,13 +2075,13 @@ pub fn pretty_fmt_args<A: FmtTuple>(
 /// Legacy name kept for back-compat with crash_handler.
 pub type PrettyFmtArgs<'a> = TemplateDisplay<'a, fmt::Arguments<'a>>;
 
-/// Runtime mirror of Zig `prettyFmt` for testing the proc-macro and for the rare
-/// dynamic case. Produces the same byte sequence the Zig comptime version would.
+/// Runtime mirror of `pretty_fmt` for testing the proc-macro and for the rare
+/// dynamic case. Produces the same byte sequence as the proc-macro.
 ///
 /// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
 /// vs `bun_core_macros::rewrite` because the two intentionally diverge in the
-/// `{` arm (proc-macro rewrites Zig specs `{s}`→`{}`; this side copies braces
-/// verbatim) and on unknown tags (proc-macro errors; this side emits `""`).
+/// `{` arm (proc-macro rewrites legacy specs `{s}`→`{}`; this side copies
+/// braces verbatim) and on unknown tags (proc-macro errors; this side emits `""`).
 pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(fmt.len() * 4);
     let mut i = 0usize;
@@ -2135,7 +2130,7 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                         is_reset = true;
                         break 'picker "";
                     } else {
-                        // Zig: @compileError — runtime version returns empty
+                        // Runtime version returns empty for unknown tags.
                         // TODO(port): proc-macro emits compile_error! here
                         break 'picker "";
                     }
@@ -2167,9 +2162,8 @@ pub fn enable_color_for(dest: Destination) -> bool {
 }
 
 /// Returns `"\n"` if `fmt` does not already end in a newline, else `""`.
-/// Mirrors Zig's `if (fmt.len == 0 or fmt[fmt.len - 1] != '\n')` guard so the
-/// `*ln!` macros never emit a double newline when the caller's template already
-/// ends in one.
+/// Used by the `*ln!` macros so they never emit a double newline when the
+/// caller's template already ends in one.
 #[doc(hidden)]
 #[inline]
 pub const fn _needs_nl(fmt: &str) -> &'static str {
@@ -2223,9 +2217,8 @@ pub fn pretty_with_printer(
 
 /// Internal: bind each `$arg` exactly once into a `match` tuple, then dispatch
 /// on the per-destination color flag and call `print_to` with the appropriate
-/// `pretty_fmt!`-expanded template. Mirrors Zig's `prettyTo` which receives the
-/// args tuple already evaluated and only branches on the color flag
-/// (output.zig:1066-1074).
+/// `pretty_fmt!`-expanded template. The args tuple is evaluated once and only
+/// the color branch differs.
 ///
 /// The recursive `@go` arm zips each user arg with a name from `pool` so the
 /// emitted `match (&a, &b, ..)` pattern can rebind them as plain idents — both
@@ -2345,8 +2338,7 @@ macro_rules! prettyln {
 #[macro_export]
 macro_rules! print_errorln {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {{
-        // `:expr` (not `:literal`) so `concat!(..)` templates compile —
-        // Zig `comptime fmt: string` accepts `"a" ++ "b"` (output.zig:1095).
+        // `:expr` (not `:literal`) so `concat!(..)` templates compile.
         const __NL: &str = $crate::output::_needs_nl($fmt);
         $crate::output::print_to(
             $crate::output::Destination::Stderr,
@@ -2380,8 +2372,8 @@ macro_rules! pretty_errorln {
 /// sink, branching on a (possibly const-generic) color flag so each branch gets
 /// the proc-macro-expanded literal template.
 ///
-/// Port of Zig `writer.print(comptime Output.prettyFmt(FMT, enable_ansi_colors), .{args})`
-/// for `writeFormat`-style impls that take `comptime enable_ansi_colors: bool`.
+/// Used by `writeFormat`-style impls that take a const-generic
+/// `enable_ansi_colors: bool`.
 /// The `pretty_fmt!` proc-macro requires a `true`/`false` *literal*, so the
 /// const-generic is dispatched here; only one arm executes at runtime, so each
 /// `$arg` evaluates exactly once.
@@ -2398,8 +2390,8 @@ macro_rules! write_pretty {
 
 // ── printCommand ──────────────────────────────────────────────────────────
 
-/// Argument shape accepted by `command`/`commandOut`. Mirrors the Zig `anytype`
-/// switch over `[][]const u8` vs `[]const u8`.
+/// Argument shape accepted by `command`/`commandOut`: a list of args or a
+/// single command string.
 pub enum CommandArgv<'a> {
     List(&'a [&'a [u8]]),
     Single(&'a [u8]),
@@ -2461,8 +2453,8 @@ pub fn print_error(args: impl core::fmt::Display) {
 /// root is the comptime-string variant). Takes anything `Display` so both
 /// `format_args!(..)` and bare `&str` call sites compile; appends `\n`.
 ///
-/// NOTE: unlike the macro (and Zig output.zig:1095-1098), this fn form cannot
-/// inspect the comptime template and therefore *always* appends `\n`. Callers
+/// NOTE: unlike the macro, this fn form cannot
+/// inspect the compile-time template and therefore *always* appends `\n`. Callers
 /// must NOT pass a template that already ends in `\n` or output will contain a
 /// doubled newline. Prefer the `print_errorln!` macro where possible.
 #[inline]
@@ -2471,7 +2463,7 @@ pub fn print_errorln(args: impl core::fmt::Display) {
 }
 
 /// `Output.enable_ansi_colors_stdout` — safe relaxed-load wrapper over the
-/// startup-initialized atomic. Mirrors the Zig public-var read.
+/// startup-initialized atomic.
 #[inline]
 pub fn enable_ansi_colors_stdout() -> bool {
     ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
@@ -2481,8 +2473,8 @@ pub fn enable_ansi_colors_stdout() -> bool {
 pub fn enable_ansi_colors_stderr() -> bool {
     ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
 }
-/// `Output.enable_ansi_colors` (legacy combined accessor — Zig deprecates the
-/// var; expose as stderr to match its historical meaning).
+/// `Output.enable_ansi_colors` (legacy combined accessor — deprecated;
+/// expose as stderr to match its historical meaning).
 #[inline]
 pub fn enable_ansi_colors() -> bool {
     ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
@@ -2553,19 +2545,21 @@ macro_rules! debug_warn {
     };
 }
 
-/// Print a red error message. The first argument takes an `error_name` value, which can be either
-/// be a Zig error, or a string or enum. The error name is converted to a string and displayed
-/// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
+/// Print a red error message. The first argument takes an `error_name` value,
+/// which can be a `bun_core::Error`, a string, or an enum. The error name is
+/// converted to a string and displayed in place of "error:", making it useful
+/// to print things like "EACCES: Couldn't open package.json".
 ///
-/// The Zig original switched on `@typeInfo` of `error_name`. The Rust port accepts anything
-/// implementing `ErrName` (impl'd for `&[u8]`, `&str`, `bun_core::Error`, `bun_sys::Error`,
-/// and any `#[derive(strum::IntoStaticStr)]` enum).
+/// Accepts anything implementing `ErrName` (impl'd for `&[u8]`, `&str`,
+/// `bun_core::Error`, `bun_sys::Error`, and any
+/// `#[derive(strum::IntoStaticStr)]` enum).
 // TODO(port): the comptime-literal fast path (is_comptime_name) is dropped — Phase B can
 // recover it with a proc-macro overload that detects string literals.
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
-    // Zig concatenates `fmt` into the prettyErrorln template, whose trailing-\n
-    // check then sees the caller's newline. Here `fmt` is rendered into a `{}`
-    // arg, so strip a trailing \n and let pretty_errorln! add exactly one.
+    // The original concatenated `fmt` into the prettyErrorln template, whose
+    // trailing-\n check then saw the caller's newline. Here `fmt` is rendered
+    // into a `{}` arg, so strip a trailing \n and let pretty_errorln! add
+    // exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
     if let Some(e) = error_name.as_sys_err_info() {
@@ -2622,7 +2616,7 @@ pub struct SysErrInfo {
     pub syscall: &'static str,
 }
 
-/// Trait abstracting the `@typeInfo` switch in Zig `err()`.
+/// Trait abstracting the polymorphic error-name argument of `err()`.
 ///
 /// `as_sys_err_info()` replaces the former `as_sys_error() -> Option<&bun_sys::Error>`:
 /// bun_core (T0) can't name `bun_sys::Error` (T1). bun_sys impls `ErrName` for
@@ -2665,7 +2659,7 @@ pub mod scoped_debug_writer {
     }
 
     /// RAII guard that suppresses scoped logging for the lifetime of the guard
-    /// (Zig: `disable_inside_log += 1; defer disable_inside_log -= 1;`).
+    /// (increments `DISABLE_INSIDE_LOG` on entry, decrements on drop).
     #[must_use]
     pub struct DisableGuard(());
 
@@ -2686,7 +2680,6 @@ pub mod scoped_debug_writer {
 }
 
 pub fn disable_scoped_debug_writer() {
-    // Zig: `if (!@inComptime())` — always runtime in Rust.
     scoped_debug_writer::DISABLE_INSIDE_LOG.set(scoped_debug_writer::DISABLE_INSIDE_LOG.get() + 1);
 }
 pub fn enable_scoped_debug_writer() {
@@ -2725,8 +2718,8 @@ pub fn init_scoped_debug_writer_at_startup() {
                 )),
             };
             // TODO(b2-blocked): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
-            // `create_file` above already opens for writing with truncate, so the explicit
-            // `fd.truncate(0)` from Zig is a no-op here until the vtable entry lands.
+            // `create_file` above already opens for writing with truncate, so an explicit
+            // `fd.truncate(0)` is a no-op here until the vtable entry lands.
             let _ = &fd; // windows
             // SAFETY: single-threaded startup.
             unsafe {
@@ -2745,9 +2738,7 @@ pub fn init_scoped_debug_writer_at_startup() {
 }
 
 fn scoped_writer() -> QuietWriter {
-    // Zig used `@compileError` here (output.zig:1320-1325) which is lazy — it
-    // only fires if `scopedWriter()` is referenced, and in release Zig the
-    // `Scoped()` no-op struct never references it. Rust's `compile_error!` is
+    // A compile-time error here would be ideal, but Rust's `compile_error!` is
     // eager and would break every release build, so assert at runtime instead.
     // All callers are already gated on `Environment::ENABLE_LOGS`.
     debug_assert!(
@@ -2777,8 +2768,8 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // ──────────────────────────────────────────────────────────────────────────
 // Stdin readers (CYCLEBREAK §Dispatch cold path)
 //
-// Zig's `bun.Output.buffered_stdin` is a `bun.deprecated.BufferedReader(4096,
-// File.Reader)`. The concrete `File.Reader` lives in bun_sys; bun_core routes
+// `bun.Output.buffered_stdin` is a 4 KiB buffered reader over the process
+// stdin. The concrete `File.Reader` lives in bun_sys; bun_core routes
 // the underlying `read(2)` through the [`OutputSinkVTable::read`] slot so the
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
@@ -2811,18 +2802,18 @@ pub struct BufferedStdin {
 }
 
 impl BufferedStdin {
-    /// Zig `BufferedReader.reader()` — the std adapter just hands back `&mut
+    /// `BufferedReader.reader()` — the adapter just hands back `&mut
     /// Self` (which already exposes `read`/`read_byte`).
     #[inline]
     pub fn reader(&mut self) -> &mut Self {
         self
     }
 
-    /// Zig `BufferedReader.read` — fill `dest` from the buffer, refilling from
+    /// `BufferedReader.read` — fill `dest` from the buffer, refilling from
     /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
     ///
-    /// PORT NOTE: matches std `BufferedReader.read` fill-to-completion semantics
-    /// (loops on the underlying fd), not POSIX partial-read.
+    /// PORT NOTE: fill-to-completion semantics (loops on the underlying fd),
+    /// not POSIX partial-read.
     pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, crate::Error> {
         let mut written: usize = 0;
         loop {
@@ -2857,7 +2848,7 @@ impl BufferedStdin {
         }
     }
 
-    /// Zig `GenericReader.readByte` — `Err` on I/O error *or* EOF (matches
+    /// `GenericReader.readByte` — `Err` on I/O error *or* EOF (returns
     /// `error.EndOfStream`).
     pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
         if self.start < self.end {
@@ -2872,7 +2863,7 @@ impl BufferedStdin {
         }
     }
 
-    /// Zig `GenericReader.readUntilDelimiterArrayList` — appends bytes (not
+    /// `GenericReader.readUntilDelimiterArrayList` — appends bytes (not
     /// including `delimiter`) into `out`; errors with `StreamTooLong`
     /// semantics if `out.len()` would exceed `max_size`.
     pub fn read_until_delimiter_array_list(
@@ -2895,14 +2886,14 @@ impl BufferedStdin {
     }
 }
 
-/// Unbuffered stdin byte reader (`std.fs.File.stdin().readerStreaming(..)` in
-/// the Zig). Each `take_byte` is a 1-byte blocking read on the process stdin.
+/// Unbuffered stdin byte reader.
+/// Each `take_byte` is a 1-byte blocking read on the process stdin.
 pub struct StdinReader {
     fd: Fd,
 }
 
 impl StdinReader {
-    /// Zig `Reader.takeByte` — `Err` on I/O error *or* EOF.
+    /// `Reader.takeByte` — `Err` on I/O error *or* EOF.
     #[inline]
     pub fn take_byte(&mut self) -> Result<u8, crate::Error> {
         let mut one = [0u8; 1];
@@ -2942,7 +2933,7 @@ pub fn buffered_stdin() -> *mut BufferedStdin {
 }
 
 /// `bun.Output.buffered_stdin.reader()` — same accessor as [`buffered_stdin`];
-/// the Zig spelling exposed the static itself and callers chained `.reader()`.
+/// callers historically reached the static directly and chained `.reader()`.
 #[inline]
 pub fn buffered_stdin_reader() -> *mut BufferedStdin {
     buffered_stdin()
@@ -2993,13 +2984,13 @@ impl Synchronized {
 mod output_macro_tests {
     //! Compile-shape regression tests for the `pretty*!`/`note!`/`warn!`/
     //! `debug!` wrapper macros. These don't drive a live `Source` (no I/O);
-    //! they assert that the macros *expand* for the shapes the Zig originals
-    //! accept and that the `*ln!` newline guard const-evaluates correctly.
+    //! they assert that the macros *expand* for the shapes call sites
+    //! use and that the `*ln!` newline guard const-evaluates correctly.
     use super::_needs_nl;
     use bun_core_macros::pretty_fmt;
 
-    /// `note!`/`warn!`/`debug!` must accept a `concat!(..)` template — Zig's
-    /// `note(comptime fmt, args)` is routinely called with `"a" ++ "b"`. The
+    /// `note!`/`warn!`/`debug!` must accept a `concat!(..)` template — call
+    /// sites routinely build the template from concatenated string parts. The
     /// `:literal` matcher rejected this; `:expr` + proc-macro `concat!`
     /// flattening makes it compile.
     #[test]
@@ -3064,7 +3055,7 @@ mod output_macro_tests {
 #[cfg(test)]
 mod pretty_fmt_tests {
     //! Parity checks between the `pretty_fmt!` proc-macro (compile-time) and
-    //! `pretty_fmt_runtime` (1:1 port of Zig `prettyFmt`). Guards against the
+    //! `pretty_fmt_runtime` (the runtime reference). Guards against the
     //! macro leaking raw `<r>`/`<b>` markup into help text.
     use super::{RESET, pretty_fmt_runtime};
     use bun_core_macros::pretty_fmt;
@@ -3106,7 +3097,7 @@ mod pretty_fmt_tests {
     }
 
     #[test]
-    fn zig_spec_rewrites() {
+    fn legacy_spec_rewrites() {
         assert_eq!(pretty_fmt!("{s}", true), "{}");
         assert_eq!(pretty_fmt!("{d}", true), "{}");
         assert_eq!(pretty_fmt!("{any}", true), "{:?}");
@@ -3143,8 +3134,8 @@ mod pretty_fmt_tests {
 
     #[test]
     fn macro_matches_runtime() {
-        // Spot-check macro output against the runtime reference (which is 1:1
-        // with Zig `prettyFmt`) for the help-text shapes that matter.
+        // Spot-check macro output against the runtime reference for the
+        // help-text shapes that matter.
         macro_rules! check {
             ($s:literal) => {{
                 assert_eq!(
@@ -3169,5 +3160,3 @@ mod pretty_fmt_tests {
         );
     }
 }
-
-// ported from: src/bun_core/output.zig

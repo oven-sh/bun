@@ -1,4 +1,4 @@
-//! Port of src/runtime/cli/cli.zig — CLI entry point + command dispatch.
+//! CLI entry point + command dispatch.
 //!
 //! B-2 round 2: un-gate the help path. `Command::which()` + `HelpCommand`
 //! + `print_version_and_exit` are real and compile against lower-tier crates.
@@ -19,11 +19,12 @@ use bun_core::{pretty, pretty_error, pretty_errorln};
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ci_info.rs"]
 pub mod ci_info;
-/// Port of the build.zig-registered `@import("ci_info")` module (output of
-/// `src/codegen/ci_info.ts`). The Zig build emits `build/*/codegen/ci_info.zig`
-/// from a static vendor table copied from watson/ci-info@4.0.0; since the Rust
-/// build has no codegen hook for this yet, the table is hand-ported here from
-/// that generated file. Keep in sync with `src/codegen/ci_info.ts`.
+/// Hand-ported CI vendor table, copied from `watson/ci-info@4.0.0`.
+///
+/// The build used to emit a generated `ci_info` module from
+/// `src/codegen/ci_info.ts`; that codegen step has been removed, but
+/// `ci_info.ts` is kept as a JSON-formatted reference for the upstream vendor
+/// list. Keep this module in sync with it when bumping `watson/ci-info`.
 pub(crate) mod ci_info_generated {
     use bun_core::{getenv_z, zstr};
 
@@ -256,7 +257,7 @@ pub mod open {
         Output::flush();
     }
 
-    /// Minimal port of `open.openURL`. The Zig version spawns `OPENER url` and
+    /// Minimal port of `open.openURL`. The full version spawns `OPENER url` and
     /// only falls back to printing on spawn failure; that path needs
     /// `bun.spawnSync` (gated). Until then, always take the fallback so
     /// `bun discord` is usable in headless/CI environments.
@@ -294,7 +295,7 @@ pub mod test {
     pub use scanner::Scanner;
 
     /// `bun test --changed`: git-diff → bundler module graph → reverse-import
-    /// walk to filter test files. See `test/ChangedFilesFilter.zig`.
+    /// walk to filter test files. See `test/ChangedFilesFilter.rs`.
     #[path = "ChangedFilesFilter.rs"]
     pub mod changed_files_filter;
     pub use changed_files_filter as ChangedFilesFilter;
@@ -306,7 +307,7 @@ pub mod test {
     pub use parallel_runner as ParallelRunner;
 
     /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
-    /// inline so paths stay 1:1 with the Zig directory). `ParallelRunner.rs`
+    /// inline so paths stay 1:1 with the source directory). `ParallelRunner.rs`
     /// re-exports the public entry points from `runner`; the rest are
     /// implementation detail of the coordinator/worker split.
     pub mod parallel {
@@ -337,7 +338,7 @@ pub use bun_bunfig::bunfig;
 pub mod run_command;
 
 // ─── per-subcommand bodies (un-gated for `Command::start` dispatch) ──────────
-// Each maps 1:1 to a `*_command.zig`. Heavy bodies inside re-gate on whatever
+// Each maps 1:1 to a `*_command.rs`. Heavy bodies inside re-gate on whatever
 // lower-tier crate surface they still need; the dispatch arm just calls
 // `<Mod>Command::exec(ctx)`.
 #[path = "build_command.rs"]
@@ -408,13 +409,13 @@ pub use multi_run as MultiRun;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
 // `bun_clap::parse_param!` is a real proc-macro (const `Param<Help>` literal),
-// and `bun_clap::concat_params!` is a const-fn slice concat (Zig comptime `++`),
+// and `bun_clap::concat_params!` is a const-fn slice concat,
 // so combined tables (`AUTO_PARAMS`, `RUN_PARAMS`, …) are baked into rodata —
 // no `LazyLock`, no init closure in `.text`, no startup heap allocation.
 pub use ::bun_clap::concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
-/// Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
+/// Written once in `Cli::start`
 /// during single-threaded startup, read freely after init. The backing
 /// `OnceLock` lives in `bun_core` (single source of truth); this accessor
 /// remains so existing `crate::cli::start_time()` callers don't churn.
@@ -424,10 +425,10 @@ pub fn start_time() -> i128 {
 }
 
 #[allow(non_upper_case_globals)]
-// PORT NOTE: Zig `?string` (borrowed slice) → owned `Box<[u8]>` so
+// PORT NOTE: optional borrowed slice → owned `Box<[u8]>` so
 // `process.title = "..."` (set_title) drops the previous value instead of
 // leaking. The mutex provides exclusion between `get_title`/`set_title`
-// (Zig: `var title_mutex = bun.Mutex{}`).
+// (replaces a free-standing `title_mutex`).
 pub static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
     bun_threading::Guarded::new(None);
 
@@ -442,13 +443,13 @@ pub static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
 /// pathology documented for `OnceLock::set` on [`CMD`]). `cli_arena()` is on the
 /// hot `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
 /// `runner_arena`), so a `LazyLock` there faults a fresh cold page on every
-/// `bun` invocation. Zig's analogue was just a `default_allocator` handle / a
-/// never-`deinit`'d `ArenaAllocator` — a plain cell is the correct shape.
+/// `bun` invocation. This was originally a `default_allocator` handle / a
+/// never-freed `ArenaAllocator` — a plain cell is the correct shape.
 pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
-/// Process-lifetime arena for one-shot CLI commands. Zig passed
-/// `bun.default_allocator` (or a per-command `ArenaAllocator` never `deinit`'d)
+/// Process-lifetime arena for one-shot CLI commands. Replaces the global
+/// default allocator (or a per-command arena never freed)
 /// and let allocations live until exit.
 ///
 /// **Main-thread only.** `MimallocArena`'s `Sync` impl is *contract-only*:
@@ -467,8 +468,8 @@ pub fn cli_arena() -> &'static bun_alloc::Arena {
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
-/// `s.to_vec().into_boxed_slice()` leaks at CLI sites where Zig used
-/// `allocator.dupe(u8, s)` with the default allocator. Main-thread only
+/// `s.to_vec().into_boxed_slice()` leaks at CLI sites that previously dupe'd
+/// with the default allocator. Main-thread only
 /// (see [`cli_arena`]).
 #[inline]
 pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
@@ -511,7 +512,7 @@ thread_local! {
 /// `RacyCell`, not `OnceLock`: `OnceLock::set` routes through stdlib's
 /// `#[cold] fn initialize`, which fat-LTO places ~36 MB away from the
 /// startup.order cluster and faults a fresh page on every `bun` invocation.
-/// Zig used a plain `var cmd: ?Tag` here; the write happens before any
+/// Originally a plain mutable `Option<Tag>`; the write happens before any
 /// thread is spawned, so a bare cell is the correct shape.
 pub static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
 
@@ -555,7 +556,7 @@ pub mod cli {
 
     pub use bun_options_types::compile_target::CompileTarget;
 
-    // Zig `var log_: logger.Log = undefined;` — process-global, init in start().
+    // Process-global `logger.Log`, init in start().
     pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -591,7 +592,7 @@ pub mod cli {
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
-            // Spec cli.zig:21 — print accumulated diagnostics BEFORE the
+            // Print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
             // message. The bake production path returns `error.BuildFailed`
             // with the actual parse/link errors sitting in `ctx.log` (== this
@@ -607,7 +608,7 @@ pub use cli as Cli;
 
 // ─── debug_flags (resolve/print breakpoints) ─────────────────────────────────
 pub mod debug_flags {
-    // SHOW_CRASH_TRACE-only in Zig; harmless to always declare here.
+    // SHOW_CRASH_TRACE-only originally; harmless to always declare here.
     // PORT NOTE: `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
     // hand off ownership of the argv-borrowed list without leaking the backing
     // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
@@ -664,7 +665,7 @@ pub mod help_command {
     pub const PACKAGES_TO_CREATE_FILLER: &[&str] =
         &["next-app", "vite", "astro", "svelte", "elysia"];
 
-    /// `cli_helptext_fmt` from cli.zig.
+    /// `cli_helptext_fmt`.
     ///
     /// PORT NOTE: emits the `pretty!`/`pretty_error!` call directly instead of
     /// expanding to a bare literal — `pretty!` captures its template as
@@ -717,14 +718,14 @@ pub mod help_command {
         };
     }
 
-    // PORT NOTE: Zig had `comptime reason: Reason` → const generic. Tag/Reason
+    // PORT NOTE: was a comptime `reason: Reason` parameter → const generic. Tag/Reason
     // lack `ConstParamTy` in lower-tier crates, so demoted to a runtime arg.
     // PERF(port): was comptime monomorphization — profile in Phase B.
     pub fn print_with_reason(reason: Reason, show_all_flags: bool) {
         let mut rand = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
         );
-        // Zig: rand.uintAtMost(len-1). xoshiro256++ next_u64() % len is close
+        // xoshiro256++ next_u64() % len is close
         // enough for filler-word selection (no rejection sampling needed here).
         let mut pick = |n: usize| (rand.next_u64() as usize) % n;
 
@@ -821,11 +822,11 @@ pub use reserved_command as ReservedCommand;
 // ─── Command (Tag + which() + dispatch skeleton) ─────────────────────────────
 pub mod command {
     use super::*;
-    // Self-referential alias so `crate::command::Command` resolves (Zig: `pub const Command = struct {…}`).
+    // Self-referential alias so `crate::command::Command` resolves.
     pub use super::Command;
 
     /// Collect `bun::argv()` into an indexable slice of `&'static ZStr`.
-    /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several Zig call
+    /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several call
     /// sites (`bun.argv[n..]`) need a sliceable `&[&ZStr]`.
     #[inline]
     pub(super) fn argv_zslice() -> Vec<&'static bun_core::ZStr> {
@@ -841,8 +842,7 @@ pub mod command {
         Context, ContextData, DebugOptions, HotReload, RuntimeOptions, TestOptions,
     };
 
-    // Zig: `var context_data: ContextData = undefined;` — process-lifetime
-    // storage, written exactly once in `create_context_data` during
+    // Process-lifetime storage, written exactly once in `create_context_data` during
     // single-threaded startup. The pointer to it is published via
     // `bun_options_types::context::set_global` (single source of truth).
     static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
@@ -858,7 +858,7 @@ pub mod command {
         bun_options_types::context::global_ptr()
     }
 
-    /// Zig: `pub fn get() Context` — process-global CLI context handle.
+    /// Process-global CLI context handle.
     #[inline]
     pub fn get() -> Context<'static> {
         // SAFETY: only called after `create_context_data` published the ctx
@@ -875,7 +875,7 @@ pub mod command {
     // copies in cli_body.rs are dead (private `mod cli_body;`, zero external
     // refs) and are removed wholesale by this dedup.
     //
-    // One semantic back-port from the dead copy / Zig spec (cli.zig:411):
+    // One semantic back-port from the original spec:
     // the `is_node` branch of `which()` must clear
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags. The live mod.rs copy had dropped this line.
@@ -990,7 +990,7 @@ pub mod command {
         }
 
         if is_node(argv0) {
-            // Zig cli.zig:411 — node-mode must not warn on flags Bun doesn't know.
+            // node-mode must not warn on flags Bun doesn't know.
             bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
                 .store(false, core::sync::atomic::Ordering::Relaxed);
             // SAFETY: single-threaded startup
@@ -1013,7 +1013,7 @@ pub mod command {
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
         let x = RootCommandMatcher::r#match(first_arg_name);
-        // PERF(port): Zig's `switch` over RootCommandMatcher cases compiles to a
+        // PERF(port): a `switch` over RootCommandMatcher cases would compile to a
         // jump table on the packed u96; Rust `if x == const` is a chain of
         // compares — profile in Phase B.
         if x == RootCommandMatcher::case(b"init") {
@@ -1138,8 +1138,8 @@ pub mod command {
 
     /// Initialize the process-global `CONTEXT_DATA` and publish it via
     /// `Context::set_global`. Shared by `create_context_data` and the
-    /// standalone-graph fast path in `start()` (Zig: the bare
-    /// `context_data = .{...}; global_cli_ctx = &context_data;` sequence).
+    /// standalone-graph fast path in `start()` (the bare
+    /// `context_data = ...; global_cli_ctx = &context_data;` sequence).
     fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
         // SAFETY: single-threaded CLI startup; first and only write to
         // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
@@ -1161,14 +1161,14 @@ pub mod command {
 
     /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
     ///
-    /// PORT NOTE: Zig had `comptime command: Tag` → const generic. `Tag` lacks
+    /// PORT NOTE: was a comptime `command: Tag` parameter → const generic. `Tag` lacks
     /// `ConstParamTy` (lower-tier crate), so demoted to a runtime arg; the only
     /// comptime-dependent bit was `Tag.uses_global_options.get(command)`, which
     /// the runtime `USES_GLOBAL_OPTIONS` set covers.
     /// Returns `&'static mut` to the process-global `CONTEXT_DATA`. Sound
     /// because CLI dispatch is single-threaded and this is the sole live
     /// borrow at the time of return; callers thread it down via the `ctx`
-    /// parameter rather than re-deriving (Zig: `Context = *ContextData`).
+    /// parameter rather than re-deriving (`Context = *ContextData`).
     ///
     /// `#[inline(never)]`: this is the `init` step of the `bun run <script>`
     /// dispatch chain (`exec_auto_or_run → init → RunCommand::exec_with_cfg`)
@@ -1231,12 +1231,11 @@ pub mod command {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child
         // runs CFRunLoopRun() as its real main loop — no Bun runtime past this.
-        // Spec: cli.zig:543.
         #[cfg(target_os = "macos")]
         {
             if let Some(fd_str) = bun_core::env_var::BUN_INTERNAL_WEBVIEW_HOST::get() {
-                // Zig: `std.fmt.parseInt(u31, fd_str, 10)` — parse base-10 directly
-                // from bytes; env var values are `&[u8]`, not assumed UTF-8.
+                // Parse base-10 directly from bytes; env var values are `&[u8]`,
+                // not assumed UTF-8.
                 let fd: u32 = match bun_core::parse_int::<u32>(fd_str, 10).ok() {
                     Some(v) if v <= i32::MAX as u32 => v,
                     _ => Output::panic(format_args!(
@@ -1287,7 +1286,7 @@ pub mod command {
         //    intercept `bun <bin> --version`, where the flag belongs to
         //    `<bin>` (the bug the old Phase-C argv-scan shim had — see the
         //    NOTE below). The empty-eval check is likewise exact-shape, so it
-        //    matches Zig's post-parse `eval.script.len == 0 &&
+        //    matches the original post-parse `eval.script.len == 0 &&
         //    positionals.len == 0` fall-through to `HelpCommand.exec`.
         {
             let argv = bun::argv();
@@ -1406,7 +1405,7 @@ pub mod command {
         let mut offset_for_passthrough: usize = 0;
 
         let ctx: &mut ContextData = 'brk: {
-            // PORT NOTE: Zig calls `bun.initArgv()` eagerly in `main.zig`
+            // PORT NOTE: `bun.initArgv()` is called eagerly at process startup
             // before `Cli.start`, which populates `bun_options_argc` from
             // `BUN_OPTIONS`. The Rust entry (`bun_bin::main`) defers argv
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
@@ -1477,7 +1476,7 @@ pub mod command {
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
-        // PORT NOTE: Zig's AutoCommand arm swallows
+        // PORT NOTE: the AutoCommand arm swallows
         // `error.MissingEntryPoint` from `Command.init` and prints
         // help. `bun_core::Error` has no variant table yet (B-1 stub
         // — `err!()` collapses to `Error::TODO`), so a name-match
@@ -1539,8 +1538,8 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_init() -> CmdResult {
-        // InitCommand parses its own argv (no Context); Zig:
-        //   .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..])
+        // InitCommand parses its own argv (no Context):
+        //   InitCommand => InitCommand.exec(allocator, bun.argv[min(2, bun.argv.len)..])
         let argv = argv_zslice();
         super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
     }
@@ -1603,7 +1602,7 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
-        // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).
+        // PORT NOTE: inits with `RunCommand` here (repl reuses run params).
         let ctx = init(Tag::RunCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
     }
@@ -1679,7 +1678,7 @@ pub mod command {
     }
 
     // ─── helper fns hoisted from `Command.start` (kept out of `start` to keep
-    //     its stack frame small; the original Zig had them as nested closures /
+    //     its stack frame small; the original had them as nested closures /
     //     inline blocks) ─────────────────────────────────────────────────────
 
     const DEFAULT_COMPLETIONS_LIST: &[&[u8]] = &[
@@ -1687,8 +1686,8 @@ pub mod command {
         b"bun", b"upgrade", b"discord", b"test", b"pm", b"x", b"repl", b"info",
     ];
 
-    // PORT NOTE: Zig concatenated DEFAULT_COMPLETIONS_LIST ++ extras at
-    // comptime; hand-rolled join (small, fixed).
+    // PORT NOTE: DEFAULT_COMPLETIONS_LIST ++ extras was concatenated at
+    // compile time; hand-rolled join (small, fixed).
     const REJECT_LIST: &[&[u8]] = &[
         b"build",
         b"install",
@@ -2018,7 +2017,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
-    /// Per-tag clap param table. Runtime dispatch (was const-generic in Zig;
+    /// Per-tag clap param table. Runtime dispatch (was const-generic;
     /// `Tag` lacks `ConstParamTy` here so demoted to a value param).
     pub fn tag_params(cmd: Tag) -> &'static [arguments::ParamType] {
         match cmd {
@@ -2362,7 +2361,7 @@ pub fn print_version_and_exit() -> ! {
     // into a heap `String`, then runs the runtime `<tag>` rewriter into a
     // second `Vec<u8>`, all to print a ~10-byte constant. Write the bytes
     // straight to the buffered stdout writer instead. One `write_all` (the
-    // `\n` is baked into the constant) → one syscall, matching Zig's
+    // `\n` is baked into the constant) → one syscall, matching
     // `writeAll(version ++ "\n")`.
     let w = Output::writer();
     let _ = w.write_all(Global::package_json_version_nl.as_bytes());
@@ -2379,5 +2378,3 @@ pub fn print_revision_and_exit() -> ! {
     Output::flush();
     Global::exit(0);
 }
-
-// ported from: src/runtime/cli/cli.zig

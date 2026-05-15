@@ -3,7 +3,7 @@
 // Main implementation is in src/codegen/ci_info.ts
 
 use bun_core::env_var;
-// TODO(port): `@import("ci_info")` is a build.zig-registered generated module (output of
+// TODO(port): `ci_info` is a build-registered generated module (output of
 // src/codegen/ci_info.ts). Wire the actual Rust module path in Phase B.
 use super::ci_info_generated as generated;
 
@@ -36,5 +36,3 @@ fn detect_uncached() -> Option<&'static [u8]> {
     }
     generated::detect_uncached_generated()
 }
-
-// ported from: src/cli/ci_info.zig

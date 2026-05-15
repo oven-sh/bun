@@ -54,5 +54,3 @@ pub struct DropShadow {
     /// The blur radius of the drop shadow.
     pub blur: Length,
 }
-
-// ported from: src/css/properties/effects.zig

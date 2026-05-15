@@ -4,10 +4,9 @@ use core::ffi::c_void;
 
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 
-/// PORT NOTE: Zig stored `{ ptr: *anyopaque, vtable: ?*const VTable }` and
-/// recovered the `Allocator` by null-checking the vtable. Rust models the same
-/// thing directly — `vtable: Option<&'static AllocatorVTable>` carries the
-/// niche, so the struct is identical in size to `StdAllocator`.
+/// `vtable: Option<&'static AllocatorVTable>` carries the niche, so the struct
+/// is identical in size to `StdAllocator`. Recover the allocator by
+/// null-checking the vtable.
 #[derive(Clone, Copy)]
 pub struct NullableAllocator {
     ptr: *mut c_void,
@@ -28,7 +27,7 @@ impl Default for NullableAllocator {
 
 impl NullableAllocator {
     /// A `NullableAllocator` with no backing allocator. `const` so it can be
-    /// used in `const` initializers (e.g. `ZigString.Slice::EMPTY`).
+    /// used in `const` initializers (e.g. `UnsafeStringView.Slice::EMPTY`).
     pub const NULL: NullableAllocator = NullableAllocator {
         ptr: core::ptr::null_mut(),
         vtable: None,
@@ -86,7 +85,7 @@ impl NullableAllocator {
             if crate::String::is_wtf_allocator(allocator) {
                 // avoid calling `std.mem.Allocator.free` as it sets the memory to undefined
                 // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
-                // WTF deallocator treats it as opaque (Zig passes `[]u8`).
+                // WTF deallocator treats it as opaque.
                 let buf = unsafe {
                     core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len())
                 };
@@ -103,5 +102,3 @@ const _: () = assert!(
     core::mem::size_of::<NullableAllocator>() == core::mem::size_of::<StdAllocator>(),
     "Expected the sizes to be the same."
 );
-
-// ported from: src/bun_alloc/NullableAllocator.zig

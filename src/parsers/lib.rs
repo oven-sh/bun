@@ -19,10 +19,10 @@
 extern crate bun_core as bun_str;
 
 // ───── json_lexer ─────────────────────────────────────────────────────────
-// JSON-only subset of `bun_js_parser::js_lexer`, sliced from
-// `src/js_parser/lexer.zig` with `is_json = true` arms taken. Breaks the
-// GENUINE T4 cycle (`bun_js_parser` → `bun_interchange` → `bun_js_parser`)
-// so `json.rs` can build without an upward dep. See module doc-comment.
+// JSON-only subset of `bun_js_parser::js_lexer`, sliced out with the
+// `is_json = true` arms taken. Breaks the GENUINE T4 cycle
+// (`bun_js_parser` → `bun_interchange` → `bun_js_parser`) so `json.rs` can
+// build without an upward dep. See module doc-comment.
 // Crate-private: implementation detail of `json.rs`; no external consumers.
 mod json_lexer;
 
@@ -33,8 +33,8 @@ mod json_lexer;
 #[path = "json.rs"]
 pub mod json;
 
-/// Zig-side import path is `bun.json` (the parser module). Downstream Rust
-/// crates name it both `json` and `json_parser`; alias the latter here.
+/// Downstream crates name this module both `json` and `json_parser`; alias the
+/// latter here.
 pub use json as json_parser;
 
 // ───── json5 ──────────────────────────────────────────────────────────────
@@ -48,5 +48,3 @@ pub mod toml;
 // ───── yaml ───────────────────────────────────────────────────────────────
 #[path = "yaml.rs"]
 pub mod yaml;
-
-// ported from: src/interchange/interchange.zig

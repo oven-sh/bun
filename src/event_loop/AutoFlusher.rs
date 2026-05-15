@@ -3,25 +3,25 @@ use core::ptr::NonNull;
 
 use crate::DeferredTaskQueue::{DeferredRepeatingTask, DeferredTaskQueue};
 
-/// Zig file-level struct: `src/event_loop/AutoFlusher.zig`
+/// Bookkeeping flag for deferred-microtask auto-flush registration.
 #[derive(Debug, Default)]
 pub struct AutoFlusher {
     pub registered: bool,
 }
 
-/// Zig's free functions take `(comptime Type: type, this: *Type)` and duck-type
-/// on `this.auto_flusher` + `Type.onAutoFlush`. In Rust that contract is a trait.
+/// The original free functions duck-typed on `this.auto_flusher` +
+/// `Type.onAutoFlush`. In Rust that contract is a trait.
 pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&mut self) -> &mut AutoFlusher;
-    /// Zig: `Type.onAutoFlush` — the deferred-task callback. Signature matches
-    /// `DeferredRepeatingTask` after the `@ptrCast` erasure at `postTask`:
-    /// `fn(*anyopaque) bool` ↔ `fn(*mut c_void) -> bool`.
+    /// `Type.onAutoFlush` — the deferred-task callback. Signature matches
+    /// `DeferredRepeatingTask` after the pointer-cast erasure at `postTask`:
+    /// `fn(*mut c_void) -> bool`.
     fn on_auto_flush(this: *mut Self) -> bool;
 }
 
 /// Erase a typed `T::on_auto_flush` to the `DeferredRepeatingTask` ABI
-/// (`unsafe extern "C" fn(*mut c_void) -> bool`). Mirrors Zig's
-/// `@ptrCast(&Type.onAutoFlush)` at the `postTask` call site, but via a
+/// (`unsafe extern "C" fn(*mut c_void) -> bool`). Mirrors the original
+/// raw fn-pointer cast at the `postTask` call site, but via a
 /// monomorphic `extern "C"` trampoline rather than a fn-ptr cast so the
 /// calling convention is honest.
 #[inline]
@@ -38,7 +38,7 @@ pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
     trampoline::<T>
 }
 
-// PORT NOTE (b0): Zig passed `*jsc.VirtualMachine` and reached
+// PORT NOTE (b0): the original passed `*jsc.VirtualMachine` and reached
 // `vm.event_loop().deferred_tasks`. To break the event_loop→jsc upward edge,
 // callers now pass the `DeferredTaskQueue` directly (it lives in this crate).
 // Higher-tier call sites do `&mut vm.event_loop().deferred_tasks` themselves.
@@ -67,7 +67,7 @@ pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     deferred: &mut DeferredTaskQueue,
 ) {
     debug_assert!(this.auto_flusher().registered);
-    // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally; the
+    // PORT NOTE: `bun.assert(expr)` evaluates `expr` unconditionally; the
     // *check* is debug-only but the side effect must run in release too.
     let removed =
         deferred.unregister_task(NonNull::new(std::ptr::from_mut::<T>(this).cast::<c_void>()));
@@ -89,7 +89,7 @@ pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
 }
 
 // ─── associated-fn facade ─────────────────────────────────────────────────
-// Zig call sites read `AutoFlusher.registerDeferredMicrotaskWithType(Self, this, vm)`
+// Existing call sites read `AutoFlusher.registerDeferredMicrotaskWithType(Self, this, vm)`
 // — i.e. namespaced on the struct. Mirror that as inherent associated fns so
 // callers can write `AutoFlusher::register_deferred_microtask_with_type::<T>(…)`.
 // These are the *lower-tier* signatures (queue passed directly); the higher-tier
@@ -128,5 +128,3 @@ impl AutoFlusher {
         unregister_deferred_microtask_with_type_unchecked(this, deferred);
     }
 }
-
-// ported from: src/event_loop/AutoFlusher.zig

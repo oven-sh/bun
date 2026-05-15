@@ -1,7 +1,7 @@
 use core::convert::Infallible;
 use std::borrow::Cow;
 
-/// Duck-typed arg-iterator surface (Zig used `anytype`). Implemented by
+/// Arg-iterator surface. Implemented by
 /// `OsIterator` and `SliceIterator`; `ShellIterator` does not fit (fallible,
 /// owned results) and is used standalone.
 pub trait ArgIter<'a> {
@@ -20,7 +20,7 @@ impl ExampleArgIterator {
 }
 
 /// Pop the first element of `remain`, advancing the slice. Shared body for
-/// `SliceIterator::next` / `OsIterator::next` (the .zig spec duplicates them).
+/// `SliceIterator::next` / `OsIterator::next`.
 #[inline]
 fn pop_first<'a>(remain: &mut &'a [&'a [u8]]) -> Option<&'a [u8]> {
     if remain.is_empty() {
@@ -61,7 +61,7 @@ impl<'a> ArgIter<'a> for SliceIterator<'a> {
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub struct OsIterator {
-    // PORT NOTE: the Zig `arena: bun.ArenaAllocator` field was dropped — non-AST crate,
+    // PORT NOTE: an `arena` allocator field was dropped — non-AST crate,
     // and `remain` borrows the process-global argv so nothing is allocated per-call.
     pub remain: &'static [&'static [u8]],
 
@@ -72,7 +72,7 @@ pub struct OsIterator {
 }
 
 impl OsIterator {
-    // TODO(port): Zig aliased `process.ArgIterator.InitError`; no std::process here.
+    // TODO(port): the original aliased a process arg-iterator init error type; no std::process here.
 
     pub fn init() -> OsIterator {
         let mut res = OsIterator {
@@ -103,7 +103,7 @@ impl ArgIter<'static> for OsIterator {
 
 /// Process argv as a `&'static` slice of `&'static [u8]`.
 ///
-/// Zig: `bun.argv: [][:0]const u8` — the process-global view that includes
+/// `bun.argv` — the process-global view that includes
 /// `BUN_OPTIONS` injection.
 ///
 /// This used to project `&ZStr → &[u8]` through a `OnceLock<Vec<&[u8]>>`,
@@ -129,7 +129,7 @@ pub enum ShellIteratorError {
     DanglingEscape,
     #[error("QuoteNotClosed")]
     QuoteNotClosed,
-    // PORT NOTE: Zig union included `mem.Allocator.Error` (OutOfMemory). Vec aborts on OOM
+    // PORT NOTE: the original error union included OutOfMemory. Vec aborts on OOM
     // under the global mimalloc allocator, so that variant is dropped.
 }
 
@@ -138,7 +138,7 @@ bun_core::named_error_set!(ShellIteratorError);
 /// An argument iterator that takes a string and parses it into arguments, simulating
 /// how shells split arguments.
 pub struct ShellIterator<'a> {
-    // PORT NOTE: the Zig `arena: bun.ArenaAllocator` field was dropped (non-AST crate).
+    // PORT NOTE: an `arena` allocator field was dropped (non-AST crate).
     // Allocated results are returned as `Cow::Owned` instead of arena-backed slices.
     pub str: &'a [u8],
 }
@@ -170,7 +170,7 @@ impl<'a> ShellIterator<'a> {
         let mut state = State::SkipWhitespace;
 
         // PORT NOTE: reshaped for borrowck — copy the slice ref so we can reassign
-        // `self.str` before returning (Zig used `defer iter.str = ...`).
+        // `self.str` before returning.
         let s: &'a [u8] = self.str;
 
         for (i, &c) in s.iter().enumerate() {
@@ -286,8 +286,8 @@ impl<'a> ShellIterator<'a> {
                 // The state we end up when after the escape character (`\`). All these
                 // states do is transition back into the previous state.
                 // TODO: Are there any escape sequences that does transform the second
-                //       character into something else? For example, in Zig, `\n` is
-                //       transformed into the line feed ascii character.
+                //       character into something else? For example, `\n` could be
+                //       transformed into the line feed ASCII character.
                 State::NoQuoteEscape => {
                     state = State::NoQuote;
                 }
@@ -345,7 +345,7 @@ mod tests {
     }
 
     fn test_shell_iterator_ok(str: &[u8], allocations: usize, expect: &[&[u8]]) {
-        // TODO(port): Zig used `testing.FailingAllocator` to cap/count allocations.
+        // TODO(port): the original test capped/counted allocations with a failing allocator.
         // No allocator injection in the Rust port; `allocations` is unused.
         let _ = allocations;
         let mut it = ShellIterator::init(str);
@@ -435,5 +435,3 @@ mod tests {
         test_shell_iterator_err(b"a\\", ShellIteratorError::DanglingEscape);
     }
 }
-
-// ported from: src/clap/args.zig

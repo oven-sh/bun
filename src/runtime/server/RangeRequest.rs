@@ -115,8 +115,8 @@ pub fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
-// PORT NOTE: Zig passed `req` by value; `bun_uws::AnyRequest::header` borrows
-// `&self` and returns `&[u8]` tied to it, so take `&AnyRequest` here.
+// PORT NOTE: `bun_uws::AnyRequest::header` borrows
+// `&self` and returns `&[u8]` tied to it, so take `&AnyRequest` here (not by value).
 pub fn from_request(req: &AnyRequest, total: u64) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;
@@ -161,5 +161,3 @@ pub fn format_content_range(buf: &mut [u8], range: Result, total: Option<u64>) -
         },
     }
 }
-
-// ported from: src/runtime/server/RangeRequest.zig

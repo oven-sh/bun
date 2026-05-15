@@ -54,7 +54,7 @@ fn z(s: &ZStr) -> &str {
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct BlockList {
-    // Intrusive thread-safe refcount (Zig: `bun.ptr.ThreadSafeRefCount`).
+    // Intrusive thread-safe refcount.
     // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
     // the `Box` via the trait's default destructor.
     ref_count: bun_ptr::ThreadSafeRefCount<BlockList>,
@@ -76,8 +76,7 @@ pub struct BlockList {
 }
 
 impl BlockList {
-    // Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-    // → trait impl + default destructor (drops the `Box`) provided by
+    // Trait impl + default destructor (drops the `Box`) provided by
     // `#[derive(ThreadSafeRefCounted)]`; inherent forwarders below.
     #[inline]
     pub fn ref_(&self) {
@@ -384,7 +383,7 @@ impl BlockList {
             ctx,
             impl_: write_bytes,
         };
-        // Error = `!` (Zig: `error{}`), so no `?` needed.
+        // Error type is uninhabited, so no `?` needed.
         // Only the address is serialized; deserialize re-derives `*mut Self`
         // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
         // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
@@ -458,5 +457,3 @@ fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)
 }
-
-// ported from: src/runtime/node/net/BlockList.zig

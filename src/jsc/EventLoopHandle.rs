@@ -1,9 +1,9 @@
 //! `jsc.EventLoopHandle` — non-owning reference to either the JS event loop or
 //! the mini event loop.
 //!
-//! LAYERING: the Zig spec (`src/jsc/EventLoopHandle.zig`) lives
-//! under `jsc` and reaches freely into `jsc.EventLoop`, `jsc.VirtualMachine`,
-//! and `bun_runtime::webcore::Blob::Store`. In Rust that is a hard dep cycle:
+//! LAYERING: this type conceptually lives under `jsc` and reaches freely into
+//! `jsc.EventLoop`, `jsc.VirtualMachine`, and `bun_runtime::webcore::Blob::Store`.
+//! That is a hard dep cycle:
 //! `bun_runtime → bun_jsc`, and many tier-≤4 crates (`bun_install`,
 //! `bun_spawn`, `bun_shell`) need `EventLoopHandle` without pulling in
 //! `bun_jsc`. The type was therefore MOVED DOWN to
@@ -15,7 +15,7 @@
 //! path (and the `jsc.EventLoopHandle` namespace shape) compiling. All
 //! behaviour lives in the lower crate; nothing here owns logic.
 //!
-//! Spec mapping (EventLoopHandle.zig → bun_event_loop::any_event_loop):
+//! Method mapping (`jsc.EventLoopHandle` → `bun_event_loop::any_event_loop`):
 //!   `globalObject`                → `EventLoopHandle::global_object` (erased ptr)
 //!   `bunVM`                       → `EventLoopHandle::bun_vm` (erased ptr)
 //!   `stdout` / `stderr`           → `EventLoopHandle::{stdout,stderr}` (erased ptr)
@@ -35,5 +35,3 @@
 pub use bun_event_loop::any_event_loop::{
     EnteredEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
-
-// ported from: src/jsc/EventLoopHandle.zig

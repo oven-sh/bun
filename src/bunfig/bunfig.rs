@@ -1,4 +1,4 @@
-//! Port of `src/runtime/cli/bunfig.zig`.
+//! `bunfig.toml` parsing and CLI option merging.
 //!
 //! `Bunfig::parse` and the inner `Parser` route through the real
 //! `bun_parsers::{toml,json}` parsers (which produce the value-shaped
@@ -28,7 +28,7 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-// Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
+// Re-exports
 pub use bun_options_types::offline_mode::OfflineMode;
 
 // TODO: replace api.TransformOptions with Bunfig
@@ -40,7 +40,7 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
 }
 
-/// Port of `resolver/package_json.zig` `PackageJSON.parseMacrosJSON`.
+/// Parses the `macros` map from a `package.json`-shaped object.
 ///
 /// Re-ported here against the value-shaped `bun_ast::Expr` (the
 /// tree produced by the TOML/JSON parsers) and returning the
@@ -136,7 +136,7 @@ fn parse_macros_json(
 
 #[inline]
 fn num_to_u32(n: f64) -> u32 {
-    // Note: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB.
+    // Note: Rust `as` saturates on overflow/NaN.
     n as u32
 }
 
@@ -148,7 +148,7 @@ pub struct Parser<'a> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
-    // PORT NOTE: Zig held both `bunfig: *api.TransformOptions` (= `&ctx.args`)
+    // PORT NOTE: the original held both `bunfig: *api.TransformOptions` (= `&ctx.args`)
     // and `ctx: *Command.Context` simultaneously. Rust forbids the overlapping
     // borrow, so `bunfig` writes route through `self.ctx.args` directly.
     ctx: &'a mut ContextData,
@@ -232,7 +232,7 @@ impl<'a> Parser<'a> {
 
     fn load_log_level(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         self.expect_string(expr)?;
-        // PERF(port): Zig used strings.ExactSizeMatcher(8) — profile in Phase B
+        // PERF(port): could use an exact-size matcher — profile in Phase B
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
             b"debug" => api::MessageLevel::Debug,
             b"error" => api::MessageLevel::Err,
@@ -352,7 +352,7 @@ impl<'a> Parser<'a> {
 
     // PORT NOTE: `comptime cmd: Command.Tag` demoted to a runtime arg —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
-    // already derives `enum_map::Enum`, which conflicts). The Zig original
+    // already derives `enum_map::Enum`, which conflicts). The original
     // monomorphised over `cmd` purely to dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
     pub fn parse(&mut self, cmd: CommandTag) -> Result<(), bun_core::Error> {
@@ -790,7 +790,7 @@ impl<'a> Parser<'a> {
 
                 if let Some(elide_lines) = run_expr.get(b"elide-lines") {
                     if let Some(n) = elide_lines.as_number() {
-                        // Note: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB
+                        // Note: Rust `as` saturates on overflow/NaN
                         self.ctx.bundler_options.elide_lines = Some(n as usize);
                     } else {
                         self.add_error(elide_lines.loc, b"Expected number")?;
@@ -1120,16 +1120,14 @@ impl Bunfig {
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
-        // Zig passes `bun.default_allocator` here — no side `mi_heap`. The Rust
-        // port previously called `Arena::new()` (= `mi_heap_new` +
-        // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
-        // `bun -e ''` startup to. Borrow the process default heap instead so
-        // TOML/JSON parse allocations route through plain `mi_malloc`, matching
-        // Zig. Parsed config lives for the process lifetime either way.
+        // No side `mi_heap` is needed here. A previous version called
+        // `Arena::new()` (= `mi_heap_new` + `mi_heap_destroy` on drop), which
+        // perf attributed ~1.6% of `bun -e ''` startup to. Borrow the process
+        // default heap instead so TOML/JSON parse allocations route through
+        // plain `mi_malloc`. Parsed config lives for the process lifetime either way.
         let bump = Bump::borrowing_default();
 
         let ext = source.path.name.ext;
-        // Zig: `if (strings.eqlComptime(source.path.name.ext[1..], "toml"))`
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
 
         let expr = if is_toml {
@@ -1168,7 +1166,7 @@ impl Bunfig {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — Zig stored both `&mut ctx` and
+        // PORT NOTE: reshaped for borrowck — the original stored both `&mut ctx` and
         // `&mut ctx.args` simultaneously inside Parser. In Rust we route bunfig
         // writes through `self.ctx.args` directly. `log` is derived from the
         // copied raw pointer above so it does not overlap the `&mut ctx` borrow.
@@ -1259,7 +1257,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
+        // PORT NOTE: the original held `*BunInstall` and `*Parser` simultaneously.
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
         // long-lived `&mut` derived from `self.ctx.install`. Move the box
@@ -1540,7 +1538,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // bunfig.zig:824-839 — remap PnpmMatcher errors so callers (and the
+        // Remap PnpmMatcher errors so callers (and the
         // crash handler's `"Invalid Bunfig"` match) see the canonical
         // bunfig error; only OOM passes through unchanged.
         let remap = |e: FromExprError| -> bun_core::Error {
@@ -1680,5 +1678,3 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 }
-
-// ported from: src/runtime/cli/bunfig.zig

@@ -6,11 +6,11 @@ pub struct EnvMap {
     map: EnvMapInner,
 }
 
-// PORT NOTE: Zig used `std.ArrayHashMap(K, V, Context, store_hash=true)`.
-// `bun_collections::ArrayHashMap` already takes a `C: ArrayHashContext<K>` param.
+// PORT NOTE: `bun_collections::ArrayHashMap` already takes a `C: ArrayHashContext<K>` param
+// (originally `std.ArrayHashMap` with `store_hash = true`).
 pub type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
-// PORT NOTE: Zig calls this `MapType`. Renamed to avoid rustc confusing it with the
+// PORT NOTE: originally named `MapType`. Renamed to avoid rustc confusing it with the
 // unrelated mmap `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
 type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
@@ -21,7 +21,7 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn hash(&self, s: &EnvStr) -> u32 {
         #[cfg(windows)]
         {
-            // Zig: `bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice())`.
+            // `CaseInsensitiveASCIIStringContext.hash(s.slice())`.
             return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
                 &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
                 s.slice(),
@@ -36,7 +36,7 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
         #[cfg(windows)]
         {
-            // Zig: `bun.CaseInsensitiveASCIIStringContext.eql` → `eqlCaseInsensitiveASCIIICheckLength`.
+            // `CaseInsensitiveASCIIStringContext.eql` → `eqlCaseInsensitiveASCIIICheckLength`.
             // Must be length-checked: "PATH" must NOT match "PATHEXT".
             return bun_core::strings::eql_case_insensitive_asciii_check_length(
                 a.slice(),
@@ -147,5 +147,3 @@ impl Drop for EnvMap {
         // map storage freed by its own Drop
     }
 }
-
-// ported from: src/shell/EnvMap.zig

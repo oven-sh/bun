@@ -101,12 +101,12 @@ impl fmt::Display for Diff<u8> {
             Operation::Insert => "+",
             Operation::Delete => "-",
         };
-        // TODO(port): Zig used `{s}` on `[]const Unit`; bytes may not be valid UTF-8.
+        // TODO(port): the original used `{s}` on `[]const Unit`; bytes may not be valid UTF-8.
         write!(f, "({}, \"{}\")", op, bstr::BStr::new(&self.text))
     }
 }
 
-/// Zig: `pub fn DMP(comptime Unit: type) type { return struct { ... } }`
+/// Originally `pub fn DMP(comptime Unit: type) type { return struct { ... } }`.
 #[derive(Clone, Copy)]
 pub struct DiffMatchPatch<Unit: DiffUnit> {
     pub config: Config,
@@ -115,10 +115,10 @@ pub struct DiffMatchPatch<Unit: DiffUnit> {
 
 pub type DiffList<Unit> = Vec<Diff<Unit>>;
 
-/// Zig: `pub const DiffError = error{OutOfMemory};`
+/// Originally `pub const DiffError = error{OutOfMemory};`.
 pub type DiffError = AllocError;
 
-/// Zig: `const DMPUsize = DMP(usize);`
+/// Originally `const DMPUsize = DMP(usize);`.
 pub type DmpUsize = DiffMatchPatch<usize>;
 
 impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
@@ -178,7 +178,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         self.diff_internal(before, after, check_lines, deadline)
     }
 
-    // Zig `deinitDiffList` / `freeRangeDiffList` deleted: bodies only freed owned
+    // `deinitDiffList` / `freeRangeDiffList` deleted: bodies only freed owned
     // `Box<[Unit]>` fields (now handled by `Drop`); range-free callsites inlined as `drain`.
 
     fn diff_internal(
@@ -741,7 +741,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                     // Upon reaching an equality, check for prior redundancies.
                     if count_delete >= 1 && count_insert >= 1 {
                         // Delete the offending records and add the merged ones.
-                        // PORT NOTE: Zig freeRangeDiffList + replaceRangeAssumeCapacity → drain
+                        // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → drain
                         diffs.drain(
                             pointer - count_delete - count_insert
                                 ..pointer - count_delete - count_insert
@@ -965,7 +965,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
             line_array.push(std::ptr::from_ref::<[Unit]>(line));
             // Unit == u8 verified above; bytemuck statically checks the layout.
             let line_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(line);
-            // TODO(port): StringHashMap key ownership — Zig stored a borrowed slice.
+            // TODO(port): StringHashMap key ownership — the original stored a borrowed slice.
             line_hash.put_assume_capacity(line_u8, line_array.len() - 1);
             chars.push(line_array.len() - 1);
         }
@@ -1062,7 +1062,7 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                             text_delete.drain(0..common_length);
                         }
                         // Factor out any common suffixies.
-                        // @ZigPort this seems very wrong
+                        // PORT NOTE: this seems very wrong
                         common_length = diff_common_suffix(&text_insert, &text_delete);
                         if common_length != 0 {
                             diffs[pointer].text = concat(&[
@@ -1284,7 +1284,7 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
                     diffs[p + 1].text = dupe(&insertion[overlap_length1..]);
                     pointer += 1;
                 } else {
-                    // PORT NOTE: restore taken values (no-op in Zig).
+                    // PORT NOTE: restore taken values (no-op in the original).
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1310,7 +1310,7 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
                     diffs[p + 1].text = new_plus;
                     pointer += 1;
                 } else {
-                    // PORT NOTE: restore taken values (no-op in Zig).
+                    // PORT NOTE: restore taken values (no-op in the original).
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1359,7 +1359,7 @@ pub fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
                 edit.extend_from_slice(&common_string);
                 edit.extend_from_slice(&not_common);
 
-                // Zig: equality_2.insertSlice(0, common_string)
+                // equality_2.insertSlice(0, common_string)
                 equality_2.splice(0..0, common_string.iter().copied());
             }
 
@@ -1641,14 +1641,14 @@ mod tests {
         ); // Unicode
     }
 
-    // TODO(port): the Zig source has ~1400 lines of additional tests for
+    // TODO(port): the original source had ~1400 lines of additional tests for
     // diffHalfMatch, diffLinesToChars, diffCharsToLines, diffCleanupMerge,
     // diffCleanupSemanticLossless, rebuildtexts, diffBisect, diff,
     // diffLineMode, diffCleanupSemantic, diffCleanupEfficiency. They were
-    // wrapped in `checkAllAllocationFailures` (Zig OOM-injection harness)
+    // wrapped in an OOM-injection harness
     // which has no Rust equivalent (global allocator aborts on OOM). Port
-    // the assertions directly in Phase B; the test data is preserved in the
-    // .zig source.
+    // the assertions directly in Phase B; the test data is preserved in
+    // git history.
 
     fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {
         let mut text: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
@@ -1729,9 +1729,7 @@ mod tests {
     }
 
     // TODO(port): `checkAllAllocationFailures` / `CheckAllAllocationFailuresTuples`
-    // are Zig comptime-reflection helpers wrapping `std.testing.checkAllAllocationFailures`.
+    // were comptime-reflection OOM-injection helpers.
     // Rust's global allocator aborts on OOM; there is no analogous fallible-alloc
     // injection harness in this codebase. Dropped.
 }
-
-// ported from: src/test_runner/diff/diff_match_patch.zig

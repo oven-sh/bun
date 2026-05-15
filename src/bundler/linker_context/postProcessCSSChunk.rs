@@ -86,8 +86,8 @@ pub fn post_process_css_chunk(
         }
 
         // Save the offset to the start of the stored JavaScript
-        // PORT NOTE: Zig `j.push(.., bun.default_allocator)` — code() borrows from
-        // compile_results which outlives the joiner; treat as static (no copy/free).
+        // PORT NOTE: code() borrows from compile_results which outlives the
+        // joiner; treat as static (no copy/free).
         j.push_static(compile_result.code());
 
         if let Some(source_map_chunk) = compile_result.source_map_chunk() {
@@ -95,9 +95,8 @@ pub fn post_process_css_chunk(
                 bun_core::handle_oom(compile_results_for_source_map.append(
                     CompileResultForSourceMap {
                         source_map_chunk: source_map_chunk.clone(),
-                        // Zig reads `.value` payload directly — guaranteed `Value` here
-                        // because `source_maps != None` implies `line_offset` was
-                        // initialised to `Value(_)` above.
+                        // Guaranteed `Value` here because `source_maps != None`
+                        // implies `line_offset` was initialised to `Value(_)` above.
                         generated_offset: match line_offset {
                             LineColumnOffsetOptional::Value(v) => v,
                             LineColumnOffsetOptional::Null => unreachable!(),
@@ -152,5 +151,3 @@ pub fn post_process_css_chunk(
 
     Ok(())
 }
-
-// ported from: src/bundler/linker_context/postProcessCSSChunk.zig

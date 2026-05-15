@@ -11,7 +11,7 @@ pub mod lexer;
 pub use self::lexer::Lexer;
 use self::lexer::T;
 
-// Zig: `js_ast.E.Object.Rope`. The MOVE_DOWN landed it at
+// `js_ast.E.Object.Rope`. The MOVE_DOWN landed it at `js_ast::e::Rope`.
 type Rope = js_ast::e::Rope;
 use js_ast::e::SetError;
 use js_ast::expr::Data as ExprData;
@@ -22,7 +22,7 @@ use js_ast::expr::Data as ExprData;
 // `bun_ast::E::Object` ships `get_or_put_object` but not the two
 // siblings the TOML parser drives. Defining them here (T3) keeps the
 // MOVE_DOWN'd T2 surface minimal; both are straight ports of
-// `src/js_parser/ast/E.zig` `setRope` / `getOrPutArray`.
+// `E.Object.setRope` / `E.Object.getOrPutArray`.
 // ──────────────────────────────────────────────────────────────────────────
 
 trait ObjectRopeExt {
@@ -154,8 +154,8 @@ impl ObjectRopeExt for E::Object {
 // ──────────────────────────────────────────────────────────────────────────
 //
 // TODO(port): `HashMapPool` is private and unreferenced in this file (dead code
-// in the Zig source). Ported for structural fidelity; verify and delete in
-// Phase B if truly unused.
+// upstream too). Ported for structural fidelity; verify and delete in Phase B
+// if truly unused.
 mod hash_map_pool {
     use super::*;
     use bun_collections::identity_context::IdentityContext;
@@ -175,7 +175,7 @@ mod hash_map_pool {
     }
 
     thread_local! {
-        // Zig: `threadlocal var list: LinkedList = undefined;` + `threadlocal var loaded: bool = false;`
+        // Originally a thread-local `LinkedList` + `loaded: bool` pair.
         // Folded into a single Option — None ≙ loaded == false.
         static LIST: RefCell<Option<*mut Node>> = const { RefCell::new(None) };
     }
@@ -210,7 +210,7 @@ mod hash_map_pool {
     }
 
     pub(super) fn release(node: *mut Node) {
-        // Zig models this as a sticky `loaded: bool` + `list.prepend(node)`;
+        // Originally modeled as a sticky `loaded: bool` + `list.prepend(node)`;
         // prepend always sets `node.next = list.first`. Folding into a single
         // `Option<*mut Node>` means we must rewrite `next` on BOTH arms — a
         // node coming back via `release` may carry a stale `next` from a prior
@@ -229,9 +229,9 @@ mod hash_map_pool {
 
 pub struct TOML<'a> {
     pub lexer: Lexer<'a>,
-    // PORT NOTE: Zig also stores `log: *logger.Log` on the parser, but it is
-    // never read — all logging goes through `lexer.log`. Dropped here to avoid
-    // a second `&mut Log` borrow overlapping `lexer.log`.
+    // PORT NOTE: a parser-side `log: *logger.Log` field is never read — all
+    // logging goes through `lexer.log`. Dropped here to avoid a second
+    // `&mut Log` borrow overlapping `lexer.log`.
     pub bump: &'a Bump,
     pub stack_check: StackCheck,
 }
@@ -256,9 +256,9 @@ impl<'a> TOML<'a> {
         self.lexer.source
     }
 
-    // Zig: `fn e(_: *TOML, t: anytype, loc: logger.Loc) Expr` with a
-    // `@typeInfo(Type) == .pointer` auto-deref. In Rust the deref is implicit at
-    // call sites, so this collapses to a single generic forwarding to Expr::init.
+    // The original auto-dereferenced pointer payloads. In Rust the deref is
+    // implicit at call sites, so this collapses to a single generic forwarding
+    // to `Expr::init`.
     pub fn e<D>(&self, t: D, loc: bun_ast::Loc) -> Expr
     where
         D: js_ast::ExprInit, // TODO(port): real trait bound for Expr::init payloads
@@ -284,10 +284,9 @@ impl<'a> TOML<'a> {
             _ => {}
         }
 
-        // PORT NOTE: Zig copies the `Source` by value (`source_.*`). The Rust
-        // `Lexer` borrows it (`&'a Source`) so `identifier`/`string_literal_slice`
-        // can point into `source.contents` for `'a` without a self-referential
-        // struct — no copy needed.
+        // PORT NOTE: the `Lexer` borrows `Source` (`&'a Source`) so
+        // `identifier`/`string_literal_slice` can point into `source.contents`
+        // for `'a` without a self-referential struct — no copy needed.
         let mut parser = TOML::init(bump, source_, log, redact_logs)?;
 
         parser.run_parser()
@@ -340,8 +339,8 @@ impl<'a> TOML<'a> {
     }
 
     pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope, bun_core::Error> {
-        // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
-        // (a stack-fallback arena reset per-iteration). Here we allocate from the
+        // TODO(port): lifetime — originally returned `*Rope` allocated from a
+        // stack-fallback arena reset per-iteration. Here we allocate from the
         // caller-provided bump and return `&mut Rope` borrowed from it.
         let rope: &mut Rope = bump.alloc(Rope {
             head: match self.parse_key_segment()? {
@@ -381,11 +380,11 @@ impl<'a> TOML<'a> {
             .e_object()
             .expect("infallible: variant checked")
             .as_ptr();
-        // TODO(port): `head` aliases into `root.data`; using raw pointer to mirror
-        // the Zig `*E.Object` and sidestep overlapping &mut on `root`.
+        // TODO(port): `head` aliases into `root.data`; using a raw pointer to
+        // sidestep overlapping `&mut` on `root`.
 
-        // PERF(port): was stack-fallback (std.heap.stackFallback(@sizeOf(Rope)*6)) —
-        // profile. Using the parser's bump directly.
+        // PERF(port): was a stack-fallback allocator (6 ropes' worth of stack)
+        // — profile. Using the parser's bump directly.
         let key_allocator = self.bump;
 
         loop {
@@ -520,14 +519,14 @@ impl<'a> TOML<'a> {
     }
 
     pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
-        // Zig: `bun.throwStackOverflow()` guarded only by `StackCheck`. The
-        // Rust port previously added a hard depth cap because release-mode
-        // frames are smaller than Zig's (Zig didn't emit LLVM lifetime
+        // Stack overflow is guarded only by `StackCheck`. The Rust port
+        // previously added a hard depth cap because release-mode frames are
+        // smaller than the original's (which didn't emit LLVM lifetime
         // annotations, so `parse_value`'s frame was the union of all locals
-        // including the `stackFallback(@sizeOf(Rope)*6)` buffer; Rust's is
-        // just the live set). The cap was an artificial limit on a feature —
-        // the test's `depth = 25_000` was Zig-calibrated and is now bumped to
-        // a value that exhausts the 18 MB stack regardless of frame size.
+        // including the stack-fallback Rope buffer; Rust's is just the live
+        // set). The cap was an artificial limit on a feature — the test's
+        // `depth = 25_000` was calibrated to the old frame size and is now
+        // bumped to a value that exhausts the 18 MB stack regardless.
         if !self.stack_check.is_safe_to_recurse() {
             return Err(bun_core::err!("StackOverflow"));
         }
@@ -591,7 +590,7 @@ impl<'a> TOML<'a> {
                     .e_object()
                     .expect("infallible: variant checked")
                     .as_ptr();
-                // TODO(port): `obj` aliases into `expr.data`; raw pointer mirrors Zig.
+                // TODO(port): `obj` aliases into `expr.data`; raw pointer to sidestep overlapping &mut.
 
                 while self.lexer.token != T::t_close_brace {
                     // SAFETY: `obj` points into the AST store and is live here.
@@ -636,7 +635,7 @@ impl<'a> TOML<'a> {
                     .e_array()
                     .expect("infallible: variant checked")
                     .as_ptr();
-                // TODO(port): `array` aliases into `array_.data`; raw pointer mirrors Zig.
+                // TODO(port): `array` aliases into `array_.data`; raw pointer to sidestep overlapping &mut.
                 let bump = self.bump;
                 self.lexer.allow_double_bracket = false;
 
@@ -678,5 +677,3 @@ impl<'a> TOML<'a> {
         }
     }
 }
-
-// ported from: src/interchange/toml.zig

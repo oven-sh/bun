@@ -27,8 +27,8 @@ mod loader_disc {
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;
 
-// PORT NOTE: `Table` variant names in Zig are raw MIME-type strings
-// (e.g. `@"application/json"`), which are not valid Rust identifiers.
+// PORT NOTE: `Table` is conceptually keyed by raw MIME-type strings
+// (e.g. `application/json`), which are not valid Rust identifiers.
 // `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`;
 // `t!("...")` resolves to the corresponding `Table` value at compile time.
 macro_rules! t {
@@ -39,7 +39,7 @@ macro_rules! t {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct MimeType {
-    // Zig `deinit` frees `value` via allocator → owning type per §Type-map.
+    // `value` is owned (§Type-map).
     // `Cow` so the `pub const` items below stay `Borrowed` and const-constructible.
     pub value: Cow<'static, [u8]>,
     pub category: Category,
@@ -72,7 +72,7 @@ impl Compact {
             }
         }
 
-        // TODO(port): Zig matches on `Table` enum variants directly; we compare against
+        // TODO(port): compare against
         // `t!` placeholders because variant idents are not yet defined (see top-of-file note).
         let v = self.value;
         if v == t!("application/webassembly") {
@@ -367,8 +367,8 @@ impl MimeType {
     }
 
     pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
-        // PORT NOTE: Zig signature is `(str_, ?Allocator param, allocated: ?*bool)`.
-        // Allocator presence == "dupe the input"; replaced with `dupe: bool` (see §Allocators).
+        // PORT NOTE: previous signature carried an optional allocator;
+        // allocator presence == "dupe the input"; replaced with `dupe: bool` (see §Allocators).
         let mut str = str_;
         if let Some(slash) = str.iter().position(|&b| b == b'/') {
             let category_ = &str[0..slash];
@@ -507,7 +507,7 @@ impl MimeType {
         if dupe {
             Cow::Owned(s.to_vec())
         } else {
-            // TODO(port): Zig borrows the input slice here (zero-copy). A non-'static
+            // TODO(port): the original borrowed the input slice here (zero-copy). A non-'static
             // borrow needs a struct lifetime param, forbidden in Phase A — copying for now.
             // PERF(port): was zero-copy borrow — profile in Phase B
             Cow::Owned(s.to_vec())
@@ -548,9 +548,9 @@ pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
 }
 
-// PORT NOTE: phf_map! rejects duplicate keys at compile time. The Zig source
-// contained duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap
-// silently kept the first occurrence) — later duplicates dropped below.
+// PORT NOTE: phf_map! rejects duplicate keys at compile time. The original table
+// contained duplicate entries for "tsx", "yaml", "yml" (and silently kept
+// the first occurrence) — later duplicates dropped below.
 pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
@@ -1521,7 +1521,7 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"tsx" => t!("application/javascript"),
     b"tsd" => t!("application/timestamped-data"),
     b"tsv" => t!("text/tab-separated-values"),
-    // (dup "tsx" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "tsx" dropped — phf rejects; first occurrence above kept)
     b"ttc" => t!("font/collection"),
     b"ttf" => t!("font/ttf"),
     b"ttl" => t!("text/turtle"),
@@ -1721,10 +1721,10 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"xwd" => t!("image/x-xwindowdump"),
     b"xyz" => t!("chemical/x-xyz"),
     b"xz" => t!("application/x-xz"),
-    // (dup "yaml" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "yaml" dropped — phf rejects; first occurrence above kept)
     b"yang" => t!("application/yang"),
     b"yin" => t!("application/yin+xml"),
-    // (dup "yml" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "yml" dropped — phf rejects; first occurrence above kept)
     b"ymp" => t!("text/x-suse-ymp"),
     b"z1" => t!("application/x-zmachine"),
     b"z2" => t!("application/x-zmachine"),
@@ -1766,5 +1766,3 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
     }
     None
 }
-
-// ported from: src/http_types/MimeType.zig

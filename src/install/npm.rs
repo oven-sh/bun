@@ -147,7 +147,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let mut response_buf = MutableString::init(1024)?;
 
     // `print_buf` stays live on this frame until after `req.send_sync()`
-    // returns (Zig: `defer print_buf.deinit()`, npm.zig:25). `init_sync`
+    // returns. `init_sync`
     // borrows the URL/header buffers for the duration of the synchronous
     // request only.
     let url = URL::parse(&print_buf);
@@ -291,7 +291,7 @@ pub mod registry {
         *DEFAULT_URL_HASH
     }
 
-    // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
+    // `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
     // `MutableString: ObjectPoolType` (init = init2048) is provided in
     // bun_string; the `object_pool!` macro generates the per-monomorphization
     // thread-local storage so `BodyPool::get()` doesn't hit `UnwiredStorage`'s
@@ -351,8 +351,8 @@ pub mod registry {
                 }
             }
 
-            // PORT NOTE: Zig's `URL.parse(registry.url)` borrows the input
-            // `[]const u8`; here `url` borrows the owned `registry_url` buffer
+            // PORT NOTE: the original `URL.parse(registry.url)` borrows the input
+            // slice; here `url` borrows the owned `registry_url` buffer
             // for the duration of parsing. The final href is moved into
             // `Scope.url: OwnedURL` (owned `Box<[u8]>`).
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
@@ -362,7 +362,7 @@ pub mod registry {
             let mut needs_normalize = false;
 
             // Backing storage for `user`/`auth` when synthesized from
-            // username:password (Zig used a single `default_allocator.alloc`).
+            // username:password (originally a single allocation).
             let mut output_buf_owned: Box<[u8]> = Box::default();
 
             if registry.token.is_empty() {
@@ -462,7 +462,7 @@ pub mod registry {
                             }
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig's `defer { url.pathname = pathname; url.path = pathname; }`
+                        // PORT NOTE: reshaped for borrowck — the deferred pathname/path restore
                         // is applied at every `break 'outer` above and once more here at fallthrough.
                         url.pathname = pathname.into();
                         url.path = pathname.into();
@@ -522,7 +522,7 @@ pub mod registry {
         }
     }
 
-    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+    // TODO(b2): the original used `IdentityContext(u64)` hasher; std HashMap is fine for now.
     pub type Map = HashMap<u64, Scope>;
 
     pub enum PackageVersionResponse {
@@ -630,14 +630,14 @@ pub use bun_install_types::resolver_hooks::{
     Architecture, Libc, Negatable, NegatableEnum, NegatableExt, OperatingSystem,
 };
 
-/// Port of `Negatable(T).fromJson` (src/install/npm.zig). Lives here (not in
+/// `Negatable(T).fromJson`. Lives here (not in
 /// `bun_install_types`) because `bun_ast::Expr` is not reachable from that crate.
 pub fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
     let mut this = T::NONE.negatable();
     if let JSON::ExprData::EArray(a) = &expr.data {
         for item in a.items.slice() {
             // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
-            // so no transcode allocator is needed (Zig: asString(allocator)).
+            // so no transcode allocator is needed.
             if let Some(value) = item.as_utf8_string_literal() {
                 this.apply(value);
             }
@@ -740,7 +740,7 @@ impl PackageVersion {
         self.bundled_dependencies.is_invalid()
     }
 
-    /// Port of Zig's `@field(package_version, group.field)` reflection used by
+    /// Field-by-name lookup used by
     /// `Package.fromNPM` to walk dependency groups by name.
     pub fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
         match field {
@@ -753,15 +753,15 @@ impl PackageVersion {
     }
 }
 
-// Layout pin (mirrors Zig `comptime { if (@sizeOf(Npm.PackageVersion) != 240) @compileError(...) }`).
-// `PackageVersion` is `std.mem.sliceAsBytes`-serialised into the on-disk
+// Layout pin (compile-time assertion that `Npm.PackageVersion` is 240 bytes).
+// `PackageVersion` is byte-serialised into the on-disk
 // `.npm` manifest cache, so its size and field offsets are an ABI contract
-// with every Zig-built Bun that wrote a cache entry. A mismatch here means a
+// with every Bun that wrote a cache entry. A mismatch here means a
 // cross-runtime cache read will mis-slice — fail loudly at compile time
 // instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
 const _: () = assert!(
     core::mem::size_of::<PackageVersion>() == 240,
-    "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
+    "Npm.PackageVersion layout drifted from spec (expected 240 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
 
@@ -871,8 +871,8 @@ pub mod package_manifest {
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
 
         // TODO(port): `sizes` was a comptime block iterating PackageManifest's fields by alignment.
-        // Rust cannot reflect struct fields. Hardcode the field order produced by the Zig sort
-        // (descending alignment) and verify in Phase B against the Zig output.
+        // Rust cannot reflect struct fields. Hardcode the field order produced by the original sort
+        // (descending alignment) and verify in Phase B against the original output.
         pub const SIZES_FIELDS: &'static [&'static str] = &[
             "pkg",
             "string_buf",
@@ -957,7 +957,7 @@ pub mod package_manifest {
             pos += 128 / 8;
 
             // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Phase B: verify field
-            // order matches Zig comptime sort (descending alignment).
+            // order matches the original comptime sort (descending alignment).
             {
                 // "pkg"
                 // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
@@ -1003,7 +1003,7 @@ pub mod package_manifest {
             // --- Perf Improvement #1 ----
             // Do not forget to buffer writes!
             //
-            // (benchmark output elided — see npm.zig)
+            // (benchmark output elided)
             // --- Perf Improvement #2 ----
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
@@ -1102,7 +1102,7 @@ pub mod package_manifest {
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
                 let _ = guard.into_inner();
-                // Zig spec discards the close error too — the renameat
+                // The close error is intentionally discarded — the renameat
                 // immediately below surfaces a usable error if the temp
                 // file is in a bad state, and on POSIX the close cannot
                 // fail for a regular-file fd we just wrote.
@@ -1143,7 +1143,7 @@ pub mod package_manifest {
                             let _ = bun_sys::unlinkat(tmpdir, tmp_path);
                         }
 
-                        // Zig (npm.zig:1128) matches `.OPNOTSUPP`, which on
+                        // The original matches `.OPNOTSUPP`, which on
                         // Darwin is errno **45** (collapsed with NOTSUP). The
                         // Rust `Errno::EOPNOTSUPP` resolves to 102 on Darwin,
                         // so match `ENOTSUP` as well to keep the macOS
@@ -1249,10 +1249,10 @@ pub mod package_manifest {
                 }
             }
 
-            // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
+            // TODO(port): lifetime — `scope` is borrowed across a thread boundary; the original assumed
             // the Registry.Scope outlives the threadpool task. Phase B: prove or change to owned.
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
-                manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
+                manifest: this.clone(), // TODO(port): the original copied PackageManifest by value
                 scope,
                 tmpdir,
                 cache_dir,
@@ -1364,7 +1364,7 @@ pub mod package_manifest {
                 return Ok(None);
             }
 
-            // TODO(port): manifest borrows `bytes` in Zig; here read_all copies into Box<[T]>.
+            // TODO(port): manifest originally borrowed `bytes`; here read_all copies into Box<[T]>.
             Ok(Some(manifest))
         }
 
@@ -1908,7 +1908,7 @@ impl PackageManifest {
     }
 }
 
-// TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+// TODO(b2): the original used `IdentityContext(u64)` hasher; std HashMap is fine for now.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
 
 use bun_install_types::DependencyGroup;
@@ -1938,7 +1938,7 @@ impl PackageManifest {
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
-        // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
+        // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — the original
         // pushed/popped the AST arena around the parse so the JSON AST is
         // bulk-freed on return. `initialize_mini_store` already does the push;
         // the pop is handled by resetting on the next call. Phase B should wire
@@ -2314,10 +2314,10 @@ impl PackageManifest {
             vec![PackageNameHash::default(); bundled_deps_count].into_boxed_slice();
         let mut bundled_deps_offset: usize = 0;
 
-        // PORT NOTE: Zig manually @memset zeroed the buffers; Default::default() above achieves
+        // PORT NOTE: the original manually zeroed the buffers; Default::default() above achieves
         // the same determinism for these POD types.
 
-        // PORT NOTE: reshaped for borrowck — Zig used overlapping mutable subslices into the
+        // PORT NOTE: reshaped for borrowck — the original used overlapping mutable subslices into the
         // same allocation. Rust uses index cursors instead and re-slices on demand.
         let mut versioned_package_releases_start: usize = 0;
         let all_versioned_package_releases_range = 0..release_versions_len;
@@ -2345,10 +2345,10 @@ impl PackageManifest {
 
         string_builder.allocate()?;
 
-        // PORT NOTE: Zig zeroed the freshly allocated buffer for determinism;
+        // PORT NOTE: the original zeroed the freshly allocated buffer for determinism;
         // `Builder::allocate` already produces a zeroed `Box<[u8]>`.
         //
-        // Zig kept a single `string_buf` slice over the builder's backing
+        // The original kept a single `string_buf` slice over the builder's backing
         // allocation for the rest of the function. In Rust that would alias a
         // `&[u8]` across the `&mut self` borrows taken by every `append` below
         // (Stacked Borrows UB even though the allocation never moves). Instead
@@ -2537,7 +2537,7 @@ impl PackageManifest {
                                         };
                                         let mut group_i: u32 = 0;
 
-                                        // PORT NOTE: Zig wrote through a raw `*[len]ExternalString`
+                                        // PORT NOTE: the original wrote through a raw `*[len]ExternalString`
                                         // sub-pointer. The boxed slice is fully initialised
                                         // (`vec![Default; n].into_boxed_slice()` in the counting
                                         // pass) and `ExternalString: Copy`, so plain absolute
@@ -3077,7 +3077,7 @@ impl PackageManifest {
                             _ => unreachable!("non-value Expr from JSON parser"),
                         }
 
-                        // TODO(port): debug-assertions block (Zig lines 2478-2522) elided —
+                        // TODO(port): debug-assertions block elided —
                         // it re-reads `this_names`/`this_versions` via `mut()` after dedupe.
                         // Phase B can re-add with cursor-based slicing.
                         let _ = (this_names, this_versions);
@@ -3117,7 +3117,7 @@ impl PackageManifest {
 
             extern_strings_consumed = dependency_names_cursor;
             // version_extern_strings trimmed below
-            // PORT NOTE: Zig: version_extern_strings = version_extern_strings[0 .. len - dependency_values.len]
+            // PORT NOTE: version_extern_strings = version_extern_strings[0 .. len - dependency_values.len]
         }
         let version_extern_strings_len = dependency_values_cursor;
 
@@ -3272,7 +3272,7 @@ impl PackageManifest {
                     // `all_semver_versions`, both fully-initialised `Box<[T]>`s
                     // (created via `vec![Default; n].into_boxed_slice()` above) —
                     // safe slice indexing replaces the `from_raw_parts_mut`
-                    // reconstruction Zig's `@constCast(release.values.get(..))`
+                    // reconstruction the original const-cast
                     // forced. The two boxes are distinct allocations so the two
                     // `&mut` borrows do not overlap.
                     let versioned_packages_ =
@@ -3294,7 +3294,7 @@ impl PackageManifest {
                             string_bytes,
                         )
                     });
-                    // PORT NOTE: Zig sorted indices against semver_versions_ (which is unmutated
+                    // PORT NOTE: the original sorted indices against semver_versions_ (which is unmutated
                     // until after sort) — equivalent to sorting against cloned_versions.
 
                     debug_assert_eq!(indices.len(), versioned_packages_.len());
@@ -3328,7 +3328,7 @@ impl PackageManifest {
         match how_many_bytes_to_store_indices {
             1 => sort_with_int!(u8),
             2 => sort_with_int!(u16),
-            3 => sort_with_int!(u32), // TODO(port): Zig used u24; Rust has no u24, use u32
+            3 => sort_with_int!(u32), // TODO(port): the original used u24; Rust has no u24, use u32
             4 => sort_with_int!(u32),
             5 | 6 | 7 | 8 => sort_with_int!(u64),
             _ => {
@@ -3340,8 +3340,8 @@ impl PackageManifest {
         if extern_strings_remaining + tarball_urls_count > 0 {
             let src_len = tarball_url_strings_cursor;
             if src_len > 0 {
-                // `ExternalString` is `Copy` POD — Zig used `@memcpy` over
-                // `sliceAsBytes` views here; an element-wise `copy_from_slice`
+                // `ExternalString` is `Copy` POD — originally a memcpy over
+                // byte views here; an element-wise `copy_from_slice`
                 // is bit-identical and lets us drop the `from_raw_parts`
                 // byte-view reconstruction over the same boxed slices.
                 debug_assert!(all_extern_strings.len() - extern_strings_cursor >= src_len);
@@ -3394,5 +3394,3 @@ impl PackageManifest {
         Ok(Some(result))
     }
 }
-
-// ported from: src/install/npm.zig

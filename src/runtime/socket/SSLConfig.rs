@@ -1,8 +1,8 @@
 //! DEDUP(D202): the `SSLConfig` struct, its `Clone`/`Drop`/`Default`/hash/
 //! equality/registry impls, and `as_usockets*`/`for_client_verification` were
 //! double-ported (here and in `bun_http::ssl_config`). The lower-tier
-//! `bun_http` copy is canonical (JSC-free, matches the Zig `?[*:0]const u8`
-//! field layout); this module now re-exports it and keeps ONLY the
+//! `bun_http` copy is canonical (JSC-free, matches the original
+//! nullable-cstring field layout); this module now re-exports it and keeps ONLY the
 //! JSC-dependent constructors (`from_js` / `from_generated` / blob+path
 //! readers) plus the WebSocket C-ABI exports, which need `bun_jsc` /
 //! `webcore::Blob` / `node_fs` (tier-6).
@@ -273,7 +273,7 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // Zig: `std.posix.system.access(name, F_OK) != 0`. `bun_sys::access`
+    // `bun_sys::access`
     // routes to `access(2)` on POSIX and `GetFileAttributesW` on Windows
     // (via `sys_uv`), so this is the cross-platform existence probe.
     if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
@@ -371,7 +371,7 @@ fn handle_file_array(
     Ok(Some(core::mem::take(result).into_boxed_slice()))
 }
 
-// PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
+// PORT NOTE: the original used an anonymous tagged-union param; named here.
 enum SingleFile<'a> {
     String(bun_core::String),
     Buffer(&'a mut jsc::JSCArrayBuffer),
@@ -395,8 +395,8 @@ fn handle_single_file(
 // ──────────────────────────────────────────────────────────────────────────
 // WebSocket C-ABI exports (parseSSLConfig / freeSSLConfig)
 //
-// LAYERING: ground truth is `src/http_jsc/websocket_client/
-// WebSocketUpgradeClient.zig::parseSSLConfig`, but `SSLConfig::from_js`
+// LAYERING: ground truth is `WebSocketUpgradeClient::parseSSLConfig`
+// (http_jsc::websocket_client), but `SSLConfig::from_js`
 // dereferences Blob / JSCArrayBuffer / node_fs values (tier-6) and lives in
 // this crate. `bun_runtime → bun_http_jsc`, so hosting the export here breaks
 // the cycle without an opaque stub. The boxed payload is the canonical
@@ -432,7 +432,7 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
 /// WebSocket.cpp can release ownership without leaking the heap allocation
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
-/// hands the pointer off to a Zig upgrade client.
+/// hands the pointer off to an upgrade client.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
     // SAFETY: C++-only entry point; `config` was produced by `heap::alloc`
@@ -441,5 +441,3 @@ pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_confi
     // `deinit()`.
     drop(unsafe { bun_core::heap::take(config) });
 }
-
-// ported from: src/runtime/socket/SSLConfig.zig

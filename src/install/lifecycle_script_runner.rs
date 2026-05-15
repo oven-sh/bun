@@ -44,8 +44,8 @@ const BUN_BIN_NAME: &[u8] = if cfg!(debug_assertions) {
 // const byte concat is awkward in Rust.
 
 /// Yarn built-in subcommands (union of v1 + v2.3 sets).
-/// Port of `src/cli/list-of-yarn-commands.zig::all_yarn_commands` (deduped).
-// PERF(port): Zig used `bun.ComptimeStringMap(void, .{...})` (length-bucketed,
+/// `all_yarn_commands` (deduped).
+// PERF(port): originally a comptime string map (length-bucketed,
 // comptime-sorted). The Rust `comptime_string_map!` macro currently returns a
 // Lazy with inferred const generics that can't be named in a `static` item, so
 // use a sorted slice + binary_search for now. ~50 entries → <7 comparisons.
@@ -119,7 +119,7 @@ impl YarnCommands {
 /// / `bun x` so that lifecycle scripts re-enter Bun instead of spawning
 /// another package manager.
 ///
-/// Port of `RunCommand.replacePackageManagerRun` (src/cli/run_command.zig).
+/// `RunCommand::replacePackageManagerRun`.
 ///
 /// `#[cold]`: only reached when actually executing a package.json script /
 /// lifecycle script — never on plain `bun foo.js` startup. Forcing it into
@@ -260,19 +260,19 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub current_script_index: u8,
 
     pub remaining_fds: i8,
-    /// Zig: `?*Process`. `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
+    /// `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
     /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
-    /// in `reset_polls` (mirrors Zig `process.close(); process.deref();`). Null = none.
+    /// in `reset_polls`. Null = none.
     pub process: *mut Process,
     pub stdout: OutputReader,
     pub stderr: OutputReader,
     pub has_called_process_exit: bool,
-    /// Zig: `manager: *PackageManager`. Stored as `BackRef` (not `&'a`) so
+    /// Stored as `BackRef` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
     /// asserting unique-borrow over the whole `PackageManager`.
     pub manager: bun_ptr::BackRef<PackageManager>,
-    /// Zig: `envp: [:null]?[*:0]const u8` — allocated with `manager.allocator`
+    /// Originally allocated with `manager.allocator`
     /// (manager-lifetime) and never freed there. Ownership is moved into this
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
@@ -294,7 +294,7 @@ pub struct LifecycleScriptSubprocess<'a> {
 
 pub struct InstallCtx<'a> {
     pub entry_id: entry::Id,
-    /// Zig: `installer: *Installer`. Raw `*mut` for the same reason as
+    /// Raw `*mut` for the same reason as
     /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
     /// mutate Installer state from inside an exit-handler callback.
     pub installer: *mut Installer<'a>,
@@ -316,10 +316,10 @@ impl<'a> InstallCtx<'a> {
     }
 }
 
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
-// fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less` on the
-// `Context` type instead, so `sort_by_started_at` is provided via a trait impl on a
-// ZST `StartedAtCtx` (the Zig context arg `*PackageManager` is unused by `less`).
+// PORT NOTE: the original `Intrusive(T, Context, less)` took the comparator as a
+// comptime fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less`
+// on the `Context` type instead, so `sort_by_started_at` is provided via a trait impl
+// on a ZST `StartedAtCtx` (the original `*PackageManager` context arg is unused by `less`).
 #[derive(Default, Clone, Copy)]
 pub struct StartedAtCtx;
 pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
@@ -349,8 +349,7 @@ pub const MIN_MILLISECONDS_TO_LOG: u64 = 500;
 pub static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl<'a> LifecycleScriptSubprocess<'a> {
-    /// Zig: `LifecycleScriptSubprocess.alive_count` static decl. Returns the
-    /// global atomic so callers can write
+    /// Returns the global `alive_count` atomic so callers can write
     /// `LifecycleScriptSubprocess::alive_count().load(..)`.
     #[inline]
     pub fn alive_count() -> &'static AtomicUsize {
@@ -375,12 +374,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     #[inline]
     fn manager(&self) -> &PackageManager {
-        // `manager` is non-null and outlives every subprocess (Zig
+        // `manager` is non-null and outlives every subprocess (the
         // `*PackageManager` is the singleton install-loop owner).
         self.manager.get()
     }
 
-    /// SAFETY: see [`Self::manager`]. Mutable access is sound because Zig's
+    /// SAFETY: see [`Self::manager`]. Mutable access is sound because the
     /// `*PackageManager` is a non-exclusive pointer; no `&PackageManager`
     /// outlives the brief field accesses below on the install thread.
     #[inline]
@@ -516,9 +515,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
 
         // errdefer { decrement alive_count; ensure_not_in_heap }
-        // PORT NOTE: Zig's `errdefer` is modeled by splitting the fallible body into
+        // PORT NOTE: error-only cleanup is modeled by splitting the fallible body into
         // `spawn_next_script_inner` and running the cleanup on the error branch. Both
-        // functions take the allocation-rooted `*mut Self` (mirroring Zig's
+        // functions take the allocation-rooted `*mut Self` (mirroring the original
         // `*LifecycleScriptSubprocess` receiver) so that backrefs stored into the
         // readers / intrusive heap / process exit handler retain valid Stacked Borrows
         // provenance after we return — deriving them from a `&mut self` reborrow would
@@ -623,8 +622,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
             );
 
-            // PORT NOTE / OWNERSHIP: Zig allocates the libuv pipes
-            // (`bun.new(uv.Pipe, zeroes)`), stashes the *non-owning* `*uv.Pipe`
+            // PORT NOTE / OWNERSHIP: the original allocated the libuv pipes,
+            // stashed the *non-owning* `*uv.Pipe`
             // in `this.stdout.source.?.pipe`, and reuses the same heap pointer for
             // `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`. In Rust,
             // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
@@ -713,7 +712,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ) {
                 Ok(Ok(s)) => s,
                 res => {
-                    // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer
+                    // TODO(port): originally a doubly-nested fallible spawn — outer
                     // `!Maybe(Spawned)`. Modeled here as `Result<bun_sys::Result<Spawned>, _>`.
                     #[cfg(windows)]
                     {
@@ -723,9 +722,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
                         // and `uv_close`+free them explicitly here — otherwise the heap
                         // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                        // linked in the libuv loop's handle queue forever). Zig avoided
-                        // this by stashing the pipes in `this.{stdout,stderr}.source`
-                        // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
+                        // linked in the libuv loop's handle queue forever). The original
+                        // avoided this by stashing the pipes in `this.{stdout,stderr}.source`
+                        // BEFORE building `SpawnOptions`;
                         // the Rust ordering moved allocation inline (see PORT NOTE above)
                         // and must therefore handle the error path explicitly.
                         spawn_options.stdout.deinit();
@@ -823,12 +822,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
             // Reuse the memory
-            // PORT NOTE: reshaped for borrowck — Zig evaluated all three clauses
+            // PORT NOTE: reshaped for borrowck — the original evaluated all three clauses
             // (`stdout.len==0 && stdout.cap>0 && stderr.buffer().cap==0`) before
             // the swap, holding two `*ArrayList(u8)` simultaneously. Evaluate
             // the stderr-capacity check first (immutable), then take the
             // disjoint `stdout` mutable borrow, so `core::mem::take` only fires
-            // when the full Zig guard would — otherwise stdout's buffer is left
+            // when the full guard would — otherwise stdout's buffer is left
             // in place for the `stdout.items.len +| stderr.items.len` check.
             if self.stderr.buffer().capacity() == 0 {
                 let stdout = self.stdout.final_buffer();
@@ -927,7 +926,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     } else {
                         // .monotonic because this is what `completeOne` does. This is the same
                         // as `completeOne` but doesn't update the parent.
-                        // TODO(port): Zig used `@atomicRmw(usize, &node.unprotected_completed_items, .Add, 1, .monotonic)`;
+                        // TODO(port): originally an atomic RMW on `node.unprotected_completed_items`;
                         // the stub `bun_progress::Node` is non-atomic & has no parent, so the
                         // detached-parent path collapses to `complete_one()` until the real
                         // `std.Progress` port lands.
@@ -940,9 +939,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         self.manager_mut()
                             .lifecycle_script_time_log
                             .append_concurrent(
-                                // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
-                                // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
-                                // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
+                                // PORT NOTE: allocator param dropped per §Allocators (non-AST crate).
+                                // The original borrowed the lockfile string buffer for `package_name`;
+                                // we own a `Box<[u8]>` that drops on
                                 // `destroy`, so the log entry takes its own owned copy.
                                 LifecycleScriptTimeLogEntry {
                                     package_name: self.package_name.clone(),
@@ -1040,8 +1039,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
                 // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
-                // `raise_ignoring_panic_handler` path is preserved. Zig's `SignalCode` is a
-                // non-exhaustive `enum(u8)` so it had no such constraint.
+                // `raise_ignoring_panic_handler` path is preserved. The original `SignalCode`
+                // was a non-exhaustive `enum(u8)` so it had no such constraint.
                 Global::raise_ignoring_panic_handler(
                     Status::Signaled(signal)
                         .signal_code()
@@ -1125,7 +1124,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` came from `heap::alloc` in `Self::new` and is
         // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
-        // then frees the allocation (Zig: `this.* = undefined; bun.destroy(this);`).
+        // then frees the allocation.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -1146,7 +1145,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 break 'try_delete_dir;
             };
             let _ = dir.delete_tree(basename);
-            // PORT NOTE: Zig (lifecycle_script_runner.zig:533-534) leaks this fd
+            // PORT NOTE: the original implementation leaks this fd
             // too — fixed here since this path returns to the install loop without
             // exiting, so the HANDLE/fd would otherwise persist for the rest of
             // the install on every failed optional-dependency lifecycle script.
@@ -1257,7 +1256,7 @@ bun_spawn::link_impl_ProcessExit! {
 // `on_reader_done`/`on_reader_error` via the type-erased vtable.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Zig: no `onReadChunk` decl — output is consumed only in `final_buffer`.
+// No `onReadChunk` callback — output is consumed only in `final_buffer`.
 // `manager.event_loop` is an `AnyEventLoop`; convert through
 // `EventLoopHandle::from_any` so the by-value `EventLoopCtx` carries the right
 // `kind`.
@@ -1280,5 +1279,3 @@ impl Drop for LifecycleScriptSubprocess<'_> {
         unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
     }
 }
-
-// ported from: src/install/lifecycle_script_runner.zig

@@ -19,8 +19,8 @@ thread_local! {
     static TOP_CTX: Cell<Option<*const Context>> = const { Cell::new(None) };
 }
 
-/// RAII guard that restores `TOP_CTX` to a saved previous value on drop.
-/// Replaces the Zig `defer top_ctx = prev_ctx;` in `call`/`call_for_test`.
+/// RAII guard that restores `TOP_CTX` to a saved previous value on drop
+/// for `call`/`call_for_test`.
 struct TopCtxRestore {
     prev: Option<*const Context>,
 }
@@ -44,11 +44,9 @@ pub fn panicked() {
     }
 }
 
-// PORT NOTE: Zig's `ExtErrType`/`ReturnType` were comptime @typeInfo helpers
-// that extended the callee's error set with `error.Panic`. In Rust,
-// `bun_core::Error` is a NonZeroU16 tag space that already covers every error
-// name (including `Panic` via `bun_core::err!("Panic")`), so the type-level
-// extension collapses and the helpers are dropped.
+// PORT NOTE: `bun_core::Error` is a NonZeroU16 tag space that already covers every error
+// name (including `Panic` via `bun_core::err!("Panic")`), so no type-level extension of the
+// callee's error set is needed.
 
 pub fn call_for_test(
     test_func: fn() -> Result<(), bun_core::Error>,
@@ -71,10 +69,9 @@ pub fn call_for_test(
 /// Calls `func`, guarding from runtime errors.
 /// Returns `error.Panic` when recovers from runtime error.
 /// Otherwise returns the return value of func.
-// PORT NOTE: Zig signature was `call(func: anytype, args: anytype)` with
-// `@call(.auto, func, args)`. Rust cannot forward an arbitrary heterogeneous
-// argument tuple without variadics; callers should wrap the invocation in a
-// closure. Return type uses bun_core::Error (see ExtErrType note above).
+// PORT NOTE: Rust cannot forward an arbitrary heterogeneous argument tuple without
+// variadics; callers should wrap the invocation in a closure. Return type uses
+// bun_core::Error (see note above).
 pub fn call<T>(
     func: impl FnOnce() -> Result<T, bun_core::Error>,
 ) -> Result<T, bun_core::Error> {
@@ -113,11 +110,10 @@ unsafe extern "C" {
 #[cfg(all(target_os = "linux", target_env = "musl"))]
 mod musl {
     use core::ffi::c_int;
-    // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
-    // exact musl jmp_buf size/align per target arch in Phase B. This is a
-    // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
-    // opaque handle, so it must reserve real storage — a ZST would let setjmp
-    // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
+    // TODO(port): confirm exact musl jmp_buf size/align per target arch in Phase B. This is a
+    // STACK VALUE (zeroed Context passed to `setjmp(&ctx)`), not an opaque handle, so it must
+    // reserve real storage — a ZST would let setjmp scribble past the allocation. 32×u64
+    // over-reserves vs every musl arch.
     #[repr(C, align(16))]
     pub struct jmp_buf {
         _buf: [u64; 32],
@@ -143,9 +139,8 @@ unsafe fn get_context(ctx: *mut Context) {
     }
     #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
     {
-        // Zig called std.debug.getContext(ctx) which wraps getcontext(3).
-        // The `libc` crate omits the binding on Darwin and the BSDs; declare
-        // locally (uniform across all unix targets).
+        // Wraps getcontext(3). The `libc` crate omits the binding on Darwin and the
+        // BSDs; declare locally (uniform across all unix targets).
         unsafe extern "C" { fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int; }
         // SAFETY: ctx is a valid, writable, properly-aligned ucontext_t (caller contract).
         let _ = unsafe { getcontext(ctx) };
@@ -176,10 +171,7 @@ unsafe fn set_context(ctx: *const Context) -> ! {
 
 /// Panic handler that if there is a recover call in current thread continues
 /// from recover call. Otherwise calls the default panic.
-/// Install at root source file as `pub const panic = @import("recover").panic;`
-// TODO(port): Zig exposed this as `std.debug.FullPanic(handler)` — a type
-// installed at the root file as `pub const panic`. Rust has no equivalent
-// declarative panic-handler slot; Phase B should wire this via
+// TODO(port): Rust has no declarative panic-handler slot; Phase B should wire this via
 // `std::panic::set_hook` (or a `#[panic_handler]` in no_std) at startup.
 pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
     panicked();
@@ -190,5 +182,3 @@ pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
 
 #[cfg(windows)]
 use bun_sys::windows::{CONTEXT, EXCEPTION_RECORD};
-
-// ported from: src/test_runner/harness/recover.zig

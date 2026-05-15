@@ -15,12 +15,10 @@ use bun_ast::{E, Expr, ExprNodeList, Flags, G, S, Stmt};
 // TODO(port): narrow error set
 type Error = bun_core::Error;
 
-// Zig: `pub fn ParseFn(comptime typescript, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // Zig: `const is_typescript_enabled = P.is_typescript_enabled;`
-    // (PORT NOTE: P.rs already defines `IS_TYPESCRIPT_ENABLED`; reuse it.)
+    // (PORT NOTE: p.rs already defines `IS_TYPESCRIPT_ENABLED`; reuse it.)
 
     /// This assumes the "function" token has already been parsed
     pub fn parse_fn_stmt(
@@ -150,7 +148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         func.name = name;
 
-        // Zig: func.flags.setPresent(.has_if_scope, hasIfScope) — flags is freshly built so unset → only insert when true
+        // flags is freshly built so the bit starts unset → only insert when true
         if has_if_scope {
             func.flags.insert(Flags::Function::HasIfScope);
         }
@@ -176,7 +174,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
         // }
 
-        // Zig: Flags.Function.init(.{ .has_rest_arg = false, .is_async = ..., .is_generator = ... })
+        // Initialize flags with has_rest_arg = false, is_async/is_generator from opts.
         let mut initial_flags = Flags::FunctionSet::empty();
         if opts.allow_await == AwaitOrYield::AllowExpr {
             initial_flags.insert(Flags::Function::IsAsync);
@@ -195,8 +193,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenParen)?;
 
         // Await and yield are not allowed in function arguments
-        // PORT NOTE: Zig used `std.mem.toBytes` / `bytesToValue` to save/restore by value;
-        // in Rust `FnOrArrowDataParse` is `Clone`, so a clone is equivalent.
+        // PORT NOTE: original saved/restored by raw byte copy; in Rust
+        // `FnOrArrowDataParse` is `Clone`, so a clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse.allow_await = if opts.allow_await == AwaitOrYield::AllowExpr {
@@ -220,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
-        // PERF(port): Zig used ArrayListUnmanaged backed by p.arena (arena).
+        // PERF(port): arena-backed list, freed in bulk with the parser arena.
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
@@ -378,7 +376,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TCloseParen)?;
-        // PORT NOTE: Zig restored via `std.mem.bytesToValue`; plain copy is equivalent.
+        // PORT NOTE: original restored via raw byte copy; plain copy is equivalent.
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
@@ -567,25 +565,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
-        // PORT NOTE: Zig `defer p.popScope();` — moved to explicit call before each return below.
+        // PORT NOTE: deferred `pop_scope` — moved to explicit call before each return below.
         // TODO(port): consider scopeguard if more early-returns are added.
 
-        // PORT NOTE: Zig used `std.mem.toBytes`/`bytesToValue`; clone is equivalent.
+        // PORT NOTE: original saved/restored by raw byte copy; clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
         let expr = match p.parse_expr(Level::Comma) {
             Ok(e) => e,
             Err(err) => {
-                // PORT NOTE: Zig `try` returns here without restoring fn_or_arrow_data_parse;
-                // only the `defer p.popScope()` fires on the error path.
+                // PORT NOTE: the original returns here without restoring
+                // fn_or_arrow_data_parse; only the deferred pop_scope fires on
+                // the error path.
                 p.pop_scope();
                 return Err(err);
             }
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
-        // PERF(port): Zig used `p.arena.alloc(Stmt, 1)` (arena bulk-free).
+        // PERF(port): single-element arena allocation (arena bulk-free).
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
@@ -601,5 +600,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 }
-
-// ported from: src/js_parser/ast/parseFn.zig

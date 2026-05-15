@@ -1,7 +1,7 @@
 //! Generic trait-based dispatch for CSS value operations.
 //!
-//! The Zig original (`generics.zig`) uses `@typeInfo`/`@hasDecl`/`@field` comptime
-//! reflection to derive `eql`, `hash`, `deepClone`, `toCss`, `parse`, etc. across
+//! The original implementation used compile-time type reflection to derive
+//! `eql`, `hash`, `deepClone`, `toCss`, `parse`, etc. across
 //! every CSS value type. Per PORTING.md §Comptime reflection, that has no Rust
 //! equivalent — the port defines a trait per protocol, provides blanket impls for
 //! the structural cases (Option/Box/slice/Vec/Vec/SmallList/primitives), and
@@ -15,9 +15,9 @@ use core::cmp::Ordering;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::VecExt;
-// Zig `std.hash.Wyhash` (iterative) → `bun_wyhash::Wyhash` (the final4 variant
-// matching upstream `std.hash.Wyhash`; NOT `Wyhash11`, which is a legacy v0.11
-// variant kept only for on-disk lockfile compat — different digest).
+// `bun_wyhash::Wyhash` is the final4 Wyhash variant
+// (NOT `Wyhash11`, which is a legacy variant
+// kept only for on-disk lockfile compat — different digest).
 // Re-exported `pub` so `#[derive(CssHash)]` (in `bun_css_derive`) can name the
 // hasher type as `::bun_css::generics::Wyhash` without depending on `bun_wyhash`
 // directly.
@@ -38,7 +38,7 @@ use crate::values::rect::Rect;
 use crate::values::size::Size2D;
 use crate::{PrintErr, VendorPrefix};
 
-// `ArrayList(T)` in the Zig is `std.ArrayListUnmanaged(T)` fed the parser arena.
+// `ArrayList(T)` is an arena-backed growable array.
 // In this AST crate that maps to `bun_alloc::ArenaVec<'bump, T>`.
 pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
@@ -46,17 +46,16 @@ pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 // DeepClone
 // ───────────────────────────────────────────────────────────────────────────────
 
-/// Arena-aware deep clone. Equivalent of Zig's `deepClone(T, *const T, Allocator) T`.
+/// Arena-aware deep clone.
 ///
 /// Per-struct/-enum impls are expected from `#[derive(DeepClone)]` (Phase B);
-/// the Zig `implementDeepClone` body is the spec for that derive (field-wise /
-/// variant-wise recursion).
+/// the derive performs field-wise / variant-wise recursion.
 pub trait DeepClone<'bump>: Sized {
     fn deep_clone(&self, bump: &'bump Arena) -> Self;
 }
 
-/// `#[derive(DeepClone)]` — field-wise / variant-wise port of Zig's
-/// `css.implementDeepClone`. See `src/css_derive/lib.rs` for the expansion
+/// `#[derive(DeepClone)]` — field-wise / variant-wise deep-clone derive.
+/// See `src/css_derive/lib.rs` for the expansion
 /// rules. Re-exported here so `use crate::generics::DeepClone;` brings both
 /// the trait and the derive into scope (same-name trait+derive is the std
 /// idiom, cf. `Clone`).
@@ -64,14 +63,13 @@ pub use bun_css_derive::DeepClone;
 
 #[inline]
 pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump Arena) -> T {
-    // TODO(port): Zig `implementDeepClone` is comptime field/variant reflection.
-    // In Rust this is the body of `#[derive(DeepClone)]`; the free fn just
-    // forwards to the trait so existing callers keep working.
+    // In Rust the field/variant-reflection body is `#[derive(DeepClone)]`;
+    // the free fn just forwards to the trait so existing callers keep working.
     this.deep_clone(bump)
 }
 
-// Alias: in Zig `deepClone` (structural type-dispatch entry) and
-// `implementDeepClone` (field-reflection body) are distinct, but in Rust both
+// Alias: `deepClone` (structural type-dispatch entry) and
+// `implementDeepClone` (field-reflection body) were distinct, but in Rust both
 // collapse to `T::deep_clone` because the structural dispatch lives in the
 // blanket impls below and the field-reflection lives in `#[derive(DeepClone)]`.
 // Kept as a re-export so generated code (`properties_generated.rs`) and
@@ -79,13 +77,13 @@ pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump A
 pub use implement_deep_clone as deep_clone;
 
 pub fn can_transitively_implement_deep_clone<T>() -> bool {
-    // TODO(port): Zig checks `@typeInfo(T) == .struct | .union`. In Rust this
-    // gate becomes "does T impl DeepClone" — i.e. a trait bound at the call
-    // site, not a runtime check. Kept as a stub for diff parity.
+    // TODO(port): in Rust this gate becomes "does T impl DeepClone" — i.e. a
+    // trait bound at the call site, not a runtime check. Kept as a stub for
+    // diff parity.
     true
 }
 
-// Blanket impls covering the structural cases the Zig switch handled inline.
+// Blanket impls covering the structural cases the original switch handled inline.
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
     #[inline]
@@ -100,15 +98,15 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump T {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: `bun.create(arena, TT, deepClone(TT, this.*, arena))`
+        // Allocate a fresh deep clone of the pointee in the arena.
         bump.alloc((**self).deep_clone(bump))
     }
 }
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: alloc slice, then memcpy if simple-copy else element-wise deepClone.
-        // PERF(port): Zig fast-paths `isSimpleCopyType` with @memcpy — profile in Phase B
+        // Alloc slice, then element-wise deepClone.
+        // PERF(port): could fast-path simple-copy types with memcpy — profile in Phase B
         // (specialization would let `T: Copy` use `alloc_slice_copy`).
         bump.alloc_slice_fill_iter(self.iter().map(|e| e.deep_clone(bump)))
     }
@@ -117,8 +115,8 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: `css.deepClone(T, arena, this)` → alloc capacity, element-wise deepClone.
-        // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile in Phase B.
+        // Alloc capacity, element-wise deepClone.
+        // PERF(port): could fast-path simple-copy types with memcpy — profile in Phase B.
         let mut out = ArrayList::with_capacity_in(self.len(), bump);
         for item in self.iter() {
             out.push(item.deep_clone(bump));
@@ -205,16 +203,15 @@ pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
 }
 
-/// `#[derive(CssEql)]` — field-wise / variant-wise port of Zig's
-/// `css.implementEql`. See `src/css_derive/lib.rs` for the expansion rules.
+/// `#[derive(CssEql)]` — field-wise / variant-wise equality derive.
+/// See `src/css_derive/lib.rs` for the expansion rules.
 /// Re-exported here so `use crate::generics::CssEql;` brings both trait and
 /// derive into scope (same-name idiom, cf. `Clone`).
 pub use bun_css_derive::CssEql;
 
 #[inline]
 pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
-    // TODO(port): Zig `implementEql` is comptime field/variant reflection ==
-    // the body of `#[derive(CssEql)]`. Free fn forwards to trait.
+    // The field/variant-reflection body is `#[derive(CssEql)]`. Free fn forwards to trait.
     this.eql(other)
 }
 
@@ -311,7 +308,7 @@ eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 ///
 /// Exported sibling of `eql_simple!` for crate-defined types whose Phase-A
 /// inherent `pub fn eql(&self, other) { self == other }` was a pure `PartialEq`
-/// forwarder (Zig `css.implementEql(@This())` leakage).
+/// forwarder.
 ///
 /// Unlike `#[derive(CssEql)]` (field-wise `.eql()` walk), this does **not**
 /// require every field type to itself impl `CssEql`; it bridges
@@ -350,7 +347,7 @@ impl CssEql for str {
 impl<T: CssEql, const N: usize> CssEql for [T; N] {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        // Zig: element-wise eql (length is `N` on both sides by type).
+        // Element-wise eql (length is `N` on both sides by type).
         for (a, b) in self.iter().zip(other.iter()) {
             if !a.eql(b) {
                 return false;
@@ -370,7 +367,7 @@ impl<T: CssEql + ?Sized> CssEql for Box<T> {
 impl CssEql for VendorPrefix {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        // Zig: `VendorPrefix.eql` is bitwise compare of the packed struct.
+        // `VendorPrefix.eql` is bitwise compare of the packed struct.
         *self == *other
     }
 }
@@ -414,8 +411,8 @@ mod ident_eql {
 // Bridge inherent eql/hash/deep_clone → trait impls
 //
 // Many CSS value types carry hand-rolled inherent `eql`/`hash`/`deep_clone`
-// (ported verbatim from the Zig `implementEql`/`implementHash`/
-// `implementDeepClone` bodies — usually because a field is a raw `*const [u8]`
+// (manual unrolls of the `implementEql`/`implementHash`/
+// `implementDeepClone` reflection bodies — usually because a field is a raw `*const [u8]`
 // arena slice that the derive can't see through). The `#[derive(CssEql/…)]`
 // expansion on *containing* types dispatches via UFCS trait paths, so those
 // inherent methods alone don't satisfy the bound. These thin forwarding impls
@@ -837,8 +834,8 @@ mod inherent_bridge {
     bridge_eql_partialeq!(PropertyId);
 }
 
-// TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →
-// bitwise `==`. In Rust those are `bitflags!` types implementing `PartialEq`;
+// TODO(port): packed structs were originally special-cased to bitwise `==`.
+// In Rust those are `bitflags!` types implementing `PartialEq`;
 // add `impl<T: BitFlags> CssEql for T` or per-type impls in Phase B.
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -852,16 +849,15 @@ pub trait CssHash {
     fn hash(&self, hasher: &mut Wyhash);
 }
 
-/// `#[derive(CssHash)]` — field-wise / variant-wise port of Zig's
-/// `css.implementHash`. See `src/css_derive/lib.rs` for the expansion rules.
+/// `#[derive(CssHash)]` — field-wise / variant-wise hash derive.
+/// See `src/css_derive/lib.rs` for the expansion rules.
 /// Re-exported here so `use crate::generics::CssHash;` brings both trait and
 /// derive into scope.
 pub use bun_css_derive::CssHash;
 
 #[inline]
 pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
-    // TODO(port): Zig `implementHash` is comptime field/variant reflection ==
-    // the body of `#[derive(CssHash)]`. Free fn forwards to trait.
+    // The field/variant-reflection body is `#[derive(CssHash)]`. Free fn forwards to trait.
     this.hash(hasher)
 }
 
@@ -895,7 +891,7 @@ impl CssHash for () {
 impl<T: CssHash> CssHash for Option<T> {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig `hash()` dispatcher: Some → hash inner, None → no-op (no prefix).
+        // `hash()` dispatcher: Some → hash inner, None → no-op (no prefix).
         // The "null"/"some" prefixes are from implementHash's dead .optional arm
         // (guarded by @compileError) — do NOT emit them here.
         if let Some(v) = self {
@@ -913,7 +909,7 @@ impl<T: CssHash + ?Sized> CssHash for &T {
 
 impl<T: CssHash> CssHash for [T] {
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig `hash()` for `.slice` pointers iterates items only — no len prefix.
+        // `hash()` for slices iterates items only — no len prefix.
         for item in self {
             item.hash(hasher);
         }
@@ -922,8 +918,8 @@ impl<T: CssHash> CssHash for [T] {
 
 impl<T: CssHash, const N: usize> CssHash for [T; N] {
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig: `bun.writeAnyToHasher(hasher, list.len)` — feeds the raw bytes
-        // of `usize` into the hasher. `bun_core::write_any_to_hasher` exists
+        // Feeds the raw bytes of `usize` into the hasher.
+        // `bun_core::write_any_to_hasher` exists
         // but is `H: Hasher`-generic and routes through `Hasher::write`, which
         // for `Wyhash11` calls `update` — so inlining the `usize` byte-feed
         // here is byte-identical and avoids the trait hop.
@@ -962,7 +958,7 @@ macro_rules! hash_simple {
         impl CssHash for $t {
             #[inline]
             fn hash(&self, hasher: &mut Wyhash) {
-                // Zig: `hasher.update(std.mem.asBytes(&this))`
+                // Feed the value's raw native-endian bytes into the hasher.
                 hasher.update(&self.to_ne_bytes());
             }
         }
@@ -1002,7 +998,7 @@ impl<T: CssHash + ?Sized> CssHash for Box<T> {
 impl CssHash for VendorPrefix {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig: `hasher.update(std.mem.asBytes(&this))` on the packed-struct repr.
+        // Feed the packed-struct bit repr into the hasher.
         hasher.update(&[self.as_bits()]);
     }
 }
@@ -1010,7 +1006,7 @@ impl CssHash for VendorPrefix {
 impl CssHash for bun_ast::Loc {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig `implementHash` doesn't reach `Loc` (callers skip it), but
+        // The reflective hash doesn't reach `Loc` (callers skip it), but
         // providing a structural hash here lets `#[derive(CssHash)]` types
         // include a `loc` field without `#[css(skip)]` if they want.
         hasher.update(&self.start.to_ne_bytes());
@@ -1087,7 +1083,7 @@ impl<T: IsCompatible + ?Sized> IsCompatible for Box<T> {
 impl<T: IsCompatible> IsCompatible for Option<T> {
     #[inline]
     fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
-        // Zig's `isCompatible` doesn't special-case Optional, but every
+        // `isCompatible` doesn't special-case Optional, but every
         // hand-written caller treats absent as compatible (no value → no
         // feature gate to check).
         match self {
@@ -1123,7 +1119,7 @@ impl<T: IsCompatible> IsCompatible for Vec<T> {
     }
 }
 
-// The Zig original blanket-impls over "any list container". A Rust blanket
+// The original blanket-impl'd over "any list container". A Rust blanket
 // `impl<L: ListContainer>` conflicts with the `&T` impl above (coherence can't
 // prove `&T` never impls `ListContainer`), so spell out the three concrete
 // container types instead.
@@ -1152,9 +1148,9 @@ is_compatible_container!(
 // ───────────────────────────────────────────────────────────────────────────────
 // Parse / ParseWithOptions
 // ───────────────────────────────────────────────────────────────────────────────
-// Zig's `generic.parse(T, input)` / `generic.parseWithOptions(T, input, opts)`
-// dispatch via `@hasDecl(T, "parse"[WithOptions])`. In Rust each leaf value
-// type either hand-writes an inherent `parse(&mut Parser) -> CssResult<Self>`
+// `generic.parse(T, input)` / `generic.parseWithOptions(T, input, opts)`
+// originally dispatched on whether T declared the method. In Rust each leaf
+// value type either hand-writes an inherent `parse(&mut Parser) -> CssResult<Self>`
 // or derives one via `#[derive(Parse)]` / `#[derive(DefineEnumProperty)]`; the
 // trait below is the uniform bound that `Property::parse` and the container
 // blanket impls (`SmallList`/`Vec`/`Option`/`Size2D`/`Rect`) need.
@@ -1171,7 +1167,7 @@ pub trait Parse: Sized {
 
 /// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
 ///
-/// Zig falls through to `parse` when a type has no `parseWithOptions` decl.
+/// Falls through to `parse` when a type has no `parseWithOptions`.
 /// PORT NOTE: Rust can't express that as a `where Self: Parse` default method
 /// — the bound becomes part of the *method signature*, so the free
 /// `parse_with_options::<T>` below would require `T: Parse` even for impls
@@ -1228,7 +1224,7 @@ impl<T: Parse> ParseWithOptions for Vec<T> {
     }
 }
 
-// Zig `.pointer` arm (`generics.zig:273-279`): parse the pointee then heap-allocate.
+// Pointer arm: parse the pointee then heap-allocate.
 impl<T: Parse> Parse for Box<T> {
     #[inline]
     fn parse(input: &mut Parser) -> CssResult<Self> {
@@ -1339,7 +1335,7 @@ impl<T: ToCss + ?Sized> ToCss for &T {
     }
 }
 
-// Zig `.pointer` arm (`generics.zig:338-341`): recurse into `*T` pointee.
+// Pointer arm: recurse into the pointee.
 impl<T: ToCss + ?Sized> ToCss for Box<T> {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -1516,11 +1512,11 @@ impl TrySign for CSSNumber {
         Some(CSSNumberFns::sign(self))
     }
 }
-// TODO(port): Zig fallback `if @hasDecl(T, "sign") T.sign else T.trySign` —
+// TODO(port): the original fell back from `T.sign` to `T.trySign` when undeclared —
 // model as a trait with default method delegating to `Sign` where available.
 
 pub trait TryMap: Sized {
-    // Zig: `comptime map_fn: *const fn(f32) f32` — generic param preserves monomorphization.
+    // Generic param preserves monomorphization (was a compile-time fn pointer).
     fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>;
 }
 
@@ -1537,7 +1533,7 @@ impl TryMap for CSSNumber {
 }
 
 pub trait TryOpTo: Sized {
-    // Zig: `comptime op_fn: *const fn(...)` — generic param preserves monomorphization.
+    // Generic param preserves monomorphization (was a compile-time fn pointer).
     // `R` is method-generic (not trait-generic) so `TryOpTo` can appear as a
     // supertrait bound without committing to a result type.
     fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
@@ -1568,7 +1564,7 @@ impl IsCompatible for CSSNumber {
 }
 
 pub trait TryOp: Sized {
-    // Zig: `comptime op_fn: *const fn(...)` — generic param preserves monomorphization.
+    // Generic param preserves monomorphization (was a compile-time fn pointer).
     fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self>;
 }
 
@@ -1653,5 +1649,3 @@ impl MulF32 for CSSNumber {
         self * rhs
     }
 }
-
-// ported from: src/css/generics.zig

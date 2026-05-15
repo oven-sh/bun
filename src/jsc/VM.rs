@@ -67,8 +67,8 @@ pub enum HeapType {
 
 impl VM {
     // PORT NOTE: `JSC__VM__create` was removed from bindings.cpp (Bun creates
-    // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
-    // The Zig `VM.create` wrapper is dead code; do not port it.
+    // its VM via `Bun::GlobalObject::create` → `WebWorker__createVM` instead).
+    // A standalone `VM::create` wrapper would be dead code; do not add one.
 
     // PORT NOTE: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
     pub fn deinit(&self, global_object: &JSGlobalObject) {
@@ -100,8 +100,8 @@ impl VM {
     }
 
     // PORT NOTE: `JSC__VM__deferGC` was removed from bindings.cpp in the
-    // WebKit-bump that introduced `JSC::DeferGC` RAII; the Zig `deferGC`
-    // wrapper is dead code. Callers should use `holdAPILock`/`DeferGC` on the
+    // WebKit-bump that introduced `JSC::DeferGC` RAII; a `deferGC` wrapper
+    // would be dead code. Callers should use `holdAPILock`/`DeferGC` on the
     // C++ side instead.
 
     pub fn report_extra_memory(&self, size: usize) {
@@ -109,9 +109,9 @@ impl VM {
         JSC__VM__reportExtraMemory(self, size)
     }
 
-    /// Alias retained for parity with the Zig comment naming this the
-    /// "deprecated" GC accounting hook (the underlying C++ is
-    /// `Heap::deprecatedReportExtraMemory`). Forward to [`report_extra_memory`].
+    /// Alias retained for the "deprecated" GC accounting hook name (the
+    /// underlying C++ is `Heap::deprecatedReportExtraMemory`). Forwards to
+    /// [`report_extra_memory`].
     #[inline]
     pub fn deprecated_report_extra_memory(&self, size: usize) {
         self.report_extra_memory(size);
@@ -224,14 +224,14 @@ impl VM {
     }
 }
 
-/// RAII JSLockHolder returned by [`VM::get_api_lock`]. Mirrors Zig
-/// `JSC.VM.Lock` (`defer api_lock.release()` → `Drop`).
+/// RAII JSLockHolder returned by [`VM::get_api_lock`]. Releases the API lock
+/// on `Drop`.
 pub struct Lock<'a> {
     vm: &'a VM,
 }
 
 impl<'a> Lock<'a> {
-    /// Explicit release (Zig spelling). Equivalent to `drop(self)`.
+    /// Explicit release. Equivalent to `drop(self)`.
     #[inline]
     pub fn release(self) {}
 }
@@ -241,5 +241,3 @@ impl Drop for Lock<'_> {
         JSC__VM__releaseAPILock(self.vm)
     }
 }
-
-// ported from: src/jsc/VM.zig

@@ -1,7 +1,7 @@
 #include "root.h"
 #include "BunInjectedScriptHost.h"
 
-#include "ZigGeneratedClasses.h"
+#include "BunGeneratedClasses.h"
 #include "DOMException.h"
 
 #include "JSDOMException.h"

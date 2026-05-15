@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_ast::Loc;
 use bun_collections::{ByteVecExt, MultiArrayList};
-use bun_core::{self, ZigStringSlice};
+use bun_core::{self, UTF8Slice};
 use bun_core::{declare_scope, err, scoped_log};
 use bun_semver::String as SemverString;
 
@@ -99,8 +99,7 @@ impl Default for ListValue {
     }
 }
 
-/// Dispatch a single body over both `ListValue` arms — Rust's spelling of Zig's
-/// `switch (this.impl) { inline else => |*list| ... }`. `$body` is duplicated
+/// Dispatch a single body over both `ListValue` arms. `$body` is duplicated
 /// textually so each arm monomorphizes over its own `MultiArrayList<T>`; the
 /// arms therefore need NOT have a common element type, only a common `$body`
 /// result type. Match-ergonomics governs the borrow: pass `&v` / `&mut v` and
@@ -151,9 +150,9 @@ impl List {
         with_names.ensure_total_capacity(without_names.len())?;
         // `without_names` drops at end of scope (was `defer without_names.deinit(allocator)`).
 
-        // PORT NOTE: Zig set_len + per-column memcpy. Rust MultiArrayList has no
-        // public `set_len`; rebuild element-wise (capacity already reserved, so no
-        // realloc). PERF(port): revisit once typed mut-column accessors exist.
+        // PORT NOTE: originally a set_len + per-column memcpy. Rust MultiArrayList
+        // has no public `set_len`; rebuild element-wise (capacity already reserved,
+        // so no realloc). PERF(port): revisit once typed mut-column accessors exist.
         for i in 0..without_names.len() {
             with_names.append_assume_capacity(without_names.get(i).to_named());
         }
@@ -269,8 +268,8 @@ impl List {
 
     pub fn name_index(&self) -> &[i32] {
         match &self.r#impl {
-            // TODO(port): Zig `inline else` calls `.items(.name_index)` on both arms, but
-            // `MappingWithoutName` has no `name_index` field — relies on Zig lazy analysis.
+            // TODO(port): the original called `.items(.name_index)` on both arms, but
+            // `MappingWithoutName` has no `name_index` field — relied on lazy analysis.
             // Return an empty slice for the without-names case.
             ListValue::WithoutNames(_list) => &[],
             ListValue::WithNames(list) => list.items_name_index(),
@@ -362,10 +361,10 @@ impl Lookup {
         }
 
         if bun_paths::is_absolute(base_filename) {
-            // PORT NOTE: Zig passed runtime `.auto` Platform; bun_paths exposes
+            // PORT NOTE: original passed a runtime `.auto` Platform; bun_paths exposes
             // const-generic `PlatformT` only. `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows), which is what
-            // `.auto` resolved to at comptime anyway.
+            // `.auto` resolved to anyway.
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             return Some(bun_core::String::clone_utf8(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
@@ -380,7 +379,7 @@ impl Lookup {
     ///
     /// This data is freed after printed on the assumption that printing
     /// errors to the console are rare (this isnt used for error.stack)
-    pub fn get_source_code(self, base_filename: &[u8]) -> Option<ZigStringSlice> {
+    pub fn get_source_code(self, base_filename: &[u8]) -> Option<UTF8Slice> {
         let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {
                 break 'bytes code.into_vec();
@@ -409,7 +408,7 @@ impl Lookup {
                 // decompression cache in-place.
                 let code = unsafe { (*serialized).source_file_contents(index) };
 
-                return Some(ZigStringSlice::from_utf8_never_free(code?));
+                return Some(UTF8Slice::from_utf8_never_free(code?));
             }
 
             if let Some(parsed) = provider.get_source_map(
@@ -429,7 +428,7 @@ impl Lookup {
             let name: &[u8] = &source_map.external_source_names[index];
 
             let mut buf = bun_paths::PathBuffer::uninit();
-            // PORT NOTE: Zig passed runtime `.auto` / `.loose`; bun_paths
+            // PORT NOTE: original passed runtime `.auto` / `.loose`; bun_paths
             // exposes const-generic `PlatformT` ZSTs. `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows) — same result.
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
@@ -442,7 +441,7 @@ impl Lookup {
             }
         };
 
-        Some(ZigStringSlice::init_owned(bytes))
+        Some(UTF8Slice::init_owned(bytes))
     }
 }
 
@@ -747,5 +746,3 @@ pub fn parse(
     psm.input_line_count = input_line_count;
     ParseResult::Success(psm)
 }
-
-// ported from: src/sourcemap/Mapping.zig

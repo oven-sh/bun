@@ -29,7 +29,7 @@ use bun_collections::StringSet;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
 use bun_core::{FeatureFlags, ZBox};
-use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
+use bun_core::{String as BunString, UTF8Slice as Utf8Slice};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
@@ -52,7 +52,7 @@ use crate::websocket_client::ErrorCode;
 use bun_http::ssl_config::SSLConfig;
 
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
-// Zig: `bun.new`/`bun.destroy` log under `.alloc` (hidden, BUN_DEBUG_alloc=1).
+// `bun.new`/`bun.destroy` log under `.alloc` (hidden, BUN_DEBUG_alloc=1).
 bun_core::declare_scope!(alloc, hidden);
 
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
@@ -97,7 +97,7 @@ pub struct HTTPClient<const SSL: bool> {
     outgoing_websocket: Option<*mut CppWebSocket>,
     /// Owned request bytes. Freed via `clear_input`.
     input_body_buf: Vec<u8>,
-    // PORT NOTE: reshaped for borrowck — Zig `to_send: []const u8` is always a
+    // PORT NOTE: reshaped for borrowck — `to_send` is always a
     // suffix of `input_body_buf`; stored here as the suffix length so we don't
     // hold a self-referential slice.
     to_send_len: usize,
@@ -120,7 +120,7 @@ pub struct HTTPClient<const SSL: bool> {
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct).
-    // TODO(port): Zig held a strong `SslCtxRef` (RAII over `SSL_CTX_up_ref`/
+    // TODO(port): originally held a strong `SslCtxRef` (RAII over `SSL_CTX_up_ref`/
     // `SSL_CTX_free`). No such wrapper exists in `bun_uws` yet; store the raw
     // retained pointer and release in `clear_data`/Drop callers.
     secure: Option<*mut SslCtx>,
@@ -136,13 +136,13 @@ pub struct HTTPClient<const SSL: bool> {
     offered_permessage_deflate: bool,
 }
 
-// Handler set referenced by `dispatch.zig` (kind = `.ws_client_upgrade[_tls]`).
+// Handler set referenced by the socket dispatch table (kind = `.ws_client_upgrade[_tls]`).
 // The `register()` C++ round-trip that previously installed these on a
 // shared `us_socket_context_t` is gone — sockets are stamped with the
 // kind at connect time and routed here statically.
 //
 // TODO(port): expose these as a `uws::SocketHandlerSet` const for the dispatch
-// table; in Zig these were `pub const onOpen = handleOpen;` etc.
+// table; previously these were `pub const onOpen = handleOpen;` etc.
 //
 // These take `*mut Self` (not `&mut Self`) because uSockets dispatches them
 // from the raw userdata pointer and several of them can free `Self` (via
@@ -164,7 +164,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 }
 
 impl<const SSL: bool> HTTPClient<SSL> {
-    /// Zig: `meta.typeName(T)` keeps the full path because the name contains `(`.
+    /// Type name keeps the full path because the name contains `(`.
     const TYPE_NAME: &'static str = if SSL {
         "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(true)"
     } else {
@@ -279,7 +279,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Build proxy state if using proxy.
         // The CONNECT request is built using local variables for proxy_authorization and proxy_headers
         // which are freed immediately after building the request (not stored on the client).
-        // Ownership of `body` moves into the proxy (matching Zig); the CONNECT
+        // Ownership of `body` moves into the proxy; the CONNECT
         // request becomes the initial input_body_buf instead.
         let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
             // Parse proxy authorization (temporary, freed after building CONNECT request)
@@ -329,7 +329,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let mut subprotocols = StringSet::new();
             let mut it = HeaderValueIterator::init(protocol_for_subprotocols);
             while let Some(protocol) = it.next() {
-                let _ = subprotocols.insert(protocol); // OOM-only Result (Zig: catch unreachable)
+                let _ = subprotocols.insert(protocol); // OOM-only Result; alloc failure aborts
             }
             subprotocols
         };
@@ -358,7 +358,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // used only for pre-connect setup and MUST NOT span any
         // `Socket::connect_*_group` call below — those install `client` as
         // socket userdata and may synchronously dispatch
-        // `handle_connect_error(*mut Self)` (see .zig:1152), which would
+        // `handle_connect_error(*mut Self)`, which would
         // alias this borrow under Stacked Borrows. A fresh `&mut *client` is
         // re-derived after each connect call returns.
         let client_ref = unsafe { &mut *client };
@@ -863,8 +863,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
         // Bumps the intrusive refcount and derefs on Drop at every return path
-        // below (Zig: `self.ref(); defer self.deref();`). No `&`/`&mut Self` is
-        // live when the guard drops.
+        // below. No `&`/`&mut Self` is live when the guard drops.
         let _guard = this.ref_guard();
 
         debug_assert!(this.is_same_socket(socket));
@@ -1094,7 +1093,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Use ssl_config if available, otherwise use defaults
         let ssl_options: SSLConfig = match &me.ssl_config {
             Some(config) => (**config).clone(),
-            // TODO(port): SSLConfig clone — Zig copies by value (`config.*`).
+            // TODO(port): SSLConfig clone — was a by-value copy.
             None => {
                 let mut c = SSLConfig::default();
                 c.reject_unauthorized = 0; // We verify manually
@@ -1348,8 +1347,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                 let mut protocol_str = BunString::clone_latin1(protocol);
                                 CppWebSocket::opaque_ref(ws).set_protocol(&mut protocol_str);
                                 // `BunString` is `Copy`; explicitly drop the
-                                // ref taken by `clone_latin1` (Zig: `defer
-                                // protocol_str.deref()`).
+                                // ref taken by `clone_latin1`.
                                 protocol_str.deref();
                             }
                             true
@@ -1528,7 +1526,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let overflow_ptr: *mut u8 = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
             if v.try_reserve_exact(overflow_len).is_err() {
-                // Spec .zig:1020 — OOM here terminates with `invalid_response`
+                // OOM here terminates with `invalid_response`
                 // rather than aborting the process.
                 // SAFETY: no `&mut Self` is live across this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
@@ -1657,7 +1655,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // No `&mut Self` spans this call (handle_close reenters).
             tcp.close(uws::CloseCode::Failure);
         }
-        // Zig: `defer if (saved_secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);`
         // Any arm above that didn't transfer ownership to `did_connect` left
         // the retained `SSL_CTX*` in `saved_secure`; release it now.
         if let Some(s) = saved_secure {
@@ -1699,7 +1696,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return;
                 }
                 // Bumps the intrusive refcount and derefs on Drop at every
-                // return path below (Zig: `self.ref(); defer self.deref();`).
+                // return path below.
                 let _guard = this.ref_guard();
                 // SAFETY: `p` holds a live ref on `tunnel`.
                 let wrote =
@@ -1725,7 +1722,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Bumps the intrusive refcount and derefs on Drop at every return path
-        // below (Zig: `self.ref(); defer self.deref();`).
+        // below.
         let _guard = this.ref_guard();
 
         let wrote = socket.write(this.to_send());
@@ -1784,7 +1781,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 /// Decodes an array of BunString header name/value pairs to UTF-8 up front.
 ///
 /// The BunString values may be backed by 8-bit Latin1 or 16-bit UTF-16
-/// `WTFStringImpl`s. Calling `.slice()` on a ZigString wrapper that was built
+/// `WTFStringImpl`s. Calling `.slice()` on an UnsafeStringView wrapper that was built
 /// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
 /// which then corrupts the HTTP upgrade request and can cause heap corruption.
 ///
@@ -1792,8 +1789,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 /// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
 /// here so build_request_body / build_connect_request can index them by &[u8].
 ///
-// PORT NOTE: reshaped for borrowck — Zig stored parallel `name_slices` /
-// `value_slices` arrays of `[]const u8` borrowing into `slices`. That is
+// PORT NOTE: reshaped for borrowck — originally stored parallel `name_slices` /
+// `value_slices` arrays borrowing into `slices`. That is
 // self-referential in Rust; instead store only the `Utf8Slice` array (len =
 // 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
 struct Headers8Bit<'a> {
@@ -1839,7 +1836,7 @@ impl<'a> Headers8Bit<'a> {
         let mut headers = Headers::default();
         for (name, value) in self.iter() {
             headers.append(name, value);
-            // PERF(port): Zig `try headers.append` — alloc errors abort in Rust.
+            // PERF(port): alloc errors abort in Rust.
         }
         headers
     }
@@ -1961,7 +1958,7 @@ fn build_request_body(
     }
 
     // Validate and use user key, or generate a new one
-    use bun_base64::zig_base64::STANDARD as B64_STD;
+    use bun_base64::std_base64::STANDARD as B64_STD;
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
         if let Some(k_slice) = user_key {
@@ -2133,7 +2130,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C" export shims for the generic `connect`/`cancel`/`memoryCost`.
-// Zig's `exportAll()` does `@export(&connect, .{ .name = ... })` per `ssl`.
+// `exportAll()` exports one symbol per `ssl` variant.
 // Rust cannot `#[no_mangle]` a generic, so monomorphize both here.
 // TODO(port): full C-ABI parameter mapping for `connect` (Option<&T> niche,
 // Option<Box<T>> niche, raw `*const BunString` arrays). Verify against the
@@ -2230,9 +2227,7 @@ export_http_client!(
     Bun__WebSocketHTTPSClient__memoryCost
 );
 
-/// Aliases for `WebSocketProxyTunnel` (matches Zig `HTTPClient` / `HTTPSClient`).
+/// Aliases for `WebSocketProxyTunnel` (matches `HTTPClient` / `HTTPSClient`).
 pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;
 pub type HttpUpgradeClient = HTTPClient<false>;
 pub type HttpsUpgradeClient = HTTPClient<true>;
-
-// ported from: src/http_jsc/websocket_client/WebSocketUpgradeClient.zig

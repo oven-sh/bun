@@ -7,9 +7,9 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
-// PORTING.md §Dispatch: Zig used `comptime test_kind: enum {...}` — Rust
-// `adt_const_params` is unstable, so the enum is passed as a runtime value
-// (the bodies branch on it anyway; no codegen difference for this fn).
+// PORTING.md §Dispatch: Rust `adt_const_params` is unstable, so the test kind
+// is passed as a runtime value rather than a const generic (the bodies branch
+// on it anyway; no codegen difference for this fn).
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum TestKind {
     Normal,
@@ -238,7 +238,7 @@ fn parser_options_from_js(
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
-                // Zig: `defer bunstr.deref()` — release the +1 ref each iteration.
+                // OwnedString releases the +1 ref on drop each iteration.
                 let bunstr = OwnedString::new(item.to_bun_string(global)?);
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
@@ -255,16 +255,8 @@ fn parser_options_from_js(
         }
     }
 
-    // if (try jsobj.getTruthy(globalThis, "css_modules")) |val| {
-    //     opts.css_modules = bun.css.css_modules.Config{
-    //
-    //     };
-    //     if (val.isObject()) {
-    //         if (try val.getTruthy(globalThis, "pure")) |pure_val| {
-    //             opts.css_modules.pure = pure_val.toBoolean();
-    //         }
-    //     }
-    // }
+    // TODO: wire up `css_modules` option (read `css_modules.pure` from the JS
+    // object into `opts.css_modules`).
 
     Ok(())
 }
@@ -272,9 +264,8 @@ fn parser_options_from_js(
 fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
     let mut targets = Browsers::default();
 
-    // Zig spec (css_internals.zig:188-256) unrolls this 9×; collapse to a
-    // table-driven loop. Key order preserved so JS getter/exception ordering
-    // matches the spec exactly.
+    // Table-driven loop over the supported browser keys. Key order is
+    // significant: JS getter/exception ordering must match.
     for (key, slot) in [
         ("android", &mut targets.android),
         ("chrome", &mut targets.chrome),
@@ -289,7 +280,7 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
         if let Some(val) = jsobj.get_truthy(global, key)? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
-                    // note: Rust `as` saturates on overflow/NaN where Zig is UB
+                    // note: Rust `as` saturates on overflow/NaN.
                     *slot = Some(value as u32);
                 }
             }
@@ -369,8 +360,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             ) {
                 Ok(r) => r,
                 Err(_e) => {
-                    // Zig: bun.handleErrorReturnTrace(e, @errorReturnTrace()); return .js_undefined;
-                    // TODO(port): handleErrorReturnTrace — debug-only error trace dump; no Rust equivalent yet
+                    // TODO(port): debug-only error-return-trace dump — no Rust equivalent yet.
                     return Ok(JSValue::UNDEFINED);
                 }
             };
@@ -385,5 +375,3 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         }
     }
 }
-
-// ported from: src/css_jsc/css_internals.zig

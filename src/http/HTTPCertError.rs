@@ -2,8 +2,8 @@ use bun_core::ZStr;
 
 pub struct HTTPCertError {
     pub error_no: i32,
-    // TODO(port): CertificateInfo.deinit frees code/reason — ownership unclear
-    // (borrowed in onHandshake, owned via dupeZ in CertificateInfo / http.zig:115).
+    // TODO(port): CertificateInfo cleanup frees code/reason — ownership unclear
+    // (borrowed in onHandshake, owned via dupeZ in CertificateInfo).
     // May need owned NUL-terminated type (Box<ZStr> / ZString) instead of &'static.
     pub code: &'static ZStr,
     pub reason: &'static ZStr,
@@ -26,8 +26,8 @@ impl HTTPCertError {
     /// (outer-TLS in `HTTPContext::Handler::on_handshake`, inner-TLS in
     /// `ProxyTunnel::on_handshake`) doesn't repeat the raw deref.
     ///
-    /// Mirrors http.zig: `reason` is gated on `code` being non-null (the
-    /// uSockets API populates both together or neither).
+    /// `reason` is gated on `code` being non-null (the uSockets API populates
+    /// both together or neither).
     pub fn from_verify_error(ssl_error: bun_uws::us_bun_verify_error_t) -> Self {
         /// Borrow a NUL-terminated C string from uSockets as `&'static ZStr`.
         /// The string is owned by the long-lived SSL session and outlives the
@@ -58,5 +58,3 @@ impl HTTPCertError {
         }
     }
 }
-
-// ported from: src/http/HTTPCertError.zig

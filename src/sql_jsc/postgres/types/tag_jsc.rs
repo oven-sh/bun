@@ -1,4 +1,4 @@
-//! JSC bridges for `sql/postgres/types/Tag.zig`. The `Tag` OID enum and its
+//! JSC bridges for the Postgres `Tag` OID type. The `Tag` OID enum and its
 //! pure helpers stay in `sql/`; only the `JSValue`/`JSGlobalObject`-touching
 //! conversion paths live here.
 
@@ -7,12 +7,11 @@ use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::types::tag::Tag;
 use bun_sql::shared::Data;
 
-// `comptime T: Tag` → const generic per PORTING.md. `Tag` in the Rust port is a
-// `#[repr(transparent)] struct Tag(Short)` with associated consts (non-exhaustive
-// OID space), so it can't be `ConstParamTy`. Demoted to a runtime arg; the body
-// is a plain match and the only caller (DataCell) computes the tag at runtime
-// anyway.
-// TODO(port): narrow error set (Zig inferred `error{UnsupportedArrayType}`).
+// `Tag` is a `#[repr(transparent)] struct Tag(Short)` with associated consts
+// (non-exhaustive OID space), so it can't be `ConstParamTy`. The tag is a
+// runtime arg; the body is a plain match and the only caller (DataCell)
+// computes the tag at runtime anyway.
+// TODO(port): narrow error set to a dedicated `UnsupportedArrayType` variant.
 pub fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     match t {
         Tag::int4_array => Ok(JSType::Int32Array),
@@ -23,15 +22,13 @@ pub fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     }
 }
 
-/// Zig's `toJSWithType(comptime Type: type, value: Type)` monomorphizes per call
-/// site so each `switch` arm only needs to typecheck for the concrete `Type`
-/// actually passed. Rust generics don't admit that — every arm must typecheck
-/// for every `T`. Following the pattern established in `date.rs` (`DateToJs`)
-/// and `PostgresString.rs` (`ToJsWithType`), this trait supplies one conversion
-/// per arm-target so the original match body is preserved verbatim. Concrete
-/// value types implement only the conversions that make sense for them; the
-/// rest may `unreachable!()` (mirroring Zig's per-monomorphization compile
-/// error becoming a runtime impossibility once the `tag` is fixed).
+/// `to_js_with_type` is generic over a closed set of value types, but every
+/// `match` arm must typecheck for every `T`. Following the pattern established
+/// in `date.rs` (`DateToJs`) and `PostgresString.rs` (`ToJsWithType`), this
+/// trait supplies one conversion per arm-target so the match body stays a
+/// uniform dispatch. Concrete value types implement only the conversions that
+/// make sense for them; the rest may `unreachable!()` since the `tag` fixes
+/// which arm runs at call time.
 pub trait TagToJs: Sized {
     /// `.numeric | .float4 | .float8 | .int4` arms → `JSValue.jsNumber(value)`.
     fn as_js_number(self) -> f64;
@@ -71,8 +68,7 @@ pub fn to_js<T: TagToJs>(
     global: &JSGlobalObject,
     value: T,
 ) -> Result<JSValue, AnyPostgresError> {
-    // Zig: `toJSWithType(tag, globalObject, @TypeOf(value), value)` — the
-    // `@TypeOf` is dropped; the generic `<T>` already names the type.
+    // The generic `<T>` already names the value type.
     to_js_with_type(tag, global, value)
 }
 
@@ -157,5 +153,3 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
 
     Ok(Tag::numeric)
 }
-
-// ported from: src/sql_jsc/postgres/types/tag_jsc.zig

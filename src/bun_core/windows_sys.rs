@@ -56,7 +56,7 @@ unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
 // so existing `crate::windows_sys::kernel32::*` / `c::*` callers resolve.
 pub use bun_windows_sys::kernel32;
-// `c::` alias used by `output.rs` (Zig's `bun.c` namespace).
+// `c::` alias used by `output.rs` (the `bun.c` namespace).
 pub use kernel32 as c;
 
 /// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from

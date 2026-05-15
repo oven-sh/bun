@@ -7,9 +7,9 @@ use bun_core::{OwnedString, strings};
 use core::cell::Cell;
 
 use jsc::StringJsc as _;
-use jsc::ZigStringJsc as _;
+use jsc::UnsafeStringViewJsc as _;
 use jsc::text_codec::TextCodec;
-use jsc::zig_string::ZigString;
+use jsc::unsafe_string_view::UnsafeStringView;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -17,7 +17,7 @@ const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 #[derive(Default, Clone, Copy)]
 pub struct Buffered {
     pub buf: [u8; 3],
-    pub len: u8, // Zig: u2
+    pub len: u8, // logically a 2-bit count (0..=3)
 }
 
 impl Buffered {
@@ -62,7 +62,7 @@ impl Default for TextDecoder {
 // pub const js = jsc.Codegen.JSTextDecoder;
 // pub const toJS / fromJS / fromJSDirect — provided by #[bun_jsc::JsClass] codegen.
 
-/// RAII guard for an FFI-owned `TextCodec` (matches Zig `defer codec.deinit()`).
+/// RAII guard for an FFI-owned `TextCodec` (calls `deinit()` on drop).
 struct CodecGuard(core::ptr::NonNull<TextCodec>);
 impl Drop for CodecGuard {
     fn drop(&mut self) {
@@ -103,12 +103,12 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        UnsafeStringView::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
     }
 
     // const Vector16 = std.meta.Vector(16, u16);
     // const max_16_ascii: Vector16 = @splat(@as(u16, 127));
-    // PORT NOTE: SIMD vector constants are unused in this file's hot paths in current Zig.
+    // PORT NOTE: SIMD vector constants are unused in this file's hot paths.
 
     #[inline(always)]
     fn process_code_unit_utf16(
@@ -277,7 +277,7 @@ impl TextDecoder {
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
-                    return Ok(ZigString::init(buffer_slice).to_js(global_this));
+                    return Ok(UnsafeStringView::init(buffer_slice).to_js(global_this));
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -289,14 +289,14 @@ impl TextDecoder {
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
                 // PERF(port): heap::alloc transfers a tight allocation (no excess capacity).
-                Ok(jsc::zig_string::to_external_u16(
+                Ok(jsc::unsafe_string_view::to_external_u16(
                     bun_core::heap::into_raw(bytes).cast::<u16>(),
                     out.written as usize,
                     global_this,
                 ))
             }
             EncodingLabel::Utf8 => {
-                // PORT NOTE: reshaped for borrowck — Zig used a labeled tuple-destructuring block.
+                // PORT NOTE: reshaped for borrowck — replaced a labeled tuple-destructuring block.
                 let maybe_without_bom =
                     if !self.ignore_bom && buffer_slice.starts_with(b"\xef\xbb\xbf") {
                         &buffer_slice[3..]
@@ -364,15 +364,19 @@ impl TextDecoder {
                         }
                     }
                     let len = decoded.len();
-                    // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
+                    // PERF(port): Vec::leak may retain excess capacity — profile in Phase B
                     let ptr = decoded.leak().as_mut_ptr();
-                    return Ok(jsc::zig_string::to_external_u16(ptr, len, global_this));
+                    return Ok(jsc::unsafe_string_view::to_external_u16(
+                        ptr,
+                        len,
+                        global_this,
+                    ));
                 }
 
                 debug_assert!(input.is_empty() || !deinit);
 
                 // Experiment: using mimalloc directly is slightly slower
-                Ok(ZigString::init(input).to_js(global_this))
+                Ok(UnsafeStringView::init(input).to_js(global_this))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
@@ -400,7 +404,7 @@ impl TextDecoder {
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            // Zig: `@tagName(utf16_encoding)` → "UTF-16LE" / "UTF-16BE"
+                            // Use the upper-case enum tag name "UTF-16LE" / "UTF-16BE"
                             // (NOT `get_label()`, which is lowercase "utf-16le"/"utf-16be").
                             format_args!(
                                 "The encoded data was not valid {} data",
@@ -412,15 +416,19 @@ impl TextDecoder {
 
                 if decoded.is_empty() {
                     drop(decoded);
-                    return Ok(ZigString::EMPTY.to_js(global_this));
+                    return Ok(UnsafeStringView::EMPTY.to_js(global_this));
                 }
 
                 // Transfer ownership of the backing allocation to JSC; freed via
                 // free_global_string -> mi_free when the string is collected.
                 let len = decoded.len();
-                // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
+                // PERF(port): Vec::leak may retain excess capacity — profile in Phase B
                 let ptr = decoded.leak().as_mut_ptr();
-                Ok(jsc::zig_string::to_external_u16(ptr, len, global_this))
+                Ok(jsc::unsafe_string_view::to_external_u16(
+                    ptr,
+                    len,
+                    global_this,
+                ))
             }
 
             // Handle all other encodings using WebKit's TextCodec
@@ -431,7 +439,7 @@ impl TextDecoder {
                 // Note: In production, we might want to cache these per-encoding
                 let Some(codec) = TextCodec::create(encoding_name) else {
                     // Fallback to empty string if codec creation fails
-                    return Ok(ZigString::init(b"").to_js(global_this));
+                    return Ok(UnsafeStringView::init(b"").to_js(global_this));
                 };
                 let mut codec = CodecGuard(codec);
                 // `codec` drops at scope exit (matches `defer codec.deinit()`).
@@ -445,7 +453,7 @@ impl TextDecoder {
                 let result = codec.decode(buffer_slice, FLUSH, self.fatal);
                 // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, and
                 // `DecodeResult` has none either — wrap the +1 ref in `OwnedString`
-                // so it derefs on scope exit (matches Zig `defer result.result.deref()`).
+                // so it derefs on scope exit.
                 let result_str = OwnedString::new(result.result);
 
                 // Check for errors if fatal mode is enabled
@@ -529,5 +537,3 @@ impl TextDecoder {
         Ok(bun_core::heap::into_raw(TextDecoder::new(decoder)))
     }
 }
-
-// ported from: src/runtime/webcore/TextDecoder.zig

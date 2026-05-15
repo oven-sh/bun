@@ -1,7 +1,6 @@
-//! HTTP client (port of `src/http/http.zig`).
-//! The Zig file is `const HTTPClient = @This();` — the whole module IS the
-//! `HTTPClient` struct. In Rust the struct is named explicitly and free
-//! functions become inherent methods on it.
+//! HTTP client.
+//! The whole module IS the `HTTPClient` struct: the struct is named explicitly
+//! and free functions are inherent methods on it.
 
 #![allow(unused, nonstandard_style, unexpected_cfgs, static_mut_refs)]
 #![warn(unused_must_use)]
@@ -93,7 +92,7 @@ pub use bun_uws::ssl_wrapper;
 pub use bun_uws::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
-// Phase-A drafts used both `HTTPClient`/`HttpClient` and the Zig type-factory
+// Phase-A drafts used both `HTTPClient`/`HttpClient` and the legacy type-factory
 // name `NewHTTPContext`; alias all spellings to the canonical types so submodules
 // resolve without churn.
 pub use h2_client as h2;
@@ -136,7 +135,7 @@ pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::HeaderValueIterator;
 pub use init_error::InitError;
 
-/// Zig: `pub const extremely_verbose = false;` — compile-time switch.
+/// Compile-time verbosity switch.
 pub const extremely_verbose: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
@@ -162,7 +161,7 @@ impl Default for HTTPResponseMetadata {
 }
 
 impl Drop for HTTPResponseMetadata {
-    // Port of Zig `HTTPResponseMetadata.deinit`: `owned_buf` is freed by
+    // `owned_buf` is freed by
     // `Box`'s own Drop; `response.headers.list` was `Box::leak`'d in
     // `clone_metadata` and must be reclaimed here. `Default` / zero-header
     // responses have an empty static slice, guarded by the len check.
@@ -270,7 +269,7 @@ pub static EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI: AtomicBool = AtomicBool::new(fals
 
 const MAX_REDIRECT_URL_LENGTH: usize = 128 * 1024;
 
-/// Mirrors Zig's `bun.http.max_http_header_size`. The static is exported to
+/// Default maximum HTTP header size. The static is exported to
 /// C++ via `BUN_DEFAULT_MAX_HTTP_HEADER_SIZE`; `AtomicUsize` has the same
 /// size/alignment as `usize` so the symbol layout is unchanged.
 #[unsafe(export_name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE")]
@@ -576,7 +575,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
-use bun_core::ZigStringSlice;
+use bun_core::UTF8Slice;
 use bun_url::URL;
 use core::ptr::NonNull;
 
@@ -653,7 +652,7 @@ pub struct HTTPClient<'a> {
     pub signals: Signals,
     pub async_http_id: u32,
     pub hostname: Option<&'a [u8]>,
-    pub unix_socket_path: ZigStringSlice,
+    pub unix_socket_path: UTF8Slice,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -699,7 +698,7 @@ impl Drop for HTTPClient<'_> {
         // proxy_headers: Option<Headers> — dropped automatically.
         // tunnel was created by ProxyTunnel::new (heap::alloc) and refcounted;
         // close_proxy_tunnel releases this client's strong ref (no shutdown —
-        // matches Zig deinit which only detach+derefs).
+        // it only detaches and derefs).
         self.close_proxy_tunnel(false);
         // The session detaches `h2` before any terminal callback, so this should
         // be None by the time the result callback's deinit path runs.
@@ -709,7 +708,7 @@ impl Drop for HTTPClient<'_> {
             // Release the strong ref taken in set_custom_ssl_ctx.
             ctx.deref();
         }
-        self.unix_socket_path = ZigStringSlice::EMPTY;
+        self.unix_socket_path = UTF8Slice::EMPTY;
     }
 }
 
@@ -717,7 +716,7 @@ impl Drop for HTTPClient<'_> {
 // `MaybeUninit` (not `Option`) so the static const-evals to all-zero bytes and
 // lands in `.bss`. `Option<HTTPThread>::None` has a non-zero niche value, which
 // forced the entire ~27 KB struct into `.data` and thus into startup RSS for
-// every process — Zig's `var http_thread: HTTPThread = undefined` is pure BSS.
+// every process; the all-zero `MaybeUninit` form lands in pure BSS.
 //
 // `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
 // type. `claim()` is invoked from `HTTPThread::on_start`. JS-side callers that
@@ -776,10 +775,10 @@ use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
 use bun_uws as uws;
-// TODO(port): spec http.zig:829 uses `std.hash.Wyhash` (NOT Wyhash11 — see
-// PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap
+// TODO(port): the canonical algorithm here is `std.hash.Wyhash` (NOT Wyhash11 —
+// see PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap
 // once `bun_wyhash::Wyhash` (std algorithm) lands so proxy_auth_hash() and
-// header-name hashing match any component still computing the Zig hash.
+// header-name hashing match any component still computing the original hash.
 use bun_http_types::ETag::StringPointer;
 use bun_wyhash::Wyhash11 as Wyhash;
 
@@ -829,7 +828,7 @@ fn get_user_agent_header() -> picohttp::Header {
 }
 
 // ── header-hash constants ───────────────────────────────────────────────
-// PORT NOTE: Zig computed these at comptime via `Wyhash + lowerString`.
+// PORT NOTE: these were previously computed at compile time via `Wyhash + lowerString`.
 // Wyhash11 is not yet `const fn`, so use a runtime alias of `hash_header_name`
 // and cache the three values that are looked up on every request via
 // `LazyLock`. The per-header `match` arms inside `build_request` /
@@ -901,8 +900,8 @@ mod scratch {
 pub use scratch::temp_hostname;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
-// PORT NOTE: Zig used `boringssl.SSL.AlpnOffer`; bun_boringssl doesn't yet
-// expose one, so define it locally and TODO(b2) wire through to
+// PORT NOTE: bun_boringssl doesn't yet expose an `AlpnOffer` type, so define
+// one locally and TODO(b2) wire through to
 // `configure_http_client_with_alpn` once that lands.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AlpnOffer {
@@ -911,7 +910,6 @@ pub enum AlpnOffer {
     H1OrH2,
 }
 
-/// Port of `BoringSSL.SSL.configureHTTPClientWithALPN` (boringssl.zig:19066).
 /// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
 /// from `on_open` for every TLS socket — must run even when the hostname is an
@@ -1034,7 +1032,7 @@ struct InitialRequestPayloadResult {
 /// is identical for both CONNECT tunnels and absolute-form forward requests.
 ///
 /// NOTE: this precedence is the *opposite* of the WebSocket upgrade client's
-/// CONNECT builder, which is intentional per the .zig specs — do not unify.
+/// CONNECT builder, which is intentional — do not unify.
 fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     // Check if user provided Proxy-Authorization in custom headers
     let user_provided_proxy_auth = client
@@ -1156,7 +1154,7 @@ pub fn print_request(
     body: &[u8],
     curl: bool,
 ) {
-    // TODO(port): Zig built a clone with `path = url` for the curl formatter.
+    // The curl formatter wants a clone with `path = url`, but
     // picohttp::Request<'_> isn't `Clone`, so format the fields directly.
     if curl {
         let request_ = picohttp::Request {
@@ -1233,12 +1231,12 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 //    and ProxyTunnel.rs.
 // ────────────────────────────────────────────────────────────────────────
 
-/// Zig: `BoringSSL.getCertErrorFromNo(error_no)` — maps an X509 verify code
-/// onto a `bun_core::Error` whose name is the upper-snake Zig error-set tag
-/// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
-/// string, so do NOT substitute `X509_verify_cert_error_string` output here.
+/// Maps an X509 verify code onto a `bun_core::Error` whose name is the
+/// upper-snake error tag (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code`
+/// matches on this exact string, so do NOT substitute
+/// `X509_verify_cert_error_string` output here.
 // PORT NOTE: constants are the BoringSSL `X509_V_ERR_*` values from
-// `<openssl/x509.h>` (see boringssl.zig:17302-17370). Inlined as literals so
+// `<openssl/x509.h>`. Inlined as literals so
 // this file doesn't grow a dep on a header-generated const set.
 pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
     let name: &'static str = match error_no {
@@ -1314,8 +1312,8 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
 }
 
 // ── HTTPClient field accessors ──────────────────────────────────────────
-// The Zig struct stored raw pointers (`*MutableString`, `*ProxyTunnel`); the
-// Rust struct uses `Option<NonNull<_>>`. These helpers centralize the unsafe
+// The struct stores `Option<NonNull<_>>` instead of raw pointers
+// (`*MutableString`, `*ProxyTunnel`). These helpers centralize the unsafe
 // deref so the state-machine bodies stay readable.
 impl<'a> HTTPClient<'a> {
     #[inline]
@@ -1376,7 +1374,7 @@ impl<'a> HTTPClient<'a> {
         // that same allocation (`(*body_out_str).reset()`, InternalState.rs)
         // while `result.body` is a live `&'static mut` to it — this overlap is
         // pre-existing (the old open-coded `(*this_ptr).state.reset()` did the
-        // same) and matches the Zig sequencing; the callback observes the
+        // same) and matches the original sequencing; the callback observes the
         // post-reset (empty) buffer. Do not read this comment as asserting
         // `result.body` and `state.reset()` are disjoint.
         let result = unsafe { self.to_result().detach_lifetime() };
@@ -1435,15 +1433,13 @@ pub(crate) mod body_out {
     pub(super) fn opt_mut<'a>(p: Option<NonNull<MutableString>>) -> Option<&'a mut MutableString> {
         p.map(as_mut)
     }
-    /// Snapshot the body buffer's contents by value (http.zig
-    /// `const body = out_str.*`) so a following `state.reset()` doesn't
-    /// deliver an empty body.
+    /// Snapshot the body buffer's contents by value so a following
+    /// `state.reset()` doesn't deliver an empty body.
     #[inline]
     pub(super) fn take_list(p: Option<NonNull<MutableString>>) -> Option<Vec<u8>> {
         p.map(|p| core::mem::take(&mut as_mut(p).list))
     }
-    /// Restore the body bytes that `state.reset()` cleared (http.zig
-    /// `result.body.?.* = body`).
+    /// Restore the body bytes that `state.reset()` cleared.
     #[inline]
     pub(super) fn restore_list(p: Option<NonNull<MutableString>>, v: Option<Vec<u8>>) {
         if let (Some(p), Some(v)) = (p, v) {
@@ -1601,7 +1597,7 @@ impl<'a> HTTPClient<'a> {
                 // Build a NUL-terminated SNI string only when the hostname is not an
                 // IP literal (RFC 6066 forbids IP SNI). ALPN/SCT/OCSP must still be
                 // configured regardless, so the helper is called unconditionally
-                // below with `null` SNI in the IP case (http.zig:186-207).
+                // below with `null` SNI in the IP case.
                 let mut owned: Vec<u8>; // drops on scope exit
                 let host_z: *const core::ffi::c_char = if !strings::is_ip_address(raw_hostname) {
                     // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
@@ -1860,7 +1856,8 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
-        // PORT NOTE: reshaped for borrowck — Zig used `defer terminateSocket(socket)`
+        // PORT NOTE: reshaped for borrowck — terminateSocket(socket) is invoked
+        // explicitly after `fail` instead of via a deferred guard.
         self.fail(err!(Timeout));
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
     }
@@ -1914,7 +1911,7 @@ impl<'a> HTTPClient<'a> {
     ///
     /// target_hostname in the pool stores url.hostname (the CONNECT TCP target
     /// at writeProxyConnect line 346). But the inner TLS SNI/cert verification
-    /// uses hostname orelse url.hostname (ProxyTunnel.zig:44). If a Host header
+    /// uses `hostname` falling back to `url.hostname`. If a Host header
     /// override sets hostname != url.hostname, two requests to different IPs
     /// with the same Host header must NOT share a tunnel — they're physically
     /// connected to different servers. Hashing hostname here catches that.
@@ -2028,7 +2025,7 @@ impl<'a> HTTPClient<'a> {
 
     pub fn set_custom_ssl_ctx(&mut self, ctx: NonNull<HttpsContext>) {
         // Intrusive-refcounted: this fn takes ownership of one strong ref by
-        // bumping it here (matches http.zig:821-825). Callers do NOT pre-bump.
+        // bumping it here. Callers do NOT pre-bump.
         // SAFETY: ctx points at a live HttpsContext.
         let new_ref = unsafe { http_context::HTTPContextRc::<true>::init_ref(ctx.as_ptr()) };
         if let Some(old) = self.custom_ssl_ctx.replace(new_ref) {
@@ -2207,9 +2204,8 @@ impl<'a> HTTPClient<'a> {
                     header_count += 1;
                 }
             } else {
-                // Zig http.zig:1051 — `std.fmt.bufPrint(&buf, "{d}", .{body_len}) catch "0"`.
                 // 11-byte buf vs 64-bit usize: must fall back to "0" on
-                // overflow (same latent bug as Zig), NOT panic.
+                // overflow (preserving the original latent bug), NOT panic.
                 let value: &[u8] = match bun_core::fmt::buf_print(
                     &mut self.request_content_len_buf,
                     format_args!("{body_len}"),
@@ -2260,10 +2256,10 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // PORT NOTE: Zig deinit'd then assigned `.empty` here; the bitwise
-        // `task.http.?.* = async_http.*` copy-back later overwrote the
-        // JS-thread original's slice with `.empty`, so the buffer was freed
-        // exactly once. The Rust port has no struct copy-back
+        // PORT NOTE: a previous formulation freed and assigned an empty slice
+        // here; a bitwise struct copy-back later overwrote the JS-thread
+        // original's slice with the empty value, so the buffer was freed
+        // exactly once. This implementation has no struct copy-back
         // (`sync_progress_from` skips owned fields) and the original retains
         // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
         // clone was created via `ptr::read`). Dropping it here would
@@ -2284,9 +2280,9 @@ impl<'a> HTTPClient<'a> {
 
         self.state.response_message_buffer = MutableString::default();
 
-        // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:1098 reads
-        // `this.state.body_out_str.?` without clearing it, so the
-        // TooManyRedirects `fail()` below still sees a populated body pointer.
+        // PORT NOTE: copy the NonNull, do NOT `.take()` — `state.body_out_str`
+        // must remain populated so the TooManyRedirects `fail()` below still
+        // sees a populated body pointer.
         let body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
@@ -2360,7 +2356,7 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub fn start(&mut self, body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) {
-        // TODO(port): body_out_str ownership — Zig stores *MutableString in state
+        // TODO(port): body_out_str ownership — state stores a raw *MutableString
         body_out_str.reset();
 
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
@@ -2379,7 +2375,7 @@ impl<'a> HTTPClient<'a> {
         // mark that we are connecting
         self.flags.defer_fail_until_connecting_is_complete = true;
         // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
-        // PORT NOTE: Zig `defer this.completeConnectingProcess()` cannot be a Drop guard here
+        // PORT NOTE: `complete_connecting_process()` cannot be a Drop guard here
         // (it needs `&mut self`, which would alias every other `self.*` call in the body),
         // so it is reshaped as an explicit `self.complete_connecting_process()` before each return.
 
@@ -2625,7 +2621,7 @@ impl<'a> HTTPClient<'a> {
             if amount < to_send_len {
                 // we could not send all pending data so we need to buffer the extra data
                 if !data.is_empty() {
-                    let _ = buffer.write(data); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    let _ = buffer.write(data); // OOM/capacity: previously aborted; now kept fire-and-forget
                 }
                 // failed to send everything so we have backpressure
                 return Ok(true);
@@ -3030,7 +3026,7 @@ impl<'a> HTTPClient<'a> {
             let to_copy = incoming_data;
             if !to_copy.is_empty() {
                 // this one will probably be another chunk, so we leave a little extra room
-                let _ = self.state.response_message_buffer.append(to_copy); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = self.state.response_message_buffer.append(to_copy); // OOM/capacity: previously aborted; now kept fire-and-forget
             }
         }
 
@@ -3163,7 +3159,7 @@ impl<'a> HTTPClient<'a> {
             && !self.state.flags.did_set_content_encoding
         {
             // if it compressed with this header, it is no longer because we will decompress it
-            // TODO(port): Zig wrapped headers in ArrayListUnmanaged but never mutated; preserved as-is
+            // TODO(port): headers were previously wrapped in a growable list but never mutated; preserved as-is
             self.state.flags.did_set_content_encoding = true;
             self.state.content_encoding_i = u8::MAX;
             // we need to reset the pending response because we removed a header
@@ -3387,7 +3383,7 @@ impl<'a> HTTPClient<'a> {
         debug_assert!(self.state.pending_response.is_some());
         // PORT NOTE: `Response<'static>` is `Copy`; bind by value so no borrow
         // of `self.state` is held across the `pending_response = None` write
-        // below (Zig nulls it mid-block, which would trip borrowck on a `&`).
+        // below (the field is nulled mid-block, which would trip borrowck on a `&`).
         if let Some(response) = self.state.pending_response {
             if let Some(old) = self.state.cloned_metadata.take() {
                 drop(old); // deinit
@@ -3400,8 +3396,8 @@ impl<'a> HTTPClient<'a> {
             // PORT NOTE: `Response::clone` ties its return lifetime to
             // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
             // the cloned response can be stored in `HTTPResponseMetadata`.
-            // Reclaimed by `Drop for HTTPResponseMetadata` (mirrors Zig
-            // `deinit` freeing `response.headers.list`).
+            // Reclaimed by `Drop for HTTPResponseMetadata` (frees
+            // `response.headers.list`).
             let headers_buf = bun_core::heap::release(
                 vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
             );
@@ -3492,11 +3488,10 @@ impl<'a> HTTPClient<'a> {
         // `self` directly, then rebuild a fresh `HTTPClientResult` for the
         // callback from the snapshotted fields + the restored body.
         let body = self.state.body_out_str;
-        // Snapshot the body buffer's CONTENTS by value (http.zig:2238-2239
-        // `const body = out_str.*`) so that `state.reset()` — which calls
-        // `body.reset()` and clears the list — doesn't deliver an empty body
-        // when `is_done`. Restored below before the callback (http.zig:2307
-        // `result.body.?.* = body`).
+        // Snapshot the body buffer's CONTENTS by value so that
+        // `state.reset()` — which calls `body.reset()` and clears the list —
+        // doesn't deliver an empty body when `is_done`. Restored below before
+        // the callback.
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
@@ -3551,7 +3546,7 @@ impl<'a> HTTPClient<'a> {
                 true
             };
 
-            // PORT NOTE (diverges from Zig): the same early-reply hazard
+            // PORT NOTE (intentional divergence): the same early-reply hazard
             // described above for tunnels applies to direct connections — a
             // server may answer (200, Content-Length: 0) before a large PUT
             // body has finished writing (e.g. S3 multipart UploadPart against
@@ -3563,7 +3558,7 @@ impl<'a> HTTPClient<'a> {
             // completion path. `request_stage` alone is insufficient because
             // a fully-sent small request parks at `.body` (see on_writable),
             // so for byte-buffer bodies check the unsent slice instead.
-            // Stream/Sendfile are left at Zig parity (they don't track an
+            // Stream/Sendfile are left untouched (they don't track an
             // unsent slice here).
             let request_side_drained = match &self.state.original_request_body {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
@@ -3624,7 +3619,7 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "done");
         }
 
-        // Restore the body bytes that `state.reset()` cleared (http.zig:2307).
+        // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
         let async_http = self.parent_async_http();
         // Rebuild the result from snapshotted fields now that all `&mut self`
@@ -3665,8 +3660,7 @@ impl<'a> HTTPClient<'a> {
         // directly, then rebuild a fresh `HTTPClientResult` for the callback.
         // See send_progress_update_without_stage_check for the same pattern.
         let body = self.state.body_out_str;
-        // Snapshot the body buffer's CONTENTS by value (http.zig:2326-2327
-        // `const body = out_str.*`); restored below (http.zig:2340).
+        // Snapshot the body buffer's CONTENTS by value; restored below.
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
@@ -3702,7 +3696,7 @@ impl<'a> HTTPClient<'a> {
             self.state.stage = Stage::Done;
             self.flags.proxy_tunneling = false;
         }
-        // Restore the body bytes that `state.reset()` cleared (http.zig:2340).
+        // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
         let async_http = self.parent_async_http();
         // Rebuild the result from snapshotted fields now that all `&mut self`
@@ -3745,9 +3739,9 @@ impl<'a> HTTPClient<'a> {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:2360 reads
-        // `this.state.body_out_str.?` without clearing it, so the
-        // TooManyRedirects `fail()` below still sees a populated body pointer.
+        // PORT NOTE: copy the NonNull, do NOT `.take()` — `state.body_out_str`
+        // must remain populated so the TooManyRedirects `fail()` below still
+        // sees a populated body pointer.
         let body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
@@ -3931,7 +3925,7 @@ impl<'a> HTTPClient<'a> {
                 self.state.total_body_received
             );
         }
-        // PORT NOTE: Zig `defer` block moved to end of fn (no early returns after this point that skip it)
+        // PORT NOTE: deferred cleanup moved to end of fn (no early returns after this point that skip it)
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
@@ -4006,7 +4000,7 @@ impl<'a> HTTPClient<'a> {
             || content_length.is_none()
         {
             let is_final_chunk = is_done;
-            // PORT NOTE: Zig passes `buffer.*` BY VALUE (http.zig:2614). Mirror that by
+            // PORT NOTE: pass the buffer BY VALUE by
             // moving the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
             // so any `&` into `self.state` held across the call would be aliased UB.
@@ -4045,7 +4039,7 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: reshaped for borrowck — `chunked_decoder` and the body
         // buffer (`compressed_body` / `body_out_str`) are disjoint fields of
         // `self.state`, so borrow them once together via the split accessor and
-        // operate on safe references. The Zig `var buffer = buffer_ptr.*` was a
+        // operate on safe references. A previous formulation took a
         // shallow struct copy that aliased the same allocation; deep-cloning
         // here would diverge (mutations from process_body_buffer would be lost).
         let (decoder, body_buf) = self.state.chunked_decoder_and_body_buffer();
@@ -4093,7 +4087,7 @@ impl<'a> HTTPClient<'a> {
                 if self.signals.get(signals::Field::ResponseBodyStreaming) {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
-                    // PORT NOTE: Zig passes the by-value struct copy (http.zig:2681). Move the
+                    // PORT NOTE: pass the buffer by value. Move the
                     // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
                     return self.state.process_body_buffer(buffer_snap, false);
@@ -4104,7 +4098,7 @@ impl<'a> HTTPClient<'a> {
             // Done
             _ => {
                 self.state.flags.received_last_chunk = true;
-                // PORT NOTE: Zig passes the by-value struct copy (http.zig:2689). Move the
+                // PORT NOTE: pass the buffer by value. Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
                 let _ = self.state.process_body_buffer(buffer_snap, true)?;
@@ -4132,8 +4126,8 @@ impl<'a> HTTPClient<'a> {
         let buffer: &mut [u8] = if self.state.response_message_buffer.owns(incoming_data) {
             // if we've already copied the buffer once, we can avoid copying it again.
             // SAFETY: `incoming_data` is a subslice of `response_message_buffer.list`
-            // (`owns` just verified). Zig does `@constCast(incoming_data)` (http.zig:2727),
-            // but `incoming_data.as_ptr() as *mut u8` would carry SharedReadOnly provenance
+            // (`owns` just verified). A naive const-cast of `incoming_data`
+            // (`incoming_data.as_ptr() as *mut u8`) would carry SharedReadOnly provenance
             // (it came from a `&[u8]`) and writing through it is UB. Derive the mutable
             // slice from the owning Vec instead so the write has Unique provenance.
             let base = self.state.response_message_buffer.list.as_mut_ptr();
@@ -4178,7 +4172,7 @@ impl<'a> HTTPClient<'a> {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
-                    // PORT NOTE: Zig passes `body_buffer.*` BY VALUE (http.zig:2763). Move
+                    // PORT NOTE: pass the body buffer BY VALUE. Move
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/body_out_str).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
@@ -4627,7 +4621,7 @@ impl<'a> HTTPClient<'a> {
                                 name: &'static [u8],
                                 hash: u64,
                             }
-                            // PORT NOTE: was a `const` table in Zig; LazyLock hashes
+                            // PORT NOTE: was previously a compile-time table; LazyLock hashes
                             // aren't const, so build at runtime.
                             let headers_to_remove: [H; 3] = [
                                 H {

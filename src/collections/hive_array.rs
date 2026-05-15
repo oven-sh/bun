@@ -6,7 +6,7 @@ use bun_core::asan;
 
 /// Fixed-width occupancy bitset for [`HiveArray`].
 ///
-/// PORT NOTE: Zig's `std.bit_set.IntegerBitSet(N)` is backed by an exact-width
+/// PORT NOTE: the original `IntegerBitSet(N)` is backed by an exact-width
 /// `uN` integer (`u128`, `u256`, `u2048`, …). The Rust port's
 /// [`IntegerBitSet`](crate::bit_set::IntegerBitSet) is backed by a single
 /// `usize`, so for `N > 64` it silently held only 64 usable bits — every
@@ -156,7 +156,7 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
 /// An array that efficiently tracks which elements are in use.
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
-// PORT NOTE: Zig's `capacity: u16` is widened to `usize` here because Rust array
+// PORT NOTE: the original `capacity: u16` is widened to `usize` here because Rust array
 // lengths require a `usize` const generic on stable.
 pub struct HiveArray<T, const CAPACITY: usize> {
     pub buffer: [MaybeUninit<T>; CAPACITY],
@@ -166,8 +166,8 @@ pub struct HiveArray<T, const CAPACITY: usize> {
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     pub const SIZE: usize = CAPACITY;
 
-    // PORT NOTE: Zig had `pub var empty: Self` as a mutable static to work around
-    // https://github.com/ziglang/zig/issues/22462 and /21988. Rust has no such
+    // PORT NOTE: the original had `pub var empty: Self` as a mutable static to work
+    // around upstream issues 22462/21988. Rust has no such
     // limitation; callers should use `init()` (which is `const`).
 
     pub const fn init() -> Self {
@@ -276,7 +276,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// point into this hive, returns `false` and is a no-op. Use when the
     /// caller has already moved the contents out / destructured them, or when
     /// `T` is POD and the slot is being released on an error path before it
-    /// was fully initialized (Zig `value.* = undefined`).
+    /// was fully initialized.
     pub fn put_raw(&mut self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
@@ -336,8 +336,8 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         debug_assert!(self.used.is_set(index as usize));
         debug_assert!(self.buffer[index as usize].as_ptr().cast::<T>() == value.cast_const());
 
-        // PORT NOTE: Zig wrote `value.* = undefined;` — Zig has no destructors,
-        // so the slot was simply marked logically uninitialized. In the Rust
+        // PORT NOTE: the original simply marked the slot logically
+        // uninitialized (no destructors). In the Rust
         // port several `T` carry owned heap data (e.g. `NumberScope.name_counts:
         // StringHashMap`, `NetworkTask.url_buf: Box<[u8]>`); drop the slot
         // before recycling so the put/get cycle does not leak it. Callers that
@@ -461,12 +461,12 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
     }
 }
 
-// PORT NOTE: In Zig this was the nested type `HiveArray(T, capacity).Fallback`.
+// PORT NOTE: originally this was the nested type `HiveArray(T, capacity).Fallback`.
 // Rust cannot nest a generic struct that captures outer generics, so it lives at
-// module scope with the same parameters. The Zig field
+// module scope with the same parameters. The original field
 // `hive: if (capacity > 0) Self else void` is always materialized here; the
 // `CAPACITY > 0` checks below preserve the original gating.
-// PERF(port): zero-capacity case carried a zero-size hive in Zig — profile in Phase B.
+// PERF(port): zero-capacity case carried a zero-size hive — profile in Phase B.
 pub struct Fallback<T, const CAPACITY: usize> {
     pub hive: HiveArray<T, CAPACITY>,
     // PORT NOTE: `std.mem.Allocator param` dropped — global mimalloc.
@@ -507,7 +507,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// for `MaybeUninit`).
     ///
     /// The returned allocation is leaked — callers stash it in a per-thread
-    /// static for the process lifetime (Zig: `threadlocal var pool`).
+    /// static for the process lifetime (`threadlocal var pool`).
     #[inline]
     pub fn new_boxed() -> NonNull<Self> {
         let mut boxed = Box::<Self>::new_uninit();
@@ -640,14 +640,14 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 // HiveRef
 // ──────────────────────────────────────────────────────────────────────────
 //
-// PORT NOTE: ground truth is `bun.HiveRef` in src/bun.zig. It lives here (not
+// PORT NOTE: ground truth is `bun.HiveRef`. It lives here (not
 // in the `bun` crate) because every consumer names it through
 // `bun_collections::HiveRef`, and its only collaborator is `Fallback` above.
 //
-// Zig defines `const HiveAllocator = HiveArray(@This(), capacity).Fallback`
+// The original defines `const HiveAllocator = HiveArray(@This(), capacity).Fallback`
 // inside the returned struct; Rust spells the self-referential pool type out
 // as `Fallback<HiveRef<T, CAPACITY>, CAPACITY>`. CAPACITY is `usize` (widened
-// from Zig's `u16`) to line up with `HiveArray`/`Fallback`'s const generic.
+// from `u16`) to line up with `HiveArray`/`Fallback`'s const generic.
 
 /// Intrusive ref-counted slot allocated from a `HiveArray::Fallback` pool.
 /// `pool` is a BACKREF (LIFETIMES.tsv class) — the pool strictly outlives
@@ -659,11 +659,11 @@ pub struct HiveRef<T, const CAPACITY: usize> {
     pub value: T,
 }
 
-/// Convenience alias mirroring Zig's nested `const HiveAllocator`.
+/// Convenience alias mirroring the nested `const HiveAllocator`.
 pub type HiveAllocator<T, const CAPACITY: usize> = Fallback<HiveRef<T, CAPACITY>, CAPACITY>;
 
 impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
-    /// Zig: `pub fn init(value, allocator) !*@This()`.
+    /// `init(value, allocator) -> *Self`.
     ///
     /// # Safety
     /// `pool` must be valid for the entire lifetime of the returned
@@ -687,7 +687,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
         self
     }
 
-    /// Zig: `pub fn unref(this) ?*@This()` — returns `null` when the count hit
+    /// `unref(this) -> ?*Self` — returns `null` when the count hit
     /// zero and the slot was returned to the pool.
     pub fn unref(&mut self) -> Option<&mut Self> {
         let ref_count = self.ref_count;
@@ -696,7 +696,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
             let pool = self.pool;
             // SAFETY: `self` was produced by `init` above, so `pool` is the
             // pool that owns this slot and is still live (caller contract on
-            // `init`). Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps
+            // `init`). The conditional `deinit()` call maps
             // to `T::drop`, which `Fallback::put` now runs (it drops the whole
             // `HiveRef` in place before recycling/freeing the slot).
             unsafe {
@@ -718,7 +718,7 @@ mod tests {
         const SIZE: usize = 64;
 
         // Choose an integer with a weird alignment
-        // PORT NOTE: Zig used `u127`; Rust has no arbitrary-width ints. `u128` is the closest.
+        // PORT NOTE: the original used `u127`; Rust has no arbitrary-width ints. `u128` is the closest.
         type Int = u128;
 
         let mut a = HiveArray::<Int, SIZE>::init();
@@ -798,5 +798,3 @@ mod tests {
         assert_eq!(DROPS.load(Ordering::Relaxed), 2);
     }
 }
-
-// ported from: src/collections/hive_array.zig

@@ -8,7 +8,7 @@ use crate::api::server::StaticRoute;
 use crate::bake::framework_router;
 use crate::server::html_bundle::HTMLBundleRoute;
 
-// Zig: `pub const Index = bun.GenericIndex(u30, RouteBundle);`
+// `Index` is a u30 generic-index newtype keyed on `RouteBundle`.
 pub use crate::bake::dev_server::route_bundle::{Index, IndexOptional};
 
 pub struct RouteBundle {
@@ -39,7 +39,7 @@ pub enum Data {
 }
 
 pub struct Framework {
-    // TODO(port): Route.Index is a nested type in Zig (bun.GenericIndex newtype); reference the ported newtype here.
+    // TODO(port): Route.Index is a nested generic-index newtype; reference the ported newtype here.
     pub route_index: framework_router::RouteIndex,
 
     /// Cached to avoid re-creating the array every request.
@@ -75,7 +75,7 @@ pub struct HTML {
     pub cached_response: Option<Arc<StaticRoute>>,
 }
 
-// Zig: `const ByteOffset = bun.GenericIndex(u32, u8);` (nested in HTML)
+// `ByteOffset` is a u32 generic-index newtype keyed on `u8` (nested in HTML).
 pub use crate::bake::dev_server::route_bundle::ByteOffset;
 
 /// A union is not used so that `bundler_failure_logs` can re-use memory, as
@@ -113,7 +113,7 @@ pub enum UnresolvedIndex<'a> {
     Html(&'a HTMLBundleRoute),
 }
 
-// Zig `pub fn deinit(rb: *RouteBundle, std.mem.Allocator param) void` is fully subsumed by Drop:
+// Manual `deinit` is fully subsumed by Drop:
 //   - client_bundle: Option<Arc<StaticRoute>> drops (== blob.deref())
 //   - Framework: Strong fields drop (== .deinit())
 //   - HTML: bundled_html_text Box<[u8]> drops (== allocator.free(text))
@@ -132,7 +132,7 @@ impl RouteBundle {
             // Dropping the Arc == bundle.deref(); setting None == rb.client_bundle = null
             self.client_bundle = None;
         }
-        // Zig: `std.crypto.random.int(u32)` — OS CSPRNG.
+        // OS CSPRNG-backed random u32.
         self.client_script_generation = {
             let mut buf = [0u8; 4];
             bun_core::csprng(&mut buf);
@@ -171,5 +171,3 @@ impl RouteBundle {
         cost
     }
 }
-
-// ported from: src/bake/DevServer/RouteBundle.zig

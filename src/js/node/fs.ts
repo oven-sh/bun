@@ -10,7 +10,7 @@ const kEmptyObject = Object.freeze(Object.create(null));
 const isDate = types.isDate;
 
 // Private exports
-// `fs` points to the return value of `node_fs_binding.zig`'s `createBinding` function.
+// `fs` points to the return value of `node_fs_binding.rs`'s `createBinding` function.
 const { fs } = promises.$data;
 
 const constants = $processBindingConstants.fs;
@@ -110,7 +110,7 @@ class FSWatcher extends EventEmitter {
   start() {}
 }
 
-/** Implemented in `node_fs_stat_watcher.zig` */
+/** Implemented in `node_fs_stat_watcher.rs` */
 interface StatWatcherHandle {
   ref();
   unref();
@@ -739,7 +739,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }
@@ -861,7 +861,7 @@ const realpath: typeof import("node:fs").realpath =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }

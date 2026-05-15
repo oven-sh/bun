@@ -706,7 +706,7 @@ impl Parser<'_> {
         line_buf: &mut [Line; 2],
         line_idx: &mut usize,
     ) -> Result<(), bun_alloc::AllocError> {
-        // PORT NOTE: reshaped for borrowck — Zig passed `line: *Line` aliasing into line_buf;
+        // PORT NOTE: reshaped for borrowck — original passed `line: *Line` aliasing into line_buf;
         // here we index into line_buf via cur_line_idx.
         let line = &mut line_buf[cur_line_idx];
 
@@ -995,7 +995,7 @@ impl Parser<'_> {
                     dest: dest_dupe,
                     title: title_dupe,
                 });
-                // TODO(port): Zig used `catch return` on push; Vec::push is infallible here
+                // TODO(port): original used `catch return` on push; Vec::push is infallible here
             }
 
             let mut newlines: u32 = 0;
@@ -1039,8 +1039,6 @@ impl Parser<'_> {
     // get_block_header_at / get_block_at moved to parser.rs (shared by containers.rs).
 }
 
-// TODO(port): `Line.type` field — Zig uses `.type`; Rust uses `r#type`. The variant
+// TODO(port): `Line.type` field — original used `.type`; Rust uses `r#type`. The variant
 // type is assumed to be `types::LineType` re-exported here for brevity.
 use crate::types::LineType;
-
-// ported from: src/md/blocks.zig

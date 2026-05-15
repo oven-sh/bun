@@ -10,7 +10,7 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache);
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
@@ -30,7 +30,7 @@ const OnLoadResultType OnLoadResultTypeObject = 2;
 const OnLoadResultType OnLoadResultTypePromise = 3;
 
 struct CodeString {
-    ZigString string;
+    UnsafeStringView string;
     JSC::JSValue value;
     BunLoaderType loader;
 };
@@ -92,7 +92,7 @@ public:
 };
 
 JSValue fetchESMSourceCodeSync(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -100,7 +100,7 @@ JSValue fetchESMSourceCodeSync(
     BunString* typeAttribute);
 
 JSValue fetchESMSourceCodeAsync(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -108,7 +108,7 @@ JSValue fetchESMSourceCodeAsync(
     BunString* typeAttribute);
 
 JSValue fetchCommonJSModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
     String specifier,
@@ -119,7 +119,7 @@ template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -131,11 +131,11 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSC::ThrowScope& scope);
 
 JSValue resolveAndFetchBuiltinModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier);
 
 JSValue fetchBuiltinModuleWithoutResolution(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier,
     ErrorableResolvedSource* res);
 

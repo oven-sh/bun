@@ -7,7 +7,7 @@
 //
 // #include <JavaScriptCore/InternalFunction.h>
 
-// namespace Zig {
+// namespace Bun {
 
 // class ModulePrototype final : public JSC::JSNonFinalObject {
 // public:
@@ -23,10 +23,10 @@
 //         return &vm.plainObjectSpace;
 //     }
 
-//     static ModulePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* zigBase)
+//     static ModulePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* bunBase)
 //     {
 //         ModulePrototype* object = new (NotNull, JSC::allocateCell<ModulePrototype>(vm.heap)) ModulePrototype(vm, structure);
-//         !!zigBase ? object->finishCreation(vm, globalObject, zigBase) : object->finishCreation(vm, globalObject);
+//         !!bunBase ? object->finishCreation(vm, globalObject, bunBase) : object->finishCreation(vm, globalObject);
 //         return object;
 //     }
 
@@ -38,13 +38,13 @@
 //         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 //     }
 
-//     void* m_zigBase;
+//     void* m_bunBase;
 
 // private:
 //     ModulePrototype(JSC::VM&, JSC::Structure*) : Base(vm, structure) {
-//         m_zigBase = nullptr;
+//         m_bunBase = nullptr;
 //     };
-//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
+//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* bunBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
 // };
@@ -63,10 +63,10 @@
 //         return &vm.plainObjectSpace;
 //     }
 
-//     static ModulePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* zigBase)
+//     static ModulePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* bunBase)
 //     {
 //         ModulePrototype* object = new (NotNull, JSC::allocateCell<ModulePrototype>(vm.heap)) ModulePrototype(vm, structure);
-//         !!zigBase ? object->finishCreation(vm, globalObject, zigBase) : object->finishCreation(vm, globalObject);
+//         !!bunBase ? object->finishCreation(vm, globalObject, bunBase) : object->finishCreation(vm, globalObject);
 //         return object;
 //     }
 
@@ -78,20 +78,20 @@
 //         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 //     }
 
-//     void* m_zigBase;
+//     void* m_bunBase;
 
 // private:
 //     ModulePrototype(JSC::VM&, JSC::Structure*) : Base(vm, structure) {
-//         m_zigBase = nullptr;
+//         m_bunBase = nullptr;
 //     };
-//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
+//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* bunBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
 // };
 
 // }
 
-// namespace Zig {
+// namespace Bun {
 
 // class HeadersPrototype final : public JSC::JSNonFinalObject {
 // public:
@@ -107,10 +107,10 @@
 //         return &vm.plainObjectSpace;
 //     }
 
-//     static HeadersPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* zigBase)
+//     static HeadersPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* bunBase)
 //     {
 //         HeadersPrototype* object = new (NotNull, JSC::allocateCell<HeadersPrototype>(vm.heap)) HeadersPrototype(vm, structure);
-//         !!zigBase ? object->finishCreation(vm, globalObject, zigBase) : object->finishCreation(vm, globalObject);
+//         !!bunBase ? object->finishCreation(vm, globalObject, bunBase) : object->finishCreation(vm, globalObject);
 //         return object;
 //     }
 
@@ -135,13 +135,13 @@
 //         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 //     }
 
-//     void* m_zigBase;
+//     void* m_bunBase;
 
 // private:
 //     HeadersPrototype(JSC::VM&, JSC::Structure*) : Base(vm, structure) {
-//         m_zigBase = nullptr;
+//         m_bunBase = nullptr;
 //     };
-//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
+//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* bunBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
 // };
@@ -218,10 +218,10 @@
 //         return &vm.plainObjectSpace;
 //     }
 
-//     static RequestPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* zigBase)
+//     static RequestPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* bunBase)
 //     {
 //         RequestPrototype* object = new (NotNull, JSC::allocateCell<RequestPrototype>(vm.heap)) RequestPrototype(vm, structure);
-//         !!zigBase ? object->finishCreation(vm, globalObject, zigBase) : object->finishCreation(vm, globalObject);
+//         !!bunBase ? object->finishCreation(vm, globalObject, bunBase) : object->finishCreation(vm, globalObject);
 //         return object;
 //     }
 
@@ -240,13 +240,13 @@
 //         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 //     }
 
-//     void* m_zigBase;
+//     void* m_bunBase;
 
 // private:
 //     RequestPrototype(JSC::VM&, JSC::Structure*) : Base(vm, structure) {
-//         m_zigBase = nullptr;
+//         m_bunBase = nullptr;
 //     };
-//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* zigBase);
+//     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, void* bunBase);
 //     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
 // };

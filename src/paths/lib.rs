@@ -1,7 +1,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 #![warn(unused_must_use)]
-// `Platform` is used as a const-generic param (Zig: `comptime _platform: Platform`)
-// in resolve_path.rs and downstream (`bun_runtime::node::path::normalize_string_t`).
+// `Platform` is used as a const-generic param in resolve_path.rs and
+// downstream (`bun_runtime::node::path::normalize_string_t`).
 // Pinned nightly — enable the structural-match subset directly instead of the
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
@@ -28,7 +28,7 @@ pub mod w_path_buffer_pool {
 // `bun.strings.paths` — Windows path-shape transcoders. Hosted here (not in
 // `bun_core::string::immutable`) to avoid a `bun_core → bun_paths` cycle.
 // Exposed as both `bun_paths::string_paths::*` and the flattened
-// `bun_paths::strings::*` (Zig-parity: `bun.strings.toNTPath` etc).
+// `bun_paths::strings::*` (`bun.strings.toNTPath` etc).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod string_paths;
 /// `bun.strings.*` superset: `bun_core`'s scalar/SIMD string utils plus the
@@ -41,7 +41,7 @@ pub mod strings {
     // Disambiguate names that exist in both `bun_core::strings` and
     // `string_paths` (path-shape transcoders win — they're the canonical
     // `bun.strings.*` impl that depends on this crate's path helpers).
-    /// `bun.strings.paths` submodule alias (Zig: `bun.strings.paths.X`).
+    /// `bun.strings.paths` submodule alias.
     pub use super::string_paths as paths;
     pub use super::string_paths::from_w_path as from_wpath;
     pub use super::string_paths::to_w_path_normalized as to_wpath_normalized;
@@ -55,9 +55,8 @@ pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
 
 /// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
-/// a path passes through a `node_modules` directory. Zig writes this inline at every
-/// site as `std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str` (comptime
-/// `++`); Rust has no comptime concat operator, so we name it once here.
+/// a path passes through a `node_modules` directory. Named once here so call
+/// sites don't repeat the const concat.
 pub const NODE_MODULES_NEEDLE: &[u8] =
     const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
 
@@ -85,7 +84,7 @@ pub fn is_absolute_windows_t<T: PathChar>(p: &[T]) -> bool {
     if c0 == T::from_u8(b'/') || c0 == T::from_u8(b'\\') {
         return true;
     }
-    // Drive letter: `X:\` or `X:/` — Zig std does NOT require `X` be alphabetic.
+    // Drive letter: `X:\` or `X:/` — `X` is intentionally NOT required to be alphabetic.
     if p.len() >= 3
         && p[1] == T::from_u8(b':')
         && (p[2] == T::from_u8(b'/') || p[2] == T::from_u8(b'\\'))
@@ -107,10 +106,10 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
 /// Port of `std.fs.path.diskDesignatorWindows` — returns the leading drive
 /// designator (e.g. `C:` or `\\server\share`) or empty.
 ///
-/// Faithful to Zig std `windowsParsePath`: no alphabetic gate on the drive
-/// letter; UNC requires a *matching* separator pair (`//` or `\\`, not mixed),
-/// rejects a third leading separator, and requires BOTH server and share
-/// tokens — otherwise returns `b""`.
+/// No alphabetic gate on the drive letter; UNC requires a *matching*
+/// separator pair (`//` or `\\`, not mixed), rejects a third leading
+/// separator, and requires BOTH server and share tokens — otherwise returns
+/// `b""`.
 #[inline]
 pub fn disk_designator_windows(p: &[u8]) -> &[u8] {
     &p[..crate::path::disk_designator_len_windows::<u8>(p)]
@@ -124,16 +123,16 @@ pub use path_char::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 
 /// `bun.pathLiteral("a/b")` → NUL-terminated path with platform separators.
-/// Port of `bun.zig:pathLiteral` — on POSIX returns the literal as-is; on
-/// Windows rewrites `/` → `\` at compile time. Yields `&'static ZStr` so it
-/// drops into `[:0]const u8` slots (`stringZ`).
+/// On POSIX returns the literal as-is; on Windows rewrites `/` → `\` at
+/// compile time. Yields `&'static ZStr` so it drops into NUL-terminated
+/// string slots.
 #[macro_export]
 macro_rules! path_literal {
     ($lit:expr) => {{
-        // Port of `bun.zig:pathLiteral` — on Windows, const-eval `/`→`\` so
-        // callers feeding `\\?\`-prefixed NT paths get backslashes (Win32 does
-        // NOT normalize `/` under the `\\?\` namespace). On POSIX the rewrite
-        // condition is `false` and bytes copy through unchanged.
+        // On Windows, const-eval `/`→`\` so callers feeding `\\?\`-prefixed NT
+        // paths get backslashes (Win32 does NOT normalize `/` under the `\\?\`
+        // namespace). On POSIX the rewrite condition is `false` and bytes copy
+        // through unchanged.
         const __B: &[u8] = $lit.as_bytes();
         const __N: usize = __B.len();
         const __OUT: [u8; __N + 1] = {
@@ -158,7 +157,7 @@ macro_rules! path_literal {
 }
 
 /// `bun.OSPathLiteral` — like `path_literal!` but yields the platform path-char
-/// width (`u8` on POSIX, `u16` on Windows). Port of `bun.zig:OSPathLiteral`.
+/// width (`u8` on POSIX, `u16` on Windows).
 ///
 /// Evaluates to `&'static OSPathSliceZ` (i.e. `&ZStr` on POSIX, `&WStr` on
 /// Windows). Both deref to `&[OSPathChar]`, so call sites that want a bare
@@ -211,9 +210,8 @@ pub fn is_absolute(p: &[u8]) -> bool {
 // CANONICAL ALREADY EXISTS — no new primitive. Two entry points cover all
 // legitimate callers:
 //
-//   1. bun_paths::is_absolute(p)           — host cfg-dispatched (Zig:
-//      std.fs.path.isAbsolute). Use when the path came from THIS host's
-//      filesystem.
+//   1. bun_paths::is_absolute(p)           — host cfg-dispatched. Use when
+//      the path came from THIS host's filesystem.
 //
 //   2. bun_paths::resolve_path::Platform::Loose.is_absolute(p) — host-agnostic
 //      (accepts '/', '\\', and 'X:/'|'X:\\' on ANY host). Use when the path is
@@ -222,20 +220,18 @@ pub fn is_absolute(p: &[u8]) -> bool {
 // `is_absolute_loose` is a thin discoverable wrapper for (2) so call sites
 // don't have to spell out `resolve_path::Platform::Loose.is_absolute(..)`.
 /// Host-agnostic absolute-path check: accepts `/…`, `\…`, and `X:/…`/`X:\…`
-/// on ANY host. Faithful to Zig std `isAbsoluteWindows` (no alphabetic gate
-/// on the drive byte). Use for cross-platform map keys / bundler specifiers
-/// where the input may have come from either OS.
+/// on ANY host (no alphabetic gate on the drive byte). Use for cross-platform
+/// map keys / bundler specifiers where the input may have come from either OS.
 #[inline]
 pub fn is_absolute_loose(p: &[u8]) -> bool {
     resolve_path::Platform::Loose.is_absolute(p)
 }
 
-// ───── std.fs.path.join / joinZ (non-normalizing) ─────
-// Faithful port of vendor/zig/lib/std/fs/path.zig `joinSepMaybeZ` with
-// `sep = path.sep`, `isSep = path.isSep` (both '/' and '\\' on Windows):
-// concatenates `parts`, skipping empties, inserting SEP only when neither
+// ───── join / joinZ (non-normalizing) ─────
+// Concatenates `parts`, skipping empties, inserting SEP only when neither
 // seam side already has one, and stripping exactly one leading sep when both
-// sides have one. Byte-level / ASCII-sep only — never normalizes.
+// sides have one (both '/' and '\\' count as separators on Windows).
+// Byte-level / ASCII-sep only — never normalizes.
 fn join_sep_vec(parts: &[&[u8]]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
     let mut prev_last: Option<u8> = None;
@@ -259,9 +255,9 @@ fn join_sep_vec(parts: &[&[u8]]) -> Vec<u8> {
     }
     out
 }
-/// `std.fs.path.join` / `std.fs.path.joinZ` — non-normalizing concatenation
-/// with the native separator. When `SENTINEL` the trailing NUL is included in
-/// the returned slice (Zig: `[:0]u8` coerced to `[]u8`).
+/// `join` / `joinZ` — non-normalizing concatenation with the native
+/// separator. When `SENTINEL` the trailing NUL is included in the returned
+/// slice.
 #[inline]
 pub fn join_sep_maybe_z<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
     let mut out = join_sep_vec(parts);
@@ -270,29 +266,29 @@ pub fn join_sep_maybe_z<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
     }
     out.into_boxed_slice()
 }
-/// `std.fs.path.joinZ` — non-normalizing concatenation, owned NUL-terminated.
+/// `joinZ` — non-normalizing concatenation, owned NUL-terminated.
 #[inline]
 pub fn join_sep_z(parts: &[&[u8]]) -> bun_core::ZBox {
     bun_core::ZBox::from_vec(join_sep_vec(parts))
 }
-/// NOT a port of `std.fs.path.dirname` — this is the naive "slice before last
-/// separator" used by a handful of callers that want exactly that. For Zig-std
-/// `dirname` semantics (Option, trailing-slash handling, root preservation)
-/// use `bun_core::dirname`.
+/// NOT a full `dirname` — this is the naive "slice before last separator"
+/// used by a handful of callers that want exactly that. For full `dirname`
+/// semantics (Option, trailing-slash handling, root preservation) use
+/// `bun_core::dirname`.
 pub fn dirname_simple(p: &[u8]) -> &[u8] {
     p.iter()
         .rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
         .map(|i| &p[..i])
         .unwrap_or(b"")
 }
-/// Port of `std.fs.path.basename` — strips trailing separators before slicing
-/// the final component (so `basename("/a/b/")` is `"b"`, not `""`).
+/// `basename` — strips trailing separators before slicing the final
+/// component (so `basename("/a/b/")` is `"b"`, not `""`).
 /// Canonical impls (width-generic over `PathByte`) live in `bun_core::strings`.
 pub use bun_core::strings::{PathByte, basename, basename_posix, basename_windows};
 
-/// Port of `std.fs.path.extension` — returns the file extension of `p`
-/// **including** the leading dot, or `b""` if none. Dotfiles (`.gitignore`)
-/// and basenames whose only `.` is at index 0 report no extension.
+/// Returns the file extension of `p` **including** the leading dot, or `b""`
+/// if none. Dotfiles (`.gitignore`) and basenames whose only `.` is at index 0
+/// report no extension.
 pub fn extension(p: &[u8]) -> &[u8] {
     let filename = basename(p);
     match filename.iter().rposition(|&c| c == b'.') {
@@ -301,9 +297,9 @@ pub fn extension(p: &[u8]) -> &[u8] {
     }
 }
 
-/// Port of `std.fs.path.stem` — returns the basename of `p` with the
-/// extension (as defined by [`extension`]) stripped. Dotfiles keep their
-/// leading dot (`.gitignore` → `.gitignore`).
+/// Returns the basename of `p` with the extension (as defined by
+/// [`extension`]) stripped. Dotfiles keep their leading dot
+/// (`.gitignore` → `.gitignore`).
 pub fn stem(p: &[u8]) -> &[u8] {
     let filename = basename(p);
     match filename.iter().rposition(|&c| c == b'.') {
@@ -318,8 +314,8 @@ pub fn stem(p: &[u8]) -> &[u8] {
 // `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
 pub use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
-/// Zig spells the wide-path capacity `bun.MAX_WPATH` (`libuv.zig` uses the same
-/// alias); keep both names so ported call sites resolve without churn.
+/// `bun.MAX_WPATH` is a historical alias for the wide-path capacity; keep
+/// both names so ported call sites resolve without churn.
 pub const MAX_WPATH: usize = PATH_MAX_WIDE;
 
 #[cfg(windows)]
@@ -327,7 +323,7 @@ pub type OSPathChar = u16;
 #[cfg(not(windows))]
 pub type OSPathChar = u8;
 
-// Zig: `[:0]const OSPathChar`. Callers borrow as `&OSPathSliceZ`.
+// NUL-terminated `OSPathChar` slice. Callers borrow as `&OSPathSliceZ`.
 #[cfg(windows)]
 pub type OSPathSliceZ = bun_core::WStr;
 #[cfg(not(windows))]
@@ -346,18 +342,18 @@ pub mod path_buffer_pool;
 // (done). 46× E0106 remain — TLS-buf-returning wrappers need `'static` lifetime
 // or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
 // compile; the convenience wrappers don't yet. Gate the module; expose Platform.
-// TODO(b2): annotate the 46 TLS-wrapper return lifetimes as `'static` (matches
-// Zig "valid until next call" semantics).
+// TODO(b2): annotate the 46 TLS-wrapper return lifetimes as `'static`
+// ("valid until next call" semantics).
 pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};
 pub mod component_iterator;
 pub use component_iterator::{
     Component, ComponentIterator, MakePathStep, PathFormat, component_iterator, make_path_with,
 };
-// Crate-root re-exports for the path-mutation helpers callers spell as
-// `bun.path.*` in Zig (e.g. `bun.path.dangerouslyConvertPathToPosixInPlace`,
-// `bun.path.pathToPosixBuf`). Zig flattens `resolve_path` into the `bun.path`
-// namespace; mirror that here so `#[cfg(windows)]` install paths can call
+// Crate-root re-exports for the path-mutation helpers under `bun.path.*`
+// (e.g. `bun.path.dangerouslyConvertPathToPosixInPlace`,
+// `bun.path.pathToPosixBuf`). `resolve_path` is flattened into the `bun.path`
+// namespace so `#[cfg(windows)]` install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
 pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place, dangerously_convert_path_to_windows_in_place,
@@ -367,8 +363,8 @@ pub use resolve_path::{
     relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
     windows_volume_name_len,
 };
-// `bun.os_path_buffer_pool.get()` in Zig is a namespace call, not a value.
-// Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
+// `bun.os_path_buffer_pool.get()` is a namespace call, not a value. Re-export
+// the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
 // POSIX).
 pub use path_buffer_pool::os_path_buffer_pool;
@@ -378,10 +374,9 @@ pub use path::{
     AbsPath, AutoAbsPath, AutoRelPath, Path, PathUnit, RelPath, options as path_options,
 };
 
-/// Duck-typing surface for the `anytype` `buf` parameter on Zig path-builder
-/// helpers (`appendStorePath`, `appendGlobalStoreEntryPath`, etc. in
-/// `isolated_install/Installer.zig`). Zig accepted any `bun.Path(...)`
-/// instantiation; Rust callers pass `Path<U, KIND, SEP, CHECK>` for arbitrary
+/// Duck-typing surface for the `buf` parameter on path-builder helpers
+/// (`appendStorePath`, `appendGlobalStoreEntryPath`, etc. in the isolated
+/// installer). Rust callers pass `Path<U, KIND, SEP, CHECK>` for arbitrary
 /// const params, so expose the three operations the helpers need behind a
 /// trait and blanket-impl it for every monomorphisation.
 pub trait PathLike {
@@ -389,11 +384,11 @@ pub trait PathLike {
     fn append(&mut self, bytes: &[u8]);
     fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
 }
-// PORT NOTE: Bound to `CheckLength::ASSUME` only. In Zig the helpers call
-// `buf.append(x)` with no `try`, so passing a `.check_for_greater_than_max_path`
-// Path is a *compile error* (`Error!void` is not `void`). Mirroring that here
-// prevents check-mode callers from silently swallowing `MaxPathExceeded` through
-// the duck-typed surface; they must use `Path::append`/`?` directly.
+// PORT NOTE: Bound to `CheckLength::ASSUME` only. The helpers call
+// `buf.append(x)` infallibly, so a `.check_for_greater_than_max_path` Path
+// would be a type mismatch. Restricting the impl prevents check-mode callers
+// from silently swallowing `MaxPathExceeded` through the duck-typed surface;
+// they must use `Path::append`/`?` directly.
 impl<U: PathUnit, const KIND: u8, const SEP: u8> PathLike
     for path::Path<U, KIND, SEP, { path::options::CheckLength::ASSUME }>
 {
@@ -413,7 +408,7 @@ impl<U: PathUnit, const KIND: u8, const SEP: u8> PathLike
     }
 }
 
-/// Zig: `bun.Dirname` namespace — width-generic `std.fs.path.dirname`
+/// `bun.Dirname` namespace — width-generic `dirname`
 /// (POSIX `/` on Unix, disk-designator-aware on Windows). Backed by
 /// `path::dirname_generic`.
 #[allow(non_snake_case)]
@@ -431,8 +426,8 @@ pub mod Dirname {
     }
 }
 
-/// Convenience: `std.fs.path.dirname` for `u8` paths (returns `None` for
-/// root / no-parent). Prefer `Dirname::dirname::<T>` for width-generic use.
+/// Convenience: `dirname` for `u8` paths (returns `None` for root /
+/// no-parent). Prefer `Dirname::dirname::<T>` for width-generic use.
 ///
 /// POSIX: re-exports `bun_core::dirname` (canonical u8 impl — identical state
 /// machine). Windows: keeps `path::dirname_generic`, whose
@@ -450,10 +445,9 @@ pub mod env_path;
 pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Windows path-prefix constants — relocated from
-// `bun_sys::windows` (src/sys/windows/windows.zig) so tier-1 callers
-// (`bun_core::immutable::paths`, this crate's `Path.rs`) can resolve them
-// without depending upward on `bun_sys`.
+// Windows path-prefix constants — relocated from `bun_sys::windows` so tier-1
+// callers (`bun_core::immutable::paths`, this crate's `Path.rs`) can resolve
+// them without depending upward on `bun_sys`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     /// `\??\` — NT object-manager prefix (UTF-16).
@@ -479,9 +473,9 @@ pub mod windows {
     /// `\\?\` — Win32 long-path prefix (UTF-8/ASCII).
     pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
-    /// Generic accessor: returns `&LONG_PATH_PREFIX_U8` for `U = u8`, `&LONG_PATH_PREFIX` for
-    /// `U = u16`. Replaces the Zig comptime `match (Unit) { .u8 => ..., .u16 => ... }` arms in
-    /// `src/paths/Path.zig` so `Path::<U, ..>::from_long_path` stays width-generic.
+    /// Generic accessor: returns `&LONG_PATH_PREFIX_U8` for `U = u8`,
+    /// `&LONG_PATH_PREFIX` for `U = u16`. Lets `Path::<U, ..>::from_long_path`
+    /// stay width-generic.
     #[inline]
     pub fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
         U::LONG_PATH_PREFIX
@@ -490,18 +484,16 @@ pub mod windows {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `is_package_path` / `is_package_path_not_absolute` — pure path predicates
-// with no resolver state. Source: src/resolver/resolver.zig:6-26. Lives here
-// (not bun_resolver) so bun_install / bun_js_parser can drop their resolver
-// edge; bun_resolver re-exports these for its own callers.
+// with no resolver state. Lives here (not bun_resolver) so bun_install /
+// bun_js_parser can drop their resolver edge; bun_resolver re-exports these
+// for its own callers.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Returns true if `path` is a bare package specifier (e.g. `react`, `@scope/pkg`),
 /// i.e. not absolute and not relative (`./`, `../`, `.`, `..`).
 ///
 /// Always rejects POSIX-absolute (`/...`); on Windows additionally rejects
-/// Windows-absolute forms via `std.fs.path.isAbsolute` semantics.
-///
-/// Port of `isPackagePath` (src/resolver/resolver.zig).
+/// Windows-absolute forms.
 #[inline]
 pub fn is_package_path(path: &[u8]) -> bool {
     !is_absolute(path) && is_package_path_not_absolute(path)
@@ -526,8 +518,6 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `fs` — TYPE_ONLY subset of resolver fs.
-// Source: src/resolver/fs.zig.
-//
 // The full `FileSystem` (DirEntry cache, RealFS impl, FilenameStore/DirnameStore)
 // stays in `bun_resolver`; only the path-shaped types (`Path`, `PathName`,
 // `PathContentsPair`) and the `top_level_dir` singleton accessor move here so
@@ -543,26 +533,23 @@ pub mod fs {
 
     use crate::resolve_path::{is_sep_any, last_index_of_sep};
 
-    /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The Zig original
-    /// (`src/resolver/fs.zig:14`) also owns the dir-entry cache and filename arenas;
-    /// those remain in `bun_resolver` and reach back here for the cwd string.
+    /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The full
+    /// version also owns the dir-entry cache and filename arenas; those remain
+    /// in `bun_resolver` and reach back here for the cwd string.
     ///
-    /// Concurrency: Zig's `instance_loaded: bool` + `instance: FileSystem = undefined`
-    /// init-once pair → `OnceLock<FileSystem>` per PORTING.md §Concurrency.
+    /// Concurrency: init-once via `OnceLock<FileSystem>` per
+    /// PORTING.md §Concurrency.
     pub struct FileSystem {
-        // Zig: `top_level_dir: stringZ` — owned, NUL-terminated. Stored as raw
-        // bytes (not `String`): POSIX paths are arbitrary byte sequences, not
-        // guaranteed UTF-8, and every reader (`top_level_dir()`, resolve_path.rs)
-        // wants `&[u8]` to match Zig's `[]const u8`.
+        // Owned, NUL-terminated. Stored as raw bytes (not `String`): POSIX
+        // paths are arbitrary byte sequences, not guaranteed UTF-8, and every
+        // reader (`top_level_dir()`, resolve_path.rs) wants `&[u8]`.
         top_level_dir: Vec<u8>,
     }
 
     static INSTANCE: OnceLock<FileSystem> = OnceLock::new();
-    // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load that
-    // mirrors the Zig `pub var instance_loaded: bool`.
+    // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load.
     static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
 
-    // Zig: `var tmpname_id_number = std.atomic.Value(u32).init(0);`
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
     impl FileSystem {
@@ -571,8 +558,7 @@ pub mod fs {
             INSTANCE_LOADED.load(Ordering::Relaxed)
         }
 
-        /// Panics if `init` has not been called. Mirrors Zig's `&instance` after
-        /// `instance_loaded` is asserted.
+        /// Panics if `init` has not been called.
         #[inline]
         pub fn instance() -> &'static FileSystem {
             INSTANCE
@@ -580,9 +566,9 @@ pub mod fs {
                 .expect("FileSystem.instance accessed before init")
         }
 
-        /// Zig: `FileSystem.init(top_level_dir)` (force=false path). Higher-tier
-        /// `bun_resolver::fs` calls this during its own `initWithForce` after it
-        /// resolves the cwd. Takes raw bytes — POSIX cwd is not guaranteed UTF-8.
+        /// Higher-tier `bun_resolver::fs` calls this during its own
+        /// `initWithForce` after it resolves the cwd. Takes raw bytes — POSIX
+        /// cwd is not guaranteed UTF-8.
         pub fn init(top_level_dir: &[u8]) -> &'static FileSystem {
             let _ = INSTANCE.set(FileSystem {
                 top_level_dir: top_level_dir.to_vec(),
@@ -591,13 +577,13 @@ pub mod fs {
             INSTANCE.get().unwrap()
         }
 
-        /// Zig has a single mutable `Fs.FileSystem.instance.top_level_dir` that
-        /// `PackageManager.init` reassigns after walking up to the workspace
-        /// root. The port split that global across tiers; the canonical
-        /// writable storage lives in `bun_core::TOP_LEVEL_DIR` (updated by
-        /// `bun_resolver::FileSystem::set_top_level_dir`). Delegate the read
-        /// there so `Path::init_top_level_dir` observes the post-chdir value
-        /// instead of the `OnceLock` snapshot taken at process start.
+        /// `PackageManager.init` reassigns `top_level_dir` after walking up to
+        /// the workspace root. The port split that global across tiers; the
+        /// canonical writable storage lives in `bun_core::TOP_LEVEL_DIR`
+        /// (updated by `bun_resolver::FileSystem::set_top_level_dir`). Delegate
+        /// the read there so `Path::init_top_level_dir` observes the
+        /// post-chdir value instead of the `OnceLock` snapshot taken at
+        /// process start.
         #[inline]
         pub fn top_level_dir(&self) -> &[u8] {
             let d = bun_core::top_level_dir();
@@ -610,7 +596,6 @@ pub mod fs {
             }
         }
 
-        /// Zig: `topLevelDirWithoutTrailingSlash`.
         pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
             let d = self.top_level_dir();
             if d.len() > 1 && d.last() == Some(&crate::SEP) {
@@ -620,24 +605,19 @@ pub mod fs {
             }
         }
 
-        /// Port of `FileSystem.tmpname` in `src/resolver/fs.zig`:
-        /// `pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8`
-        ///
         /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
-        /// the NUL-terminated borrow. Static (no `&self`) — matches the Zig.
+        /// the NUL-terminated borrow. Static (no `&self`).
         pub fn tmpname<'b>(
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
         ) -> Result<&'b mut ZStr, bun_core::Error> {
-            // Zig: `@as(u64, @truncate(@as(u128, hash) | @as(u128, std.time.nanoTimestamp())))`
             let hex_value: u64 =
                 (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
 
             let len = buf.len();
             let mut cursor = &mut buf[..];
-            // Zig: bun.fmt.hexIntLower / hexIntUpper — fixed-width, zero-padded
-            // to `@bitSizeOf(Int)/4` digits (u64 → 16, u32 → 8).
+            // Fixed-width, zero-padded hex (u64 → 16 digits, u32 → 8).
             write!(
                 &mut cursor,
                 ".{:016x}-{:08X}.{}",
@@ -655,9 +635,8 @@ pub mod fs {
         }
     }
 
-    /// Port of `PathName` in `src/resolver/fs.zig:1582` — parsed (dir, base, ext,
-    /// filename) view over a borrowed path slice. All four fields point into the
-    /// same backing allocation.
+    /// Parsed (dir, base, ext, filename) view over a borrowed path slice.
+    /// All four fields point into the same backing allocation.
     ///
     /// CANONICAL: `bun_paths::fs::PathName<'static>` / `bun_resolver::fs::PathName` are
     /// re-exports of this type (D090).
@@ -684,7 +663,6 @@ pub mod fs {
     }
 
     impl<'a> PathName<'a> {
-        /// Zig: `PathName.findExtname`.
         pub fn find_extname(path: &[u8]) -> &[u8] {
             let start = last_index_of_sep(path).map(|i| i + 1).unwrap_or(0);
             let base = &path[start..];
@@ -705,7 +683,6 @@ pub mod fs {
             }
         }
 
-        /// Zig: `PathName.nonUniqueNameStringBase`.
         /// `/bar/foo/index.js` → `foo`; `/bar/foo.js` → `foo`.
         pub fn non_unique_name_string_base(&self) -> &'a [u8] {
             // /bar/foo/index.js -> foo
@@ -718,19 +695,16 @@ pub mod fs {
             self.base
         }
 
-        /// Zig: `PathName.dirOrDot`.
         #[inline]
         pub fn dir_or_dot(&self) -> &'a [u8] {
             if self.dir.is_empty() { b"." } else { self.dir }
         }
 
-        /// Zig: `PathName.fmtIdentifier`.
         #[inline]
         pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'a> {
             bun_core::fmt::fmt_identifier(self.non_unique_name_string_base())
         }
 
-        /// Zig: `PathName.dirWithTrailingSlash`.
         #[inline]
         pub fn dir_with_trailing_slash(&self) -> &'a [u8] {
             // The three strings basically always point to the same underlying ptr
@@ -749,7 +723,6 @@ pub mod fs {
             unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
         }
 
-        /// Zig: `PathName.init`.
         pub fn init(path_: &'a [u8]) -> PathName<'a> {
             #[cfg(all(windows, debug_assertions))]
             {
@@ -820,8 +793,8 @@ pub mod fs {
         }
     }
 
-    /// Port of `Path` in `src/resolver/fs.zig:1727` — the bundler/resolver's logical
-    /// path (display `pretty`, canonical `text`, `namespace`, parsed `name`).
+    /// The bundler/resolver's logical path (display `pretty`, canonical
+    /// `text`, `namespace`, parsed `name`).
     ///
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
@@ -891,7 +864,7 @@ pub mod fs {
             }
         }
 
-        // Zig: `pub const empty = Fs.Path.init("");`
+        // Equivalent to `Path::init(b"")`.
         pub const EMPTY: Path<'static> = Path {
             pretty: b"",
             text: b"",
@@ -906,7 +879,7 @@ pub mod fs {
             is_symlink: false,
         };
 
-        /// Zig: `Path.init(text)` — sets `text`/`pretty` to the same slice, parses `name`,
+        /// Sets `text`/`pretty` to the same slice, parses `name`,
         /// namespace defaults to `"file"`.
         pub fn init(text: &'a [u8]) -> Self {
             Self {
@@ -919,7 +892,6 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Path.initWithPretty`.
         pub fn init_with_pretty(text: &'a [u8], pretty: &'a [u8]) -> Self {
             Self {
                 pretty,
@@ -931,7 +903,6 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Path.initWithNamespace`.
         pub fn init_with_namespace(text: &'a [u8], namespace: &'a [u8]) -> Self {
             Self {
                 pretty: text,
@@ -943,10 +914,9 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Path.initWithNamespaceVirtual(comptime text, namespace, package)`.
-        /// PORT NOTE: Zig formed `pretty = namespace ++ ":" ++ package` at comptime;
-        /// `const_format::concatcp!` can't accept fn-param `&str`, so callers pass
-        /// the precomputed `concatcp!` result as `pretty`.
+        /// PORT NOTE: `pretty = namespace ++ ":" ++ package` is a compile-time
+        /// concat; `const_format::concatcp!` can't accept fn-param `&str`, so
+        /// callers pass the precomputed `concatcp!` result as `pretty`.
         #[inline]
         pub fn init_with_namespace_virtual(
             text: &'static [u8],
@@ -963,8 +933,7 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Path.initForKitBuiltIn`.
-        /// PORT NOTE: same comptime-concat caveat as `init_with_namespace_virtual`.
+        /// PORT NOTE: same compile-time-concat caveat as `init_with_namespace_virtual`.
         #[inline]
         pub fn init_for_kit_built_in(
             namespace: &'static [u8],
@@ -982,8 +951,8 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Path.assertPrettyIsValid` — debug-only check that `pretty`
-        /// contains no backslashes (Windows). No-op on POSIX.
+        /// Debug-only check that `pretty` contains no backslashes (Windows).
+        /// No-op on POSIX.
         #[inline]
         pub fn assert_pretty_is_valid(&self) {
             #[cfg(all(windows, debug_assertions))]
@@ -995,7 +964,7 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Path.assertFilePathIsAbsolute` — CI-assert only.
+        /// CI-assert only.
         #[inline]
         pub fn assert_file_path_is_absolute(&self) {
             if bun_core::Environment::CI_ASSERT && self.is_file() {
@@ -1040,33 +1009,29 @@ pub mod fs {
             self.namespace == b"macro"
         }
 
-        /// Zig: `pub inline fn sourceDir(this: *const Path) string`
         #[inline]
         pub fn source_dir(&self) -> &'a [u8] {
             self.name.dir_with_trailing_slash()
         }
 
-        /// Zig: `pub inline fn prettyDir(this: *const Path) string`
         #[inline]
         pub fn pretty_dir(&self) -> &'a [u8] {
             self.name.dir_with_trailing_slash()
         }
 
-        /// Zig: `Path.isNodeModule` — checks for `<sep>node_modules<sep>` in the
-        /// parsed dir component (`name.dir`, NOT `text`).
+        /// Checks for `<sep>node_modules<sep>` in the parsed dir component
+        /// (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
             use bstr::ByteSlice;
             self.name.dir.rfind(crate::NODE_MODULES_NEEDLE).is_some()
         }
 
-        /// Zig: `Path.isJSXFile`.
         #[inline]
         pub fn is_jsx_file(&self) -> bool {
             let f = self.name.filename;
             f.ends_with(b".jsx") || f.ends_with(b".tsx")
         }
 
-        /// Zig: `Path.keyForIncrementalGraph`.
         #[inline]
         pub fn key_for_incremental_graph(&self) -> &'a [u8] {
             if self.is_file() {
@@ -1076,7 +1041,6 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Path.setRealpath`.
         pub fn set_realpath(&mut self, to: &'a [u8]) {
             let old_path = self.text;
             self.text = to;
@@ -1086,15 +1050,12 @@ pub mod fs {
         }
     }
 
-    /// Port of `PathContentsPair` in `src/resolver/fs.zig:1505`.
+    /// A resolved path paired with its file contents.
     #[derive(Debug, Clone, Default)]
     pub struct PathContentsPair<'a> {
         pub path: Path<'a>,
-        // Zig: `contents: string` (`[]const u8`).
         pub contents: &'a [u8],
     }
 }
 
 pub use self::fs::PathContentsPair;
-
-// ported from: src/paths/paths.zig

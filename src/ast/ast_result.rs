@@ -1,4 +1,4 @@
-//! `js_parser/ast/Ast.zig` — the parser-output struct.
+//! `Ast` — the parser-output struct.
 //!
 //! Moved down from `bun_js_parser` so `bun_js_printer` can consume it without
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
@@ -53,9 +53,9 @@ pub struct Ast {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList,
 
-    // `hashbang`/`directive` are `[]const u8` slices into source text (not
-    // freed in Zig `deinit`). `StoreStr` records them under the same
-    // lifetime-erased contract as `StoreRef`.
+    // `hashbang`/`directive` are slices into source text (never owned/freed
+    // by `Ast`). `StoreStr` records them under the same lifetime-erased
+    // contract as `StoreRef`.
     pub hashbang: StoreStr,
     pub directive: Option<StoreStr>,
     pub parts: PartList,
@@ -76,7 +76,7 @@ pub struct Ast {
     // is conveniently fully parallelized.
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
-    // TODO(port): `[]u32` not freed in Zig `deinit` — likely arena-owned. Using Box<[u32]> for now.
+    // TODO: not explicitly freed historically — likely arena-owned. Using Box<[u32]> for now.
     pub export_star_import_records: Box<[u32]>,
 
     // arena: std.mem.Allocator,
@@ -99,8 +99,8 @@ pub struct Ast {
     pub import_meta_ref: Ref,
 }
 
-// PORT NOTE: Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
-// `ExportsKind.none`, `Target.browser`) whose equivalence to the Rust types' `Default::default()`
+// NOTE: field defaults reference named constants (`Ref.None`, `logger.Range.None`,
+// `ExportsKind.none`, `Target.browser`) whose equivalence to `Default::default()`
 // is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
 impl Default for Ast {
     fn default() -> Self {
@@ -184,10 +184,10 @@ impl Ast {
         }
     }
 
-    // Zig `initTest` borrowed `parts` via `Part.List.fromBorrowedSliceDangerous`
-    // and relied on explicit `deinit` never being called. `Vec::drop` now
-    // unconditionally guards on `Origin::Borrowed` (not debug-only), so unwrapping
-    // the `ManuallyDrop` is safe — the caller's slice is never freed by `Ast`'s Drop.
+    // `init_test` borrows `parts` via `Part.List.from_borrowed_slice_dangerous`.
+    // `Vec::drop` unconditionally guards on `Origin::Borrowed` (not debug-only),
+    // so unwrapping the `ManuallyDrop` is safe — the caller's slice is never
+    // freed by `Ast`'s Drop.
     pub fn init_test(parts: &[Part]) -> Ast {
         Ast {
             // SAFETY: test-only helper; the borrowed list is tagged
@@ -201,34 +201,29 @@ impl Ast {
         }
     }
 
-    // Zig: `pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };`
-    // All fields use their defaults, so `Ast::default()` is the Rust equivalent.
-    // TODO(port): if a true `const` is required at use sites, revisit once field types are `const`-constructible.
+    // All fields use their defaults, so `Ast::default()` is the canonical
+    // empty value.
+    // TODO: if a true `const` is required at use sites, revisit once field types are `const`-constructible.
     pub fn empty() -> Ast {
         Ast::default()
     }
 
-    // Zig: `std.json.stringify(self.parts, opts, stream)` where
-    // `opts = .{ .whitespace = .{ .separator = true } }`. In the Rust port the
-    // `crate::JsonWriter` trait stands in for the configured
-    // `std.json.WriteStream` (separator/whitespace are properties of the
-    // writer impl, not passed per-call), so the body collapses to a single
-    // `write` of the parts slice — the writer emits the JSON array,
+    // The `crate::JsonWriter` trait carries separator/whitespace config as
+    // properties of the writer impl, not passed per-call, so this collapses to
+    // a single `write` of the parts slice — the writer emits the JSON array,
     // dispatching to `Part::json_stringify` per element (same shape as
     // `Part::json_stringify` writing `self.stmts`). No live callers.
     pub fn to_json<W: crate::JsonWriter>(&self, stream: &mut W) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `whitespace.separator = true` is the caller's
-        // responsibility when constructing the `JsonWriter` impl.
+        // NOTE: `whitespace.separator = true` is the caller's responsibility
+        // when constructing the `JsonWriter` impl.
         stream.write(self.parts.slice())
     }
 
-    // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,
-    // and was guarded by "Do not call this if it wasn't globally allocated!".
-    // In Rust those fields own their storage and free on Drop; no explicit body needed.
-    // TODO(port): Vec<T> Drop semantics must distinguish arena-backed vs heap-backed to
-    // preserve the Zig conditional-free behavior. Revisit.
+    // Cleanup historically only freed `parts`, `symbols`, `import_records` and
+    // was guarded by "Do not call this if it wasn't globally allocated!". Here
+    // those fields own their storage and free on Drop; no explicit body needed.
+    // TODO: Vec<T> Drop semantics must distinguish arena-backed vs heap-backed
+    // to preserve the conditional-free behavior. Revisit.
 }
 
 pub use crate::g::Class;
-
-// ported from: src/js_parser/ast/Ast.zig

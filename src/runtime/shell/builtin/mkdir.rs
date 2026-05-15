@@ -32,9 +32,9 @@ pub struct Exec {
     pub tasks_done: usize,
     pub output_waiting: u16,
     pub output_done: u16,
-    /// Index into `Builtin::args` where filepath args start (replaces Zig's
-    /// borrowed `args: []const [*:0]const u8` slice — storing the index keeps
-    /// the lifetime tied to the Cmd's argv without a self-reference).
+    /// Index into `Builtin::args` where filepath args start (replaces a
+    /// borrowed argv subslice — storing the index keeps the lifetime tied to
+    /// the Cmd's argv without a self-reference).
     pub args_start: usize,
     pub err: Option<bun_sys::Error>,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
@@ -42,7 +42,7 @@ pub struct Exec {
     /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
     /// push, `on_io_writer_chunk` pops and forwards to
     /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
-    /// writeErr→writeOut→onDone state machine runs (spec mkdir.zig:134/150).
+    /// writeErr→writeOut→onDone state machine runs.
     pub output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
 }
 
@@ -165,7 +165,7 @@ impl Mkdir {
         Self::next(interp, cmd)
     }
 
-    /// Spec: mkdir.zig `onShellMkdirTaskDone`.
+    /// Worker→main completion callback for a finished `ShellMkdirTask`.
     pub fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellMkdirTask) {
         // SAFETY: task was heap-allocated in create(); reclaim ownership.
         let mut task = unsafe { bun_core::heap::take(task) };
@@ -209,7 +209,7 @@ impl OutputTaskVTable for Mkdir {
             // dedicated WriterTag once OutputTask is dispatchable. Until then
             // stash `child` on `output_queue` so `on_io_writer_chunk` can
             // route the completion back to the OutputTask state machine and
-            // reclaim the box (spec mkdir.zig:134 enqueues with childptr).
+            // reclaim the box.
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }
@@ -241,7 +241,7 @@ impl OutputTaskVTable for Mkdir {
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             // See write_err — stash `child` so the chunk callback routes to
-            // OutputTask::on_io_writer_chunk (spec mkdir.zig:150).
+            // OutputTask::on_io_writer_chunk.
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }
@@ -269,14 +269,14 @@ impl OutputTaskVTable for Mkdir {
     }
 }
 
-/// Spec: mkdir.zig `ShellMkdirTask`. Runs `mkdir`/`mkdir -p` on a worker
-/// thread, then bounces back to the main thread.
+/// Runs `mkdir`/`mkdir -p` on a worker thread, then bounces back to the
+/// main thread.
 pub struct ShellMkdirTask {
     /// Owning Cmd node (the mkdir builtin's id).
     pub cmd: NodeId,
     pub opts: Opts,
-    /// Owned copy of the target path (Zig borrowed from argv; we own to avoid
-    /// threading a lifetime through the WorkPool).
+    /// Owned copy of the target path; owned (rather than borrowed from argv)
+    /// to avoid threading a lifetime through the WorkPool.
     pub filepath: Vec<u8>,
     pub cwd_path: Vec<u8>,
     pub created_directories: Vec<u8>,
@@ -306,7 +306,6 @@ impl ShellMkdirTask {
         bun_core::heap::into_raw(task)
     }
 
-    /// Spec: mkdir.zig `runFromThreadPool`.
     pub fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
@@ -369,10 +368,10 @@ impl bun_event_loop::Taskable for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 }
 
-/// Spec: mkdir.zig `MkdirVerboseVTable` — collects each created directory into
-/// `created_directories` (newline-separated) when `-v` is set. Passed by value
-/// to `NodeFS::mkdir_recursive_impl`; `on_create_dir` writes through the raw
-/// back-ref because the trait method takes `&self` (Zig: `*@This()`).
+/// Collects each created directory into `created_directories`
+/// (newline-separated) when `-v` is set. Passed by value to
+/// `NodeFS::mkdir_recursive_impl`; `on_create_dir` writes through the raw
+/// back-ref because the trait method takes `&self`.
 struct MkdirVerboseVTable {
     inner: *mut Vec<u8>,
     active: bool,
@@ -432,7 +431,7 @@ impl FlagParser for Opts {
             self.parents = true;
             return Some(ParseFlagResult::ContinueParsing);
         }
-        // Note: Zig has the same `--vebose` typo (mkdir.zig:497).
+        // Note: the historic `--vebose` typo is intentionally preserved.
         if flag == b"--vebose" {
             self.verbose = true;
             return Some(ParseFlagResult::ContinueParsing);
@@ -457,5 +456,3 @@ impl FlagParser for Opts {
         }
     }
 }
-
-// ported from: src/shell/builtin/mkdir.zig

@@ -66,14 +66,14 @@ unsafe extern "C" {
 
 unsafe extern "Rust" {
     /// Link-time-resolved by `bun_runtime::jsc_hooks` (same pattern as
-    /// `__BUN_RUNTIME_HOOKS`). Spec sourcemap_jsc/source_provider.zig:20
+    /// `__BUN_RUNTIME_HOOKS`).
     /// `BakeSourceProvider.getExternalData` — looks up the bundled `.map`
     /// JSON for `source_filename` via the live `Bake::GlobalObject`'s
     /// `PerThread.source_maps`. Returns `None` if not running under Bake
     /// (caller falls back to disk read), or `Some("")` if the table has no
     /// entry. The slice borrows `PerThread.bundled_outputs` (lives for the
     /// bake build session, which outlives any error-stack source-map
-    /// resolution). Zig had no crate split here.
+    /// resolution). The original implementation had no crate split here.
     static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]>;
 }
 
@@ -118,7 +118,7 @@ impl BakeSourceProvider {
     }
 }
 
-// PORT NOTE: Zig dispatched via `comptime SourceProviderKind: type` + `@hasDecl`;
+// PORT NOTE: original dispatched via compile-time duck typing;
 // Rust uses a trait per PORTING.md §Dispatch.
 impl SourceProvider for BakeSourceProvider {
     const HAS_EXTERNAL_DATA: bool = true;
@@ -152,7 +152,7 @@ pub struct SourceMapState {
     pub original_column: i32,
 }
 
-/// Top-level `SourceMap` struct (was `@This()` in Zig).
+/// Top-level `SourceMap` struct.
 #[derive(Default)]
 pub struct SourceMap {
     pub sources: Vec<Box<[u8]>>,
@@ -221,7 +221,7 @@ impl Default for ParseResultFail {
     fn default() -> Self {
         Self {
             loc: bun_ast::Loc::default(),
-            err: bun_core::err!("Unknown"), // TODO(port): Zig has no default for `err`
+            err: bun_core::err!("Unknown"), // TODO(port): original had no default for `err`
             value: 0,
             msg: b"",
         }
@@ -243,7 +243,7 @@ pub struct LineColumnOffset {
     pub columns: Ordinal,
 }
 
-// Spec sourcemap.zig:548 — Zig field defaults are `.start`, not `.invalid`
+// Field defaults are `.start`, not `.invalid`
 // (bun_core::Ordinal::default() is INVALID, so derive(Default) would be wrong).
 impl Default for LineColumnOffset {
     #[inline]
@@ -455,7 +455,7 @@ impl core::fmt::Display for DebugIDFormatter {
     }
 }
 
-/// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
+/// This is a pointer to a BunSourceProvider that may or may not have a `//# sourceMappingURL` comment
 /// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
 ///
 /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
@@ -467,12 +467,12 @@ unsafe extern "C" {
     // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
     // the foreign side owns all state behind the handle and may mutate it. The
     // only param is that handle reference, so this is a `safe fn`.
-    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
+    safe fn BunSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
 }
 
 impl SourceProviderMap {
     pub fn get_source_slice(&self) -> bun_core::String {
-        ZigSourceProvider__getSourceSlice(self)
+        BunSourceProvider__getSourceSlice(self)
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -571,8 +571,7 @@ impl SourceProvider for DevServerSourceProvider {
 // ── SourceProvider trait + get_source_map_impl ─────────────────────────────
 
 /// Abstraction over `SourceProviderMap` / `DevServerSourceProvider` /
-/// `BakeSourceProvider` — Zig used `comptime SourceProviderKind: type` plus
-/// `@hasDecl` checks; in Rust this is a trait with default-`None` optional
+/// `BakeSourceProvider`. In Rust this is a trait with default-`None` optional
 /// methods so each provider only overrides what it actually has.
 pub trait SourceProvider {
     fn get_source_slice(&self) -> bun_core::String;
@@ -590,9 +589,9 @@ pub trait SourceProvider {
         None
     }
 
-    /// Mirrors Zig `comptime SourceProviderKind == DevServerSourceProvider`.
+    /// True only for `DevServerSourceProvider`.
     const IS_DEV_SERVER: bool = false;
-    /// Mirrors `@hasDecl(SourceProviderKind, "getExternalData")`.
+    /// True only for providers that override `get_external_data`.
     const HAS_EXTERNAL_DATA: bool = false;
 }
 
@@ -621,7 +620,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
             'try_inline: {
                 let source = provider.get_source_slice();
                 // defer source.deref() → Drop on bun_core::String
-                debug_assert!(source.tag() == bun_core::Tag::ZigString);
+                debug_assert!(source.tag() == bun_core::Tag::UnsafeStringView);
 
                 let maybe_found_url = if source.is_8bit() {
                     find_source_mapping_url_u8(source.latin1())
@@ -707,8 +706,8 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 }
 
                 let mut load_path_buf = bun_paths::path_buffer_pool::get();
-                // Zig wrote `+ 4` but we also need a trailing NUL for the
-                // `&ZStr` open path; reserve `+ 5`.
+                // We also need a trailing NUL for the `&ZStr` open path on top
+                // of the `.map` suffix; reserve `+ 5`.
                 if source_filename.len() + 5 > load_path_buf.len() {
                     break 'try_external;
                 }
@@ -720,7 +719,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let load_path =
                     bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
-                // PORT NOTE: Zig passed the arena allocator; the Rust
+                // PORT NOTE: original passed the arena allocator; the Rust
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`. The
                 // arena was only used to free the bytes on scope exit, which
                 // `Vec` Drop already does.
@@ -763,7 +762,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         return None;
     };
     if let Some(ptr) = parsed.map.as_mut() {
-        // PORT NOTE: Zig mutates `ptr.underlying_provider` after `bun.new`.
+        // PORT NOTE: original mutated `ptr.underlying_provider` after allocation.
         // The Arc is freshly created in `parse_json` and we hold the only ref
         // here, so `Arc::get_mut` succeeds. (PORTING.md §Pointers — no raw
         // *mut cast through Arc::as_ptr.)
@@ -824,8 +823,8 @@ pub mod SavedSourceMap {
 // retrieval. Moved down from `bun_standalone_graph` so `ParsedSourceMap` can
 // name `Loaded` without an upward dep.
 //
-// Zig nests `Header` / `Loaded` inside the struct; Rust models that namespace
-// as a module so `crate::SerializedSourceMap::Loaded` resolves as a path.
+// `Header` / `Loaded` are nested namespaces; Rust models that as a module
+// so `crate::SerializedSourceMap::Loaded` resolves as a path.
 #[allow(non_snake_case)]
 pub mod SerializedSourceMap {
     use bun_core::StringPointer;
@@ -853,8 +852,8 @@ pub mod SerializedSourceMap {
     impl SerializedSourceMap {
         #[inline]
         pub fn header(self) -> Header {
-            // Zig: `*align(1) const Header` — read_unaligned because the blob
-            // sits at an arbitrary offset inside the executable.
+            // read_unaligned because the blob sits at an arbitrary offset inside
+            // the executable.
             // SAFETY: callers guarantee `bytes.len() >= size_of::<Header>()`.
             unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<Header>()) }
         }
@@ -873,8 +872,8 @@ pub mod SerializedSourceMap {
             Some(&self.bytes[start..][..head.map_bytes_length as usize])
         }
 
-        /// Zig returns `[]align(1) const StringPointer` (StandaloneModuleGraph.zig)
-        /// because the blob sits at an arbitrary offset in the executable. Rust
+        /// The blob sits at an arbitrary offset in the executable, so the
+        /// `StringPointer` table is unaligned. Rust
         /// cannot soundly form a `&[StringPointer]` here — that would require
         /// 4-byte alignment regardless of target. Return raw `(ptr, count)` and
         /// read each element via `ptr.add(i).read_unaligned()`.
@@ -915,14 +914,14 @@ pub mod SerializedSourceMap {
 
     impl Loaded {
         pub fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
-            // PORT NOTE: reshaped for borrowck — Zig checked the cache, then
+            // PORT NOTE: reshaped for borrowck — original checked the cache, then
             // wrote and re-read in the same scope. Here we populate first if
             // empty, then take a single borrow at the end.
             if self.decompressed_files[index].is_none() {
                 let (compressed_codes, _count) = self.map.compressed_source_files();
                 // SAFETY: `index < source_files_count` is upheld by caller;
                 // pointer is into the mmapped `'static` blob. Read unaligned
-                // per Zig's `[]align(1) const StringPointer`.
+                // since the table is at an arbitrary file offset.
                 let sp = unsafe { compressed_codes.add(index).read_unaligned() };
                 let compressed_file = sp.slice(self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
@@ -1179,8 +1178,8 @@ pub fn parse_json(
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
-    // PORT NOTE: reshaped for borrowck — Zig used a counted index `i` with
-    // errdefer freeing the prefix; Rust `Vec<Box<[u8]>>` drops automatically.
+    // PORT NOTE: reshaped for borrowck — original used a counted index `i` with
+    // a deferred prefix free; Rust `Vec<Box<[u8]>>` drops automatically.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len_u32() as usize);
         for item in sources_paths.items.slice() {
@@ -1252,8 +1251,8 @@ pub fn parse_json(
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
-        // TODO(port): ParsedSourceMap is ThreadSafeRefCount in Zig; LIFETIMES.tsv
-        // says Arc. Phase B: confirm whether intrusive Arc is required for FFI.
+        // TODO(port): ParsedSourceMap was originally an intrusive thread-safe refcount;
+        // LIFETIMES.tsv says Arc. Phase B: confirm whether intrusive Arc is required for FFI.
         Some(Arc::new(psm))
     } else {
         None
@@ -1376,10 +1375,10 @@ pub fn append_source_map_chunk(
 }
 
 /// Always returns UTF-8.
-// TODO(port): Zig was generic over `comptime T: type` (u8/u16). Rust cannot
-// express `[]const T` literals generically without a helper trait; split into
+// TODO(port): originally generic over the element type (u8/u16). Rust cannot
+// express the slice literal generically without a helper trait; split into
 // two functions and dispatch at the (only) callsite.
-fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Slice> {
+fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::unsafe_string_view::Slice> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
@@ -1389,10 +1388,12 @@ fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Sli
         .map(|p| start + p)
         .unwrap_or(source.len());
     let url = bun_core::strings::trim_right(&source[start..end], b" \r");
-    Some(bun_core::zig_string::Slice::from_utf8_never_free(url))
+    Some(bun_core::unsafe_string_view::Slice::from_utf8_never_free(
+        url,
+    ))
 }
 
-fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::Slice> {
+fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::unsafe_string_view::Slice> {
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
     let found = bun_core::strings::last_index_of_t(source, needle)?;
     let start = found + needle.len();
@@ -1409,7 +1410,7 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
             break;
         }
     }
-    Some(bun_core::zig_string::Slice::init_owned(
+    Some(bun_core::unsafe_string_view::Slice::init_owned(
         bun_core::strings::to_utf8_alloc(url),
     ))
 }

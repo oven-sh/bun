@@ -16,7 +16,7 @@ use bun_boringssl as boringssl;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::Output;
-use bun_core::{ZigString, strings};
+use bun_core::{UnsafeStringView, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
@@ -121,7 +121,7 @@ pub struct WebSocket<const SSL: bool> {
 }
 
 impl<const SSL: bool> WebSocket<SSL> {
-    /// Zig `@typeName(@This())` — tests grep for this exact shape under `BUN_DEBUG_alloc=1`.
+    /// Allocation type name — tests grep for this exact shape under `BUN_DEBUG_alloc=1`.
     const ALLOC_TYPE_NAME: &'static str = if SSL {
         "http.websocket_client.NewWebSocketClient(true)"
     } else {
@@ -131,8 +131,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     #[inline]
     fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_io::EventLoopCtx {
         // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
-        // it from `bun_vm_ptr()` (FFI `*mut VirtualMachine`, see
-        // `JSGlobalObject.zig:617`) rather than `bun_vm()`'s `&VirtualMachine`
+        // it from `bun_vm_ptr()` (FFI `*mut VirtualMachine`)
+        // rather than `bun_vm()`'s `&VirtualMachine`
         // so the stored pointer carries write provenance instead of being
         // laundered through a shared-ref `*const _ as *mut` hop — the vtable
         // slots (`file_polls`, `set_after_event_loop_callback`) write through
@@ -159,7 +159,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         true
     }
 
-    // Handler set referenced by `dispatch.zig` (kind = `.ws_client[_tls]`).
+    // Handler set referenced by the socket dispatch table (kind = `.ws_client[_tls]`).
     // Replaces the C++→`register()`→`us_socket_context_on_*` round-trip.
     // In Rust: these are aliased via the dispatch table; expose the handle_* fns directly.
     // pub const onClose = handleClose; → see handle_close
@@ -346,8 +346,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn clear_receive_buffers(&mut self, free: bool) {
-        // PORT NOTE: Zig poked `head = 0; count = 0` directly; LinearFifo's
-        // fields are private in Rust so discard everything readable instead
+        // PORT NOTE: LinearFifo's fields are private so discard everything
+        // readable instead of poking `head = 0; count = 0` directly
         // (same observable state — empty, head realigned to 0).
         self.receive_buffer
             .discard(self.receive_buffer.readable_length());
@@ -417,21 +417,20 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let mut outstring = ZigString::EMPTY;
+                let mut outstring = UnsafeStringView::EMPTY;
                 if let Some(utf16) = utf16_bytes {
-                    outstring = ZigString::from16_slice(&utf16);
+                    outstring = UnsafeStringView::from16_slice(&utf16);
                     outstring.mark_global();
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
                     // Ownership of the UTF-16 buffer transfers to C++: with
-                    // `clone=false` and the global tag set, `Zig::toString`
+                    // `clone=false` and the global tag set, `Bun::toString`
                     // adopts the allocation into a `WTF::ExternalStringImpl`
                     // which `mi_free`s it later. Dropping the Vec here would
-                    // be a UAF + double-free. Mirrors websocket_client.zig
-                    // which never frees `utf16` locally.
+                    // be a UAF + double-free, so `utf16` is never freed locally.
                     core::mem::forget(utf16);
                 } else {
-                    outstring = ZigString::init(data);
+                    outstring = UnsafeStringView::init(data);
                     jsc::mark_binding!();
                     out.did_receive_text(true, &outstring);
                 }
@@ -564,12 +563,12 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     // PORT NOTE: takes a raw `*mut Self` instead of `&mut self` because
     // `handle_without_deinit()` re-enters this very function on the same
-    // allocation (spec .zig:398-402 / 1242-1253). A live outer `&mut self`
+    // allocation. A live outer `&mut self`
     // across that re-entry would yield two `&mut WebSocket` to one allocation
     // (Stacked-Borrows UB), so the preamble works through `this_ptr` and only
     // materializes `&mut *this_ptr` once re-entry is no longer possible.
     //
-    // The Zig `socket` parameter is dropped: every caller passed `this.tcp`
+    // The original `socket` parameter is dropped: every caller passed `this.tcp`
     // (the dispatch thunk wraps the same `us_socket_t*` that `adopt_group`
     // stored into `self.tcp`), so the parse loop reads `self.tcp` directly.
     //
@@ -630,7 +629,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let mut is_final = self.receiving_is_final;
         let mut last_receive_data_type = receiving_type;
 
-        // Zig `defer { if terminated ... else ... }` → run at end of fn
+        // Deferred `if terminated ... else ...` cleanup runs at end of fn.
         // PORT NOTE: implemented as explicit epilogue after the loop below.
 
         let mut header_bytes = [0u8; size_of::<usize>()];
@@ -1027,7 +1026,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
-        // Zig `defer { ... }` epilogue
+        // Deferred-cleanup epilogue.
         if terminated {
             self.close_received = true;
         } else {
@@ -1041,8 +1040,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.send_close_with_body(1000, None, 0);
     }
 
-    // PORT NOTE: Zig passed `socket` by value (a copy of `this.tcp`). Every
-    // Rust caller would have passed `self.tcp`, and threading a `&Socket<SSL>`
+    // PORT NOTE: previously took `socket` by value (a copy of `this.tcp`). Every
+    // caller would have passed `self.tcp`, and threading a `&Socket<SSL>`
     // alongside `&mut self` is a Stacked-Borrows hazard (the receiver retag
     // covers `self.tcp` and invalidates any prior `&self.tcp`-derived pointer
     // before the argument is even retagged). Read `self.tcp` directly instead.
@@ -1101,7 +1100,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if should_compress {
             // For compressed messages, we need to compress the content first
             let mut temp_buffer: Option<Vec<u8>> = None;
-            // PORT NOTE: Zig used deflate.rare_data.arena(); in Rust we use global mimalloc.
+            // PORT NOTE: uses global mimalloc instead of a `rare_data` arena allocator.
             // PERF(port): was rare_data arena allocator — profile in Phase B
             let content_to_compress: &[u8] = match bytes {
                 Copy::Utf16(utf16) => 'brk: {
@@ -1219,11 +1218,11 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     // PORT NOTE: renamed from `sendBuffer` to avoid clash with `send_buffer`
-    // field. Reshaped to take no slice argument: every caller in the Zig
+    // field. Reshaped to take no slice argument: every caller previously
     // passed `this.send_buffer.readableSlice(0)`, and laundering that slice
     // through `from_raw_parts` while holding `&mut self` is aliased-&mut UB
     // (PORTING.md §Forbidden). Instead, take ownership of the fifo, write its
-    // readable region, then restore. The Zig pointer-equality check becomes
+    // readable region, then restore. The original pointer-equality check becomes
     // unconditional `discard`.
     fn send_buffer_out(&mut self) -> bool {
         let mut buf = core::mem::replace(
@@ -1282,8 +1281,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             return false;
         }
 
-        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
+        // PORT NOTE: WebsocketHeader has no public raw-bits ctor, so build the
+        // all-zero header via from_slice.
         let mut header = WebsocketHeader::from_slice([0, 0]);
         header.set_final(true);
         header.set_opcode(Opcode::Pong);
@@ -1336,8 +1335,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
         let mut final_body_bytes = [0u8; 128 + 8];
-        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
+        // PORT NOTE: WebsocketHeader has no public raw-bits ctor, so build the
+        // all-zero header via from_slice.
         let mut header = WebsocketHeader::from_slice([0, 0]);
         header.set_final(true);
         header.set_opcode(Opcode::Close);
@@ -1524,7 +1523,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
+    pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const UnsafeStringView, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
@@ -1613,7 +1612,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         unsafe { Self::deref(self) };
     }
 
-    pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
+    pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const UnsafeStringView) {
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
@@ -1629,12 +1628,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         let mut close_reason_buf = [0u8; 128];
-        // SAFETY: reason is null or a valid *const ZigString from C++
+        // SAFETY: reason is null or a valid *const UnsafeStringView from C++
         if let Some(str) = unsafe { reason.as_ref() } {
             'inner: {
-                // Zig: FixedBufferAllocator + allocPrint("{f}", .{str}) — the
-                // `{f}` formatter writes the string in UTF-8 regardless of
-                // backing encoding. `ZigString` has no `Display` impl yet, so
+                // Format the string into a fixed buffer in UTF-8 regardless of
+                // backing encoding. `UnsafeStringView` has no `Display` impl yet, so
                 // replicate the encoding switch directly: 8-bit copies bytes,
                 // 16-bit transcodes via `to_owned_slice()` (UTF-16 → UTF-8).
                 use std::io::Write;
@@ -1652,16 +1650,15 @@ impl<const SSL: bool> WebSocket<SSL> {
                         break 'inner;
                     }
                 } else {
-                    // 8-bit Latin-1. Spec websocket_client.zig:1224 routes
-                    // through `ZigString.format` → `bun.fmt.formatLatin1`,
-                    // transcoding Latin-1 → UTF-8. Writing raw Latin-1 bytes
+                    // 8-bit Latin-1. Transcode Latin-1 → UTF-8
+                    // (matching `bun.fmt.formatLatin1`). Writing raw Latin-1 bytes
                     // here would fail the UTF-8 check in `send_close_with_body`
                     // and terminate(InvalidUtf8) instead of sending the frame.
                     let pos = cursor.position() as usize;
                     let dst = &mut cursor.get_mut()[pos..];
                     let result = strings::copy_latin1_into_utf8(dst, str.slice());
                     if (result.read as usize) < str.slice().len() {
-                        // Mirrors Zig `error.NoSpaceLeft` from FixedBufferAllocator.
+                        // Out of space in the fixed buffer — give up on the reason text.
                         break 'inner;
                     }
                     cursor.set_position((pos + result.written as usize) as u64);
@@ -1739,8 +1736,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
-        // PORT NOTE: Zig `adoptGroup(tcp, group, kind, "tcp", ws)` reflected on
-        // the field name; Rust port takes a closure to write the new socket.
+        // PORT NOTE: `adoptGroup(tcp, group, kind, "tcp", ws)` originally reflected
+        // on the field name; this port takes a closure to write the new socket.
         let group = {
             // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm`
             // mutably and `ws_client_group` also wants a `vm` reference.
@@ -1766,7 +1763,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             ws,
             // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
             // write avoids materializing a second `&mut` that would alias
-            // `ws_ref` above (Zig's `@field(owner, "tcp") = ...` equivalent).
+            // `ws_ref` above (equivalent to a reflected `owner.tcp = sock` write).
             |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(sock) },
         ) {
             // SAFETY: `ws` is the `heap::alloc` allocation just created
@@ -1782,10 +1779,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         if buffered_data_len > 0 {
             // SAFETY: buffered_data/len from C++; caller guarantees validity.
             // The upgrade client allocated this buffer via `bun.default_allocator`
-            // (mimalloc) and transfers ownership to us — Zig's
-            // `InitialDataHandler.deinit` frees it with `bun.default_allocator.free`.
-            // The Rust global allocator is also mimalloc, so `heap::take`
-            // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
+            // (mimalloc) and transfers ownership to us. The global allocator is
+            // also mimalloc, so `heap::take` adopts the original allocation
+            // (no copy) and `Drop` will `mi_free` it.
             let buffered_slice: Box<[u8]> = unsafe {
                 bun_core::heap::take(core::slice::from_raw_parts_mut(
                     buffered_data,
@@ -1831,9 +1827,9 @@ impl<const SSL: bool> WebSocket<SSL> {
     ) -> *mut c_void {
         // SAFETY: tunnel_ptr is a valid *WebSocketProxyTunnel from C++ with an
         // intrusive refcount. The caller retains its own ref; we bump to take
-        // ownership (Zig: tunnel.ref()).
-        // PORT NOTE: Zig `tunnel.ref()` then store — bump the intrusive count
-        // and store the raw owning handle (released in `clear_data`).
+        // ownership.
+        // PORT NOTE: bump the intrusive count and store the raw owning handle
+        // (released in `clear_data`).
         let tunnel_owned: NonNull<WebSocketProxyTunnel> = {
             let p = tunnel_ptr.cast::<WebSocketProxyTunnel>();
             // SAFETY: caller passes a live tunnel pointer (extern-C contract).
@@ -2007,7 +2003,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called once when ref_count hits zero
         let this_ref = unsafe { &mut *this };
         this_ref.clear_data();
-        // deflate already dropped in clear_data; this is defensive parity with Zig
+        // deflate already dropped in clear_data; this is a defensive re-clear.
         this_ref.deflate = None;
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
         // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel
@@ -2026,15 +2022,15 @@ impl<const SSL: bool> WebSocket<SSL> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// exportAll() — comptime @export with name concat
+// exportAll() — per-SSL-variant `#[no_mangle]` exports
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): Zig's `@export(&fn, .{.name = "Bun__" ++ name ++ "__fn"})` with
-// comptime string concat cannot be expressed generically in Rust (no_mangle
-// requires a literal). Emit two monomorphized #[no_mangle] shims per fn via macro.
+// TODO(port): the per-variant export-name pattern (`"Bun__" ++ name ++ "__fn"`)
+// cannot be expressed generically in Rust (`no_mangle` requires a literal). Emit
+// two monomorphized #[no_mangle] shims per fn via macro.
 
 // PORT NOTE: avoids the `paste` crate by passing the nine fully-qualified
-// `#[no_mangle]` idents at the call site (declare-site macro). Zig's
-// comptime `++` concat has no Rust equivalent for `#[no_mangle]` literals.
+// `#[no_mangle]` idents at the call site (declare-site macro), since concatenating
+// identifier names at compile time has no Rust equivalent for `#[no_mangle]` literals.
 macro_rules! export_websocket_client {
     (
         $ssl:expr,
@@ -2053,7 +2049,11 @@ macro_rules! export_websocket_client {
             WebSocket::<$ssl>::cancel(this)
         }
         #[unsafe(no_mangle)]
-        pub extern "C" fn $close(this: *mut WebSocket<$ssl>, code: u16, reason: *const ZigString) {
+        pub extern "C" fn $close(
+            this: *mut WebSocket<$ssl>,
+            code: u16,
+            reason: *const UnsafeStringView,
+        ) {
             WebSocket::<$ssl>::close(this, code, reason)
         }
         #[unsafe(no_mangle)]
@@ -2118,7 +2118,7 @@ macro_rules! export_websocket_client {
         #[unsafe(no_mangle)]
         pub extern "C" fn $write_string(
             this: *mut WebSocket<$ssl>,
-            str_: *const ZigString,
+            str_: *const UnsafeStringView,
             op: u8,
         ) {
             WebSocket::<$ssl>::write_string(this, str_, op)
@@ -2179,7 +2179,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // SAFETY: `adopted` is a backref to a live WebSocket (heap::alloc
         // provenance); raw field write of a `Copy`-sized `Option<NonNull<_>>`.
         unsafe { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
-        // Zig: `defer ws.unref()` — RAII: take the owned ref so it drops at
+        // RAII: take the owned ref so it drops at
         // scope exit. Paired with the `adopted.take()` above so the ref is
         // released exactly once even when this fn is later re-called with
         // `adopted == None` (early return leaves `ws` already `None`).
@@ -2281,7 +2281,7 @@ impl Mask {
     }
 
     /// In-place variant for when output and input alias the same buffer.
-    /// PORT NOTE: Zig's `fill` allowed output==input; Rust borrowck forbids
+    /// PORT NOTE: `fill` previously allowed output==input; Rust borrowck forbids
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
     pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
         let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
@@ -2477,8 +2477,8 @@ impl<'a> Copy<'a> {
         // 4 byte mask
         // 0, 2, 8 byte length
 
-        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
+        // PORT NOTE: WebsocketHeader has no public raw-bits ctor, so build the
+        // all-zero header via from_slice.
         let mut header = WebsocketHeader::from_slice([0, 0]);
 
         // Write extended length if needed
@@ -2501,7 +2501,7 @@ impl<'a> Copy<'a> {
 
         // PORT NOTE: reshaped for borrowck — split `buf` into three disjoint
         // regions (header bytes / 4-byte mask / payload) so `write_header` and
-        // `Mask::fill*` don't alias. Zig wrote through one pointer.
+        // `Mask::fill*` don't alias (instead of writing through one pointer).
         let (head, to_mask_full) = buf.split_at_mut(content_offset);
         let (header_part, mask_part) = head.split_at_mut(mask_offset);
         let mask_buf: &mut [u8; 4] = (&mut mask_part[..4])
@@ -2518,8 +2518,8 @@ impl<'a> Copy<'a> {
                 header.set_len(WebsocketHeader::pack_length(
                     encode_into_result.written as usize,
                 ));
-                // TODO(port): Zig used std.io.fixedBufferStream + header.writeHeader.
-                // WebsocketHeader::write_header should write into &mut head[..2+len_int].
+                // TODO(port): WebsocketHeader::write_header should write into
+                // &mut head[..2+len_int] (avoiding the cursor-style writer).
                 header
                     .write_header(
                         &mut &mut header_part[..],
@@ -2583,8 +2583,8 @@ impl<'a> Copy<'a> {
             _ => unreachable!(),
         }
 
-        // PORT NOTE: Zig `@bitCast(@as(u16, 0))`; WebsocketHeader has no public
-        // raw-bits ctor, so build the all-zero header via from_slice.
+        // PORT NOTE: WebsocketHeader has no public raw-bits ctor, so build the
+        // all-zero header via from_slice.
         let mut header = WebsocketHeader::from_slice([0, 0]);
 
         header.set_mask(true);
@@ -2613,5 +2613,3 @@ impl<'a> Copy<'a> {
         Mask::fill(global_this, mask_buf, to_mask, compressed_data);
     }
 }
-
-// ported from: src/http_jsc/websocket_client.zig

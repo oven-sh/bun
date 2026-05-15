@@ -273,8 +273,8 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefP
 
     if (isUseMainContextDefaultLoaderConstant(globalObject, dynamicImportCallback)) {
         auto defer = fetcher->temporarilyUseDefaultLoader();
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin));
+        Bun::GlobalObject* bunGlobalObject = defaultGlobalObject(globalObject);
+        RELEASE_AND_RETURN(scope, bunGlobalObject->moduleLoaderImportModule(bunGlobalObject, bunGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin));
     } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return nullptr;
@@ -601,8 +601,8 @@ NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSV
     }
 
     JSObject* context = asObject(contextValue);
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    JSValue scopeValue = bunGlobalObject->vmModuleContextMap()->get(context);
     if (scopeValue.isUndefined()) {
         if (auto* specialSandbox = dynamicDowncast<NodeVMSpecialSandbox>(context)) {
             return specialSandbox->parentGlobal();
@@ -647,9 +647,9 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, 
 
 bool isContext(JSGlobalObject* globalObject, JSValue value)
 {
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
 
-    if (zigGlobalObject->vmModuleContextMap()->has(asObject(value))) {
+    if (bunGlobalObject->vmModuleContextMap()->has(asObject(value))) {
         return true;
     }
 
@@ -669,8 +669,8 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
     if (contextArg.isUndefined()) {
         contextArg = JSC::constructEmptyObject(globalObject);
     } else if (contextArg.isSymbol()) {
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        if (contextArg == zigGlobalObject->m_nodeVMDontContextify.get(zigGlobalObject)) {
+        Bun::GlobalObject* bunGlobalObject = defaultGlobalObject(globalObject);
+        if (contextArg == bunGlobalObject->m_nodeVMDontContextify.get(bunGlobalObject)) {
             contextArg = JSC::constructEmptyObject(globalObject);
             return true;
         }
@@ -682,8 +682,8 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
 bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isSymbol()) {
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        if (value == zigGlobalObject->m_nodeVMUseMainContextDefaultLoader.get(zigGlobalObject)) {
+        Bun::GlobalObject* bunGlobalObject = defaultGlobalObject(globalObject);
+        if (value == bunGlobalObject->m_nodeVMUseMainContextDefaultLoader.get(bunGlobalObject)) {
             return true;
         }
     }
@@ -777,14 +777,14 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
     return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
-void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
+static void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
 static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
 {
-    // Delegate to the parent Zig::GlobalObject so that unhandled rejections
+    // Delegate to the parent Bun::GlobalObject so that unhandled rejections
     // in VM contexts are reported to the main process (matching Node.js behavior)
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Zig::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    Bun::GlobalObject::promiseRejectionTracker(bunGlobalObject, promise, operation);
 }
 
 const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
@@ -829,7 +829,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 
     vm.ensureTerminationException();
 
-    // Share the async context data with the parent Zig::GlobalObject.
+    // Share the async context data with the parent Bun::GlobalObject.
     // This is necessary because AsyncLocalStorage methods (run, getStore, etc.) are defined
     // in the parent realm and reference the parent's $asyncContext. However, microtask
     // processing (JSMicrotask.cpp) operates on this NodeVMGlobalObject's m_asyncContextData.
@@ -1390,10 +1390,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         return JSValue::encode(sandbox);
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
 
     auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
+        bunGlobalObject->NodeVMGlobalObjectStructure(),
         contextOptions, importer);
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -1402,10 +1402,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     targetContext->setContextifiedObject(sandbox);
 
     // Store context in WeakMap for isContext checks
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
+    bunGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
 
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, bunGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
         return JSValue::encode(targetContext->specialSandbox());
@@ -1502,7 +1502,7 @@ JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObje
     return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
 }
 
-JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
+JSC::JSValue createNodeVMBinding(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);
@@ -1563,7 +1563,7 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
+void configureNodeVM(JSC::VM& vm, Bun::GlobalObject* globalObject)
 {
     globalObject->m_nodeVMDontContextify.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
         init.set(JSC::Symbol::createWithDescription(init.vm, "vm_dont_contextify"_s));
@@ -1789,8 +1789,8 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 
             JSObject* context = asObject(parsingContextValue);
-            auto* zigGlobalObject = defaultGlobalObject(globalObject);
-            JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
+            auto* bunGlobalObject = defaultGlobalObject(globalObject);
+            JSValue scopeValue = bunGlobalObject->vmModuleContextMap()->get(context);
 
             if (scopeValue.isUndefined())
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);

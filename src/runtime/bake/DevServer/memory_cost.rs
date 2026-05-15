@@ -33,11 +33,10 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut source_maps: usize = 0;
     let mut assets: usize = 0;
 
-    // See https://github.com/ziglang/zig/issues/21879
-    // PORT NOTE: Zig used `useAllFields(DevServer, .{...})` to compile-time-assert that
-    // every DevServer field is accounted for below. Rust has no equivalent; the field
-    // list is preserved as comments so Phase B can wire a proc-macro or static-assert.
-    // TODO(port): exhaustiveness check for DevServer fields (was bun.meta.useAllFields)
+    // PORT NOTE: there is no compile-time-assert that every DevServer field is accounted
+    // for below; the field list is preserved as comments so Phase B can wire a proc-macro
+    // or static-assert.
+    // TODO(port): exhaustiveness check for DevServer fields
 
     // does not contain pointers
     //   .assume_perfect_incremental_bundling
@@ -103,17 +102,16 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
-        // PORT NOTE: Zig stored `MultiArrayList(PackedMap.Shared)` and called
-        // `entry.files.memoryCost()` (capacityInBytes). The Rust port stores a
-        // plain `Vec<packed_map::Shared>` (see source_map_store.rs PORT NOTE),
-        // so the SoA byte-count is replaced by `cap * size_of::<Shared>()`.
+        // PORT NOTE: a struct-of-arrays layout would report SoA byte capacity here;
+        // the Rust port stores a plain `Vec<packed_map::Shared>` (see source_map_store.rs
+        // PORT NOTE), so the byte-count is `cap * size_of::<Shared>()`.
         source_maps += entry.files.capacity() * size_of::<packed_map::Shared>();
         for file in entry.files.iter() {
             source_maps += file.memory_cost();
         }
     }
     // .incremental_result
-    // TODO(port): exhaustiveness check for IncrementalResult fields (was bun.meta.useAllFields)
+    // TODO(port): exhaustiveness check for IncrementalResult fields
     {
         let _ = core::mem::size_of::<IncrementalResult>(); // anchor for grep
         // .had_adjusted_edges
@@ -154,8 +152,8 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         dev.html_router.map.capacity() * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
     // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
     // .bundling_failures
-    // PORT NOTE: Zig keys the set by `SerializedFailure` directly; the Rust port
-    // stores `OwnerPacked → SerializedFailure`, so the failure payloads live in
+    // PORT NOTE: the Rust port stores `OwnerPacked → SerializedFailure` (rather than
+    // keying the set by `SerializedFailure` directly), so the failure payloads live in
     // `.values()`.
     other_bytes += memory_cost_slice(dev.bundling_failures.values());
     for failure in dev.bundling_failures.values() {
@@ -164,8 +162,8 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // All entries are owned by the bundler arena, not DevServer, except for `requests`
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
-        // PORT NOTE: Zig walked the intrusive list (`while (r) |req| : (r = req.next)`)
-        // only to count nodes; `SinglyLinkedList::len()` does the same O(N) walk.
+        // PORT NOTE: only the node count is needed here; `SinglyLinkedList::len()`
+        // does the same O(N) walk as iterating the intrusive list.
         other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
     }
     // .next_bundle
@@ -196,9 +194,9 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
 
 pub fn memory_cost(dev: &DevServer) -> usize {
     let cost = memory_cost_detailed(dev);
-    // PORT NOTE: Zig iterated `@typeInfo(MemoryCost).@"struct".fields` to sum every
-    // field. Rust has no field reflection; the sum is written out explicitly. Keep this
-    // in sync with the `MemoryCost` struct definition above.
+    // PORT NOTE: Rust has no field reflection to iterate `MemoryCost` fields; the sum is
+    // written out explicitly. Keep this in sync with the `MemoryCost` struct definition
+    // above.
     let mut acc: usize = 0;
     acc += cost.incremental_graph_client;
     acc += cost.incremental_graph_server;
@@ -218,11 +216,7 @@ pub fn memory_cost_slice<T>(slice: &[T]) -> usize {
 }
 
 pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
-    // Zig: `@TypeOf(map.entries).capacityInBytes(map.entries.capacity)` — the
-    // SoA byte capacity of the backing `MultiArrayList`. The Rust `ArrayHashMap`
-    // stores three separate `Vec`s (keys, values, 32-bit hashes) instead, so the
-    // equivalent footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
+    // The Rust `ArrayHashMap` stores three separate `Vec`s (keys, values, 32-bit
+    // hashes), so its footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
     map.capacity() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
-
-// ported from: src/bake/DevServer/memory_cost.zig

@@ -22,7 +22,7 @@ use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
 use bun_core::ZBox;
-use bun_core::{self, ZigString};
+use bun_core::{self, UnsafeStringView};
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
 use crate::napi::NapiEnv;
@@ -31,7 +31,7 @@ use super::{ABIType, Function};
 
 unsafe extern "C" {
     /// `JSGlobalObject::makeNapiEnvForFFI` — heap-allocated env owned by VM.
-    fn ZigGlobalObject__makeNapiEnvForFFI(global: *const JSGlobalObject) -> *mut NapiEnv;
+    fn BunGlobalObject__makeNapiEnvForFFI(global: *const JSGlobalObject) -> *mut NapiEnv;
     /// `JSValue::getOwn` — own-property lookup (no prototype-chain walk).
     /// Declared locally while `bun_jsc::JSValue::get_own` (JSValue.rs) is gated.
     fn JSC__JSValue__getOwn(
@@ -41,12 +41,12 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// `JSValue::getOwn` (JSValue.zig:1578) — own-property lookup. Local thin
-/// wrapper while `bun_jsc::JSValue::get_own` stays gated.
+/// `JSValue::getOwn` — own-property lookup. Local thin wrapper while
+/// `bun_jsc::JSValue::get_own` stays gated.
 #[inline]
 fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
-    let key_str = bun_core::String::init(ZigString::init(key));
-    // Zig spec opens a `TopExceptionScope` before the FFI call (the C++ side has a
+    let key_str = bun_core::String::init(UnsafeStringView::init(key));
+    // Open a `TopExceptionScope` before the FFI call (the C++ side has a
     // ThrowScope whose dtor sets `m_needExceptionCheck`); a post-hoc `has_exception()`
     // would assert under `BUN_JSC_validateExceptionChecks=1`.
     bun_jsc::top_scope!(scope, global);
@@ -60,7 +60,7 @@ fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Opti
 // Symbol-spec parsing — generate_symbols / generate_symbol_for_function
 // ══════════════════════════════════════════════════════════════════════════
 
-/// `FFI.generateSymbolForFunction` (FFI.zig:1518) — parse one
+/// `FFI::generateSymbolForFunction` — parse one
 /// `{ args, returns, threadsafe, ptr }` spec into a `Function`.
 pub fn generate_symbol_for_function(
     global: &JSGlobalObject,
@@ -89,7 +89,7 @@ pub fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Range `0..=ABIType::MAX` rejects Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     abi_types.push(t);
                     // PERF(port): was appendAssumeCapacity
@@ -130,7 +130,7 @@ pub fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, b"returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Range `0..=ABIType::MAX` rejects Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;
@@ -197,7 +197,7 @@ pub fn generate_symbol_for_function(
     Ok(None)
 }
 
-/// `FFI.generateSymbols` (FFI.zig:1662) — iterate own-properties of `object`,
+/// `FFI::generateSymbols` — iterate own-properties of `object`,
 /// parsing each value as a `Function` spec.
 pub fn generate_symbols(
     global: &JSGlobalObject,
@@ -250,7 +250,7 @@ pub fn generate_symbols(
 // ══════════════════════════════════════════════════════════════════════════
 
 impl Function {
-    /// `Function.compile` (FFI.zig:1769). Prints the C trampoline source,
+    /// `Function::compile`. Prints the C trampoline source,
     /// compiles + relocates it via TinyCC, and stores the resulting
     /// `JSFunctionCall` symbol address in `self.step`.
     ///
@@ -271,7 +271,7 @@ impl Function {
         Ok(())
     }
 
-    /// `Function.printSourceCode` (FFI.zig:2007) — emit the C trampoline that
+    /// `Function::printSourceCode` — emit the C trampoline that
     /// adapts a JSC host-call frame to the native symbol's ABI.
     pub fn print_source_code(
         &self,
@@ -316,7 +316,7 @@ impl Function {
             b");\n\
               \n\
               /* ---- Your Wrapper Function ---- */\n\
-              ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {\n",
+              BUN_FFI_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {\n",
         )?;
 
         if self.needs_handle_scope() {
@@ -410,18 +410,18 @@ impl Function {
         if self.return_type != ABIType::Void {
             write!(
                 writer,
-                "{}.asZigRepr",
+                "{}.asBunFFIRepr",
                 self.return_type.to_js(b"return_value")
             )?;
         } else {
-            writer.write_all(b"ValueUndefined.asZigRepr")?;
+            writer.write_all(b"ValueUndefined.asBunFFIRepr")?;
         }
 
         writer.write_all(b";\n}\n\n")?;
         Ok(())
     }
 
-    /// `Function.printCallbackSourceCode` (FFI.zig:2170) — emit the C
+    /// `Function::printCallbackSourceCode` — emit the C
     /// trampoline that adapts a native call into a JSC `FFI_Callback_call`.
     pub fn print_callback_source_code(
         &self,
@@ -483,7 +483,7 @@ impl Function {
             let mut arg_buf = [0u8; 32];
             write!(
                 writer,
-                " ZIG_REPR_TYPE arguments[{}];\n",
+                " BUN_FFI_REPR_TYPE arguments[{}];\n",
                 self.arg_types.len()
             )?;
 
@@ -493,7 +493,7 @@ impl Function {
                 let arg_name = &arg_buf[0..3 + printed];
                 write!(
                     writer,
-                    "arguments[{}] = {}.asZigRepr;\n",
+                    "arguments[{}] = {}.asBunFFIRepr;\n",
                     i,
                     arg.to_js(arg_name)
                 )?;
@@ -516,7 +516,7 @@ impl Function {
             } else {
                 write!(
                     &mut cursor,
-                    "FFI_Callback_call((void*)0x{:X}ULL, 0, (ZIG_REPR_TYPE*)0)",
+                    "FFI_Callback_call((void*)0x{:X}ULL, 0, (BUN_FFI_REPR_TYPE*)0)",
                     ptr
                 )?;
             }
@@ -551,10 +551,8 @@ pub(super) fn make_napi_env_if_needed<'a>(
             // SAFETY: C++ returns a non-null heap-allocated env owned by the
             // VM (lifetime ≥ DevServer/FFI lifetime).
             // TODO(port): lifetime — `'static` is a stand-in for VM lifetime.
-            return Some(unsafe { &*ZigGlobalObject__makeNapiEnvForFFI(global_this) });
+            return Some(unsafe { &*BunGlobalObject__makeNapiEnvForFFI(global_this) });
         }
     }
     None
 }
-
-// ported from: src/runtime/ffi/FFI.zig

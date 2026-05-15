@@ -45,8 +45,7 @@ pub fn to_be_empty(
                         "Expected value to be a string, object, or iterable"
                     )));
                 };
-                // Zig: `cell.toObject(globalThis)` — `value` is the same cell, so use the
-                // JSValue ToObject path directly.
+                // `value` is the same cell, so use the JSValue ToObject path directly.
                 let object = value.to_object(global)?;
                 let props_iter = JSPropertyIterator::init(
                     global,
@@ -107,5 +106,3 @@ pub fn to_be_empty(
         value.to_fmt(&mut formatter)
     )))
 }
-
-// ported from: src/test_runner/expect/toBeEmpty.zig

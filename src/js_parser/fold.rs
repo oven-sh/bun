@@ -58,8 +58,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     }
 }
 
-// Zig: `pub fn AstMaybe(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -140,7 +139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let name_static = E::Str::new(name);
 
-        // Zig labeled switch with `continue :sw` → loop + match with mutable scrutinee.
+        // Labeled switch with re-dispatch → loop + match with mutable scrutinee.
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
@@ -151,8 +150,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
-                            // PORT NOTE: reshaped for borrowck — Zig held `*ImportItemForNamespaceMap`
-                            // across `p.newSymbol`; split into lookup → (maybe new_symbol) → re-borrow.
+                            // PORT NOTE: reshaped for borrowck — original held a mutable
+                            // `ImportItemForNamespaceMap` reference across `p.newSymbol`;
+                            // split into lookup → (maybe new_symbol) → re-borrow.
                             let existing = p
                                 .import_items_for_namespace
                                 .get(&id.ref_)
@@ -337,12 +337,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         return None;
                                     }
                                 }
-                                // Zig: `for (props) |prop| { ... } else { deopt; return null }`
-                                // — the loop body has no `break`, so the `else` arm runs on
-                                // every normal completion (including empty `props`). The
-                                // entire stmts/decls/clause_items rewriting block that follows
-                                // in the Zig source is therefore unreachable there too and is
-                                // dropped from the port.
+                                // The original loop here had no `break`, so its `else` arm
+                                // (deopt + return null) ran on every normal completion
+                                // (including empty `props`). The entire
+                                // stmts/decls/clause_items rewriting block that followed
+                                // was therefore unreachable and is dropped here.
                                 {
                                     // empty object de-opts because otherwise the statement becomes
                                     // <empty space> = {};
@@ -401,8 +400,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     return None;
                                 }
 
-                                // PORT NOTE: reshaped for borrowck — Zig held the
-                                // `getOrPut` entry across `p.newSymbol`.
+                                // PORT NOTE: reshaped for borrowck — original held the
+                                // map entry across `p.newSymbol`.
                                 let ref_ = if let Some(existing) =
                                     p.commonjs_named_exports.get(name)
                                 {
@@ -606,7 +605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         inner_use.count_estimate += 1;
                     }
                 }
-                // Zig: `inline .e_dot, .e_index => |data, tag|` — expanded per arm
+                // Inlined `.e_dot, .e_index` — expanded per arm
                 js_ast::ExprData::EDot(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
                         && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -717,7 +716,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                             });
                         }
-                        // Zig: `bun.ComptimeStringMap(void, ...)` over 7 fixed keys.
+                        // Static lookup table over 7 fixed keys.
                         let in_lookup_table = matches!(
                             name,
                             b"decline"
@@ -911,5 +910,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 }
-
-// ported from: src/js_parser/ast/maybe.zig

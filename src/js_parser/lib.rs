@@ -1,14 +1,14 @@
-//! Port of `src/js_parser/js_parser.zig`.
+//! JavaScript/TypeScript parser.
 //!
-//! NOTE on arena slices: this is the AST crate. Nearly every `[]const u8` /
-//! `[]T` struct field in the Zig points into either the source text or the
+//! NOTE on arena slices: this is the AST crate. Nearly every slice-typed
+//! struct field here points into either the source text or the
 //! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, Phase A
 //! does **not** add lifetime params to structs; arena-owned slices are typed
 //! as `StoreSlice<T>` / `StoreStr` here. Phase B threads a crate-wide
 //! `'bump` and rewrites these to `&'bump [T]` / `&'bump mut [T]`.
 
 // `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots (Zig: `NewLexer(comptime json_options)`). Field
+// eight `const bool` slots. Field
 // access on a `const J: JSONOptions` param is rejected by nightly-2025-12-10
 // ("overly complex generic constant"); assoc-const projection on a *type*
 // param works under `generic_const_exprs`. `adt_const_params` keeps
@@ -36,15 +36,12 @@ pub mod visit;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 
-// `pub const Macro = @import("../js_parser_jsc/Macro.zig");`
-// Full impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
+// Full Macro impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
 // placeholder `MacroContext` so lower-tier crates (bundler, transpiler) that
 // only need the namespace strings / a context handle stay unblocked.
 #[allow(non_snake_case)]
 pub mod Macro {
-    /// Zig: `pub const namespace: string = "macro";`
     pub const NAMESPACE: &[u8] = b"macro";
-    /// Zig: `pub const namespaceWithColon: string = namespace ++ ":";`
     pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
     #[inline]
@@ -52,7 +49,7 @@ pub mod Macro {
         str_.starts_with(NAMESPACE_WITH_COLON)
     }
 
-    /// Spec `bundler_jsc/PluginRunner.zig:MacroJSCtx` (= `JSC.JSValue`).
+    /// Equivalent to `bundler_jsc::PluginRunner::MacroJSCtx` (= `JSC.JSValue`).
     ///
     /// `JSValue` is `#[repr(transparent)] i64` (PORTING.md §JSC types). This
     /// newtype carries the encoded bits at the lowest tier that needs them so
@@ -80,17 +77,17 @@ pub mod Macro {
     /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
     /// owns that state behind `data`; the visit pass reaches it via
     /// link-time-resolved `extern "Rust"` fns so `visitExpr.rs` stays a
-    /// faithful port of `visitExpr.zig:415` / `:1443` without an upward
+    /// faithful port of the original `visitExpr` macro hooks without an upward
     /// import. `javascript_object` is surfaced here so `Transpiler::parse` can
-    /// thread `this_parse.macro_js_ctx` through (spec transpiler.zig:938-940)
-    /// without this crate depending on `bun_jsc::JSValue`.
+    /// thread `this_parse.macro_js_ctx` through without this crate depending
+    /// on `bun_jsc::JSValue`.
     pub struct MacroContext {
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
         /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
-        /// (matches Zig's process-lifetime `default_allocator`);
+        /// (matches the original process-lifetime `default_allocator`);
         /// `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
@@ -139,8 +136,6 @@ pub mod Macro {
         ) -> Option<&'static MacroRemapEntry>;
     }
     impl MacroContext {
-        /// Zig: `pub fn call(self: *MacroContext, import_record_path, source_dir,
-        /// log, source, import_range, caller, function_name) !Expr`.
         #[inline]
         pub fn call(
             &mut self,
@@ -163,8 +158,6 @@ pub mod Macro {
                 function_name,
             )
         }
-        /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
-        ///
         /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
         /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
         /// an upward dep on the bundler. The `_jsc` crate reads the concrete
@@ -190,7 +183,6 @@ pub mod Macro {
             // possible.
             unsafe { __bun_macro_context_deinit(self.data) }
         }
-        /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
         /// Returns `'static` so callers can keep the result across `&mut self`
         /// parser calls without a borrowck conflict; the table lives in
         /// `Transpiler.options` which outlives every parse.
@@ -208,7 +200,6 @@ pub mod Macro {
         }
     }
 
-    /// Zig: `MacroImportReplacementMap` — `bun.StringArrayHashMap([]const u8)`.
     /// Values are owned (`Box<[u8]>`) so callers can populate without `unsafe`
     /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
     pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
@@ -222,7 +213,7 @@ use bun_ast::{Ast, Ref};
 // NamedExports, CharFreq, several HashMaps). Storing it inline made this enum
 // ~1 KB and forced a ~1 KB memmove at every layer of the return chain
 // `P::to_ast → _parse → parse → cache::JavaScript::parse → Transpiler::parse_*`
-// (Zig sidesteps this via result-location semantics; Rust does not). Boxing the
+// (the original sidestepped this via result-location semantics; Rust does not). Boxing the
 // `Ast` variant collapses `Result` to 16 B so only a thin pointer is moved up
 // the stack — one mimalloc-arena alloc per parsed module is far cheaper than
 // 4+ kilobyte memmoves. The other variants are already tiny.
@@ -258,7 +249,7 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
 
 pub mod defines_table;
 
-// ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
+// ─── from bun_bundler::defines ──────────────────────────────────────────────
 // B-3 UNIFIED: canonical `Define` / `DefineData` / `DotDefine` live here so the
 // parser (`P.define: &'a Define`) and the bundler (`BundleOptions.define:
 // Box<Define>`) share one nominal type. `bun_bundler::defines` re-exports these
@@ -273,7 +264,6 @@ pub mod defines {
     use bun_ast::StoreRef;
     use bun_ast::expr::Data as ExprData;
 
-    // Zig: `bun.StringArrayHashMap(string)` / `bun.StringArrayHashMap(DefineData)`.
     pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
     pub type UserDefines = StringHashMap<DefineData>;
     pub type UserDefinesArray = StringArrayHashMap<DefineData>;
@@ -282,17 +272,17 @@ pub mod defines {
 
     #[derive(Clone)]
     pub struct DotDefine {
-        // Zig stored borrowed `[][]const u8` into static tables / user-define
+        // The original stored borrowed slices into static tables / user-define
         // key strings; the Rust port owns the part strings (small, allocated
         // once at startup). PERF(port): tiny copies.
         pub parts: Vec<Box<[u8]>>,
         pub data: DefineData,
     }
 
-    /// Zig: `packed struct(u8)` — `_padding: u3, valueless: bool,
+    /// Packed `u8` — `_padding: u3, valueless: bool,
     /// can_be_removed_if_unused: bool, call_can_be_unwrapped_if_unused:
     /// E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined: bool`.
-    /// Packed LSB-first → bit positions below match the Zig layout exactly.
+    /// Packed LSB-first → bit positions below match the original layout exactly.
     #[repr(transparent)]
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags(u8);
@@ -366,8 +356,8 @@ pub mod defines {
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
-        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
-        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
+        // The original stored a separate name pointer + length pair
+        // borrowing into caller-owned strings (a 48→40-byte
         // packing trick). The Rust port owns the `RawDefines` value bytes
         // (`Box<[u8]>`), so borrowing would be a use-after-free once the
         // `RawDefines` map is dropped after `Define::init`. Own the bytes here
@@ -387,7 +377,6 @@ pub mod defines {
     impl Default for DefineData {
         fn default() -> Self {
             Self {
-                // Zig: `.e_missing = .{}`
                 value: ExprData::EMissing(E::Missing),
                 original_name: None,
                 flags: Flags::default(),
@@ -395,7 +384,7 @@ pub mod defines {
         }
     }
 
-    /// Named-init shim (mirrors Zig anonymous-struct init).
+    /// Named-init shim (mirrors anonymous-struct init).
     pub struct Options<'a> {
         pub original_name: Option<&'a [u8]>,
         pub value: ExprData,
@@ -472,7 +461,7 @@ pub mod defines {
             let mut flags = Flags::default();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
-                // Zig: @constCast(str) — Expr.Data.e_string stores *E.String.
+                // Expr.Data.e_string stores a non-const `E.String` pointer; the static is never mutated.
                 value: ExprData::EString(StoreRef::from_static(str)),
                 flags,
                 ..Default::default()
@@ -520,7 +509,7 @@ pub mod defines {
             crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
         }
 
-        // Zig: `comptime Iterator: type, iter: Iterator` — type param dropped.
+        // PORT NOTE: original took the iterator type as a compile-time param; dropped here.
         pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
         where
             I: Iterator<Item = (&'a [u8], &'a DefineData)>,
@@ -599,7 +588,6 @@ pub mod defines_full_draft {
     use crate::lexer as js_lexer;
     use bun_ast::StoreRef;
 
-    // Zig: `bun.StringArrayHashMap(string)` / `bun.StringHashMap(DefineData)`
     pub type RawDefines = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
     pub type UserDefines = StringHashMap<DefineData>;
     pub type UserDefinesArray = ArrayHashMap<Box<[u8]>, DefineData>;
@@ -608,7 +596,7 @@ pub mod defines_full_draft {
 
     #[derive(Clone)]
     pub struct DotDefine {
-        // Zig stored borrowed `[][]const u8` into the user-define key strings;
+        // The original stored borrowed slices into the user-define key strings;
         // the Rust port owns the part bytes (small, allocated once at startup)
         // so the `RawDefines` map can be dropped after `Define::init`.
         pub parts: Vec<Box<[u8]>>,
@@ -616,9 +604,9 @@ pub mod defines_full_draft {
     }
 
     bitflags::bitflags! {
-        // Zig: `packed struct(u8) { _padding: u3, valueless, can_be_removed_if_unused,
-        //        call_can_be_unwrapped_if_unused: E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined }`
-        // Packed LSB-first → bit positions below match the Zig layout exactly.
+        // Packed `u8`: `_padding: u3, valueless, can_be_removed_if_unused,
+        //   call_can_be_unwrapped_if_unused: E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined`.
+        // Packed LSB-first → bit positions below match the original layout exactly.
         #[derive(Copy, Clone, Default)]
         pub struct DefineDataFlags: u8 {
             const VALUELESS                                  = 1 << 3;
@@ -633,8 +621,8 @@ pub mod defines_full_draft {
     #[derive(Clone)]
     pub struct DefineData {
         pub value: expr::Data,
-        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
-        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
+        // The original stored a separate name pointer + length pair
+        // borrowing into caller-owned strings (a 48→40-byte
         // packing trick). The Rust port owns the `RawDefines` value bytes
         // (`Box<[u8]>`), so borrowing would be a use-after-free once the
         // `RawDefines` map is dropped after `Define::init`. Own the bytes here
@@ -706,7 +694,7 @@ pub mod defines_full_draft {
 
         pub fn init_static_string(str_: &'static E::String) -> DefineData {
             DefineData {
-                // Zig `@constCast` — Expr.Data stores StoreRef (NonNull); the static is never mutated.
+                // Expr.Data stores StoreRef (NonNull); the static is never mutated.
                 value: expr::Data::EString(StoreRef::from_static(str_)),
                 flags: DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED,
                 ..Default::default()
@@ -826,7 +814,7 @@ pub mod defines_full_draft {
                 ..Default::default()
             };
             let expr = parse_json(&source, log, bump)?;
-            // Zig: `expr.data.deepClone(arena)` followed by `expr.isPrimitiveLiteral()`.
+            // The original deep-cloned then checked `isPrimitiveLiteral()`.
             // With one `Expr` type the parser result is already in the target
             // shape; `deep_clone` re-roots payloads in `bump`.
             let cloned = expr.data.deep_clone(bump)?;
@@ -852,7 +840,7 @@ pub mod defines_full_draft {
     }
 
     impl Define {
-        // Zig: `pub const Data = DefineData;` — Rust callers import `DefineData` directly.
+        // Rust callers import `DefineData` directly.
 
         pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
@@ -876,7 +864,7 @@ pub mod defines_full_draft {
                 let tail = &key[last_dot + 1..];
                 let remainder = &key[..last_dot];
                 let count = remainder.iter().filter(|&&c| c == b'.').count() + 1;
-                // Zig allocated `[][]const u8` borrowing the input key; the Rust
+                // The original allocated slices borrowing the input key; the Rust
                 // port owns the part bytes (tiny startup-time copies) so the
                 // caller can drop `key` after `Define::init`.
                 let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
@@ -920,15 +908,14 @@ pub mod defines_full_draft {
             // here is safe-ish: only affects pure-annotation tree shaking.
 
             // Step 3. Load user data into hash tables
-            // (Zig: `iter.next()` over `StringHashMap` — consume the inner map.)
+            // (Iterate over `StringHashMap` — consume the inner map.)
             if let Some(mut user_defines) = user_defines {
                 for (k, v) in core::mem::take(&mut *user_defines).into_iter() {
                     define.insert(bump, &k, v)?;
                 }
             }
             // Step 4. Load environment data into hash tables.
-            // (Zig: `it.next()` over `StringArrayHashMap` — `ArrayHashMap` has
-            // no `IntoIterator`; walk insertion-order entries.)
+            // (`ArrayHashMap` has no `IntoIterator`; walk insertion-order entries.)
             if let Some(mut string_defines) = string_defines {
                 let mut it = string_defines.iterator();
                 while let Some(entry) = it.next() {
@@ -952,8 +939,8 @@ pub mod defines_full_draft {
     }
 }
 
-// ─── from bun_js_printer::renamer (src/js_printer/renamer.zig) ──────────────
-// Only the slot-assignment helpers the parser calls (`P.rs:6658`) live here;
+// ─── from bun_js_printer::renamer ───────────────────────────────────────────
+// Only the slot-assignment helpers the parser calls live here;
 // the full `NumberRenamer`/`MinifyRenamer` machinery stays in `bun_js_printer`
 // (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
@@ -1104,5 +1091,3 @@ pub mod renamer {
     #[allow(unused_imports)]
     use symbol as _;
 }
-
-// ported from: src/js_parser/js_parser.zig

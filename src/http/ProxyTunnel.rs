@@ -41,9 +41,9 @@ pub(crate) fn raw_as_mut<'a>(ptr: *mut ProxyTunnel) -> &'a mut ProxyTunnel {
 type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 
 /// active socket is the socket that is currently being used
-// PORT NOTE: Zig used `NewHTTPContext(B).HTTPSocket`; inherent associated types
-// are unstable in Rust, so the free `HTTPSocket<SSL>` alias from http_context
-// is used instead. `HTTPSocket<B>` = `uws::SocketHandler<B>` = `NewSocketHandler<B>`,
+// PORT NOTE: inherent associated types are unstable in Rust, so the free
+// `HTTPSocket<SSL>` alias from http_context is used instead.
+// `HTTPSocket<B>` = `uws::SocketHandler<B>` = `NewSocketHandler<B>`,
 // so the canonical 3-arm enum lives in `bun_uws` next to its payload type.
 pub use bun_uws::MaybeAnySocket as Socket;
 
@@ -86,8 +86,8 @@ impl Default for ProxyTunnel {
 
 impl Drop for ProxyTunnel {
     fn drop(&mut self) {
-        // Zig: ProxyTunnel.deinit — wrapper.deinit() / write_buffer.deinit()
-        // are handled by their own Drop impls; just clear the socket tag.
+        // wrapper / write_buffer cleanup is handled by their own Drop impls;
+        // just clear the socket tag.
         self.socket = Socket::None;
     }
 }
@@ -153,8 +153,6 @@ impl ProxyTunnel {
     /// without one. This is the same shared-read-of-a-Copy-field-while-a-
     /// `&mut SSLWrapper`-is-live pattern the pre-refactor inline call sites
     /// used: read-only, single-threaded, never retained past this expression.
-    /// The Zig original (`proxy.wrapper.?.ssl`) has no exclusive-alias rule so
-    /// this was never modelled there.
     #[inline]
     fn wrapper_ssl(this: NonNull<Self>) -> Option<NonNull<bun_boringssl_sys::SSL>> {
         // SAFETY: `this` is live; transient shared read of a Copy field. See
@@ -227,8 +225,7 @@ fn client_from_ctx<'a, 'c>(ctx: *mut HTTPClient<'c>) -> &'a mut HTTPClient<'c> {
 // memory that overlaps the caller's `&mut SSLWrapper` — UB under Stacked
 // Borrows. Callbacks therefore never materialise `&mut ProxyTunnel`; they
 // access individual fields through raw `addr_of!`/`addr_of_mut!` projections so
-// each borrow covers only memory disjoint from `wrapper`. The Zig original
-// (ProxyTunnel.zig) has no exclusive-alias rule so this was never modelled.
+// each borrow covers only memory disjoint from `wrapper`.
 
 fn on_open(ctx: *mut HTTPClient) {
     // HTTPClient owns ProxyTunnel only by `NonNull` pointer, so the borrow
@@ -247,8 +244,8 @@ fn on_open(ctx: *mut HTTPClient) {
     if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
         let _hostname = this.hostname.unwrap_or(this.url.hostname);
 
-        // PORT NOTE: Zig `configureHTTPClient` is `configureHTTPClientWithALPN(ssl, host, .h1)`;
-        // the Rust port already exposes the ALPN form in `crate::configure_http_client_with_alpn`.
+        // PORT NOTE: `configureHTTPClient` is `configureHTTPClientWithALPN(ssl, host, .h1)`;
+        // the ALPN form is exposed in `crate::configure_http_client_with_alpn`.
         if bun_core::is_ip_address(_hostname) {
             crate::configure_http_client_with_alpn(
                 ssl_ptr.as_ptr(),
@@ -396,10 +393,8 @@ fn on_handshake(
             }
 
             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
-            // Zig: `const ssl_ptr = proxy.wrapper.?.ssl orelse return;` —
-            // `.?` asserts wrapper-is-Some; `orelse return` silently bails if
-            // ssl is None. Mirror that split: assert the wrapper, then return
-            // (no debug_assert) on the ssl-None sub-case.
+            // Assert wrapper-is-Some, but silently bail if ssl is None — the
+            // two cases are intentionally split.
             // SAFETY: `proxy_nn` is live (ref-guarded above). Transient shared
             // read of the `wrapper` discriminant only — same caveat as
             // [`wrapper_ssl`]: the caller's `&mut SSLWrapper` overlaps this
@@ -653,8 +648,8 @@ impl ProxyTunnel {
             }
         }
         // Move the sole strong ref (refcount == 1 from `ProxyTunnel::default`)
-        // into the client field; no bump (matches the bare `this.proxy_tunnel =
-        // tunnel` in http.zig — Zig's `RefPtr.create` returns the owned ref).
+        // into the client field; no bump — `RefPtr::adopt_ref` takes ownership
+        // of the existing ref.
         this.proxy_tunnel = Some(unsafe { RefPtr::adopt_ref(proxy_nn.as_ptr()) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
         // End the named &mut borrows before calling into the SSLWrapper. start()
@@ -721,8 +716,8 @@ impl ProxyTunnel {
         let self_nn = NonNull::from(&mut *self);
         let self_ptr = self_nn.as_ptr();
         let _guard = Self::ref_scope(self_nn);
-        // PORT NOTE: Zig `defer wrapper.flush()` runs AFTER the body but BEFORE
-        // `defer deref()` (LIFO). We mirror that order explicitly at the single
+        // PORT NOTE: `wrapper.flush()` must run AFTER the body but BEFORE the
+        // ref-guard deref. We sequence that explicitly at the single
         // exit. flush() → handle_traffic → write_encrypted reenters and touches
         // `write_buffer`/`socket` via raw projection; we must not hold a
         // `&mut ProxyTunnel` (or any borrow overlapping those fields) across it.
@@ -746,7 +741,7 @@ impl ProxyTunnel {
             // Cycle to through the SSL state machine
             let _ = wrapper.flush();
         }
-        // _guard derefs here (Zig LIFO `defer deref()`).
+        // _guard derefs here (last in, first out).
     }
 
     pub fn receive(&mut self, buf: &[u8]) {
@@ -761,7 +756,7 @@ impl ProxyTunnel {
         if let Some(wrapper) = ProxyTunnel::wrapper_mut(self_nn.as_ptr()) {
             wrapper.receive_data(buf);
         }
-        // _guard derefs here (Zig LIFO `defer deref()`); `self_ptr` provenance
+        // _guard derefs here (last in, first out); `self_ptr` provenance
         // intact because `self` was never reborrowed after capture.
     }
 
@@ -782,7 +777,7 @@ impl ProxyTunnel {
     }
 
     pub fn detach_and_deref(&mut self) {
-        // Zig: detachSocket() BEFORE deref() — if refcount > 1 the tunnel
+        // detachSocket() must run BEFORE deref() — if refcount > 1 the tunnel
         // outlives this call and must not retain a dangling socket handle.
         self.detach_socket();
         // SAFETY: `&mut self` was derived (transitively) from the `heap::alloc`
@@ -837,7 +832,7 @@ impl ProxyTunnel {
         // SAFETY: `self` was created by `start` (heap::alloc) and is live; we
         // transfer the pool's strong ref to the client WITHOUT bumping it
         // (`from_raw` == `take_ref`), matching `existingSocket` in
-        // HTTPContext.zig which moves the parked ref into the new client.
+        // HTTPContext which moves the parked ref into the new client.
         client.proxy_tunnel = Some(unsafe { RefPtr::from_raw(core::ptr::from_mut(&mut *self)) });
         client.flags.proxy_tunneling = false;
         // Restore the cert-error flag captured in detachOwner() — no handshake
@@ -849,5 +844,3 @@ impl ProxyTunnel {
         client.state.request_sent_len = 0;
     }
 }
-
-// ported from: src/http/ProxyTunnel.zig

@@ -17,7 +17,7 @@ use crate::filter_arg as FilterArg;
 use crate::run_command::RunCommand;
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
-// lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
+// lives under crate::api::bun::process.
 use crate::api::bun::process::{
     self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, SpawnResultExt as _, Status,
     event_loop_handle_to_ctx,
@@ -53,7 +53,7 @@ struct PipeReader<'a> {
 impl<'a> PipeReader<'a> {
     fn new(is_stderr: bool) -> Self {
         Self {
-            // BufferedReader::init(This) — Zig passes the parent type for vtable.
+            // BufferedReader::init(This) — passes the parent type for vtable.
             reader: BufferedReader::init::<Self>(),
             handle: ptr::null(),
             is_stderr,
@@ -182,7 +182,7 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // Zig: `this.stdout_reader.reader.source = .{ .pipe = this.options.stdout.buffer }`.
+            // `this.stdout_reader.reader.source = pipe(this.options.stdout.buffer)`.
             // In the Rust port `spawn_process_windows` has *already* reclaimed
             // sole ownership of that heap pipe into
             // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
@@ -750,7 +750,7 @@ fn add_script_configs(
     Ok(())
 }
 
-// TODO(port): `!noreturn` — Zig returns either an error or diverges. Using
+// TODO(port): the function returns either an error or diverges. Using
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
 pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
@@ -790,7 +790,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
     // Set up the transpiler/environment
     let _ = bun_resolver::fs::FileSystem::init(None)?;
-    // Out-param init pattern — Zig writes into `var this_transpiler: Transpiler = undefined;`
+    // Out-param init pattern — `Transpiler` has no `Default`, so write through a `MaybeUninit` slot.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
@@ -1078,8 +1078,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     let use_colors = Output::enable_ansi_colors_stderr();
 
     let mut state = State {
-        // TODO(port): allocate handles slice; Zig used uninitialized alloc + per-index assign.
-        // Using Vec then into_boxed_slice after init loop below to avoid MaybeUninit gymnastics.
+        // TODO(port): allocate handles slice. Using Vec then into_boxed_slice
+        // after the init loop below to avoid MaybeUninit gymnastics.
         handles: Box::default(),
         event_loop,
         event_loop_handle: EventLoopHandle::init_mini(event_loop),
@@ -1208,5 +1208,3 @@ fn has_runnable_extension(name: &[u8]) -> bool {
     };
     loader.can_be_run_by_bun()
 }
-
-// ported from: src/cli/multi_run.zig

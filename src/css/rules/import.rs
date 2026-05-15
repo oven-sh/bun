@@ -9,10 +9,9 @@ use bun_alloc::Arena;
 use bun_ast::ImportRecord;
 use bun_collections::VecExt;
 
-/// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
-/// both `ImportConditions.layer` and `ImportRule.layer`. The two Zig anonymous
-/// structs are layout-identical (the code `@ptrCast`s between the parents), so
-/// we use a single Rust type for both.
+/// Shared wrapper used for both `ImportConditions.layer` and
+/// `ImportRule.layer`. The two parents are layout-identical (the code casts
+/// between them), so we use a single type for both.
 #[repr(C)]
 #[derive(Default)]
 pub struct Layer {
@@ -228,7 +227,7 @@ impl ImportRule {
     pub fn conditions(&self) -> &ImportConditions {
         // SAFETY: ImportConditions is #[repr(C)] with fields {layer, supports, media}
         // laid out identically to the {layer, supports, media} field run of ImportRule
-        // (also #[repr(C)]). The Zig code relies on this same layout pun via @ptrCast.
+        // (also #[repr(C)]). The implementation relies on this layout pun.
         // The pointer is derived from `self` (not `&self.layer`) so its provenance
         // covers all three fields — going through a field reference would narrow
         // provenance to just `layer` and make sibling-field reads UB under SB.
@@ -281,10 +280,10 @@ impl ImportRule {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `url: &'static [u8]`
-        // is an arena-owned slice → identity copy (generics.zig "const
-        // strings" rule); `media` routes through `dc::media_list` until
-        // `MediaList` gains an arena-aware `deep_clone`.
+        // PORT NOTE: field-walk deep clone. `url: &'static [u8]` is an
+        // arena-owned slice → identity copy ("const strings" rule); `media`
+        // routes through `dc::media_list` until `MediaList` gains an
+        // arena-aware `deep_clone`.
         Self {
             url: self.url,
             layer: self.layer.as_ref().map(|l| l.deep_clone(bump)),
@@ -373,5 +372,3 @@ const _: () = {
 // silence unused-import warnings on the gated bodies' deps
 #[allow(unused_imports)]
 use {Arena as _Arena, ImportRecord as _ImportRecord};
-
-// ported from: src/css/rules/import.zig

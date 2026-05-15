@@ -201,7 +201,7 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
 // Safe access helpers for unaligned views
-// TODO(port): Zig used `*align(1) const T`; Rust references require alignment.
+// TODO(port): the original used unaligned typed pointers; Rust references require alignment.
 // These return raw pointers; callers must treat reads/writes as potentially unaligned.
 // Phase B: consider `#[repr(C, packed)]` on header structs or `ptr::read_unaligned`.
 fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
@@ -285,7 +285,7 @@ impl PEFile {
             return Err(Error::OutOfBounds);
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
-        // TODO(port): potentially unaligned — Zig used []align(1) const SectionHeader
+        // TODO(port): potentially unaligned — original used an unaligned const slice
         let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
         Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
     }
@@ -297,7 +297,7 @@ impl PEFile {
             return Err(Error::OutOfBounds);
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
-        // TODO(port): potentially unaligned — Zig used []align(1) SectionHeader
+        // TODO(port): potentially unaligned — original used an unaligned mutable slice
         let ptr = unsafe { self.data.as_mut_ptr().add(start).cast::<SectionHeader>() };
         Ok(unsafe { slice::from_raw_parts_mut(ptr, self.num_sections as usize) })
     }
@@ -791,7 +791,7 @@ impl PEFile {
 
     /// Write the modified PE file
     pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
+        // PORT NOTE: original took a generic writer; std::io::Write
         // is the canonical Rust equivalent. bun_io has no Write trait.
         writer.write_all(&self.data)?;
         Ok(())
@@ -903,7 +903,7 @@ pub mod utils {
         }
 
         // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
-        // TODO(port): potentially unaligned — Zig used *align(1) const DOSHeader
+        // TODO(port): potentially unaligned — original used an unaligned const pointer
         let dos = unsafe { &*data.as_ptr().cast::<DOSHeader>() };
         if dos.e_magic != DOS_SIGNATURE {
             return false;
@@ -915,7 +915,7 @@ pub mod utils {
         }
 
         // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
-        // TODO(port): potentially unaligned — Zig used *align(1) const PEHeader
+        // TODO(port): potentially unaligned — original used an unaligned const pointer
         let pe = unsafe { &*data.as_ptr().add(off).cast::<PEHeader>() };
         pe.signature == PE_SIGNATURE
     }
@@ -933,5 +933,3 @@ unsafe extern "C" {
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
 }
-
-// ported from: src/exe_format/pe.zig

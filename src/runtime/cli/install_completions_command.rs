@@ -13,7 +13,7 @@ pub struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
     pub fn test_path(_: &[u8]) -> Result<Dir, bun_core::Error> {
-        // TODO(port): Zig body is empty (`pub fn testPath(_: string) !std.fs.Dir {}`)
+        // TODO(port): the original body is intentionally empty (placeholder).
         unreachable!()
     }
 
@@ -157,10 +157,8 @@ impl InstallCompletionsCommand {
             )?;
             // SAFETY: exe_suffix_z ends in NUL
             let bunx_cmd = WStr::from_slice_with_nul(&bunx_cmd_with_z[..]);
-            // TODO: fix this zig bug, it is one line change to a few functions.
-            // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
-            // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
+            // bun_sys::File has no Drop impl; must close explicitly
             let res = file.write_all(SCRIPT);
             let _ = file.close();
             res?;
@@ -212,7 +210,7 @@ impl InstallCompletionsCommand {
         )?;
 
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
-        // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
+        // bun_sys::File has no Drop impl; must close explicitly
         let res = file.write_all(CONTENT);
         let _ = file.close();
         res?;
@@ -731,5 +729,3 @@ impl InstallCompletionsCommand {
 }
 
 use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z_infallible as buf_print_z};
-
-// ported from: src/cli/install_completions_command.zig

@@ -122,7 +122,7 @@ impl PipeReader {
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
         #[cfg(windows)]
         {
-            // Zig: `this.reader.source = .{ .pipe = this.stdio_result.buffer }` —
+            // `this.reader.source = .{ .pipe = this.stdio_result.buffer }` —
             // on Windows `StdioResult` is the `WindowsStdioResult` enum and the
             // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
             // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
@@ -172,7 +172,7 @@ impl PipeReader {
             // outlives the guard's drop on return.
             let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
 
-            // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors Zig `.?`.
+            // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors the original force-unwrap.
             match self.reader.start(self.stdio_result.unwrap(), true) {
                 bun_sys::Result::Err(err) => {
                     return bun_sys::Result::Err(err);
@@ -185,7 +185,7 @@ impl PipeReader {
                             // will drop the last ref and deinit() closes the handle.
                             return bun_sys::Result::Ok(());
                         }
-                        // PORT NOTE: `PollOrFd` is an enum in the Rust port; the Zig
+                        // PORT NOTE: `PollOrFd` is an enum in the Rust port; the original
                         // `this.reader.handle.poll` field projection becomes a variant
                         // pattern. `FilePoll` is an opaque vtable-backed handle (Copy)
                         // with `set_flag` standing in for `poll.flags.insert(...)`.
@@ -241,7 +241,7 @@ impl PipeReader {
 
     pub fn to_owned_slice(&mut self) -> Vec<u8> {
         if let State::Done(bytes) = core::mem::replace(&mut self.state, State::Pending) {
-            // PORT NOTE: reshaped for borrowck — Zig reads `state.done` in place; here we
+            // PORT NOTE: reshaped for borrowck — the original reads `state.done` in place; here we
             // take it out and restore Pending (caller immediately overwrites state anyway).
             return bytes;
         }
@@ -253,7 +253,7 @@ impl PipeReader {
             return Vec::new();
         }
 
-        // PERF(port): Zig returns `out.items` (len-only slice) without shrinking capacity;
+        // PERF(port): the original returns `out.items` (len-only slice) without shrinking capacity;
         // returning the Vec preserves capacity, which is the same intent.
         out
     }
@@ -283,7 +283,7 @@ impl PipeReader {
 
         match &self.state {
             State::Pending => {
-                // PORT NOTE: `_parent` is unused in `from_pipe` (Zig `anytype` discard); pass the
+                // PORT NOTE: `_parent` is unused in `from_pipe`; pass the
                 // raw ptr instead of `self` so borrowck allows `&mut self.reader` alongside it.
                 let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
@@ -328,7 +328,7 @@ impl PipeReader {
     }
 
     pub fn on_reader_error(&mut self, err: bun_sys::Error) {
-        // Zig: if state == .done, free state.done — handled by Drop of the replaced Vec.
+        // If state == .done, free state.done — handled by Drop of the replaced Vec.
         self.state = State::Err(err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
@@ -406,15 +406,15 @@ impl PipeReader {
             );
         }
 
-        // Zig: if state == .done, free state.done — handled by Drop of `state` when Box drops.
-        // Zig: this.reader.deinit() — handled by Drop of `reader` field when Box drops.
+        // If state == .done, free state.done — handled by Drop of `state` when Box drops.
+        // `this.reader.deinit()` — handled by Drop of `reader` field when Box drops.
 
         // SAFETY: `this` was created via heap::alloc in `create()`.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
+// `bun.io.BufferedReader.init(@This())` — vtable parent. The spec declares
 // `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
 // `on_reader_done`/`on_reader_error` are tail-position (the reader is finished
 // with `self`), so `&mut *this` autoref is OK.
@@ -446,5 +446,3 @@ bun_io::impl_buffered_reader_parent! {
         sp.on_max_buffer(kind);
     };
 }
-
-// ported from: src/runtime/api/bun/subprocess/SubprocessPipeReader.zig

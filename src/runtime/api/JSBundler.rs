@@ -12,7 +12,7 @@ use bun_bundler::options;
 use bun_collections::{StringArrayHashMap, StringHashMap, StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, UnsafeStringView, strings};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
@@ -27,7 +27,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 
 pub mod js_bundler {
     use super::*;
-    use bun_core::ZigStringSlice;
+    use bun_core::UTF8Slice;
     use bun_jsc::JSObject;
     use bun_sys::FdExt;
 
@@ -99,8 +99,8 @@ pub mod js_bundler {
             // copied, JS strings are decoded). Extract them into the lower-tier
             // map and release the wrapper immediately so no JSC handle crosses
             // threads.
-            // PERF(port): Zig stores the `BlobOrStringOrBuffer` directly; here we
-            // make one extra owned copy to keep `bun_bundler` free of JSC types.
+            // PERF(port): the original stored the `BlobOrStringOrBuffer` directly;
+            // here we make one extra owned copy to keep `bun_bundler` free of JSC types.
             let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
             drop(blob_or_string);
 
@@ -822,7 +822,7 @@ pub mod js_bundler {
             }
 
             {
-                let path: ZigStringSlice = 'brk: {
+                let path: UTF8Slice = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
                         break 'brk slice;
                     }
@@ -839,7 +839,7 @@ pub mod js_bundler {
                             }
                         }
                         if all_in_filemap {
-                            break 'brk ZigStringSlice::from_utf8_never_free(b".");
+                            break 'brk UTF8Slice::from_utf8_never_free(b".");
                         }
                     }
 
@@ -848,7 +848,7 @@ pub mod js_bundler {
                         let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             &entry_points[0],
                         );
-                        break 'brk ZigStringSlice::from_utf8_never_free(if d.is_empty() {
+                        break 'brk UTF8Slice::from_utf8_never_free(if d.is_empty() {
                             b"."
                         } else {
                             d
@@ -859,7 +859,7 @@ pub mod js_bundler {
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk ZigStringSlice::from_utf8_never_free(
+                    break 'brk UTF8Slice::from_utf8_never_free(
                         bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
                             .unwrap_or(b"."),
                     );
@@ -955,7 +955,7 @@ pub mod js_bundler {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
+            // if (try config.getOptional(globalThis, "dir", UnsafeStringView.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
@@ -968,8 +968,6 @@ pub mod js_bundler {
             }
 
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
-                // Zig kept a separate `owned_*: OwnedString` buffer per template
-                // and pointed `template.data` (a `[]const u8`) into it. Rust's
                 // `PathTemplate.data` is already `Box<[u8]>` (owned), so build
                 // straight into it — no self-referential borrow, no clone.
                 let with_dot_slash = |s: &[u8]| -> Box<[u8]> {
@@ -1033,10 +1031,10 @@ pub mod js_bundler {
                         )));
                     }
 
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global_this)?;
+                    let mut val = UnsafeStringView::init(b"");
+                    property_value.to_unsafe_string_view(&mut val, global_this)?;
                     if val.len == 0 {
-                        val = ZigString::from_utf8(b"\"\"");
+                        val = UnsafeStringView::from_utf8(b"\"\"");
                     }
 
                     let key = prop.to_owned_slice();
@@ -1207,8 +1205,8 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // PORT NOTE (diverges from Zig spec — flake fix): when no
-                        // `outdir`/`outfile` was given, the Zig path stores only
+                        // PORT NOTE (diverges from original — flake fix): when no
+                        // `outdir`/`outfile` was given, the original path stored only
                         // the basename here and `doCompilation` later resolves it
                         // against the process-wide `top_level_dir`. Under the JS
                         // API that means every `Bun.build({compile: true,
@@ -1273,9 +1271,8 @@ pub mod js_bundler {
     // `Config` owns only `Drop`-aware fields (`Box<[u8]>` map values, `Vec`s,
     // `MutableString`, `Strong`); no manual `Drop` needed.
 
-    /// Zig kept a separate `owned_*: OwnedString` per template and pointed
-    /// `template.data: []const u8` into it (self-referential). Rust's
-    /// `PathTemplate.data` is `Box<[u8]>` (owned), so the indirection is gone.
+    /// `PathTemplate.data` is `Box<[u8]>` (owned), so the previous
+    /// self-referential `owned_*` indirection is gone.
     pub struct Names {
         pub entry_point: options::PathTemplate,
         pub chunk: options::PathTemplate,
@@ -1554,8 +1551,8 @@ pub mod js_bundler {
                         )),
                     );
                 }
-                // Zig: this.deinit() — explicit drop
-                // TODO(port): Load is not Box-allocated here; Zig deinit only resets value
+                // Explicit drop.
+                // TODO(port): Load is not Box-allocated here; deinit only resets value
                 this.value = LoadValue::Consumed;
                 return;
             }
@@ -1687,8 +1684,8 @@ pub mod js_bundler {
                 Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
-            // Zig (JSBundler.zig:1572-1582) opens an explicit `TopExceptionScope`
-            // before the FFI call and `returnIfException`s after; the C++ side has
+            // An explicit `TopExceptionScope` is opened before the FFI call and
+            // checked after; the C++ side has
             // a `DECLARE_THROW_SCOPE` whose dtor sets `m_needExceptionCheck` under
             // `BUN_JSC_validateExceptionChecks=1`, so a post-hoc `has_exception()`
             // (whose own scope ctor asserts) is wrong.
@@ -1765,9 +1762,8 @@ pub mod js_bundler {
     /// pending-item counter is decremented. Returning early here would cause
     /// `Bun.build` to hang forever waiting on the counter.
     ///
-    /// Runs on the JS thread, so allocations go through the global heap (Zig
-    /// passes `bun.default_allocator`); the bundler arena is owned by another
-    /// thread.
+    /// Runs on the JS thread, so allocations go through the global heap;
+    /// the bundler arena is owned by another thread.
     fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
         let global = plugin.global_object();
         match bun_ast_jsc::msg_from_js(global, file.to_vec(), exception) {
@@ -1849,7 +1845,7 @@ pub struct BuildArtifact {
 /// callers stay unchanged.
 pub use bun_bundler::options::OutputKind;
 
-/// `JSValue::as(Blob)` BuildArtifact fallback (JSValue.zig:467) — declared
+/// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
 pub fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
@@ -2104,5 +2100,3 @@ impl BuildArtifact {
         Ok(())
     }
 }
-
-// ported from: src/runtime/api/JSBundler.zig

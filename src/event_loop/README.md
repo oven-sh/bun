@@ -8,11 +8,11 @@ Bun's event loop is built on top of **uSockets** (a cross-platform event loop ba
 
 ## Core Components
 
-### 1. Task Queue (`src/event_loop/Task.zig`)
+### 1. Task Queue (`src/jsc/Task.rs`)
 
 A tagged pointer union containing various async task types (file I/O, network requests, timers, etc.). Tasks are queued by various subsystems and drained by the main event loop.
 
-### 2. Immediate Tasks (`event_loop.zig:14-15`)
+### 2. Immediate Tasks (`src/jsc/event_loop.rs`)
 
 Two separate queues for `setImmediate()`:
 
@@ -21,11 +21,11 @@ Two separate queues for `setImmediate()`:
 
 This prevents infinite loops when `setImmediate` is called within a `setImmediate` callback.
 
-### 3. Concurrent Task Queue (`event_loop.zig:17`)
+### 3. Concurrent Task Queue (`src/jsc/event_loop.rs`)
 
 Thread-safe queue for tasks enqueued from worker threads or async operations. These are moved to the main task queue before processing.
 
-### 4. Deferred Task Queue (`src/event_loop/DeferredTaskQueue.zig`)
+### 4. Deferred Task Queue (`src/event_loop/DeferredTaskQueue.rs`)
 
 For operations that should be batched and deferred until after microtasks drain (e.g., buffered HTTP response writes, file sink flushes). This avoids excessive system calls while maintaining responsiveness.
 
@@ -39,7 +39,7 @@ Built-in JSC microtask queue for promises and queueMicrotask.
 
 ## Event Loop Flow
 
-### Main Tick Flow (`event_loop.zig:477-513`)
+### Main Tick Flow (`tick` in `src/jsc/event_loop.rs`)
 
 ```
 ┌─────────────────────────────────────┐
@@ -67,7 +67,7 @@ Built-in JSC microtask queue for promises and queueMicrotask.
 └─────────────────────────────────────┘
 ```
 
-### autoTick Flow (`event_loop.zig:349-401`)
+### autoTick Flow (`auto_tick` in `src/jsc/event_loop.rs`)
 
 This is called when the event loop is active and needs to wait for I/O:
 
@@ -112,7 +112,7 @@ This is called when the event loop is active and needs to wait for I/O:
 
 ## Task Draining Algorithm
 
-### For Regular Tasks (`Task.zig:97-512`)
+### For Regular Tasks (`src/jsc/Task.rs`)
 
 For each task dequeued from the task queue:
 
@@ -120,17 +120,17 @@ For each task dequeued from the task queue:
 ┌─────────────────────────────────────────────────────────────┐
 │ FOR EACH TASK in task queue:                                │
 │                                                              │
-│   1. RUN THE TASK (Task.zig:135-506)                        │
+│   1. RUN THE TASK                                            │
 │      └─> Execute task.runFromJSThread() or equivalent       │
 │                                                              │
-│   2. DRAIN MICROTASKS (Task.zig:508)                        │
+│   2. DRAIN MICROTASKS                                        │
 │      └─> drainMicrotasksWithGlobal()                        │
 │          │                                                   │
-│          ├─> RELEASE WEAK REFS (event_loop.zig:129)         │
+│          ├─> RELEASE WEAK REFS                               │
 │          │   └─> VM.releaseWeakRefs()                       │
 │          │                                                   │
 │          ├─> CALL JSC__JSGlobalObject__drainMicrotasks()    │
-│          │   (ZigGlobalObject.cpp:2793-2840)                │
+│          │   (BunGlobalObject.cpp)                           │
 │          │   │                                               │
 │          │   ├─> IF nextTick queue exists and not empty:    │
 │          │   │   └─> Call processTicksAndRejections()       │
@@ -147,7 +147,7 @@ For each task dequeued from the task queue:
 │          │   └─> ALWAYS call vm.drainMicrotasks() again     │
 │          │       (safety net for any remaining microtasks)  │
 │          │                                                   │
-│          └─> RUN DEFERRED TASK QUEUE (event_loop.zig:136-138)│
+│          └─> RUN DEFERRED TASK QUEUE                         │
 │              └─> deferred_tasks.run()                       │
 │                  (buffered writes, file sink flushes, etc.) │
 │                                                              │
@@ -156,7 +156,7 @@ For each task dequeued from the task queue:
 
 ### Key Points
 
-#### Process.nextTick Ordering (`ZigGlobalObject.cpp:2818-2829`)
+#### Process.nextTick Ordering (`BunGlobalObject.cpp`)
 
 The process.nextTick queue is special:
 
@@ -218,7 +218,7 @@ function processTicksAndRejections() {
 }
 ```
 
-#### Deferred Task Queue (`DeferredTaskQueue.zig:44-61`)
+#### Deferred Task Queue (`DeferredTaskQueue.rs`)
 
 Runs after microtasks to batch operations:
 
@@ -281,10 +281,10 @@ When I/O becomes ready (socket readable/writable, file descriptor ready):
 
 Timers are handled differently based on platform:
 
-### POSIX (`event_loop.zig:396`)
+### POSIX (`auto_tick` in `src/jsc/event_loop.rs`)
 
-```zig
-ctx.timer.drainTimers(ctx);
+```rust
+ctx.timer.drain_timers(ctx);
 ```
 
 Timers are drained after I/O polling. Each timer callback:
@@ -318,17 +318,17 @@ This is because:
 
 The event loop uses a counter to track when to drain microtasks:
 
-```zig
-pub fn enter(this: *EventLoop) void {
-    this.entered_event_loop_count += 1;
+```rust
+pub fn enter(&mut self) {
+    self.entered_event_loop_count += 1;
 }
 
-pub fn exit(this: *EventLoop) void {
-    const count = this.entered_event_loop_count;
-    if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm) catch {};
+pub fn exit(&mut self) {
+    let count = self.entered_event_loop_count;
+    if count == 1 && !self.virtual_machine.is_inside_deferred_task_queue {
+        let _ = self.drain_microtasks_with_global(self.global, self.virtual_machine.jsc_vm);
     }
-    this.entered_event_loop_count -= 1;
+    self.entered_event_loop_count -= 1;
 }
 ```
 

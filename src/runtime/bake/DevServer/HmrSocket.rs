@@ -10,7 +10,7 @@ use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle};
 use crate::bake::dev_server_body::HmrTopicBits;
 
-// Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
+// Local shim for the original generic `res` param — shared with `DevServer::on_web_socket_upgrade`.
 // TODO(port): replace with `bun_uws::ResponseLike` once that trait lands upstream.
 pub use super::ResponseLike;
 
@@ -88,7 +88,7 @@ impl HmrSocket {
             return ws.close();
         }
 
-        // Zig's IncomingMessageId is non-exhaustive (`_ => ws.close()`), so msg[0] may be any
+        // IncomingMessageId is non-exhaustive (`_ => ws.close()`), so msg[0] may be any
         // byte. Transmuting an out-of-range u8 into a #[repr(u8)] enum is UB regardless of a
         // wildcard match arm — match on the raw byte instead.
         match msg[0] {
@@ -120,14 +120,14 @@ impl HmrSocket {
                 if topics.len() > HmrTopic::MAX_COUNT {
                     return;
                 }
-                // Zig: inline for over @typeInfo(HmrTopic).@"enum".fields, matching
+                // Originally a comptime loop over HmrTopic enum fields, matching
                 // `char == field.value` and setting the corresponding bit.
                 for &ch in topics {
                     if let Some(topic) = HmrTopic::from_u8(ch) {
                         new_bits.insert(topic.as_bit());
                     }
                 }
-                // Zig: inline for over std.enums.values(HmrTopic)
+                // Originally a comptime loop over all HmrTopic variants.
                 for &field in HmrTopic::ALL {
                     let bit = field.as_bit();
                     if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
@@ -173,7 +173,7 @@ impl HmrSocket {
                         }
                     } else if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
                         // PORT NOTE: this `else if` condition is identical to the `if` above in
-                        // the source Zig (line 96) and is therefore unreachable. Ported verbatim;
+                        // the original source and is therefore unreachable. Ported verbatim;
                         // likely an upstream bug (intended: `!new && old` → unsubscribe).
                         let _ = ws.unsubscribe(&[field as u8]);
                     }
@@ -236,7 +236,7 @@ impl HmrSocket {
                         ws.close();
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
-                        // PORT NOTE: reshaped for borrowck — Zig copied the payload then
+                        // PORT NOTE: reshaped for borrowck — the original copied the payload then
                         // overwrote the union; here we replace-and-extract.
                         let super::TestingBatchEvents::Enabled(mut event) = core::mem::replace(
                             &mut dev.testing_batch_events,
@@ -407,5 +407,3 @@ impl HmrSocket {
         }
     }
 }
-
-// ported from: src/bake/DevServer/HmrSocket.zig

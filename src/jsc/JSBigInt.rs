@@ -22,7 +22,7 @@ unsafe extern "C" {
 }
 
 /// Types that can be compared against a `JSBigInt` via the FFI order functions.
-/// Mirrors the `comptime T: type` switch in the Zig `order` fn.
+/// Each implementor selects the matching extern order function for its type.
 pub trait BigIntOrderable: Copy {
     fn raw_order(self, this: &JSBigInt) -> i8;
 }
@@ -80,5 +80,3 @@ impl JSBigInt {
         crate::host_fn::from_js_host_call_generic(global, || JSC__JSBigInt__toString(self, global))
     }
 }
-
-// ported from: src/jsc/JSBigInt.zig

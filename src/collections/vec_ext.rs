@@ -1,8 +1,8 @@
-//! `VecExt` / `ByteVecExt` — Zig-ported method vocabulary on `Vec<T>`.
+//! `VecExt` / `ByteVecExt` — extension method vocabulary on `Vec<T>`.
 //!
 //! Migration shim from the deleted `BabyList<T>` (see
 //! `docs/BABYLIST_REPLACEMENT.md`): every former `BabyList<T>` site is now a
-//! plain `Vec<T>`, and these traits supply the Zig method names (`.slice()`,
+//! plain `Vec<T>`, and these traits supply the legacy method names (`.slice()`,
 //! `.append()`, `.init_capacity()`, …) so call sites needed only a type-level
 //! rewrite. `Vec` aborts on OOM, so these methods are infallible and return
 //! `T` / `()` directly (the original `Result<_, AllocError>` shim has been
@@ -30,7 +30,7 @@ pub trait VecExt<T>: Sized {
     fn move_from_list(list: Vec<T>) -> Self;
     fn from_owned_slice(items: Box<[T]>) -> Self;
     fn init_with_buffer_vec(buffer: Vec<T>) -> Self;
-    /// Arena-builder → owned `Vec<T>`.  In Zig this was zero-copy (arena ptr
+    /// Arena-builder → owned `Vec<T>`.  Originally this was zero-copy (arena ptr
     /// adopted as `Borrowed`); in the Rust port the linker always called
     /// `transfer_ownership` afterwards (full copy), so doing the copy up-front
     /// here is no worse and lets the arena round-trip disappear.
@@ -131,8 +131,8 @@ pub trait VecExt<T>: Sized {
     unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T];
     /// # Safety
     /// As [`writable_slice`] but skips `reserve`; caller must guarantee
-    /// `len + additional <= capacity` (debug-asserted). Zig:
-    /// `ArrayList.addManyAsSliceAssumeCapacity`.
+    /// `len + additional <= capacity` (debug-asserted).
+    /// (`ArrayList.addManyAsSliceAssumeCapacity`.)
     unsafe fn writable_slice_assume_capacity(&mut self, additional: usize) -> &mut [T];
     /// # Safety
     /// As [`writable_slice`] but uses `reserve_exact` so the allocation grows
@@ -217,7 +217,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn move_from_list(list: Vec<T>) -> Self {
         // Mirror of the `move_to_list` fast-path: when `A == Global` this is a
-        // pointer adopt (Zig `moveFromList`, baby_list.zig:46), not a realloc.
+        // pointer adopt (`moveFromList`), not a realloc.
         // Hot Global callers: `FileReader`, `ByteStream`, `shell::Cmd`.
         if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
             // SAFETY: `A == Global`, so `Vec<T>` and `Vec<T, A>` have identical
@@ -568,7 +568,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     }
 }
 
-/// `Vec<u8>`-only helpers (Zig `Vec(u8)` extension methods).
+/// `Vec<u8>`-only helpers (`Vec(u8)` extension methods).
 pub trait ByteVecExt {
     fn append_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), AllocError>;
     fn write(&mut self, str: &[u8]) -> Result<u32, AllocError>;
@@ -727,7 +727,7 @@ impl OffsetByteList {
 /// distinct allocators.
 ///
 /// Ports the open-coded `reserve → ptr::copy(shift) → copy_nonoverlapping →
-/// set_len` pattern that translated Zig's `bun.copy`/`@memcpy` splice for
+/// set_len` pattern that translated the `bun.copy`/`@memcpy` splice for
 /// non-`Copy` element types.
 pub fn prepend_from<T, A: Allocator, B: Allocator>(dst: &mut Vec<T, A>, src: &mut Vec<T, B>) {
     let src_len = src.len();

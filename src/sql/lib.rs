@@ -102,8 +102,8 @@ pub mod mysql {
 
         // ── flat re-exports for `bun_sql_jsc` ──────────────────────────────
         // sql_jsc names most of these via `bun_sql::mysql::protocol::Foo`
-        // (mirroring Zig's flat `MySQLProtocol.zig` namespace), so surface
-        // them here as well as via their leaf modules.
+        // (a flat `MySQLProtocol` namespace), so surface them here as well
+        // as via their leaf modules.
         pub use any_mysql_error::{AnyMySQLError, Error};
         pub use auth_switch_request::AuthSwitchRequest;
         pub use auth_switch_response::AuthSwitchResponse;
@@ -122,7 +122,7 @@ pub mod mysql {
         pub use ssl_request::SSLRequest;
         pub use stack_reader::StackReader;
         pub use stmt_prepare_ok_packet::StmtPrepareOKPacket;
-        // `protocol::FieldType` (Zig re-export of mysql_types.FieldType).
+        // `protocol::FieldType` (re-export of mysql_types.FieldType).
         pub use crate::mysql::mysql_types::FieldType;
     }
 
@@ -250,9 +250,9 @@ pub mod postgres {
     pub use tls_status::TLSStatus;
     pub use types::tag::Tag;
 
-    // PascalCase module aliases — Zig callers used `PostgresProtocol.Foo` /
-    // `PostgresTypes.Int4` / `SocketMonitor.write` directly; sql_jsc still
-    // names them that way.
+    // PascalCase module aliases — callers historically used
+    // `PostgresProtocol.Foo` / `PostgresTypes.Int4` / `SocketMonitor.write`
+    // directly; sql_jsc still names them that way.
     pub use postgres_protocol as PostgresProtocol;
     pub use postgres_types as PostgresTypes;
     pub use socket_monitor as SocketMonitor;

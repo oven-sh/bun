@@ -78,7 +78,7 @@ impl Default for FileReader {
             total_readed: Cell::new(0),
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
-            // TODO(port): event_loop has no Zig default; callers must overwrite before use
+            // TODO(port): event_loop has no default value; callers must overwrite before use
             event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
             buffered: JsCell::new(Vec::new()),
@@ -117,7 +117,7 @@ pub enum Lazy {
     None,
     /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`) so the
     /// raw pointer carries mutable provenance from `heap::alloc`, matching
-    /// Zig's `*Blob.Store` direct-field-write usage in `openFileBlob`.
+    /// `*Blob.Store` direct-field-write usage in `openFileBlob`.
     Blob(blob::StoreRef),
 }
 
@@ -246,7 +246,7 @@ impl Lazy {
                 is_nonblocking = false;
             }
 
-            // sys.zig:isPollable — `S.ISFIFO(mode) or S.ISSOCK(mode)`
+            // sys:isPollable — `S.ISFIFO(mode) or S.ISSOCK(mode)`
             this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
                 || is_nonblocking
                 || file.is_atty.unwrap_or(false);
@@ -279,7 +279,7 @@ impl Lazy {
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
+// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the original
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
 //
 // R-2: every mutated field on `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-
@@ -295,7 +295,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_error = |this, err| (&*this).on_reader_error(err);
     loop_ = |this| {
         let ev = (&*this).event_loop.get();
-        // Spec FileReader.zig:163: `this.eventLoop().loop()` → libuv
+        // `this.eventLoop().loop()` → libuv
         // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
         // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
         #[cfg(windows)] { ev.uv_loop().cast() }
@@ -309,7 +309,7 @@ impl FileReader {
     /// `UnsafeCell` note on the field declaration — this is the single point
     /// through which all `self.reader` access flows so vtable-callback
     /// re-entrancy and outer `&mut FileReader` borrows both root at the cell.
-    /// SAFETY: single-threaded; matches Zig `*FileReader` aliasing model.
+    /// SAFETY: single-threaded; matches `*FileReader` aliasing model.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn reader(&self) -> &mut IOReader {
@@ -327,8 +327,8 @@ impl FileReader {
     }
 
     // TODO(port): in-place init — `self` is the `context` field of an already-allocated
-    // `Source`; the Zig writes `this.* = FileReader{...}` then reads `parent()`. Note the
-    // Zig struct literal omits `event_loop` (no default) — likely dead code or relies on
+    // `Source`; the original writes `this.* = FileReader{...}` then reads `parent()`. Note the
+    // the original struct literal omits `event_loop` (no default) — likely dead code or relies on
     // a quirk; preserved as-is.
     // R-2: kept `&mut self` — init-time constructor that runs before any
     // host-fn could re-enter; `*self =` requires unique access.
@@ -359,17 +359,17 @@ impl FileReader {
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
             // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
             // `StoreRef` liveness invariant (single-threaded JS event loop; we
-            // hold the only mutating handle). Matches Zig's `*Blob.Store`
+            // hold the only mutating handle). Matches `*Blob.Store`
             // direct field access.
             match store.data_mut() {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
-                    // PORT NOTE: reshaped for borrowck — Zig `defer { deref; lazy = none }`
+                    // PORT NOTE: reshaped for borrowck — `{ deref; lazy = none }`
                     // is hoisted after the match below since both arms fall through.
                     let open_result = Lazy::open_file_blob(file);
-                    // drop the StoreRef (Zig: this.lazy.blob.deref()); `lazy` was already cleared above
+                    // drop the StoreRef (originally: this.lazy.blob.deref()); `lazy` was already cleared above
                     drop(store);
                     match open_result {
                         Err(err) => {
@@ -460,7 +460,7 @@ impl FileReader {
             if let Some(poll) = r.handle.get_poll() {
                 // `bun_io::FilePoll` is an opaque vtable wrapper; flag
                 // mutation goes through `set_flag(FilePollFlag)` instead of the
-                // direct `aio::FilePoll.flags.insert(...)` field write in Zig.
+                // direct `aio::FilePoll.flags.insert(...)` field write originally.
                 if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {
                     poll.set_flag(bun_io::FilePollFlag::Socket);
                 } else {
@@ -528,7 +528,7 @@ impl FileReader {
     // Only side-effect teardown lives here. Owned fields (buffered: Vec, reader:
     // BufferedReader, pending_value: Strong, lazy: Arc) drop when the caller
     // (`NewSource::decrement_count`) reclaims the `Box<Source>` *after* this
-    // returns. Freeing the parent here (Zig: `this.parent().deinit()`) would
+    // returns. Freeing the parent here (originally: `this.parent().deinit()`) would
     // deallocate the storage backing `&self` while the borrow is still live
     // — a dangling-reference UAF — so ownership release stays with the caller.
     fn deinit(&self) {
@@ -566,7 +566,7 @@ impl FileReader {
             return false;
         }
         let mut close = false;
-        // PORT NOTE: Zig `defer if (close) this.reader.close();` — handled at each return
+        // PORT NOTE: originally `defer if (close) this.reader.close();` — handled at each return
         // site below via `close_if_needed`. Reshaped for borrowck (scopeguard would alias &mut self).
         macro_rules! close_if_needed {
             () => {
@@ -601,8 +601,8 @@ impl FileReader {
         // we still hold `&self` and mutate `self.buffered`/`self.pending` etc.
         // interleaved with reads/clears of `*reader_buffer`. Holding a `&mut Vec` here
         // would be the aliased-&mut forbidden pattern (PORTING.md §Forbidden patterns).
-        // Spec FileReader.zig:337 `const reader_buffer = this.reader.buffer();` is a Zig
-        // raw `*std.ArrayList(u8)` with no aliasing rules; we mirror that with a raw ptr
+        // `reader.buffer()` returns a raw pointer to the reader's growable
+        // byte buffer with no aliasing rules; mirror that with a raw ptr
         // and deref only at the exact use sites below.
         let reader_buffer: *mut Vec<u8> = self.reader().buffer();
 
@@ -645,7 +645,7 @@ impl FileReader {
                 return true;
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig `defer { clear; run() }` becomes a
+            // PORT NOTE: reshaped for borrowck — `defer { clear; run() }` becomes a
             // labeled block computing `ret`, then cleanup + run + return.
             let ret: bool = 'pending: {
                 if buf.is_empty() {
@@ -844,7 +844,7 @@ impl FileReader {
                 .set(ReadDuringJSOnPullResult::Js(buffer));
             self.reader().read();
 
-            // PORT NOTE: Zig `defer this.read_inside_on_pull = .none` — replaced via
+            // PORT NOTE: originally `defer this.read_inside_on_pull = .none` — replaced via
             // replace so the field is reset before matching, covering all return paths.
             let pulled = self
                 .read_inside_on_pull
@@ -902,7 +902,7 @@ impl FileReader {
                     return streams::Result::Owned(Vec::<u8>::move_from_list(buffered));
                 }
                 _ => {
-                    // Spec FileReader.zig:544 `else => {}` falls through to set
+                    // Spec `else => {}` falls through to set
                     // `pending_view = buffer`. The only variants reaching this arm
                     // are `None` (impossible — we just stored `Js(buffer)` above and
                     // `on_read_chunk` never sets `None`) and `AmountRead` (never
@@ -1054,7 +1054,7 @@ impl FileReader {
 pub type Source = readable_stream::NewSource<FileReader>;
 
 // Intrusive backref: `self` is always the `context` field of a heap-allocated
-// `Source` (Zig `@fieldParentPtr("context", this)`). Returns `*mut Source`
+// `Source` (`@fieldParentPtr("context", this)`). Returns `*mut Source`
 // (NOT `&mut Source`) because `self` IS the `context` field — materializing
 // `&mut Source` would alias the live `&self` borrow. Callers deref in a tight
 // `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
@@ -1104,7 +1104,7 @@ impl readable_stream::SourceContext for FileReader {
 }
 
 // Local shim: `bun_io::ReadState` doesn't derive `IntoStaticStr` (upstream crate);
-// mirrors Zig `@tagName(state)` for the scoped log only.
+// mirrors `@tagName(state)` for the scoped log only.
 #[inline]
 fn read_state_tag(state: ReadState) -> &'static str {
     match state {
@@ -1126,5 +1126,3 @@ fn is_slice_in_vec_capacity(slice: &[u8], vec: &Vec<u8>) -> bool {
     let buf_start = vec.as_ptr() as usize;
     buf_start <= slice_start && (slice_start + slice.len()) <= (buf_start + vec.capacity())
 }
-
-// ported from: src/runtime/webcore/FileReader.zig

@@ -26,8 +26,8 @@ pub enum FolderResolution {
     NewPackageId(PackageID),
 }
 
-// Zig: `pub const Tag = enum { package_id, err, new_package_id };`
-// In Rust the enum discriminant serves as the tag; expose an alias for parity.
+// The enum discriminant serves as the tag; expose an alias for parity with the
+// historical `Tag` nested type.
 pub type Tag = core::mem::Discriminant<FolderResolution>;
 
 pub struct PackageWorkspaceSearchPathFormatter<'a> {
@@ -37,18 +37,18 @@ pub struct PackageWorkspaceSearchPathFormatter<'a> {
 }
 
 impl<'a> PackageWorkspaceSearchPathFormatter<'a> {
-    /// Zig default only set `quoted = true`; `manager`/`version` have no
-    /// default, so a `Default` impl is not expressible. Construct explicitly.
+    /// Only `quoted` has a sensible default (`true`); `manager`/`version` have
+    /// no default, so a `Default` impl is not expressible. Construct explicitly.
     pub const DEFAULT_QUOTED: bool = true;
 }
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut joined = [0u8; MAX_PATH_BYTES + 2];
-        // Zig: `getPtr(@truncate(String.Builder.stringHash(...)))` — key type is
-        // `PackageNameHash` (u64), so the @truncate is identity.
+        // Lookup keys with `string_hash(...)` truncated to the
+        // `PackageNameHash` (u64) key type — the truncation is identity.
         // Caller constructs this formatter only when
-        // `self.version.tag == .workspace` (Zig: `formatter.version.value.workspace`).
+        // `self.version.tag == .workspace`.
         let workspace = self.version.workspace();
         let str_to_use = self
             .manager
@@ -82,7 +82,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             let quoted = QuotedFormatter { text: paths.rel };
             fmt::Display::fmt(&quoted, f)
         } else {
-            // Zig: `writer.writeAll(paths.rel)` writes raw bytes. `fmt::Formatter`
+            // The original wrote `paths.rel` as raw bytes. `fmt::Formatter`
             // only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
             // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
             // `quoted = true`, so this branch is unreached today; if a future
@@ -92,9 +92,9 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     }
 }
 
-// Zig: std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80)
 // PORT NOTE: bun_collections::HashMap currently ignores the context/load-factor
-// type params (backed by std HashMap); identity hashing is a Phase-B perf item.
+// type params (backed by std HashMap); identity hashing on the u64 key is a
+// Phase-B perf item.
 pub type Map = HashMap<u64, FolderResolution, IdentityContext<u64>>;
 
 pub fn normalize(path: &[u8]) -> &[u8] {
@@ -106,7 +106,7 @@ pub fn hash(normalized_path: &[u8]) -> u64 {
 }
 
 // ── NewResolver(comptime tag: Resolution.Tag) type ────────────────────────
-// PORT NOTE: `Resolution.Tag` (Zig nested decl) is `crate::resolution::Tag`;
+// PORT NOTE: `Resolution.Tag` is `crate::resolution::Tag`;
 // const-generic requires `#[derive(ConstParamTy)]` (already on `Tag`).
 pub struct NewResolver<'a, const TAG: ResolutionTag> {
     pub folder_path: &'a [u8],
@@ -126,7 +126,7 @@ impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
-        // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
+        // Build the Resolution.Value variant named by `TAG` from the appended folder path.
         let appended = builder.append::<SemverString>(self.folder_path);
         Ok(ResolutionType::<u64>::init(match TAG {
             ResolutionTag::Folder => TaggedValue::Folder(appended),
@@ -167,9 +167,8 @@ impl ResolverContext for CacheFolderResolver {
 }
 
 /// Unifies `NewResolver<TAG>` and `CacheFolderResolver` for
-/// `read_package_json_from_disk` (Zig: `comptime ResolverType: type`). The
-/// associated const `IS_WORKSPACE` replaces the
-/// `if (comptime ResolverType == WorkspaceResolver)` check.
+/// `read_package_json_from_disk`. The associated const `IS_WORKSPACE`
+/// replaces a per-resolver-type compile-time branch.
 pub trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
 }
@@ -279,8 +278,8 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     let mut package: LockfilePackage = Default::default();
 
-    // PORT NOTE: Zig passed `manager.lockfile`, `manager`, `manager.log` as
-    // three separate args; Rust borrowck rejects the overlap on `&mut self`,
+    // PORT NOTE: passing `manager.lockfile`, `manager`, `manager.log` as
+    // three separate args is rejected by borrowck for the overlap on `&mut self`,
     // so split via raw pointer once here. `lockfile` and `log` are disjoint
     // fields of `PackageManager`, and `parse{,_with_json}` only reaches
     // `manager` through the `pm` argument (no re-entrant access to
@@ -404,9 +403,8 @@ pub fn get_or_put(
     // replace before getting hash. rel may or may not be contained in abs
     #[cfg(windows)]
     let (abs, rel): (&ZStr, &[u8]) = {
-        // Zig (folder_resolver.zig:249-252) does `@constCast(abs)` /
-        // `@constCast(rel)` and mutates in place — well-defined in Zig, which
-        // has no provenance-based aliasing model. In Rust, writing through
+        // The original const-cast `abs` / `rel` and mutated in place, relying
+        // on a model with no provenance-based aliasing. In Rust, writing through
         // `(&ZStr).as_ptr().cast_mut()` / `(&[u8]).as_ptr().cast_mut()` is UB
         // under Stacked/Tree Borrows: those pointers carry read-only
         // provenance, and the optimizer may assume `abs`'s bytes are
@@ -433,9 +431,9 @@ pub fn get_or_put(
     };
     let abs_hash = hash(abs.as_bytes());
 
-    // PORT NOTE: reshaped for borrowck — Zig used getOrPut to reserve the slot before reading
-    // package.json; here we check first, compute, then insert, because read_package_json_from_disk
-    // needs &mut manager.
+    // PORT NOTE: reshaped for borrowck — instead of reserving the slot before
+    // reading package.json, check first, compute, then insert, because
+    // read_package_json_from_disk needs &mut manager.
     if let Some(existing) = manager.folders.get(&abs_hash) {
         return *existing;
     }
@@ -482,7 +480,7 @@ pub fn get_or_put(
             let mut resolver = CacheFolderResolver {
                 // `GlobalOrRelative::CacheFolder` is only passed by
                 // `PackageManagerResolution` with a `version.tag == .npm`
-                // dependency (Zig: `version.value.npm.version.toVersion()`).
+                // dependency, so `version.npm()` is always valid.
                 version: version.npm().version.to_version(),
             };
             break 'cache_folder read_package_json_from_disk(
@@ -514,5 +512,3 @@ pub fn get_or_put(
         .insert(abs_hash, FolderResolution::PackageId(package.meta.id));
     FolderResolution::NewPackageId(package.meta.id)
 }
-
-// ported from: src/install/resolvers/folder_resolver.zig

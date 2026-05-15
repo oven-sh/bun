@@ -98,13 +98,13 @@ fn generate_compile_result_for_js_chunk_impl(
         .as_mut()
         .expect("Worker.temporary_arena set in create()");
     let mut buffer_writer = js_printer::BufferWriter::init();
-    // Zig: `defer _ = arena.reset(.retain_capacity)` on a `std.heap.ArenaAllocator`
-    // (O(1) bump rewind, chunks retained). `temporary_arena` is a `MimallocArena`
+    // The arena must be rewound (O(1) bump rewind, chunks retained) at end of
+    // scope. `temporary_arena` is a `MimallocArena`
     // here because `temp_arena` flows into `Stmt::allocate`/`Expr::allocate`/
     // `Binding::alloc`/`ArenaVec`, all of which take `&MimallocArena` concretely;
     // a plain `reset()` would be `mi_heap_destroy + mi_heap_new` *per part_range*
     // (perf-probe: 46× for one elysia build). Use `reset_retain_with_limit` — the
-    // codebase's mapping for Zig's `.retain_*` modes (see `ModuleLoader`'s
+    // codebase's mapping for capacity-retaining resets (see `ModuleLoader`'s
     // `transpile_source_code_arena`): keep the heap warm across part_ranges and
     // only pay the destroy+new round-trip once accumulated scratch exceeds the
     // limit. 8 MiB matches the module-arena precedent and comfortably covers a
@@ -145,7 +145,7 @@ fn generate_compile_result_for_js_chunk_impl(
     let collect_decls = c.options.generate_bytecode_cache
         && c.options.output_format == OutputFormat::Esm
         && c.options.compile;
-    // PORT NOTE: Zig threaded `arena` (dev_server or default) into
+    // PORT NOTE: the original threaded `arena` (dev_server or default) into
     // DeclCollector; the Rust DeclCollector wants `*const Arena`. Use the
     // worker heap for now (see TODO above re: dev_server arena).
     let mut dc = DeclCollector {
@@ -158,8 +158,8 @@ fn generate_compile_result_for_js_chunk_impl(
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
     let worker_alloc = worker.arena.get();
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
-    // touches `chunk.renamer` through its `chunk` parameter (Zig passes the renamer
-    // union by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't
+    // touches `chunk.renamer` through its `chunk` parameter (the renamer union is
+    // passed by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't
     // see two overlapping `&mut chunk` borrows.
     let renamer_ptr: *mut crate::bun_renamer::ChunkRenamer = core::ptr::addr_of_mut!(chunk.renamer);
     let result = generate_code_for_file_in_chunk_js(
@@ -209,5 +209,3 @@ fn generate_compile_result_for_js_chunk_impl(
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
-
-// ported from: src/bundler/linker_context/generateCompileResultForJSChunk.zig

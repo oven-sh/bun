@@ -7,7 +7,7 @@ use crate::args;
 use crate::args::ArgIter;
 
 // Disabled because not all CLI arguments are parsed with Clap.
-// TODO(port): Zig `pub var` — using AtomicBool for safe mutable global.
+// TODO(port): originally a mutable global — using AtomicBool for safety.
 pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
@@ -67,7 +67,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub diagnostic: Option<&'p mut clap::Diagnostic>,
 }
 
-// PORT NOTE: ArgIterator was a comptime duck-typed param in Zig; expressed here as
+// PORT NOTE: ArgIterator was originally a duck-typed param; expressed here as
 // the `args::ArgIter<'a>` trait so `next()`/`remain()` resolve.
 impl<'p, 'a, Id, ArgIterator> StreamingClap<'p, 'a, Id, ArgIterator>
 where
@@ -230,8 +230,8 @@ where
             }
 
             // Before we return, we have to set the new state of the clap
-            // PORT NOTE: Zig `defer` hoisted — every path below returns, and nothing
-            // between here and those returns reads `self.state`.
+            // PORT NOTE: deferred state restore hoisted — every path below returns,
+            // and nothing between here and those returns reads `self.state`.
             if arg.len() <= next_index || param.takes_value != clap::Values::None {
                 self.state = State::Normal;
             } else {
@@ -336,8 +336,8 @@ where
 
     fn err(&mut self, arg: &[u8], short: Option<u8>, long: Option<&[u8]>, e: ArgError) -> ArgError {
         if let Some(d) = self.diagnostic.as_deref_mut() {
-            // PORT NOTE: Zig assigned borrowed `arg`/`name` slices; Rust `Diagnostic`
-            // owns its bytes (error path only) — see lib.rs.
+            // PORT NOTE: the original assigned borrowed `arg`/`name` slices; Rust
+            // `Diagnostic` owns its bytes (error path only) — see lib.rs.
             d.arg = arg.to_vec();
             d.short = short;
             d.long = long.map(|l| l.to_vec());
@@ -793,5 +793,3 @@ mod tests {
         );
     }
 }
-
-// ported from: src/clap/streaming.zig

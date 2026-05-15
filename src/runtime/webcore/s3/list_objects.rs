@@ -4,12 +4,12 @@ use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
-use bun_core::{self as bstr, ZigStringSlice as Utf8Slice, strings};
+use bun_core::{self as bstr, UTF8Slice as Utf8Slice, strings};
 use bun_ptr::RawSlice;
 
 pub struct S3ListObjectsOptions {
     // Self-referential views: these borrow from the corresponding
-    // `_field: Utf8Slice` below. In Zig the slice and its backing storage are
+    // `_field: Utf8Slice` below. In the original the slice and its backing storage are
     // separate fields; `RawSlice` encodes the non-owning contract so callers
     // read `.as_deref()` instead of open-coding `unsafe { &*p }`.
     pub continuation_token: Option<RawSlice<u8>>,
@@ -20,7 +20,7 @@ pub struct S3ListObjectsOptions {
     pub prefix: Option<RawSlice<u8>>,
     pub start_after: Option<RawSlice<u8>>,
 
-    // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
+    // TODO(port): Utf8Slice<'_> lifetime — `UnsafeStringView.Slice` owns or
     // ref-holds its backing WTFStringImpl; model as 'static here and let
     // Phase B pick the real lifetime / collapse the dual fields.
     pub _continuation_token: Option<Utf8Slice>,
@@ -30,11 +30,11 @@ pub struct S3ListObjectsOptions {
     pub _start_after: Option<Utf8Slice>,
 }
 
-// Zig deinit only forwarded to each Utf8Slice field's deinit; Rust handles
+// The original deinit only forwarded to each Utf8Slice field's deinit; Rust handles
 // that via field Drop, so no explicit `impl Drop` is needed here.
 
 // PORT NOTE: result structs borrow slices out of the input `xml: &[u8]`
-// passed to `parse_s3_list_objects_result`. The Zig code never frees these
+// passed to `parse_s3_list_objects_result`. The original code never frees these
 // (they alias the request body buffer). Represented with an explicit `'a`
 // even though PORTING.md prefers avoiding struct lifetimes in Phase A —
 // the borrow is unambiguous and any other encoding (Box / raw ptr) would
@@ -54,7 +54,7 @@ struct ObjectRestoreStatus<'a> {
 
 pub struct S3ListObjectsContents<'a> {
     key: &'a [u8],
-    // Zig: ?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator)) —
+    // Originally `?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator))` —
     // i.e. a maybe-owned slice. Cow<'a, [u8]> is the direct equivalent.
     etag: Option<Cow<'a, [u8]>>,
     checksum_type: Option<&'a [u8]>,
@@ -66,7 +66,7 @@ pub struct S3ListObjectsContents<'a> {
     restore_status: Option<ObjectRestoreStatus<'a>>,
 }
 
-// Zig deinit only freed `etag` when owned; Cow handles that in Drop.
+// The original deinit only freed `etag` when owned; Cow handles that in Drop.
 
 pub struct S3ListObjectsV2Result<'a> {
     pub name: Option<&'a [u8]>,
@@ -83,7 +83,7 @@ pub struct S3ListObjectsV2Result<'a> {
     pub contents: Option<Vec<S3ListObjectsContents<'a>>>,
 }
 
-// Zig deinit freed `contents` items (etag) + the two ArrayLists. All handled
+// The original deinit freed `contents` items (etag) + the two ArrayLists. All handled
 // by Drop on Vec / Cow; no explicit Drop impl needed.
 
 impl<'a> S3ListObjectsV2Result<'a> {
@@ -193,7 +193,7 @@ impl<'a> S3ListObjectsV2Result<'a> {
     }
 }
 
-// PORT NOTE: Zig signature was `!S3ListObjectsV2Result` but the only `try`
+// PORT NOTE: original signature was `!S3ListObjectsV2Result` but the only `try`
 // sites were allocations (Vec::push / alloc) which abort on OOM in Rust, so
 // this is now infallible.
 pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
@@ -548,7 +548,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
         if !contents.is_empty() {
             result.contents = Some(contents);
         }
-        // else branch: Vec drops itself (Zig: contents.deinit())
+        // else branch: Vec drops itself (was `contents.deinit()`)
 
         if !common_prefixes.is_empty() {
             result.common_prefixes = Some(common_prefixes);
@@ -602,7 +602,7 @@ pub fn get_list_objects_options_from_js(
     }
 
     // PORT NOTE: `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
-    // `get_truthy` + `to_boolean()` (matches Zig getBooleanLoose semantics for truthy values).
+    // `get_truthy` + `to_boolean()` (matches getBooleanLoose semantics for truthy values).
     if let Some(val) = list_options.get_truthy(global_this, b"fetchOwner")? {
         list_objects_options.fetch_owner = Some(val.to_boolean());
     }
@@ -625,5 +625,3 @@ pub fn get_list_objects_options_from_js(
 
     Ok(list_objects_options)
 }
-
-// ported from: src/runtime/webcore/s3/list_objects.zig

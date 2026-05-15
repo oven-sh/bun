@@ -48,7 +48,7 @@ pub struct ParentDeathWatchdog;
 /// convention for "terminated because the controlling end went away".
 pub const EXIT_CODE: u8 = 128 + 1;
 
-// PORT NOTE: Zig used plain `var` globals (unsynchronized). Converted to
+// PORT NOTE: previously plain unsynchronized globals. Converted to
 // atomics/OnceLock per docs/PORTING.md §Global mutable state — same
 // single-writer-at-startup discipline, but no `static mut` aliasing.
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -129,7 +129,7 @@ pub fn pop_sync_pgid() {
 /// Scoped to the `spawnSync` script(s) — does NOT call `kill_descendants()`,
 /// which is rooted at `getpid()` and would take out unrelated `Bun.spawn`
 /// siblings when `spawnSync` is reached from inside a live VM (e.g.
-/// `ffi.zig:getSystemRootDirOnce` shelling out to `xcrun`).
+/// the FFI subsystem's `getSystemRootDirOnce` shelling out to `xcrun`).
 pub fn kill_sync_script_tree() {
     #[cfg(unix)]
     {
@@ -337,7 +337,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 }
 
 /// `FilePoll.Owner` dispatch target — see the `ParentDeathWatchdog` arm in
-/// `posix_event_loop.zig`'s `onUpdate`. The kqueue `NOTE_EXIT` for our parent
+/// the posix event loop's `onUpdate`. The kqueue `NOTE_EXIT` for our parent
 /// fired.
 pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
     // Global.exit → Bun__onExit → on_process_exit → kill_descendants.
@@ -520,10 +520,10 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
     to_kill.push(root);
     let _ = to_visit.try_reserve(1);
     to_visit.push(root);
-    // PORT NOTE: Zig swallowed OOM on the to_visit push; Rust push() after a
-    // failed try_reserve would still attempt (and abort on OOM). In practice
-    // a 1-element reserve never fails; matching exact Zig OOM semantics is
-    // not worth the complexity here.
+    // PORT NOTE: this used to swallow OOM on the to_visit push; Rust push()
+    // after a failed try_reserve would still attempt (and abort on OOM).
+    // In practice a 1-element reserve never fails; matching the exact OOM
+    // semantics is not worth the complexity here.
 
     let mut buf: [libc::pid_t; 4096] = [0; 4096];
     while !to_visit.is_empty() && to_kill.len() < 4096 {
@@ -676,7 +676,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer task_fd.close()`; `Fd` is Copy and does not impl Drop.
+    // PORT NOTE: `Fd` is Copy and does not impl Drop, so close on every exit path.
     let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
         let _ = bun_sys::close(fd);
     });
@@ -734,12 +734,12 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer file.close()`. `bun_sys::File` does not impl Drop;
+    // PORT NOTE: `bun_sys::File` does not impl Drop;
     // close explicitly on every exit path.
     let _guard = scopeguard::guard(fd, |fd| {
         let _ = bun_sys::close(fd);
     });
-    // Zig `file.readAll(buf)` — fixed-buffer read-until-EOF-or-full. The Rust
+    // Fixed-buffer read-until-EOF-or-full. The Rust
     // `File::read_all` grows a `Vec`, which would allocate; do the loop here.
     let mut written = 0usize;
     while written < buf.len() {
@@ -751,5 +751,3 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     }
     Some(&buf[..written])
 }
-
-// ported from: src/aio/ParentDeathWatchdog.zig

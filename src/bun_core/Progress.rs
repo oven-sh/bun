@@ -1,10 +1,8 @@
-//! This is a snapshot of the Zig std.Progress API before it's rewrite in 0.13
+//! Non-allocating, thread-safe terminal progress bar.
 //! We use this API for the progress in Bun install and some other places.
 //!
 //! TODO: It would be worth considering using our own progress indicator for
 //! Bun install, as this bar only shows the most recent action.
-//!
-//! https://github.com/ziglang/zig/blob/0.12.0/lib/std/Progress.zig
 //!
 //! This API is non-allocating, non-fallible, and thread-safe.
 //! The tradeoff is that users of this API must provide the storage
@@ -78,7 +76,7 @@ impl File {
     pub fn supports_ansi_escape_codes(&self) -> bool {
         #[cfg(windows)]
         {
-            // Zig std.fs.File.supportsAnsiEscapeCodes(): query the live console
+            // Query the live console
             // mode for ENABLE_VIRTUAL_TERMINAL_PROCESSING — a *capability*
             // check. Do NOT proxy through ENABLE_ANSI_COLORS_STDERR: that is a
             // color-*preference* flag (NO_COLOR/FORCE_COLOR/tty) and never
@@ -167,23 +165,23 @@ pub struct Progress {
 impl Default for Progress {
     fn default() -> Self {
         Self {
-            // Zig: `= undefined` — overwritten in `start()`
+            // overwritten in `start()`
             terminal: None,
             is_windows_terminal: false,
             supports_ansi_escape_codes: false,
             dont_print_on_dumb: false,
-            // Zig: `= undefined` — overwritten in `start()`
+            // overwritten in `start()`
             root: Node::default(),
             timer: None,
-            // Zig: `= undefined`
+            // overwritten in `start()`
             prev_refresh_timestamp: 0,
-            // Zig: `= undefined`
+            // overwritten in `start()`
             output_buffer: [0; 100],
             refresh_rate_ns: 50 * NS_PER_MS,
             initial_delay_ns: 500 * NS_PER_MS,
             done: true,
             update_mutex: Mutex::new(()),
-            // Zig: `= undefined`
+            // overwritten in `start()`
             columns_written: 0,
         }
     }
@@ -202,8 +200,9 @@ pub enum Unit {
 pub struct Node {
     pub context: *mut Progress,
     pub parent: *mut Node,
-    // TODO(port): lifetime — caller-borrowed slice, Zig is non-allocating; using
-    // 'static here as a Phase-A placeholder (callers in install/ pass string literals).
+    // TODO(port): lifetime — caller-borrowed slice (the API is non-allocating);
+    // using 'static here as a Phase-A placeholder (callers in install/ pass
+    // string literals).
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
@@ -264,9 +263,9 @@ impl Node {
 
     /// Create a new child progress node. Thread-safe.
     /// Call `Node.end` when done.
-    /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
-    /// API to set `self.parent.recently_updated_child` with the return value.
-    /// Until that is fixed you probably want to call `activate` on the return value.
+    /// TODO: change this API to set `self.parent.recently_updated_child` with
+    /// the return value. Until then you probably want to call `activate` on the
+    /// return value.
     /// Passing 0 for `estimated_total_items` means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> Node {
         Node {
@@ -369,8 +368,8 @@ impl Node {
 
     /// Thread-safe.
     pub fn set_unit(&mut self, unit: Unit) {
-        // TODO(port): Zig signature was `unit: []const u8` assigned to an enum field —
-        // dead code in Zig (lazy compilation never type-checked it). Ported with the
+        // TODO(port): the original signature took a string assigned to an enum
+        // field — never type-checked because it had no callers. Ported with the
         // enum type to keep it well-typed; revisit if any caller appears.
         let ctx_ptr = self.context_ptr();
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
@@ -413,8 +412,8 @@ impl Node {
 impl Progress {
     /// Create a new progress node.
     /// Call `Node.end` when done.
-    /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
-    /// API to return Progress rather than accept it as a parameter.
+    /// TODO: change this API to return Progress rather than accept it as a
+    /// parameter.
     /// `estimated_total_items` value of 0 means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
         // TODO(port): std.fs.File.stderr() / supportsAnsiEscapeCodes() / isTty() —
@@ -447,7 +446,7 @@ impl Progress {
         };
         self.columns_written = 0;
         self.prev_refresh_timestamp = 0;
-        // Zig: std.time.Timer.start() catch null — Instant::now() is infallible.
+        // Instant::now() is infallible, so the timer always exists once started.
         self.timer = Some(Instant::now());
         self.done = false;
         &mut self.root
@@ -469,7 +468,7 @@ impl Progress {
     }
 
     fn maybe_refresh_with_held_lock(&mut self, timer: Instant) {
-        // Zig: timer.read() returns ns since start.
+        // ns elapsed since `start()`.
         let now = u64::try_from(timer.elapsed().as_nanos()).expect("int cast");
         if now < self.initial_delay_ns {
             return;
@@ -611,9 +610,7 @@ impl Progress {
                 // and advance `maybe_node` *before* any `self.buf_write` call:
                 // on the first iteration `maybe_node` is `&raw mut self.root`,
                 // and `buf_write`'s `&mut self` reborrow would invalidate any
-                // tag derived from it under Stacked Borrows. (Zig has no
-                // aliasing model, so Progress.zig:313-345 holds `node: *Node`
-                // across `self.bufWrite` freely; Rust must not.)
+                // tag derived from it under Stacked Borrows.
                 let (name, unit, eti, completed_items);
                 unsafe {
                     name = (*maybe_node).name;
@@ -648,8 +645,8 @@ impl Progress {
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
-                            // TODO(port): Zig `{Bi:.2}` is std.fmt binary-bytes formatter (e.g. "1.50KiB").
-                            // Need a bun_core::fmt::BytesBi helper in Phase B.
+                            // TODO(port): need a binary-bytes formatter (e.g. "1.50KiB") —
+                            // add a bun_core::fmt::BytesBi helper in Phase B.
                             Unit::Bytes => self
                                 .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
                         }
@@ -665,7 +662,7 @@ impl Progress {
                             Unit::Files => {
                                 self.buf_write(&mut end, format_args!("[{} files] ", current_item))
                             }
-                            // TODO(port): Zig `{Bi:.2}` binary-bytes formatter.
+                            // TODO(port): binary-bytes formatter (see above).
                             Unit::Bytes => {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
                             }
@@ -695,7 +692,7 @@ impl Progress {
             eprint!("{}", args);
             return;
         };
-        // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer in Phase B.
+        // TODO(port): map to a bun_sys::File streaming writer in Phase B.
         self.refresh();
         if file.write_fmt(args).is_err() {
             self.terminal = None;
@@ -708,10 +705,10 @@ impl Progress {
     /// called. During the lock, the progress information is cleared from the
     /// terminal.
     ///
-    /// PORT NOTE: Zig splits the lock/unlock across fn boundaries.
+    /// PORT NOTE: the original API split the lock/unlock across fn boundaries.
     /// `crate::Mutex` (std::sync wrapper) has no raw `unlock()`, and storing a
     /// guard on `self` is self-referential. There are currently **no callers**
-    /// of `lock_stderr`/`unlock_stderr` in either the Zig or Rust trees, so
+    /// of `lock_stderr`/`unlock_stderr`, so
     /// this clears the terminal under a scoped lock and `unlock_stderr` is a
     /// no-op. If a caller materializes, refactor to return the guard (or move
     /// `update_mutex` to a raw `bun_threading::Mutex` once layering allows).
@@ -819,5 +816,3 @@ mod tests {
         root_node.end();
     }
 }
-
-// ported from: src/bun_core/Progress.zig

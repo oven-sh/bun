@@ -249,9 +249,7 @@ fn os_monotonic_ns() -> u64 {
     }
     #[cfg(not(windows))]
     {
-        // PORT NOTE: Zig used `bun.timespec` (struct with .sec/.nsec/.ns()) and called
-        // `std.os.linux.clock_gettime` / `std.c.clock_gettime` directly. The Rust port
-        // uses `libc::timespec` + `libc::clock_gettime` directly (same ABI) and
+        // PORT NOTE: uses `libc::timespec` + `libc::clock_gettime` directly and
         // computes ns inline; `bun_core::Timespec` does not exist at this tier.
         let mut spec = libc::timespec {
             tv_sec: 0,
@@ -302,5 +300,3 @@ unsafe extern "C" {
         newlen: usize,
     ) -> c_int;
 }
-
-// ported from: src/perf/hw_timer.zig

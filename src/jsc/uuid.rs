@@ -179,8 +179,8 @@ pub struct UUID5 {
     pub bytes: [u8; 16],
 }
 
-// PORT NOTE: Zig nested `pub const namespaces = struct { ... }` used as a namespace;
-// Rust cannot nest a module inside an `impl`, so it lives adjacent to `UUID5`.
+// PORT NOTE: Rust cannot nest a module inside an `impl`, so the well-known
+// namespace constants live in a sibling module adjacent to `UUID5`.
 pub mod namespaces {
     use super::*;
 
@@ -259,5 +259,3 @@ impl fmt::Display for UUID5 {
         self.to_uuid().fmt(f)
     }
 }
-
-// ported from: src/jsc/uuid.zig

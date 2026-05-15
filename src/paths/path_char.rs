@@ -1,8 +1,6 @@
 //! Canonical `PathChar` — the one trait abstracting over `u8`/`u16` path code
-//! units. Replaces the per-crate re-definitions that grew out of porting Zig's
-//! `comptime T: type` duck-typing (Zig had **no** trait; every site asserted
-//! `T ∈ {u8,u16}` via `validatePathT` and shared exactly one helper,
-//! `bun.strings.literal(T, str)` at `string/immutable/unicode.zig:1395`).
+//! units. Replaces the per-crate re-definitions that grew out of porting
+//! `T ∈ {u8,u16}` duck-typing.
 //!
 //! Tier-0: depends only on `bun_core`. Higher crates **extend** this trait
 //! (`bun_paths::PathUnit`, `bun_sys::make_path::MakePathUnit`,
@@ -20,7 +18,7 @@ use bun_core::strings;
 /// transcoding write (`write_u8_part`) that lets `u16` call sites memcpy a
 /// UTF-8 part without an `if T::IS_U16` branch.
 pub trait PathChar: strings::PathByte + Ord {
-    /// `true` iff `Self == u16` (WTF-16). Replaces Zig's `if (T == u16)`.
+    /// `true` iff `Self == u16` (WTF-16).
     const IS_U16: bool;
 
     // `from_u8` inherited from `PathByte`.
@@ -30,8 +28,7 @@ pub trait PathChar: strings::PathByte + Ord {
     fn as_u32(self) -> u32;
 
     /// `Some(b)` if this code unit is in the ASCII range (`<= 0x7F`), else
-    /// `None`. `u8` always returns `Some(self)` (matches Zig's `@intCast` site
-    /// which never observed non-ASCII u8 there).
+    /// `None`. `u8` always returns `Some(self)`.
     #[inline]
     fn to_ascii(self) -> Option<u8> {
         let w = self.as_u32();
@@ -45,8 +42,8 @@ pub trait PathChar: strings::PathByte + Ord {
         self == Self::from_u8(c)
     }
 
-    /// ASCII upper-case (passes through non-ASCII unchanged). Port of the
-    /// per-unit upper-casing in `resolve_path.zig` drive-letter handling.
+    /// ASCII upper-case (passes through non-ASCII unchanged). Used by
+    /// `resolve_path` drive-letter handling.
     #[inline]
     fn to_ascii_upper(self) -> Self {
         match self.to_ascii() {
@@ -63,8 +60,7 @@ pub trait PathChar: strings::PathByte + Ord {
     /// `bun.strings.literal(T, "...")` — yields a `&'static [Self]` for an
     /// ASCII byte literal. `u8` returns the input slice; `u16` const-widens
     /// the **closed set** of literals actually passed by callers (see the
-    /// `match` in the `u16` impl). Zero allocation; matches Zig's comptime
-    /// `Holder.value` static-per-call-site emission.
+    /// `match` in the `u16` impl). Zero allocation; one static per literal.
     fn lit(s: &'static [u8]) -> &'static [Self];
 
     /// Write a UTF-8 path part into `dest` (transcoding to UTF-16 when
@@ -109,11 +105,9 @@ impl PathChar for u16 {
     }
     #[inline]
     fn lit(s: &'static [u8]) -> &'static [u16] {
-        // Zig's `bun.strings.literal(u16, str)` is `std.unicode.utf8ToUtf16LeStringLiteral`
-        // — a comptime constant. Rust cannot widen an arbitrary `&'static [u8]` at
-        // const time, so dispatch on the closed set of ASCII literals actually
-        // passed through `T::lit` across the codebase. Each gets one static,
-        // exactly as Zig emits one `Holder.value` per call site. Zero runtime
+        // Rust cannot widen an arbitrary `&'static [u8]` at const time, so
+        // dispatch on the closed set of ASCII literals actually passed through
+        // `T::lit` across the codebase. Each gets one static. Zero runtime
         // allocation; `Box::leak` is forbidden here (PORTING.md §Forbidden).
         macro_rules! w {
             ($($b:literal),* $(,)?) => {{ static W: &[u16] = &[$($b as u16),*]; W }};

@@ -34,8 +34,8 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-// PORT NOTE: Zig threaded `arena: Allocator` and built `components` into
-// an arena `ArrayList`. Phase A: `GenericSelector.components` is a std `Vec`
+// PORT NOTE: originally an `arena` allocator was threaded and `components` was
+// built into an arena list. Phase A: `GenericSelector.components` is a std `Vec`
 // (see parser.rs `// PERF(port): was arena ArrayList`), so the builder uses
 // std `Vec` for the result and drops the `&'bump Arena` field. Phase B
 // re-threads `'bump` once `GenericSelector.components` becomes
@@ -107,8 +107,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         self.simple_selectors.insert(0, GenericComponent::Nesting);
     }
 
-    // PORT NOTE: Zig `deinit` only freed `simple_selectors` and `combinators`.
-    // In Rust, `SmallList` owns its spill buffer and frees on `Drop`, so no
+    // PORT NOTE: cleanup only needed to free `simple_selectors` and `combinators`.
+    // `SmallList` owns its spill buffer and frees on `Drop`, so no
     // explicit `Drop` impl is needed here.
 
     /// Consumes the builder, producing a Selector.
@@ -131,9 +131,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         if parsed_part {
             flags |= SelectorFlags::HAS_PART;
         }
-        // `build_with_specificity_and_flags()` will
-        // PORT NOTE: Zig had `defer this.deinit()` here to free SmallList capacity
-        // after building. In Rust, `Drop` on `SelectorBuilder` handles this when the
+        // PORT NOTE: there was previously a deferred `deinit` here to free SmallList
+        // capacity after building. `Drop` on `SelectorBuilder` handles this when the
         // builder goes out of scope; the call below already drains the contents.
         self.build_with_specificity_and_flags(SpecificityAndFlags { specificity, flags })
     }
@@ -172,7 +171,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
 
         loop {
             if current_simple_selectors_i < current_simple_selectors.len() {
-                // PORT NOTE: Zig copies the component by value here (struct copy).
+                // PORT NOTE: the original copied the component by value (struct copy).
                 // `GenericComponent<Impl>` is not `Copy`; we bitwise-move it out
                 // via `ptr::read` — sound because every element of
                 // `simple_selectors` is consumed exactly once across the loop,
@@ -224,5 +223,3 @@ pub fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     let midpoint = s.len() - at;
     (&s[0..midpoint], &s[midpoint..])
 }
-
-// ported from: src/css/selectors/builder.zig

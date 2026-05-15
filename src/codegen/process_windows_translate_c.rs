@@ -12,9 +12,9 @@ use bstr::{BStr, ByteSlice};
 use std::io::Write as _;
 
 // TODO(port): standalone build-time codegen binary — uses std::env / std::fs::{read,write}
-// directly (PORTING.md bans std::fs for runtime code). The Zig original also calls std.fs
-// directly (not bun.sys) since this never links into the runtime. Phase B: either keep as-is
-// for build tooling, or swap to bun_sys::File::read_from / bun_sys::File::write_file.
+// directly (PORTING.md bans std::fs for runtime code). This never links into the runtime,
+// so std::fs is acceptable. Phase B: either keep as-is for build tooling, or swap to
+// bun_sys::File::read_from / bun_sys::File::write_file.
 
 static SYMBOL_REPLACEMENTS: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
     b"NTSTATUS" => b"@import(\"std\").os.windows.NTSTATUS",
@@ -29,8 +29,8 @@ pub fn main() -> Result<(), bun_core::Error> {
 
     let input: Vec<u8> = 'brk: {
         let in_path = args.next().unwrap_or_else(|| panic!("missing argument"));
-        // Zig: openFile + readToEndAllocOptions(.., sentinel 0). Sentinel was only
-        // needed for std.zig.Tokenizer; the inline scan below doesn't require it.
+        // No NUL sentinel needed: the inline identifier scan below never reads
+        // past the end of the buffer.
         break 'brk std::fs::read(&in_path).map_err(|_| bun_core::err!("ReadFailed"))?;
     };
     let in_bytes: &[u8] = &input;
@@ -39,7 +39,7 @@ pub fn main() -> Result<(), bun_core::Error> {
 
     let mut i: usize = 0;
     while let Some(pub_i) = index_of_pos(in_bytes, i, b"pub const ") {
-        // TODO(port): std.zig.Tokenizer replaced with an inline ASCII identifier scan.
+        // TODO(port): uses an inline ASCII identifier scan rather than a full tokenizer.
         // translate-c emits plain `[A-Za-z_][A-Za-z0-9_]*` identifiers here; verify the
         // `@"…"` raw-identifier form never appears after `pub const ` in the input.
         let symbol_start = pub_i + b"pub const ".len();
@@ -48,7 +48,7 @@ pub fn main() -> Result<(), bun_core::Error> {
                 .iter()
                 .position(|&b| !(b.is_ascii_alphanumeric() || b == b'_'))
                 .unwrap_or(in_bytes.len() - symbol_start);
-        assert(symbol_end > symbol_start); // Zig: assert(symbol_name_token.tag == .identifier)
+        assert(symbol_end > symbol_start); // there must be at least one identifier byte
         let symbol_name = &in_bytes[symbol_start..symbol_end];
 
         out.extend_from_slice(&in_bytes[i..symbol_end]);
@@ -103,5 +103,3 @@ fn index_of_scalar_pos(haystack: &[u8], start: usize, scalar: u8) -> Option<usiz
         .position(|&b| b == scalar)
         .map(|p| start + p)
 }
-
-// ported from: src/codegen/process_windows_translate_c.zig

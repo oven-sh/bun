@@ -53,8 +53,8 @@ impl CurrentFile {
             return;
         }
         if reporter.reporters.dots || reporter.reporters.only_failures {
-            // PORT NOTE: Zig's freeAndClear() freed the old allocations; in Rust,
-            // assigning into the Box<[u8]> fields below drops the previous values.
+            // PORT NOTE: assigning into the Box<[u8]> fields below drops (and frees) the
+            // previous values.
             self.title = Box::<[u8]>::from(title);
             self.prefix = Box::<[u8]>::from(prefix);
             self.repeat_info.count = repeat_count;
@@ -133,7 +133,7 @@ pub struct TestRunner<'a> {
     pub max_concurrency: u32,
 
     // PORT NOTE: `std.mem.Allocator param` field deleted — global mimalloc.
-    // TODO(port): `drainer` had `= undefined` default in Zig
+    // TODO(port): `drainer` had no default value originally; verify init order.
     pub drainer: jsc::AnyTask::AnyTask,
 
     pub has_pending_tests: bool,
@@ -214,7 +214,7 @@ impl<'a> TestRunner<'a> {
             return false;
         }
         let file_path = self.files.items_source()[file_id as usize].path.text();
-        // TODO(port): MultiArrayList column accessor name (`items(.source)` in Zig)
+        // TODO(port): verify MultiArrayList column accessor name for `source`.
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
@@ -298,14 +298,13 @@ bun_collections::multi_array_columns! {
         log: bun_ast::Log,
     }
 }
-// PORT NOTE: Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.
+// PORT NOTE: u32 keys hash as identity in bun_collections.
 pub type FileMap = ArrayHashMap<u32, u32>;
 
 #[allow(non_snake_case)]
 pub mod Jest {
     use super::*;
 
-    // Zig `pub var runner: ?*TestRunner = null`.
     // PORTING.md §Global mutable state: JS-VM-thread-only singleton; RacyCell
     // over `Option<NonNull<_>>` so direct `.read()` projections in
     // `snapshot.rs` etc. keep their shape.
@@ -313,7 +312,7 @@ pub mod Jest {
         bun_core::RacyCell::new(None);
 
     pub fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
+        // SAFETY: single-threaded JS VM; unguarded global access is safe.
         unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
     }
 
@@ -322,7 +321,7 @@ pub mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
+        // SAFETY: single-threaded JS VM; unguarded global access is safe.
         unsafe { RUNNER.read() }
     }
 
@@ -788,5 +787,3 @@ pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<(
     }
     Ok(())
 }
-
-// ported from: src/test_runner/jest.zig

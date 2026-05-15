@@ -60,9 +60,9 @@ struct PoolStats {
     last_dump_ns: AtomicU64,
 }
 
-// PORT NOTE: Zig's `packed struct(u32)` named `Sync` is kept as `Sync` here for
-// diffability with the .zig. It shadows `core::marker::Sync` within this module;
-// no `T: Sync` bounds are written in this file. Phase B may rename.
+// PORT NOTE: this packed-`u32` state is named `Sync` (it shadows
+// `core::marker::Sync` within this module; no `T: Sync` bounds are written in
+// this file). Phase B may rename.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct Sync(u32);
@@ -83,7 +83,7 @@ enum SyncState {
 }
 
 impl Sync {
-    // Bit layout (LSB-first, matching Zig packed struct field order):
+    // Bit layout (LSB-first):
     //   idle:     u14  bits 0..14
     //   spawned:  u14  bits 14..28
     //   unused:   bool bit  28
@@ -156,7 +156,7 @@ impl AtomicSync {
     fn load(&self, order: Ordering) -> Sync {
         Sync(self.0.load(order))
     }
-    /// Returns `None` on success, `Some(current)` on failure (matches Zig `cmpxchgWeak`).
+    /// Returns `None` on success, `Some(current)` on failure.
     #[inline]
     fn cmpxchg_weak(
         &self,
@@ -304,8 +304,8 @@ impl ThreadPool {
 }
 
 impl Default for ThreadPool {
-    /// Zig: `var instance: ThreadPool = .{};` — default-initialised pool with
-    /// zero `max_threads` (`init()` clamps to ≥1 when actually started).
+    /// Default-initialised pool with zero `max_threads` (`init()` clamps to
+    /// ≥1 when actually started).
     fn default() -> Self {
         Self::init(Config::default())
     }
@@ -316,7 +316,6 @@ impl Drop for ThreadPool {
     fn drop(&mut self) {
         self.shutdown();
         self.join();
-        // Zig: `self.* = undefined;` — no-op in Rust.
     }
 }
 
@@ -332,15 +331,13 @@ pub struct Task {
 // the intrusive `node.next` raw pointer is only dereferenced under the pool's
 // internal synchronization (lock-free `Node.Queue` / `Node.Buffer` below). The
 // auto-trait opt-out is purely from the raw `*mut Node`, not a real !Send
-// invariant. (Zig had no auto-trait notion; this matches `ThreadPool.zig`'s
-// cross-thread `*Task` usage.)
+// invariant.
 unsafe impl Send for Task {}
 
 impl Default for Task {
     /// Placeholder for fields where the callback is installed later
     /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
-    /// `unreachable` callback panics if scheduled un-initialized — same
-    /// failure mode as Zig's `.callback = undefined`.
+    /// `unreachable` callback panics if scheduled un-initialized.
     #[inline]
     fn default() -> Self {
         // Body has no unsafe op; a safe fn item coerces to the `callback`
@@ -385,7 +382,7 @@ pub struct Batch {
 impl Batch {
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
         // SAFETY: `len` is only read here for the fast-path zero check; the
-        // atomic load mirrors Zig's `@atomicLoad(usize, &this.len, .monotonic)`.
+        // atomic load is a Relaxed fast-path probe.
         let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
         if len == 0 {
             return None;
@@ -441,8 +438,8 @@ impl Batch {
     }
 }
 
-/// Dispatch trait for `each_impl`: erases the by-value vs by-pointer comptime
-/// branch from Zig's `eachImpl(..., comptime as_ptr: bool)` into two impls.
+/// Dispatch trait for `each_impl`: erases the by-value vs by-pointer dispatch
+/// branch into two impls.
 trait EachCall<Ctx, V>: core::marker::Sync {
     /// SAFETY: `value` must point to a live `V` exclusively owned by this call.
     unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize);
@@ -480,10 +477,10 @@ impl ThreadPool {
     /// `V: Send` is required because each `values[i]` is handed (by copy or by
     /// `*mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
-    /// data across threads with no compiler check (Zig's `anytype` had none).
+    /// data across threads with no compiler check.
     pub fn each<Ctx, V: Copy, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
-        // TODO(port): narrow bounds — Zig used `anytype` + comptime fn
+        // TODO(port): narrow bounds.
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
@@ -530,9 +527,9 @@ impl ThreadPool {
             i: usize,
         }
 
-        // PORT NOTE: `run_fn` was `comptime` in Zig (monomorphized into `call`).
-        // Here it is stored in WaitContext and dispatched via the `EachCall` trait,
-        // which encodes the `comptime as_ptr` branch (ByValue vs ByPtr).
+        // PORT NOTE: `run_fn` is stored in WaitContext and dispatched via the
+        // `EachCall` trait, which encodes the by-value vs by-pointer branch
+        // (ByValue vs ByPtr).
         unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
             // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
             let runner_task =
@@ -568,9 +565,8 @@ impl ThreadPool {
                 ctx: bun_ptr::BackRef::new(&wait_context),
             });
         }
-        // PORT NOTE: reshaped for borrowck — Zig wrote into pre-allocated slots and
-        // pushed in the same loop. Here we push to Vec first (no realloc: capacity
-        // reserved) then take stable addresses.
+        // PORT NOTE: reshaped for borrowck — push to Vec first (no realloc:
+        // capacity reserved) then take stable addresses.
         for runner_task in tasks.iter_mut() {
             batch.push(Batch::from(ptr::addr_of_mut!(runner_task.task)));
         }
@@ -604,8 +600,8 @@ impl ThreadPool {
         if self.is_running.load(Ordering::Relaxed) {
             self.wait_group.add(batch.len);
         } else {
-            // PERF(port): Zig used `add_unsynchronized` (non-atomic `+=`) when the
-            // pool isn't running yet. `&self` precludes `&mut WaitGroup` here, so
+            // PERF(port): could use `add_unsynchronized` (non-atomic `+=`) when the
+            // pool isn't running yet, but `&self` precludes `&mut WaitGroup` here, so
             // fall back to the relaxed atomic add — semantically identical.
             self.wait_group.add(batch.len);
         }
@@ -665,7 +661,6 @@ impl ThreadPool {
     /// Takes `&mut self` (NOT by-value): worker threads hold `*const ThreadPool`
     /// pointing at this struct's address; consuming `self` would move it to a new
     /// stack slot and leave workers with dangling pointers (UAF + deadlock).
-    /// Zig `waitAndDeinit(self: *ThreadPool)` operates in place — match that.
     pub fn wait_and_deinit(&mut self) {
         self.wait_for_all();
         self.shutdown();
@@ -703,19 +698,18 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     const DEFAULT: u32 = 4 * 1024 * 1024;
     #[cfg(windows)]
     {
-        // PORT NOTE: Zig's `std.Thread.spawn` on Windows calls `CreateThread`
-        // with `dwCreationFlags = 0`, so `dwStackSize` sets the *commit* size
-        // and the thread inherits the executable's *reserve* size from the PE
-        // header (`/STACK:0x1200000` = 18 MB — see scripts/build/flags.ts).
-        // Rust's `std::thread::Builder::stack_size` instead passes
-        // `STACK_SIZE_PARAM_IS_A_RESERVATION`, so the value here *is* the
-        // reserve. Passing 4 MB therefore gave Rust worker threads 4 MB of
-        // stack vs Zig's 18 MB, and the deeply-nested-AST stress tests
-        // (`lots-of-for-loop.js`, 15k nested `for`) overflow on the 4 MB
+        // PORT NOTE: on Windows, `CreateThread` with `dwCreationFlags = 0`
+        // sets only the *commit* size; the thread inherits the executable's
+        // *reserve* size from the PE header (`/STACK:0x1200000` = 18 MB — see
+        // scripts/build/flags.ts). Rust's `std::thread::Builder::stack_size`
+        // instead passes `STACK_SIZE_PARAM_IS_A_RESERVATION`, so the value
+        // here *is* the reserve. Passing 4 MB therefore gave worker threads 4
+        // MB of stack vs the expected 18 MB, and the deeply-nested-AST stress
+        // tests (`lots-of-for-loop.js`, 15k nested `for`) overflow on the 4 MB
         // worker stack before the parser's `StackCheck` can fire (each
         // `parse_stmt`→`t_for` cycle is small enough that 15k levels fit, but
-        // the visit/print passes that follow do not). Match Zig parity by
-        // reserving the same 18 MB the PE header would have given us.
+        // the visit/print passes that follow do not). Reserve the same 18 MB
+        // the PE header would have given us.
         let _ = DEFAULT;
         0x1200000
     }
@@ -725,7 +719,7 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
     #[cfg(target_os = "macos")]
     {
-        // TODO(port): Zig used `std.heap.page_size_max`; using 16384 (arm64 macOS).
+        // TODO(port): hard-coded to 16384 (arm64 macOS page size).
         const PAGE_SIZE_MAX: u32 = 16384;
         let size = DEFAULT - (DEFAULT % PAGE_SIZE_MAX);
         // stack size must be a multiple of page_size
@@ -749,7 +743,7 @@ impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
-        // PORT NOTE: Zig used u14; Rust has no u14, using u16 and truncating to 14 bits.
+        // PORT NOTE: the count field is logically u14; Rust has no u14, so use u16 and truncate to 14 bits.
         self.is_running.store(true, Ordering::Relaxed);
         let target = count.min((self.max_threads & 0x3FFF) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
@@ -772,7 +766,7 @@ impl ThreadPool {
                 .spawn(move || Thread::run(pool))
             {
                 Ok(_handle) => {
-                    // Dropping JoinHandle detaches the thread (matches Zig `thread.detach()`).
+                    // Dropping JoinHandle detaches the thread.
                 }
                 Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
             }
@@ -1049,12 +1043,12 @@ enum WaitError {
     Shutdown,
 }
 
-// `repr(C)` pins field order to match the Zig layout: the work-steal loop in
+// `repr(C)` pins field order: the work-steal loop in
 // `Thread::pop` chases `(*target).next`, and keeping `next`/`target` at offsets
 // 0/8 means that load hits the same cache line that already holds the
 // `run_queue` header it reads immediately after. With the default `repr(Rust)`
 // the compiler is free to reorder fields (the 4-byte `Event` invites it),
-// which profiled ~43% hotter on the steal traversal vs the Zig build.
+// which profiled ~43% hotter on the steal traversal.
 #[repr(C)]
 pub struct Thread {
     next: *mut Thread,
@@ -1072,7 +1066,7 @@ thread_local! {
 
 /// RAII scope for a worker thread's active lifetime: publishes `thread` as
 /// `CURRENT` and registers it with `pool` on construction; on drop, unregisters
-/// from the pool and clears `CURRENT` (matching the Zig `defer` order).
+/// from the pool and clears `CURRENT` (in that order).
 ///
 /// `pool` is a [`BackRef`]: the pool's `join()` blocks on every registered
 /// worker, so it strictly outlives this guard.
@@ -1165,8 +1159,8 @@ impl Thread {
         {
             let mut counter_buf = [0u8; 100];
             let int = COUNTER.fetch_add(1, Ordering::SeqCst);
-            // PORT NOTE: Zig used bufPrintZ; format into the buffer, track written
-            // length via the advancing &mut [u8] cursor, then NUL-terminate.
+            // Format into the buffer, track written length via the advancing
+            // &mut [u8] cursor, then NUL-terminate.
             use std::io::Write;
             let len = {
                 let mut cur: &mut [u8] = &mut counter_buf[..99];
@@ -1479,7 +1473,7 @@ pub mod node {
     /// An unbounded multi-producer-(non blocking)-multi-consumer queue of Node pointers.
     pub struct Queue {
         stack: AtomicUsize,
-        // PORT NOTE: Zig's plain `?*Node` is mutated through `&self` while
+        // PORT NOTE: this raw next-pointer is mutated through `&self` while
         // `IS_CONSUMING` is held. `Cell` gives interior mutability without an
         // atomic — the `stack` Acquire/Release barriers order accesses, and the
         // `unsafe impl Sync` below is where that synchronization promise lives.
@@ -1599,7 +1593,7 @@ pub mod node {
     }
 
     /// RAII handle for the `IS_CONSUMING` bit on a [`Queue`]. Owns the local
-    /// cache pointer (Zig's `var consumer: ?*Node`) directly so the hot
+    /// cache pointer directly so the hot
     /// `pop()` fast path is a plain field read/write that LLVM can keep in a
     /// register — the previous `scopeguard::guard` + `&mut *consumer` pattern
     /// forced the cache pointer through a stack slot via `DerefMut` on every
@@ -1663,8 +1657,8 @@ pub mod node {
 
     /// A bounded single-producer, multi-consumer ring buffer for node pointers.
     // `repr(C)` keeps `head`/`tail` in the first cache line ahead of the 2 KB
-    // `array`, matching the Zig layout the steal/consume fast paths were tuned
-    // against. `repr(Rust)` is free to reorder these.
+    // `array`, the layout the steal/consume fast paths were tuned against.
+    // `repr(Rust)` is free to reorder these.
     #[repr(C)]
     pub struct Buffer {
         head: AtomicU32,
@@ -1684,7 +1678,7 @@ pub mod node {
             Buffer {
                 head: AtomicU32::new(0),
                 tail: AtomicU32::new(0),
-                // PORT NOTE: Zig left this `undefined`; we zero-init.
+                // PORT NOTE: zero-init (could be left uninitialized; this is safer).
                 array: [const { AtomicPtr::new(ptr::null_mut()) }; CAPACITY],
             }
         }
@@ -1696,8 +1690,8 @@ pub mod node {
     }
 
     impl Buffer {
-        // PORT NOTE: Zig's `.raw` field access (non-atomic) on Atomic(T) is mapped to
-        // Relaxed loads here; Rust does not expose unsynchronized access on atomics.
+        // PORT NOTE: Rust does not expose unsynchronized access on atomics, so the
+        // non-atomic raw read is mapped to a Relaxed load here.
         // PERF(port): was non-atomic raw read — profile in Phase B.
         #[inline]
         fn tail_raw(&self) -> Index {
@@ -1728,7 +1722,7 @@ pub mod node {
                         nodes = unsafe { (*node).next };
 
                         // Array written atomically with weakest ordering since it could be getting atomically read by steal().
-                        // PORT NOTE: Zig .unordered → Relaxed (Rust has no Unordered).
+                        // PORT NOTE: Rust has no Unordered atomic ordering; use Relaxed.
                         self.array[(tail as usize) % CAPACITY].store(node, Ordering::Relaxed);
                         tail = tail.wrapping_add(1);
                         size += 1;
@@ -1837,7 +1831,7 @@ pub mod node {
                 let Some(node) = consumer.pop() else {
                     break;
                 };
-                // PORT NOTE: Zig .unordered → Relaxed (same `mov` on x86).
+                // PORT NOTE: Relaxed in place of Unordered (same `mov` on x86).
                 self.array[(tail.wrapping_add(pushed) as usize) % CAPACITY]
                     .store(node, Ordering::Relaxed);
                 pushed += 1;
@@ -1899,7 +1893,7 @@ pub mod node {
                 // Atomically load from the target buffer array as it may be pushing and atomically storing to it.
                 // Atomic store to our array as other steal() threads may be atomically loading from it as above.
                 for i in 0..steal_size {
-                    // PORT NOTE: Zig .unordered → Relaxed.
+                    // PORT NOTE: Relaxed in place of Unordered.
                     let node = buffer.array[(buffer_head.wrapping_add(i) as usize) % CAPACITY]
                         .load(Ordering::Relaxed);
                     self.array[(tail.wrapping_add(i) as usize) % CAPACITY]
@@ -1941,5 +1935,3 @@ pub mod node {
         }
     }
 }
-
-// ported from: src/threading/ThreadPool.zig

@@ -1,10 +1,8 @@
 use bun_sys::{O, posix};
 
-// PORT NOTE: the Zig `get(comptime name)` helper used `@hasDecl(bun.O, name)` +
-// `@field(bun.O, name)` to look up an open-flag by string at comptime, with a
-// `@compileError` fallback. Rust has no struct-field reflection; since every
+// PORT NOTE: Rust has no struct-field reflection; since every
 // call site names a constant that exists on `bun_sys::O`, we reference those
-// constants directly below and drop the helper.
+// constants directly below rather than via a name-lookup helper.
 
 // File Access Constants
 /// Constant for fs.access(). File is visible to the calling process.
@@ -17,14 +15,14 @@ pub const W_OK: i32 = posix::W_OK;
 pub const X_OK: i32 = posix::X_OK;
 
 // File Copy Constants
-// PORT NOTE: Zig `enum(i32) { _ }` (non-exhaustive, no variants) is a newtype
-// over i32 with associated decls — modelled here as a transparent tuple struct.
+// PORT NOTE: a non-exhaustive open enum over i32 with associated decls,
+// modelled here as a transparent tuple struct.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Copyfile(pub i32);
 
 impl Copyfile {
-    /// Zig: `@enumFromInt(raw)` — wrap a raw flags value.
+    /// Wrap a raw flags value.
     #[inline]
     pub const fn from_raw(raw: i32) -> Self {
         Self(raw)
@@ -159,8 +157,5 @@ pub const S_IXOTH: i32 = posix::S::IXOTH as i32;
 /// this flag is ignored.
 pub const UV_FS_O_FILEMAP: i32 = 536870912;
 
-// TODO(port): verify constant types — Zig left these as comptime_int / inherited
-// from bun.O / std.posix.S; Phase B should align with bun_sys's actual repr
-// (u32 vs i32) once that crate lands.
-
-// ported from: src/runtime/node/node_fs_constant.zig
+// TODO(port): verify constant types — Phase B should align with bun_sys's
+// actual repr (u32 vs i32) once that crate lands.

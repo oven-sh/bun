@@ -20,7 +20,7 @@ pub struct WebSocketProxy {
 
 impl WebSocketProxy {
     /// Initialize a new WebSocketProxy
-    // PORT NOTE: params are owned (Zig caller transfers allocator ownership; freed in deinit)
+    // PORT NOTE: params are owned (caller transfers allocator ownership; freed in deinit)
     pub fn init(
         target_host: Box<[u8]>,
         target_is_https: bool,
@@ -75,5 +75,3 @@ impl Drop for WebSocketProxy {
         }
     }
 }
-
-// ported from: src/http_jsc/websocket_client/WebSocketProxy.zig

@@ -1,8 +1,8 @@
 //! One QUIC connection to an origin. Owns its UDP endpoint via quic.c and
 //! multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`. The `qsocket`
 //! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
-//! checks `closed` first. See `src/http/H3Client.zig` for the module-level
-//! overview.
+//! checks `closed` first. See the parent `h3_client` module for the
+//! module-level overview.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -234,10 +234,11 @@ impl ClientSession {
     }
 
     pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // PORT NOTE: Zig iterates `pending.items` and calls `this.fail` (which
-        // mutates `pending`) mid-loop. Rust borrowck forbids reborrowing
-        // `&mut self` while the iterator holds `&self.pending`, and only one
-        // entry can match — so locate first via raw-ptr reads, then act.
+        // PORT NOTE: a previous formulation iterated `pending` and called
+        // `fail` (which mutates `pending`) mid-loop. Rust borrowck forbids
+        // reborrowing `&mut self` while the iterator holds `&self.pending`,
+        // and only one entry can match — so locate first via raw-ptr reads,
+        // then act.
         let mut found: *mut Stream = core::ptr::null_mut();
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the
@@ -475,5 +476,3 @@ impl Drop for ClientSession {
         // `bun.destroy(this)` is handled by `deref()` via heap::take.
     }
 }
-
-// ported from: src/http/h3_client/ClientSession.zig

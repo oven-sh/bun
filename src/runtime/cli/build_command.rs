@@ -18,8 +18,8 @@ use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
-/// `bun.cli.start_time` accessor — Zig had a mutable global; Rust keeps the
-/// single backing `OnceLock` in `bun_core` (written once in `Cli::start`).
+/// `bun.cli.start_time` accessor — backed by a single `OnceLock` in `bun_core`
+/// (written once in `Cli::start`).
 #[inline]
 fn cli_start_time() -> i128 {
     crate::cli::start_time()
@@ -449,16 +449,16 @@ impl BuildCommand {
             MacroOptions::Unspecified => {}
         }
 
-        // TODO(port): client_transpiler is left uninitialized in Zig until needed; using Option here
+        // TODO(port): client_transpiler is only needed when server components are on; use Option here
         let mut client_transpiler: Option<transpiler::Transpiler> = None;
         if this_transpiler.options.server_components {
             let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
-            // PORT NOTE: Zig assigned `client_transpiler.options = this_transpiler.options`
-            // (struct copy). `BundleOptions<'a>` is non-`Clone` in Rust; instead
+            // PORT NOTE: `BundleOptions<'a>` is non-`Clone`, so a plain struct
+            // copy of `this_transpiler.options` is not possible; instead
             // `Transpiler::init` above rebuilds options from the same `ctx.args`,
             // and the divergent fields are set explicitly below. `client_transpiler`
-            // is currently unused after this block (matching the Zig), so a
-            // perfect field-wise copy is not load-bearing.
+            // is currently unused after this block, so a perfect field-wise copy
+            // is not load-bearing.
             ct.options.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
@@ -567,9 +567,9 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Zig: `bun.jsc.AnyEventLoop.init(ctx.allocator)` — a Mini event loop
-            // owned by the arena. `generate_from_cli` → `wait_for_parse` derefs
-            // this via `r#loop()` to drain parse tasks; passing `None` panics.
+            // A Mini event loop owned by the arena. `generate_from_cli` →
+            // `wait_for_parse` derefs this via `r#loop()` to drain parse tasks;
+            // passing `None` panics.
             let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
 
             let build_result = match BundleV2::generate_from_cli(
@@ -684,7 +684,7 @@ impl BuildCommand {
 
         let mut had_err = false;
         'dump: {
-            // Output::flush() runs at end of this block (defer in Zig); see explicit calls below
+            // Output::flush() runs at end of this block; see explicit calls below
             let writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
@@ -1176,5 +1176,3 @@ fn print_summary(
         reachable_file_count
     ));
 }
-
-// ported from: src/cli/build_command.zig

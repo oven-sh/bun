@@ -1,10 +1,9 @@
 //! `WTFTimer` — a timer created by WTF (WebKit) code and invoked by Bun's
 //! event loop. Backs `WTF::RunLoop::TimerBase` on the Bun runloop.
 //!
-//! PORT NOTE (b2-cycle): Zig stores `vm: *VirtualMachine` and reaches the
-//! timer heap via `vm.timer.{remove,update}`. The low-tier
-//! `bun_jsc::VirtualMachine.timer` is a `()` placeholder, so this port
-//! resolves the heap through [`crate::jsc_hooks::runtime_state`] instead —
+//! PORT NOTE (b2-cycle): the low-tier `bun_jsc::VirtualMachine.timer` is a `()`
+//! placeholder, so this module resolves the timer heap through
+//! [`crate::jsc_hooks::runtime_state`] instead of `vm.timer.{remove,update}` —
 //! the same pattern `TimerObjectInternals` uses.
 
 use core::cell::Cell;
@@ -67,7 +66,7 @@ pub extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
 }
 
 impl WTFTimer {
-    /// Spec WTFTimer.zig `run` — fire the underlying `RunLoop::TimerBase`,
+    /// Fire the underlying `RunLoop::TimerBase`,
     /// removing `self` from the timer heap first if it's currently scheduled.
     /// Reached from `bun_jsc::event_loop` via `__bun_run_wtf_timer`
     /// (definer in [`crate::dispatch`]).
@@ -106,8 +105,8 @@ impl WTFTimer {
         }
         // `imminent` is a `BackRef` into the VM's event loop, which outlives this timer.
         let loaded = self.imminent.load(Ordering::SeqCst);
-        // Zig: `(load orelse return false) == this` — null can never equal `this`,
-        // so a single pointer compare suffices.
+        // Null can never equal `this`, so a single pointer compare suffices
+        // (no separate null check needed).
         loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
     }
 
@@ -227,8 +226,7 @@ impl WTFTimer {
         }
     }
 
-    /// Spec WTFTimer.zig `fire` — `EventLoopTimer.fire` dispatch arm body for
-    /// `Tag::WTFTimer`.
+    /// `EventLoopTimer.fire` dispatch arm body for `Tag::WTFTimer`.
     ///
     /// # Safety
     /// `this` is the container of an `EventLoopTimer` just popped from
@@ -293,7 +291,6 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
             },
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             repeat: false,
-            // Zig: `@enumFromInt(vm.initial_script_execution_context_identifier)`
             script_execution_context_id: ScriptExecutionContextIdentifier(
                 vm_ref.initial_script_execution_context_identifier as u32,
             ),
@@ -326,5 +323,3 @@ pub extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
 unsafe extern "C" {
     safe fn WTFTimer__fire(this: NonNull<RunLoopTimer>);
 }
-
-// ported from: src/runtime/timer/WTFTimer.zig

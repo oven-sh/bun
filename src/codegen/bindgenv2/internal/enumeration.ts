@@ -64,7 +64,7 @@ export function enumeration(
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?: CodeStyle) {
+    bunType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     toCpp(value: string): string {
@@ -171,24 +171,6 @@ export function enumeration(
             value.toWTFString(&globalObject)
           );
         }
-      `);
-    }
-
-    get hasZigSource() {
-      return true;
-    }
-    get zigSource() {
-      return reindent(`
-        pub const ${name} = enum(u32) {
-          ${joinIndented(
-            10,
-            uniqueValues.map(value => `@${toQuotedLiteral(value)},`),
-          )}
-        };
-
-        pub const Bindgen${name} = bindgen.BindgenTrivial(${name});
-        const bun = @import("bun");
-        const bindgen = bun.bun_js.bindgen;
       `);
     }
   })();

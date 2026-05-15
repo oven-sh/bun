@@ -374,5 +374,3 @@ pub fn encode(
         free: encoded_wrap_free!(tj3Free),
     })
 }
-
-// ported from: src/runtime/image/codec_jpeg.zig

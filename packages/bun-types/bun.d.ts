@@ -3118,9 +3118,9 @@ declare module "bun" {
    *
    * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
-   * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-   * work on this.
+   * Originally based on cryptographic implementations contributed by
+   * \@jedisct1 and other contributors to https://github.com/ziglang/zig.
+   * Thank you for your work on this.
    *
    * @example
    * **Example with argon2**
@@ -3225,9 +3225,9 @@ declare module "bun" {
      * Warning: password hashing is slow, consider using {@link Bun.password.verify}
      * instead which runs in a worker thread.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-     * work on this.
+     * Originally based on cryptographic implementations contributed by
+     * \@jedisct1 and other contributors to https://github.com/ziglang/zig.
+     * Thank you for your work on this.
      *
      * @example
      * **Example with argon2**
@@ -3270,9 +3270,9 @@ declare module "bun" {
      * Warning: password hashing is slow, consider using {@link Bun.password.hash}
      * instead which runs in a worker thread.
      *
-     * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to \@jedisct1 and other Zig contributors for their
-     * work on this.
+     * Originally based on cryptographic implementations contributed by
+     * \@jedisct1 and other contributors to https://github.com/ziglang/zig.
+     * Thank you for your work on this.
      *
      * @example
      * **Example with argon2**

@@ -6,8 +6,8 @@
 //! where `.0` is the `&[u8]` key and `.1` is the associated value of type `V`.
 // TODO: https://github.com/ziglang/zig/issues/4335
 
-// PORT NOTE: The Zig original is a `fn(comptime KeyType, comptime V, comptime kvs_list) type`
-// that does heavy comptime work: sorts kvs by (len, bytes), builds a `len_indexes` table,
+// PORT NOTE: the original is a comptime type-factory
+// that does heavy const-eval work: sorts kvs by (len, bytes), builds a `len_indexes` table,
 // then every lookup is an `inline while` over lengths × `inline for` over same-length keys
 // with `eqlComptime` (length-known SIMD compare). Rust cannot replicate the per-callsite
 // monomorphization without a proc-macro. Phase A models this as a const-constructed struct
@@ -36,7 +36,7 @@ pub struct ComptimeStringMapWithKeyType<
     const N: usize,
     const LEN_TABLE: usize,
 > {
-    // PORT NOTE: in Zig these were `precomputed.{min_len,max_len,sorted_kvs,len_indexes}`
+    // PORT NOTE: originally these were `precomputed.{min_len,max_len,sorted_kvs,len_indexes}`
     // computed in a `comptime blk:`. Here they are filled by the constructor macro.
     min_len: usize,
     max_len: usize,
@@ -52,7 +52,7 @@ pub type ComptimeStringMap<V, const N: usize, const LEN_TABLE: usize> =
 pub type ComptimeStringMap16<V, const N: usize, const LEN_TABLE: usize> =
     ComptimeStringMapWithKeyType<u16, V, N, LEN_TABLE>;
 
-/// Trait abstracting "has a length" for `get_with_eql` inputs — Zig used
+/// Trait abstracting "has a length" for `get_with_eql` inputs — the original used
 /// `if (@hasField(Input, "len")) input.len else input.length()`.
 pub trait HasLength {
     fn length(&self) -> usize;
@@ -87,10 +87,10 @@ where
 {
     /// Builds the precomputed tables. Called by the `comptime_string_map!` macro.
     ///
-    /// Mirrors the `comptime blk:` in the Zig: sort by (len asc, bytes asc), then
+    /// Mirrors the original const-eval block: sort by (len asc, bytes asc), then
     /// fill `len_indexes[len]` = first index whose key.len >= len.
     // TODO(port): make this a `const fn` once const-sort is stable, or move to build.rs.
-    // PERF(port): Zig did this at comptime (zero runtime cost); this runs once at init.
+    // PERF(port): the original did this at compile time (zero runtime cost); this runs once at init.
     pub fn new(mut sorted_kvs: [KV<K, V>; N]) -> Self {
         // lenAsc comparator
         sorted_kvs.sort_by(|a, b| {
@@ -141,7 +141,7 @@ where
 
     /// Contiguous range in `kvs` whose keys have exactly `len`.
     ///
-    /// PORT NOTE: the .zig spec open-coded this at every lookup site because `len` was
+    /// PORT NOTE: the upstream spec open-coded this at every lookup site because `len` was
     /// `comptime` there and each needed its own `comptime brk:` block. In the Rust port
     /// `len` is runtime, so the duplication is vestigial — extract once and inline.
     #[inline(always)]
@@ -154,7 +154,7 @@ where
         start..end
     }
 
-    // PORT NOTE: `comptime len: usize` → runtime `len: usize`. The Zig used the comptime
+    // PORT NOTE: `comptime len: usize` → runtime `len: usize`. The original used the const
     // value to compute `end` at comptime and `inline for` the range; we loop at runtime.
     // PERF(port): was comptime monomorphization — profile in Phase B.
     pub fn get_with_length(&self, str: &[K], len: usize) -> Option<V> {
@@ -163,7 +163,7 @@ where
         // This benchmarked faster for both small and large lists of strings than using a big switch statement
         // But only so long as the keys are a sorted list.
         for i in start..end {
-            // PERF(port): Zig used `strings.eqlComptimeCheckLenWithType(K, str, kvs[i].key, false)`
+            // PERF(port): the original used `strings.eqlComptimeCheckLenWithType(K, str, kvs[i].key, false)`
             // (length-known SIMD compare). Plain slice == here; Phase B may swap to
             // `bun_core::strings::eql_comptime_check_len_with_type`.
             if str == self.kvs[i].key {
@@ -218,7 +218,7 @@ where
             return None;
         }
 
-        // PERF(port): Zig `inline while (i <= max_len)` dispatched to a monomorphized
+        // PERF(port): an `inline while (i <= max_len)` dispatched to a monomorphized
         // `getWithLength(str, comptime i)`. We call the runtime version directly.
         self.get_with_length(str, str.len())
     }
@@ -244,8 +244,8 @@ where
         None
     }
 
-    // TODO(port): move to *_jsc — `fromJS` / `fromJSCaseInsensitive` were thin shims to
-    // `jsc/comptime_string_map_jsc.zig`. In Rust these become extension-trait methods in
+    // TODO(port): move to *_jsc — `fromJS` / `fromJSCaseInsensitive` were thin JSC
+    // shims. In Rust these become extension-trait methods in
     // `bun_jsc` (e.g. `impl<V> ComptimeStringMapJsc for ComptimeStringMap<V, ..>`).
     // The base `bun_collections` crate has no JSC dependency.
 
@@ -301,7 +301,7 @@ impl<V, const N: usize, const LEN_TABLE: usize> ComptimeStringMapWithKeyType<u8,
 where
     V: Copy + 'static,
 {
-    // PORT NOTE: Zig `fromString` calls `bun.String.eqlComptime`, which compares against
+    // PORT NOTE: `fromString` calls `bun.String.eqlComptime`, which compares against
     // `[]const u8` — effectively u8-only. Lives in the K=u8 impl, not the generic one.
     // TODO(b0): `String` arrives in bun_alloc via move-in (was bun_core::String).
     pub fn from_string(&self, str: &bun_alloc::String) -> Option<V> {
@@ -309,10 +309,10 @@ where
     }
 
     pub fn get_asciii_case_insensitive(&self, input: &[u8]) -> Option<V> {
-        // PORT NOTE: Zig name has triple-I (`getASCIIICaseInsensitive`); preserved per
+        // PORT NOTE: original name has triple-I (`getASCIIICaseInsensitive`); preserved per
         // "match fn names" rule. Body is identical to `get_any_case` — both lowercase
-        // ASCII into a stack buffer then dispatch via eql_comptime_ignore_len. Zig
-        // duplicates them too (comptime_string_map.zig:212/256); we dedup here.
+        // ASCII into a stack buffer then dispatch via eql_comptime_ignore_len. The
+        // original duplicates them too; we dedup here.
         self.get_any_case(input)
     }
 
@@ -322,9 +322,9 @@ where
         input: &[u8],
         eql: impl Fn(&[u8], &'static [u8]) -> bool,
     ) -> Option<V> {
-        // PORT NOTE: identical to `get_case_insensitive_with_eql` — Zig has both
+        // PORT NOTE: identical to `get_case_insensitive_with_eql` — the original has both
         // (`std.ascii.toLower` vs manual `'A'..'Z' => c+32`, byte-equivalent on u8).
-        // Kept as a named forwarder to honor the "match Zig fn names" rule.
+        // Kept as a named forwarder to honor the "match fn names" rule.
         self.get_case_insensitive_with_eql(input, eql)
     }
 
@@ -342,7 +342,7 @@ where
             return None;
         }
 
-        // PERF(port): Zig built a `[i]u8` stack buffer per comptime length; we use a
+        // PERF(port): the original built a `[i]u8` stack buffer per length; we use a
         // bounded stack buffer sized to max_len. Profile in Phase B.
         // TODO(port): if max_len can exceed a small bound at any call site, revisit.
         let mut buf = [0u8; 256];
@@ -362,7 +362,7 @@ where
 ///     ...
 /// ]);
 /// ```
-// TODO(port): proc-macro — Zig sorted + built len_indexes at comptime. A `macro_rules!`
+// TODO(port): proc-macro — the original sorted + built len_indexes at compile time. A `macro_rules!`
 // cannot sort; either (a) require callers pre-sort and compute LEN_TABLE, (b) use a
 // proc-macro, or (c) lazy-init via `once_cell::Lazy` + `ComptimeStringMapWithKeyType::new`.
 // Phase A picks (c) for correctness; Phase B may upgrade to a proc-macro for true const.
@@ -389,7 +389,7 @@ macro_rules! comptime_string_map {
 #[macro_export]
 macro_rules! comptime_string_map_16 {
     ($V:ty, [ $( ($key:expr, $val:expr) ),* $(,)? ]) => {{
-        // PORT NOTE: Zig had `@compileError("Not implemented for this key type")` for non-u8
+        // PORT NOTE: the original raised a build error ("Not implemented for this key type") for non-u8
         // in the kv-copy loop, but `ComptimeStringMap16` is exported anyway. Keep the
         // export; the compile_error moves to the macro body if ever instantiated.
         compile_error!("ComptimeStringMap16: not implemented for this key type");
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn comptime_string_map_array_of_structs() {
-        // PORT NOTE: Zig tested that anonymous-struct and named-struct kv inputs both work.
+        // PORT NOTE: the original tested that anonymous-struct and named-struct kv inputs both work.
         // In Rust there is one input shape (`KV`), so this collapses to the same test.
         let map = ComptimeStringMapWithKeyType::<u8, TestEnum, 5, 9>::new([
             KV {
@@ -572,5 +572,3 @@ mod tests {
     // benchmark fixture against `std.ComptimeStringMap` (no `test` block references it).
     // Omitted; Phase B can re-add as a criterion bench if needed.
 }
-
-// ported from: src/collections/comptime_string_map.zig

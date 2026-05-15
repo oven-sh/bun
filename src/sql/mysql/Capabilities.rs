@@ -1,10 +1,9 @@
 // MySQL capability flags
 //
-// PORT NOTE: The Zig original is a file-level struct of `bool` fields (NOT a
-// `packed struct(u32)`), with explicit bit-value constants and comptime field
-// iteration for `toInt`/`fromInt`/`format`. We keep the same shape — a plain
-// struct of bools — and unroll the comptime loops explicitly. Field names stay
-// SCREAMING_SNAKE_CASE because `format` emits them verbatim.
+// PORT NOTE: This is a plain struct of `bool` fields (NOT a packed bitfield),
+// with explicit bit-value constants and unrolled field iteration for
+// `to_int`/`from_int`/`Display`. Field names stay SCREAMING_SNAKE_CASE because
+// `Display` emits them verbatim.
 // (non_snake_case / non_upper_case_globals allowed at crate root.)
 
 use core::fmt;
@@ -80,8 +79,8 @@ impl Capabilities {
     const _CLIENT_SSL_VERIFY_SERVER_CERT: u32 = 1073741824; // 1 << 30
     const _CLIENT_REMEMBER_OPTIONS: u32 = 2147483648; // 1 << 31
 
-    // PORT NOTE: the Zig `comptime { _ = .{...} }` block only force-referenced
-    // the constants above; dropped per PORTING.md §Don't translate.
+    // PORT NOTE: a force-reference block for the constants above was dropped
+    // per PORTING.md §Don't translate.
 
     pub fn reject(&mut self) {
         self.CLIENT_ZSTD_COMPRESSION_ALGORITHM = false;
@@ -269,11 +268,10 @@ impl Capabilities {
     }
 }
 
-// Zig: pub fn format(self, writer: *std.Io.Writer) !void
 impl fmt::Display for Capabilities {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
-        // PORT NOTE: unrolled `inline for (std.meta.fieldNames(Capabilities)) |field| { if @field(self, field) { ... writer.writeAll(field) } }`
+        // Emit a comma-separated list of the set flags by field name.
         macro_rules! emit {
             ($field:ident) => {
                 if self.$field {
@@ -321,5 +319,3 @@ impl fmt::Display for Capabilities {
         Ok(())
     }
 }
-
-// ported from: src/sql/mysql/Capabilities.zig

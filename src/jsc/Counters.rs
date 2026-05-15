@@ -9,9 +9,9 @@ pub struct Counters {
 
 impl Counters {
     pub fn mark(&mut self, tag: Field) {
-        // PORT NOTE: Zig used `comptime tag` + `@field(this, @tagName(tag))` reflection;
-        // Rust dispatches via match. Demoted to runtime arg (not used in a type position).
-        // PERF(port): was comptime monomorphization — profile in Phase B.
+        // PORT NOTE: dispatch via match instead of compile-time field reflection.
+        // Demoted to a runtime arg (not used in a type position).
+        // PERF(port): was monomorphized per-tag — profile in Phase B.
         let slot = match tag {
             Field::SpawnSyncBlocking => &mut self.spawn_sync_blocking,
             Field::SpawnMemfd => &mut self.spawn_memfd,
@@ -20,9 +20,9 @@ impl Counters {
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): `JSObject::create(struct_value, global)` relies on field reflection in Zig
-        // (builds an object with one property per struct field). Phase B: hand-roll the two
-        // `put` calls or add a small derive.
+        // TODO(port): the original `JSObject::create(struct_value, global)` relied
+        // on field reflection (one property per struct field). Phase B: hand-roll
+        // the two `put` calls or add a small derive.
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
@@ -39,14 +39,14 @@ impl Counters {
 }
 
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` emits the `extern "sysv64"`/"C"
-// trampoline. Until the macro crate exists, expose the Zig-shape signature
+// trampoline. Until the macro crate exists, expose the host-fn-shaped signature
 // directly; the trampoline is wired by codegen.
 pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the per-thread VirtualMachine singleton; caller is on the JS thread.
     global.bun_vm().counters.to_js(global)
 }
 
-// Zig: `const Field = std.meta.FieldEnum(Counters);`
+// One variant per `Counters` field.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Field {
     #[strum(serialize = "spawnSync_blocking")]
@@ -54,5 +54,3 @@ pub enum Field {
     #[strum(serialize = "spawn_memfd")]
     SpawnMemfd,
 }
-
-// ported from: src/jsc/Counters.zig

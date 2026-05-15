@@ -1,8 +1,7 @@
 //! RapidHash.
 //!
-//! Ported from `src/bun_core/deprecated.zig` (`bun.deprecated.RapidHash`).
-//! `HashObject.zig` exposes this via `hashWrap(bun.deprecated.RapidHash)`,
-//! which calls `hash(seed: u64, input: []const u8) -> u64`.
+//! `HashObject` exposes this via `hashWrap(RapidHash)`, which calls
+//! `hash(seed: u64, input: &[u8]) -> u64`.
 
 pub struct RapidHash;
 
@@ -105,7 +104,7 @@ impl RapidHash {
 mod tests {
     use super::RapidHash;
 
-    /// Mirrors the `RapidHash.hash` test in `src/bun_core/deprecated.zig`.
+    /// Reference vectors for `RapidHash::hash`.
     #[test]
     fn vectors() {
         // "abcdefgh" ** 128

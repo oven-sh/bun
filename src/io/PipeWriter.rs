@@ -52,16 +52,16 @@ pub enum WriteStatus {
 // PosixPipeWriter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `fn PosixPipeWriter(comptime This, getFd, getBuffer, onWrite, registerPoll, onError, _, getFileType) type`
+/// `PosixPipeWriter` mixin.
 ///
-/// Originally this was a comptime vtable struct. In Rust the comptime fn pointers
+/// Originally this was a compile-time vtable struct. In Rust the fn pointers
 /// become required trait methods on `Self`, and the returned struct's fns become
 /// provided trait methods.
 pub trait PosixPipeWriter {
     fn get_fd(&self) -> Fd;
     fn get_buffer(&self) -> &[u8];
     fn on_write(&mut self, written: usize, status: WriteStatus);
-    /// Optional in Zig (`?fn`). Implement as no-op when not needed and set
+    /// Optional. Implement as no-op when not needed and set
     /// `HAS_REGISTER_POLL = false`.
     fn register_poll(&mut self);
     const HAS_REGISTER_POLL: bool = true;
@@ -69,7 +69,7 @@ pub trait PosixPipeWriter {
     fn get_file_type(&self) -> FileType;
     fn get_force_sync(&self) -> bool;
 
-    // TODO(port): Zig accesses `parent.handle` (PollOrFd) directly for logging
+    // TODO(port): `parent.handle` (PollOrFd) is accessed directly for logging
     // in on_poll. Expose via accessor instead of requiring a field.
     fn handle(&self) -> &PollOrFd;
 
@@ -77,8 +77,8 @@ pub trait PosixPipeWriter {
     /// callers may pass a `buf` that borrows from a field of `self` (e.g.
     /// `self.outgoing.slice()`) without raw-pointer aliasing escapes.
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
-        // PERF(port): Zig used `switch { inline else }` to monomorphize
-        // try_write_with_write_fn per FileType — profile in Phase B.
+        // PERF(port): try_write_with_write_fn used to be monomorphized
+        // per FileType — profile in Phase B.
         let ft = if !force_sync {
             self.get_file_type()
         } else {
@@ -184,7 +184,7 @@ pub trait PosixPipeWriter {
         }
     }
 
-    /// Zig passed `buf: []const u8` separately while also mutating `self`;
+    /// Passing `buf: &[u8]` separately while also mutating `self` would alias;
     /// here we re-derive the slice from `self.get_buffer()` each iteration.
     /// `try_write` only needs `&self`, so the shared borrow of the buffer
     /// coexists with it, and the `&mut self` for `on_error` is taken after
@@ -235,7 +235,7 @@ pub trait PosixPipeWriter {
     }
 }
 
-/// Zig: `fn writeToFileType(comptime file_type: FileType) *const fn(...)` — folded into
+/// `writeToFileType` — folded into
 /// `try_write` above. Kept here as a free fn for the blocking-pipe path.
 fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -255,19 +255,19 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 // PosixBufferedWriter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Function table for `PosixBufferedWriter`. In Zig this was `function_table: anytype`;
-/// in many cases the function table can be the same as `Parent`.
+/// Function table for `PosixBufferedWriter`. In many cases the function table
+/// can be the same as `Parent`.
 ///
 /// All methods take `*mut Self` (not `&mut self`) because the writer is an
-/// intrusive *field of* the parent — see PipeWriter.zig `parent: *Parent`.
+/// intrusive *field of* the parent (`parent: *Parent`).
 /// Materializing `&mut Parent` while a `&mut writer` is live would alias under
-/// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
+/// Stacked Borrows. `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixBufferedWriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
-    /// recovers `*mut PosixBufferedWriter<Self>` from this. Zig derived the
-    /// tag from `@TypeOf` (TaggedPointerUnion); Rust threads it explicitly.
+    /// recovers `*mut PosixBufferedWriter<Self>` from this. The tag was
+    /// historically derived from the type at compile time; Rust threads it explicitly.
     const POLL_OWNER_TAG: PollTag;
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -286,7 +286,7 @@ pub trait PosixBufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_writable(_this: *mut Self) {}
-    // TODO(port): Zig calls `parent.eventLoop()` (returns anytype). Phase B: pin concrete type.
+    // TODO(port): `parent.eventLoop()` is duck-typed. Phase B: pin concrete type.
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
@@ -307,7 +307,7 @@ impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> 
     fn default() -> Self {
         Self {
             handle: PollOrFd::Closed,
-            parent: None, // Zig: undefined
+            parent: None, // populated in start()
             is_done: false,
             pollable: false,
             closed_without_reporting: false,
@@ -567,7 +567,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    /// Zig accepts `bun.FD`, `*bun.MovableIfWindowsFd`, or `bun.MovableIfWindowsFd`.
+    /// Accepts `bun.FD`; historically also accepted `*bun.MovableIfWindowsFd` / `bun.MovableIfWindowsFd`.
     // TODO(port): MovableIfWindowsFd overload — Phase B add Into<Fd> bound or separate fn.
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
@@ -607,15 +607,15 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
 /// Function table for `PosixStreamingWriter`.
 /// All methods take `*mut Self` (not `&mut self`) because the writer is an
-/// intrusive *field of* the parent — see PipeWriter.zig `parent: *Parent`.
+/// intrusive *field of* the parent (`parent: *Parent`).
 /// Materializing `&mut Parent` while a `&mut writer` is live would alias under
-/// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
+/// Stacked Borrows. `*Parent` freely aliases; we mirror that with raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixStreamingWriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
-    /// recovers `*mut PosixStreamingWriter<Self>` from this. Zig derived the
-    /// tag from `@TypeOf` (TaggedPointerUnion); Rust threads it explicitly.
+    /// recovers `*mut PosixStreamingWriter<Self>` from this. The tag was
+    /// historically derived from the type at compile time; Rust threads it explicitly.
     const POLL_OWNER_TAG: PollTag;
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -652,7 +652,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
         Self {
             outgoing: StreamBuffer::default(),
             handle: PollOrFd::Closed,
-            parent: core::ptr::null_mut(), // Zig: undefined
+            parent: core::ptr::null_mut(), // populated in start()
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
@@ -925,7 +925,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 Self::register_poll(self);
             }
 
-            // Zig `else => |r| return r` — only Err remains.
+            // Only Err remains in the wildcard arm.
             WriteResult::Err(e) => return WriteResult::Err(e),
         }
 
@@ -1209,7 +1209,7 @@ pub trait BaseWindowsPipeWriter {
                 // an in-flight write (on_fs_write_complete) or will receive an
                 // async uv_fs_close callback (File::on_close_complete). Dropping
                 // the Box here would free that memory before the callback fires.
-                // Zig stores a raw `*File` so `this.source = null` is non-owning;
+                // The original stored a raw `*File` so `this.source = null` was non-owning;
                 // mirror that by leaking via into_raw. on_close_detached path
                 // reclaims via heap::take in File::on_close_complete.
                 let raw = bun_core::heap::into_raw(file);
@@ -1224,9 +1224,9 @@ pub trait BaseWindowsPipeWriter {
                     } else {
                         // Don't own fd: stop any in-flight op and detach parent so
                         // on_fs_write_complete won't touch the (possibly freed)
-                        // writer. We must still reclaim the Box<File> — the Zig
-                        // spec leaks it here (source.zig heap-allocates and never
-                        // destroys on this path); Rust port fixes that leak.
+                        // writer. We must still reclaim the Box<File> — the
+                        // original leaked it here (heap-allocated and never
+                        // destroyed on this path); the Rust port fixes that leak.
                         (*raw).stop();
                         (*raw).fs.data = core::ptr::null_mut();
                         if (*raw).state == crate::source::FileState::Deinitialized {
@@ -1326,7 +1326,7 @@ pub trait BaseWindowsPipeWriter {
         self.start_with_current_pipe()
     }
 
-    /// Zig accepts `bun.FD` or `*bun.MovableIfWindowsFd`.
+    /// Accepts `bun.FD`; historically also accepted `*bun.MovableIfWindowsFd`.
     // TODO(port): MovableIfWindowsFd overload — Phase B add a separate start_movable().
     fn start(&mut self, rawfd: Fd, _pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
@@ -1342,8 +1342,8 @@ pub trait BaseWindowsPipeWriter {
         // Creating a uv_pipe/uv_tty takes ownership of the file descriptor
         // TODO: Change the type of the parameter and update all places to
         //       use MovableFD
-        // TODO(port): Zig branch `if (source is pipe|tty) and FDType == *MovableIfWindowsFd { rawfd.take() }`
-        // dropped — Phase B handles via the MovableFd overload.
+        // TODO(port): the `if (source is pipe|tty) and FDType == *MovableIfWindowsFd { rawfd.take() }`
+        // branch was dropped — Phase B handles it via the MovableFd overload.
         let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
@@ -1354,7 +1354,7 @@ pub trait BaseWindowsPipeWriter {
 
     /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer.
     unsafe fn set_pipe(&mut self, pipe: *mut uv::Pipe) {
-        // Zig overwrites a raw-pointer union (worst case: leak). In Rust the
+        // The original overwrote a raw-pointer union (worst case: leak). In Rust the
         // assignment below would Drop the prior Box WITHOUT uv_close, leaving
         // libuv with a dangling handle → UAF on next loop tick. All other
         // start_* paths assert empty; enforce the same invariant here.
@@ -1367,7 +1367,7 @@ pub trait BaseWindowsPipeWriter {
 
     fn get_stream(&mut self) -> Option<*mut uv::uv_stream_t> {
         let source = self.source_mut().as_mut()?;
-        // Zig spec only excludes .file (latent bug); Rust's Source::to_stream()
+        // The original only excluded .file (latent bug); Rust's Source::to_stream()
         // is `unreachable!()` for SyncFile too, so exclude both to avoid panic.
         if matches!(source, Source::File(_) | Source::SyncFile(_)) {
             return None;
@@ -1390,7 +1390,7 @@ extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
     // libuv passes the same pointer back, so `handle` *is* the tty ptr.
     // The stdin tty (fd 0) lives in static storage; never free it. Mirrors
-    // Zig PipeWriter onTtyClose's `is_stdin_tty()` gate.
+    // `onTtyClose`'s `is_stdin_tty()` gate.
     if !crate::source::stdin_tty::is_stdin_tty(handle) {
         // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc).
         drop(unsafe { bun_core::heap::take(handle) });
@@ -1400,9 +1400,9 @@ extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
 /// Common parent requirements for Windows writers (event loop access + ref counting).
 ///
 /// All methods take `*mut Self` (not `&self`) because the writer is an
-/// intrusive *field of* the parent — see PipeWriter.zig `parent: *Parent`.
+/// intrusive *field of* the parent (`parent: *Parent`).
 /// Materializing `&Parent`/`&mut Parent` while a `&mut writer` is live would
-/// alias under Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that
+/// alias under Stacked Borrows. `*Parent` freely aliases; we mirror that
 /// with raw pointers and never form a Rust reference to `Parent` inside the
 /// writer.
 #[cfg(windows)]
@@ -1464,7 +1464,7 @@ impl<Parent: WindowsBufferedWriterParent> Default for WindowsBufferedWriter<Pare
         Self {
             source: None,
             owns_fd: true,
-            parent: core::ptr::null_mut(), // Zig: undefined
+            parent: core::ptr::null_mut(), // populated in start()
             is_done: false,
             write_req: bun_core::ffi::zeroed(),
             write_buffer: uv::uv_buf_t::init(b""),
@@ -1692,13 +1692,13 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // BORROW_PARAM (raw-ptr break): the match arms mutate `self` while
         // borrowing into `self.source`. The boxed `File`/`Pipe` live in their
         // own heap allocations, so a `*mut` snapshot is provenance-disjoint
-        // from `&mut self` (mirrors the Zig `*Source` pointer the original
+        // from `&mut self` (mirrors the raw `*Source` pointer the original
         // kept across `self.*` writes).
         let (file_raw, stream_raw): (*mut crate::source::File, *mut uv::uv_stream_t) =
             match self.source.as_mut() {
                 None => return,
                 Some(Source::SyncFile(_)) => {
-                    panic!("This code path shouldn't be reached - sync_file in PipeWriter.zig");
+                    panic!("This code path shouldn't be reached - sync_file in PipeWriter");
                 }
                 Some(Source::File(f)) => (f.as_mut() as *mut _, core::ptr::null_mut()),
                 Some(s) => (core::ptr::null_mut(), s.to_stream()),
@@ -1795,8 +1795,8 @@ impl StreamBuffer {
         // TODO(port): std.heap.pageSize() — using 4096; Phase B: query actual page size.
         let page = 4096usize;
         if self.list.capacity() > page {
-            // Zig: expandToCapacity() then shrinkAndFree(page) — i.e. truncate the
-            // buffer's content to `page` bytes AND release the excess capacity.
+            // Truncate the buffer's content to `page` bytes AND release the
+            // excess capacity.
             // Vec::shrink_to never goes below current len, so truncate first.
             self.list.truncate(page);
             self.list.shrink_to(page);
@@ -1843,13 +1843,13 @@ impl StreamBuffer {
     }
 
     pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
-        // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
+        // TODO(port): historically round-tripped through `bun.Vec<u8>`; Rust just writes bytes.
         // PERF(port): was assume_capacity
         self.list.extend_from_slice(bun_core::bytes_of(&data));
     }
 
-    /// Zig: `writeOrFallback(buffer: anytype, comptime writeFn: anytype)` —
-    /// dispatched on fn-pointer identity at comptime. In Rust we use an enum tag.
+    /// `writeOrFallback` —
+    /// originally dispatched on fn-pointer identity at compile time. In Rust we use an enum tag.
     pub fn write_or_fallback<'a>(
         &'a mut self,
         buffer_u8: Option<&'a [u8]>,
@@ -1882,8 +1882,8 @@ impl StreamBuffer {
             }
         }
 
-        // PORT NOTE: Zig round-trips through `Vec::<u8>::moveFromList` to call
-        // `writeLatin1`; the underlying op is `allocateLatin1IntoUTF8WithList`,
+        // PORT NOTE: historically round-tripped through `Vec::<u8>::moveFromList`
+        // to call `writeLatin1`; the underlying op is `allocateLatin1IntoUTF8WithList`,
         // which we call on the `Vec<u8>` directly.
         let len = self.list.len();
         let list = mem::take(&mut self.list);
@@ -1892,8 +1892,7 @@ impl StreamBuffer {
     }
 
     pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
-        // Zig (PipeWriter.zig:1213): `byte_list.writeUTF16(allocator, buffer)` —
-        // `ByteList.writeUTF16` (baby_list.zig:419) sizes the spare capacity via
+        // `ByteList.writeUTF16` sizes the spare capacity via
         // `simdutf.length.utf8.from.utf16.le` *before* the simdutf write. The
         // `ByteVecExt::write_utf16` impl mirrors that contract; calling
         // `convert_utf16_to_utf8_append` directly (its old shortcut) handed
@@ -1967,7 +1966,7 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
         Self {
             source: None,
             owns_fd: true,
-            parent: core::ptr::null_mut(), // Zig: undefined
+            parent: core::ptr::null_mut(), // populated in start()
             is_done: false,
             write_req: bun_core::ffi::zeroed(),
             write_buffer: uv::uv_buf_t::init(b""),
@@ -2077,7 +2076,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// See [`r_on_error`](Self::r_on_error) for the encapsulated type
     /// invariant and laundered-receiver rationale. Reads `self.parent`
     /// **before** dispatch so the (potentially freeing) `Parent::deref`
-    /// runs with no borrow of `*this` live — mirrors the lazy Zig-`defer`
+    /// runs with no borrow of `*this` live — mirrors the lazy deferred
     /// read order at each scopeguard site. Collapses the three
     /// `Parent::deref` blocks into one `unsafe`.
     #[inline(always)]
@@ -2120,7 +2119,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         // Deref the parent at the end to balance the ref taken in
         // process_send before submitting the async write request.
-        // Zig's `defer this.parent.deref()` reads `this.parent` LAZILY at scope
+        // The deferred `this.parent.deref()` reads `this.parent` LAZILY at scope
         // exit; capturing `self.parent` by value here would snapshot the old
         // pointer and over-deref it if a re-entrant callback set_parent()s.
         // Capture the laundered `*mut Self` and read `.parent` at guard
@@ -2238,7 +2237,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         if let Some(err) = result.to_error(sys::Tag::write) {
             // deref to balance process_send ref — read `.parent` LAZILY at
-            // guard execution (Zig defer semantics), not eagerly, in case
+            // guard execution, not eagerly, in case
             // close()/on_error re-enter and swap the parent pointer.
             let _g = scopeguard::guard(this, |s| Self::r_deref(s));
             // close() may re-enter JS — every post-call `r(this)` reborrow
@@ -2394,7 +2393,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     fn write_internal_u8(&mut self, buffer: &[u8], kind: WriteKind) -> WriteResult {
-        // TODO(port): Zig used `comptime writeFn: anytype` (fn-ptr identity);
+        // TODO(port): historically dispatched on fn-pointer identity at compile time;
         // Rust splits into u8/u16 paths via WriteKind enum.
         if self.is_done {
             return WriteResult::Done(0);
@@ -2575,8 +2574,8 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // Parent-vtable shim macros
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Zig's `StreamingWriter(Parent, .{ .onWrite = T.onWrite, ... })` takes a
-// comptime function table; the Rust port replaced it with monomorphic
+// `StreamingWriter(Parent, .{ .onWrite = T.onWrite, ... })` historically took a
+// compile-time function table; the Rust port replaced it with monomorphic
 // `*WriterParent` traits whose every method is `unsafe fn(this: *mut Self, ..)`
 // that derefs the BACKREF and forwards to an inherent method. Every concrete
 // parent (FileSink, Terminal, WindowsNamedPipe, shell IOWriter,
@@ -2712,7 +2711,7 @@ macro_rules! impl_streaming_writer_parent {
 
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsStreamingWriterParent for $Ty {
-            // Zig `.onWritable` slot — same body as POSIX `on_ready`.
+            // `.onWritable` slot — same body as POSIX `on_ready`.
             const HAS_ON_WRITABLE: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
@@ -2895,5 +2894,3 @@ macro_rules! impl_buffered_writer_parent {
         $crate::impl_buffered_writer_parent! { @emit [] $Ty; $($rest)* }
     };
 }
-
-// ported from: src/io/PipeWriter.zig

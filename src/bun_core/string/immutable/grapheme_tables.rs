@@ -1,6 +1,5 @@
 //! This file is auto-generated. Do not edit manually.
-//! Source: src/string/immutable/grapheme_tables.zig
-//! Regenerate via `zig build generate-grapheme-tables` (Zig) and re-convert.
+//! Generated grapheme-break property tables (Unicode UAX #29, two-stage lookup).
 
 use super::grapheme::{GraphemeBreakNoControl, Tables};
 

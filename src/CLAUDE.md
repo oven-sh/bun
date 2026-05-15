@@ -12,9 +12,9 @@ bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
 
-You will see `.zig` siblings next to many `.rs` files — those are the original
-implementation kept as a porting reference for _behavior_; they are not
-compiled and are not where new code goes.
+This tree was originally written in Zig and ported to Rust. The `.zig` sources
+have been removed; if you need them as a porting reference, look them up in
+git history.
 
 Conventions:
 
@@ -89,7 +89,7 @@ let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
 let s = String::static_(b"literal");       // 'static slice, never freed
 
-let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
+let utf8: UTF8Slice = s.to_utf8();         // ref-holding view; falls back to allocating a copy
 let owned: Vec<u8>       = s.to_utf8_bytes();
 ```
 

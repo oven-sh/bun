@@ -1,4 +1,4 @@
-//! Port of src/shell/builtin/rm.zig
+//! Shell `rm` builtin.
 
 use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -29,7 +29,6 @@ pub enum RmState {
         idx: u32,
         wait_write_err: bool,
     },
-    /// Spec rm.zig `.exec`.
     Exec(ExecState),
     Done {
         exit_code: ExitCode,
@@ -110,7 +109,6 @@ impl Rm {
         Self::next(interp, cmd)
     }
 
-    /// Spec: rm.zig `next`.
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
@@ -373,7 +371,6 @@ impl Rm {
         Builtin::done(interp, cmd, 1)
     }
 
-    /// Spec: rm.zig `writeFailingError`.
     fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
@@ -391,7 +388,6 @@ impl Rm {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    /// Spec: rm.zig `onIOWriterChunk`.
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -426,7 +422,7 @@ impl Rm {
         }
     }
 
-    /// Spec: rm.zig `onShellRmTaskDone`.
+    /// Worker→main completion callback for a finished `ShellRmTask`.
     pub fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
         // In verbose mode the root DirTask may also be queued for write_verbose;
         // both callbacks hold a pending count and the last one to run frees the
@@ -491,7 +487,7 @@ impl Rm {
         }
     }
 
-    /// Spec: rm.zig `writeVerbose`. Flushes a `DirTask`'s buffered list of
+    /// Flushes a `DirTask`'s buffered list of
     /// deleted paths to stdout, then frees the DirTask (non-root) and releases
     /// the pending-main-callback count taken in `DirTask::post_run`.
     fn write_verbose(interp: &Interpreter, cmd: NodeId, verbose: *mut DirTask) -> Yield {
@@ -546,7 +542,6 @@ impl Rm {
         Yield::done()
     }
 
-    /// Spec: rm.zig `parseFlag`.
     fn parse_flag(opts: &mut Opts, flag: &[u8]) -> RmParseFlag {
         if flag.is_empty() || flag[0] != b'-' {
             return RmParseFlag::Done;
@@ -650,18 +645,20 @@ pub enum EntryKindHint {
     File,
 }
 
-/// Spec: rm.zig `ShellRmTask`. One per filepath argument; owns the root
+/// One per filepath argument; owns the root
 /// [`DirTask`] and tracks the cross-thread error state.
 pub struct ShellRmTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub cwd: bun_sys::Fd,
-    // PORT NOTE: rm.zig also keeps a Windows-only `cwd_path` populated from
-    // `Syscall.getFdPath(cwd)` on the root task, but it is never read (set and
-    // freed only). The Rust port drops it: keeping it required a Windows
-    // `get_fd_path` call whose only observable effect was the error path.
-    /// PORT NOTE: in Zig the root DirTask is an inline field. Here it lives in
-    /// its own `heap::alloc`'d allocation so that `&ShellRmTask` (held as
+    // PORT NOTE: an earlier implementation kept a Windows-only `cwd_path`
+    // populated from `Syscall.getFdPath(cwd)` on the root task, but it was
+    // never read (set and freed only). Dropped here: keeping it required a
+    // Windows `get_fd_path` call whose only observable effect was the error
+    // path.
+    /// PORT NOTE: the root DirTask was originally an inline field. Here it
+    /// lives in its own `heap::alloc`'d allocation so that `&ShellRmTask`
+    /// (held as
     /// the `&self` receiver throughout `remove_entry*`) never overlaps the
     /// `&mut DirTask` borrows those methods take on the root — embedding it
     /// would make every `verbose_deleted` call on the root UB under Stacked
@@ -673,7 +670,7 @@ pub struct ShellRmTask {
     /// outlives every in-flight `ShellRmTask`.
     pub error_signal: bun_ptr::BackRef<AtomicBool>,
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
-    /// bump it from worker threads (Zig: `this.rm.state.exec.incrementOutputCount`).
+    /// bump it from worker threads (`this.rm.state.exec.incrementOutputCount`).
     output_count: bun_ptr::BackRef<AtomicUsize>,
     /// Main-thread callbacks that must complete before this task can be freed:
     /// always one for `on_shell_rm_task_done` (via `finish_concurrently`), plus
@@ -688,7 +685,7 @@ pub struct ShellRmTask {
     pub task: ShellTask,
 }
 
-/// Spec: rm.zig `ShellRmTask.DirTask`. One per directory in the recursive
+/// One per directory in the recursive
 /// walk; root and children alike are heap-allocated (see PORT NOTE on
 /// [`ShellRmTask::root_task`]).
 pub struct DirTask {
@@ -768,7 +765,7 @@ impl ShellRmTask {
         raw
     }
 
-    /// Spec: rm.zig `schedule` — `WorkPool.schedule(&this.task)`. Unlike most
+    /// `WorkPool.schedule(&this.task)`. Unlike most
     /// shell builtins this does NOT use the generic [`ShellTask::schedule`]
     /// trampoline (which auto-enqueues back to main on return): the recursive
     /// DirTask tree owns the bounce-back via [`finish_concurrently`].
@@ -788,7 +785,7 @@ impl ShellRmTask {
         }
     }
 
-    /// Spec: rm.zig `workPoolCallback` — recover `*ShellRmTask` from the
+    /// Recover `*ShellRmTask` from the
     /// intrusive `*WorkPoolTask` and run the root DirTask.
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
@@ -804,7 +801,7 @@ impl ShellRmTask {
         }
     }
 
-    /// Spec: rm.zig `finishConcurrently` — post this task to the main-thread
+    /// Post this task to the main-thread
     /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
     ///
     /// # Safety
@@ -821,8 +818,6 @@ impl ShellRmTask {
         Rm::on_shell_rm_task_done(interp, cmd, this);
     }
 
-    /// Spec: rm.zig `decrPendingAndMaybeDeinit`.
-    ///
     /// # Safety
     /// `this` is a live `heap::alloc`'d task; main thread.
     pub unsafe fn decr_pending_and_maybe_deinit(this: *mut ShellRmTask) {
@@ -845,7 +840,7 @@ impl ShellRmTask {
         self.error_signal.get()
     }
 
-    /// Spec: rm.zig `enqueue` — joins `path` onto `parent_dir.path` and spawns
+    /// Joins `path` onto `parent_dir.path` and spawns
     /// a child DirTask.
     fn enqueue(
         &self,
@@ -863,7 +858,7 @@ impl ShellRmTask {
         self.enqueue_no_join(parent_dir, new_path, kind_hint);
     }
 
-    /// Spec: rm.zig `enqueueNoJoin`. Takes ownership of `path`.
+    /// Takes ownership of `path`.
     fn enqueue_no_join(&self, parent: *mut DirTask, path: ZBox, kind_hint: EntryKindHint) {
         if self.error_signal().load(Ordering::SeqCst) {
             return;
@@ -897,8 +892,6 @@ impl ShellRmTask {
         }
     }
 
-    /// Spec: rm.zig `verboseDeleted`.
-    ///
     /// Takes `dir_task` as a raw pointer (not `&mut DirTask`) so callers in
     /// `remove_entry*` — which already hold `&self: &ShellRmTask` and a
     /// `&ZStr` borrowed from `dir_task.path` — never materialise an aliasing
@@ -928,7 +921,7 @@ impl ShellRmTask {
         Ok(())
     }
 
-    /// Spec: rm.zig `bufJoin` — join into `buf` honoring [`join_style`].
+    /// Join into `buf` honoring [`join_style`].
     fn buf_join<'a>(&self, buf: &'a mut bun_paths::PathBuffer, parts: &[&[u8]]) -> &'a ZStr {
         if self.join_style == JoinStyle::Posix {
             resolve_path::join_z_buf::<platform::Posix>(buf.as_mut_slice(), parts)
@@ -937,7 +930,7 @@ impl ShellRmTask {
         }
     }
 
-    /// Spec: rm.zig `join` — owned ZBox.
+    /// Owned ZBox join.
     fn join(&self, parts: &[&[u8]], is_absolute: bool) -> ZBox {
         if !is_absolute {
             // If relative paths enabled, stdlib join is preferred over
@@ -971,14 +964,11 @@ impl ShellRmTask {
         ZBox::from_bytes(resolve_path::join::<platform::Auto>(parts))
     }
 
-    /// Spec: rm.zig `errorWithPath`.
     #[inline]
     fn error_with_path(&self, e: bun_sys::Error, path: &[u8]) -> bun_sys::Error {
         e.with_path(path)
     }
 
-    /// Spec: rm.zig `removeEntry`.
-    ///
     /// Returns `Ok(true)` when [`remove_entry_dir`] published
     /// `need_to_wait = true` on `dir_task`. Once that store is visible, a
     /// child finishing on another thread may run
@@ -987,9 +977,9 @@ impl ShellRmTask {
     /// [`ShellRmTask`]). Callers must therefore treat `dir_task` as
     /// potentially-freed when this returns `Ok(true)`. The bool is threaded
     /// out locally instead of re-reading the atomic so the caller never
-    /// dereferences `dir_task` to find out — the Zig spec re-reads
-    /// `deleting_after_waiting_for_children` after this returns, which is the
-    /// same race; the Rust port closes it.
+    /// dereferences `dir_task` to find out — re-reading
+    /// `deleting_after_waiting_for_children` after this returns would be the
+    /// same race; threading the bool out closes it.
     fn remove_entry(&self, dir_task: *mut DirTask, is_absolute: bool) -> bun_sys::Maybe<bool> {
         let mut waiting = false;
         let mut buf = bun_paths::PathBuffer::uninit();
@@ -1012,8 +1002,6 @@ impl ShellRmTask {
         Ok(waiting)
     }
 
-    /// Spec: rm.zig `removeEntryDir`.
-    ///
     /// `need_to_wait_out` is set to `true` immediately before the
     /// `need_to_wait` atomic store that hands `dir_task` off to its children;
     /// see [`remove_entry`] for why the caller needs this on its own stack
@@ -1129,9 +1117,10 @@ impl ShellRmTask {
                 }
                 _ => {
                     let name = current.name.slice_u8();
-                    // PORT NOTE: reshaped for borrowck — Zig passed both the
+                    // PORT NOTE: reshaped for borrowck — passing both the
                     // joined slice (borrowing `buf`) and `buf` itself to
-                    // `removeEntryFile`. Copy the join into an owned ZBox so
+                    // `removeEntryFile` would alias. Copy the join into an
+                    // owned ZBox so
                     // `buf` is free to be re-borrowed by the vtable callback.
                     let file_path = {
                         let joined = self.buf_join(buf, &[path.as_bytes(), name]);
@@ -1194,7 +1183,7 @@ impl ShellRmTask {
         }
     }
 
-    /// Spec: rm.zig `removeEntryDirAfterChildren`. Returns `Ok(true)` if the
+    /// Returns `Ok(true)` if the
     /// directory was deleted (or force-ignored), `Ok(false)` if a subtask was
     /// enqueued and the caller should not run `post_run` yet.
     fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> bun_sys::Maybe<bool> {
@@ -1243,7 +1232,6 @@ impl ShellRmTask {
         }
     }
 
-    /// Spec: rm.zig `removeEntryFile`.
     fn remove_entry_file<V: RemoveFileHandler>(
         &self,
         parent_dir_task: *mut DirTask,
@@ -1349,8 +1337,6 @@ impl DirTask {
         };
     }
 
-    /// Spec: rm.zig `DirTask.runFromThreadPoolImpl`.
-    ///
     /// # Safety
     /// `this` is a live DirTask (root or heap child); the calling worker
     /// thread has exclusive access to its non-atomic fields.
@@ -1366,9 +1352,9 @@ impl DirTask {
         // / `parent_task` / `path` / `is_absolute`). `tm_ptr` is live until
         // `pending_main_callbacks` hits 0.
         //
-        // PORT NOTE: rm.zig:560-577 also resolves `cwd_path` here on Windows
-        // via `Syscall.getFdPath`. That field is dead state (never read), so
-        // the Rust port drops the block entirely rather than calling a
+        // PORT NOTE: an earlier implementation also resolved `cwd_path` here
+        // on Windows via `Syscall.getFdPath`. That field is dead state
+        // (never read), so the block is dropped entirely rather than calling a
         // Windows path resolver whose only effect would be to fail the task
         // on error.
         let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
@@ -1394,9 +1380,9 @@ impl DirTask {
             }
         };
 
-        // PORT NOTE: rm.zig re-reads `this.deleting_after_waiting_for_children`
-        // here to decide whether to skip `postRun`. That load (and `postRun`'s
-        // own `need_to_wait` load) is a use-after-free race: once
+        // PORT NOTE: re-reading `this.deleting_after_waiting_for_children`
+        // here to decide whether to skip `postRun` (and `postRun`'s own
+        // `need_to_wait` load) would be a use-after-free race: once
         // `remove_entry_dir` publishes `need_to_wait = true`, the last child
         // may run `delete_after_waiting_for_children(this)` → `post_run` →
         // `deinit` (or, for the root, the main thread may drop the whole
@@ -1414,8 +1400,6 @@ impl DirTask {
         }
     }
 
-    /// Spec: rm.zig `DirTask.postRun`.
-    ///
     /// # Safety
     /// `this` is a live DirTask; called from a worker thread that just
     /// finished its body.
@@ -1452,7 +1436,7 @@ impl DirTask {
                     // finished, while the parent was still in `remove_entry_dir`.
                     let p = &*me.parent_task;
                     let tasks_left = p.subtask_count.fetch_sub(1, Ordering::SeqCst);
-                    // PORT NOTE: rm.zig uses `.monotonic` here, but that is a
+                    // PORT NOTE: `.monotonic` ordering would be a
                     // formal data race on the parent's non-atomic
                     // `deleted_entries`: the parent thread may have appended
                     // verbose paths for plain-file children *after* scheduling
@@ -1490,8 +1474,6 @@ impl DirTask {
         // Otherwise need to wait.
     }
 
-    /// Spec: rm.zig `DirTask.deleteAfterWaitingForChildren`.
-    ///
     /// # Safety
     /// `this` is a live DirTask; called from a worker thread.
     unsafe fn delete_after_waiting_for_children(this: *mut DirTask) {
@@ -1526,7 +1508,7 @@ impl DirTask {
         }
     }
 
-    /// Spec: rm.zig `DirTask.queueForWrite` — post this DirTask to the main
+    /// Post this DirTask to the main
     /// thread for [`Rm::write_verbose`].
     ///
     /// # Safety
@@ -1569,7 +1551,7 @@ impl DirTask {
         event_loop.enqueue_task_concurrent(task_ptr);
     }
 
-    /// Spec: rm.zig `DirTask.runFromMainThread` — flush verbose output.
+    /// Flush verbose output.
     ///
     /// Reached only via `runtime::dispatch::run_task` for
     /// `task_tag::ShellRmDirTask` (or the mini-loop trampoline below), which
@@ -1585,8 +1567,6 @@ impl DirTask {
         Rm::write_verbose(interp, cmd, this).run(interp);
     }
 
-    /// Spec: rm.zig `DirTask.deinit`.
-    ///
     /// # Safety
     /// `this` is a live heap-allocated (non-root) DirTask; reclaimed once.
     unsafe fn deinit(this: *mut DirTask) {
@@ -1604,7 +1584,7 @@ fn dir_task_run_from_main_thread_mini(this: *mut DirTask, _: *mut ()) {
     DirTask::run_from_main_thread(this);
 }
 
-// ── RemoveFileHandler — Zig `vtable: anytype` lowered to a trait ───────────
+// ── RemoveFileHandler — duck-typed vtable lowered to a trait ───────────────
 
 trait RemoveFileHandler {
     fn on_is_dir(
@@ -1753,7 +1733,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(_this: &mut Self) {
         // Not reached: `ShellRmTask::schedule` installs `work_pool_callback`
-        // directly (rm.zig does NOT use `InnerShellTask` — the generic
+        // directly (rm does NOT use `InnerShellTask` — the generic
         // trampoline auto-posts back, which would race the recursive DirTask
         // tree's own `finish_concurrently`).
         debug_assert!(
@@ -1765,5 +1745,3 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
         Self::run_from_main_thread(this, interp)
     }
 }
-
-// ported from: src/shell/builtin/rm.zig

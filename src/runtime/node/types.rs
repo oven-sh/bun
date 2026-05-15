@@ -2,10 +2,10 @@ use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::unsafe_string_view::Slice as UTF8Slice;
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{WStr, ZStr, ZigString};
-use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
+use bun_core::{UnsafeStringView, WStr, ZStr};
+use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, UnsafeStringViewJsc as _};
 use bun_paths::{
     self as path_handler, MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer,
 };
@@ -24,7 +24,7 @@ pub use jsc::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
 // canonical `bun_sys_jsc::FdJsc` extension trait (full range/type validation
-// per Zig `bun.FD.fromJSValidated`). Re-exported so existing
+// per `bun.FD.fromJSValidated`). Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
 pub use bun_sys_jsc::FdJsc;
 
@@ -130,7 +130,7 @@ impl BlobOrStringOrBuffer {
                     let blob_data = blob.shared_view();
                     let owned_data: Vec<u8> = blob_data.to_vec();
                     return Ok(Some(Self::StringOrBuffer(StringOrBuffer::EncodedSlice(
-                        ZigStringSlice::init_owned(owned_data),
+                        UTF8Slice::init_owned(owned_data),
                     ))));
                 }
 
@@ -244,7 +244,7 @@ impl BlobOrStringOrBuffer {
 pub enum StringOrBuffer {
     String(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(ZigStringSlice),
+    EncodedSlice(UTF8Slice),
     Buffer(Buffer),
 }
 
@@ -255,7 +255,7 @@ impl Default for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    pub const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
+    pub const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(UTF8Slice::EMPTY);
 
     pub fn slice(&self) -> &[u8] {
         match self {
@@ -272,13 +272,13 @@ impl Drop for StringOrBuffer {
         match self {
             Self::ThreadsafeString(str) | Self::String(str) => {
                 // `SliceWithUnderlyingString` has no `Drop` of its own; release
-                // the WTF refcount in place. `str.utf8: ZigStringSlice` is then
+                // the WTF refcount in place. `str.utf8: UTF8Slice` is then
                 // dropped by the enum's field drop glue — no need to
                 // `mem::take()` and write a ~56B default back.
                 str.underlying.deref();
             }
             Self::EncodedSlice(_encoded) => {
-                // ZigStringSlice has Drop; cleanup is implicit.
+                // UTF8Slice has Drop; cleanup is implicit.
             }
             Self::Buffer(_) => {}
         }
@@ -286,7 +286,7 @@ impl Drop for StringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
-    /// Zig `BlobOrStringOrBuffer.deinitAndUnprotect`, JS-side half — owned
+    /// `BlobOrStringOrBuffer.deinitAndUnprotect`, JS-side half — owned
     /// payloads are released by `Drop` (which runs next when held in a
     /// [`bun_jsc::ThreadSafe`]).
     #[inline]
@@ -298,7 +298,7 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for StringOrBuffer {
-    /// Zig `StringOrBuffer.deinitAndUnprotect`, JS-side half — undo the
+    /// `StringOrBuffer.deinitAndUnprotect`, JS-side half — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
     /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
     /// `Drop`.
@@ -315,7 +315,7 @@ impl StringOrBuffer {
         match self {
             Self::String(s) => {
                 s.to_thread_safe();
-                // PORT NOTE: reshaped for borrowck — Zig moves the payload between variants.
+                // PORT NOTE: reshaped for borrowck — moves the payload between variants.
                 let str = core::mem::take(s);
                 *self = Self::ThreadsafeString(str);
             }
@@ -359,8 +359,7 @@ impl StringOrBuffer {
             Self::ThreadsafeString(str) | Self::String(str) => str.transfer_to_js(ctx),
             Self::EncodedSlice(encoded_slice) => {
                 let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
-                // Zig: `defer { this.encoded_slice.deinit(); this.encoded_slice = .{}; }`
-                *encoded_slice = ZigStringSlice::default();
+                *encoded_slice = UTF8Slice::default();
                 result
             }
             Self::Buffer(buffer) => {
@@ -372,7 +371,7 @@ impl StringOrBuffer {
         }
     }
 
-    /// Zig `StringOrBuffer.protect` — mirrors `to_thread_safe` but only
+    /// `StringOrBuffer.protect` — mirrors `to_thread_safe` but only
     /// protects the JS-side buffer value (no string conversion).
     #[inline]
     pub fn protect(&self) {
@@ -392,7 +391,7 @@ impl StringOrBuffer {
     }
 
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
-    /// directly into `*out` (Zig result-location semantics) and returns
+    /// directly into `*out` (result-location semantics) and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     ///
@@ -557,7 +556,7 @@ impl StringOrBuffer {
             let encoded = str.get().encode(encoding);
             global.vm().report_extra_memory(encoded.len());
 
-            *out = Self::EncodedSlice(ZigStringSlice::init_owned(encoded));
+            *out = Self::EncodedSlice(UTF8Slice::init_owned(encoded));
             return Ok(true);
         }
 
@@ -648,7 +647,7 @@ pub enum Encoding {
     Buffer,
 }
 
-// PORT NOTE: Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
+// PORT NOTE: a static string map (`fromJSCaseInsensitive` /
 // `inMapCaseInsensitive`). Phase A originally lowered this to a `phf::Map`,
 // but with only 13 short keys spread across 7 distinct lengths (max 4 keys at
 // len==6) a length-gated byte match beats phf's hash+probe — see
@@ -804,12 +803,12 @@ impl Encoding {
             .throw()
     }
 
-    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. In Zig the two
-    /// `encodeWith*` fns differed only in their comptime stack-buffer size
+    /// `encodeWithSize(size, *const [size]u8)`. The two
+    /// `encodeWith*` fns historically differed only in their stack-buffer size
     /// (`[size*4]u8` vs `[max_size*4]u8`); in Rust both heap-allocate, so the
     /// match-arm bodies were byte-identical for Base64url/Hex/Buffer/else and
     /// `size` was unused past the assert. Collapsed into a thin assertion
-    /// wrapper. Kept for Zig-port symmetry; currently has no Rust callers
+    /// wrapper. Kept for source symmetry; currently has no Rust callers
     /// (CryptoHasher.rs ported all sites to `encode_with_max_size`).
     #[inline]
     pub fn encode_with_size(
@@ -822,7 +821,7 @@ impl Encoding {
         self.encode_with_max_size(global_object, size, input)
     }
 
-    /// Zig `encodeWithMaxSize(comptime max_size, []const u8)`. `max_size` is a
+    /// `encodeWithMaxSize(max_size, []const u8)`. `max_size` is a
     /// runtime arg (see `encode_with_size`); callers pass `EVP_MAX_MD_SIZE` etc.
     pub fn encode_with_max_size(
         self,
@@ -836,7 +835,7 @@ impl Encoding {
             input.len(),
             max_size,
         );
-        // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
+        // PERF(port): originally const-sized stack buffers; stable Rust forbids
         // const-generic arithmetic in array lengths, so we heap-allocate.
         match self {
             Self::Base64 => {
@@ -850,10 +849,10 @@ impl Encoding {
             }
             Self::Base64url => {
                 let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
+                Ok(jsc::unsafe_string_view::UnsafeStringView::init(&buf).to_js(global_object))
             }
             Self::Hex => {
-                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
+                // PORT NOTE: a previous version used `bufPrint("{x}", input)` into a stack buffer.
                 // The byte-by-byte `write!` formatting machinery is pathologically
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
@@ -912,11 +911,11 @@ pub enum PathOrBuffer {
 impl PathOrBuffer {
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        // PORT NOTE: Zig only ever returns `self.path.slice()` here regardless of variant —
-        // preserved verbatim (likely a latent bug or this type is unused).
+        // PORT NOTE: the original only ever returns `self.path.slice()` here regardless
+        // of variant — preserved verbatim (likely a latent bug or this type is unused).
         match self {
             Self::Path(p) => p.slice(),
-            Self::Buffer(_) => unreachable!("Zig accessed .path unconditionally"),
+            Self::Buffer(_) => unreachable!("original accessed .path unconditionally"),
         }
     }
 }
@@ -929,7 +928,7 @@ pub struct CallbackTask<Result> {
     pub success: bool,
 }
 
-// PORT NOTE: Zig uses an untagged `union` discriminated by `success: bool`.
+// PORT NOTE: originally an untagged `union` discriminated by `success: bool`.
 // Represented here as a Rust enum; callers must keep `success` in sync or
 // drop the `success` field entirely in Phase B.
 pub enum CallbackTaskOption<Result> {
@@ -942,7 +941,7 @@ where
     CallbackTaskOption<Result>: Default,
 {
     fn default() -> Self {
-        // Zig only sets `success = false` and leaves the rest `undefined`;
+        // The original only sets `success = false` and leaves the rest uninitialized;
         // Rust requires every field initialized, so zero the callback handle
         // and lean on the `CallbackTaskOption<Result>: Default` bound.
         Self {
@@ -1035,7 +1034,7 @@ pub trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike {
-    // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
+    // TODO(port): the spec varies return-type mutability on `force`.
     // Rust const-generics can't change return mutability; we always return `&ZStr`.
     // The single force=true caller (if any) needs `&mut ZStr` — handle in Phase B.
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
@@ -1149,8 +1148,8 @@ impl PathLikeExt for PathLike {
                 && bun_paths::is_sep_any(s[3])
             {
                 // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
-                // alignment is runtime-asserted inside `bytes_as_slice_mut`
-                // (port of Zig `@alignCast`); see PathBuffer doc comment for
+                // alignment is runtime-asserted inside `bytes_as_slice_mut`;
+                // see PathBuffer doc comment for
                 // why the buffer is always sufficiently aligned in practice.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, s);
@@ -1335,13 +1334,13 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
-        match zig_str.slice().len() {
+    pub fn path_slice(unsafe_str_view: &UTF8Slice, ctx: &JSGlobalObject) -> JsResult<()> {
+        match unsafe_str_view.slice().len() {
             0..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .with_path(zig_str.slice())
+                        .with_path(unsafe_str_view.slice())
                         .to_system_error();
                 system_error.syscall = bun_core::String::DEAD;
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
@@ -1362,8 +1361,8 @@ impl Valid {
         }
     }
 
-    pub fn path_string(zig_str: &ZigString, ctx: &JSGlobalObject) -> JsResult<()> {
-        Self::path_string_length(zig_str.len, ctx)
+    pub fn path_string(unsafe_str_view: &UnsafeStringView, ctx: &JSGlobalObject) -> JsResult<()> {
+        Self::path_string_length(unsafe_str_view.len, ctx)
     }
 
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
@@ -1473,9 +1472,9 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         // the example), specifies permissions for the group. The right-most
         // digit (5 in the example), specifies the permissions for others.
 
-        let mut zig_str = ZigString::EMPTY;
-        value.to_zig_string(&mut zig_str, ctx)?;
-        let mut slice = zig_str.slice();
+        let mut unsafe_str_view = UnsafeStringView::EMPTY;
+        value.to_unsafe_string_view(&mut unsafe_str_view, ctx)?;
+        let mut slice = unsafe_str_view.slice();
         if slice.starts_with(b"0o") {
             slice = &slice[2..];
         }
@@ -1511,11 +1510,11 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
-// PORT NOTE: Zig copies these tagged unions by value freely; the Rust port adds
-// `Drop` for the path-owning variants, so an explicit `dupe()` is provided for
-// callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
-// bumped where the underlying type supports it; otherwise we bitwise-copy
-// (matching Zig semantics) and leave proper ref-counting to a later pass.
+// PORT NOTE: these tagged unions were originally copied by value freely; the
+// Rust port adds `Drop` for the path-owning variants, so an explicit `dupe()`
+// is provided for callers (Blob, Store::File) that need a fresh copy.
+// Ref-counting variants are bumped where the underlying type supports it;
+// otherwise we bitwise-copy and leave proper ref-counting to a later pass.
 
 impl PathOrFdExt for PathOrFileDescriptor {
     fn from_js(
@@ -1544,7 +1543,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Non-exhaustive enum in Zig (`enum(c_int) { ... _ }`) → newtype over c_int.
+/// Non-exhaustive open enum → newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FileSystemFlags(pub c_int);
@@ -1559,7 +1558,7 @@ impl FileSystemFlags {
     // PORT NOTE: `pub type TagType = c_int;` would be an inherent associated
     // type (unstable). Dropped — callers use `c_int` directly.
 
-    // Named variants from the Zig enum:
+    // Named variants:
     /// Open file for appending. The file is created if it does not exist.
     pub const A: Self = Self(O::APPEND | O::WRONLY | O::CREAT);
     /// Open file for reading. An exception occurs if the file does not exist.
@@ -1606,7 +1605,7 @@ impl FileSystemFlags {
 
         let js_type = val.js_type();
         if js_type.is_string_like() {
-            let str = val.get_zig_string(ctx)?;
+            let str = val.get_unsafe_string_view(ctx)?;
             if str.len == 0 {
                 return Err(ctx.throw_invalid_arguments(format_args!(
                     "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
@@ -1628,7 +1627,7 @@ impl FileSystemFlags {
                         // node allows "0o644" as a string :(
                         let slice = str.to_slice();
                         // slice.deinit() on Drop
-                        // Zig: `@as(i32, @intCast(...))` — release builds wrap.
+                        // Release builds wrap.
                         break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
                             .ok()
                             .map(|v| v as i32);
@@ -1640,8 +1639,7 @@ impl FileSystemFlags {
                     }
                 }
 
-                // PORT NOTE: Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice and
+                // PORT NOTE: convert the UnsafeStringView (≤12 bytes here) to a UTF-8 slice and
                 // dispatch through the length-gated match below.
                 let key_slice = str.to_slice();
                 break 'brk lookup_file_system_flags(key_slice.slice());
@@ -1661,7 +1659,7 @@ impl FileSystemFlags {
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    // PORT NOTE: Zig took `comptime kind: enum { access, copy_file }`; lowered to a
+    // PORT NOTE: `kind` is lowered to a
     // runtime arg here so callers (`node_fs.rs`) can pass it positionally without
     // needing `adt_const_params` const-generic dispatch.
     pub fn from_js_number_only(
@@ -1692,7 +1690,7 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
+                        // MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1704,7 +1702,7 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
+                        // MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1714,8 +1712,8 @@ impl FileSystemFlags {
     }
 }
 
-// PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-// Phase A lowered this to a 44-entry `phf::Map`, but the keys are tiny (1..=3
+// PERF(port): Phase A lowered the original static string map to a 44-entry
+// `phf::Map`, but the keys are tiny (1..=3
 // bytes) and cluster heavily by length (6/22/16). phf's hash+probe is dominated
 // by the SipHash of the input slice; a length-gated byte match rejects on a
 // single `usize` compare and lowers the inner arms to 1-2 register compares.
@@ -1804,7 +1802,7 @@ pub struct Dirent {
     pub kind: DirentKind,
 }
 
-// TODO(port): Zig used `std.fs.File.Kind`. std::fs is banned; map to bun_sys::FileKind.
+// TODO(port): std::fs is banned; map to bun_sys::FileKind.
 pub type DirentKind = bun_sys::FileKind;
 
 // TODO(port): move to runtime_sys
@@ -1899,7 +1897,7 @@ impl PathOrBlob {
             ));
         };
         if let Some(blob) = arg.as_class_ref::<Blob>() {
-            // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
+            // The original was a raw bitwise copy with no ref bumps that callers
             // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
             // clones only the `StoreRef` (whose `Drop` balances the +1) and
             // aliases `name`/`content_type`; `dupe()` would leak both since
@@ -1915,5 +1913,3 @@ impl PathOrBlob {
         ))
     }
 }
-
-// ported from: src/runtime/node/types.zig

@@ -3,7 +3,7 @@ use crate::base::Ref;
 use crate::binding::Binding;
 use crate::expr::Expr;
 use crate::{ExprNodeIndex, flags};
-// Re-exported so callers can spell `js_ast::b::ArrayBinding` (Zig: `B.Array.Item`).
+// Re-exported so callers can spell `js_ast::b::ArrayBinding`.
 pub use crate::ArrayBinding;
 
 /// B is for Binding! Bindings are on the left side of variable
@@ -23,8 +23,8 @@ pub use crate::ArrayBinding;
 ///     let { foo: [ bar ] } = ...
 ///         ----------------
 ///         B.Object
-// Zig: `union(Binding.Tag)` — tag enum lives on `Binding::Tag`.
-// PORT NOTE: arena ptrs are raw `*mut` in Phase A (LIFETIMES.tsv: ARENA → raw);
+// Tagged union; the tag enum lives on `Binding::Tag`.
+// NOTE: arena ptrs are raw `*mut` in Phase A (LIFETIMES.tsv: ARENA → raw);
 // 'bump threaded crate-wide (`&'bump mut T`).
 #[derive(Copy, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = super::binding::Tag)]
@@ -70,24 +70,22 @@ pub struct Property {
     pub value: Binding,
     pub default_value: Option<Expr>,
 }
-// TODO(port): partial defaults — Zig only defaults `flags`/`default_value`; `key`/`value` have none, so no `impl Default`.
+// NOTE: only `flags`/`default_value` have natural defaults; `key`/`value` have none, so no `impl Default`.
 
 pub struct Object {
     pub properties: crate::StoreSlice<Property>,
     pub is_single_line: bool,
 }
-// Zig: `pub const Property = B.Property;` — inherent associated type alias.
-// TODO(port): inherent associated types are unstable; callers use `B::Property` directly.
-// TODO(port): partial defaults — Zig only defaults `is_single_line`; `properties` has none, so no `impl Default`.
+// NOTE: inherent associated types are unstable; callers use `B::Property` directly.
+// Only `is_single_line` has a natural default; `properties` has none, so no `impl Default`.
 
 pub struct Array {
     pub items: crate::StoreSlice<ArrayBinding>,
     pub has_spread: bool,
     pub is_single_line: bool,
 }
-// Zig: `pub const Item = ArrayBinding;` — inherent associated type alias.
-// TODO(port): inherent associated types are unstable; callers use `ArrayBinding` directly.
-// TODO(port): partial defaults — Zig only defaults `has_spread`/`is_single_line`; `items` has none, so no `impl Default`.
+// NOTE: inherent associated types are unstable; callers use `ArrayBinding` directly.
+// Only `has_spread`/`is_single_line` have natural defaults; `items` has none, so no `impl Default`.
 
 #[derive(Default, Copy, Clone)]
 pub struct Missing {}
@@ -123,18 +121,16 @@ impl B {
     where
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
-        // PORT NOTE: `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
+        // NOTE: `symbol_table` is forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
-        // Local mirror of `bun.writeAnyToHasher`. Zig fed anonymous tuples
-        // through `std.mem.asBytes`, but Rust tuples have *uninitialized*
-        // padding bytes (e.g. `(Tag /*u8*/, usize)` has 7 on 64-bit), so
-        // forming a `&[u8]` over them is UB. Instead we feed each scalar
-        // field individually and bound on `NoUninit` so the compiler proves
-        // every byte is initialized — same pattern as `expr::Data::write_to_hasher`.
-        // The hash is only used in-process for React Fast Refresh, so the
-        // byte-stream change vs. Zig is immaterial (and the old stream was
-        // nondeterministic anyway).
+        // Rust tuples have *uninitialized* padding bytes (e.g.
+        // `(Tag /*u8*/, usize)` has 7 on 64-bit), so forming a `&[u8]` over
+        // them is UB. Instead feed each scalar field individually and bound on
+        // `NoUninit` so the compiler proves every byte is initialized — same
+        // pattern as `expr::Data::write_to_hasher`. The hash is only used
+        // in-process for React Fast Refresh, so the exact byte stream is
+        // immaterial.
         #[inline(always)]
         fn raw<H: bun_core::Hasher + ?Sized, T: bun_core::NoUninit>(h: &mut H, v: T) {
             h.update(bun_core::bytes_of(&v));
@@ -183,5 +179,3 @@ impl B {
 type _BindingTagHost = Binding;
 
 pub use crate::g::Class;
-
-// ported from: src/js_parser/ast/B.zig

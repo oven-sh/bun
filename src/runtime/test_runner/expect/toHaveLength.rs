@@ -102,5 +102,3 @@ pub fn to_have_length(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveLength.zig

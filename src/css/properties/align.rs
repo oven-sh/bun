@@ -19,8 +19,8 @@ use crate::css_properties::flex::{
 
 /// A value for the [align-content](https://www.w3.org/TR/css-align-3/#propdef-align-content) property.
 #[derive(Clone, PartialEq)]
-// Zig: `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss` —
-// comptime-reflection generators ported as proc-macro derives.
+// `DeriveParse`/`DeriveToCss` —
+// reflective generators ported as proc-macro derives.
 #[derive(css::Parse, css::ToCss)]
 pub enum AlignContent {
     /// Default alignment.
@@ -33,8 +33,8 @@ pub enum AlignContent {
     ContentPosition(AlignContentContentPosition),
 }
 
-// Zig: anonymous payload struct carrying `pub fn __generateToCss() void {}` —
-// the marker telling `DeriveToCss` to auto-generate the field-sequence printer.
+// Originally an anonymous payload struct carrying a `__generateToCss` marker —
+// telling `DeriveToCss` to auto-generate the field-sequence printer.
 // In Rust the equivalent is `#[derive(css::ToCss)]` on the lifted named-field
 // struct (see `css_derive::expand_derive_to_css` struct branch); the enum arm's
 // `__inner.to_css(dest)` then resolves to this generated inherent.
@@ -212,7 +212,7 @@ impl JustifyContent {
 
 /// A value for the [align-self](https://www.w3.org/TR/css-align-3/#align-self-property) property.
 #[derive(Clone, PartialEq)]
-// Zig: `css.DeriveParse` / `css.DeriveToCss`
+// `DeriveParse` / `DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
 pub enum AlignSelf {
     /// Automatic alignment.
@@ -227,7 +227,7 @@ pub enum AlignSelf {
     SelfPosition(AlignSelfSelfPosition),
 }
 
-// Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
+// `__generateToCss` marker — see `AlignContentContentPosition` note.
 #[derive(Clone, PartialEq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignSelfSelfPosition {
@@ -382,7 +382,7 @@ impl JustifySelf {
 
 /// A value for the [align-items](https://www.w3.org/TR/css-align-3/#align-items-property) property.
 #[derive(Clone, PartialEq)]
-// Zig: `css.DeriveParse` / `css.DeriveToCss`
+// `DeriveParse` / `DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
 pub enum AlignItems {
     /// Default alignment.
@@ -395,7 +395,7 @@ pub enum AlignItems {
     SelfPosition(AlignItemsSelfPosition),
 }
 
-// Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
+// `__generateToCss` marker — see `AlignContentContentPosition` note.
 #[derive(Clone, PartialEq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignItemsSelfPosition {
@@ -606,7 +606,7 @@ impl LegacyJustify {
 /// A [gap](https://www.w3.org/TR/css-align-3/#column-row-gap) value, as used in the
 /// `column-gap` and `row-gap` properties.
 #[derive(Clone, PartialEq)]
-// Zig: `css.DeriveParse` / `css.DeriveToCss`
+// `DeriveParse` / `DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
 pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
@@ -985,10 +985,10 @@ pub struct AlignHandler {
     pub has_any: bool,
 }
 
-// ─── helper macros (Zig used `comptime prop: []const u8` + `@field` / `@unionInit`) ───
+// ─── helper macros (originally compile-time field-name strings + reflection) ───
 //
-// TODO(port): the Zig source threads field names as comptime strings into helper fns
-// and uses @field/@unionInit for reflection. Rust cannot pass field names as values, so
+// TODO(port): the original threads field names as compile-time strings into helper fns
+// and uses reflection. Rust cannot pass field names as values, so
 // these are macro_rules! that expand at each call site. Phase B may want to dedupe via
 // a small proc-macro if maintenance burden is high.
 
@@ -1068,7 +1068,7 @@ macro_rules! flush_legacy_property {
                         prefixes_2009.insert(VendorPrefix::MOZ);
                     }
                     if !prefixes_2009.is_empty() {
-                        // TODO(port): Zig branched on `T == BoxOrdinalGroup` to bypass
+                        // TODO(port): the original branched on `T == BoxOrdinalGroup` to bypass
                         // from_standard. Never true at any callsite in this file; preserved
                         // as a note in case the macro is reused elsewhere.
                         let s = <$ty2009>::from_standard(val);
@@ -1151,7 +1151,7 @@ macro_rules! flush_shorthand_helper {
                         align.clone(),
                         justify_actual.clone(),
                     )));
-                    // TODO(port): Zig built `prop.ty{ .align = ..., .justify = ... }` directly.
+                    // TODO(port): the original built `prop.ty{ .align = ..., .justify = ... }` directly.
                     // Using a `from_align_justify` ctor here; Phase B can inline struct init.
 
                     *$align_val = None;
@@ -1171,7 +1171,7 @@ macro_rules! flush_shorthand_helper {
     ) => {{
         if let Some((align, align_prefix)) = &mut *$align_val {
             if let Some(justify) = &mut *$justify_val {
-                // Zig: intersection = align_prefix & align_prefix (justify has no prefix)
+                // intersection = align_prefix & align_prefix (justify has no prefix)
                 let intersection = *align_prefix;
                 if intersection.contains(VendorPrefix::NONE) {
                     *align_prefix = $this.flush_prefixes_helper($context, $align_feature);
@@ -1343,7 +1343,7 @@ impl AlignHandler {
             Property::Unparsed(val) => {
                 if is_align_property(&val.property_id) {
                     self.flush(dest, context);
-                    // PORT NOTE: Zig pushed `property.deepClone(context.arena)`. `Property`
+                    // PORT NOTE: the original pushed `property.deepClone(context.arena)`. `Property`
                     // has no blanket `Clone` yet; reconstruct from the matched payload (same as flex.rs).
                     let bump = dest.bump();
                     dest.push(Property::Unparsed(val.deep_clone(bump)));
@@ -1520,5 +1520,3 @@ fn is_align_property(property_id: &PropertyId) -> bool {
             | PropertyId::Gap
     )
 }
-
-// ported from: src/css/properties/align.zig

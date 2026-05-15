@@ -14,7 +14,7 @@ use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
-// Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
+// Originally `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
 // — file-split mixin pattern. Round-D lowered to direct `impl P` block.
 
 use crate::p::P;
@@ -869,7 +869,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 }
 
-/// Bump-allocate a single-element `G::DeclList` (Zig: `Decl.List.fromOwnedSlice(arena.dupe(...))`).
+/// Bump-allocate a single-element `G::DeclList` (originally `Decl.List.fromOwnedSlice(arena.dupe(...))`).
 #[inline]
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] = bump.alloc_slice_fill_with(1, |_| G::Decl {
@@ -878,5 +878,3 @@ fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     });
     G::DeclList::from_arena_slice(slice)
 }
-
-// ported from: src/js_parser/ast/repl_transforms.zig

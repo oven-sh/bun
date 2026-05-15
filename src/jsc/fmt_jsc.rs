@@ -1,5 +1,5 @@
 //! Bindgen target for `fmt_jsc.bind.ts`. The actual formatters live in
-//! `src/bun_core/fmt.zig`; only the JS-facing wrapper that takes a
+//! `bun_core::fmt`; only the JS-facing wrapper that takes a
 //! `&JSGlobalObject` lives here so `bun_core/` stays JSC-free.
 
 use std::io::Write as _;
@@ -53,5 +53,3 @@ pub mod js_bindings {
         Ok(String::clone_utf8(buffer.list.as_slice()))
     }
 }
-
-// ported from: src/jsc/fmt_jsc.zig

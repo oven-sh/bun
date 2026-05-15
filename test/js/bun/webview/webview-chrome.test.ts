@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
-// ChromeProcess.zig's findChrome() — $PATH names, then hardcoded absolute
+// ChromeProcess.rs's findChrome() — $PATH names, then hardcoded absolute
 // paths, then Playwright cache — so the test detects Chrome whenever the
 // runtime would.
 import { dlopen, FFIType, ptr } from "bun:ffi";
@@ -73,7 +73,7 @@ function findChrome(): string | undefined {
       "/usr/bin/microsoft-edge",
     ];
     for (const c of absolute) if (isExecutable(c)) return c;
-  } // Windows TODO — ChromeProcess.zig doesn't support it yet
+  } // Windows TODO — ChromeProcess.rs doesn't support it yet
 
   // Playwright cache fallback — mirrors findPlaywrightShell().
   const cacheDir =

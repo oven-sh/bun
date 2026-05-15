@@ -34,7 +34,6 @@ impl EOFPacket {
     }
 }
 
-// Zig: pub const decode = decoderWrap(EOFPacket, decodeInternal).decode;
 impl EOFPacket {
     pub fn decode<Context: ReaderContext>(
         &mut self,
@@ -43,5 +42,3 @@ impl EOFPacket {
         self.decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/mysql/protocol/EOFPacket.zig

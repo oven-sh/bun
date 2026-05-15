@@ -77,9 +77,8 @@ pub enum Size {
 }
 
 /// Case-insensitive keyword dispatch for `Size`/`MaxSize` parse bodies.
-/// PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive` —
-/// expanded as an `if`-chain over `eql_case_insensitive_ascii::<true>` (≤14 keys;
-/// per PORTING.md a phf table is overkill at this size).
+/// PORT NOTE: expanded as an `if`-chain over `eql_case_insensitive_ascii::<true>`
+/// (≤14 keys; per PORTING.md a phf table is overkill at this size).
 macro_rules! size_ident_match {
     ($ident:expr, { $($lit:literal => $val:expr,)+ } else $err:expr) => {{
         let __ident: &[u8] = $ident;
@@ -417,8 +416,8 @@ bitflags::bitflags! {
 
 impl SizeProperty {
     pub fn try_from_property_id_tag(property_id: PropertyIdTag) -> Option<SizeProperty> {
-        // TODO(port): Zig used `inline for (std.meta.fields(@This()))` to compare each
-        // bitfield name against PropertyIdTag's @tagName. Expanded explicitly here.
+        // TODO(port): keep in sync with the `SizeProperty` bitflag fields — expanded explicitly
+        // because Rust has no field reflection.
         match property_id {
             PropertyIdTag::Width => Some(SizeProperty::WIDTH),
             PropertyIdTag::Height => Some(SizeProperty::HEIGHT),
@@ -461,13 +460,13 @@ pub struct SizeHandler {
 // PropertyHandlerContext; the arena is recovered via `dest.bump()`.
 use css::compat::Feature;
 
-// ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
+// ─── helper macros ─────────────────────────────────────────────────────────
 //
-// TODO(port): the following four macros replace Zig's `propertyHelper`, `logicalUnparsedHelper`,
-// `flushPrefixHelper`, `flushPropertyHelper`, `flushLogicalHelper`. The Zig code passes field
-// names as comptime strings and uses @field/@unionInit/@tagName to splice them into struct/enum
-// accesses. Rust has no equivalent reflection — macro_rules! is the closest 1:1 mapping.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// TODO(port): the following four macros replace `propertyHelper`, `logicalUnparsedHelper`,
+// `flushPrefixHelper`, `flushPropertyHelper`, `flushLogicalHelper`, which originally
+// spliced field names into struct/enum accesses via reflection. Rust has no
+// equivalent — macro_rules! is the closest 1:1 mapping.
+// PERF(port): profile in Phase B.
 
 macro_rules! property_helper {
     ($this:expr, $field:ident, $ty:ty, $value:expr, $category:expr, $dest:expr, $context:expr) => {{
@@ -495,8 +494,8 @@ macro_rules! logical_unparsed_helper {
             $this.flushed_properties.insert(
                 SizeProperty::try_from_property_id_tag($unparsed.property_id.tag()).unwrap(),
             );
-            // PORT NOTE: Zig pushed `property.deepClone(arena)`; the matched
-            // payload is `Unparsed`, so reconstruct directly.
+            // PORT NOTE: the matched payload is `Unparsed`, so reconstruct directly
+            // from a deep clone instead of cloning the whole `Property`.
             $dest.push(Property::Unparsed($unparsed.deep_clone(bump)));
         } else {
             $dest.push(Property::Unparsed(
@@ -966,5 +965,3 @@ impl SizeHandler {
         self.flushed_properties = SizeProperty::empty();
     }
 }
-
-// ported from: src/css/properties/size.zig

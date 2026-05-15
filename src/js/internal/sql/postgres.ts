@@ -25,7 +25,7 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
-} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+} = $rust("postgres.rs", "createBinding") as PostgresNativeBinding;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
@@ -294,7 +294,7 @@ initPostgres(
   },
 );
 
-export interface PostgresDotZig {
+export interface PostgresNativeBinding {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
@@ -316,13 +316,13 @@ export interface PostgresDotZig {
     tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
-    onDisconnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    onConnected: (err: Error | null, connection: $BunGeneratedClasses.PostgresSQLConnection) => void,
+    onDisconnected: (err: Error | null, connection: $BunGeneratedClasses.PostgresSQLConnection) => void,
     idleTimeout: number,
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
-  ) => $ZigGeneratedClasses.PostgresSQLConnection;
+  ) => $BunGeneratedClasses.PostgresSQLConnection;
   createQuery: (
     sql: string,
     values: unknown[],
@@ -330,7 +330,7 @@ export interface PostgresDotZig {
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
-  ) => $ZigGeneratedClasses.PostgresSQLQuery;
+  ) => $BunGeneratedClasses.PostgresSQLQuery;
 }
 
 const enum SQLCommand {
@@ -451,9 +451,9 @@ function onQueryFinish(this: PooledPostgresConnection, onClose: (err: Error) => 
 class PooledPostgresConnection {
   private static async createConnection(
     options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    onConnected: (err: Error | null, connection: $BunGeneratedClasses.PostgresSQLConnection) => void,
     onClose: (err: Error | null) => void,
-  ): Promise<$ZigGeneratedClasses.PostgresSQLConnection | null> {
+  ): Promise<$BunGeneratedClasses.PostgresSQLConnection | null> {
     const {
       hostname,
       port,
@@ -508,7 +508,7 @@ class PooledPostgresConnection {
   }
 
   adapter: PostgresAdapter;
-  connection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
+  connection: $BunGeneratedClasses.PostgresSQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
@@ -660,8 +660,8 @@ class PostgresAdapter
   implements
     DatabaseAdapter<
       PooledPostgresConnection,
-      $ZigGeneratedClasses.PostgresSQLConnection,
-      $ZigGeneratedClasses.PostgresSQLQuery
+      $BunGeneratedClasses.PostgresSQLConnection,
+      $BunGeneratedClasses.PostgresSQLQuery
     >
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;

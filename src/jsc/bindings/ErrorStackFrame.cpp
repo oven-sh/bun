@@ -8,10 +8,10 @@
 namespace Bun {
 using namespace JSC;
 
-/// Adjust a `ZigStackFramePosition` by a number of bytes. This accounts for when the adjustment
+/// Adjust a `BunStackFramePosition` by a number of bytes. This accounts for when the adjustment
 /// crosses line boundaries, and thus requires the source code in order to properly compute
 /// the result.
-void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
+void adjustPositionBackwards(BunStackFramePosition& pos, int amount, CodeBlock* code)
 {
     if (pos.byte_position - amount < 0) {
         pos.line_zero_based = 0;
@@ -62,11 +62,11 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
     pos.byte_position -= amount;
 }
 
-ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
+BunStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
     auto expr = code->expressionInfoForBytecodeIndex(bc);
 
-    ZigStackFramePosition pos {
+    BunStackFramePosition pos {
         .line_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line).zeroBasedInt(),
         .column_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column).zeroBasedInt(),
         .byte_position = (int)expr.divot,

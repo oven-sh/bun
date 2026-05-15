@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-// PORT NOTE: JSRef.zig stores `jsc.Strong.Optional`, not `jsc.Strong`. The
+// PORT NOTE: this stores `jsc.Strong.Optional`, not `jsc.Strong`. The
 // methods below (`get() -> Option`, `has()`, `try_swap()`) live on the
 // Optional wrapper, so import it under the local name `Strong`.
 use crate::strong::Optional as Strong;
@@ -142,9 +142,9 @@ impl JsRef {
     }
 
     /// `try_get().unwrap_or(JSValue::UNDEFINED)`. Convenience for callers that
-    /// previously stored a bare `JSValue` field (Zig `this.js_value`) and read
-    /// it unconditionally — the `JsRef` wrapper was added on the Rust side for
-    /// GC-safety, so `get()` recovers the original ergonomics.
+    /// previously stored a bare `JSValue` field and read it unconditionally —
+    /// the `JsRef` wrapper was added for GC-safety, so `get()` recovers the
+    /// original ergonomics.
     pub fn get(&self) -> JSValue {
         self.try_get().unwrap_or(JSValue::UNDEFINED)
     }
@@ -154,9 +154,8 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(_) => {
-                // PORT NOTE: Zig calls `this.strong.deinit()` here. In Rust,
-                // `Strong`'s `Drop` deallocates the HandleSlot when `*self` is
-                // overwritten below, so the explicit call is elided.
+                // PORT NOTE: `Strong`'s `Drop` deallocates the HandleSlot when
+                // `*self` is overwritten below, so no explicit deinit is needed.
             }
             JsRef::Finalized => {
                 return;
@@ -194,8 +193,8 @@ impl JsRef {
             JsRef::Strong(strong) => {
                 let value = strong.try_swap().unwrap_or(JSValue::UNDEFINED);
                 value.ensure_still_alive();
-                // PORT NOTE: Zig calls `strong.deinit()` here; in Rust the old
-                // `Strong` is dropped by the assignment below.
+                // PORT NOTE: the old `Strong` is dropped by the assignment
+                // below; no explicit deinit is needed.
                 // PORT NOTE: reshaped for borrowck — `strong` borrow ends at
                 // last use above, permitting reassignment of `*self`.
                 *self = JsRef::Weak(value);
@@ -226,9 +225,8 @@ impl JsRef {
     }
 
     pub fn finalize(&mut self) {
-        // PORT NOTE: Zig calls `self.deinit()` then sets `.finalized`. In Rust,
-        // overwriting `*self` drops the prior variant (releasing the `Strong`
-        // HandleSlot via its `Drop`), so the explicit deinit step is elided.
+        // PORT NOTE: overwriting `*self` drops the prior variant (releasing the
+        // `Strong` HandleSlot via its `Drop`), so no explicit deinit is needed.
         // Phase B: external `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
         *self = JsRef::Finalized;
     }
@@ -256,5 +254,3 @@ impl Default for JsRef {
         JsRef::empty()
     }
 }
-
-// ported from: src/jsc/JSRef.zig

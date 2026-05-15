@@ -16,8 +16,7 @@ impl ResultSetHeader {
         Ok(())
     }
 
-    // TODO(port): `decoderWrap(ResultSetHeader, decodeInternal).decode` is a Zig comptime
-    // type-function that wraps `decode_internal` over an anyopaque-backed reader. Phase B
+    // TODO(port): wraps `decode_internal` over a context-backed reader. Phase B
     // should replace this with the trait/impl that `new_reader::decoder_wrap` exposes.
     pub fn decode<Context: ReaderContext>(
         &mut self,
@@ -26,5 +25,3 @@ impl ResultSetHeader {
         self.decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/mysql/protocol/ResultSetHeader.zig

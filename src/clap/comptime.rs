@@ -7,9 +7,9 @@ use crate::streaming::{self, StreamingClap};
 use crate::{Names, Param, ParseOptions, Values};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Compile-time conversion (Zig parity)
+// Compile-time conversion
 //
-// Zig's `ComptimeClap(Id, params)` is a comptime type-generator: it iterates
+// `ComptimeClap(Id, params)` originally was a comptime type-generator: it iterated
 // `params` *at comptime* to (a) re-index every param's `id` to its slot within
 // its category (flag / single / multi) and (b) emit a struct with fixed-size
 // array fields. `findParam` is `inline for`, so every `args.flag("--foo")`
@@ -19,7 +19,7 @@ use crate::{Names, Param, ParseOptions, Values};
 // a `Vec<Param<usize>>` on every CLI start, and `find_param` linear-scanned it
 // for every `flag()`/`option()` lookup (~190 lookups × ~100 params on the
 // `bun run` path). perf put this at ~0.25 % of `bun --version` cycles vs ~0 %
-// in Zig.
+// when the work is done at compile time.
 //
 // This module restores the comptime semantics on stable Rust:
 //
@@ -29,7 +29,7 @@ use crate::{Names, Param, ParseOptions, Values};
 //     name lookup can be folded to a constant via `const { find_param_index(..) }`.
 //
 //   * `comptime_table!` (in `lib.rs`) packages the const-fn output as a
-//     `&'static ConvertedTable` — the Rust analogue of the Zig comptime
+//     `&'static ConvertedTable` — the analogue of a comptime
 //     `converted_params` const baked into the generated type.
 //
 //   * Every per-subcommand table in `runtime/cli/Arguments.rs` is now a
@@ -48,7 +48,7 @@ const fn is_named<Id>(p: &Param<Id>) -> bool {
     p.names.long.is_some() || p.names.short.is_some()
 }
 
-/// Count flag params (named, `takes_value == None`). Zig: comptime loop arm.
+/// Count flag params (named, `takes_value == None`).
 pub const fn count_flags<Id>(params: &[Param<Id>]) -> usize {
     let mut n = 0;
     let mut i = 0;
@@ -89,8 +89,8 @@ pub const fn count_multi<Id>(params: &[Param<Id>]) -> usize {
     n
 }
 
-/// Compile-time equivalent of the Zig comptime conversion loop (comptime.zig
-/// lines 6–32): re-indexes each param's `id` to its slot within its category.
+/// Compile-time conversion loop: re-indexes each param's `id` to its slot
+/// within its category.
 /// `N` must equal `params.len()` (asserted at const-eval).
 pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [Param<usize>; N] {
     const DUMMY: Param<usize> = Param {
@@ -137,16 +137,15 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
     out
 }
 
-/// Compile-time name → converted-param index. This is the Rust analogue of
-/// Zig's `inline for` `findParam` and is intended to be called inside a
+/// Compile-time name → converted-param index. This is the const-eval form
+/// of `findParam` and is intended to be called inside a
 /// `const { }` block so the loop folds to a literal:
 ///
 /// ```ignore
 /// const IDX: usize = find_param_index(TABLE.converted, b"--help");
 /// ```
 ///
-/// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`
-/// — matching Zig's `@compileError("no param '…'")`.
+/// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`.
 pub const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
     if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
         let (_, key) = name.split_at(2);
@@ -300,7 +299,7 @@ impl ConvertedTable {
     /// Build a table entirely at compile time. All four arguments come from
     /// the `const fn`s above via [`comptime_table!`](crate::comptime_table),
     /// so the converted param array, category counts, sorted long-name hash
-    /// index, and short-name direct index all land in rodata — full Zig
+    /// index, and short-name direct index all land in rodata — full
     /// `ComptimeClap` parity with zero runtime work.
     pub const fn from_const(
         converted: &'static [Param<usize>],
@@ -511,8 +510,7 @@ pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, us
 
 /// Deprecated: Use `parse_ex` instead
 pub struct ComptimeClap<Id> {
-    // Field order matches comptime.zig.
-    // Inner `&'static [u8]` slices borrow argv (process-lifetime); never freed in Zig `deinit`.
+    // Inner `&'static [u8]` slices borrow argv (process-lifetime); never freed.
     pub single_options: Box<[Option<&'static [u8]>]>,
     pub multi_options: Box<[Box<[&'static [u8]]>]>,
     pub flags: Box<[bool]>,
@@ -520,8 +518,8 @@ pub struct ComptimeClap<Id> {
     pub passthrough_positionals: Box<[&'static [u8]]>,
     // `mem.Allocator param` field deleted — global mimalloc (see PORTING.md §Allocators).
 
-    // Zig captures `converted_params` as a comptime const on the returned type. Rust
-    // carries it as a `&'static` table — either rodata (`comptime_table!`) or
+    // The original captured `converted_params` as a comptime const on the returned type.
+    // Here it is carried as a `&'static` table — either rodata (`comptime_table!`) or
     // interned-once via the ptr-keyed registry — so `flag`/`option` resolve via
     // hashed lookup instead of an O(n) scan, and no per-parse `Vec` is allocated.
     table: &'static ConvertedTable,
@@ -574,8 +572,7 @@ impl<Id> ComptimeClap<Id> {
             vec![None; table.n_single].into_boxed_slice();
         let mut flags: Box<[bool]> = vec![false; table.n_flags].into_boxed_slice();
 
-        // Zig: `StreamingClap(usize, @typeInfo(@TypeOf(iter)).pointer.child)` — the second
-        // type arg is the pointee of `iter`; in Rust that is just `I`.
+        // The second type arg is the iterator type `I`.
         let mut stream = StreamingClap::<usize, I> {
             params: table.converted,
             iter,
@@ -590,9 +587,8 @@ impl<Id> ComptimeClap<Id> {
                 pos.push(arg.value.unwrap());
                 if opt.stop_after_positional_at > 0 && pos.len() >= opt.stop_after_positional_at {
                     let mut remaining_ = stream.iter.remain();
-                    // PORT NOTE: Zig called `bun.span` (NUL-scan) on `[:0]const u8` argv
-                    // entries. Our `ArgIter` already yields sized `&[u8]`, so `span` is a
-                    // no-op and is dropped.
+                    // PORT NOTE: `ArgIter` already yields sized `&[u8]`, so the
+                    // original NUL-scan over argv entries is a no-op and is dropped.
                     let first: &[u8] = if !remaining_.is_empty() {
                         remaining_[0]
                     } else {
@@ -628,7 +624,7 @@ impl<Id> ComptimeClap<Id> {
 
         Ok(Self {
             single_options,
-            // PORT NOTE: Zig left these `undefined` and filled them post-loop.
+            // PORT NOTE: the original left these uninitialized and filled them post-loop.
             multi_options: multis.into_iter().map(Vec::into_boxed_slice).collect(),
             flags,
             pos: pos.into_boxed_slice(),
@@ -638,8 +634,8 @@ impl<Id> ComptimeClap<Id> {
         })
     }
 
-    // Zig `deinit` only freed `multi_options[*]` and `pos` (not `passthrough_positionals` —
-    // likely a leak in the deprecated Zig). All are owned here, so `Drop` handles it;
+    // The original `deinit` only freed `multi_options[*]` and `pos` (not
+    // `passthrough_positionals` — likely a leak). All are owned here, so `Drop` handles it;
     // body deleted per PORTING.md §Idiom map (`pub fn deinit` → `impl Drop`, empty body
     // when it only frees owned fields).
 
@@ -687,7 +683,7 @@ impl<Id> ComptimeClap<Id> {
     }
 
     /// Direct slot accessors — pair with [`find_param_index`] inside
-    /// `const { }` for true Zig-parity zero-cost lookup at the call site.
+    /// `const { }` for zero-cost lookup at the call site.
     #[inline]
     pub fn flag_at(&self, converted_idx: usize) -> bool {
         self.flags[self.table.converted[converted_idx].id]
@@ -709,7 +705,7 @@ impl<Id> ComptimeClap<Id> {
         &self.passthrough_positionals
     }
 
-    /// Zig `hasFlag` is a comptime-only predicate over the captured table.
+    /// `hasFlag` is a const-eval-only predicate over the captured table.
     /// `const fn` here so `const { has_flag(PARAMS, b"--foo") }` folds.
     pub const fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
         let mut i = 0;
@@ -747,5 +743,3 @@ impl<Id> ComptimeClap<Id> {
         self.table.find(name)
     }
 }
-
-// ported from: src/clap/comptime.zig

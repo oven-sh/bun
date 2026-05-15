@@ -1,7 +1,7 @@
 // Verifies that `bun install` can extract a tarball while it is still
 // downloading. A local registry drip-feeds the .tgz body in small
 // chunks so the HTTP thread delivers multiple progress callbacks; the
-// streaming extractor (TarballStream.zig + the ARCHIVE_RETRY patches in
+// streaming extractor (src/install/TarballStream.rs + the ARCHIVE_RETRY patches in
 // vendor/libarchive) must reassemble them into the same on-disk layout
 // the buffered extractor would produce.
 

@@ -1,10 +1,7 @@
-//! Ported from src/test_runner/harness/fixtures.zig
-
 use phf::phf_map;
 
-// Zig: `std.ComptimeStringMap([]u8, .{ ... })` with `@embedFile`.
-// TODO(port): Zig source has a duplicate `"simple-component.tsx"` entry (lines 5-6); phf rejects
-// duplicate keys at compile time so the second one is dropped here. Verify upstream intent.
+// TODO(port): the original implementation had a duplicate `"simple-component.tsx"` entry; phf
+// rejects duplicate keys at compile time so the second one is dropped here. Verify upstream intent.
 pub static FIXTURES: phf::Map<&'static [u8], &'static [u8]> = phf_map! {
     b"package.json" => include_bytes!("./fixtures/package.json"),
     b"tsconfig.json" => include_bytes!("./fixtures/tsconfig.json"),
@@ -14,9 +11,8 @@ pub static FIXTURES: phf::Map<&'static [u8], &'static [u8]> = phf_map! {
 
 /// (route file path, file body)
 ///
-/// Zig models these as anonymous-struct literals where each *field name* is the
-/// path (`.@"pages/index.js" = "..."`). Callers iterate fields via `@typeInfo`
-/// reflection, so the faithful Rust shape is a static `(key, value)` slice.
+/// Callers iterate the entries by index, so the natural shape is a static
+/// `(key, value)` slice.
 pub type RouteList = &'static [(&'static [u8], &'static [u8])];
 
 pub static SAMPLE_ROUTE_LIST: RouteList = &[
@@ -583,5 +579,3 @@ pub static VERCEL_ROUTES_LIST: RouteList = &[
     (b"pages/vercel-live-auth.js", b"// pages/vercel-live-auth.js"),
     (b"pages/virtual-event-starter-ki.js", b"// pages/virtual-event-starter-ki.js"),
 ];
-
-// ported from: src/test_runner/harness/fixtures.zig

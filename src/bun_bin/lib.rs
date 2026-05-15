@@ -1,11 +1,11 @@
 //! `libbun_rust.a` — the Rust-port staticlib.
 //!
 //! Built by `cargo build -p bun_bin` (emitted from `scripts/build/rust.ts`)
-//! and linked into the final `bun-debug` executable by ninja's link step,
-//! occupying the slot `bun-zig.o` used to. The clang++ driver supplies the
+//! and linked into the final `bun-debug` executable by ninja's link step.
+//! The clang++ driver supplies the
 //! C runtime startup (`_start` → `main`); `main` below is the process entry.
 //!
-//! Init order mirrors `src/main.zig`:
+//! Init order:
 //!   1. crash handler / signal masks
 //!   2. allocator wiring (mimalloc as `#[global_allocator]`)
 //!   3. argv / start-time capture
@@ -46,8 +46,8 @@ use bun_core::Global;
 use bun_core::StackCheck;
 use bun_core::output;
 
-/// mimalloc as the process allocator — matches Zig's `bun.default_allocator`
-/// and the `uv_replace_allocator(mi_*)` call in `main.zig` on Windows.
+/// mimalloc as the process allocator — `bun.default_allocator`,
+/// plus the `uv_replace_allocator(mi_*)` call below on Windows.
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
@@ -71,7 +71,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
     //   ASAN_OPTIONS with a suppressions file.
     //
-    // PORT NOTE: matches `src/safety/asan.zig` exactly. Do NOT add `symbolize=0`
+    // PORT NOTE: do NOT add `symbolize=0`
     // here — LSAN's function-name suppression matching (`test/leaksan.supp`)
     // requires symbolized stacks; with symbolization disabled every entry like
     // `leak:uws_create_app` silently stops matching and CI reports the
@@ -82,15 +82,15 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 
 /// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`
 /// the CI runner passes (`test/leaksan.supp`). That file's entries were written
-/// against Zig's symbol mangling (`runtime.node.zlib.NativeZlib.Context.init`,
+/// against the legacy symbol mangling (`runtime.node.zlib.NativeZlib.Context.init`,
 /// `jsc.web_worker.create`, …); LSAN matches by *substring on a symbolized
 /// frame*, so after the Rust port renamed every frame to `bun_<crate>::<mod>`
-/// none of the Zig-named rules fire and CI reports the same intentionally-
+/// none of the legacy-named rules fire and CI reports the same intentionally-
 /// leaked-at-exit allocations the suppressions were authored for. Baking the
 /// Rust spellings into the binary keeps `leaksan.supp` as the C/C++/JSC list
 /// and lets the Rust list ride with the code that produces the symbols.
 ///
-/// Also covers one Rust-only false positive that has no Zig analogue:
+/// Also covers one Rust-only false positive with no legacy analogue:
 /// `std::thread::Builder::spawn` allocates an `Arc<thread::Inner>` that the
 /// detached thread holds in TLS for its lifetime; LSAN does not scan other
 /// threads' TLS roots at exit, so every long-lived detached thread (HTTP
@@ -107,12 +107,12 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
-    // Keep this list 1:1 with the Zig-named entries in `test/leaksan.supp`;
-    // C/C++ symbol entries stay in that file (their names did not change).
+    // Keep this list 1:1 with the Rust-side entries; the C/C++ symbol entries
+    // (`Bun__*`, `Bun::*`, `UnsafeStringView__*`, …) live in `test/leaksan.supp`.
     concat!(
         // Rust std false positive — detached threads' Arc<thread::Inner>.
         "leak:std::thread::thread::Thread>::new\n",
-        // ── ported Zig-named entries ────────────────────────────────────────
+        // ── ported legacy-named entries ─────────────────────────────────────
         "leak:bun_runtime::api::server::ServerAllConnectionsClosedTask\n",
         "leak:bun_cli::bunfig::Bunfig>::parse\n",
         "leak:bun_resolver::resolver::Resolver>::parse_package_json\n",
@@ -156,7 +156,7 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_sql::postgres::protocol::FieldMessage\n",
         "leak:bun_runtime::webcore::fetch::FetchTasklet>::to_response\n",
         "leak:bun_lolhtml_sys::lol_html::HTMLString\n",
-        // Zig `jsc.Debugger.startJSDebuggerThread` — the Rust module is
+        // `jsc.Debugger.startJSDebuggerThread` — the Rust module is
         // lowercase (`#[path = "Debugger.rs"] pub mod debugger;`), so the
         // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous
         // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
@@ -169,7 +169,7 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 }
 
 /// Process entry point. `extern "C"` so the linker resolves crt1.o's
-/// undefined `main` against this symbol — same role as Zig's `pub fn main`.
+/// undefined `main` against this symbol.
 ///
 /// `argc`/`argv` are forwarded to `bun_core::init_argv` immediately: on
 /// glibc/macOS/Windows libstd also captures them via a `.init_array` hook /
@@ -177,8 +177,7 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// receives no arguments (musl's `__libc_start_main` does not pass
 /// `(argc,argv,envp)` to constructors), so `std::env::args_os()` returns
 /// empty and the binary would see argc=0. Capturing the C-runtime-provided
-/// pair here is the only portable source — same contract as Zig's
-/// `bun.initArgv` wrapping `std.os.argv`.
+/// pair here is the only portable source.
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 0. Capture argv FIRST — before the crash handler, whose panic path
@@ -190,16 +189,16 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
-    // SIGPIPE/SIGXFSZ → SIG_IGN, like main.zig's posix block.
+    // SIGPIPE/SIGXFSZ → SIG_IGN.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
-    // main.zig:40-50 — Windows-only startup. Must run BEFORE the first libuv
+    // Windows-only startup. Must run BEFORE the first libuv
     // call (uv allocator) and before anything reads `Bun.env`/`process.env`
-    // (env conversion). The Zig spec orders these between sigaction and
+    // (env conversion). These are ordered between sigaction and
     // `start_time`/`initArgv`.
     #[cfg(windows)]
     {
@@ -228,7 +227,7 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     output::stdio::init();
     let _flush = output::flush_guard();
 
-    // main.zig: `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.
+    // `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.
     #[cfg(all(target_arch = "x86_64", unix))]
     if bun_core::Environment::ENABLE_SIMD {
         unsafe extern "C" {
@@ -251,7 +250,6 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 6. Push high-tier allocator vtable addresses into the
     //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
     //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances
-    //    (Zig: inline `isInstance` chain in `safety/alloc.zig:hasPtr`).
     //    Runs once; reads are lock-free Relaxed.
     bun_runtime::allocators::register_safety_vtables();
 

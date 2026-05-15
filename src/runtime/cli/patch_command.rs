@@ -14,5 +14,3 @@ impl PatchCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/patch_command.zig

@@ -10,7 +10,7 @@ use bun_core::SmolStr;
 use smallvec::SmallVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Moved from `bun_shell` (src/shell/shell.zig):
+// Moved from `bun_shell`:
 //   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter, has_eq_sign
 // These live here so `bun_shell` (higher tier) can depend on `shell_parser`
 // without a back-edge. `bun_shell` re-exports these under its old paths.
@@ -20,7 +20,6 @@ use bun_core::immutable::CodePoint; // i32
 use bun_core::immutable::{CodepointIterator, Cursor};
 use bun_core::strings;
 
-/// Zig: `pub const StringEncoding = enum { ascii, wtf8, utf16 };`
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum StringEncoding {
     Ascii,
@@ -33,11 +32,10 @@ pub enum StringEncoding {
 // Clone: bitwise OK — `bytes` borrows caller-owned input (BACKREF, non-owning).
 #[derive(Clone)]
 struct SrcAscii {
-    bytes: *const [u8], // PORT NOTE: raw slice ptr — Zig held a borrowed `[]const u8`; lifetime erased (BACKREF).
+    bytes: *const [u8], // PORT NOTE: raw slice ptr — borrowed view into caller-owned input; lifetime erased (BACKREF).
     i: usize,
 }
 
-/// Zig: `packed struct(u8) { char: u7, escaped: bool = false }`.
 // PERF(port): widened `char` to u32 so ascii/unicode share one `InputChar` shape and
 // `ShellCharIter<const E>` needs no type-level branching on `E`. Phase B may split.
 #[derive(Copy, Clone)]
@@ -48,7 +46,7 @@ pub struct InputChar {
 
 #[derive(Copy, Clone)]
 struct AsciiIndexValue {
-    char: u32, // u7 in Zig
+    char: u32, // 7-bit ASCII range; widened to u32 for the shared InputChar shape
     escaped: bool,
 }
 
@@ -62,7 +60,7 @@ impl SrcAscii {
     }
     #[inline]
     fn bytes(&self) -> &[u8] {
-        // SAFETY: `bytes` outlives the iter by construction (caller contract, same as Zig).
+        // SAFETY: `bytes` outlives the iter by construction (caller contract).
         unsafe { &*self.bytes }
     }
     #[inline]
@@ -118,7 +116,7 @@ impl SrcUnicode {
         }
     }
     fn init(bytes: &[u8]) -> Self {
-        // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter (same as Zig).
+        // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter.
         let bytes: &'static [u8] =
             unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let iter = CodepointIterator::init(bytes);
@@ -176,8 +174,8 @@ pub enum ShellCharIterState {
     Double,
 }
 
-// PERF(port): Zig selected `Src` at comptime via `switch (encoding)`. Rust const
-// generics can't pick a field type from an enum value without an aux trait, so we
+// PERF(port): originally `Src` was selected at compile time per encoding. Rust
+// const generics can't pick a field type from an enum value without an aux trait, so we
 // store both arms in a small enum and branch at runtime. Phase B may split into
 // three `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
 // shows the branch matters.
@@ -218,7 +216,7 @@ impl<const E: StringEncoding> ShellCharIter<E> {
 }
 
 impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
-    // PERF(port): Zig used `u7` for ascii; unified to u32 (see InputChar note).
+    // PERF(port): originally a 7-bit type for ascii; unified to u32 (see InputChar note).
     type CodepointType = u32;
     type InputChar = InputChar;
 
@@ -354,7 +352,6 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
 
 // ─── has_eq_sign ───────────────────────────────────────────────────────────
 
-/// Zig: `pub fn hasEqSign(str: []const u8) ?u32`.
 pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
     if strings::is_all_ascii(str_) {
         return bun_core::immutable::index_of_char(str_, b'=');
@@ -377,7 +374,7 @@ bun_core::declare_scope!(BRACES, visible);
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
-// PORT NOTE: Zig `packed struct(u32)` — two u16 fields packed into a u32.
+// PORT NOTE: two u16 fields packed into a u32.
 #[repr(transparent)]
 #[derive(Default, Copy, Clone)]
 struct ExpansionVariant(u32);
@@ -414,8 +411,8 @@ pub enum Token {
     Eof,
 }
 
-// TODO(b2-blocked): bun_core::SmolStr — missing `Clone` impl. Zig copied the
-// union by value (bitwise SmolStr copy with shared heap backing). Until the
+// TODO(b2-blocked): bun_core::SmolStr — missing `Clone` impl. The original copied
+// the union by value (bitwise SmolStr copy with shared heap backing). Until the
 // lower-tier crate provides `Clone`, deep-copy via `from_slice` so the parser
 // can own its token. PERF(port): extra alloc on heap-backed SmolStr — profile
 // in Phase B once SmolStr grows Clone.
@@ -456,11 +453,9 @@ impl Token {
 }
 
 // ─── JSON debug formatters ───────────────────────────────────────────────────
-// Port of Zig's `std.json.fmt(tokens)` / `std.json.fmt(ast_node)` used by
-// `Bun.$.braces(str, {tokenize:true})` / `{parse:true}` (debug-only). Zig's
-// reflection-driven JSON encoder emits tagged unions as `{"<tag>": <payload>}`
-// and bare-payload structs by field; reproduce that shape so the JS-visible
-// output is byte-compatible.
+// JSON encoders used by `Bun.$.braces(str, {tokenize:true})` / `{parse:true}`
+// (debug-only). Tagged unions are emitted as `{"<tag>": <payload>}` and
+// bare-payload structs by field, so the JS-visible output is stable.
 
 fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
     // debug-only path; canonical's run-batched write_str preserves verbatim
@@ -532,7 +527,7 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
     if group.bubble_up.is_null() {
         out.extend_from_slice(b"null");
     } else {
-        // Zig's std.json.fmt encodes `?*T` as the pointer address.
+        // Optional pointers are encoded as the raw pointer address.
         let _ = write!(out, "{}", group.bubble_up as usize);
     }
     out.extend_from_slice(b",\"bubble_up_next\":");
@@ -661,7 +656,7 @@ pub fn expand(
 // `expansion.variants` slices are bump-owned and outlive this call. The function
 // writes `bubble_up` backrefs (raw pointers) into child Groups and re-enters the
 // parent through them; raw-pointer access is used throughout to avoid creating
-// overlapping `&mut` borrows. Mirrors Zig pointer semantics 1:1.
+// overlapping `&mut` borrows.
 // TODO(port): audit aliasing soundness in Phase B (no long-lived `&mut` is held
 // across recursion, only raw derefs).
 unsafe fn expand_nested(
@@ -671,7 +666,7 @@ unsafe fn expand_nested(
     out_key_counter: &mut u16,
     start: u32,
 ) -> Result<(), ExpandError> {
-    // SAFETY: see fn doc comment — raw-pointer derefs mirror Zig pointer semantics;
+    // SAFETY: see fn doc comment — raw-pointer derefs are intentional;
     // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
     unsafe {
         if let ast::GroupAtoms::Single(_) = (*root).atoms {
@@ -708,8 +703,8 @@ unsafe fn expand_nested(
                 }
                 ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
                     let length = out[usize::from(out_key)].len();
-                    // PORT NOTE: reshaped for borrowck — snapshot prefix once; Zig re-sliced
-                    // out[out_key].items[0..length] each iteration (same bytes).
+                    // PORT NOTE: reshaped for borrowck — snapshot prefix once instead of
+                    // re-slicing out[out_key][..length] each iteration (same bytes).
                     // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
                     let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
@@ -1141,8 +1136,8 @@ pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
 }
 
 fn build_expansion_table_alloc(tokens: &mut [Token]) -> Result<Vec<ExpansionVariant>, ParserError> {
-    // PERF(port): was arena bulk-free — Zig fed the same allocator to Parser and this
-    // table; table is local POD dropped at end of expand(), so global Vec is logic-neutral.
+    // PERF(port): was arena bulk-free — Parser and this table once shared an
+    // allocator; table is local POD dropped at end of expand(), so global Vec is logic-neutral.
     let mut table: Vec<ExpansionVariant> = Vec::new();
     build_expansion_table(tokens, &mut table)?;
     Ok(table)
@@ -1337,7 +1332,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         let mut i: u32 = 0;
         let mut j: u32 = 1;
         while (i as usize) < self.tokens.len() && (j as usize) < self.tokens.len() {
-            // PORT NOTE: reshaped for borrowck — Zig held two `&mut` into self.tokens
+            // PORT NOTE: reshaped for borrowck — original held two `&mut` into self.tokens
             // simultaneously. We branch on tags first, then borrow once.
             let itok_is_text = matches!(self.tokens[i as usize], Token::Text(_));
             let jtok_is_text = matches!(self.tokens[j as usize], Token::Text(_));
@@ -1493,5 +1488,3 @@ mod tests {
         }
     }
 }
-
-// ported from: src/shell_parser/braces.zig

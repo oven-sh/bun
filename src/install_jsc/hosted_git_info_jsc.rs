@@ -1,9 +1,9 @@
-//! JSC bridges for `src/install/hosted_git_info.zig`. Aliased back so call
-//! sites and `$newZigFunction("hosted_git_info.zig", …)` are unchanged.
+//! JSC bridges for `bun_install::hosted_git_info`, exposed via
+//! `$newRustFunction("hosted_git_info.rs", …)`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-/// Extension trait providing `.to_js()` on `HostedGitInfo` (Zig: `hostedGitInfoToJS`).
+/// Extension trait providing `.to_js()` on `HostedGitInfo`.
 pub trait HostedGitInfoJsc {
     fn to_js(&self, go: &JSGlobalObject) -> JsResult<JSValue>;
 }
@@ -57,7 +57,8 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
 }
 
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` will wrap these into the
-// `JSHostFn` ABI for `$newZigFunction`. Bodies are plain `JSHostFnZig`-shaped fns.
+// `JSHostFn` ABI for `$newRustFunction`. Bodies are plain
+// `(global, callframe) -> JsResult<JSValue>` host fns.
 pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     use bun_install::hosted_git_info as hgi;
     if callframe.arguments_count() != 1 {
@@ -77,8 +78,8 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // TODO(markovejnovic): This feels like there's too much going on all
     // to give us a slice. Maybe there's a better way to code this up.
     let npa_str = arg0.to_bun_string(go)?;
-    // PORT NOTE: Zig used `ZigString.Slice.mut()` to get a mutable view; the Rust
-    // `ZigStringSlice` is read-only, so own a mutable copy via `into_vec()`.
+    // PORT NOTE: `UTF8Slice` is read-only, so own a mutable copy via
+    // `into_vec()`.
     let mut as_utf8 = npa_str.to_utf8().into_vec();
     let mut parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
         Ok(p) => p,
@@ -116,7 +117,7 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
     // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
     // Maybe there's a better way to code this up.
     let npa_str = arg0.to_bun_string(go)?;
-    // PORT NOTE: Zig used `ZigString.Slice.mut()`; own a mutable copy.
+    // PORT NOTE: own a mutable copy of the slice.
     let mut as_utf8 = npa_str.to_utf8().into_vec();
     let parsed = match HostedGitInfo::from_url(as_utf8.as_mut_slice()) {
         Ok(Some(p)) => p,
@@ -131,5 +132,3 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     parsed.to_js(go)
 }
-
-// ported from: src/install_jsc/hosted_git_info_jsc.zig

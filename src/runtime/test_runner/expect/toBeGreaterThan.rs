@@ -7,5 +7,3 @@ impl Expect {
         self.numeric_ordering_matcher(global, frame, "toBeGreaterThan", OrderingRelation::Gt)
     }
 }
-
-// ported from: src/test_runner/expect/toBeGreaterThan.zig

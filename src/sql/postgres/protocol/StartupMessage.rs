@@ -65,7 +65,7 @@ impl StartupMessage {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
+    // Thin wrapper mirroring `WriteWrap` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
@@ -73,5 +73,3 @@ impl StartupMessage {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/StartupMessage.zig

@@ -135,8 +135,8 @@ const handlers = {
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
 
-    // The code genearting each list is annotated with equivalent "List n"
-    // comments in DevServer.zig's finalizeBundle function.
+    // The code generating each list is annotated with equivalent "List n"
+    // comments in the DevServer's finalize_bundle function.
 
     // List 1
     const serverSideRoutesUpdated = new Set();

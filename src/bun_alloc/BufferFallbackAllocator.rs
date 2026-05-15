@@ -92,5 +92,3 @@ unsafe fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize
     }
     self_.fallback.raw_free(buf, alignment, ra)
 }
-
-// ported from: src/bun_alloc/BufferFallbackAllocator.zig

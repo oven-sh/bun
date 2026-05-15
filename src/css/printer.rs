@@ -15,8 +15,8 @@ use css_values::ident::DashedIdent;
 
 pub use css::Error;
 
-// TODO(port): move to <area>_sys / clarify which Write trait. Zig used *std.Io.Writer
-// (byte-oriented: writeAll/writeByte/print/splatByteAll). Using a local dyn trait alias.
+// TODO(port): move to <area>_sys / clarify which Write trait. Originally a byte-oriented
+// writer interface (writeAll/writeByte/print/splatByteAll). Using a local dyn trait alias.
 use bun_io::Write;
 
 /// Options that control how CSS is serialized to a string.
@@ -190,10 +190,10 @@ impl<'a> Printer<'a> {
         self.lookup_symbol(ident.as_ref().unwrap())
     }
 
-    // Zig checked vtable identity against std.Io.Writer.Allocating and recovered the
+    // The original checked the writer vtable identity and recovered the
     // backing buffer length via `container_of`; in Rust the trait exposes `written_len()`
-    // directly (Vec<u8> / MutableString / counting sinks override it, others panic — same
-    // contract as Zig's `@panic("css: got bad writer type")` fallthrough).
+    // directly (Vec<u8> / MutableString / counting sinks override it, others panic on
+    // an unexpected writer type — same contract as the original fallthrough).
     #[inline]
     fn get_written_amt(writer: &dyn Write) -> usize {
         writer.written_len()
@@ -302,7 +302,7 @@ impl<'a> Printer<'a> {
                 column: 1,
             },
             symbols,
-            // defaults for fields not set by Zig's `.{}` initializer
+            // defaults for fields not set explicitly by the constructor
             indent_amt: 0,
             line: 0,
             col: 0,
@@ -315,8 +315,8 @@ impl<'a> Printer<'a> {
     }
 
     /// Construct a `Printer` that writes into an in-memory `Vec<u8>` buffer
-    /// using default `PrinterOptions`. Mirrors the Zig pattern of pairing
-    /// `std.Io.Writer.Allocating` with `Printer.new(..., PrinterOptions.default(), ...)`
+    /// using default `PrinterOptions`. Mirrors the pattern of pairing
+    /// an allocating writer with `Printer.new(..., PrinterOptions.default(), ...)`
     /// for sub-serialization (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
     pub fn new_buffered(
         arena: &'a Bump,
@@ -352,7 +352,7 @@ impl<'a> Printer<'a> {
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
-            // PERF(port): two small heap copies above; Zig borrowed directly. Profile in Phase B.
+            // PERF(port): two small heap copies above; the original borrowed directly. Profile in Phase B.
             self.write_str(&a)?;
             self.write_str(&b)?;
             return Ok(());
@@ -477,10 +477,10 @@ impl<'a> Printer<'a> {
     }
 
     /// Alias of `write_str` for callers that want to be explicit about
-    /// possibly-newline-containing byte content (Zig: `writeBytes`).
+    /// possibly-newline-containing byte content (`writeBytes`).
     #[inline]
     pub fn write_bytes(&mut self, s: &[u8]) -> PrintResult<()> {
-        // TODO(port): Zig writeBytes did not assert no-newline; tracked
+        // TODO(port): `writeBytes` did not assert no-newline; tracked
         // line/col separately. For now route through write_str.
         self.col += u32::try_from(s.len()).expect("int cast");
         if self.dest.write_all(s).is_err() {
@@ -546,8 +546,8 @@ impl<'a> Printer<'a> {
     pub fn write_ident(&mut self, ident: &'a [u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
             if self.css_module.is_some() {
-                // PORT NOTE: borrowck reshape — Zig captured `&mut self` inside the closure
-                // while `css_module` (a field of self) was simultaneously borrowed. We instead
+                // PORT NOTE: borrowck reshape — the original captured `&mut self` inside the
+                // closure while `css_module` (a field of self) was simultaneously borrowed. We instead
                 // copy the `'a`-lifetime references out of `css_module` up front so the
                 // closure can hold the sole `&mut self`.
                 let source_index = self.loc.source_index as usize;
@@ -795,7 +795,7 @@ impl<'a> Printer<'a> {
         let ctx = css::StyleContext { selectors, parent };
 
         // TODO(port): lifetime — `&ctx` is stack-local but field type is `&'a StyleContext<'a>`.
-        // Zig relied on restoring `parent` before return. Phase B: change field to raw
+        // Relies on restoring `parent` before return. Phase B: change field to raw
         // `*const StyleContext` or restructure StyleContext as an explicit stack.
         // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
         // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
@@ -840,10 +840,10 @@ impl<'a> Printer<'a> {
             return &INDENT_SPACES[..i * 2];
         }
         if self.indentation_buf.len() < idnt as usize {
-            // PORT NOTE: Zig had `appendNTimes(' ', items.len - idnt)` which underflows when
+            // PORT NOTE: the original `appendNTimes(' ', items.len - idnt)` underflows when
             // len < idnt — preserving the (buggy) arithmetic verbatim would panic in Rust.
             // Mirroring intent: pad up to `idnt` spaces.
-            // TODO(port): verify upstream bug; Zig wrapping-sub here is suspicious.
+            // TODO(port): verify upstream bug; the wrapping-sub here is suspicious.
             let need = idnt as usize - self.indentation_buf.len();
             self.indentation_buf
                 .extend(core::iter::repeat(b' ').take(need));
@@ -869,12 +869,11 @@ impl<'a> Printer<'a> {
     }
 }
 
-// PORT NOTE: Zig built a comptime [32][]const u8 table of " " * (i*2). Equivalent here is a
-// single static buffer of 64 spaces, sliced on demand — same observable behavior, simpler const.
+// PORT NOTE: the original built a compile-time table of 32 indent strings of " " * (i*2).
+// Equivalent here is a single static buffer of 64 spaces, sliced on demand —
+// same observable behavior, simpler const.
 const INDENTS_LEVELS: usize = 32;
 static INDENT_SPACES: [u8; INDENTS_LEVELS * 2] = [b' '; INDENTS_LEVELS * 2];
 
 // bun.ast.Symbol.Map — lives in bun_logger.
 type SymbolMap = bun_ast::symbol::Map;
-
-// ported from: src/css/printer.zig

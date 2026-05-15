@@ -78,8 +78,8 @@ unsafe extern "C" {
 pub type phr_header = struct_phr_header;
 pub type phr_chunked_decoder = struct_phr_chunked_decoder;
 
-// Zig: `enum(u8) { ..., _ }` — non-exhaustive (C may write any u8 into `_state`).
-// A Rust `#[repr(u8)] enum` would be UB for values outside 0..=5, so use a
+// The C side may write any u8 into `_state` (non-exhaustive). A Rust
+// `#[repr(u8)] enum` would be UB for values outside 0..=5, so use a
 // transparent newtype with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -94,5 +94,3 @@ impl ChunkedEncodingState {
     pub const CHUNKED_IN_TRAILERS_LINE_HEAD: Self = Self(4);
     pub const CHUNKED_IN_TRAILERS_LINE_MIDDLE: Self = Self(5);
 }
-
-// ported from: src/picohttp_sys/picohttpparser.zig

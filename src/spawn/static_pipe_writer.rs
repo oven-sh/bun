@@ -15,7 +15,7 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 
 /// Trait bound for the owning process type `P` of [`StaticPipeWriter`].
 ///
-/// Zig's `NewStaticPipeWriter(comptime ProcessType)` duck-types
+/// `NewStaticPipeWriter` duck-types
 /// `process.onCloseIO(.stdin)`; in Rust we require this trait so the
 /// generic `BufferedWriter<StaticPipeWriter<P>>` field can satisfy its
 /// `PosixBufferedWriterParent`/`WindowsBufferedWriterParent` bound for all `P`.
@@ -29,12 +29,9 @@ pub trait StaticPipeWriterProcess {
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
 }
 
-/// Zig: `pub fn NewStaticPipeWriter(comptime ProcessType: type) type { return struct { ... } }`
-///
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
 /// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
-// Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
-// `_deinit` maps to `impl Drop` below; the final `bun.destroy` (Box free) is
+// `_deinit` maps to `impl Drop` below; the final heap free is
 // the derive's default destructor (`drop(heap::take(this))`).
 #[derive(bun_ptr::RefCounted)]
 pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
@@ -55,17 +52,14 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     pub buffer: RawSlice<u8>,
 }
 
-// Zig: `const print = bun.Output.scoped(.StaticPipeWriter, .visible);`
-// NOTE: `print` is declared but never used in the Zig source; the file-level
-// `log` (hidden) is what's actually called. We declare a single hidden scope above.
+// NOTE: a `print` scoped logger was declared but never used in the original;
+// the file-level `log` (hidden) is what's actually called. We declare a single
+// hidden scope above.
 
-/// Zig: `pub const IOWriter = bun.io.BufferedWriter(@This(), struct { ... })`
-///
-/// The Zig callback-struct (`onWritable = null`, `getBuffer`, `onClose`, `onError`,
+/// The callback-struct (`onWritable = null`, `getBuffer`, `onClose`, `onError`,
 /// `onWrite`) maps to a handler trait that `StaticPipeWriter<P>` implements; the
 /// inherent methods below are the callback bodies.
 pub type IOWriter<P> = BufferedWriter<StaticPipeWriter<P>>;
-/// Zig: `pub const Poll = IOWriter;`
 pub type Poll<P> = IOWriter<P>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -120,12 +114,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    /// Zig: `pub fn create(event_loop: anytype, subprocess: *ProcessType, result: StdioResult, source: Source) *This`
-    ///
-    /// PORT NOTE: Zig's `anytype` dispatched on type (`EventLoopHandle`,
-    /// `*VirtualMachine`, `*MiniEventLoop`) inside `EventLoopHandle.init`. The
-    /// Rust port splits that into separate overloads, so callers resolve to an
-    /// `EventLoopHandle` before calling and we accept it directly.
+    /// PORT NOTE: original dispatched on the event-loop type
+    /// (`EventLoopHandle`, `*VirtualMachine`, `*MiniEventLoop`) inside
+    /// `EventLoopHandle.init`. The Rust port splits that into separate
+    /// overloads, so callers resolve to an `EventLoopHandle` before calling
+    /// and we accept it directly.
     pub fn create(
         event_loop: EventLoopHandle,
         subprocess: *mut P,
@@ -145,9 +138,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let this_ref = unsafe { &mut *this };
         #[cfg(windows)]
         {
-            // Zig: `this.writer.setPipe(this.stdio_result.buffer)` — on Windows
-            // `StdioResult` is the `WindowsStdioResult` union and Zig reads the
-            // `.buffer` field unchecked (caller invariant). Enforce that
+            // On Windows `StdioResult` is the `WindowsStdioResult` union and the
+            // original read the `.buffer` field unchecked (caller invariant). Enforce that
             // invariant here: any other arm is a logic bug, not a silent no-op.
             // Ownership of the boxed `uv::Pipe` transfers into the writer's
             // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
@@ -175,7 +167,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             "StaticPipeWriter(0x{:x}) start()",
             std::ptr::from_ref(self) as usize
         );
-        // Zig `this.ref()` — intrusive-refcount increment.
+        // Intrusive-refcount increment.
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // TODO(port): self-borrow — see `buffer` field note.
@@ -186,13 +178,12 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
         #[cfg(not(windows))]
         {
-            // Zig: `this.stdio_result.?` — on POSIX `StdioResult` is `?bun.FD`.
+            // On POSIX `StdioResult` is `Option<Fd>`.
             match self.writer.start(self.stdio_result.unwrap(), true) {
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
                 bun_sys::Result::Ok(()) => {
                     #[cfg(unix)]
                     {
-                        // Zig: `const poll = this.writer.handle.poll; poll.flags.insert(.socket);`
                         // `handle` is `PollOrFd` (enum) in Rust; flag mutation goes
                         // through the FilePoll vtable shim.
                         if let Some(poll) = self.writer.handle.get_poll() {
@@ -266,13 +257,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 }
 
-/// Zig: `fn _deinit(this: *This) void` — the `RefCount` destructor callback.
-/// `bun.destroy(this)` (the heap free) is handled by `IntrusiveRc` after `drop` returns.
+/// `RefCount` destructor callback.
+/// The heap free is handled by `IntrusiveRc` after `drop` returns.
 impl<P: StaticPipeWriterProcess> Drop for StaticPipeWriter<P> {
     fn drop(&mut self) {
         self.writer.end();
         self.source.detach();
     }
 }
-
-// ported from: src/runtime/api/bun/subprocess/StaticPipeWriter.zig

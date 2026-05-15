@@ -40,7 +40,7 @@ pub enum FontFaceProperty {
 
 impl FontFaceProperty {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Local helpers mirroring the Zig `Helpers.writeProperty` with `comptime multi: bool`.
+        // Local helpers replacing a generic `write_property` with a `multi` flag.
         macro_rules! write_property_single {
             ($d:expr, $prop:expr, $value:expr) => {{
                 $d.write_str($prop)?;
@@ -89,7 +89,7 @@ impl FontFaceProperty {
     }
 
     pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` field-walk, hand-expanded.
+        // PORT NOTE: field-walk deep clone, hand-expanded.
         match self {
             FontFaceProperty::Source(v) => {
                 FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(arena)).collect())
@@ -289,7 +289,7 @@ impl UnicodeRange {
         }
     }
 
-    // PORT NOTE: Zig `css.Maybe(UnicodeRange, void)` carries no error payload → `Option<UnicodeRange>`.
+    // PORT NOTE: no error payload is needed → `Option<UnicodeRange>`.
     fn parse_concatenated(text_: &[u8]) -> Option<UnicodeRange> {
         use bun_core::strings;
         let mut text = if !text_.is_empty() && text_[0] == b'+' {
@@ -345,8 +345,8 @@ impl UnicodeRange {
     }
 
     fn consume_hex(text: &mut &[u8]) -> (u32, usize) {
-        // Cap at 8: caller validates `<= 6` post-hoc; the unbounded Zig original
-        // panic-overflows u32 in debug on >8 hex chars (malformed input).
+        // Cap at 8: caller validates `<= 6` post-hoc; an unbounded read would
+        // overflow u32 on >8 hex chars (malformed input).
         let (value, n) = bun_core::fmt::parse_hex_prefix(text, 8);
         *text = &text[n..];
         (value, n)
@@ -515,7 +515,6 @@ impl Source {
         match input.try_parse(UrlSource::parse) {
             Ok(url) => return Ok(Source::Url(url)),
             Err(e) => {
-                // Zig: `e.kind == .basic and e.kind.basic == .at_rule_body_invalid`
                 if matches!(
                     e.kind,
                     css::ParseErrorKind::basic(css::BasicParseErrorKind::at_rule_body_invalid)
@@ -728,10 +727,8 @@ impl FontFaceRule {
 
 pub struct FontFaceDeclarationParser;
 
-// PORT NOTE: Zig modeled `AtRuleParser` / `QualifiedRuleParser` /
-// `DeclarationParser` / `RuleBodyItemParser` as nested namespaces with
-// associated consts + fns. In Rust these are trait impls on
-// `FontFaceDeclarationParser`.
+// PORT NOTE: `AtRuleParser` / `QualifiedRuleParser` / `DeclarationParser` /
+// `RuleBodyItemParser` are trait impls on `FontFaceDeclarationParser`.
 //
 // blocked_on: css::{AtRuleParser,QualifiedRuleParser,DeclarationParser,
 // RuleBodyItemParser} trait signatures, properties::font::* +
@@ -860,5 +857,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/font_face.zig

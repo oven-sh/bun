@@ -8,7 +8,7 @@ pub const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
-// TODO(port): Zig used `std.EnumMap(jsc.c.JSType, []const u8)` for the
+// TODO(port): the original used an EnumMap keyed by `jsc.c.JSType` for the
 // type-name → message tables. `bun_jsc::c` (the deprecated JSC C-API module)
 // does not expose `JSType` (it's an opaque-value enum), and `EnumMap` requires
 // `#[derive(enum_map::Enum)]` on the key. Surface as plain `[&str; 8]` indexed
@@ -38,7 +38,7 @@ pub const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
 pub const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Re-export: FetchTasklet lives in ./fetch/FetchTasklet.zig
+// Re-export: FetchTasklet lives in ./fetch/FetchTasklet.rs
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "fetch/FetchTasklet.rs"]
@@ -55,7 +55,7 @@ use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 use bun_core::Output;
-use bun_core::{String as BunString, Tag as BunStringTag, ZigString, ZigStringSlice, strings};
+use bun_core::{String as BunString, Tag as BunStringTag, UTF8Slice, UnsafeStringView, strings};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -84,7 +84,7 @@ use bun_picohttp as picohttp;
 use bun_resolver::data_url::DataURL;
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
-use bun_url::URL as ZigURL;
+use bun_url::URL as BunURL;
 
 pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
@@ -137,8 +137,8 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
-/// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`. Zig had
-/// `defer { if (signal) |sig| sig.unref(); }` covering every exit path; this is
+/// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`. The original
+/// deferred `signal.unref()` covering every exit path; this is
 /// the Rust equivalent. `take()` disarms the guard when ownership is handed to
 /// `FetchOptions`.
 struct SignalRef(Option<NonNull<AbortSignal>>);
@@ -160,7 +160,7 @@ impl Drop for SignalRef {
 }
 
 /// RAII guard for the `+1` `FetchHeaders` ref returned by
-/// `FetchHeaders::create_from_js`. Zig had `defer { if (fetch_headers_to_deref) |fh| fh.deref() }`;
+/// `FetchHeaders::create_from_js`. The original deferred `fetch_headers_to_deref.deref()`;
 /// this releases the ref on every exit path of `extract_headers`.
 struct FetchHeadersRef(Option<NonNull<FetchHeaders>>);
 impl Drop for FetchHeadersRef {
@@ -174,7 +174,7 @@ impl Drop for FetchHeadersRef {
     }
 }
 
-/// `Blob.Any` accessor shim — Zig union-field access `body.AnyBlob.Blob`.
+/// `Blob.Any` accessor shim — union-field access `body.AnyBlob.Blob`.
 trait AnyBlobExt {
     fn blob(&self) -> &Blob;
 }
@@ -284,7 +284,7 @@ pub fn bun_fetch_preconnect(
 
     let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
     // PORT NOTE: `defer url_str.deref()` → BunString impls Drop.
-    // (Zig's post-hoc `hasException()` is redundant here — `href_from_js` already
+    // (the post-hoc `hasException()` check is redundant here — `href_from_js` already
     // returns `JsResult` and is `?`-propagated.)
 
     if url_str.tag() == BunStringTag::Dead {
@@ -314,7 +314,7 @@ pub fn bun_fetch_preconnect(
     // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
     // to `preconnect` (which frees it) or reclaim it on the early-return paths.
     let href: &'static [u8] = unsafe { &*href_raw };
-    let url = ZigURL::parse(href);
+    let url = BunURL::parse(href);
 
     macro_rules! reclaim_href {
         () => {
@@ -388,7 +388,7 @@ pub fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// URLType (local enum inside fetchImpl in Zig)
+// URLType (originally a fn-local enum inside fetchImpl)
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -417,7 +417,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     // PORT NOTE: in Rust, owned locals (Box/Vec/BunString/etc.) Drop on early return,
-    // so most of the Zig `defer { ... }` block below is implicit. `is_error` is
+    // so most of the original `defer { ... }` block below is implicit. `is_error` is
     // retained to mirror control flow but no longer gates cleanup.
     #[allow(unused_assignments)]
     let mut is_error = false;
@@ -448,7 +448,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let mut args = jsc::ArgumentsSlice::init(vm, arguments.slice());
 
-    let mut url = ZigURL::default();
+    let mut url = BunURL::default();
     let first_arg = args.next_eat().unwrap();
 
     // We must always get the Body before the Headers That way, we can set
@@ -475,7 +475,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         verbose = vm_verbose_fetch;
     }
 
-    let mut proxy: Option<ZigURL> = None;
+    let mut proxy: Option<BunURL> = None;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
     // AbortSignal is intrusive-refcounted; the +1 from `ref_()` is released by
     // `SignalRef`'s Drop on every early-return path, and disarmed via `take()`
@@ -484,12 +484,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Custom Hostname
     let mut hostname: Option<bun_core::ZBox> = None;
     let mut range: Option<bun_core::ZBox> = None;
-    let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
+    let mut unix_socket_path: UTF8Slice = UTF8Slice::empty();
 
     // TODO(port): lifetime — `url` and `proxy` borrow into this buffer. Kept as
-    // Vec<u8> (owned) here; ZigURL fields are raw slices in Phase A.
+    // Vec<u8> (owned) here; BunURL fields are raw slices in Phase A.
     let mut url_proxy_buffer: Vec<u8> = Vec::new();
-    // PORT NOTE: Zig freely reassigns `url_proxy_buffer` while `url`/`proxy`
+    // PORT NOTE: the original freely reassigned `url_proxy_buffer` while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
     // borrow-checker by parsing through a raw-pointer slice; the caller is
     // responsible for keeping the backing allocation alive (it always becomes
@@ -499,7 +499,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let s: &[u8] = $slice;
             // SAFETY: `s` points into a Vec that is immediately adopted as
             // `url_proxy_buffer` (or already is it); see PORT NOTE above.
-            ZigURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
+            BunURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
         }};
     }
     let mut url_type = URLType::Remote;
@@ -508,7 +508,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 
-    // PORT NOTE: the Zig `defer { ... }` block here freed signal/unix_socket_path/
+    // PORT NOTE: the original `defer { ... }` block here freed signal/unix_socket_path/
     // url_proxy_buffer/headers/body/hostname/range/ssl_config on every exit path.
     // In Rust, all of these are owning types whose Drop runs on early return
     // (`signal` via `SignalRef`).
@@ -524,7 +524,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     };
 
     // PORT NOTE: kept as raw `*mut Request` because the body re-borrows it
-    // multiple times across long-lived option/init reads (Zig had no borrowck).
+    // multiple times across long-lived option/init reads (the original had no borrowck).
     let request: Option<*mut Request> = 'brk: {
         if first_arg.is_cell() {
             if let Some(request_) = first_arg.as_direct::<Request>() {
@@ -543,7 +543,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    // (`StringOrURL::from_js` returns `JsResult` — Zig's post-hoc `hasException()` is dead.)
+    // (`StringOrURL::from_js` returns `JsResult` — the post-hoc `hasException()` check is dead.)
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
         StringOrURL::from_js(first_arg, global_this)?
     } else {
@@ -626,10 +626,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(data_url_response(data_url, global_this));
     }
 
-    // PORT NOTE: `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
+    // PORT NOTE: `BunURL::from_string` returns `OwnedURL` (owns href buffer); we
     // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
-    // borrow it, mirroring Zig's `url.href` ownership transfer.
-    let owned_url = match ZigURL::from_string(&url_str) {
+    // borrow it, mirroring the original `url.href` ownership transfer.
+    let owned_url = match BunURL::from_string(&url_str) {
         Ok(u) => u,
         Err(_) => {
             let err = ctx.to_type_error(
@@ -784,7 +784,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        // PORT NOTE: Zig `toSliceCloneWithAllocator` ≈ `to_slice_clone`.
+                        // PORT NOTE: `toSliceCloneWithAllocator` ≈ `to_slice_clone`.
                         break 'extract_unix_socket_path socket_path.to_slice_clone(global_this)?;
                     }
                 }
@@ -950,7 +950,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(verb) = obj.get(global_this, "verbose")? {
                     if verb.is_string() {
-                        if verb.get_zig_string(global_this)?.eql_comptime(b"curl") {
+                        if verb
+                            .get_unsafe_string_view(global_this)?
+                            .eql_comptime(b"curl")
+                        {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
                         }
                     } else if verb.is_boolean() {
@@ -1073,7 +1076,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                                 FetchHeaders::create_from_js(ctx, headers_value)?
                                             {
                                                 // `create_from_js` returns a +1-ref NonNull<FetchHeaders>;
-                                                // RAII guard releases it on scope exit (≡ Zig `defer fh.deref()`).
+                                                // RAII guard releases it on scope exit (≡ deferred `fh.deref()`).
                                                 let _guard = FetchHeadersRef(Some(fetch_hdrs));
                                                 let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
                                                 proxy_headers = Some(from_fetch_headers(
@@ -1263,7 +1266,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // headers: Headers | undefined;
     headers = 'extract_headers: {
-        // Zig: `defer { if (fetch_headers_to_deref) |fh| fh.deref() }` — releases
+        // Original: deferred `fetch_headers_to_deref.deref()` — releases
         // the +1 from `create_from_js` on every exit path (including the
         // `has_exception()` early returns below).
         let mut fetch_headers_to_deref = FetchHeadersRef(None);
@@ -1407,7 +1410,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let mut path_buf = PathBuffer::uninit();
         let mut path_buf2 = PathBuffer::uninit();
         // TODO(port): std.io.fixedBufferStream + PercentEncoding.decode writer plumbing.
-        // The Zig threads a writer over path_buf2; here we call a slice-based decode.
+        // The original threads a writer over path_buf2; here we call a slice-based decode.
         let decoded_len = match PercentEncoding::decode_into(
             &mut path_buf2[..],
             match url_type {
@@ -1487,7 +1490,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let mut cwd_buf = PathBuffer::uninit();
                 #[cfg(windows)]
                 // `bun_sys::getcwd` returns the byte length written into `cwd_buf`
-                // (Zig `bun.getcwd` returns the slice directly); slice it here.
+                // (`bun.getcwd` originally returned the slice directly); slice it here.
                 let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
                     Ok(len) => &cwd_buf[..len],
                     Err(err) => {
@@ -1532,7 +1535,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `crate::webcore::node_types` stub (until it's swapped to a
             // re-export of `crate::node::types`); construct that variant here.
             let mut pathlike = crate::webcore::node_types::PathOrFileDescriptor::Path(
-                crate::webcore::node_types::PathLike::EncodedSlice(ZigStringSlice::init_owned(
+                crate::webcore::node_types::PathLike::EncodedSlice(UTF8Slice::init_owned(
                     temp_file_path.to_vec(),
                 )),
             );
@@ -1595,7 +1598,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
-    // PORT NOTE: Zig kept a separate `http_body = body` shallow alias and later
+    // PORT NOTE: the original kept a separate `http_body = body` shallow alias and later
     // detached `body` after `FetchTasklet.queue`. With Rust move semantics the
     // alias is unnecessary: `body` is mutated in place for the sendfile/readfile
     // paths and then *moved* into `FetchOptions`, so the trailing `body.detach()`
@@ -1620,7 +1623,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         global_this,
                     )),
                 );
-                // PORT NOTE: Zig `defer old.detach()`. HTTPRequestBody has no Drop
+                // PORT NOTE: the original deferred `old.detach()`. HTTPRequestBody has no Drop
                 // impl, so a bare `drop(old)` would leak the S3 Blob.Store ref.
                 old.detach();
                 break 'prepare_body;
@@ -1630,7 +1633,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     global_this,
                     global_this.create_error_instance(format_args!("Failed to start s3 stream")),
                 );
-            // PORT NOTE: Zig fetch.zig calls `body.detach()` here. HTTPRequestBody has no
+            // PORT NOTE: the original fetch impl calls `body.detach()` here. HTTPRequestBody has no
             // Drop impl, so a bare `drop(body)` would leak the S3 Blob.Store ref.
             body.detach();
             return Ok(rejected_value);
@@ -1638,7 +1641,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     if body.needs_to_read_file() {
         'prepare_body: {
-            // PORT NOTE: Zig used the VM's `nodeFS().sync_error_buf` as scratch
+            // PORT NOTE: the original used the VM's `nodeFS().sync_error_buf` as scratch
             // for `path.sliceZ()`; we use a local `PathBuffer` instead (the
             // `vm.node_fs()` accessor is gated behind a jsc↔runtime cycle and
             // the buffer is just NUL-termination scratch).
@@ -1709,7 +1712,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     let blob_offset = body.any_blob().blob().offset.get();
 
                     // PORT NOTE: `http::SendFile` fields are `usize`; blob sizes/offsets
-                    // are `blob::SizeType` (u64). Zig's `@intCast` ↔ `as usize` here.
+                    // are `blob::SizeType` (u64). Truncating `as usize` here.
                     let mut sf = http::SendFile {
                         fd: opened_fd,
                         remain: (blob_offset + original_size) as usize,
@@ -1736,7 +1739,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
-            // PORT NOTE: Zig used `globalThis.bunVM().nodeFS()`; that accessor is
+            // PORT NOTE: the original used `globalThis.bunVM().nodeFS()`; that accessor is
             // a jsc↔runtime cycle. `read_file` with an `Fd` path only touches
             // `self.sync_error_buf` for path-variant inputs, so a fresh `NodeFS`
             // is sufficient here.
@@ -1838,7 +1841,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
             // re-parsed URL; the slices stay valid for the buffer's lifetime.
             let url_static =
-                ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
+                BunURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
             let s3_path = url_static.s3_path();
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
@@ -1855,16 +1858,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 promise,
                 global: global_this,
             });
-            // Shim: Zig used `@ptrCast(&Wrapper.resolve)` to erase both the
+            // Shim: the original used a pointer cast on `&Wrapper.resolve` to erase both the
             // `*@This()` payload type and the `JSTerminated!void` error union when
             // coercing to `?*const fn (S3UploadResult, *anyopaque) void`. In Rust we
             // can't safely transmute away the `Result` return, so erase it explicitly.
             fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
                 // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
-                // 'static lifetime is a raw-pointer fiction matching the Zig @ptrCast.
+                // 'static lifetime is a raw-pointer fiction matching the original pointer cast.
                 let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
             }
-            // Zig: `credentialsWithOptions.credentials.dupe()` — heap-allocate a
+            // `credentialsWithOptions.credentials.dupe()` — heap-allocate a
             // fresh intrusive-refcounted copy. `upload_stream` adopts the ref by
             // value (no extra bump) and the MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
@@ -1917,7 +1920,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // PORT NOTE: `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
             let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
             buffer[0..result.url.len()].copy_from_slice(&result.url);
-            // PORT NOTE: upstream Zig (fetch.zig:1373) has `buffer[proxy_.href.len..]`
+            // PORT NOTE: the original implementation has `buffer[proxy_.href.len..]`
             // which is an off-by-one typo — it only happens to not crash because
             // `bun.copy` debug-asserts `dest.len >= src.len` rather than equality.
             // `copy_from_slice` requires exact length, so we use the correct
@@ -1967,7 +1970,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let promise_val = promise.value();
 
-    // PORT NOTE: `FetchOptions.{url,proxy}` are `ZigURL<'static>` borrowing the
+    // PORT NOTE: `FetchOptions.{url,proxy}` are `BunURL<'static>` borrowing the
     // `url_proxy_buffer: Box<[u8]>` stored alongside them — a self-referential
     // struct. `Vec::into_boxed_slice` may realloc when `cap > len` (the
     // proxy-string path above triggers this), so the existing `url`/`proxy`
@@ -1986,9 +1989,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
     let buf: &'static [u8] = unsafe { &*buf_ptr };
-    let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
-    let proxy_static: Option<ZigURL<'static>> = if has_proxy {
-        Some(ZigURL::parse(&buf[url_len..]))
+    let url_static: BunURL<'static> = BunURL::parse(&buf[..url_len]);
+    let proxy_static: Option<BunURL<'static>> = if has_proxy {
+        Some(BunURL::parse(&buf[url_len..]))
     } else {
         None
     };
@@ -2019,7 +2022,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         } else {
             jsc::strong::Optional::create(check_server_identity, global_this)
         },
-        unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
+        unix_socket_path: core::mem::replace(&mut unix_socket_path, UTF8Slice::empty()),
     };
 
     let _ = FetchTasklet::queue(
@@ -2032,7 +2035,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     );
     // PORT NOTE: `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
 
-    // PORT NOTE: Zig followed with a debug ref-count assertion on `body.store()`
+    // PORT NOTE: the original followed with a debug ref-count assertion on `body.store()`
     // and a `body.detach()` reset. With Rust move semantics `body` has been
     // *moved* into `FetchOptions` (no shallow alias), so neither applies — the
     // FetchTasklet now owns the single live reference.
@@ -2042,16 +2045,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// S3 ReadableStream upload Wrapper (was a fn-local struct in Zig)
+// S3 ReadableStream upload Wrapper (originally a fn-local struct)
 // PORT NOTE: hoisted to module level — Rust does not allow `impl` blocks
 // inside fn bodies for types referenced by external fn pointers.
 // ──────────────────────────────────────────────────────────────────────────
 
 struct S3StreamWrapper<'a> {
     promise: jsc::JSPromiseStrong,
-    url: ZigURL<'a>,
+    url: BunURL<'a>,
     url_proxy_buffer: Box<[u8]>,
-    // LIFETIMES.tsv: src/runtime/webcore/fetch.zig · Wrapper · global · JSC_BORROW → &JSGlobalObject
+    // Wrapper · global · JSC_BORROW → &JSGlobalObject
     global: &'a JSGlobalObject,
 }
 
@@ -2119,5 +2122,3 @@ fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) 
     // PORT NOTE: `if (old) |*h| h.deinit()` → Drop on `old`.
     drop(old);
 }
-
-// ported from: src/runtime/webcore/fetch.zig

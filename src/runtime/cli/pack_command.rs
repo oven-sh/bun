@@ -56,7 +56,7 @@ fn dir_open_dir_z(
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
-/// (Zig: `ctx.allocator`, an arena freed at process exit). `bun_alloc::Arena`
+/// (an arena freed at process exit). `bun_alloc::Arena`
 /// (= `bumpalo::Bump`) is `!Sync`, so a `static LazyLock` is out; store the
 /// arena directly in a `thread_local!` and hand out a `'static` borrow — the
 /// CLI is single-threaded and the slot lives for the thread's lifetime.
@@ -66,7 +66,7 @@ fn pack_bump() -> &'static bun_alloc::Arena {
     }
     // SAFETY: `BUMP` is never dropped (thread = process lifetime in `bun pm
     // pack`), and `Arena` is `!Sync` so no cross-thread aliasing. Erase the
-    // borrow to `'static` to mirror Zig's allocator-owned slices.
+    // borrow to `'static` to mirror allocator-owned slices.
     BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
 }
 
@@ -80,14 +80,14 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> 
     ))
 }
 
-/// `manager.log` deref — Zig: non-optional `*logger.Log`, set once at `init()`.
+/// `manager.log` deref — non-optional `*logger.Log`, set once at `init()`.
 /// Raw-pointer receiver so the borrow doesn't conflict with the simultaneous
-/// `&mut workspace_package_json_cache` borrow at the call site (mirrors Zig's
+/// `&mut workspace_package_json_cache` borrow at the call site (mirrors a
 /// freely-aliased `*PackageManager`).
 #[inline]
 fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_ast::Log {
     // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
-    // `PackageManager::init()` (Zig: non-optional `*Log`).
+    // `PackageManager::init()` (non-optional `*Log`).
     unsafe { &mut *(*m).log }
 }
 /// `manager.workspace_package_json_cache` field projection via raw pointer.
@@ -100,7 +100,7 @@ fn pm_workspace_cache<'a>(
 }
 #[inline]
 fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
-    // Zig: non-optional `*DotEnv.Loader`, set during `PackageManager.init`.
+    // Non-optional `*DotEnv.Loader`, set during `PackageManager.init`.
     m.env
         .map(|p| p.as_ptr())
         .expect("env set by PackageManager::init")
@@ -110,7 +110,7 @@ fn pm_run_scripts(m: &PackageManager) -> bool {
     m.options.do_.run_scripts()
 }
 
-// type aliases matching Zig `string`/`stringZ`
+// type aliases for `string`/`stringZ`
 // (used as `&[u8]` / `&ZStr` at fn boundaries; owned forms use Box<[u8]> / Box<ZStr>)
 
 pub struct PackCommand;
@@ -228,11 +228,11 @@ impl PackCommand {
         }
 
         let mut lockfile = Lockfile::default();
-        // `log` is non-null after `PackageManager::init()` (Zig: non-optional `*Log`).
+        // `log` is non-null after `PackageManager::init()` (non-optional `*Log`).
         let log_ptr: *mut bun_ast::Log = manager.log;
         let manager_ptr: *mut PackageManager = manager;
         // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed disjointly
-        // (Zig passed both via the same `*PackageManager` alias).
+        // (both originally passed via the same `*PackageManager` alias).
         let load_from_disk_result = lockfile
             .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
 
@@ -276,7 +276,7 @@ impl PackCommand {
             LoadResult::NotFound => None,
         };
 
-        // PORT NOTE: Zig packed both `manager` and `lockfile` into `Context` and
+        // PORT NOTE: the original packed both `manager` and `lockfile` into `Context` and
         // freely aliased the `*PackageManager`; here split-borrowing through
         // `Context` would conflict with `&mut PackageManager`, so capture the
         // package.json path before constructing `Context`.
@@ -385,7 +385,7 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     #[error("MissingPackageJSON")]
     MissingPackageJSON,
     // The following two are only valid when FOR_PUBLISH == true.
-    // TODO(port): Zig modeled this as a comptime-computed error set union; Rust
+    // TODO(port): originally modeled as a compile-time-computed error set union; Rust
     // const-generic enums cannot conditionally include variants. Phase B may
     // split into two enums or gate construction.
     #[error("RestrictedUnscopedPackage")]
@@ -436,7 +436,7 @@ const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
 ];
 
 struct PackListEntry {
-    subpath: ZBox, // owned NUL-terminated path (Zig `stringZ`)
+    subpath: ZBox, // owned NUL-terminated path
     size: usize,
 }
 type PackList = Vec<PackListEntry>;
@@ -499,7 +499,7 @@ fn new_pack_queue() -> PackQueue {
 
 /// (dir, dir_subpath, dir_depth)
 struct DirInfo(Dir, Box<[u8]>, usize);
-// TODO(port): Zig used `string` (borrowed) for the subpath; here owned because
+// TODO(port): originally a borrowed `string` subpath; here owned because
 // values are pushed onto a Vec stack and outlive the producing iteration.
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -525,7 +525,7 @@ fn iterate_included_project_tree(
     }
 
     let mut ignores: Vec<IgnorePatterns> = Vec::new();
-    let _ = &mut ignores; // unused in this fn body in Zig too (declared but not read)
+    let _ = &mut ignores; // unused in this fn body (declared but not read)
 
     let mut dirs: Vec<DirInfo> = Vec::new();
     dirs.push(DirInfo(root_dir, Box::from(&b""[..]), 1));
@@ -733,7 +733,7 @@ fn add_entire_tree(
         }
         ignores.push(IgnorePatterns {
             list: negated_excludes.into_boxed_slice(),
-            // PORT NOTE: Zig stored a borrowed slice into `negated_excludes`;
+            // PORT NOTE: originally stored a borrowed slice into `negated_excludes`;
             // moved here since it isn't reused below.
             kind: IgnorePatternsKind::PackageJson,
             depth: 1,
@@ -964,7 +964,7 @@ fn iterate_bundled_deps(
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 
-                // PORT NOTE: reshaped for borrowck — Zig iterates `*dep` and
+                // PORT NOTE: reshaped for borrowck — original iterates `*dep` and
                 // calls `add_bundled_dep(ctx, ...)` mid-loop; in Rust we find
                 // the matching index first, mark it, then call with `&mut ctx`.
                 let Some(dep_idx) = ctx.bundled_deps.iter().position(|dep| {
@@ -1249,7 +1249,7 @@ fn add_bundled_dep(
                     }
 
                     if entry_name == b"node_modules" {
-                        // handled by labeled-block fallthrough in Zig: `continue` outer loop
+                        // handled by labeled-block fallthrough: `continue` outer loop
                         // (see below)
                     }
                 }
@@ -1853,7 +1853,7 @@ impl ArchivePtrExt for *mut Archive {
     }
 }
 
-/// Local `@tagName` for `bun_core::FileKind` (Zig `std.fs.File.Kind` tag names).
+/// Local tag-name lookup for `bun_core::FileKind`.
 fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
     use bun_core::FileKind as K;
     match kind {
@@ -1872,8 +1872,7 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
 }
 
 /// Heap-allocate a 512 KiB `BufferedFileReader` without materializing it on
-/// the stack. Zig: `allocator.create(BufferedFileReader)` then field-init with
-/// `.buf = undefined`. `Box::new_zeroed` maps to a `calloc` (typically a free
+/// the stack. `Box::new_zeroed` maps to a `calloc` (typically a free
 /// kernel zero-page for this size) and avoids the 512 KiB stack temporary.
 fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader> {
     // SAFETY: all-zero is a valid bit pattern for `[u8; N]`, `usize`, and
@@ -1888,7 +1887,7 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
 
 /// Re-seat the underlying file and reset the buffer cursor in place — avoids
 /// the 512 KiB stack temporary that `*file_reader = BufferedFileReader { ... }`
-/// would create. Zig: `file_reader.* = .{ .unbuffered_reader = ..., .buf = undefined }`.
+/// would create. Field-initializes `unbuffered_reader` and leaves `buf` uninitialized.
 #[inline]
 fn reset_buffered_file_reader(r: &mut BufferedFileReader, file: bun_sys::File) {
     r.unbuffered_reader = file;
@@ -1944,7 +1943,7 @@ fn manager_env<'a>(m: &'a PackageManager) -> &'a bun_dotenv::Loader<'static> {
 // pack()
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig used `comptime for_publish: bool` to vary the return type
+// TODO(port): a comptime `for_publish: bool` parameter was used to vary the return type
 // (`Publish.Context(true)` vs `void`). Rust const generics cannot vary return
 // type directly; using an associated-type-like Option for now. Phase B: split
 // into `pack()` and `pack_for_publish()` or use a trait.
@@ -1954,7 +1953,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
 ) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
-    // PORT NOTE: reshaped for borrowck — Zig freely aliased `*PackageManager`
+    // PORT NOTE: reshaped for borrowck — the original freely aliased `*PackageManager`
     // alongside `ctx`-whole calls (`run_lifecycle_script(ctx, …)`,
     // `iterate_bundled_deps(ctx, …)`). Round-trip the field through a raw
     // pointer so the long-lived `manager` reborrow is decoupled from `ctx`;
@@ -1967,7 +1966,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let log_level = manager.options.log_level;
     let bump = pack_bump();
     // PORT NOTE: `workspace_package_json_cache` and `log` are disjoint fields on
-    // `PackageManager` but Zig accessed them via the same `*PackageManager`
+    // `PackageManager` but originally accessed via the same `*PackageManager`
     // alias inside one call; route through raw-pointer field projections so the
     // two `&mut` borrows don't conflict.
     let mut json = match pm_workspace_cache(manager_ptr).get_with_path(
@@ -2067,8 +2066,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
     }
 
-    // PORT NOTE: `Transpiler` has no `Default`; Zig used `var t: Transpiler = undefined;`
-    // and `configure_env_for_run` writes the whole struct (out-param constructor).
+    // PORT NOTE: `Transpiler` has no `Default`; use a `MaybeUninit` slot
+    // and let `configure_env_for_run` write the whole struct (out-param constructor).
     let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
         core::mem::MaybeUninit::uninit();
 
@@ -2333,7 +2332,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     path: ZBox::from_bytes(bin.path.as_bytes()),
                     optional: true,
                 })?;
-                // TODO(port): Zig pushed a borrowed slice; cloning here
+                // TODO(port): originally pushed a borrowed slice; cloning here
             }
             BinType::Dir => {
                 let bin_dir = match dir_open_dir_z(
@@ -2491,7 +2490,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &mut dest_buf[..],
             );
             // PORT NOTE: `manager`/`command_ctx` reborrowed via raw pointer —
-            // Zig freely aliased `*PackageManager`/`*ContextData` between
+            // Originally freely aliased `*PackageManager`/`*ContextData` between
             // `pack::Context` and `Publish::Context`; both are process-lifetime
             // singletons (see `cli::command::GLOBAL_CLI_CTX`).
             // SAFETY: pointers came from `&mut` and outlive the returned value.
@@ -2634,9 +2633,9 @@ pub fn pack<const FOR_PUBLISH: bool>(
             node = Some(progress.start(b"", pack_queue.count() + bundled_pack_queue.count() + 1));
             node.as_mut().expect("infallible: progress active").unit = Progress::Unit::Files;
         }
-        // PORT NOTE: Zig had `defer node.end()` / `defer node.completeOne()`.
-        // The loop bodies' only early exits are `continue` (where the Zig
-        // `defer` still fires) and `Global::crash()` (never returns, no
+        // PORT NOTE: deferred `node.end()` / `node.completeOne()`.
+        // The loop bodies' only early exits are `continue` (where the
+        // deferred call still fires) and `Global::crash()` (never returns, no
         // unwinding). `scopeguard` captures of `&mut node` overlap the inline
         // uses below, so call `complete_one()` explicitly at every loop-body
         // exit and `end()` once after the loops.
@@ -2968,7 +2967,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
     if FOR_PUBLISH {
         // SAFETY: see dry-run construction above — `manager`/`command_ctx` are
-        // process-lifetime singletons aliased exactly as Zig's `*T` did.
+        // process-lifetime singletons aliased as raw `*T` pointers.
         return Ok(Some(Publish::Context {
             manager: unsafe { &mut *manager_ptr },
             command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
@@ -3001,7 +3000,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
     // PORT NOTE: `ctx.command_ctx` and `env` are reborrowed via raw pointer
-    // because Zig passed `*ContextData` / `*DotEnv.Loader` (freely aliased
+    // because the original passed `*ContextData` / `*DotEnv.Loader` (freely aliased
     // process singletons) and `run_package_script_foreground` needs `&mut`
     // for `env.map.put()` while `ctx` only holds `&Context`.
     // SAFETY: both are process-lifetime singletons; no concurrent `&mut` exists
@@ -3032,7 +3031,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
             if err == bun_core::err!("OutOfMemory") {
                 return Err(PackError::OutOfMemory);
             }
-            // TODO(port): Zig's error set is exactly {MissingShell, OutOfMemory};
+            // TODO(port): the error set is exactly {MissingShell, OutOfMemory};
             // unreachable here.
             unreachable!()
         }
@@ -3195,7 +3194,7 @@ fn archive_package_json(
     root_dir: &Dir,
     edited_package_json: &[u8],
 ) -> Result<*mut ArchiveEntry, AllocError> {
-    // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
+    // `entry: *Archive.Entry` → same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
     let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
         Ok(s) => s,
@@ -3253,7 +3252,7 @@ fn add_archive_entry(
     print_buf: &mut Vec<u8>,
     bins: &[BinInfo],
 ) -> Result<*mut ArchiveEntry, AllocError> {
-    // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
+    // `entry: *Archive.Entry` → same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
     write!(
         print_buf,
@@ -3342,7 +3341,7 @@ fn edit_root_package_json(
     json: &mut WorkspacePackageJSONCache::MapEntry,
 ) -> Result<Box<[u8]>, AllocError> {
     use bun_install_types::DependencyGroup;
-    // preserve deps→dev→peer→optional order (matches Zig pack_command.zig:2149 error-message ordering)
+    // preserve deps→dev→peer→optional order (matches the error-message ordering)
     for dependency_group in [
         DependencyGroup::DEPENDENCIES,
         DependencyGroup::DEV,
@@ -3354,7 +3353,7 @@ fn edit_root_package_json(
         if let Some(dependencies_expr) = json.root.get(dependency_group) {
             if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {
-                    // TODO(port): Zig iterated `slice()` of `*dependency`; need mutable iter
+                    // TODO(port): originally iterated a `*dependency` slice; need mutable iter
                     if dependency.key.is_none() {
                         continue;
                     }
@@ -3374,7 +3373,7 @@ fn edit_root_package_json(
                         strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
                     {
                         // TODO: make semver parsing more strict. `^`, `~` are not valid
-                        // (see Zig source for commented-out parsed/valid block)
+                        // (commented-out parsed/valid block elided)
 
                         if without_workspace_protocol.len() == 1 {
                             // TODO: this might be too strict
@@ -3412,7 +3411,6 @@ fn edit_root_package_json(
                                         b'*' => b"",
                                         _ => unreachable!(),
                                     };
-                                    // Zig: `try std.fmt.allocPrint(allocator, "{s}{}", ...)`.
                                     // Format on the heap then copy into the pack arena
                                     // (`ctx.allocator` analog); `EString::init` erases the
                                     // lifetime.
@@ -3445,7 +3443,6 @@ fn edit_root_package_json(
                             }
                         }
 
-                        // Zig: `try allocator.dupe(u8, without_workspace_protocol)`.
                         let dup = pack_bump().alloc_slice_copy(without_workspace_protocol);
                         dependency.value =
                             Some(Expr::init(E::EString::init(dup), Default::default()));
@@ -3524,7 +3521,6 @@ fn edit_root_package_json(
                         };
                         let dep: &Dependency = &catalog.values()[dep_idx];
 
-                        // Zig: `try allocator.dupe(u8, literal.slice(buf))`.
                         let literal =
                             pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
                         dependency.value =
@@ -3577,7 +3573,7 @@ fn edit_root_package_json(
         .ctx
         .written_without_trailing_zero()
         .into())
-    // TODO(port): return type ownership — Zig returned a borrowed slice into
+    // TODO(port): return type ownership — originally returned a borrowed slice into
     // package_json_writer's internal buffer; here boxed.
 }
 
@@ -3881,7 +3877,7 @@ impl IgnorePatterns {
 // printArchivedFilesAndPackages
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig used `comptime is_dry_run: bool` to vary the param type
+// TODO(port): a comptime `is_dry_run: bool` parameter was used to vary the param type
 // (`*PackQueue` vs `PackList`). Using a small enum wrapper.
 enum PackListOrQueue<'a> {
     Queue(&'a mut PackQueue),
@@ -4029,8 +4025,8 @@ fn is_unconditionally_included_file(filename: &[u8]) -> bool {
 // TODO: should this be case insensitive on all platforms?
 #[inline]
 fn strings_eql(a: &[u8], b: &'static [u8]) -> bool {
-    // PORT NOTE: Zig's `Environment.isLinux` (builtin.target.os.tag == .linux)
-    // is true on Android too; Rust splits these into distinct target_os values.
+    // PORT NOTE: `Environment.isLinux` is true on Android too; Rust splits
+    // these into distinct target_os values.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         a == b
@@ -4043,7 +4039,7 @@ fn strings_eql(a: &[u8], b: &'static [u8]) -> bool {
 
 #[inline]
 fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
-    // PERF(port): Zig used `inline` switch arms for comptime-known length
+    // PERF(port): was monomorphized switch arms for compile-time-known length
     // ranges. Runtime branches here are equivalent for these tiny comparisons.
     if filename.len() < name.len() {
         false
@@ -4294,5 +4290,3 @@ pub mod bindings {
         Ok(result)
     }
 }
-
-// ported from: src/cli/pack_command.zig

@@ -2,10 +2,10 @@
 
 use core::ops::{BitAnd, BitOr, Not};
 
-// In Zig these are free functions over `comptime T: type` where T is a
-// `packed struct(uN)`. Rust expresses the same constraint via a trait that
-// exposes the backing integer and the bitcast in/out.
-// TODO(port): @typeInfo(T).@"struct".backing_integer — modeled as associated type.
+// These were free functions parameterized over a packed bool-struct backed by
+// `uN`. Rust expresses the same constraint via a trait that exposes the backing
+// integer and the bitcast in/out.
+// TODO(port): backing-integer reflection — modeled as associated type.
 pub trait Bits: Copy {
     /// The backing integer type (`uN` of the `packed struct(uN)`).
     type Int: Copy
@@ -15,7 +15,6 @@ pub trait Bits: Copy {
         + Not<Output = Self::Int>;
 
     /// Smallest unsigned integer that can hold `0..=bits_of(Self::Int)`.
-    /// Mirrors Zig's `LeadingZerosInt(T)`.
     type LeadingZerosInt: Copy;
 
     const ZERO_INT: Self::Int;
@@ -65,8 +64,8 @@ pub fn contains<T: Bits>(lhs: T, rhs: T) -> bool {
 
 #[inline]
 pub fn mask_out<T: Bits>(lhs: &mut T, rhs: T) -> T {
-    // PORT NOTE: Zig passes `lhs` (a *T) directly to `@"and"` which expects T;
-    // ported as a deref, matching the evident intent.
+    // PORT NOTE: `lhs` is taken by `&mut T` for parity with `remove`; the
+    // upstream version passed it straight through, so it is dereffed here.
     and(*lhs, invert(rhs))
 }
 
@@ -80,9 +79,9 @@ pub fn leading_zeros<T: Bits>(value: T) -> T::LeadingZerosInt {
     T::clz(as_int(value))
 }
 
-// `LeadingZerosInt(comptime T: type) type` → associated type `Bits::LeadingZerosInt`.
-// Zig computes `std.math.IntFittingRange(0, @typeInfo(backing_int).int.bits)`;
-// each `impl Bits` picks the concrete type (e.g. u8's is u4, u32's is u6).
+// `Bits::LeadingZerosInt` is the smallest unsigned integer that can hold
+// `0..=bits_of(backing_int)`; each `impl Bits` picks the concrete type
+// (e.g. u8's is u4, u32's is u6).
 // TODO(port): no direct type-level fn equivalent; resolved per-impl.
 
 #[inline]
@@ -94,5 +93,3 @@ pub fn from_int<T: Bits>(bits: T::Int) -> T {
 pub fn as_int<T: Bits>(value: T) -> T::Int {
     value.as_int()
 }
-
-// ported from: src/meta/bits.zig

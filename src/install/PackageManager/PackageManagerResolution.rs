@@ -18,8 +18,8 @@ use super::PackageManager;
 use super::options::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
+// Free-function re-export surface — the original declares these at file scope
+// with an explicit `*PackageManager` first param. Thin shims over the
 // `impl PackageManager` bodies below so `pub use resolution::{...}` in
 // `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────
@@ -90,9 +90,9 @@ impl PackageManager {
         name_hash: PackageNameHash,
         resolution: Resolution,
     ) -> Option<semver::version::Formatter<'_, u64>> {
-        // Zig forwards `package_name` → `scopeForPackageName` → `byNameHash`,
-        // but the `.load_from_memory` arm never reads scope; keep the param for
-        // signature parity.
+        // The original forwards `package_name` → `scopeForPackageName` →
+        // `byNameHash`, but the `.load_from_memory` arm never reads scope; keep
+        // the param for signature parity.
         let _ = package_name;
         match resolution.tag {
             ResolutionTag::Npm => {
@@ -102,7 +102,7 @@ impl PackageManager {
                     return None;
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig calls
+                // PORT NOTE: reshaped for borrowck — the original calls
                 // `this.manifests.byNameHash(this, …, .load_from_memory, …)`,
                 // which in Rust would require simultaneous `&mut self.manifests`
                 // (receiver) and `&mut self` (arg). The memory-only path touches
@@ -147,7 +147,7 @@ impl PackageManager {
     ) -> Result<Vec<semver::Version>, bun_core::Error> {
         // TODO(port): narrow error set
         let mut list: Vec<semver::Version> = Vec::new();
-        // Zig: `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
+        // `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
         let cache_dir = super::get_cache_directory(self);
         let dir = match bun_sys::open_dir(cache_dir, package_name) {
             Ok(d) => d,
@@ -238,8 +238,8 @@ impl PackageManager {
         // TODO: make this fewer passes
         {
             let tags_slice: &[u8] = tags_buf.as_slice();
-            // Zig: `std.sort.pdq(..., sortGt)` — `sortGt` is `order == .gt`, so
-            // pdq sorts descending. Use the total-order helper with swapped args
+            // The original sort comparator is "greater-than", so it sorts
+            // descending. Use the total-order helper with swapped args
             // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
             // closure is not antisymmetric and may panic since Rust 1.81.
             installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
@@ -428,5 +428,3 @@ impl PackageManager {
         }
     }
 }
-
-// ported from: src/install/PackageManager/PackageManagerResolution.zig

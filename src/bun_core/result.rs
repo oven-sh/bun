@@ -1,19 +1,18 @@
-// ─── bun_core::Error — Zig `anyerror` port ────────────────────────────────
+// ─── bun_core::Error — global named error set ─────────────────────────────
 //
-// Zig's `anyerror` is a global error set: every distinct `error.Foo` name in
-// the program is assigned a unique non-zero u16 at link time, `@intFromError`
-// returns that code, `@errorName` recovers the string, and two `error.Foo`s
-// from different modules compare equal because the *name* is the identity.
+// `Error` models a process-wide error set: every distinct `error.Foo` name in
+// the program is assigned a unique non-zero u16, `as_u16()` returns that code,
+// `name()` recovers the string, and two `Error`s from different modules
+// compare equal because the *name* is the identity.
 //
-// Rust has no link-time global enum, so we intern at runtime: a process-wide
-// append-only `&'static str` table guarded by an RwLock. The `err!()` macro
-// caches each call-site's code in a 2-byte `AtomicU16` slot (zero-init →
-// `.bss`), so the lock is touched once per *name-site*, not once per call —
-// matching Zig's zero-cost comparison (`e == err!(Foo)` is a u16 compare
-// after first use).
+// Names are interned at runtime: a process-wide append-only `&'static str`
+// table guarded by an RwLock. The `err!()` macro caches each call-site's code
+// in a 2-byte `AtomicU16` slot (zero-init → `.bss`), so the lock is touched
+// once per *name-site*, not once per call — `e == err!(Foo)` is a u16 compare
+// after first use.
 //
 // Layout is `#[repr(transparent)] NonZeroU16`, so `Option<Error>` is one u16
-// and FFI/packed-struct slots that held a Zig `anyerror` keep the same width.
+// and FFI/packed-struct slots that hold an `Error` stay 2 bytes wide.
 
 use crate::RwLock;
 use core::fmt;
@@ -33,8 +32,8 @@ pub struct Error(NonZeroU16);
 /// the `pub const` Errors below. (The errno→name map lives in bun_errno via the
 /// `ErrnoNames` hook; entries here are only fast-path intern hits.)
 const SEED: &[&str] = &[
-    // — well-known Zig error-set members the runtime matches on by value —
-    "Unexpected",      // 1  (Zig's catch-all; also `errno_map` default)
+    // — well-known error-set members the runtime matches on by value —
+    "Unexpected",      // 1  (catch-all; also `errno_map` default)
     "OutOfMemory",     // 2
     "EndOfStream",     // 3
     "StreamTooLong",   // 4
@@ -138,8 +137,7 @@ impl Error {
     pub const TODO: Self = Self::UNEXPECTED;
 
     /// Intern `name`, returning its process-unique code. Idempotent: the same
-    /// string (by value) always yields the same `Error`. This is the runtime
-    /// half of Zig's link-time `anyerror` assignment.
+    /// string (by value) always yields the same `Error`.
     ///
     /// `#[cold]`: only reached on a per-site cache miss (or `err!(from e)`);
     /// keeps the SEED scan + RwLock probe out of `.text.hot` so
@@ -167,7 +165,7 @@ impl Error {
         Self::intern(name)
     }
 
-    /// Zig: `@errorName(e)`. Never allocates; the table only stores `'static`.
+    /// Recover the interned tag name. Never allocates; the table only stores `'static`.
     pub fn name(self) -> &'static str {
         let code = self.0.get() as usize;
         if code <= SEED.len() {
@@ -180,14 +178,15 @@ impl Error {
             .unwrap_or("Unexpected")
     }
 
-    /// Zig: `@intFromError(e)`.
+    /// Return the interned u16 code.
     #[inline]
     pub const fn as_u16(self) -> u16 {
         self.0.get()
     }
 
-    /// Zig: `@errorFromInt(n)`. `0` (the "no error" value Zig forbids) maps to
-    /// `Unexpected` rather than panicking, since callers feed untrusted ints.
+    /// Reconstruct an `Error` from a previously-interned u16 code. `0` (the
+    /// reserved "no error" value) maps to `Unexpected` rather than panicking,
+    /// since callers feed untrusted ints.
     #[inline]
     pub const fn from_raw(code: u16) -> Self {
         match NonZeroU16::new(code) {
@@ -196,17 +195,15 @@ impl Error {
         }
     }
 
-    /// Port of `bun.errnoToZigErr`: map a raw OS errno to its named error.
-    /// Unknown errnos collapse to `Unexpected` (matching the Zig `@memset`).
+    /// Map a raw OS errno to its named error. Unknown errnos collapse to
+    /// `Unexpected`.
     pub fn from_errno(errno: i32) -> Self {
-        // Zig builds `errno_map: [max+1]anyerror` at comptime (bun.zig:2841);
-        // we build the equivalent once at first use by interning every
-        // platform `SystemErrno` tag name. After init, lookup is a plain
-        // bounds-checked array index — same cost as the Zig version.
+        // Build a dense `errno_map: [max+1]Error` once at first use by
+        // interning every platform `SystemErrno` tag name. After init, lookup
+        // is a plain bounds-checked array index.
         static ERRNO_MAP: crate::Once<Box<[Error]>> = crate::Once::new();
         let map = ERRNO_MAP.get_or_init(|| {
-            // Index 0 ("SUCCESS") is the no-error hole → Unexpected,
-            // matching the Zig `@memset(&map, error.Unexpected)`.
+            // Index 0 ("SUCCESS") is the no-error hole → default to Unexpected.
             (0..crate::ErrnoNames::SYS.max_dense())
                 .map(|i| match system_errno_name(i as i32) {
                     Some(name) => Error::intern(name),
@@ -215,7 +212,7 @@ impl Error {
                 .collect()
         });
 
-        // Windows libuv errnos are negative; normalise like the Zig original.
+        // Windows libuv errnos are negative; normalise to a non-negative index.
         let n = if cfg!(windows) {
             errno.unsigned_abs()
         } else {
@@ -228,8 +225,8 @@ impl Error {
             return e;
         }
         // Windows: fall through to the sparse UV_* range (3000..=4096) so e.g.
-        // `from_errno(-4058)` → `error.UV_ENOENT`, matching Zig's full-width
-        // `errno_map` (bun.zig:2841-2851 sizes it to `max(@intFromEnum)+1`).
+        // `from_errno(-4058)` → `error.UV_ENOENT`. The dense map above only
+        // covers the contiguous low errnos.
         #[cfg(windows)]
         if let Some(name) = system_errno_name(errno) {
             return Self::intern(name);
@@ -258,8 +255,8 @@ impl From<std::io::Error> for Error {
             // Windows: `raw_os_error()` returns the raw Win32 `GetLastError()`
             // code (ERROR_ACCESS_DENIED=5, ERROR_SHARING_VIOLATION=32, …),
             // NOT a `SystemErrno`. Routing it through `ErrnoNames::SYS.name()` would
-            // alias garbage (5→EIO, 32→EPIPE). The Zig pipeline first runs
-            // `Win32Error.toSystemErrno()` (windows_errno.zig:290) before any
+            // alias garbage (5→EIO, 32→EPIPE). The expected pipeline first
+            // converts via `Win32Error::toSystemErrno()` before any
             // `errno_map` lookup; that table lives in `bun_errno`, which is
             // tier-above `bun_core` (dep cycle), so we can't call it here.
             // Fall back to `Unexpected` rather than return a wrong name.
@@ -276,10 +273,10 @@ impl From<bun_alloc::AllocError> for Error {
         Self::OUT_OF_MEMORY
     }
 }
-/// Zig's `std.Io.Writer` error set surfaces as `error.WriteFailed` when
-/// propagated through `try writer.print(…)`; the Rust port routes formatted
-/// output through `core::fmt::Write`, whose only error value is the unit
-/// `fmt::Error`. Map it to the same tag so `?`-propagation matches the spec.
+/// Writer-style I/O failures surface as `error.WriteFailed`. Formatted output
+/// here routes through `core::fmt::Write`, whose only error value is the unit
+/// `fmt::Error`; map it to the same tag so `?`-propagation matches the
+/// expected error name.
 impl From<core::fmt::Error> for Error {
     fn from(_: core::fmt::Error) -> Self {
         Self::WRITE_FAILED
@@ -289,8 +286,8 @@ impl From<core::fmt::Error> for Error {
 /// Extension for `?`-propagating non-`fmt::Error` write failures (e.g.
 /// `std::io::Error` from `write!(&mut Vec<u8>, …)` / `Cursor` / `BufWriter`)
 /// as the spec's `error.WriteFailed` tag. Bare `?` on those would route through
-/// [`From<std::io::Error>`] → errno/`Unexpected`, which diverges from the Zig
-/// `try writer.print(…)` contract. Replaces the open-coded
+/// [`From<std::io::Error>`] → errno/`Unexpected`, which diverges from the
+/// `error.WriteFailed` contract. Replaces the open-coded
 /// `.map_err(|_| err!("WriteFailed"))` pattern at ~20 call sites.
 pub trait OrWriteFailed<T> {
     fn or_write_failed(self) -> core::result::Result<T, Error>;
@@ -336,8 +333,8 @@ macro_rules! named_error_set {
 
 /// Stamp out `impl Display + impl Error` for one or more
 /// `strum::IntoStaticStr`-deriving error enums whose user-facing string is
-/// exactly the variant tag (Zig `@errorName(e)` semantics). Replaces the
-/// hand-rolled 5-line `f.write_str(<&'static str>::from(self))` boilerplate.
+/// exactly the variant tag. Replaces the hand-rolled 5-line
+/// `f.write_str(<&'static str>::from(self))` boilerplate.
 ///
 /// Kept separate from [`named_error_set!`] because not every named error set
 /// wants the tag-as-Display behavior (some have bespoke `Display` impls).
@@ -355,13 +352,12 @@ macro_rules! impl_tag_error {
 }
 
 // ─── coreutils_error_map ─────────────────────────────────────────────────
-// Zig builds a comptime `EnumMap<SystemErrno, []const u8>` with a per-OS
-// `switch (Environment.os)` body (src/sys/coreutils_error_map.zig). The full
-// EnumMap lives in `bun_sys::coreutils_error_map`; that crate is tier-above
-// `bun_core`, so for `output.rs`'s integer-errno hot path we keep a parallel
-// table here, keyed by `SystemErrno` *name* and resolved through the per-OS
-// `ErrnoNames` hook — i.e. the same `errno → SystemErrno → message`
-// composition the Zig does, just without the cross-crate enum.
+// The full `EnumMap<SystemErrno, &str>` lives in
+// `bun_sys::coreutils_error_map`; that crate is tier-above `bun_core`, so for
+// `output.rs`'s integer-errno hot path we keep a parallel table here, keyed by
+// `SystemErrno` *name* and resolved through the per-OS `ErrnoNames` hook —
+// i.e. the same `errno → SystemErrno → message` composition, just without the
+// cross-crate enum.
 //
 // Layout: one shared BASE table (the glibc/coreutils strings — used as-is on
 // linux/android/windows/wasm) plus a small per-OS DELTA on macOS/FreeBSD that
@@ -619,7 +615,7 @@ pub mod coreutils_error_map {
     };
 }
 
-/// Zig: `pub fn Result(comptime T: type, comptime E: type) type { return union(enum) { ok: T, err: E, ... } }`
+/// Two-variant ok/err result used at FFI boundaries that pass a tagged union by value.
 pub enum Result<T, E> {
     Ok(T),
     Err(E),
@@ -675,5 +671,3 @@ mod tests {
         assert_ne!(a, Error::TODO);
     }
 }
-
-// ported from: src/bun.zig

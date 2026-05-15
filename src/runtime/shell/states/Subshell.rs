@@ -46,7 +46,7 @@ impl Subshell {
         }))
     }
 
-    /// Zig `Subshell.initDupeShellState` — dupe the parent env and `init`.
+    /// Dupe the parent env and `init`.
     /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
     /// NOT use this (it dupes per-child itself and calls `init` directly).
     pub fn init_dupe_shell_state(
@@ -73,7 +73,7 @@ impl Subshell {
         log!("Subshell {} next state={}", this, state_tag);
         match interp.as_subshell(this).state {
             SubshellState::Idle => {
-                // Spec (Subshell.zig start()): spawn Script directly with
+                // Spawn Script directly with
                 // `this.base.shell`. The env was already duped at construction
                 // (by `init_dupe_shell_state` or by Pipeline) — do NOT dupe
                 // again here.
@@ -97,7 +97,6 @@ impl Subshell {
         }
     }
 
-    /// Spec: Subshell.zig `onIOWriterChunk` (lines 163-174).
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -108,7 +107,7 @@ impl Subshell {
             interp.as_subshell(this).state,
             SubshellState::WaitWriteErr
         ));
-        // Spec just `e.deref()` — Drop handles that.
+        // The error is just deref'd — Drop handles that.
         drop(err);
         let (parent, exit) = {
             let me = interp.as_subshell_mut(this);
@@ -145,5 +144,3 @@ impl Subshell {
         me.base.end_scope();
     }
 }
-
-// ported from: src/shell/states/Subshell.zig

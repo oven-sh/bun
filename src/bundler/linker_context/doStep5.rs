@@ -1,6 +1,6 @@
-//! Port of `src/bundler/linker_context/doStep5.zig`.
+//! Step 5 of the linker: resolve symbol uses and create per-file exports.
 //!
-//! PORT NOTE: like `scanImportsAndExports.rs`, the Zig body holds many
+//! PORT NOTE: like `scanImportsAndExports.rs`, the original body held many
 //! overlapping `&mut` column slices out of `LinkerGraph.{ast,meta}` while also
 //! calling `&self` methods. The SoA columns are physically disjoint and never
 //! reallocate during this step, so we cache raw column pointers and deref at
@@ -68,8 +68,8 @@ impl LinkerContext<'_> {
         // form `&mut BundleV2` here (concurrent tasks would alias it).
         let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
         let worker = ThreadPool::Worker::get(bundle_v2);
-        // Zig: `defer worker.unget()`. `Worker::get` returns the thread-local worker
-        // (not RAII), so balance explicitly via scopeguard.
+        // `Worker::get` returns the thread-local worker (not RAII), so balance the
+        // `unget` explicitly via scopeguard.
         let worker = scopeguard::guard(worker, |w| w.unget());
 
         // we must use this arena here
@@ -209,7 +209,7 @@ impl LinkerContext<'_> {
         let named_imports_is_empty = unsafe { (*named_imports).is_empty() };
 
         // PERF(port): hoist this file's two `top_level_symbols_to_parts`
-        // sub-maps. The Zig version reaches them through
+        // sub-maps. The original reaches them through
         // `c.topLevelSymbolsToParts(id, ref)` per symbol-use, which is fine
         // when the underlying ArrayHashMap has its index_header (O(1) get).
         // In the port, perf showed `find_hash` falling through to the linear
@@ -241,7 +241,7 @@ impl LinkerContext<'_> {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
-            // PORT NOTE: reshaped for borrowck — Zig iterates keys()/values() while
+            // PORT NOTE: reshaped for borrowck — original iterates keys()/values() while
             // holding a mutable getPtr into part.symbol_uses; collect refs first.
             // PERF(port): the property-use map is empty for the overwhelming
             // majority of parts (it only fills for `import * as ns`/enum
@@ -391,7 +391,7 @@ impl LinkerContext<'_> {
         }
     }
 
-    /// Spec: `linker_context/doStep5.zig:createExportsForFile`.
+    /// Generate the namespace export object (`__export(exports, …)`) for one file.
     ///
     /// WARNING: This method is run in parallel over all files. Do not mutate data
     /// for other files within this method or you will create a data race.
@@ -412,7 +412,7 @@ impl LinkerContext<'_> {
         ast_flags: &mut AstFlags,
         ast_parts: &mut bun_ast::PartList,
     ) {
-        // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
+        // PORT NOTE: original toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
         // re-entrancy guards around the global Store). `Disabler::scope()`
         // calls `disable()` and re-`enable()`s on drop — currently no-op stubs
         // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
@@ -443,7 +443,7 @@ impl LinkerContext<'_> {
             // + 1 if we need to do module.exports = __toCommonJS(exports)
             force_include_exports_for_entry_point as usize;
 
-        // PORT NOTE: Zig used `Stmt.Batcher` (preallocated arena slice +
+        // PORT NOTE: original used `Stmt.Batcher` (preallocated arena slice +
         // cursor). `Batcher::<T>::init` requires `T: Default` which `Stmt`
         // doesn't satisfy, so we hand-roll the same shape: one arena slab of
         // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
@@ -716,5 +716,3 @@ impl LinkerContext<'_> {
         }
     }
 }
-
-// ported from: src/bundler/linker_context/doStep5.zig

@@ -44,7 +44,7 @@ impl Ratio {
         Ok(())
     }
 
-    // PORT NOTE: dropped unused `std.mem.Allocator` param (was `_` in Zig).
+    // PORT NOTE: dropped unused allocator param (was `_` in the original).
     pub fn add_f32(self, other: f32) -> Ratio {
         Ratio {
             numerator: self.numerator + other,
@@ -53,10 +53,8 @@ impl Ratio {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        // Zig: css.implementEql(@This(), lhs, rhs) — field-wise equality via reflection.
+        // `css.implementEql` — field-wise equality via reflection.
         // Rust: covered by #[derive(PartialEq)].
         self == rhs
     }
 }
-
-// ported from: src/css/values/ratio.zig

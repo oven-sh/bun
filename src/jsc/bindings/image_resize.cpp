@@ -245,7 +245,7 @@ static void FlipVImpl(const uint8_t* HWY_RESTRICT src, size_t w, size_t h, uint8
 // Nearest-palette index for one RGBA point. Squared Euclidean over all four
 // channels; SIMD across palette entries (4 entries' R/G/B/A laid out as
 // contiguous u8, so we load 16 at a time and compute 4 distances per step on
-// targets where Lanes(u32) ≥ 4). Used by quantize.zig's Floyd–Steinberg
+// targets where Lanes(u32) ≥ 4). Used by quantize.rs's Floyd–Steinberg
 // mapper — the diffusion itself is serial, but this inner search is hot and
 // parallelisable.
 static uint32_t NearestPaletteImpl(const uint8_t* HWY_RESTRICT palette, uint32_t k,
@@ -502,7 +502,7 @@ struct ScratchLayout {
 
 extern "C" {
 
-// How many bytes of scratch the resize needs. Caller (Zig) allocates this
+// How many bytes of scratch the resize needs. Caller (Rust) allocates this
 // alongside the output in ONE bun.default_allocator block — zero mallocs in
 // this TU.
 size_t bun_image_resize_scratch_size(int32_t src_w, int32_t src_h, int32_t dst_w, int32_t dst_h, int32_t filter_kind)

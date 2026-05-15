@@ -4,7 +4,7 @@ use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
-// PORT NOTE: reshaped — Zig owns `cache_dir_subpath: bun.AutoRelPath` by struct
+// PORT NOTE: reshaped — `cache_dir_subpath` was originally owned by struct
 // copy; Rust borrows mutably so the caller's path survives a clonefile→hardlink
 // fallback (`continue 'backend` in `Installer::Task::run`). The borrow must be
 // `&mut` because `Path::slice_z` writes the NUL terminator into the pooled buf.
@@ -56,5 +56,3 @@ impl FileCloner<'_> {
         }
     }
 }
-
-// ported from: src/install/isolated_install/FileCloner.zig

@@ -11,5 +11,3 @@ impl RemoveCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/remove_command.zig

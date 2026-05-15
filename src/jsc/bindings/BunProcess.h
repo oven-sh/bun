@@ -6,7 +6,7 @@
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
@@ -54,7 +54,7 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
-    JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    JSValue constructNextTickFn(JSC::VM& vm, Bun::GlobalObject* globalObject);
     void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue);
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue, JSValue);
@@ -64,7 +64,7 @@ public:
 
     // Some Node.js events want to be emitted on the next tick rather than synchronously.
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
-    void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
+    void emitOnNextTick(Bun::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);

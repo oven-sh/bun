@@ -18,11 +18,11 @@ pub type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
 pub struct Assets {
-    /// Keys are absolute paths, sharing memory with `IncrementalGraph(.client)`
-    /// key storage in Zig (`replacePath` writes `stable_abs_path` back into
-    /// `key_ptr`). PORT NOTE: `StringArrayHashMap` stores owned `Box<[u8]>`
-    /// keys; the borrow-from-graph optimization is dropped.
-    // PERF(port): keys aliased IncrementalGraph storage in Zig.
+    /// Keys are absolute paths. PORT NOTE: an earlier design shared memory with
+    /// `IncrementalGraph(.client)` key storage (writing the interned path back
+    /// into the map's key pointer). `StringArrayHashMap` stores owned
+    /// `Box<[u8]>` keys; the borrow-from-graph optimization is dropped.
+    // PERF(port): keys could alias IncrementalGraph storage to save allocations.
     pub path_map: StringArrayHashMap<EntryIndex>,
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, tracked by `refs`. One ref held to each `StaticRoute` while stored
@@ -51,7 +51,7 @@ impl Assets {
     /// browser caching. The old URL is immediately revoked.
     ///
     /// `abs_path` is not allocated. Ownership of `contents` is transferred to
-    /// this function (Zig: `Ownership is transferred`).
+    /// this function.
     pub fn replace_path(
         &mut self,
         abs_path: &[u8],
@@ -60,11 +60,10 @@ impl Assets {
         content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
         debug_assert!(self.owner().magic == Magic::Valid);
-        // Zig: `defer assert(assets.files.count() == assets.refs.items.len);`
-        // PORT NOTE: reshaped for borrowck — invariant re-checked before each return below.
+        // PORT NOTE: reshaped for borrowck — the `files.count() == refs.len()`
+        // invariant is re-checked before each return below instead of via `defer`.
 
-        // Zig `std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower)` —
-        // hex-encodes the *native-endian bytes* of the u64.
+        // Hex-encode the *native-endian bytes* of the u64.
         let mut hex_buf = [0u8; 16];
         let hex_len = bun_fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex_buf);
         scoped_log!(
@@ -78,13 +77,13 @@ impl Assets {
         );
 
         // Captured up-front so borrows of `self.files` / `self.path_map` below don't
-        // overlap with `owner()` (`&self`) calls. Zig: `assets.owner().server orelse unreachable`.
+        // overlap with `owner()` (`&self`) calls.
         let server = self.owner().server;
         debug_assert!(server.is_some());
 
-        // PORT NOTE: reshaped for borrowck — Zig holds `gop` (key/value ptrs into
-        // `path_map`) live across calls that take `&mut self`. Capture `index` /
-        // `found_existing` and re-derive the value slot at the end instead.
+        // PORT NOTE: reshaped for borrowck — instead of holding `gop` (key/value ptrs
+        // into `path_map`) live across calls that take `&mut self`, capture `index` /
+        // `found_existing` and re-derive the value slot at the end.
         let gop = self.path_map.get_or_put(abs_path)?;
         let path_index = gop.index;
         let found_existing = gop.found_existing;
@@ -96,11 +95,12 @@ impl Assets {
 
         if !found_existing {
             // Locate a stable pointer for the file path.
-            // PORT NOTE: in Zig, `path_map` keys borrow `client_graph`'s interned key storage
-            // (the `gop.key_ptr.* = stable_abs_path` write shared the slice). Rust
-            // `StringArrayHashMap` owns its keys as `Box<[u8]>`, and `get_or_put` already
-            // boxed `abs_path` on insert, so the reassignment is a no-op here — we still call
-            // `insert_empty` for its side effect of registering the file in `client_graph`.
+            // PORT NOTE: an earlier design had `path_map` keys borrow `client_graph`'s
+            // interned key storage (writing the interned slice back into the map's key
+            // pointer). Rust `StringArrayHashMap` owns its keys as `Box<[u8]>`, and
+            // `get_or_put` already boxed `abs_path` on insert, so the reassignment is a
+            // no-op here — we still call `insert_empty` for its side effect of registering
+            // the file in `client_graph`.
             let owner = self.owner_mut();
             // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
             // not touched through `owner` for the duration of this borrow.
@@ -111,8 +111,8 @@ impl Assets {
             // When there is one reference to the asset, the entry can be
             // replaced in-place with the new asset.
             if self.refs[entry_index.get_usize()] == 1 {
-                // PORT NOTE: Zig accessed `files.entries.slice()` (MultiArrayList SoA view) and
-                // mutated `.key`/`.value` columns directly. Rust ArrayHashMap exposes keys_mut/values_mut.
+                // PORT NOTE: a struct-of-arrays map would expose key/value columns to mutate
+                // directly. Rust `ArrayHashMap` exposes `keys_mut`/`values_mut` instead.
                 let prev = self.files.values()[entry_index.get_usize()];
                 // SAFETY: `prev` is a live intrusively-refcounted StaticRoute we hold one ref to.
                 unsafe { StaticRoute::deref_(prev) };
@@ -126,9 +126,8 @@ impl Assets {
                         ..Default::default()
                     },
                 );
-                // Zig: `comptime assert(@TypeOf(slice.items(.hash)[0]) == void);`
-                // PORT NOTE: AutoArrayHashMap<u64, _> stores hashes as `void` (key IS the hash).
-                // The Rust ArrayHashMap<u64, _> upholds the same; nothing to assert at runtime.
+                // PORT NOTE: the key IS the content hash (no separate hash column).
+                // The Rust `ArrayHashMap<u64, _>` upholds this; nothing to assert at runtime.
                 self.needs_reindex = true;
                 debug_assert_eq!(self.files.count(), self.refs.len());
                 return Ok(entry_index);
@@ -153,7 +152,6 @@ impl Assets {
             self.refs.push(1);
         } else {
             self.refs[file_index] += 1;
-            // Zig: `var contents_mut = contents.*; contents_mut.detach();`
             // Release the owned blob on the duplicate-content path.
             contents.detach();
         }
@@ -170,9 +168,9 @@ impl Assets {
         content_hash: u64,
         ref_count: u32,
     ) -> Result<Option<&mut *mut StaticRoute>, bun_alloc::AllocError> {
-        // Zig: `defer assert(assets.files.count() == assets.refs.items.len);`
         // PORT NOTE: reshaped for borrowck — `gop.value_ptr` borrows `self.files` mutably,
-        // so re-derive the slot via `values_mut()[index]` after the invariant assert.
+        // so re-derive the slot via `values_mut()[index]` after the
+        // `files.count() == refs.len()` invariant assert.
         let file_index_gop = self.files.get_or_put(content_hash)?;
         let index = file_index_gop.index;
         let found = file_index_gop.found_existing;
@@ -268,8 +266,8 @@ impl Assets {
 
 impl Drop for Assets {
     fn drop(&mut self) {
-        // Zig `deinit(assets, alloc)`: path_map/files/refs storage is freed by their own Drop;
-        // only the manual StaticRoute derefs remain as a side effect.
+        // path_map/files/refs storage is freed by their own Drop; only the manual
+        // StaticRoute derefs remain as a side effect.
         for &blob in self.files.values() {
             // SAFETY: we hold one ref to each stored StaticRoute; release it.
             unsafe { StaticRoute::deref_(blob) };

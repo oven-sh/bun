@@ -90,7 +90,7 @@ impl DigestContext {
         bun_core::strings::eql_long(a, b, false)
     }
 }
-// TODO(port): wire DigestContext as the ArrayHashMap hasher/eq (Zig: 4th generic param)
+// TODO(port): wire DigestContext as the ArrayHashMap hasher/eq
 
 pub struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
@@ -307,5 +307,3 @@ pub mod c {
         pub safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
     }
 }
-
-// ported from: src/runtime/api/bun/SSLContextCache.zig

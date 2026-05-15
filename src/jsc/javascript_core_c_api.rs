@@ -13,13 +13,12 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle backing every `*Ref` typedef in the JavaScriptCore C API.
-    /// In Zig this is a single `opaque {}` aliased under many names; we mirror that.
+    /// A single opaque type aliased under many names.
     pub struct Generic;
 }
 
 impl Generic {
     pub fn value(&self) -> JSValue {
-        // Zig: @enumFromInt(@as(JSValue.backing_int, @bitCast(@intFromPtr(this))))
         // The JSC C API hands out JSValueRef as the cell pointer itself; reinterpreting the
         // pointer bits as an encoded JSValue is exactly what JSC::JSValue(JSCell*) does.
         JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
@@ -66,7 +65,7 @@ pub const kJSTypeSymbol: c_uint = JSType::kJSTypeSymbol as c_uint;
 pub const kJSTypeBigInt: c_uint = JSType::kJSTypeBigInt as c_uint;
 
 /// From JSValueRef.h:81
-// TODO(port): Zig enum is non-exhaustive (`_`); only ever passed *to* C in this file so a
+// TODO(port): the C enum is open-ended; only ever passed *to* C in this file so a
 // #[repr(u32)] enum is sound here. If a future extern returns this, switch to a newtype.
 #[repr(u32)] // c_uint
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -123,7 +122,7 @@ unsafe extern "C" {
     ) -> JSObjectRef;
 }
 
-// TODO(port): Zig enum is non-exhaustive (`_`); never crosses FFI in this file.
+// TODO(port): the C enum is open-ended; never crosses FFI in this file.
 #[repr(u32)] // c_uint
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum JSPropertyAttributes {
@@ -141,7 +140,7 @@ pub const kJSPropertyAttributeDontEnum: c_uint =
 pub const kJSPropertyAttributeDontDelete: c_uint =
     JSPropertyAttributes::kJSPropertyAttributeDontDelete as c_uint;
 
-// TODO(port): Zig enum is non-exhaustive (`_`); never crosses FFI in this file.
+// TODO(port): the C enum is open-ended; never crosses FFI in this file.
 #[repr(u32)] // c_uint
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum JSClassAttributes {
@@ -307,5 +306,3 @@ unsafe extern "C" {
 
     pub fn JSObjectGetProxyTarget(object: JSObjectRef) -> JSObjectRef;
 }
-
-// ported from: src/jsc/javascript_core_c_api.zig

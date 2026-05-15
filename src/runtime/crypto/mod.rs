@@ -34,10 +34,10 @@ pub fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSVal
 // `#[path = "PasswordObject.rs"]` / `#[path = "CryptoHasher.rs"]` drafts
 // un-gated above. Re-exports below resolve through those files.
 
-/// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).
+/// `pub fn pbkdf2` — for usage from Rust callers.
 ///
 /// Returns `Some(output)` on success, `None` on BoringSSL error.
-// PORT NOTE: Zig nests `pbkdf2`/`Algorithm` inside the `EVP` struct. Stable
+// PORT NOTE: the original nests `pbkdf2`/`Algorithm` inside the `EVP` struct. Stable
 // Rust has no inherent associated types, so callers reach them via the
 // `evp` module re-exported as `EVP` (see `pub use evp as EVP` below) —
 // `EVP::pbkdf2(..)` / `EVP::Algorithm::Sha256` resolve through the module.
@@ -95,7 +95,7 @@ pub use crypto_hasher::SHA384;
 pub use crypto_hasher::SHA512;
 pub use crypto_hasher::SHA512_256;
 
-// Zig nests `Algorithm`/`pbkdf2`/`PBKDF2` inside the `EVP` struct; stable Rust
+// The original nests `Algorithm`/`pbkdf2`/`PBKDF2` inside the `EVP` struct; stable Rust
 // has no inherent associated types, so re-export the module under the struct
 // name. `crypto::EVP::pbkdf2` / `crypto::EVP::Algorithm` resolve via the module,
 // and the struct itself is reachable as `crypto::EVP::EVP` if ever needed.
@@ -103,5 +103,3 @@ pub use evp as EVP;
 pub use hmac::HMAC;
 
 // `comptime { CryptoHasher.Extern.@"export"(); }` — dropped; Rust links what's `pub`.
-
-// ported from: src/runtime/crypto/crypto.zig

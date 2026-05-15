@@ -18,7 +18,7 @@ use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
-// PORT NOTE: `bun.spawn.Status` lives in src/runtime/api/bun/process.zig
+// PORT NOTE: `bun.spawn.Status` lives in `src/runtime/api/bun/process.rs`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
 use crate::api::bun::process::Status as SpawnStatus;
 
@@ -85,7 +85,7 @@ impl<'a> Coordinator<'a> {
         // into `self.workers`. `iter_mut()` would materialize a second
         // `&mut Worker` for that same slot — instant UB under Stacked Borrows
         // regardless of what the loop body does. Iterate via raw pointers
-        // instead, mirroring Zig's `for (this.workers) |*v|` (raw `*Worker`).
+        // instead, mirroring `for (this.workers) |*v|` (raw `*Worker`).
         let mut victim: Option<*mut Worker> = None;
         let mut most: u32 = 0;
         let base: *mut Worker = self.workers.as_mut_ptr();
@@ -170,7 +170,7 @@ impl<'a> Coordinator<'a> {
         // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
         // retry on the same slot starts with a fresh channel.
         w.ipc = Default::default();
-        // The Zig stores a back-pointer; in Rust this is an intrusive backref (raw ptr).
+        // The original stored a back-pointer; in Rust this is an intrusive backref (raw ptr).
         w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
         w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
         match w.start() {
@@ -269,7 +269,7 @@ impl<'a> Coordinator<'a> {
         // PORT NOTE: reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate
-        // via raw pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        // via raw pointers — mirrors `for (this.workers[..]) |*other|`.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -413,7 +413,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
             frame::Kind::RepeatBufs => {
-                // PORT NOTE: Zig `inline for` over a 3-tuple of &mut buffers;
+                // PORT NOTE: the original `inline for` over a 3-tuple of &mut buffers;
                 // unrolled here because an array of disjoint &mut fields needs
                 // explicit splitting.
                 self.reporter
@@ -511,7 +511,7 @@ impl<'a> Coordinator<'a> {
             // Explicit early release: `w` is a borrowed slot in self.workers, so
             // Drop won't fire until Coordinator teardown. Assigning defaults
             // drops the old values now (pipe FDs, capture buffer) to match the
-            // Zig's explicit deinit() calls.
+            // original's explicit deinit() calls.
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
             w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
@@ -564,7 +564,7 @@ impl<'a> Coordinator<'a> {
         // PORT NOTE: reachable from reap_worker with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() would
         // create a second `&mut Worker` for `w`'s slot (UB). Iterate via raw
-        // pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        // pointers — mirrors `for (this.workers[..]) |*other|`.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -603,7 +603,7 @@ impl<'a> Coordinator<'a> {
         // PORT NOTE: reachable from reap_worker/abort_on_worker_panic with the
         // caller's `w: &mut Worker` still live and used afterward; iter_mut()
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate via
-        // raw pointers — mirrors Zig `for (this.workers) |*w|`.
+        // raw pointers — mirrors `for (this.workers) |*w|`.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let len = self.workers.len();
         for i in 0..len {
@@ -834,5 +834,3 @@ pub mod abort_handler {
         }
     }
 }
-
-// ported from: src/cli/test/parallel/Coordinator.zig

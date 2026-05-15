@@ -1,6 +1,4 @@
 //! Patch file parser and applier.
-//!
-//! Port of `src/patch/patch.zig`.
 
 #![allow(
     unused,
@@ -47,14 +45,14 @@ pub enum PatchFilePart<'a> {
     FileModeChange(Box<FileModeChange<'a>>),
 }
 
-// Zig `deinit` only freed owned fields → Drop is automatic.
+// `deinit` only freed owned fields → Drop is automatic.
 
 #[derive(Default)]
 pub struct PatchFile<'a> {
     pub parts: Vec<PatchFilePart<'a>>,
 }
 
-// Zig `deinit` only freed owned fields → Drop is automatic.
+// `deinit` only freed owned fields → Drop is automatic.
 
 struct ApplyState {
     pathbuf: PathBuffer,
@@ -82,8 +80,8 @@ impl ApplyState {
                 // PORT NOTE: reshaped for borrowck — capture len, drop `p`,
                 // then re-borrow `self.pathbuf` to write the sentinel.
                 let len = p.len();
-                // Zig `state.pathbuf[0..p.len :0]` asserts a NUL sentinel; on
-                // Linux `readlink(2)` does not NUL-terminate, so write it
+                // The path is exposed as a NUL-terminated slice; on Linux
+                // `readlink(2)` does not NUL-terminate, so write the sentinel
                 // explicitly (the buffer is zero-initialized but be defensive).
                 self.pathbuf.0[len] = 0;
                 self.patch_dir_abs_path = Some(len);
@@ -148,12 +146,13 @@ impl<'a> PatchFile<'a> {
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {
-                        // PORT NOTE: Zig calls `NodeFS.mkdirRecursive` with the bare relative
-                        // `filedir` (resolved against process CWD), then immediately `openat`s
-                        // the same path against `patch_dir`. That is internally inconsistent
-                        // when `patch_dir != cwd`. We intentionally diverge and create the
-                        // directory under `patch_dir` so the subsequent `openat` succeeds.
-                        // Consider back-porting this fix to patch.zig.
+                        // PORT NOTE: an earlier implementation called
+                        // `NodeFS.mkdirRecursive` with the bare relative `filedir`
+                        // (resolved against process CWD), then immediately `openat`ed
+                        // the same path against `patch_dir`. That is internally
+                        // inconsistent when `patch_dir != cwd`. We intentionally
+                        // create the directory under `patch_dir` so the subsequent
+                        // `openat` succeeds.
                         if let sys::Result::Err(e) =
                             sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
                         {
@@ -189,7 +188,7 @@ impl<'a> PatchFile<'a> {
                         total
                     };
 
-                    // PERF(port): Zig used arena for small (<= PAGE_SIZE) allocations.
+                    // PERF(port): could use an arena for small (<= PAGE_SIZE) allocations.
                     let _ = PAGE_SIZE;
 
                     // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
@@ -304,7 +303,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     // to use the arena
     // PERF(port): was arena vs default_allocator selection — profile in Phase B
     let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
-    // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
+    // TODO(port): replace with bun_sys::File::read_from directly.
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {
@@ -395,7 +394,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
                         );
                     }
 
-                    // Zig: addManyAt + @memcpy
                     lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
                     line_cursor += part.lines.len();
                     if part.no_newline_at_end_of_file {
@@ -448,11 +446,10 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 }
 
 fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    // PORT NOTE: Zig's `std.fs.Dir.readFileAlloc` opens, fstats, allocates
-    // `min(size, max)` and errors `error.FileTooBig` past `max`. Enforce the
-    // same cap so a pathological multi-GiB target file errors instead of
-    // allocating unboundedly. (`error.FileTooBig` would surface as `.INVAL` at
-    // the only call site anyway, so we map it to EINVAL here.)
+    // PORT NOTE: open, fstat, allocate `min(size, max)` and error past `max`.
+    // Enforce the cap so a pathological multi-GiB target file errors instead
+    // of allocating unboundedly. (`FileTooBig` would surface as `.INVAL` at
+    // the only call site anyway, so map it to EINVAL here.)
     let stat = sys::fstatat(dir, path)?;
     if stat.st_size as u64 > max as u64 {
         return sys::Result::Err(
@@ -462,7 +459,7 @@ fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
     sys::File::read_from(dir, path)
 }
 
-/// Port of `std.mem.join` for byte slices.
+/// Join byte slices with a separator.
 fn join_bytes(sep: &[u8], slices: &[&[u8]]) -> Vec<u8> {
     if slices.is_empty() {
         return Vec::new();
@@ -505,11 +502,10 @@ impl<'a> FileDeets<'a> {
         mem::take(&mut self.hunks)
     }
 
-    // Zig `deinit` only freed owned fields → Drop is automatic.
+    // `deinit` only freed owned fields → Drop is automatic.
 
     fn nullify_empty_strings(&mut self) {
-        // Zig used @typeInfo reflection over all `?[]const u8` fields. No Rust
-        // equivalent — written out by hand.
+        // No reflection over the `Option<&[u8]>` fields — written out by hand.
         macro_rules! nullify {
             ($($f:ident),*) => {$(
                 if matches!(self.$f, Some(v) if v.is_empty()) {
@@ -556,7 +552,7 @@ pub enum PartType {
     Deletion,
 }
 
-// Zig `PatchMutationPart.deinit` only freed `lines` → Drop is automatic.
+// `PatchMutationPart.deinit` only freed `lines` → Drop is automatic.
 
 #[derive(Default)]
 pub struct Hunk<'a> {
@@ -589,7 +585,7 @@ impl Header {
     };
 }
 
-// Zig `Hunk.deinit` only freed owned fields → Drop is automatic.
+// `Hunk.deinit` only freed owned fields → Drop is automatic.
 
 impl<'a> Hunk<'a> {
     pub fn verify_integrity(&self) -> bool {
@@ -664,7 +660,7 @@ pub struct FilePatch<'a> {
     pub before_hash: Option<&'a [u8]>,
     pub after_hash: Option<&'a [u8]>,
 }
-// Zig `deinit` freed hunks + bun.destroy(this) → Drop on Box<FilePatch> handles both.
+// `deinit` freed hunks + bun.destroy(this) → Drop on Box<FilePatch> handles both.
 
 pub struct FileDeletion<'a> {
     pub path: &'a [u8],
@@ -672,7 +668,7 @@ pub struct FileDeletion<'a> {
     pub hunk: Option<Box<Hunk<'a>>>,
     pub hash: Option<&'a [u8]>,
 }
-// Zig `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileDeletion> handles both.
+// `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileDeletion> handles both.
 
 pub struct FileCreation<'a> {
     pub path: &'a [u8],
@@ -680,7 +676,7 @@ pub struct FileCreation<'a> {
     pub hunk: Option<Box<Hunk<'a>>>,
     pub hash: Option<&'a [u8]>,
 }
-// Zig `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileCreation> handles both.
+// `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileCreation> handles both.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PatchFilePartKind {
@@ -694,21 +690,20 @@ pub enum PatchFilePartKind {
 // ──────────────────────────────────────────────────────────────────────────
 // json_fmt — JSON `Display` adapter for `PatchFile`
 //
-// Port of Zig's `std.json.fmt(patchfile, .{})` (used only by the testing
-// bindings in `src/patch_jsc/testing.zig`). The output shape is dictated by
-// Zig's default `std.json.stringify` rules, so it must match exactly for the
-// snapshot tests in `test/js/bun/patch/patch.test.ts` to pass:
-//   - struct           → `{"field":...}` in field-declaration order
-//   - `ArrayListUnmanaged` (our `Vec<T>`) → `{"items":[...],"capacity":N}`
-//   - `[]const u8`     → JSON string
-//   - `enum`           → `"tag_name"`
-//   - `union(enum)`    → `{"tag_name":payload}`
-//   - `?T`             → `null` or value
-//   - `*T`             → serialized as the pointee
+// Used only by the testing bindings in `src/patch_jsc/testing.rs`. The output
+// shape is fixed and must match exactly for the snapshot tests in
+// `test/js/bun/patch/patch.test.ts` to pass:
+//   - struct                              → `{"field":...}` in field-declaration order
+//   - growable list (our `Vec<T>`)        → `{"items":[...],"capacity":N}`
+//   - byte slice                          → JSON string
+//   - enum                                → `"tag_name"`
+//   - tagged union                        → `{"tag_name":payload}`
+//   - optional                            → `null` or value
+//   - boxed value                         → serialized as the pointee
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Returns a `Display` adapter that serializes `patchfile` as JSON, matching
-/// the output of Zig's `std.json.fmt(patchfile, .{})`.
+/// Returns a `Display` adapter that serializes `patchfile` as JSON in the
+/// fixed snapshot format documented above.
 pub fn json_fmt<'a, 'b>(patchfile: &'b PatchFile<'a>) -> impl core::fmt::Display + 'b {
     PatchFileJsonFmt(patchfile)
 }
@@ -734,8 +729,8 @@ mod json {
         }
     }
 
-    /// Zig `std.ArrayListUnmanaged(T)` is a plain struct `{ items: []T, capacity: usize }`,
-    /// which `std.json` serializes field-wise. Reproduce that wrapper around a `Vec<T>`.
+    /// Lists are serialized as `{ items: [...], capacity: N }` for snapshot
+    /// compatibility. Reproduce that wrapper around a `Vec<T>`.
     fn write_list<W: Write, T>(
         w: &mut W,
         v: &Vec<T>,
@@ -775,7 +770,7 @@ mod json {
     }
 
     fn write_mutation_part(w: &mut impl Write, p: &PatchMutationPart<'_>) -> Result {
-        // Zig field name is `type`; Rust field is `ty`.
+        // The serialized key is `type` (a Rust keyword); Rust field is `ty`.
         write!(w, "{{\"type\":\"{}\",\"lines\":", part_type_tag(p.ty))?;
         write_list(w, &p.lines, |w, line| write_str(w, line))?;
         write!(
@@ -1192,8 +1187,8 @@ struct ParseOpts {
 }
 
 impl<'a> PatchLinesParser<'a> {
-    // Zig `deinit` had a `comptime clear_result_retaining_capacity: bool` param.
-    // In Rust, Drop handles freeing; `reset()` handles the retain-capacity case.
+    // `deinit` had an optional clear-retaining-capacity mode. In Rust, Drop
+    // handles freeing; `reset()` handles the retain-capacity case.
 
     fn reset(&mut self) {
         // PORT NOTE: reshaped for borrowck — take result vec, clear it, reinit self.
@@ -1219,7 +1214,7 @@ impl<'a> PatchLinesParser<'a> {
             };
             if last_line.is_empty() {
                 if let Some(i) = last_nl {
-                    // Zig: iter.index.? — index points to the byte BEFORE the delimiter.
+                    // The cursor points to the byte BEFORE the delimiter.
                     prev = i;
                 }
             }
@@ -1658,18 +1653,17 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     Some((a_path, b_path))
 }
 
-// `pub const TestingAPIs = @import("../patch_jsc/testing.zig").TestingAPIs;`
-// — *_jsc alias line; deleted per PORTING.md. Consumers use bun_patch_jsc::TestingAPIs.
+// `TestingAPIs` re-export: deleted per PORTING.md. Consumers use
+// `bun_patch_jsc::TestingAPIs`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig returns `bun.spawn.sync.Options` with `argv`/`envp` allocated on
-// `bun.default_allocator` and freed by the caller. `bun_spawn::sync::Options` owns
-// `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
-// the null-terminated envp array is returned alongside as the second tuple element —
-// caller must keep it alive while `Options` is in use (no `Box::leak`, §Forbidden).
+// PORT NOTE: `bun_spawn::sync::Options` owns `argv` (`Vec<Box<[u8]>>`) but
+// borrows `envp` (`Option<*const *const c_char>`), so the null-terminated envp
+// array is returned alongside as the second tuple element — caller must keep
+// it alive while `Options` is in use (no `Box::leak`, §Forbidden).
 pub fn spawn_opts(
     old_folder: &[u8],
     new_folder: &[u8],
@@ -1690,8 +1684,8 @@ pub fn spawn_opts(
             b"--full-index",
             b"--no-index",
         ];
-        // PERF(port): Zig stored borrowed slices; `Options.argv` is
-        // `Vec<Box<[u8]>>`, so we copy. Profile in Phase B.
+        // PERF(port): `Options.argv` is `Vec<Box<[u8]>>`, so we copy
+        // instead of borrowing. Profile in Phase B.
         let mut argv_buf: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
         argv_buf.push(Box::from(git.as_bytes()));
         for i in 1..ARGV.len() {
@@ -1721,7 +1715,7 @@ pub fn spawn_opts(
         if let Some(p) = path {
             // PORT NOTE: `env_var::PATH.get()` yields a slice into the C env
             // block (NUL byte immediately follows on POSIX — see
-            // `bun_core::getenv_z`), matching Zig's `@ptrCast(p.ptr)`.
+            // `bun_core::getenv_z`).
             envp_buf.push(p.as_ptr().cast::<core::ffi::c_char>());
         }
         envp_buf.push(core::ptr::null()); // sentinel
@@ -1739,8 +1733,8 @@ pub fn spawn_opts(
         argv,
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            // Zig matched on `loop.*` to build the handle by hand; `as_handle`
-            // owns that conversion now so variant internals stay encapsulated.
+            // `as_handle` owns the variant→handle conversion so variant
+            // internals stay encapsulated.
             loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
             ..Default::default()
         },
@@ -1773,9 +1767,9 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-// TODO(port): Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
-// return type depends on a comptime bool. Rust cannot express this without GAT-ish
-// traits. Phase A: return owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
+// TODO(port): the return type would ideally vary on `SENTINEL` (NUL-terminated
+// vs not). Rust cannot express this without GAT-ish traits. Phase A: return
+// owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
 pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
     old_folder_: &[u8],
     new_folder_: &[u8],
@@ -1790,9 +1784,9 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
         paths::slashes_to_posix_in_place(&mut cpy[..]);
         if SENTINEL {
             cpy[old_folder_.len()] = 0;
-            // Zig: `break :brk cpy[0..len :0]` — sentinel slice's `.len` excludes
-            // the NUL. Truncate so `Vec::len()` matches; the NUL byte stays in
-            // spare capacity for callers that need a C string via `.as_ptr()`.
+            // The sentinel slice's `len` excludes the NUL. Truncate so
+            // `Vec::len()` matches; the NUL byte stays in spare capacity for
+            // callers that need a C string via `.as_ptr()`.
             cpy.truncate(old_folder_.len());
         }
         cpy
@@ -1807,7 +1801,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
         paths::slashes_to_posix_in_place(&mut cpy[..]);
         if SENTINEL {
             cpy[new_folder_.len()] = 0;
-            // Zig: `break :brk cpy[0..len :0]` — `.len` excludes the sentinel.
+            // `.len` excludes the sentinel.
             cpy.truncate(new_folder_.len());
         }
         cpy
@@ -1817,7 +1811,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 
     #[cfg(unix)]
     if SENTINEL {
-        // Zig: allocator.dupeZ — append NUL.
+        // Append NUL terminators.
         let mut o = old_folder;
         o.push(0);
         let mut n = new_folder;
@@ -1838,7 +1832,6 @@ pub fn git_diff_internal(
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
-    // Zig used `std.process.Child`, which searches `$PATH` for argv[0].
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
     let mut gitbuf = PathBuffer::uninit();
@@ -1902,11 +1895,11 @@ pub fn git_diff_internal(
         stderr: bun_spawn::sync::Stdio::Buffer,
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // PORT NOTE: Zig used `std.process.Child` (no uv loop). The Rust port
-        // routes through `bun_spawn::sync::spawn`, whose Windows path
-        // unconditionally derefs `windows.loop_` (process.rs spawn_windows_*).
-        // `WindowsOptions::default()` is `zeroed_unchecked()`, so leaving this
-        // defaulted is a null deref on Windows — supply the caller's loop.
+        // PORT NOTE: routed through `bun_spawn::sync::spawn`, whose Windows
+        // path unconditionally derefs `windows.loop_` (process.rs
+        // spawn_windows_*). `WindowsOptions::default()` is `zeroed_unchecked()`,
+        // so leaving this defaulted is a null deref on Windows — supply the
+        // caller's loop.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
             loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
@@ -2005,10 +1998,10 @@ fn git_diff_postprocess(
     let mut saw_b_folder: Option<usize> = None;
     let mut line_idx: u32 = 0;
 
-    // PORT NOTE: reshaped for borrowck — Zig mutated `stdout` while iterating
-    // `std.mem.splitScalar` over it (relying on the iterator's by-value buffer
-    // pointer staying valid because replaceRange only shrinks). In Rust we
-    // re-implement the cursor manually so we can mutate `stdout` between lines.
+    // PORT NOTE: reshaped for borrowck — instead of iterating over `stdout`
+    // while mutating it (relying on a raw pointer staying valid because the
+    // splice only shrinks), we re-implement the cursor manually so we can
+    // mutate `stdout` between lines.
     let mut cursor: usize = 0;
     while cursor <= stdout.len() {
         // Compute current line [line_start, line_end) and the index AFTER its delimiter.
@@ -2021,8 +2014,8 @@ fn git_diff_postprocess(
                 }
                 None => (stdout.len(), stdout.len(), true),
             };
-        // Mirror Zig SplitIterator: `index` after next() points one past delimiter,
-        // so `index - 1 - line.len() == line_start`.
+        // After advancing, the cursor points one past the delimiter, so
+        // `cursor - 1 - line.len() == line_start`.
         let line_len = line_end - line_start;
 
         // Borrow line for read-only checks; drop before mutating stdout.
@@ -2041,7 +2034,7 @@ fn git_diff_postprocess(
                     line_start + old_folder_slash_start
                         ..line_start + old_folder_slash_start + old_folder_trimmed.len() + 1,
                 );
-                // Zig: line_iter.index.? -= 1 + line.len  → re-examine this same line.
+                // Re-examine this same line.
                 cursor = line_start;
                 saw_a_folder = Some(line_idx as usize);
                 continue;
@@ -2055,8 +2048,8 @@ fn git_diff_postprocess(
                     line_start + new_folder_slash_start
                         ..line_start + new_folder_slash_start + new_folder_trimmed.len() + 1,
                 );
-                // Zig: line_iter.index.? -= new_folder_trimmed.len + 1 → next iteration
-                // resumes at the (now-shifted) byte after this line's '\n'.
+                // Next iteration resumes at the (now-shifted) byte after this
+                // line's '\n'.
                 cursor = next_cursor - (new_folder_trimmed.len() + 1);
                 saw_b_folder = Some(line_idx as usize);
                 continue;
@@ -2131,5 +2124,3 @@ fn should_skip_line(line: &[u8]) -> bool {
             // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
             && !(line.len() >= 4 && (&line[0..4] == b"--- " || &line[0..4] == b"+++ ")))
 }
-
-// ported from: src/patch/patch.zig

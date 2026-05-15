@@ -30,9 +30,9 @@ pub struct Store {
 pub const MODULES_DIR_NAME: &[u8] = b".bun";
 
 // ──────────────────────────────────────────────────────────────────────────
-// NewId<T> — Zig: `fn NewId(comptime T: type) type { return enum(u32) { root=0, invalid=max, _ } }`
+// NewId<T> — `enum(u32) { root=0, invalid=max, _ }` parameterized over T.
 // Rust generic newtypes are nominally distinct, so `NewId<Entry> != NewId<Node>` holds by
-// construction (the Zig `comptime { bun.assert(NewId(Entry) != NewId(Node)) }` block is a no-op).
+// construction (no compile-time assertion needed).
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 pub struct NewId<T>(u32, PhantomData<fn() -> T>);
@@ -55,7 +55,7 @@ impl<T> core::hash::Hash for NewId<T> {
     }
 }
 impl<T> Default for NewId<T> {
-    // Zig leaves this undefined; pick the sentinel so accidental use trips
+    // Pick the sentinel so accidental use of an uninitialized id trips
     // the debug_assert in `get()`.
     fn default() -> Self {
         Self::INVALID
@@ -116,7 +116,7 @@ impl Store {
         let mut i: usize = 0;
         let mut len: usize;
 
-        // Zig `.items(.parents)` → derive(MultiArrayElement)-generated `.items_parents()`.
+        // derive(MultiArrayElement)-generated `.items_parents()` column accessor.
         let entry_parents = self.entries.items_parents();
 
         for &parent_id in entry_parents[id.get() as usize].as_slice() {
@@ -126,7 +126,7 @@ impl Store {
             if parent_id == maybe_parent_id {
                 return true;
             }
-            let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+            let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (treated as unreachable)
         }
 
         len = parent_dedupe.len();
@@ -140,7 +140,7 @@ impl Store {
                 if parent_id == maybe_parent_id {
                     return true;
                 }
-                let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+                let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (treated as unreachable)
                 len = parent_dedupe.len();
             }
             i += 1;
@@ -151,9 +151,9 @@ impl Store {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// OrderedArraySet<T> — Zig: `fn OrderedArraySet(comptime T, comptime Ctx) type`.
+// OrderedArraySet<T> — generic ordered-array set.
 // PORT NOTE: the `Ctx` type param is dropped from the struct; ctx is passed per-call as
-// `&impl OrderedArraySetCtx<T>`. In Zig the Ctx param only contributed comptime method
+// `&impl OrderedArraySetCtx<T>`. The original Ctx param only contributed comptime method
 // lookup; in Rust the two instantiations (`Dependencies`, `Peers`) are already distinct
 // via `T`. Ctx structs carry borrowed slices, so binding their lifetime into the
 // container type would infect stored fields.
@@ -191,7 +191,7 @@ impl<T> OrderedArraySet<T> {
         })
     }
 
-    /// Infallible alias for `init_capacity` (Zig `initCapacity` + `bun.handleOom`).
+    /// Infallible alias for `init_capacity` (treats OOM as fatal).
     pub fn with_capacity(n: usize) -> Self {
         Self {
             list: Vec::with_capacity(n),
@@ -300,9 +300,9 @@ pub mod entry {
         pub node_id: super::node::Id,
         // parent_id: Id,
         pub dependencies: Dependencies,
-        // Zig default: `.empty`
+        // default: `.empty`
         pub parents: Vec<Id>,
-        // Zig default: `.init(.link_package)`
+        // default: `.init(.link_package)`
         // PORT NOTE: `std.atomic.Value(Installer.Task.Step)` → `AtomicU32` storing
         // the `#[repr(u8)]` discriminant. Loads/stores go through `Step as u32` /
         // `Step::from_u32` (see Installer.rs); no atomic-enum wrapper exists.
@@ -320,13 +320,13 @@ pub mod entry {
         /// hash differs and a new global-store entry is created. Computed after the
         /// store is built (see `computeEntryHashes`). 0 means "do not use global store"
         /// (root, workspace, folder, symlink, patched).
-        // Zig default: `0`
+        // default: `0`
         pub entry_hash: u64,
 
-        // Zig default: `null`
+        // default: `null`
         // PORT NOTE: `Cell` because `Installer::Task::run` writes this slot
         // from a task thread through `&Store` (each Task is the sole writer for
-        // its own `entry_id`; see Installer.zig:541/1161). Without interior
+        // its own `entry_id`). Without interior
         // mutability the only access path is `&Store → &[Option<_>]` and the
         // per-entry write would mutate through shared-reference provenance.
         // Raw `*mut` instead of `Box` so reads don't move out of the cell.
@@ -354,15 +354,15 @@ pub mod entry {
             Self {
                 node_id: super::node::Id::INVALID,
                 dependencies: Dependencies::EMPTY,
-                // Zig default: `.empty`
+                // default: `.empty`
                 parents: Vec::new(),
-                // Zig default: `.init(.link_package)` — `Step::LinkPackage as u32 == 0`.
+                // default: `.init(.link_package)` — `Step::LinkPackage as u32 == 0`.
                 step: core::sync::atomic::AtomicU32::new(0),
                 hoisted: false,
                 peer_hash: PeerHash::NONE,
-                // Zig default: `0`
+                // default: `0`
                 entry_hash: 0,
-                // Zig default: `null`
+                // default: `null`
                 scripts: core::cell::Cell::new(None),
             }
         }
@@ -448,7 +448,7 @@ pub mod entry {
             }
 
             if peer_hash != PeerHash::NONE {
-                // Zig `bun.fmt.hexIntLower(u64)` zero-pads to 16 nibbles.
+                // Zero-pad the lowercase hex to 16 nibbles.
                 write!(f, "+{:016x}", peer_hash.cast())?;
             }
 
@@ -476,7 +476,7 @@ pub mod entry {
     impl<'a> fmt::Display for GlobalStorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             self.inner.fmt(f)?;
-            // Zig `bun.fmt.hexIntLower(u64)` zero-pads to 16 nibbles.
+            // Zero-pad the lowercase hex to 16 nibbles.
             write!(f, "-{:016x}", self.entry_hash)
         }
     }
@@ -496,8 +496,8 @@ pub mod entry {
     }
 
     pub fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
-        // PORT NOTE: reshaped — Zig leaked the local map and returned its keys slice;
-        // Rust returns an owned Vec instead.
+        // PORT NOTE: reshaped — the original leaked the local map and returned its
+        // keys slice; Rust returns an owned Vec instead.
         let mut i: usize = 0;
         let mut len: usize;
 
@@ -510,7 +510,7 @@ pub mod entry {
             if parent_id == Id::INVALID {
                 continue;
             }
-            let _ = parents.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+            let _ = parents.put(parent_id, ()); // OOM-only Result (treated as unreachable)
         }
 
         len = parents.len();
@@ -521,7 +521,7 @@ pub mod entry {
                 if parent_id == Id::INVALID {
                     continue;
                 }
-                let _ = parents.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+                let _ = parents.put(parent_id, ()); // OOM-only Result (treated as unreachable)
                 len = parents.len();
             }
             i += 1;
@@ -587,9 +587,9 @@ pub mod entry {
         }
     }
 
-    // PORT NOTE: the Zig body references stale Entry fields (`pkg_id`,
+    // PORT NOTE: the original body referenced stale Entry fields (`pkg_id`,
     // `dep_name`, `parent_id`) not present on the current `Entry` struct —
-    // dead debug code that Zig's lazy compilation never instantiates. Rust
+    // dead debug code that lazy compilation never instantiated. Rust
     // typechecks dead code, so this is rewritten against the real shape:
     // resolve `pkg_id` via `nodes[entry.node_id].pkg_id`.
     pub fn debug_print_list(list: &List, nodes: &super::node::List, lockfile: &mut Lockfile) {
@@ -652,8 +652,8 @@ pub mod node {
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;
     pub type Peers = OrderedArraySet<TransitivePeer>;
-    /// Zig: `Node.dependencies: ArrayList(Ids)` — re-exported under a
-    /// disambiguating name for callers building the dependency vec.
+    /// Re-exported under a disambiguating name for callers building the
+    /// dependency vec.
     pub use super::Ids as DependencyIds;
 
     pub struct Node {
@@ -661,13 +661,13 @@ pub mod node {
         pub pkg_id: PackageID,
         pub parent_id: Id,
 
-        // Zig default: `.empty`
+        // default: `.empty`
         pub dependencies: Vec<Ids>,
-        // Zig default: `.empty`
+        // default: `.empty`
         pub peers: Peers,
 
         // each node in this list becomes a symlink in the package's node_modules
-        // Zig default: `.empty`
+        // default: `.empty`
         pub nodes: Vec<Id>,
     }
 
@@ -702,8 +702,8 @@ pub mod node {
         pub auto_installed: bool,
     }
 
-    // Zig: `TransitivePeer.OrderedArraySetCtx` — Rust can't nest a type inside a struct,
-    // so expose a snake_case module mirroring the Zig namespace for callers.
+    // Rust can't nest a type inside a struct, so expose a snake_case module
+    // mirroring the original namespace for callers.
     pub mod transitive_peer {
         pub use super::TransitivePeerOrderedArraySetCtx as OrderedArraySetCtx;
     }
@@ -837,5 +837,3 @@ pub mod node {
 
 pub use node::Node;
 pub use node::NodeColumns;
-
-// ported from: src/install/isolated_install/Store.zig

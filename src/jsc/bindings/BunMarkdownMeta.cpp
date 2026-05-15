@@ -53,7 +53,7 @@ Structure* createLinkMetaStructure(VM& vm, JSGlobalObject* globalObject)
 } // namespace Bun
 
 // ──────────────────────────────────────────────────────────────────────────
-// extern "C" constructors — callable from MarkdownObject.zig
+// extern "C" constructors — callable from src/runtime/api/MarkdownObject.rs
 // ──────────────────────────────────────────────────────────────────────────
 
 extern "C" JSC::EncodedJSValue BunMarkdownMeta__createListItem(
@@ -64,7 +64,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createListItem(
     EncodedJSValue start,
     EncodedJSValue checked)
 {
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownListItemMetaStructure());
@@ -83,7 +83,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createList(
     EncodedJSValue start,
     uint32_t depth)
 {
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownListMetaStructure());
@@ -98,7 +98,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createCell(
     JSGlobalObject* globalObject,
     EncodedJSValue align)
 {
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownCellMetaStructure());
@@ -112,7 +112,7 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createLink(
     EncodedJSValue href,
     EncodedJSValue title)
 {
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* obj = constructEmptyObject(vm, global->JSMarkdownLinkMetaStructure());

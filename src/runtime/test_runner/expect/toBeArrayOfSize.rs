@@ -10,7 +10,6 @@ pub fn to_be_array_of_size(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — scopeguard::defer! would hold &mut *this for the whole fn.
     let this = this.post_match_guard(global);
 
@@ -45,7 +44,7 @@ pub fn to_be_array_of_size(
     }
 
     let mut formatter = super::make_formatter(global);
-    // Zig: `defer formatter.deinit();` — handled by Drop.
+    // formatter cleanup handled by Drop.
     let received = value.to_fmt(&mut formatter);
 
     if not {
@@ -68,5 +67,3 @@ pub fn to_be_array_of_size(
         format_args!("{}", received),
     )
 }
-
-// ported from: src/test_runner/expect/toBeArrayOfSize.zig

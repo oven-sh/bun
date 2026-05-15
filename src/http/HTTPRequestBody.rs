@@ -6,7 +6,7 @@ use crate::ThreadSafeStreamBuffer;
 /// Phase-A port used at every `AsyncHTTP::init` call site.
 // PORT NOTE: no `Owned(Vec<u8>)` variant — the body is bitwise-copied across
 // threads via `core::ptr::read` in `start_queued_task`, so every arm must be
-// trivially-droppable. Zig has only `bytes` / `sendfile` / `stream`.
+// trivially-droppable. Only `Bytes` / `Sendfile` / `Stream`.
 pub enum HTTPRequestBody<'a> {
     /// Borrowed bytes — caller guarantees they outlive the request.
     Bytes(&'a [u8]),
@@ -40,7 +40,7 @@ impl Stream {
 
     pub fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
-            // matches Zig `buffer.deref()` — intrusive refcount decrement.
+            // intrusive refcount decrement.
             ThreadSafeStreamBuffer::deref(buffer.as_ptr());
         }
     }
@@ -48,8 +48,8 @@ impl Stream {
 
 // No `Drop` for `Stream`: the body is bitwise-copied across threads
 // (`core::ptr::read` in `start_queued_task`), so auto-dropping the
-// JS-thread original would over-deref the shared buffer. Mirrors Zig,
-// where `HTTPRequestBody.deinit()` is explicit.
+// JS-thread original would over-deref the shared buffer.
+// `HTTPRequestBody::deinit()` is an explicit teardown call.
 
 impl<'a> HTTPRequestBody<'a> {
     pub const EMPTY: HTTPRequestBody<'static> = HTTPRequestBody::Bytes(b"");
@@ -84,5 +84,3 @@ impl<'a> HTTPRequestBody<'a> {
         }
     }
 }
-
-// ported from: src/http/HTTPRequestBody.zig

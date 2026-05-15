@@ -22,13 +22,12 @@ use bun_ptr::BackRef;
 /// - Context receives a reference to the WorkTask itself in the `run` method
 pub trait WorkTaskContext: Sized {
     /// Tag this `WorkTask<Self>` carries when enqueued back onto the JS event
-    /// loop's concurrent queue (`task_tag::*`). Mirrors Zig's per-instantiation
-    /// `TaggedPointerUnion` membership (e.g. `GetAddrInfoRequestTask`).
+    /// loop's concurrent queue (`task_tag::*`). Each context gets its own
+    /// tagged-pointer-union membership (e.g. `GetAddrInfoRequestTask`).
     const TASK_TAG: TaskTag;
 
     /// Perform the work on the thread pool. `this`/`task` are raw pointers
-    /// because the context is heap-allocated, crosses threads, and is mutated
-    /// — the Zig signature is `fn run(this: *Context, task: *Task) void`.
+    /// because the context is heap-allocated, crosses threads, and is mutated.
     fn run(this: *mut Self, task: *mut WorkTask<Self>);
     fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), crate::JsTerminated>;
 }
@@ -86,8 +85,8 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     }
 
     // PORT NOTE: not `impl Drop` — `ref_.unref` is also called from `run_from_js`,
-    // and `Self` is held as a raw pointer (intrusive task). Explicit destroy matches
-    // the Zig `bun.destroy(this)` shape.
+    // and `Self` is held as a raw pointer (intrusive task), so destruction is
+    // an explicit call.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` was produced by heap::alloc in create_on_js_thread and
         // has not been freed.
@@ -148,5 +147,3 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         event_loop.enqueue_task_concurrent(task);
     }
 }
-
-// ported from: src/jsc/WorkTask.zig

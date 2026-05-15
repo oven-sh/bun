@@ -5,7 +5,7 @@ use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 
 pub type JSSink = sink::JSSink<ArrayBufferSink>;
-// PORT NOTE: Zig passes the literal "ArrayBufferSink" as a 2nd comptime arg to
+// PORT NOTE: originally passes the literal "ArrayBufferSink" as a 2nd comptime arg to
 // `Sink.JSSink()`; in Rust the symbol-name concatenation lives in the
 // `JsSinkAbi` impl in `Sink.rs` (see `array_buffer_sink_abi`).
 
@@ -14,9 +14,9 @@ pub struct ArrayBufferSink {
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub done: bool,
     pub signal: Signal,
-    // PORT NOTE: Zig `?Sink` stores a `*anyopaque` (raw, manually-managed
+    // PORT NOTE: originally `?Sink` stores a `*anyopaque` (raw, manually-managed
     // lifetime). The Rust `Sink<'a>` was ported with a borrow; using `'static`
-    // here recovers the Zig semantics (caller is responsible for the pointee
+    // here recovers the original semantics (caller is responsible for the pointee
     // outliving every dispatch). No call site sets `next` to non-`None` today.
     pub next: Option<Sink<'static>>,
     pub streaming: bool,
@@ -38,8 +38,8 @@ impl Default for ArrayBufferSink {
 
 impl ArrayBufferSink {
     pub fn connect(&mut self, signal: Signal) {
-        // PORT NOTE: Zig asserts `this.reader == null` but there is no `reader`
-        // field on this struct (dead Zig assert; lazy compilation never reaches it).
+        // PORT NOTE: originally asserts `this.reader == null` but there is no `reader`
+        // field on this struct (dead assertion; lazy compilation never reaches it).
         self.signal = signal;
     }
 
@@ -77,7 +77,7 @@ impl ArrayBufferSink {
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         if self.streaming {
-            // TODO: properly propagate exception upwards (matches Zig `catch .zero`).
+            // TODO: properly propagate exception upwards (matches `catch .zero`).
             let value: JSValue = if self.as_uint8array {
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, self.bytes.slice())
                     .unwrap_or(JSValue::ZERO)
@@ -164,7 +164,7 @@ impl ArrayBufferSink {
             return next.write_utf16(data);
         }
         let bytes = data.slice();
-        // Mirrors Zig `@ptrCast(@alignCast(data.slice().ptr))` — caller
+        // Mirrors `@ptrCast(@alignCast(data.slice().ptr))` — caller
         // guarantees the byte slice is u16-aligned and has even length when the
         // stream encoding is UTF-16. bytemuck checks both at runtime.
         let utf16: &[u16] = bytemuck::cast_slice(bytes);
@@ -189,7 +189,7 @@ impl ArrayBufferSink {
     /// [`ArrayBufferSink::init`] or the JSSink codegen path) and not yet freed.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
-        // frees the box, matching Zig `this.bytes.deinit(...); bun.destroy(this)`.
+        // frees the box, matching `this.bytes.deinit(...); bun.destroy(this)`.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -199,8 +199,8 @@ impl ArrayBufferSink {
         as_uint8array: bool,
     ) -> JsResult<JSValue> {
         if self.streaming {
-            // PORT NOTE: Zig calls `ArrayBuffer.create()` here without `catch`
-            // (dead path under Zig's lazy compilation). Propagate the JS
+            // PORT NOTE: originally calls `ArrayBuffer.create()` here without `catch`
+            // (dead path under the original lazy compilation). Propagate the JS
             // exception explicitly in Rust.
             let value: JSValue = if as_uint8array {
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, self.bytes.slice())?
@@ -280,7 +280,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         Self::memory_cost(self)
     }
     fn finalize(&mut self) {
-        // Zig: ArrayBufferSink.finalize destroys the heap allocation; the
+        // Originally: ArrayBufferSink.finalize destroys the heap allocation; the
         // `JSSink::finalize` C export owns that path. The trait impl here is
         // the *inner* finalize.
         Self::finalize(std::ptr::from_mut::<Self>(self));
@@ -327,5 +327,3 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
 }
 
 crate::impl_sink_handler!(ArrayBufferSink);
-
-// ported from: src/runtime/webcore/ArrayBufferSink.zig

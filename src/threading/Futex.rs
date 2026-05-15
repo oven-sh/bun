@@ -1,5 +1,4 @@
-//! This is a copy-pasta of std.Thread.Futex, except without `unreachable`
-//! Synchronized with std as of Zig 0.14.1
+//! Cross-platform futex implementation.
 //!
 //! A mechanism used to block (`wait`) and unblock (`wake`) threads using a
 //! 32bit memory address as hints.
@@ -80,8 +79,8 @@ pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
 use darwin_impl as imp;
 #[cfg(target_os = "freebsd")]
 use freebsd_impl as imp;
-// PORT NOTE: Zig's `builtin.os.tag == .linux` covers Android (Android uses the .linux OS tag with
-// the android ABI). Rust splits these into distinct target_os values, so we must list both.
+// PORT NOTE: Android uses the same kernel ABI as Linux. Rust splits these into
+// distinct target_os values, so we must list both.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use linux_impl as imp;
 #[cfg(not(any(
@@ -117,8 +116,8 @@ mod unsupported_impl {
     }
 
     fn unsupported() -> ! {
-        // PORT NOTE: Zig used @compileError here; Rust cfg already gates this module,
-        // so reaching this at runtime means the cfg ladder above is incomplete.
+        // PORT NOTE: cfg already gates this module, so reaching this at runtime
+        // means the cfg ladder above is incomplete.
         unreachable!("Unsupported operating system for Futex");
     }
 }
@@ -505,8 +504,8 @@ impl Deadline {
     /// Pass in `null` to have the deadline call `Futex.wait()` and never expire.
     pub fn init(expires_in_ns: Option<u64>) -> Deadline {
         // std.time.Timer is required to be supported for somewhat accurate reportings of error.Timeout.
-        // PORT NOTE: Zig only initialized `started` when timeout != null; Instant::now() is
-        // infallible and cheap, so we always initialize it to avoid MaybeUninit gymnastics.
+        // PORT NOTE: `Instant::now()` is infallible and cheap, so we always
+        // initialize `started` (even with no timeout) to avoid MaybeUninit gymnastics.
         Deadline {
             timeout: expires_in_ns,
             started: std::time::Instant::now(),
@@ -535,5 +534,3 @@ impl Deadline {
         wait(ptr, expect, Some(until_timeout_ns))
     }
 }
-
-// ported from: src/threading/Futex.zig

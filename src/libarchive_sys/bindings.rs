@@ -11,7 +11,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use bun_core::{Fd, FileKind, Mode, kind_from_mode};
 use bun_core::{WStr, ZStr};
 
-/// Bitset over [`FileKind`] (Zig: `std.EnumSet(std.fs.File.Kind)`).
+/// Bitset over [`FileKind`] (originally `std.EnumSet(std.fs.File.Kind)`).
 /// Local because `bun_core::FileKind` does not derive `enumset::EnumSetType`.
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub struct FileKindSet(u16);
@@ -79,7 +79,7 @@ pub type struct_archive_entry = ArchiveEntry;
 #[allow(non_camel_case_types)]
 type mode_t = Mode;
 
-#[repr(u32)] // TODO(port): Zig used `enum(mode_t)`; mode_t width is platform-specific
+#[repr(u32)] // TODO(port): original used `enum(mode_t)`; mode_t width is platform-specific
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FileType {
     Regular = 0o100000,
@@ -129,7 +129,7 @@ pub mod flags {
         SafeWrites = ARCHIVE_EXTRACT_SAFE_WRITES,
     }
 
-    // Deprecated: Compression enum (see Zig source)
+    // Deprecated: Compression enum (see libarchive headers)
 
     #[repr(i32)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -200,7 +200,7 @@ pub mod flags {
         Sha512 = ARCHIVE_ENTRY_DIGEST_SHA512,
     }
 
-    /// Zig's `EntryACL` enum has many duplicate discriminant values (e.g.
+    /// The original `EntryACL` enum has many duplicate discriminant values (e.g.
     /// `read_data` == `list_directory` == 0x8). Rust enums forbid that, so this
     /// is ported as a transparent newtype with associated consts.
     #[repr(transparent)]
@@ -342,7 +342,7 @@ const ARCHIVE_EXTRACT_SAFE_WRITES: c_int = 0x40000;
 /// Opaque libarchive `struct archive` handle. Always used behind `*mut Archive`.
 ///
 /// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
-/// the C-side state through every call, and the Zig spec passes `*Archive`
+/// the C-side state through every call, and the spec passes `*Archive`
 /// (mutable) everywhere. Without `UnsafeCell`, deriving a `*mut` from `&Archive`
 /// and letting C write through it is UB.
 bun_opaque::opaque_ffi! { pub struct Archive; }
@@ -577,7 +577,7 @@ impl Archive {
     pub fn write_add_filter_b64encode(&self) -> ArchiveResult {
         archive_write_add_filter_b64encode(self)
     }
-    // pub fn write_add_filter_bzip2 — disabled in Zig
+    // pub fn write_add_filter_bzip2 — intentionally disabled
     pub fn write_add_filter_compress(&self) -> ArchiveResult {
         archive_write_add_filter_compress(self)
     }
@@ -678,7 +678,7 @@ impl Archive {
         archive_read_finish(self)
     }
 
-    // deprecated: archive_read_support_compression_* (see Zig source)
+    // deprecated: archive_read_support_compression_* (see libarchive headers)
 
     pub fn read_support_format_7zip(&self) -> ArchiveResult {
         archive_read_support_format_7zip(self)
@@ -794,7 +794,7 @@ impl Archive {
     pub fn write_zeros_to_file(sink: &ArchiveFileSink, count: usize) -> ArchiveResult {
         // Use uninit + memset instead of comptime zero-init to reduce binary size
         let mut zero_buf: [u8; 16 * 1024] = [0u8; 16 * 1024];
-        // PERF(port): Zig used `undefined` + @memset to avoid a 16KB zeroed static — profile in Phase B
+        // PERF(port): original used `undefined` + @memset to avoid a 16KB zeroed static — profile in Phase B
         let _ = &mut zero_buf;
         let mut remaining = count;
         while remaining > 0 {
@@ -916,7 +916,7 @@ impl Archive {
     pub fn read_support_filter_by_code(&self, code: i32) -> ArchiveResult {
         archive_read_support_filter_by_code(self, code)
     }
-    // pub fn read_support_filter_bzip2 — disabled in Zig
+    // pub fn read_support_filter_bzip2 — intentionally disabled
     pub fn read_support_filter_compress(&self) -> ArchiveResult {
         archive_read_support_filter_compress(self)
     }
@@ -961,7 +961,7 @@ impl Archive {
 /// One block returned by [`Archive::next`].
 pub struct Block {
     /// Borrowed from libarchive's internal buffer; valid until the next read call.
-    // TODO(port): lifetime — Zig had `[]const u8` defaulting to "".
+    // TODO(port): lifetime — original had `[]const u8` defaulting to "".
     pub bytes: *const [u8],
     pub offset: i64,
     pub result: ArchiveResult,
@@ -974,7 +974,7 @@ pub struct Block {
 /// Opaque libarchive `struct archive_entry` handle.
 ///
 /// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
-/// entry state through setters and `archive_read_next_header2`. The Zig spec
+/// entry state through setters and `archive_read_next_header2`. The spec
 /// passes `*Entry` (mutable) — without `UnsafeCell`, `&ArchiveEntry → *mut` is UB.
 bun_opaque::opaque_ffi! { pub struct ArchiveEntry; }
 
@@ -1109,11 +1109,11 @@ impl ArchiveEntry {
 
 pub struct ArchiveIterator {
     pub archive: *mut Archive,
-    // TODO(port): Zig used `std.EnumSet(std.fs.File.Kind)`; mapped to bun_core::FileKind.
+    // TODO(port): original used `std.EnumSet(std.fs.File.Kind)`; mapped to bun_core::FileKind.
     pub filter: FileKindSet,
 }
 
-/// Generic result type used by [`ArchiveIterator`] (Zig: `Iterator.Result(T)`).
+/// Generic result type used by [`ArchiveIterator`] (originally `Iterator.Result(T)`).
 pub enum IteratorResult<T> {
     Err {
         archive: *mut Archive,
@@ -1224,7 +1224,7 @@ impl ArchiveIterator {
         }
     }
 
-    // TODO(port): Zig `deinit` returns `Iterator.Result(void)`; cannot be `Drop`.
+    // TODO(port): original `deinit` returns `Iterator.Result(void)`; cannot be `Drop`.
     // Per PORTING.md, explicit early release is exposed as `close(self)` taking ownership.
     pub fn close(self) -> IteratorResult<()> {
         let a = self.archive();
@@ -1247,7 +1247,7 @@ impl ArchiveIterator {
 
 pub struct NextEntry {
     pub entry: *mut ArchiveEntry,
-    // TODO(port): Zig used `std.fs.File.Kind`; mapped to bun_core::FileKind.
+    // TODO(port): original used `std.fs.File.Kind`; mapped to bun_core::FileKind.
     pub kind: FileKind,
 }
 
@@ -2078,7 +2078,7 @@ impl GrowingBuffer {
         GrowingBuffer::default()
     }
 
-    // Zig `deinit` only freed `list`; Vec drops automatically — no explicit Drop needed.
+    // The original `deinit` only freed `list`; Vec drops automatically — no explicit Drop needed.
 
     pub fn to_owned_slice(&mut self) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         if self.had_error {
@@ -2111,7 +2111,7 @@ impl GrowingBuffer {
         }
         // SAFETY: buff[0..length] is valid for reads per libarchive contract.
         let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
-        // Vec::try_reserve + extend to mirror Zig's `appendSlice catch` OOM handling.
+        // Vec::try_reserve + extend to mirror the original `appendSlice catch` OOM handling.
         if this.list.try_reserve(length).is_err() {
             this.had_error = true;
             return -1;
@@ -2135,5 +2135,3 @@ bun_opaque::opaque_ffi! {
     /// Opaque libc `FILE` (only used as `*mut FILE` across FFI).
     pub struct FILE;
 }
-
-// ported from: src/libarchive_sys/bindings.zig

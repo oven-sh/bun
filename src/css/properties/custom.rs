@@ -1,6 +1,5 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //!
-//! Ported from `src/css/properties/custom.zig`.
 use bun_collections::VecExt;
 //
 // ─── B-2 round 9 status ────────────────────────────────────────────────────
@@ -162,7 +161,7 @@ mod ext {
 
     /// Forwarder to `DashedIdentReference::to_css` (now un-gated in
     /// `values/ident.rs`). `CssModule::reference_dashed` is real; the
-    /// CSS-Modules `dashed_idents` remapping path (ident.zig:44-52) is wired.
+    /// CSS-Modules `dashed_idents` remapping path is wired.
     #[inline]
     pub(super) fn dashed_ident_ref_to_css(
         this: &DashedIdentReference,
@@ -276,7 +275,7 @@ impl CssEql for Token {
 impl CssHash for Token {
     fn hash(&self, hasher: &mut Wyhash) {
         use Token::*;
-        // Zig `implementHash`: tag prefix + payload bytes.
+        // `implementHash`: tag prefix + payload bytes.
         // `Token::kind() as u32` gives a stable per-variant discriminant.
         hasher.update(&(self.kind() as u32).to_ne_bytes());
         match self {
@@ -305,7 +304,7 @@ impl<'bump> DeepClone<'bump> for Token {
     #[inline]
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
         // All `&'static [u8]` payloads borrow the parser source/arena (Phase-A
-        // `'static` placeholder) — identity copy is correct (matches generics.zig
+        // `'static` placeholder) — identity copy is correct (matches the
         // "const strings" fast-path). `Num`/`Dimension` are POD.
         self.clone()
     }
@@ -316,7 +315,7 @@ impl<'bump> DeepClone<'bump> for Token {
 // Phase A drops arena params and uses global-alloc `Vec`; Phase B may need
 // to thread `&'bump Bump` if profiling shows it.
 
-/// Zig: `pub fn Result(comptime T: type) type` → `Maybe(T, ParseError(ParserError))`.
+/// `Result(T)` → `Maybe(T, ParseError(ParserError))`.
 pub use css_parser::CssResult as Result;
 
 /// PERF: nullable optimization
@@ -487,7 +486,7 @@ impl TokenList {
             if tokens[tokens.len() - 1].is_whitespace() {
                 end -= 1;
             }
-            // PORT NOTE: Zig does `insertSlice(0, slice)` (shallow memcpy) then `tokens.deinit()`
+            // PORT NOTE: the original does `insertSlice(0, slice)` (shallow memcpy) then `tokens.deinit()`
             // (frees only the backing array). `drain` moves the elements out without deep-cloning.
             let newlist: Vec<TokenOrValue> = tokens.drain(start..end).collect();
             return Ok(TokenList { v: newlist });
@@ -990,8 +989,8 @@ impl UnresolvedColor {
                 })
             }),
             b"light-dark" => return input.parse_nested_block(|input2| {
-                // errdefer doesn't fire on `return .{ .err = ... }` in Zig — but in Rust,
-                // `?` drops `light` automatically on the error path.
+                // The original's error-deferred cleanup didn't fire on a returned err
+                // value — but in Rust, `?` drops `light` automatically on the error path.
                 let light = input2.parse_until_before(Delimiters::COMMA, |i| {
                     TokenListFns::parse(i, options, depth + 1)
                 })?;
@@ -1018,7 +1017,7 @@ impl UnresolvedColor {
 
 // `ComponentParser::parse_relative` is generic over `C: LightDarkOwned` so the
 // `from light-dark(...)` relative-color path can rebuild a `light-dark()` of
-// whatever output type the caller is producing. Zig duck-types this via
+// whatever output type the caller is producing. The original duck-types this via
 // `lightDarkOwned` on both `CssColor` and `UnresolvedColor`; in Rust the trait
 // lives in `values::color` and we wire `UnresolvedColor` into it here.
 impl css_values::color::LightDarkOwned for UnresolvedColor {
@@ -1193,8 +1192,8 @@ impl EnvironmentVariableName {
 }
 
 /// A UA-defined environment variable name.
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
-// to_css/deep_clone via comptime reflection over @tagName. Replaced by an
+// PORT NOTE: `DefineEnumProperty` provides eql/hash/parse/
+// to_css/deep_clone via reflection over the variant name. Replaced by an
 // `EnumProperty` impl below (kebab-case match) — same protocol surface.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, CssHash)]
 pub enum UAEnvironmentVariable {
@@ -1342,7 +1341,7 @@ impl TokenOrValue {
 // `TokenList` payload, and `media_query::MediaFeatureValue` derives
 // `Debug + Clone` over an `EnvironmentVariable` payload. The leaf value types
 // (`Url`, `CustomIdent`, …) don't all `#[derive(Clone)]` yet, so hand-roll
-// the structural clone here. PORT NOTE: Zig had no `Clone` distinction —
+// the structural clone here. PORT NOTE: the original had no `Clone` distinction —
 // shallow struct copy was implicit; arena-slice payloads (`*const [u8]`) are
 // `Copy`, and the only owning fields are `Vec<TokenOrValue>` / `Vec<i32>`.
 
@@ -1560,7 +1559,7 @@ impl CustomPropertyName {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             CustomPropertyName::Custom(custom) => {
-                // Spec custom.zig:1496-1501 → DashedIdent.toCss → dest.writeDashedIdent(ident, true),
+                // DashedIdent.toCss → dest.writeDashedIdent(ident, true),
                 // which applies CSS-Modules dashed-ident renaming.
                 dest.write_dashed_ident(custom, true)
             }
@@ -1635,5 +1634,3 @@ pub fn try_parse_color_token(
 
     None
 }
-
-// ported from: src/css/properties/custom.zig

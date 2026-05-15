@@ -23,7 +23,7 @@ use bun_core::String as BunString;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 use core::ffi::{c_char, c_int, c_void};
 
-// ─── ZigGlobalObject.cpp / BunObject.cpp ────────────────────────────────────
+// ─── BunGlobalObject.cpp / BunObject.cpp ────────────────────────────────────
 // (populated incrementally — see audit comment in generated_host_exports.rs)
 // Empty until the first migration lands; an empty `unsafe extern "C" {}` block
 // and `use crate::ffi_imports::*` over zero items are both legal Rust.

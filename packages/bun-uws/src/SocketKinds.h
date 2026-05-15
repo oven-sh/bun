@@ -1,6 +1,6 @@
 #pragma once
-/* `src/deps/uws/SocketKind.zig` is the source of truth for these ordinals.
- * The Zig side `@export`s them so the dispatch ABI can't silently drift if
+/* `src/uws_sys/SocketKind.rs` is the source of truth for these ordinals.
+ * The Rust side exports them so the dispatch ABI can't silently drift if
  * the enum is reordered — C++ links against the actual values instead of
  * hand-mirrored literals. */
 extern "C" const unsigned char BUN_SOCKET_KIND_DYNAMIC;

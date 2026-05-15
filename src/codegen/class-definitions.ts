@@ -94,13 +94,13 @@ export class ClassDefinition {
   /**
    * Which language implements the native side of this class.
    *
-   * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
+   * The C++ wrapper output (`BunGeneratedClasses.{h,cpp}`) is byte-identical
    * regardless of this flag — it only selects whether the implementer thunks
-   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
+   * land in `generated_classes.rs`.
    *
-   * @default "zig"
+   * @default "rust"
    */
-  lang?: "zig" | "rust";
+  lang?: "rust";
   /**
    * Fully-qualified Rust path of the native struct backing this class, e.g.
    * `crate::webcore::request::Request`. The codegen emits
@@ -140,7 +140,7 @@ export class ClassDefinition {
   /**
    * Class constructor needs `this` value.
    *
-   * Makes the code generator call the Zig constructor function **after** the
+   * Makes the code generator call the native constructor function **after** the
    * JSValue is instantiated. Only use this if you must, as it probably isn't
    * good for GC since it means if the constructor throws the GC will have to
    * clean up the object that never reached JS.
@@ -160,43 +160,33 @@ export class ClassDefinition {
    * You _must_ free the pointer to your native class!
    *
    * Example for pointers only owned by JavaScript classes:
-   * ```zig
-   * pub const NativeClass = struct {
-   *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
+   * ```rust
+   * impl NativeClass {
+   *   pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<NativeClass>> {
    *     // do stuff
-   *     return bun.new(NativeClass, .{
+   *     Ok(Box::new(NativeClass {
    *       // ...
-   *     });
+   *     }))
    *   }
    *
-   *   fn finalize(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
+   *   pub fn finalize(self: Box<Self>) {
+   *     // free allocations owned by this class; `Box` is dropped when this returns.
    *   }
-   * };
+   * }
    * ```
    * Example with ref counting:
-   * ```
-   * pub const RefCountedNativeClass = struct {
-   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-   *   pub const ref = RefCount.ref;
-   *   pub const deref = RefCount.deref;
-   *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
+   * ```rust
+   * impl RefCountedNativeClass {
+   *   pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Arc<RefCountedNativeClass>> {
    *     // do stuff
-   *     return bun.new(NativeClass, .{
+   *     Ok(Arc::new(RefCountedNativeClass {
    *       // ...
-   *     });
+   *     }))
    *   }
    *
-   *   fn deinit(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   *
-   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
-   * };
+   *   // GC drops one strong count; the struct is freed when no references remain.
+   *   pub fn finalize(self: Arc<Self>) {}
+   * }
    * ```
    * @todo remove this and require all classes to implement `finalize`.
    */
@@ -233,11 +223,11 @@ export class ClassDefinition {
    * Called from any thread.
    *
    * When `true`, classes should have a method with this signature:
-   * ```zig
-   * pub fn estimatedSize(this: *@This()) usize;
+   * ```rust
+   * pub fn estimated_size(&self) -> usize;
    * ```
    *
-   * Report `@sizeOf(@this())` as well as any external allocations.
+   * Report `size_of::<Self>()` as well as any external allocations.
    */
   estimatedSize?: boolean;
   /**
@@ -291,7 +281,7 @@ export interface CustomField {
 }
 
 /**
- * Define a native class written in ZIg. Bun's codegen step will create CPP wrappers
+ * Define a native class written in Rust. Bun's codegen step will create CPP wrappers
  * for interacting with JSC.
  */
 export function define(

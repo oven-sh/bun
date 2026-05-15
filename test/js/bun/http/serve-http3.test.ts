@@ -1047,7 +1047,7 @@ describe("Bun.serve HTTP/3 production", () => {
   });
 
   // RFC 9114 §4.2 forbids Transfer-Encoding; the server rejects it with 400
-  // (server.zig prepareJsRequestContextFor). Not testable via the native
+  // (src/runtime/server/mod.rs prepareJsRequestContextFor). Not testable via the native
   // client either — `isConnectionSpecific()` strips the header before
   // encoding — so the check is defense-in-depth against raw QUIC clients.
 

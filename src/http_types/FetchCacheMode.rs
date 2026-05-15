@@ -1,5 +1,5 @@
 /// https://developer.mozilla.org/en-US/docs/Web/API/Request/cache
-#[repr(u8)] // Zig: enum(u3) — Rust has no u3, u8 is the smallest repr
+#[repr(u8)] // conceptually a 3-bit enum — Rust has no u3, u8 is the smallest repr
 #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
 pub enum FetchCacheMode {
     #[strum(serialize = "default")]
@@ -25,8 +25,5 @@ impl FetchCacheMode {
         b"force-cache" => FetchCacheMode::ForceCache,
         b"only-if-cached" => FetchCacheMode::OnlyIfCached,
     };
-    // Zig `pub const toJS = @import("../http_jsc/fetch_enums_jsc.zig").fetchCacheModeToJS;`
-    // deleted — to_js lives as an extension-trait method in bun_http_jsc (see PORTING.md §Idiom map).
+    // `to_js` lives as an extension-trait method in bun_http_jsc (see PORTING.md §Idiom map).
 }
-
-// ported from: src/http_types/FetchCacheMode.zig

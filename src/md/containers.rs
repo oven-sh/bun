@@ -10,7 +10,7 @@ impl Parser<'_> {
     pub fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
         if (self.n_containers as usize) >= self.containers.len() {
             self.containers.push(*c);
-            // PERF(port): Vec::push aborts on OOM; Zig returned error.OutOfMemory
+            // PERF(port): Vec::push aborts on OOM; the original returned error.OutOfMemory
         } else {
             self.containers[self.n_containers as usize] = *c;
         }
@@ -288,5 +288,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/containers.zig

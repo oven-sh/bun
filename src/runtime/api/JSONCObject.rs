@@ -44,5 +44,3 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         },
     )
 }
-
-// ported from: src/runtime/api/JSONCObject.zig

@@ -1,4 +1,4 @@
-//! Port of `src/string/immutable.zig` — `bun.strings` namespace.
+//! `bun.strings` namespace.
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
 use core::cmp::Ordering;
@@ -77,7 +77,7 @@ pub mod visible_fallback {
 
             /// Skip a CSI/OSC escape starting at `input[0] == ESC`; returns
             /// the byte length consumed (at least 1). Mirrors the parser in
-            /// `visible.zig:visibleLatin1WidthExcludeANSIColors`.
+            /// `visibleLatin1WidthExcludeANSIColors`.
             fn skip_ansi(input: &[u8]) -> usize {
                 debug_assert!(!input.is_empty() && input[0] == 0x1b);
                 if input.len() < 2 {
@@ -281,7 +281,7 @@ pub mod unicode {
             cp
         }
 
-        /// Zig: `CodepointIterator.needsUTF8Decoding` — true iff any byte in
+        /// `CodepointIterator.needsUTF8Decoding` — true iff any byte in
         /// `slice` begins a multi-byte WTF-8 sequence.
         pub fn needs_utf8_decoding(slice: &[u8]) -> bool {
             let mut i = 0usize;
@@ -305,12 +305,11 @@ pub mod unicode {
     }
 
     impl<'a> NewCodePointIterator<'a> {
-        /// Zig-style cursor advance. Returns `false` at end.
+        /// Cursor-style advance. Returns `false` at end.
         // PERF(port): `#[inline]` alone is hint-only; LLVM declined to inline
         // this cross-crate into `bun_js_printer::print_identifier_ascii_only`
         // (the multibyte slow path makes the body look heavy). Called per-byte
-        // of every printed identifier under `ASCII_ONLY=true`. Zig's `iter.next`
-        // lives in the same TU and inlines. Force it.
+        // of every printed identifier under `ASCII_ONLY=true`. Force it.
         #[inline(always)]
         pub fn next(&self, cursor: &mut Cursor) -> bool {
             let bytes = self.bytes;
@@ -324,7 +323,7 @@ pub mod unicode {
             let first = tail[0];
             cursor.i = pos as u32;
             // ASCII fast path — the overwhelmingly common case for JS source
-            // (identifiers, escape-free strings). Matches Zig's per-byte ptr
+            // (identifiers, escape-free strings). Matches the per-byte ptr
             // indexing + 1-arm switch in `decodeWTF8RuneT`.
             if first < 0x80 {
                 cursor.c = first as CodePoint;
@@ -348,7 +347,7 @@ pub mod unicode {
         }
     }
 
-    /// Zig: `unicode.zig:containsNonBmpCodePoint` — `true` iff `text` contains any
+    /// `containsNonBmpCodePoint` — `true` iff `text` contains any
     /// codepoint above U+FFFF (i.e. would need a UTF-16 surrogate pair).
     pub fn contains_non_bmp_code_point(text: &[u8]) -> bool {
         let iter = CodepointIterator::init(text);
@@ -361,7 +360,7 @@ pub mod unicode {
         false
     }
 
-    /// Zig: `unicode.zig:containsNonBmpCodePointOrIsInvalidIdentifier` — fused
+    /// `containsNonBmpCodePointOrIsInvalidIdentifier` — fused
     /// "must I quote this import/export alias?" predicate for `js_printer`.
     ///
     /// Returns `true` if `text` is empty, OR any codepoint is non-BMP (>U+FFFF,
@@ -384,26 +383,22 @@ pub mod unicode {
         false
     }
 
-    /// `toUTF16Literal` — port of `unicode.zig:toUTF16Literal` →
-    /// `std.unicode.utf8ToUtf16LeStringLiteral`. Zig evaluated this at
-    /// `comptime` into a `Holder.value` const yielding `[:0]const u16`; the
-    /// Rust runtime port returns an owned `Box<[u16]>` (no `Box::leak` per
-    /// PORTING.md §Forbidden). Prefer the const `crate::string::w!("…")` macro at call
-    /// sites with literal inputs — this fn exists for the residual runtime
-    /// callers that thread `&[u8]` through.
+    /// `toUTF16Literal`. Returns an owned `Box<[u16]>` (no `Box::leak` per
+    /// PORTING.md §Forbidden). Prefer the const `crate::string::w!("…")` macro
+    /// at call sites with literal inputs — this fn exists for the residual
+    /// runtime callers that thread `&[u8]` through.
     pub fn to_utf16_literal(s: &[u8]) -> Box<[u16]> {
         if s.is_empty() {
             return Box::new([]);
         }
-        // `std.unicode.utf8ToUtf16LeStringLiteral` requires valid UTF-8 (Zig
-        // would `catch unreachable` at comptime). simdutf gives us the exact
-        // UTF-16 code-unit length, then a validating convert.
+        // Requires valid UTF-8. simdutf gives us the exact UTF-16 code-unit
+        // length, then a validating convert.
         let out_len = super::simdutf::length::utf16::from::utf8(s);
         let mut out = vec![0u16; out_len].into_boxed_slice();
         let written = super::simdutf::convert::utf8::to::utf16::le(s, &mut out);
         debug_assert_eq!(
             written, out_len,
-            "to_utf16_literal: input must be valid UTF-8 (was comptime-checked in Zig)",
+            "to_utf16_literal: input must be valid UTF-8",
         );
         out
     }
@@ -414,11 +409,10 @@ pub mod unicode {
 /// (invalid lead byte → 1). Stops early at EOF or a truncated trailing sequence,
 /// returning the slice up to the last complete codepoint boundary.
 ///
-/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek` (Zig:
-/// `js_lexer.zig:267`, `toml/lexer.zig:128`). Unlike the upstream Zig copies —
-/// whose `*const Self` stepper never advances and re-reads the first byte `n`
-/// times — this helper actually advances; the sole live caller passes ASCII so
-/// the fix is unobservable.
+/// Shared body of `js_parser::Lexer::peek` / `toml::Lexer::peek`. Unlike the
+/// upstream copies — whose `*const Self` stepper never advances and re-reads
+/// the first byte `n` times — this helper actually advances; the sole live
+/// caller passes ASCII so the fix is unobservable.
 #[inline]
 pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
     let mut end = at;
@@ -437,12 +431,12 @@ pub fn peek_n_codepoints_wtf8(bytes: &[u8], at: usize, n: usize) -> &[u8] {
 
 /// WTF-8 codepoint stepper shared by the JS / JSON / TOML lexers.
 ///
-/// Zig: `js_parser/lexer.zig` `nextCodepointSlice` / `nextCodepoint` (and the
-/// byte-identical copy in `parsers/toml/lexer.zig`). The Rust port grew a
-/// third copy when `json_lexer.rs` was carved out of `js_parser` to break the
-/// `bun_js_parser ↔ bun_interchange` crate cycle; all three call the same
-/// `wtf8_byte_sequence_length_with_invalid` / `decode_wtf8_rune_t_multibyte`
-/// pair defined alongside this module, so the stepper belongs here.
+/// `nextCodepointSlice` / `nextCodepoint` (originally duplicated between the
+/// JS and TOML lexers). The port grew a third copy when `json_lexer.rs` was
+/// carved out of `js_parser` to break the `bun_js_parser ↔ bun_interchange`
+/// crate cycle; all three call the same `wtf8_byte_sequence_length_with_invalid`
+/// / `decode_wtf8_rune_t_multibyte` pair defined alongside this module, so the
+/// stepper belongs here.
 ///
 /// NOT the same algorithm as [`CodepointIterator::next_codepoint`] — that one
 /// uses `utf8ByteSequenceLength` + `next_width` lookahead, has no `end`
@@ -473,8 +467,7 @@ pub mod lexer_step {
     /// EOF or a truncated trailing multibyte sequence.
     ///
     /// Split into an `#[inline(always)]` ASCII/EOF fast path plus an outlined
-    /// multibyte tail so the hot per-byte loop folds into every `step()` site
-    /// (matches Zig's per-byte `ptr[current]` increment).
+    /// multibyte tail so the hot per-byte loop folds into every `step()` site.
     #[inline(always)]
     pub fn next_codepoint(contents: &[u8], current: &mut usize, end: &mut usize) -> CodePoint {
         let len = contents.len();
@@ -508,7 +501,7 @@ pub mod lexer_step {
         let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
         let avail = len - *current;
 
-        // Zig spec (lexer.zig nextCodepoint): `switch (slice.len) { 0 => -1, 1 => slice[0], else => decode }`
+        // nextCodepoint: `match slice.len { 0 => -1, 1 => slice[0], else => decode }`
         // where `slice` is empty when `cp_len + current > len` and `cp_len` bytes otherwise.
         // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
         // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
@@ -517,7 +510,7 @@ pub mod lexer_step {
         let code_point: CodePoint = if cp_len == 1 {
             first as CodePoint
         } else if avail < cp_len {
-            // truncated multibyte at EOF → Zig's empty-slice arm
+            // truncated multibyte at EOF → the empty-slice arm
             -1
         } else {
             // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
@@ -545,8 +538,8 @@ pub mod lexer_step {
     }
 }
 
-/// Strip a leading UTF-8 BOM (`EF BB BF`) if present. Mirrors
-/// `bun.strings.withoutUTF8BOM` (immutable.zig:2332 → unicode.withoutUTF8BOM).
+/// Strip a leading UTF-8 BOM (`EF BB BF`) if present.
+/// `bun.strings.withoutUTF8BOM`.
 #[inline]
 pub fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
     if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
@@ -643,7 +636,7 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 
 #[inline]
 pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
-    // TODO(port): Zig dispatched on T at comptime; in Rust we branch on size_of.
+    // TODO(port): the original dispatched on T at compile time; here we branch on size_of.
     if core::mem::size_of::<T>() == 1 {
         contains_char(reinterpret_to_u8(self_), char)
     } else {
@@ -653,10 +646,10 @@ pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u
 
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
-    // Zig: containsT(u8) → indexOfT(u8) → indexOf, which routes through
-    // std.mem.indexOf and returns None for empty needle. The generic
-    // index_of_t below returns Some(0) for empty, so dispatch to the
-    // u8-specific index_of (which matches Zig/std.mem semantics).
+    // containsT(u8) → indexOfT(u8) → indexOf, which returns None for
+    // empty needle. The generic index_of_t below returns Some(0) for empty,
+    // so dispatch to the u8-specific index_of (which keeps the
+    // empty-needle-is-not-contained convention).
     index_of(self_, str).is_some()
 }
 
@@ -669,8 +662,8 @@ pub fn contains_t<T: Eq>(self_: &[T], str: &[T]) -> bool {
 // reach without depending on this crate); re-export to avoid a second copy.
 pub use crate::strings::contains_case_insensitive_ascii;
 
-/// Zig: `std.meta.Int(.unsigned, @bitSizeOf(usize) - 1)` — fits in 63/31 bits so
-/// `?OptionalUsize` is word-sized via niche. Rust `Option<u32>` already niches; keep
+/// Conceptually a `usize`-minus-one-bit unsigned int — fits in 63/31 bits so
+/// the Option is word-sized via niche. Rust `Option<u32>` already niches; keep
 /// `u32` to match call sites that take `u32` indices throughout this module.
 pub type OptionalUsize = u32;
 
@@ -687,7 +680,7 @@ pub fn index_of_any16(self_: &[u16], str: &'static [u16]) -> Option<OptionalUsiz
 }
 
 pub fn index_of_any_t<T: Copy + Eq>(str: &[T], chars: &'static [T]) -> Option<OptionalUsize> {
-    // TODO(port): Zig specialized T==u8 → index_of_any (highway). Rust cannot
+    // TODO(port): could specialize T==u8 → index_of_any (highway). Rust cannot
     // dispatch on type identity without specialization; callers with u8 should
     // call index_of_any directly.
     for (i, c) in str.iter().enumerate() {
@@ -709,7 +702,7 @@ pub fn contains_comptime(self_: &[u8], str: &'static [u8]) -> bool {
         return false;
     };
     let mut remain = &self_[start..];
-    // PERF(port): Zig used a comptime-sized integer bitcast for the comparison.
+    // PERF(port): could use a fixed-size integer bitcast for the comparison.
     // Use slice equality; LLVM should emit equivalent code for small fixed lengths.
     while remain.len() >= str.len() {
         if &remain[..str.len()] == str {
@@ -748,7 +741,7 @@ pub fn in_map_case_insensitive<V: Copy>(
 
 #[inline]
 pub fn contains_any(in_: &[&[u8]], target: &[u8]) -> bool {
-    // TODO(port): Zig accepted `anytype` and handled both `[]const u8` and `u8` elements.
+    // TODO(port): the original accepted both string and single-byte elements.
     for str in in_ {
         if contains(str, target) {
             return true;
@@ -814,7 +807,7 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 
 // Secret-redaction scanners are canonical in crate::strings (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
-// NOTE: starts_with_npm_secret now returns usize (was u8 in the Zig-literal port);
+// NOTE: starts_with_npm_secret now returns usize (was u8 in the literal port);
 // no external callers depended on the narrow type.
 pub use crate::strings::{
     find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
@@ -874,8 +867,8 @@ pub fn index_of_char_neg(self_: &[u8], char: u8) -> i32 {
 }
 
 pub fn index_of_signed(self_: &[u8], str: &[u8]) -> i32 {
-    // std.mem.indexOf returns 0 for an empty needle; bun's `index_of` returns
-    // None. Match Zig semantics here (immutable.zig:412).
+    // The std-style indexOf returns 0 for an empty needle; bun's `index_of`
+    // returns None. Match the std semantics here.
     if str.is_empty() {
         return 0;
     }
@@ -949,7 +942,7 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
 }
 
 pub fn index_of_t<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    // TODO(port): Zig specialized T==u8 → index_of (memmem). Callers with u8
+    // TODO(port): could specialize T==u8 → index_of (memmem). Callers with u8
     // should call index_of directly; generic path uses naive search.
     if needle.is_empty() {
         return Some(0);
@@ -1019,10 +1012,10 @@ pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
 //
 // PERF NOTE: `remainder_buf` is `MaybeUninit` because `init`/`init_lower_case`
 // only write `[0..len]` (or `[0..16]` for the slice case) and `slice()` only
-// reads `[0..remainder_len]`. Zig leaves the tail `undefined`; the original
-// Rust port zeroed `[0; 31]` on every call which showed up as ~0.45% of cycles
-// in the next-lint profile (~6M calls × ~24B avg waste). Tail bytes have no
-// validity requirement, so we leave them uninit to match Zig.
+// reads `[0..remainder_len]`. The tail is intentionally left undefined; an
+// earlier version zeroed `[0; 31]` on every call which showed up as ~0.45% of
+// cycles in the next-lint profile (~6M calls × ~24B avg waste). Tail bytes
+// have no validity requirement, so we leave them uninit.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct StringOrTinyString {
@@ -1082,7 +1075,7 @@ impl StringOrTinyString {
         }
     }
 
-    // PORT NOTE: Zig deinit was a no-op (commented-out free). No Drop impl.
+    // PORT NOTE: deinit was a no-op (commented-out free). No Drop impl.
 
     // PORT NOTE: plain `#[inline]` (not `#[inline(always)]`). These are tiny
     // generic delegators: a length check plus a tail call into the non-generic
@@ -1169,7 +1162,7 @@ impl StringOrTinyString {
             1..=Self::MAX => {
                 // Inline ASCII-lowercase loop (≤31 iters). Avoids forming `&mut [u8]`
                 // over uninit storage that `copy_lowercase` would need; semantics are
-                // identical (Zig's copyLowercase only ASCII-lowercases).
+                // identical (`copyLowercase` only ASCII-lowercases).
                 let dst = buf.as_mut_ptr() as *mut u8;
                 for (i, &c) in stringy.iter().enumerate() {
                     // SAFETY: i < stringy.len() <= 31 == MAX.
@@ -1206,7 +1199,7 @@ impl StringOrTinyString {
 }
 
 /// Trait for the `Appender` parameter on `StringOrTinyString::init*_append_if_needed`.
-/// Zig used `comptime Appender: type` + duck-typed `.append`/`.appendLowerCase`.
+/// Replaces a duck-typed `.append`/`.appendLowerCase` interface.
 pub trait Appender {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
     fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
@@ -1374,7 +1367,7 @@ pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
 /// Count the occurrences of a character in an ASCII byte array
 /// uses SIMD
 pub fn count_char(self_: &[u8], char: u8) -> usize {
-    // PERF(port): Zig used @Vector(16, u8) + @popCount + @reduce.
+    // PERF(port): could use a SIMD compare + popcount reduce.
     // Phase A: scalar count; Phase B: portable_simd or highway intrinsic.
     let mut total: usize = 0;
     for &c in self_ {
@@ -1406,7 +1399,7 @@ pub fn eql(self_: &[u8], other: &[u8]) -> bool {
 }
 
 pub fn eql_comptime_t<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
-    // TODO(port): Zig dispatched on T at comptime (u16 → eql_comptime_utf16).
+    // TODO(port): the original dispatched on T at compile time (u16 → eql_comptime_utf16).
     if core::mem::size_of::<T>() == 2 {
         // `NoUninit` + size_of::<T>()==2 lets bytemuck prove the &[T]→&[u16]
         // reinterpret is sound (align checked at runtime; T is u16 in practice).
@@ -1424,7 +1417,7 @@ pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
 pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
     // Compare bytewise, widening each ASCII byte of `alt` on the fly — avoids
     // materializing (and leaking) a `&'static [u16]`. All call sites pass
-    // ASCII literals (Zig was `comptime`).
+    // ASCII literals.
     debug_assert!(alt.iter().all(|&b| b < 0x80));
     self_.len() == alt.len()
         && self_
@@ -1452,7 +1445,7 @@ pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
 }
 
 pub fn has_prefix_comptime_type<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
-    // TODO(port): Zig accepted heterogeneous `alt: anytype` and widened u8→u16 via `w(alt)`.
+    // TODO(port): the original accepted a heterogeneous `alt` and widened u8→u16.
     // Rust callers must pass the correctly-typed literal (use `crate::string::w!` for u16).
     self_.len() >= alt.len()
         && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
@@ -1482,7 +1475,7 @@ fn eql_comptime_debug_runtime_fallback(a: &[u8], b: &[u8], check_len: bool) -> b
 
 #[allow(dead_code)]
 fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    // PERF(port): Zig unrolled at comptime over b.len in usize/u32/u16/u8 chunks.
+    // PERF(port): could be unrolled over b.len in usize/u32/u16/u8 chunks.
     // Rust cannot iterate a runtime slice at const-eval. Slice equality compiles
     // to memcmp; for short literals LLVM should emit comparable code.
     if check_len {
@@ -1492,8 +1485,8 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     }
     debug_assert!(a.len() >= b.len());
     // SAFETY: when `check_len`, the early-return above gives `a.len()==b.len()`.
-    // When `!check_len`, callers guarantee `a.len() >= b.len()` (mirrors the
-    // Zig `eqlComptimeCheckLenU8` contract). LLVM cannot prove the latter, so
+    // When `!check_len`, callers guarantee `a.len() >= b.len()` (the
+    // `eqlComptimeCheckLenU8` contract). LLVM cannot prove the latter, so
     // a checked slice would emit a real bounds check on this hot path
     // (lexer keyword/prefix matching) — keep the unchecked index.
     unsafe { a.get_unchecked(..b.len()) == b }
@@ -1518,9 +1511,9 @@ pub fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN
     a: &[T],
     b: &[T],
 ) -> bool {
-    // PORT NOTE: Zig coerced array-by-value `b` to a pointer here. The Zig
-    // version's `comptime` literal is unenforceable in Rust, so accept any
-    // slice; callers are still expected to pass literals.
+    // PORT NOTE: the original coerced array-by-value `b` to a pointer here, and
+    // its compile-time-literal constraint is unenforceable in Rust, so accept
+    // any slice; callers are still expected to pass literals.
     eql_comptime_check_len_with_known_type::<T, CHECK_LEN>(a, b)
 }
 
@@ -1530,16 +1523,16 @@ pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
 
 pub use crate::strings::eql_case_insensitive_ascii_check_length;
 
-/// Preserves Zig's triple-`i` typo (`eqlCaseInsensitiveASCIIICheckLength`); both
+/// Preserves the triple-`i` typo (`eqlCaseInsensitiveASCIIICheckLength`); both
 /// spellings are reachable from ported call sites until the next typo sweep.
 #[inline]
 pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii(a, b, true)
 }
 
-// PORT NOTE: Zig's `comptime check_len: bool` was first ported as a const
-// generic, but the dominant call shape across the tree passes it as a runtime
-// 3rd arg (`eql_case_insensitive_ascii(a, b, true)`). Accept it at runtime —
+// PORT NOTE: `check_len` was first ported as a const generic, but the dominant
+// call shape across the tree passes it as a runtime 3rd arg
+// (`eql_case_insensitive_ascii(a, b, true)`). Accept it at runtime —
 // the branch is trivially predicted/inlined; callers wanting the
 // length-agnostic forms still have the `_check_length` / `_ignore_length`
 // wrappers above.
@@ -1605,9 +1598,9 @@ pub fn eql_long_t<T: crate::NoUninit, const CHECK_LEN: bool>(a_str: &[T], b_str:
     eql_long(reinterpret_to_u8(a_str), reinterpret_to_u8(b_str), false)
 }
 
-// PORT NOTE: same rationale as `eql_case_insensitive_ascii` — Zig's
-// `comptime check_len: bool` becomes a runtime 3rd arg to match the dominant
-// ported call shape (`eql_long(a, b, true)`).
+// PORT NOTE: same rationale as `eql_case_insensitive_ascii` — `check_len`
+// becomes a runtime 3rd arg to match the dominant ported call shape
+// (`eql_long(a, b, true)`).
 #[inline]
 pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
     let len = b_str.len();
@@ -1624,7 +1617,7 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
     }
 
     // SAFETY: a_str.len() >= b_str.len() by contract above; raw-pointer walk
-    // mirrors Zig's word-chunked compare exactly.
+    // is a word-chunked compare.
     unsafe {
         let end = b_str.as_ptr().add(len);
         let mut a = a_str.as_ptr();
@@ -1691,7 +1684,7 @@ pub fn append(self_: &[u8], other: &[u8]) -> Box<[u8]> {
 
 #[inline]
 pub fn concat_alloc_t<T: Copy>(strs: &[&[T]]) -> Result<Box<[T]>, AllocError> {
-    // PORT NOTE: Zig took `strs: anytype` (tuple) and inline-for'd. Slice-of-slices here.
+    // PORT NOTE: was a tuple-of-slices arg with an unrolled loop; slice-of-slices here.
     let len: usize = strs.iter().map(|s| s.len()).sum();
     let mut buf = Vec::with_capacity(len);
     for s in strs {
@@ -1728,16 +1721,16 @@ pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u
     &self_[sta.min(self_.len())..sto.min(self_.len())]
 }
 
-// PORT NOTE: AsciiVector / @Vector aliases — Zig SIMD types have no stable
-// Rust equivalent. Exposed as thin scalar wrappers so dead-SIMD branches
-// type-check; `ENABLE_SIMD = false` makes those branches unreachable at
-// runtime. Hot loops use scalar fallbacks with `// PERF(port)` markers;
+// PORT NOTE: AsciiVector aliases — the original SIMD vector types have no
+// stable Rust equivalent. Exposed as thin scalar wrappers so dead-SIMD
+// branches type-check; `ENABLE_SIMD = false` makes those branches unreachable
+// at runtime. Hot loops use scalar fallbacks with `// PERF(port)` markers;
 // Phase B routes through bun_highway/portable_simd.
 pub const ENABLE_SIMD: bool = false;
 pub const ASCII_VECTOR_SIZE: usize = 16;
 pub const ASCII_U16_VECTOR_SIZE: usize = 8;
 
-/// Scalar stand-in for Zig `@Vector(N, T)` — just enough surface
+/// Scalar stand-in for a SIMD `Vector(N, T)` — just enough surface
 /// (`splat`/`from_slice`/`simd_eq`/`simd_gt`) for the `escape_html` SIMD
 /// branches to type-check. Every method is a plain elementwise loop.
 /// PERF(port): replace with `core::simd::Simd<T, N>` or `bun_highway` lanes.
@@ -1745,7 +1738,7 @@ pub const ASCII_U16_VECTOR_SIZE: usize = 8;
 pub struct ScalarVec<T: Copy + Eq + Ord + Default, const N: usize>(pub [T; N]);
 
 /// Lane mask returned by `simd_eq`/`simd_gt`. `BitOr` combines masks; `any()`
-/// reduces to a single bool (Zig `@reduce(.Max, mask) == 1`).
+/// reduces to a single bool.
 #[derive(Clone, Copy)]
 pub struct ScalarMask<const N: usize>(pub [bool; N]);
 
@@ -1862,7 +1855,7 @@ pub type AsciiU16Vector = ScalarVec<u16, ASCII_U16_VECTOR_SIZE>;
 
 // (UTF16Replacement / utf16_codepoint{,_with_fffd} — deleted; re-exported from unicode_draft above)
 
-/// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). Zig's `bun.w`.
+/// `w!("foo")` → `&'static [u16]` UTF-16 literal (ASCII-only). `bun.w`.
 #[macro_export]
 macro_rules! w {
     ($s:literal) => {{
@@ -1883,7 +1876,7 @@ macro_rules! w {
 }
 
 /// Index of first non-ASCII byte. Thin `u32` view over the canonical
-/// `crate::strings_impl::first_non_ascii` (Zig spec `firstNonASCII -> ?u32`).
+/// `crate::strings_impl::first_non_ascii` (`firstNonASCII -> Option<u32>`).
 /// NOTE: must call `strings_impl` directly — `crate::strings::first_non_ascii`
 /// re-exports *this* function (177f671a9046), so routing through it recurses.
 #[inline]
@@ -1891,7 +1884,7 @@ pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
     crate::strings_impl::first_non_ascii(slice).map(|i| i as u32)
 }
 
-/// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check (immutable.zig).
+/// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check.
 /// Wraps `simdutf::validate::utf8`; the gated `unicode_draft` adds a
 /// `bun.FeatureFlags.use_simdutf` toggle + scalar fallback.
 #[inline]
@@ -1944,8 +1937,8 @@ pub fn index_of_space_or_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Opt
     }
 
     let i = highway::index_of_space_or_newline_or_non_ascii(remaining)?;
-    // PORT NOTE: Zig uses @truncate here (immutable.zig:1194); match wrapping semantics
-    // instead of try_from().unwrap() which would panic on >4GB inputs.
+    // PORT NOTE: wrapping truncation, not try_from().unwrap() — must not
+    // panic on >4GB inputs.
     Some(i as u32 + offset)
 }
 
@@ -1969,8 +1962,8 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     }
 
     let i = highway::index_of_newline_or_non_ascii(remaining)?;
-    // PORT NOTE: Zig uses @truncate here (immutable.zig:1212); match wrapping semantics
-    // instead of try_from().unwrap() which would panic on >4GB inputs.
+    // PORT NOTE: wrapping truncation, not try_from().unwrap() — must not
+    // panic on >4GB inputs.
     Some(i as u32 + offset)
 }
 
@@ -2012,8 +2005,8 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF(port): Zig used @Vector(16,u8) compare + @ctz on bitmask. Scalar loop
-    // here; Phase B: portable_simd or a highway entry point.
+    // PERF(port): could use a SIMD compare + trailing-zero on bitmask. Scalar
+    // loop here; Phase B: portable_simd or a highway entry point.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127
             || char < 0x20
@@ -2028,7 +2021,7 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
             || char == b'|'
             || char == b'~'
         {
-            // PORT NOTE: Zig uses @truncate (immutable.zig:1292); match wrapping semantics.
+            // PORT NOTE: wrapping truncation.
             return Some(i as u32);
         }
     }
@@ -2037,12 +2030,12 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
 }
 
 pub fn index_of_char_z(slice_z: &crate::string::ZStr, char: u8) -> Option<u64> {
-    // Zig returned ?u63; use u64 in Rust (no u63).
+    // Returns u64 (the original used a 63-bit int, which has no Rust analogue).
     highway::index_of_char(slice_z.as_bytes(), char).map(|i| i as u64)
 }
 
 pub fn index_of_char(slice: &[u8], char: u8) -> Option<u32> {
-    // PORT NOTE: Zig uses @truncate (immutable.zig:1304); match wrapping semantics.
+    // PORT NOTE: wrapping truncation.
     index_of_char_usize(slice, char).map(|i| i as u32)
 }
 
@@ -2089,10 +2082,10 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF(port): Zig used @Vector(16,u8) != splat + @ctz. Scalar loop here.
+    // PERF(port): could use a SIMD != splat + trailing-zero. Scalar loop here.
     for (i, &current) in slice.iter().enumerate() {
         if current != char {
-            // PORT NOTE: Zig uses @truncate (immutable.zig:1360); match wrapping semantics.
+            // PORT NOTE: wrapping truncation.
             return Some(i as u32);
         }
     }
@@ -2177,7 +2170,7 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 
     let to_read = to_write / 2;
 
-    // PERF(port): Zig had a @Vector(16,u8) interlace fast path. Scalar loop here;
+    // PERF(port): could use a SIMD interlace fast path. Scalar loop here;
     // Phase B: portable_simd shuffle or LUT.
     crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
 }
@@ -2288,9 +2281,9 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
             // PERF(port): was assume_capacity
             let _ = ranges.push(LineRange {
                 start: 0,
-                // PORT NOTE: Zig uses @truncate(text.len) (immutable.zig:1595); match wrapping semantics.
+                // PORT NOTE: wrapping truncation of `text.len()`.
                 end: text.len() as u32,
-            }); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            }); // OOM/capacity: original would abort; port keeps fire-and-forget
         }
         return ranges;
     };
@@ -2326,13 +2319,13 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         }
         let _ = ranges.push(LineRange {
             start: 0,
-            // PORT NOTE: Zig uses @truncate(text.len) (immutable.zig:1635); match wrapping semantics.
+            // PORT NOTE: wrapping truncation of `text.len()`.
             end: text.len() as u32,
         });
         return ranges;
     };
 
-    let _ = ranges.push(first_newline_range); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+    let _ = ranges.push(first_newline_range); // OOM/capacity: original would abort; port keeps fire-and-forget
 
     if target_line == 0 {
         return ranges;
@@ -2362,7 +2355,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
                         start: prev_end,
                         end: current_end,
                     };
-                    prev_end = cursor.i; // Zig: `defer prev_end = cursor.i;`
+                    prev_end = cursor.i; // deferred-assignment in the original
                     r
                 } else {
                     LineRange {
@@ -2376,10 +2369,10 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
         if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
             let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-            let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: original would abort; port keeps fire-and-forget
             ranges = new_ranges;
         }
-        let _ = ranges.push(current_line_range); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = ranges.push(current_line_range); // OOM/capacity: original would abort; port keeps fire-and-forget
 
         if current_line >= target_line {
             return ranges;
@@ -2390,7 +2383,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
 
     if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
         let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-        let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: original would abort; port keeps fire-and-forget
         ranges = new_ranges;
     }
 
@@ -2408,18 +2401,18 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
     }
     let mut results = BoundedArray::<&[u8], LINE_RANGE_COUNT>::default();
     for range in ranges.as_slice() {
-        let _ = results.push(&text[range.start as usize..range.end as usize]); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = results.push(&text[range.start as usize..range.end as usize]); // OOM/capacity: original would abort; port keeps fire-and-forget
     }
     results.as_mut_slice().reverse();
     Some(results)
 }
 
 pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
-    // PERF(port): Zig used @Vector(8,u16) max-reduce + @ctz on bitmask. Scalar
+    // PERF(port): could use a SIMD max-reduce + trailing-zero on bitmask. Scalar
     // loop here; Phase B: portable_simd or simdutf utf16 validator.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
-            // PORT NOTE: Zig uses @truncate(i) (immutable.zig:1766); match wrapping semantics.
+            // PORT NOTE: wrapping truncation.
             return Some(i as u32);
         }
     }
@@ -2475,25 +2468,25 @@ pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError>
 }
 
 // ── Lexicographic slice ordering ──────────────────────────────────────────
-// Canonical home for what Zig calls `std.mem.order`. The Zig tree had three
+// Canonical home for byte-slice ordering. The pre-port tree had three
 // hand-rolled copies (bun.strings.order, md.entity.orderStrings,
 // ast.e.stringCompareForJavaScript); the Rust port keeps exactly one of each
 // shape here.
 
 /// Lexicographic byte-slice ordering (memcmp fast path).
-/// Semantically identical to `<[u8] as Ord>::cmp` / Zig `std.mem.order(u8, a, b)`.
+/// Semantically identical to `<[u8] as Ord>::cmp`.
 ///
 /// Delegates to `<[u8] as Ord>::cmp` rather than an extern `libc::memcmp` call:
 /// the std specialisation lowers to the `memcmp` LLVM builtin, so LLVM can
-/// inline the short-string fast path and skip the PLT trampoline — matching
-/// what Zig gets for `bun.c.memcmp` after LTO. `#[inline(always)]` because this
-/// sits inside `sort_unstable_by` comparators on the install hot path.
+/// inline the short-string fast path and skip the PLT trampoline.
+/// `#[inline(always)]` because this sits inside `sort_unstable_by` comparators
+/// on the install hot path.
 #[inline(always)]
 pub fn order(a: &[u8], b: &[u8]) -> Ordering {
     a.cmp(b)
 }
 
-/// Generic lexicographic slice ordering — Zig `std.mem.order(T, a, b)`.
+/// Generic lexicographic slice ordering.
 /// For `T = u8` prefer [`order`] (memcmp fast path).
 #[inline]
 pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
@@ -2508,8 +2501,9 @@ pub fn cmp_strings_desc(_: &(), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Greater
 }
 
-/// Every time you read a non^2 sized integer, Zig masks off the extra bits.
-/// This is a meaningful performance difference, including in release builds.
+/// Reading a non-power-of-two-sized integer requires masking off the extra
+/// bits. This is a meaningful performance difference, including in release
+/// builds, so use a full byte instead.
 pub type U3Fast = u8;
 
 pub fn sort_asc(in_: &mut [&[u8]]) {
@@ -2538,13 +2532,13 @@ impl<'a> StringArrayByIndexSorter<'a> {
 
 #[inline]
 pub fn to_ascii_hex_value(character: u8) -> u8 {
-    // Zig parity: bun.strings.toASCIIHexValue (precondition-based, no Option).
+    // bun.strings.toASCIIHexValue (precondition-based, no Option).
     debug_assert!(character.is_ascii_hexdigit());
     crate::fmt::hex_digit_value(character).expect("ascii hex digit")
 }
 
-/// Zig: `fn NewLengthSorter(comptime Type, comptime field) type`.
-/// Rust cannot take a field name as a const param; use an accessor fn.
+/// `NewLengthSorter`. Rust cannot take a field name as a const param;
+/// use an accessor fn.
 pub struct LengthSorter<T, F: Fn(&T) -> &[u8]>(pub F, core::marker::PhantomData<T>);
 impl<T, F: Fn(&T) -> &[u8]> LengthSorter<T, F> {
     pub fn less_than(&self, lhs: &T, rhs: &T) -> bool {
@@ -2598,20 +2592,19 @@ impl<T, F: Fn(&T) -> &[u8]> GlobLengthSorter<T, F> {
     }
 }
 
-/// Reflection adapter for [`move_all_slices`]. Zig's `moveAllSlices` used
-/// `std.meta.fields(Type)` to enumerate every `[]const u8` field at comptime;
-/// Rust has no field reflection, so each container type hand-implements this
-/// trait (or, once landed, `#[derive(MoveSlices)]`) to yield the same set of
-/// fields as `&mut &'a [u8]` so they can be re-pointed into a new backing
-/// buffer of lifetime `'a` without any unsafe.
+/// Reflection adapter for [`move_all_slices`]. The original `moveAllSlices`
+/// used compile-time reflection to enumerate every byte-slice field; Rust has
+/// no field reflection, so each container type hand-implements this trait
+/// (or, once landed, `#[derive(MoveSlices)]`) to yield the same set of fields
+/// as `&mut &'a [u8]` so they can be re-pointed into a new backing buffer of
+/// lifetime `'a` without any unsafe.
 pub trait MoveSlices<'a> {
     /// Invoke `f` once per byte-slice field of `self`.
     fn for_each_byte_slice_field(&mut self, f: &mut dyn FnMut(&mut &'a [u8]));
 }
 
 /// Update all `&[u8]` fields in `container` that currently point into `from`
-/// to instead point at the same offset within `to`. Port of
-/// `immutable.zig:moveAllSlices`.
+/// to instead point at the same offset within `to`. (`moveAllSlices`.)
 pub fn move_all_slices<'a, T: MoveSlices<'a> + ?Sized>(
     container: &mut T,
     from: &[u8],
@@ -2657,10 +2650,11 @@ pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 // UTF-8 encoding of U+FFFD
 pub const UNICODE_REPLACEMENT_STR: [u8; 3] = [0xEF, 0xBF, 0xBD];
 
-// Spec (immutable.zig:1990, 2003) calls `bun.c_ares.ares_inet_pton`, the vendored
-// c-ares implementation. Do NOT call the system `inet_pton` here: on Windows that
-// resolves into ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
-// `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no preconditions.
+// Calls `bun.c_ares.ares_inet_pton`, the vendored c-ares implementation. Do
+// NOT call the system `inet_pton` here: on Windows that resolves into
+// ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
+// `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no
+// preconditions.
 unsafe extern "C" {
     pub fn ares_inet_pton(
         af: c_int,
@@ -2794,9 +2788,9 @@ pub fn concat_if_needed(
         let stack_copy = &stack_buf[0..total_length];
         for &interned in interned_strings_to_check {
             if eql_long(stack_copy, interned, true) {
-                // PERF(port): Zig stored the interned slice directly; with an
-                // owned `Box<[u8]>` dest we copy once. Hit at most once per
-                // JSX config; no leak.
+                // PERF(port): the original stored the interned slice directly;
+                // with an owned `Box<[u8]>` dest we copy once. Hit at most
+                // once per JSX config; no leak.
                 *dest = Box::from(interned);
                 return Ok(());
             }
@@ -2807,7 +2801,7 @@ pub fn concat_if_needed(
         let mut remain: &[u8] = dest;
 
         for arg in args {
-            // PORT NOTE: Zig has `args.len` here (likely a bug); preserved verbatim.
+            // PORT NOTE: the original used `args.len()` here (likely a bug); preserved verbatim.
             if args.len() > remain.len() {
                 break 'brk true;
             }
@@ -2869,7 +2863,7 @@ impl Default for QuoteEscapeFormatFlags {
 }
 
 /// usage: print(" string: '{}' ", format_escapes_js("hello'world!"));
-// PERF(port): was comptime monomorphization (Zig `comptime flags: QuoteEscapeFormatFlags`) — profile in Phase B
+// PERF(port): was compile-time monomorphization on `flags` — profile in Phase B
 pub fn format_escapes(str: &[u8], flags: QuoteEscapeFormatFlags) -> QuoteEscapeFormat<'_> {
     QuoteEscapeFormat { data: str, flags }
 }
@@ -2881,7 +2875,7 @@ pub struct QuoteEscapeFormat<'a> {
 
 impl core::fmt::Display for QuoteEscapeFormat<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PERF(port): Zig wrote directly to the writer; here we buffer through
+        // PERF(port): could write directly to the writer; here we buffer through
         // a Vec so `write_pre_quoted_string`'s `PrinterWriter` bound is met
         // without an adapter for `core::fmt::Formatter`. Profile in Phase B.
         let mut buf: Vec<u8> = Vec::with_capacity(self.data.len() + 8);
@@ -2889,7 +2883,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.data,
             &mut buf,
             self.flags.quote_char,
-            // Zig (immutable.zig:2159) hardcodes `false` here regardless of
+            // The original hardcoded `false` here regardless of
             // `flags.ascii_only`; the field is dead in QuoteEscapeFormat.
             false,
             self.flags.json,
@@ -2904,7 +2898,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 /// Generic. Works on &[u8], &[u16], etc
 #[inline]
 pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
-    // TODO(port): Zig specialized T==u8 → index_of_char_usize (highway).
+    // TODO(port): specialize T==u8 → index_of_char_usize (highway).
     if core::mem::size_of::<T>() == 1 {
         let scalar_u8 = reinterpret_to_u8(core::slice::from_ref(&scalar))[0];
         return index_of_char_usize(reinterpret_to_u8(input), scalar_u8);
@@ -3135,7 +3129,7 @@ pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
 // ───────────── B-2 Track A: minimal real impls of gated-submodule fns ─────────────
 // These mirror the same-named fns in `unicode_draft`/`paths_draft` so dependents
 // can link against `bun_core::strings::*` without un-gating the full drafts.
-// Each is a thin wrapper over simdutf or the scalar logic from the .zig source.
+// Each is a thin wrapper over simdutf or the original scalar logic.
 
 pub use crate::strings_impl::utf8_byte_sequence_length;
 
@@ -3151,7 +3145,7 @@ pub use crate::strings::{replace, replace_owned, replacement_size};
 pub use crate::fmt::{ParseIntError, parse_int};
 
 /// Compare a UTF-16 string against a UTF-8 string without allocating
-/// (`unicode.zig:utf16EqlString`).
+/// (`utf16EqlString`).
 pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
     if text.len() > str.len() {
         // UTF-16 encoding can never be longer than the UTF-8 encoding.
@@ -3162,7 +3156,7 @@ pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
     let mut j: usize = 0;
     let mut i: usize = 0;
     while i < n {
-        // Fixes the `|`-precedence bug ported from unicode.zig:1839 — supplementary
+        // Fixes a `|`-precedence bug carried over from the original — supplementary
         // code points >= U+20000 mis-decoded with the old open-coded math.
         let (cp, adv) = crate::strings::decode_wtf16_raw(&text[i..]);
         i += adv as usize;
@@ -3180,7 +3174,7 @@ pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
 
 /// `strings.toUTF16AllocForReal` — like [`to_utf16_alloc`] but **always**
 /// returns a `Vec<u16>` (pure-ASCII inputs are widened 1:1 instead of
-/// returning `None`). Port of `unicode.zig:toUTF16AllocForReal`.
+/// returning `None`).
 pub fn to_utf16_alloc_for_real(
     bytes: &[u8],
     fail_if_invalid: bool,
@@ -3209,26 +3203,25 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
     }
 }
 
-// Zig: `pub const withoutTrailingSlash = paths_.withoutTrailingSlash;`
-// (immutable.zig:2380). The full `paths` submodule now lives in
-// `bun_paths::string_paths` (it depends upward on `bun_paths` resolve/pool
-// helpers and would cycle here). Callers reach the Windows path-shape
-// helpers (`to_nt_path` / `to_kernel32_path` / `from_w_path` / …) via
-// `bun_paths::strings::*`; this module keeps only the re-export of the
-// scalar `without_trailing_slash` already defined in `crate::strings`.
+// `withoutTrailingSlash` lives in the paths submodule; the full `paths`
+// submodule now lives in `bun_paths::string_paths` (it depends upward on
+// `bun_paths` resolve/pool helpers and would cycle here). Callers reach the
+// Windows path-shape helpers (`to_nt_path` / `to_kernel32_path` /
+// `from_w_path` / …) via `bun_paths::strings::*`; this module keeps only the
+// re-export of the scalar `without_trailing_slash` already defined in
+// `crate::strings`.
 pub use crate::strings_impl::{remove_leading_dot_slash, without_trailing_slash};
-// Zig: `pub const convertUTF16ToUTF8InBuffer = unicode.convertUTF16ToUTF8InBuffer;`
-// (immutable.zig). Re-export the bun_core implementation so callers can spell
-// `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
+// `convertUTF16ToUTF8InBuffer` — re-export the bun_core implementation so
+// callers can spell `strings::convert_utf16_to_utf8_in_buffer` without
+// reaching into `unicode`.
 pub use crate::strings::convert_utf16_to_utf8_in_buffer;
-// Zig: `pub const convertUTF8toUTF16InBufferZ = unicode.convertUTF8toUTF16InBufferZ;`
-// — re-export the NUL-terminated variant so callers can spell
-// `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
-// to widen output paths for `File::write_file_os_path`).
+// `convertUTF8toUTF16InBufferZ` — re-export the NUL-terminated variant so
+// callers can spell `strings::convert_utf8_to_utf16_in_buffer_z` (used by the
+// Windows profilers to widen output paths for `File::write_file_os_path`).
 pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 
 /// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
-/// followed by at least one more byte (Zig: `s.len > 2`).
+/// followed by at least one more byte (`s.len() > 2`).
 #[inline]
 pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
     s.len() > 2 && s[1].into() == u32::from(b':') && {
@@ -3242,7 +3235,7 @@ pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool 
 /// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid
 /// UTF-8 falls back to a scalar WTF-8 decoder that emits U+FFFD for malformed
 /// bytes and passes unpaired surrogates through (so non-empty input never yields
-/// an empty slice — fixes #8197 / the TODO at unicode.zig:1537).
+/// an empty slice — fixes #8197).
 pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a mut [u16] {
     if input.is_empty() {
         return &mut buf[..0];
@@ -3309,21 +3302,20 @@ fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
 }
 
 /// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
-/// `list` and return the (possibly-reallocated) list. Port of
-/// `unicode.zig:toUTF8ListWithType` (always uses simdutf path; Bun is built
-/// with `FeatureFlags.use_simdutf = true`).
+/// `list` and return the (possibly-reallocated) list. Always uses the simdutf
+/// path; Bun is built with `FeatureFlags.use_simdutf = true`.
 pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
     if utf16.is_empty() {
         return Ok(list);
     }
-    // Zig: `list.ensureTotalCapacityPrecise(length + 16)` then `convertUTF16ToUTF8`.
+    // Reserve `length + 16` then `convertUTF16ToUTF8`.
     // `convert_utf16_to_utf8_append` writes directly into `spare_capacity_mut()` and
     // requires the caller to pre-reserve (its doc says so explicitly); without this
     // reserve a fresh `Vec::new()` has a dangling `0x1` spare pointer and simdutf
-    // segfaults writing to it. The +16 padding mirrors Zig's SIMD over-read slack.
+    // segfaults writing to it. The +16 padding accounts for SIMD over-read slack.
     let length = simdutf::length::utf8::from::utf16::le(utf16);
     list.try_reserve(length + 16).map_err(|_| AllocError)?;
-    // PORT NOTE: Zig's path validates UTF-16 first then falls back to a manual
+    // PORT NOTE: the original validates UTF-16 first then falls back to a manual
     // loop on failure (`toUTF8ListWithTypeBun`). For B-2 we route through
     // `crate::strings::convert_utf16_to_utf8_append`, which already replaces
     // unpaired surrogates with U+FFFD — semantically equivalent.
@@ -3350,8 +3342,7 @@ impl From<ToUTF16Error> for crate::Error {
 /// any non-ASCII byte; pure-ASCII inputs return `Ok(None)` (caller keeps the
 /// 8-bit form). When `fail_if_invalid` is set, invalid UTF-8 yields
 /// `Err(InvalidByteSequence)`; otherwise invalid sequences are replaced with
-/// U+FFFD (per `unicode.zig:toUTF16Alloc`). When `sentinel` is set the result
-/// includes a trailing 0 u16.
+/// U+FFFD. When `sentinel` is set the result includes a trailing 0 u16.
 pub fn to_utf16_alloc(
     bytes: &[u8],
     fail_if_invalid: bool,
@@ -3401,9 +3392,9 @@ pub fn to_utf16_alloc(
         // Copy ASCII prefix as-is (one u16 per byte).
         out.extend(remaining[..i].iter().map(|&b| u16::from(b)));
         remaining = &remaining[i..];
-        // Decode one codepoint via the same routine Zig uses
-        // (`convertUTF8BytesIntoUTF16`) so the number/position of U+FFFD
-        // emissions matches: advance by `replacement.len.max(1)`, not 1.
+        // Decode one codepoint via `convertUTF8BytesIntoUTF16` so the
+        // number/position of U+FFFD emissions matches: advance by
+        // `replacement.len.max(1)`, not 1.
         let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
         remaining = &remaining[(replacement.len as usize).max(1)..];
         push_codepoint_utf16(&mut out, replacement.code_point);
@@ -3418,7 +3409,7 @@ pub fn to_utf16_alloc(
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator
 /// behind `NewGlobLengthSorter`. Returns an [`Ordering`] suitable for
 /// `slice.sort_by(|a, b| glob_length_compare(a, b))` to sort in **descending
-/// order of specificity** (matches Zig `lessThan` returning `true` ⇒ `Less`).
+/// order of specificity** (`lessThan` returning `true` ⇒ `Less`).
 pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
     let star_a = index_of_char(key_a, b'*');
     let star_b = index_of_char(key_b, b'*');
@@ -3461,5 +3452,3 @@ mod tests {
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
     }
 }
-
-// ported from: src/string/immutable.zig

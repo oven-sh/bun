@@ -38,7 +38,7 @@ pub trait GradientPosition: Sized + Clone + PartialEq {
 // Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
 // satisfy `DimensionPercentage<D>: CalcValue` in `calc.rs`. A blanket impl
 // would need to re-state that bound; concrete impls are simpler and match
-// the Zig monomorphization sites exactly.
+// the original monomorphization sites exactly.
 macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
@@ -1506,7 +1506,7 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
     let mut seen_stop = false;
 
     loop {
-        // PORT NOTE: reshaped for borrowck — Zig used a Closure { items: *ArrayList, seen_stop: *bool }
+        // PORT NOTE: reshaped for borrowck — the original used a `Closure { items, seen_stop }`
         // captured into parseUntilBefore; here we close over &mut locals directly.
         input.parse_until_before(
             css::Delimiters::COMMA,
@@ -1629,5 +1629,3 @@ pub fn convert_stops_to_webkit(
 
     Some(stops)
 }
-
-// ported from: src/css/values/gradient.zig

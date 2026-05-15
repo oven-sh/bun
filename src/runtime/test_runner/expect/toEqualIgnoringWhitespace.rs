@@ -3,10 +3,10 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::console_object::Formatter;
 use super::Expect;
 
-// PORT NOTE: std.ascii.isWhitespace includes VT (0x0B); Rust's u8::is_ascii_whitespace does not.
-// Zig matches ' ' and '\t'..'\r' (0x09–0x0D).
+// PORT NOTE: matches ' ' and '\t'..'\r' (0x09–0x0D), including VT (0x0B); Rust's
+// u8::is_ascii_whitespace excludes VT, so this needs its own helper.
 #[inline]
-fn is_zig_whitespace(b: u8) -> bool {
+fn is_jest_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
@@ -38,7 +38,6 @@ pub fn to_equal_ignoring_whitespace(
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {
-        // Zig passed `default_allocator`; drop per §Allocators.
         let value_slice = value.to_slice(global)?;
         let expected_slice = expected.to_slice(global)?;
         // `defer ….deinit()` deleted — Drop handles it.
@@ -50,10 +49,10 @@ pub fn to_equal_ignoring_whitespace(
         let mut right: usize = 0;
 
         // Skip leading whitespaces
-        while left < value_utf8.len() && is_zig_whitespace(value_utf8[left]) {
+        while left < value_utf8.len() && is_jest_whitespace(value_utf8[left]) {
             left += 1;
         }
-        while right < expected_utf8.len() && is_zig_whitespace(expected_utf8[right]) {
+        while right < expected_utf8.len() && is_jest_whitespace(expected_utf8[right]) {
             right += 1;
         }
 
@@ -70,10 +69,10 @@ pub fn to_equal_ignoring_whitespace(
             right += 1;
 
             // Skip trailing whitespaces
-            while left < value_utf8.len() && is_zig_whitespace(value_utf8[left]) {
+            while left < value_utf8.len() && is_jest_whitespace(value_utf8[left]) {
                 left += 1;
             }
-            while right < expected_utf8.len() && is_zig_whitespace(expected_utf8[right]) {
+            while right < expected_utf8.len() && is_jest_whitespace(expected_utf8[right]) {
                 right += 1;
             }
         }
@@ -91,7 +90,7 @@ pub fn to_equal_ignoring_whitespace(
     }
 
     // handle failure
-    // PORT NOTE: `to_fmt` returns a `ZigFormatter<'a, 'b>` that mutably borrows the
+    // PORT NOTE: `to_fmt` returns a `BunFormatter<'a, 'b>` that mutably borrows the
     // backing formatter. Use a second formatter for the received value — `make_formatter` is
     // cheap (no alloc) and this matches sibling matchers (toContainEqual, toBeCloseTo).
     let mut formatter = super::make_formatter(global);
@@ -101,7 +100,7 @@ pub fn to_equal_ignoring_whitespace(
     let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
-        // TODO(port): get_signature must be `const fn` (was `comptime` in Zig).
+        // TODO(port): get_signature must be `const fn`.
         let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -123,5 +122,3 @@ pub fn to_equal_ignoring_whitespace(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toEqualIgnoringWhitespace.zig

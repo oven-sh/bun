@@ -25,12 +25,10 @@ impl StringBuilder {
         }
     }
 
-    // PORT NOTE: Zig's `append(comptime append_type: Append, value: append_type.Type())`
-    // dispatches on a comptime enum to pick the value's *type*. Rust const
-    // generics cannot vary a parameter's type by enum value, and a trait would
-    // collide (e.g. `String` is used for both `.string` and `.quoted_json_string`).
-    // Each comptime arm is therefore a separate method below; callers that wrote
-    // `sb.append(.latin1, s)` now write `sb.append_latin1(s)`.
+    // PORT NOTE: each append type is a separate method. Rust const generics
+    // cannot vary a parameter's type by enum value, and a trait would collide
+    // (e.g. `String` is used for both `.string` and `.quoted_json_string`).
+    // Callers select the variant by name, e.g. `sb.append_latin1(s)`.
 
     pub fn append_latin1(&mut self, value: &[u8]) {
         // SAFETY: forwards a valid (ptr,len) slice to C++.
@@ -71,8 +69,8 @@ impl StringBuilder {
     }
 
     pub fn to_string(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // PORT NOTE: Zig wraps this in a TopExceptionScope. `from_js_host_call`
-        // is the equivalent shape (call FFI → check pending exception); using it
+        // PORT NOTE: `from_js_host_call` is the equivalent shape to a
+        // TopExceptionScope (call FFI → check pending exception); using it
         // here avoids the in-place-init / pinning dance TopExceptionScope needs.
         crate::from_js_host_call(global, || StringBuilder__toString(self, global))
     }
@@ -112,5 +110,3 @@ unsafe extern "C" {
     safe fn StringBuilder__toString(this: &mut StringBuilder, global: &JSGlobalObject) -> JSValue;
     safe fn StringBuilder__ensureUnusedCapacity(this: &mut StringBuilder, additional: usize);
 }
-
-// ported from: src/jsc/StringBuilder.zig

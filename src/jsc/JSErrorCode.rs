@@ -1,8 +1,8 @@
 /// Represents JavaScript error types
 //
-// PORT NOTE: Zig source is `enum(u8) { ..., _ }` (non-exhaustive — any u8 is a
-// valid bit pattern). A Rust `#[repr(u8)] enum` would make non-listed values
-// UB, so this is ported as a transparent u8 newtype with associated consts.
+// PORT NOTE: this code space is non-exhaustive — any u8 is a valid bit pattern.
+// A Rust `#[repr(u8)] enum` would make non-listed values UB, so this is modeled
+// as a transparent u8 newtype with associated consts.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct JSErrorCode(pub u8);
@@ -80,5 +80,3 @@ pub enum DOMExceptionCode {
     InvalidURLError,
     CryptoOperationFailedError,
 }
-
-// ported from: src/jsc/JSErrorCode.zig

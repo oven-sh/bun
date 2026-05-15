@@ -24,7 +24,7 @@ use bun_threading::Mutex;
 bun_core::define_scoped_log!(debug, Fs, hidden);
 
 // ── BOM ──────────────────────────────────────────────────────────────────────
-// Port of `bun.strings.BOM` from `src/string/immutable.zig`. The Rust port
+// `bun.strings.BOM`. The canonical implementation
 // lives in `bun_core::immutable::unicode_draft` but that module is private
 // (`mod unicode_draft` — no `pub use` of `BOM` yet); the resolver needs it for
 // `read_file_with_handle_and_allocator` so the enum is re-ported here. The
@@ -96,7 +96,7 @@ impl BOM {
             BOM::Utf16Le => {
                 // `trimmed` is `&[u8]` at offset 2 of a `Vec<u8>` allocation; its
                 // alignment is not guaranteed ≥ 2, so reinterpreting it as `&[u16]`
-                // (the Zig `@alignCast` port) is UB in Rust. Route through the
+                // is UB. Route through the
                 // byte-level helper which copies into an aligned `Vec<u16>` first.
                 let trimmed = &bytes[Self::UTF16_LE_BYTES.len()..];
                 let out = strings::to_utf8_alloc_from_le_bytes(trimmed);
@@ -122,7 +122,7 @@ impl BOM {
                 let n = Self::UTF8_BYTES.len();
                 let len = list.len();
                 list.copy_within(n.., 0);
-                // PORT NOTE: Zig returned a subslice without truncating; mirror by slicing.
+                // PORT NOTE: return a subslice without truncating the backing list.
                 &list[..len - n]
             }
             BOM::Utf16Le => {
@@ -147,8 +147,6 @@ impl BOM {
     }
 }
 
-// pub const FilesystemImplementation = @import("./fs_impl.zig");
-
 pub(crate) mod preallocate {
     pub(crate) mod counts {
         pub(crate) const DIR_ENTRY: usize = 2048;
@@ -156,18 +154,18 @@ pub(crate) mod preallocate {
     }
 }
 
-// PORT NOTE: Zig `BSSStringList(_COUNT, _ITEM_LENGTH)` internally remaps to
-// `<_COUNT * 2, _ITEM_LENGTH + 1>`; the Rust port took the post-transform
+// PORT NOTE: `BSSStringList<_COUNT, _ITEM_LENGTH>` internally remaps to
+// `<_COUNT * 2, _ITEM_LENGTH + 1>`; the type takes the post-transform
 // const params, so apply the arithmetic at the type-alias / declare site.
 pub(crate) type DirnameStoreBacking =
     allocators::BSSStringList<{ preallocate::counts::DIR_ENTRY * 2 }, { 128 + 1 }>;
 pub(crate) type FilenameStoreBacking =
     allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
-// PORT NOTE: Zig `BSSList(_COUNT)` → Rust `BSSList<{_COUNT * 2}>`.
+// PORT NOTE: `BSSList<{_COUNT * 2}>` mirrors the doubled `BSSList(_COUNT)` capacity.
 pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
-// Per-monomorphization singleton storage — Zig kept `var instance` inside the
-// generic; Rust emits it at the declare site via `bss_*!` macros (returns `*mut`).
+// Per-monomorphization singleton storage — emitted at the declare site via
+// `bss_*!` macros (returns `*mut`).
 bun_alloc::bss_string_list! { pub dirname_store_backing : preallocate::counts::DIR_ENTRY * 2, 128 + 1 }
 bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
 bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
@@ -182,7 +180,7 @@ static DIRNAME_STORE_ZST: DirnameStore = DirnameStore(());
 static FILENAME_STORE_ZST: FilenameStore = FilenameStore(());
 
 // PORT NOTE: `BSSStringList::append`/`append_lower_case`/`print` now take a raw
-// `*mut Self` receiver (matching `BSSList::append` and Zig's `*Self`), so the
+// `*mut Self` receiver (matching `BSSList::append`), so the
 // inner `self.mutex` is the sole serialization point and no `&mut` is ever
 // materialized before the lock is held. The previous outer `LazyLock<Mutex>`
 // pair existed only to prevent aliased-`&mut`-before-lock UB under the old
@@ -199,7 +197,7 @@ macro_rules! string_store_impl {
             }
             #[inline]
             fn backing() -> *mut $bty {
-                // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`).
+                // PORT NOTE: returns the raw `*mut` singleton.
                 // `BSSStringList`'s mutating methods take `*mut Self` and lock
                 // internally, so callers may pass this directly without ever
                 // forming a `&mut`.
@@ -213,7 +211,7 @@ macro_rules! string_store_impl {
                 // mi_malloc), so widening to `'static` is sound.
                 unsafe { <$bty>::append(Self::backing(), value) }
             }
-            /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly
+            /// `FileSystem.DirnameStore.print(fmt, args)` — format directly
             /// into the store's tail (no intermediate `String`). See
             /// `BSSStringList::print` (bun_alloc) for the in-place writer.
             pub fn print(
@@ -342,7 +340,7 @@ pub(crate) static MAX_FD: bun_core::AtomicCell<bun_sys::RawFd> = bun_core::Atomi
 pub(crate) static MAX_FD: bun_core::AtomicCell<i32> = bun_core::AtomicCell::new(0);
 pub(crate) static INSTANCE_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
-// TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
+// TODO(port): lifetime — global mutable singleton.
 pub(crate) static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -434,8 +432,8 @@ impl FileSystem {
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    // PORT NOTE: Zig used `bun.getcwdAlloc(default_allocator)`; intern into
-                    // DirnameStore so it lives for `'static` without `Box::leak`.
+                    // PORT NOTE: intern into DirnameStore so it lives for
+                    // `'static` without `Box::leak`.
                     let mut buf = PathBuffer::uninit();
                     let n = bun_sys::getcwd(&mut buf[..])?;
                     DirnameStore::instance().append(&buf[..n])?
@@ -443,7 +441,7 @@ impl FileSystem {
             }
         };
 
-        // SAFETY: matches Zig global singleton init pattern
+        // SAFETY: process-lifetime global-singleton init pattern.
         unsafe {
             if !INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire) || FORCE {
                 // Publish to T0 storage so `bun_sys` / display paths can read
@@ -471,7 +469,7 @@ impl FileSystem {
 
     #[inline]
     pub(crate) fn instance() -> *mut FileSystem {
-        // PORT NOTE: returns the raw `*mut` singleton (Zig `*FileSystem`). Do NOT
+        // PORT NOTE: returns the raw `*mut` singleton. Do NOT
         // materialize a `&'static mut` here — concurrent callers (resolver runs on a
         // thread pool) would each hold a live `&'static mut` to the same object (UB).
         // Form the `&mut` only for the duration of a single operation at the call site.
@@ -480,8 +478,8 @@ impl FileSystem {
     }
 }
 
-// PORT NOTE: Zig `FileSystem.deinit()` only called .deinit() on dirname_store/filename_store,
-// which are &'static singletons here — nothing owned to free, so no `impl Drop`.
+// PORT NOTE: `FileSystem` owns no heap resources besides the dirname/filename
+// stores, which are &'static singletons here — nothing to free, so no `impl Drop`.
 
 // ══════════════════════════════════════════════════════════════════════════
 // CANONICAL Entry / DirEntry / EntryLookup family.
@@ -510,7 +508,7 @@ pub trait EntryKindResolver {
     ) -> core::result::Result<EntryCache, bun_core::Error>;
 }
 
-/// Port of `FileSystem.Entry.Kind` in `fs.zig`.
+/// `FileSystem.Entry.Kind`.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryKind {
@@ -518,7 +516,7 @@ pub enum EntryKind {
     File,
 }
 
-/// Port of `FileSystem.Entry.Cache` in `fs.zig`.
+/// `FileSystem.Entry.Cache`.
 #[derive(Clone, Copy)]
 pub struct EntryCache {
     pub symlink: PathString,
@@ -538,16 +536,16 @@ impl Default for EntryCache {
     }
 }
 
-/// Port of `FileSystem.Entry` in `fs.zig`.
+/// `FileSystem.Entry`.
 // PORT NOTE: `cache` / `need_stat` are lazily populated by `Entry::kind` /
-// `Entry::symlink` while callers hold a shared `&Entry` (Zig used a freely-
-// aliasing-mutable `*Entry`). `EntryCache` is `Copy`, so `Cell` gives us safe
+// `Entry::symlink` while callers hold a shared `&Entry`.
+// `EntryCache` is `Copy`, so `Cell` gives us safe
 // `.get()/.set()` through `&self` — `RealFS.entries_mutex` serializes access
 // across threads (the `unsafe impl Sync for Entry` below opts back in under
 // that external-locking discipline).
 pub struct Entry {
     pub cache: core::cell::Cell<EntryCache>,
-    // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide says Box<[u8]>,
+    // TODO(port): rule deviation — guide says Box<[u8]>,
     // but this points into DirnameStore (a &'static BSSList). Keeping &'static; Phase B revisit.
     pub dir: &'static [u8],
 
@@ -610,28 +608,27 @@ impl Entry {
         self.base_lowercase_.slice()
     }
 
-    /// Zig: `entry.dir` field (fs.zig:333) — interned in DirnameStore.
+    /// `entry.dir` field — interned in DirnameStore.
     #[inline]
     pub fn dir(&self) -> &'static [u8] {
         self.dir
     }
 
-    /// Zig: `entry.abs_path` field. `PathString` is `Copy`.
+    /// `entry.abs_path` field. `PathString` is `Copy`.
     #[inline]
     pub fn abs_path(&self) -> PathString {
         self.abs_path
     }
 
-    /// Zig: `entry.abs_path = PathString.init(...)`.
+    /// `entry.abs_path = PathString.init(...)`.
     #[inline]
     pub fn set_abs_path(&mut self, p: PathString) {
         self.abs_path = p;
     }
 
-    /// Port of `Entry.kind` in `fs.zig` — stat-on-first-use.
+    /// `Entry.kind` — stat-on-first-use.
     // PORT NOTE: `Entry` lives in the EntryStore BSSMap singleton; all access is
-    // serialized through `RealFS.entries_mutex`. Zig used `*Entry` (freely
-    // aliasing-mutable) and `*Fs.FileSystem.RealFS` (raw). `fs` is `*mut` so the
+    // serialized through `RealFS.entries_mutex`. `fs` is `*mut` so the
     // call site does not require a second exclusive `&mut RealFS` borrow while a
     // `&mut Entry` (borrowed out of `RealFS.entries`) is live. Mutation of the
     // lazily-populated `need_stat` / `cache` goes through `Cell`. Generic over
@@ -652,7 +649,7 @@ impl Entry {
         self.cache().kind
     }
 
-    /// Port of `Entry.symlink` in `fs.zig`.
+    /// `Entry.symlink`.
     pub fn symlink<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> &'static [u8] {
         if self.need_stat.get() {
             self.need_stat.set(false);
@@ -672,7 +669,7 @@ impl Entry {
 // PORT NOTE: `BSSList::append` requires `ValueType: Clone` (its overflow path
 // retries with a copy). `Mutex`/`StringOrTinyString` aren't `Clone`, but for a
 // freshly-constructed `Entry` (the only thing ever appended) a field-wise copy
-// with a fresh `Mutex` is semantically equivalent to Zig's by-value move.
+// with a fresh `Mutex` is semantically equivalent to a by-value move.
 impl Clone for Entry {
     fn clone(&self) -> Self {
         Self {
@@ -701,7 +698,7 @@ impl Default for Entry {
     }
 }
 
-/// Port of `FileSystem.DirEntry.DifferentCase` in `fs.zig`.
+/// `FileSystem.DirEntry.DifferentCase`.
 // PORT NOTE: lifetime-generic, but resolver storage requires `'static` (all
 // three slices borrow DirnameStore/EntryStore-interned data in practice).
 #[derive(Clone, Copy)]
@@ -711,8 +708,8 @@ pub struct DifferentCase<'a> {
     pub actual: &'a [u8],
 }
 
-/// Port of `FileSystem.DirEntry.Lookup` in `fs.zig`.
-// PORT NOTE: `entry` is a RAW `*mut Entry` (matching Zig `*Entry`). A safe
+/// `FileSystem.DirEntry.Lookup`.
+// PORT NOTE: `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
 // at each write site under `entries_mutex`.
@@ -761,7 +758,7 @@ pub mod dir_entry {
     impl EntryStore {
         #[inline]
         pub fn instance() -> *mut EntryStoreBacking {
-            // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
+            // PORT NOTE: returns the raw `*mut` singleton. Do NOT
             // materialize a `&'static mut` here — concurrent callers would alias.
             super::entry_store_backing()
         }
@@ -769,7 +766,7 @@ pub mod dir_entry {
         pub fn append(value: Entry) -> core::result::Result<*mut Entry, bun_alloc::AllocError> {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton.
             // `BSSList::append` takes `*mut Self` and serializes on its own inner
-            // mutex (matching Zig `EntryStore.instance.append`); no outer lock.
+            // mutex; no outer lock.
             unsafe { EntryStoreBacking::append(Self::instance(), value) }
         }
         /// Reserve an `Entry` slot in the store and return its uninitialized
@@ -781,8 +778,8 @@ pub mod dir_entry {
         /// loop: `Entry` is ~168 bytes and the by-value `append` above forces a
         /// stack temporary + memcpy that Rust does not reliably NRVO across
         /// the call boundary. Reserving the slot first lets the per-field
-        /// writes lower straight into the destination (matching Zig's
-        /// result-location semantics).
+        /// writes lower straight into the destination (result-location
+        /// semantics).
         #[inline(always)]
         pub fn append_uninit()
         -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_alloc::AllocError> {
@@ -802,7 +799,7 @@ pub mod dir_entry {
 }
 
 /// Trait abstraction for the `comptime Iterator: type, iterator: Iterator` pattern
-/// in `addEntry`/`readdir` (Zig used a duck-typed `iterator.next(*Entry, FD)`).
+/// in `addEntry`/`readdir` (a duck-typed `iterator.next(*Entry, FD)`).
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
     fn next(&self, entry: &mut Entry, fd: Fd);
@@ -821,9 +818,9 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     }
 }
 
-/// Port of `FileSystem.DirEntry` in `fs.zig`.
+/// `FileSystem.DirEntry`.
 pub struct DirEntry {
-    // TODO(port): rule deviation — Zig deinit calls allocator.free(d.dir) so guide says Box<[u8]>,
+    // TODO(port): rule deviation — guide says Box<[u8]>,
     // but this is interned in DirnameStore (a &'static BSSList). Keeping &'static; Phase B revisit.
     pub dir: &'static [u8],
     pub fd: Fd,
@@ -844,9 +841,10 @@ impl DirEntry {
         }
     }
 
-    /// Port of `DirEntry.addEntry` in `fs.zig`.
-    // PORT NOTE: Zig signature was `(prev_map, *entry, allocator, comptime Iterator, iterator)`.
-    // The Zig `allocator` param is dropped (everything routes through the global stores).
+    /// `DirEntry.addEntry`.
+    // PORT NOTE: the original signature took an explicit allocator + comptime
+    // iterator type; the allocator param is dropped (everything routes through
+    // the global stores).
     // Compatibility wrapper for callers outside the `readdir` hot loop —
     // resolves the `FilenameStore` singleton on demand. Hot-loop callers
     // should hoist `FilenameStoreAppender::new()` once and call
@@ -871,7 +869,7 @@ impl DirEntry {
         use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
-        // transcoded `slice_u8()` (mirrors Zig's `.u8` `NewWrappedIterator`).
+        // transcoded `slice_u8()`.
         let name_slice = entry.name.slice_u8();
         let found_kind: Option<EntryKind> = match entry.kind {
             DK::Directory => Some(EntryKind::Dir),
@@ -920,7 +918,7 @@ impl DirEntry {
 
         let stored: *mut Entry = 'brk: {
             if let Some(map) = prev_map {
-                // `data` keys are the lowercased basenames (Zig's `getAdapted`
+                // `data` keys are the lowercased basenames (`getAdapted`
                 // lowercases for both hash and eql), so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
                 // `name_hash` instead of re-hashing.
@@ -952,7 +950,7 @@ impl DirEntry {
             }
 
             // Reserve the destination slot first so each field write below
-            // lowers straight into the store (Zig result-location semantics) —
+            // lowers straight into the store (result-location semantics) —
             // avoids a ~168-byte `Entry` stack temporary + memcpy per entry.
             let slot = dir_entry::EntryStore::append_uninit()?;
             // SAFETY: `slot` is a freshly-reserved uninit cell exclusively
@@ -1008,14 +1006,13 @@ impl DirEntry {
         // SAFETY: just produced from EntryStore append or prev_map lookup
         let stored_ref = unsafe { &mut *stored };
 
-        // PERF(port): Zig's `StringHashMap.put` borrows the key slice; the
-        // generic `put` here would heap-box a second copy. `base_lowercase`
+        // PERF(port): the generic `put` here would heap-box a second copy of
+        // the key slice. `base_lowercase`
         // points either into the `Entry`'s inline `StringOrTinyString` buffer
         // (≤31B names) or into the process-static `FilenameStore`; the `Entry`
         // itself lives in the process-lifetime `EntryStore` BSSList, so in
         // both cases the bytes are address-stable for the life of the process.
-        // Widen to `'static` and store the slice directly — same ownership
-        // model as Zig.
+        // Widen to `'static` and store the slice directly.
         // SAFETY: `stored` is an `EntryStore` slot (never freed, never moved);
         // `base_lowercase_` is never mutated after construction.
         let key: &'static [u8] =
@@ -1042,7 +1039,7 @@ impl DirEntry {
         Ok(())
     }
 
-    /// Port of `DirEntry.get` in `fs.zig`.
+    /// `DirEntry.get`.
     // PORT NOTE: `query_` borrow detached from the returned Entry lifetime so
     // callers can pass a slice into the same threadlocal buffer they then
     // mutate; `DifferentCase` widens to 'static (DirnameStore-backed).
@@ -1062,7 +1059,7 @@ impl DirEntry {
                 entry: result_ptr,
                 diff_case: Some(DifferentCase {
                     dir: self.dir,
-                    // TODO(port): lifetime — Zig stored caller's slice; widened to 'static.
+                    // TODO(port): lifetime — widened to 'static.
                     // SAFETY: extended for borrowck reshape; consumed before caller's buffer
                     // is overwritten (see resolver call sites).
                     query: unsafe { &*core::ptr::from_ref::<[u8]>(query_) },
@@ -1080,9 +1077,8 @@ impl DirEntry {
         })
     }
 
-    /// Port of `DirEntry.getComptimeQuery` in `fs.zig`.
-    // PORT NOTE: Zig used comptime string lowering + comptime hash; Rust port
-    // takes a &'static [u8] that is already lowercase.
+    /// `DirEntry.getComptimeQuery`.
+    // PORT NOTE: takes a &'static [u8] that is already lowercase.
     pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
         // PERF(port): was comptime hash precompute — profile in Phase B
         let &result_ptr = self.data.get(query_lower)?;
@@ -1109,22 +1105,21 @@ impl DirEntry {
         })
     }
 
-    /// Port of `DirEntry.hasComptimeQuery` in `fs.zig`.
+    /// `DirEntry.hasComptimeQuery`.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         // PERF(port): was comptime hash precompute — profile in Phase B
         self.data.contains_key(query_lower)
     }
 
-    /// Zig: `dir_entry.fd` (fs.zig:121) — cached open directory fd, or
-    /// `bun.invalid_fd` when the resolver did not retain it.
+    /// Cached open directory fd, or `bun.invalid_fd` when the resolver did not
+    /// retain it.
     #[inline]
     pub fn fd(&self) -> Fd {
         self.fd
     }
 
-    /// Zig: `dir_entry.data.iterator()` (fs.zig:117). Yields the raw
-    /// `*mut Entry` value for each cached file (Zig's `EntryMap` value
-    /// type is `*Entry`). Yields `*mut Entry`, NOT `&mut Entry`, because
+    /// `dir_entry.data.iterator()`. Yields the raw `*mut Entry` value for each
+    /// cached file. Yields `*mut Entry`, NOT `&mut Entry`, because
     /// the map hands out raw pointers with no exclusivity guarantee;
     /// callers reborrow at the use site under `entries_mutex`.
     #[inline]
@@ -1133,8 +1128,8 @@ impl DirEntry {
     }
 }
 
-// PORT NOTE: Zig `DirEntry.deinit(allocator)` freed `data` (now drops itself) and `dir`
-// (interned in DirnameStore — see field TODO). Body would be empty, so no `impl Drop`.
+// PORT NOTE: `data` drops itself and `dir` is interned in DirnameStore (see
+// field TODO). Body would be empty, so no `impl Drop`.
 
 impl bun_dotenv::DirEntryProbe for DirEntry {
     #[inline]
@@ -1169,10 +1164,10 @@ impl FileSystem {
     }
 
     pub(crate) fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        // TODO(port): join_buf is threadlocal static; returning &'static matches Zig (caller copies before reuse)
+        // TODO(port): join_buf is threadlocal static; caller copies before reuse.
         JOIN_BUF.with_borrow_mut(|buf| {
             let s = path_handler::join_string_buf::<platform::Loose>(&mut buf[..], parts);
-            // SAFETY: borrows the threadlocal buffer; matches Zig pattern
+            // SAFETY: borrows the threadlocal buffer; caller copies before reuse.
             unsafe { bun_ptr::detach_lifetime(s) }
         })
     }
@@ -1272,8 +1267,7 @@ impl FileSystem {
 // RealFS
 // ──────────────────────────────────────────────────────────────────────────
 
-// Zig: `allocators.BSSMap(EntriesOption, dir_entry, false, 256, true)`.
-// `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
+// `store_keys=false` → `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
 pub(crate) type EntriesOptionMap =
     allocators::BSSMapInner<EntriesOption, { preallocate::counts::DIR_ENTRY }, true>;
 
@@ -1471,7 +1465,7 @@ impl RealFS {
     pub fn open_tmp_dir(&self) -> Result<bun_sys::Dir, bun_core::Error> {
         #[cfg(windows)]
         {
-            // fs.zig:601-608 — `openDirAtWindowsA(invalid_fd, tmpdirPath(),
+            // `openDirAtWindowsA(invalid_fd, tmpdirPath(),
             // .{ .iterable = true, .can_rename_or_delete = false, .read_only = true })`.
             // The generic `open_dir_absolute` path goes through `open_a(.., O::DIRECTORY, 0)`
             // and on Windows `O::DIRECTORY == 0`, so the directory dispatch in
@@ -1515,7 +1509,7 @@ impl RealFS {
         index: allocators::IndexType,
         generation: Generation,
     ) -> Option<*mut EntriesOption> {
-        // PORT NOTE: Zig fs.zig:613 does not lock here; in Rust we must, because every
+        // PORT NOTE: the original did not lock here; we must, because every
         // `EntriesMap` method auto-refs the global `BSSMapInner` to `&mut self`, and a
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB under Stacked Borrows. `EntriesGuard` holds
@@ -1524,8 +1518,8 @@ impl RealFS {
         // (`readdir`, `read_directory_error`) remain unconstrained while held.
         let map = self.entries_locked();
 
-        // PORT NOTE: `at_index` returns a raw `*mut EntriesOption` (matching Zig's
-        // `*EntriesOption`). Form short-lived `&mut` only at each use site below;
+        // PORT NOTE: `at_index` returns a raw `*mut EntriesOption`.
+        // Form short-lived `&mut` only at each use site below;
         // never hand a `&'static mut` back to the caller.
         let existing_ptr = map.at_index(index)?;
         // SAFETY: `entries_mutex` held; no other `&mut` to this slot in scope.
@@ -1534,14 +1528,14 @@ impl RealFS {
                 let dir_path = entries.dir;
                 // PORT NOTE: capture raw ptrs to the in-place `DirEntry` fields, then
                 // drop the short-lived `&mut` before re-borrowing `self` for
-                // `readdir` / `read_directory_error` (Zig used `*DirEntry` directly).
+                // `readdir` / `read_directory_error`.
                 let entries_ptr: *mut DirEntry = &raw mut **entries;
                 // SAFETY: derive `prev_map_ptr` FROM `entries_ptr` so both raw ptrs
                 // share one provenance root. Writing `&mut entries.data` here would
                 // call `Box::deref_mut` a second time, which under Stacked Borrows
                 // retags the whole `DirEntry` and invalidates `entries_ptr` — making
-                // the later `*entries_ptr = new_entry` UB. Zig's `existing.entries.*`
-                // / `existing.entries.data` go through one `*DirEntry`; mirror that.
+                // the later `*entries_ptr = new_entry` UB. Both `existing.entries.*`
+                // and `existing.entries.data` must go through one `*DirEntry`.
                 let prev_map_ptr: *mut dir_entry::EntryMap =
                     unsafe { core::ptr::addr_of_mut!((*entries_ptr).data) };
                 let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir_path) {
@@ -1632,7 +1626,7 @@ impl RealFS {
 
     /// Returns `true` if an entry was removed
     pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-        // PORT NOTE: Zig fs.zig:778 does not lock here; in Rust we must, because
+        // PORT NOTE: the original did not lock here; we must, because
         // `EntriesMap::remove` auto-refs the global `BSSMapInner` to `&mut self`, and a
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB. `&mut self` alone proves nothing cross-thread since
@@ -1730,7 +1724,7 @@ impl ModKey {
         HASH_NAME_BUF.with_borrow_mut(|buf| {
             let len = buf.len();
             let mut cursor = &mut buf[..];
-            // Zig `{s}` writes `[]const u8` verbatim — `BStr`'s `Display` would
+            // We need bytes written verbatim — `BStr`'s `Display` would
             // lossily emit U+FFFD for non-UTF-8 bytes (and 1→3 expand), so use
             // raw `io::Write` for the basename.
             cursor
@@ -1741,7 +1735,7 @@ impl ModKey {
                 .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             write!(&mut cursor, "{:x}", hex_int).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let written = len - cursor.len();
-            // SAFETY: threadlocal buffer outlives caller's use (matches Zig pattern)
+            // SAFETY: threadlocal buffer outlives caller's use (caller copies before reuse).
             Ok(unsafe { bun_ptr::detach_lifetime(&buf[..written]) })
         })
     }
@@ -1768,8 +1762,8 @@ impl ModKey {
         let stat = file.stat()?;
 
         const NS_PER_S: i128 = 1_000_000_000;
-        // PORT NOTE: `bun_sys::Stat` is `libc::stat`; Zig's `std.fs.File.stat()` returned a
-        // normalized struct with `mtime: i128` ns. Reconstruct from `st_mtime` (sec) +
+        // PORT NOTE: `bun_sys::Stat` is `libc::stat`; the original normalized
+        // form carried `mtime: i128` ns. Reconstruct from `st_mtime` (sec) +
         // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin `st_mtimespec` into
         // `st_mtime`/`st_mtime_nsec`, so the access is uniform on all `unix`.
         #[cfg(unix)]
@@ -1786,7 +1780,7 @@ impl ModKey {
         // Don't generate a modification key if the file is too new
         let now = bun_core::time::nano_timestamp();
         let now_seconds = now / NS_PER_S;
-        // PORT NOTE: Zig had `seconds > seconds` (always false) — preserved
+        // PORT NOTE: the original had `seconds > seconds` (always false) — preserved
         #[allow(clippy::eq_op)]
         if seconds > seconds || (seconds == now_seconds && mtime > now) {
             return Err(bun_core::err!("Unusable"));
@@ -1830,7 +1824,7 @@ pub enum EntriesOption {
 
 // SAFETY: ARENA — `EntriesOption` holds a `Box<DirEntry>` whose `data` map stores
 // `*mut Entry` into the BSSList singleton. All access is serialized through
-// `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The raw-pointer
+// `RealFS.entries_mutex`. The raw-pointer
 // fields are the only thing blocking auto-Sync (needed for `bss_map_inner!`'s
 // `SyncUnsafeCell` static).
 unsafe impl Sync for EntriesOption {}
@@ -1942,7 +1936,7 @@ impl TmpfileWindows {
     #[inline]
     pub(crate) fn dir(&self) -> bun_sys::Dir {
         // TODO(port): Fs.FileSystem.instance.tmpdir() — needs &mut FileSystem
-        // SAFETY: `instance()` is the process-lifetime singleton (Zig `*FileSystem`);
+        // SAFETY: `instance()` is the process-lifetime singleton;
         // `&mut` scoped to this call only (no `&'static mut` escapes).
         unsafe { (*FileSystem::instance()).tmpdir().expect("tmpdir") }
     }
@@ -1963,7 +1957,7 @@ impl TmpfileWindows {
         // `open_tmp_dir()` opens a *fresh* directory handle every call (it is not the
         // cached `FileSystem::tmpdir()`), and `bun_sys::Dir` has no `Drop`, so without an
         // explicit close the kernel HANDLE leaks on both success and the `?` early-returns
-        // below. Zig has the same leak (fs.zig:709-717); fixed here.
+        // below. The original had the same leak; fixed here.
         let tmp_dir = rfs.open_tmp_dir()?;
         let tmp_dir_fd = tmp_dir.fd();
         scopeguard::defer! {
@@ -2033,7 +2027,7 @@ impl TmpfileWindows {
 
 impl RealFS {
     pub fn open_dir(&self, unsafe_dir_string: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
-        // fs.zig:944-955 — on Windows this must go through
+        // On Windows this must go through
         // `openDirAtWindowsA(invalid_fd, path, .{ .iterable = true, .no_follow = false,
         // .read_only = true })` so the resulting handle has FILE_LIST_DIRECTORY +
         // FILE_DIRECTORY_FILE and can be iterated by `readdir`. The generic
@@ -2084,8 +2078,8 @@ impl RealFS {
         // back to a small floor for cold reads. Do NOT collect dirents into a
         // `Vec` first — that costs N `push`es + ~log2(N) Vec grows just to learn
         // the count, and forces every `Name` allocation to outlive the loop.
-        // Stream `getdents64` straight into `add_entry` like Zig's
-        // `while (try iter.next()) |*e| dir.addEntry(e)`. Floor at 64 even when
+        // Stream `getdents64` straight into `add_entry`
+        // (`while (try iter.next()) |*e| dir.addEntry(e)`). Floor at 64 even when
         // a `prev_map` exists but is tiny/empty — a directory that just grew
         // would otherwise rebuild `data` from a zero-capacity table.
         dir.data
@@ -2135,7 +2129,7 @@ impl RealFS {
                         original_err: err,
                         canonical_error: err,
                     }));
-                    // PORT NOTE: threadlocal storage outlives caller (matches Zig);
+                    // PORT NOTE: threadlocal storage outlives caller;
                     // return raw `*mut` — caller forms a short-lived `&mut` at use site.
                     slot.as_mut_ptr()
                 }));
@@ -2156,7 +2150,7 @@ impl RealFS {
                 original_err: err,
                 canonical_error: err,
             }));
-            // PORT NOTE: threadlocal storage outlives caller (matches Zig);
+            // PORT NOTE: threadlocal storage outlives caller;
             // return raw `*mut` — caller forms a short-lived `&mut` at use site.
             slot.as_mut_ptr()
         }))
@@ -2183,7 +2177,7 @@ impl RealFS {
     /// Caller borrows the returned EntriesOption. When `FeatureFlags::ENABLE_ENTRY_CACHE` is `false`,
     /// it is not safe to store this pointer past the current function call.
     ///
-    /// PORT NOTE: returns a raw `*mut EntriesOption` (matching Zig's `*EntriesOption`), not
+    /// PORT NOTE: returns a raw `*mut EntriesOption`, not
     /// `&'static mut`. Handing out `&'static mut` from a safe `pub fn` would let two callers
     /// (sequential or across the resolver thread pool) each hold a live `&mut` aliasing the
     /// same BSSMap slot — instant UB under Rust's `&mut` noalias model. Callers form a
@@ -2200,7 +2194,7 @@ impl RealFS {
 
         crate::Resolver::assert_valid_cache_key(dir);
         let mut cache_result: Option<allocators::Result> = None;
-        // PORT NOTE: Zig `defer self.entries_mutex.unlock()`. `EntriesGuard` holds the
+        // PORT NOTE: `EntriesGuard` holds the
         // mutex by raw pointer (no borrow of `self`), so the `&mut self` calls below
         // (`open_dir`, `readdir`, `read_directory_error`) remain unconstrained while
         // the lock is held.
@@ -2254,8 +2248,8 @@ impl RealFS {
         };
 
         let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-        // PORT NOTE: Zig `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
-        // runs on EVERY exit path including the `try`s below — defer the close so we never
+        // PORT NOTE: the conditional close must run on EVERY exit path including
+        // the `?`s below — defer the close so we never
         // leak the directory FD when `DirnameStore::append` / `self.entries.put` early-return via `?`.
         // `Dir` is `Copy`, so the `move` closure captures a copy of `handle`; uses below remain valid.
         scopeguard::defer! {
@@ -2273,8 +2267,8 @@ impl RealFS {
                 DirnameStore::instance().append(dir_maybe_trail_slash)?
             }
         } else {
-            // PORT NOTE: Zig stored the caller-provided slice directly (no lifetime system).
-            // Intern into DirnameStore so the cache entry never dangles — `append` is a
+            // PORT NOTE: intern into DirnameStore so the cache entry never
+            // dangles (the caller-provided slice may not outlive it) — `append` is a
             // bump-pointer copy and dedups against the singleton, so cost is bounded.
             DirnameStore::instance().append(dir)?
         };
@@ -2300,8 +2294,8 @@ impl RealFS {
                 entries.fd = handle.fd();
             }
 
-            // PORT NOTE: Zig stores `EntriesOption{ .entries: *DirEntry }` (raw pointer), so
-            // `put` is a plain pointer overwrite with no drop glue. In Rust the slot owns a
+            // PORT NOTE: a raw-pointer slot would make `put` a plain pointer
+            // overwrite with no drop glue. Here the slot owns a
             // `Box<DirEntry>`; calling `put` again on an already-populated slot would drop the
             // old Box (use-after-free if `in_place` aliases it) or leak it. Split the two cases:
             //  - in_place Some → write through the existing pointer, return the existing slot.
@@ -2321,7 +2315,7 @@ impl RealFS {
                         .expect("in_place entry must exist in BSSMap")
                 }
                 None => {
-                    // PORT NOTE: Zig used bun.default_allocator.create(DirEntry); EntriesOption owns Box<DirEntry>
+                    // PORT NOTE: `EntriesOption` owns a `Box<DirEntry>`.
                     let mut boxed = Box::new(DirEntry::init(dir, generation));
                     *boxed = entries;
                     let result = EntriesOption::Entries(boxed);
@@ -2349,7 +2343,7 @@ impl RealFS {
         read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(path, size_, &file, shared_buffer)
     }
 
-    /// Thin forward — kept for spec-shape fidelity (fs.zig:1160).
+    /// Thin forward — kept for spec-shape fidelity.
     pub fn read_file_with_handle_and_allocator<
         'p,
         'buf,
@@ -2374,11 +2368,11 @@ impl RealFS {
 // ══════════════════════════════════════════════════════════════════════════
 // CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)
 //
-// Spec: src/resolver/fs.zig:1160 `RealFS.readFileWithHandleAndAllocator`.
+// `RealFS.readFileWithHandleAndAllocator`.
 // One body, three entry points:
 //   • `read_file_with_handle_impl`  — free fn, const-generic, returns
 //     `PathContentsPair` (the spec shape). No `&mut RealFS` needed: the only
-//     `self` uses in the Zig body are `setMaxFd` (a static) and
+//     `self` uses in the original body are `setMaxFd` (a static) and
 //     `readFileError` (a no-op in release; the Rust port already stubs it).
 //   • `RealFS::read_file_with_handle_and_allocator` — keeps the existing
 //     fs.rs:2121 signature for spec-shape fidelity; thin forward.
@@ -2408,14 +2402,14 @@ pub fn read_file_contents<'buf>(
 
 /// Arena-backed twin of the `USE_SHARED_BUFFER = false` arm of
 /// [`read_file_with_handle_impl`]. Port of the `allocator` forwarding in
-/// `Fs.readFileWithHandleAndAllocator` (fs.zig:1617): the returned bytes live
+/// `Fs.readFileWithHandleAndAllocator`: the returned bytes live
 /// in `arena` so they are bulk-freed when the per-call `MimallocArena` is
 /// `mi_heap_destroy`'d (`TranspilerJob::run` / `ParseTask`), instead of
 /// round-tripping through the worker thread's *default* mimalloc heap (which
 /// is never destroyed and retains the segment for the process lifetime).
 ///
 /// Returns `(ptr, len)` into `arena`-owned memory; a sentinel NUL is written
-/// at `ptr[len]` (not counted in `len`), matching Zig's `[:0]u8` `dupeZ`.
+/// at `ptr[len]` (not counted in `len`).
 pub fn read_file_contents_in_arena(
     file: &bun_sys::File,
     path: &[u8],
@@ -2434,8 +2428,8 @@ pub fn read_file_contents_in_arena(
     };
     if read_count + 1 < initial_buf.len() {
         // allocator.dupeZ — own the buffer in `arena`; trailing NUL not in len.
-        // Allocate UNINITIALIZED (no zero-fill), like Zig's `allocator.alloc(u8,
-        // size + 1)`: `copy_from_slice` initializes `[..read_count]` and
+        // Allocate UNINITIALIZED (no zero-fill):
+        // `copy_from_slice` initializes `[..read_count]` and
         // `finish_arena_contents` writes the trailing NUL at `[read_count]`.
         let buf = arena_alloc_uninit_bytes(arena, read_count + 1);
         buf[..read_count].copy_from_slice(&initial_buf[..read_count]);
@@ -2456,8 +2450,8 @@ pub fn read_file_contents_in_arena(
     }
 
     // Arena-owned `[u8; cap + 1]` instead of `vec![0u8; size + 1]` — this is
-    // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`. Like
-    // Zig's `allocator.alloc(u8, size + 1)` the buffer is UNINITIALIZED; the
+    // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`.
+    // The buffer is UNINITIALIZED; the
     // `copy_from_slice` + `read_all` below cover `[..total]` and
     // `finish_arena_contents` writes the trailing NUL at `[total]`.
     //
@@ -2483,8 +2477,8 @@ pub fn read_file_contents_in_arena(
     Ok(finish_arena_contents(arena, buf, total))
 }
 
-/// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill —
-/// matches Zig's `allocator.alloc(u8, len)`), returned as a raw `&mut [u8]`.
+/// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),
+/// returned as a raw `&mut [u8]`.
 ///
 /// The caller must write every byte before reading it; the file-content readers
 /// do (`copy_from_slice` of the already-read prefix + `File::read_all` for the
@@ -2553,7 +2547,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
     // PORT NOTE: in the `USE_SHARED_BUFFER` branch, `file_contents` borrows
     // `shared_buffer.list`; tracked as a raw (ptr, len) pair so borrowck doesn't tie the
     // slice to `&mut shared_buffer` across the read/truncate/grow loop. The final slice is
-    // reconstituted with `from_raw_parts` (matches Zig's `[]const u8` return). The
+    // reconstituted with `from_raw_parts`. The
     // non-shared-buffer branch owns its allocation and returns early with `Cow::Owned`.
     // Definite-init: the read `loop` below assigns both before any `break`/read; the
     // `else` (non-shared-buffer) arm always early-returns.
@@ -2654,8 +2648,8 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         // `&mut shared_buffer.list` reborrow inside the BOM branch.
         if let Some(bom) = BOM::detect(&shared_buffer.list[..file_contents_len]) {
             debug!("Convert {} BOM", bom.tag_name());
-            // PORT NOTE: Zig passed `&shared_buffer.list` and the returned slice aliases it.
-            // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
+            // PORT NOTE: `&shared_buffer.list` is passed and the returned slice
+            // aliases it. We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
             // correct logical size (the read loop above truncated to `file_contents_len`).
             shared_buffer.list.truncate(file_contents_len);
             let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
@@ -2675,11 +2669,9 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
             };
             if read_count + 1 < buf.len() {
                 // allocator.dupeZ — own the buffer; caller frees via PathContentsPair drop.
-                // PORT NOTE: Zig returned an allocator-owned `[:0]u8` and the caller freed it
-                // later; Rust returns `Cow::Owned` so the caller's drop frees it. The trailing
-                // NUL sentinel is not part of `contents` (matches Zig `[:0]`).
-                // Allocate UNINITIALIZED (no zero-fill), like Zig's
-                // `allocator.alloc(u8, size + 1)`: the copy + the explicit NUL
+                // PORT NOTE: returns `Cow::Owned` so the caller's drop frees it.
+                // The trailing NUL sentinel is not part of `contents`.
+                // Allocate UNINITIALIZED (no zero-fill): the copy + the explicit NUL
                 // below initialize all `read_count + 1` bytes before any read,
                 // then `truncate` drops the sentinel from the logical length.
                 let mut allocation: Vec<u8> = Vec::with_capacity(read_count + 1);
@@ -2717,8 +2709,8 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         };
         debug!("stat({}) = {}", file.handle(), size);
 
-        // Allocate UNINITIALIZED (no zero-fill), like Zig's `allocator.alloc(u8,
-        // size + 1)`: the `copy_from_slice` + `read_all` + the explicit NUL
+        // Allocate UNINITIALIZED (no zero-fill):
+        // the `copy_from_slice` + `read_all` + the explicit NUL
         // below write every byte of `buf[..total]` and `buf[size]` before any is
         // read, then `truncate` drops the sentinel from the logical length.
         let mut buf: Vec<u8> = Vec::with_capacity(size + 1);
@@ -2794,15 +2786,15 @@ impl RealFS {
         let mut symlink: &[u8] = b"";
 
         if is_symlink {
-            // TODO(port): existing_fd != 0 — Zig compared FD to integer 0; using is_valid()
+            // TODO(port): the original compared FD to integer 0; using is_valid()
             let file: Fd = if existing_fd.is_valid() {
                 existing_fd
             } else if store_fd {
                 bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?
                     .handle()
             } else {
-                // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
-                // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
+                // PORT NOTE: O_PATH is Linux-only; macOS/BSD use O_RDONLY.
+                // Both add O_NOCTTY|O_CLOEXEC.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -2811,8 +2803,8 @@ impl RealFS {
             };
             FileSystem::set_max_fd(file.native());
 
-            // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
-            // BOTH success and error paths — use scopeguard so close-or-store happens even if
+            // PORT NOTE: the conditional close-or-store must run on
+            // BOTH success and error paths — use scopeguard so it happens even if
             // stat()/get_fd_path() return early with `?`.
             let need_to_close_files = self.need_to_close_files();
             let cache_ptr: *mut EntryCache = &raw mut cache;
@@ -2978,8 +2970,8 @@ impl RealFS {
                     bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
                         .handle()
                 } else {
-                    // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
-                    // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
+                    // PORT NOTE: O_PATH is Linux-only; macOS/BSD use O_RDONLY.
+                    // Both add O_NOCTTY|O_CLOEXEC.
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -2988,8 +2980,8 @@ impl RealFS {
                 };
                 FileSystem::set_max_fd(file.native());
 
-                // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
-                // BOTH success and error paths — use scopeguard so close-or-store happens even if
+                // PORT NOTE: the conditional close-or-store must run on
+                // BOTH success and error paths — use scopeguard so it happens even if
                 // stat()/get_fd_path() return early with `?`.
                 let need_to_close_files = self.need_to_close_files();
                 let cache_ptr: *mut EntryCache = &raw mut cache;
@@ -3193,5 +3185,3 @@ impl core::fmt::Display for PrintHandle<Fd> {
 pub mod stat_hash;
 // TODO(b2-blocked): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
 // bun_http_types::wtf::write_http_date — gated until those land.
-
-// ported from: src/resolver/fs.zig

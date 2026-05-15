@@ -4,9 +4,9 @@ use core::ptr;
 // BufferedReader
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig's `ReaderType` only needs `.read(&mut [u8]) -> Result<usize, Self::Error>`
+// TODO(port): the reader contract only needs `.read(&mut [u8]) -> Result<usize, Self::Error>`
 // and an associated `Error` type. There is no `bun_io::Read` trait yet; Phase B should
-// introduce one (or reuse whatever the `std.Io.GenericReader` port lands as) and bound `R` on it.
+// introduce one and bound `R` on it.
 pub struct BufferedReader<const BUFFER_SIZE: usize, R> {
     pub unbuffered_reader: R,
     pub buf: [u8; BUFFER_SIZE],
@@ -19,10 +19,9 @@ where
     // TODO(port): replace with the real reader trait once it exists.
     R: DeprecatedRead,
 {
-    // Zig: `pub const Error = R.Error;` — inherent assoc types are nightly-only
-    // (E0658). Callers name `R::Error` directly; this alias was sugar.
-    // TODO(port): `pub const Reader = std.Io.GenericReader(*Self, Error, read);` —
-    // depends on the Rust port of `std.Io.GenericReader`. Left unported; `reader()`
+    // Inherent assoc types are nightly-only (E0658). Callers name `R::Error`
+    // directly; an `Error` alias here would just be sugar.
+    // TODO(port): a generic-reader adapter type is left unported; `reader()`
     // below is stubbed accordingly.
 
     pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, R::Error> {
@@ -50,9 +49,9 @@ where
     }
 
     pub fn reader(&mut self) -> &mut Self {
-        // TODO(port): Zig returned a `std.Io.GenericReader` adapter wrapping `self`.
-        // Until the generic-reader port exists, hand back `&mut Self` (which already
-        // exposes `read`). Phase B: wire to the real adapter type.
+        // TODO(port): until the generic-reader adapter exists, hand back
+        // `&mut Self` (which already exposes `read`). Phase B: wire to the
+        // real adapter type.
         self
     }
 }
@@ -67,7 +66,8 @@ pub trait DeprecatedRead {
 pub fn buffered_reader<R: DeprecatedRead>(reader: R) -> BufferedReader<4096, R> {
     BufferedReader {
         unbuffered_reader: reader,
-        // PERF(port): Zig left `buf` undefined; zero-init here is an extra 4 KiB memset.
+        // PERF(port): `buf` could be left uninitialized; zero-init here is an
+        // extra 4 KiB memset.
         buf: [0u8; 4096],
         start: 0,
         end: 0,
@@ -79,7 +79,8 @@ pub fn buffered_reader_size<const SIZE: usize, R: DeprecatedRead>(
 ) -> BufferedReader<SIZE, R> {
     BufferedReader {
         unbuffered_reader: reader,
-        // PERF(port): Zig left `buf` undefined; zero-init here is an extra memset.
+        // PERF(port): `buf` could be left uninitialized; zero-init here is an
+        // extra memset.
         buf: [0u8; SIZE],
         start: 0,
         end: 0,
@@ -118,7 +119,6 @@ pub struct DoublyLinkedList<T> {
 }
 
 /// Node inside the linked list wrapping the actual data.
-// In Zig this is `DoublyLinkedList(T).Node`.
 pub struct DoublyLinkedNode<T> {
     pub prev: *mut DoublyLinkedNode<T>,
     pub next: *mut DoublyLinkedNode<T>,
@@ -335,12 +335,13 @@ pub use bun_hash::RapidHash;
 // misc
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): comptime reflection — Zig picks "{f}" if `ty` has a `format` method,
-// otherwise `fallback`. Rust has no `@hasDecl`; the equivalent is "does `T: Display`?".
-// Format specifiers also differ (Rust uses "{}" for both). Callers should be migrated
-// to use `Display` directly; until then this returns the fallback unconditionally.
+// TODO(port): comptime reflection — pick a format spec when `T` has a
+// formatting method, otherwise `fallback`. Rust has no `has_decl` reflection;
+// the equivalent is "does `T: Display`?". Format specifiers also differ (Rust
+// uses "{}" for both). Callers should be migrated to use `Display` directly;
+// until then this returns the fallback unconditionally.
 pub const fn auto_format_label_fallback<T>(fallback: &'static str) -> &'static str {
-    // TODO(port): `std.meta.hasFn(ty, "format")` reflection — see note above.
+    // TODO(port): see note above re: format-method reflection.
     let _ = core::marker::PhantomData::<T>;
     fallback
 }
@@ -493,5 +494,3 @@ mod tests {
 
     // RapidHash test vectors live alongside the canonical impl in `bun_hash::rapidhash`.
 }
-
-// ported from: src/bun_core/deprecated.zig

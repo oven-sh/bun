@@ -29,8 +29,8 @@ impl JSCDeferredWorkTask {
         let global_this = VirtualMachine::get().global();
         crate::validation_scope!(scope, global_this);
         Bun__runDeferredWork(self);
-        // Zig: `try scope.assertNoExceptionExceptTermination()` — the only error variant
-        // that fn returns is termination, so map the wider `JsError` back down.
+        // The only error variant `assert_no_exception_except_termination` can return
+        // is termination, so map the wider `JsError` back down.
         scope
             .assert_no_exception_except_termination()
             .map_err(|_| JsTerminated::JSTerminated)
@@ -58,8 +58,7 @@ pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     crate::mark_binding!();
     // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
     let loop_: &EventLoop = jsc_vm.event_loop_shared();
-    // Zig: `ConcurrentTask.new(.{ .task = Task.init(task), .next = .auto_delete })`
-    // — `create_from` is exactly that (heap-allocates with the auto-delete bit set).
+    // `create_from` heap-allocates a ConcurrentTask with the auto-delete bit set.
     loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task));
 }
 
@@ -71,7 +70,3 @@ pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
         .event_loop_mut()
         .tick_while_paused(unsafe { &mut *paused });
 }
-
-// Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.
-
-// ported from: src/jsc/JSCScheduler.zig

@@ -2,14 +2,14 @@ use core::ptr::NonNull;
 
 /// Protocol for types whose reference count is managed externally (e.g., by extern functions).
 ///
-/// In Zig this is duck-typed via `T.external_shared_descriptor = struct { ref, deref }`.
-/// In Rust the type implements this trait directly.
+/// The type implements this trait directly.
 ///
 /// # Safety
 /// Implementors guarantee that `ext_ref`/`ext_deref` operate on a valid externally-owned
 /// reference count, and that the pointee remains alive while the count is > 0.
-// TODO(port): Zig names are `ref`/`deref`; renamed to avoid the `ref` keyword and
-// `core::ops::Deref::deref` confusion. Revisit naming in Phase B.
+// TODO(port): the conventional names are `ref`/`deref`; renamed to `ext_*` to
+// avoid the `ref` keyword and `core::ops::Deref::deref` confusion. Revisit
+// naming in Phase B.
 pub unsafe trait ExternalSharedDescriptor {
     unsafe fn ext_ref(this: *mut Self);
     unsafe fn ext_deref(this: *mut Self);
@@ -17,11 +17,10 @@ pub unsafe trait ExternalSharedDescriptor {
 
 /// A shared pointer whose reference count is managed externally; e.g., by extern functions.
 ///
-/// `T` must implement [`ExternalSharedDescriptor`] (the Rust equivalent of Zig's
-/// `T.external_shared_descriptor` struct with `ref(*T)` / `deref(*T)`).
+/// `T` must implement [`ExternalSharedDescriptor`] (`ext_ref(*T)` / `ext_deref(*T)`).
 #[repr(transparent)]
 pub struct ExternalShared<T: ExternalSharedDescriptor> {
-    // Zig: `#impl: *T` (private, non-null)
+    // private, non-null
     ptr: NonNull<T>,
 }
 
@@ -33,7 +32,7 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
     /// ownership of is being transferred to the returned `ExternalShared`.
     pub unsafe fn adopt(incremented_raw: *mut T) -> Self {
         Self {
-            // SAFETY: Zig `*T` is non-null by construction.
+            // SAFETY: caller contract — `incremented_raw` is a live non-null ref.
             ptr: unsafe { NonNull::new_unchecked(incremented_raw) },
         }
     }
@@ -56,7 +55,7 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         // SAFETY: caller contract.
         unsafe { T::ext_ref(raw) };
         Self {
-            // SAFETY: Zig `*T` is non-null.
+            // SAFETY: caller contract — `raw` is a live non-null ref.
             ptr: unsafe { NonNull::new_unchecked(raw) },
         }
     }
@@ -75,8 +74,9 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         ExternalSharedOptional { ptr: Some(ptr) }
     }
 
-    // TODO(port): Zig's `ExternalShared(T).Optional` was an inherent associated type.
-    // Stable Rust callers spell `ExternalSharedOptional<T>` directly.
+    // TODO(port): an inherent `Optional` associated type would be nice here,
+    // but those are unstable. Stable Rust callers spell
+    // `ExternalSharedOptional<T>` directly.
 }
 
 impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
@@ -111,10 +111,10 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalShared<T> {
     }
 }
 
-/// Optional variant of [`ExternalShared`] (Zig: `ExternalShared(T).Optional`).
+/// Optional variant of [`ExternalShared`].
 #[repr(transparent)]
 pub struct ExternalSharedOptional<T: ExternalSharedDescriptor> {
-    // Zig: `#impl: ?*T = null`
+    // private, nullable
     ptr: Option<NonNull<T>>,
 }
 
@@ -209,5 +209,3 @@ unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`.
 pub type WTFString = ExternalShared<bun_alloc::WTFStringImplStruct>;
-
-// ported from: src/ptr/external_shared.zig

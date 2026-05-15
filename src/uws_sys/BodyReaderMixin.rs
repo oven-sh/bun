@@ -5,8 +5,8 @@ use crate::AnyResponse;
 use crate::response::Response;
 
 /// Response types that can drive a `BodyReaderMixin`: must support registering
-/// data/abort callbacks and converting to `AnyResponse`. Stands in for the Zig
-/// `anytype` parameter on `readBody`.
+/// data/abort callbacks and converting to `AnyResponse`. Stands in for the
+/// duck-typed parameter on `readBody`.
 ///
 /// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x);
 /// `h3::Response` can be added once its callback signatures are unified.
@@ -38,8 +38,8 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
     #[inline]
     fn to_any(&mut self) -> AnyResponse {
         // `From<*mut Response<{true,false}>>` exist as two concrete impls, not a
-        // const-generic one, so dispatch on `SSL` here. Same shape as Zig's
-        // `AnyResponse.init` switching on @TypeOf.
+        // const-generic one, so dispatch on `SSL` here. Same shape as
+        // `AnyResponse.init` switching on the response type.
         if SSL {
             AnyResponse::SSL(std::ptr::from_mut::<Self>(self).cast())
         } else {
@@ -54,9 +54,9 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
 ///
 /// See `DevServer`'s `ErrorReportRequest` for an example.
 ///
-/// In Zig this was a `fn(...) type` taking a comptime `field` name and two
-/// comptime fn pointers (`onBody`, `onError`). In Rust those are expressed as
-/// a trait the wrapper type implements; the comptime `field` name used by
+/// Originally this was a type-constructing function taking a `field` name and
+/// two fn pointers (`onBody`, `onError`). In Rust those are expressed as
+/// a trait the wrapper type implements; the `field` name used by
 /// `@fieldParentPtr` is the [`bun_core::IntrusiveField`] supertrait (implement
 /// via `bun_core::intrusive_field!`).
 pub trait BodyReaderHandler: bun_core::IntrusiveField<BodyReaderMixin<Self>> + 'static {
@@ -66,7 +66,7 @@ pub trait BodyReaderHandler: bun_core::IntrusiveField<BodyReaderMixin<Self>> + '
     /// provenance) rather than `&mut self`: implementors typically free `Self`
     /// (`heap::take`) on the success path, and doing so through a
     /// `&mut self`-derived pointer is UB under Stacked/Tree Borrows. This
-    /// mirrors Zig's `fn(*Wrap, ...)` callback shape exactly.
+    /// mirrors the `fn(*Wrap, ...)` callback shape exactly.
     ///
     /// SAFETY: `this` is the pointer previously passed to
     /// `BodyReaderMixin::read_body`; it is live and uniquely owned by the
@@ -102,8 +102,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     ///
     /// Takes `*mut Wrap` (not `&mut self`) so the registered C user_data carries
     /// provenance for the *entire* enclosing `Wrap`, not just the mixin field.
-    /// Zig used `@fieldParentPtr(field, ctx)` which has no provenance/aliasing
-    /// restriction; in Rust, deriving the parent by `.byte_sub(OFFSET)` from a
+    /// A naive container-of recovery from the field pointer has no
+    /// provenance/aliasing restriction in C; in Rust, deriving the parent by
+    /// `.byte_sub(OFFSET)` from a
     /// `&mut self`-sourced pointer is out-of-provenance under Stacked Borrows
     /// and the resulting `&mut Wrap` would overlap a live `&mut Self`. Callers
     /// pass the `heap::alloc`'d wrapper pointer directly; trampolines below
@@ -115,7 +116,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     }
 
     /// Forward offset `Wrap` → its embedded mixin field, materialised as `&mut`.
-    /// Inverse direction of Zig's `@fieldParentPtr` — we go parent→field because
+    /// Inverse direction of container-of — we go parent→field because
     /// the stored user_data is the parent (full provenance), never the field.
     ///
     /// Single nonnull-asref accessor for the set-once `wrap` user-data.
@@ -140,7 +141,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         let any = r.to_any();
         match Self::on_data(wrap, any, chunk, last) {
             Ok(()) => {}
-            // Match Zig's `error.OutOfMemory => onOOM, else => onInvalid` by error
+            // Match `OutOfMemory => onOOM, else => onInvalid` by error
             // *kind* only — `bun_core::Error`'s derived `PartialEq` compares all
             // fields (syscall/fd/path), and `err!("OutOfMemory")` is currently a
             // TODO sentinel, so a full-struct compare would invert the branch.
@@ -178,7 +179,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                 if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
                     return Err(bun_core::err!(RequestBodyTooLarge));
                 }
-                // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
+                // TODO(port): OOM was previously handled gracefully here; Vec::extend_from_slice aborts.
                 // Consider try_reserve in Phase B if graceful 500 on OOM is required.
                 body.extend_from_slice(chunk);
                 unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
@@ -188,7 +189,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                 }
                 unsafe { Wrap::on_body(wrap, chunk, resp)? };
             }
-            // `body` drops here (was `defer body.deinit()` in Zig)
+            // `body` drops here.
             Ok(())
         } else {
             let body = &mut Self::mixin_of(wrap).body;
@@ -233,5 +234,3 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         unsafe { Wrap::on_error(wrap) };
     }
 }
-
-// ported from: src/uws_sys/BodyReaderMixin.zig

@@ -1,4 +1,4 @@
-//! Port of `src/jsc/ModuleLoader.zig`.
+//! Module loader.
 //!
 //! B-2 un-gate: real `ModuleLoader` struct, `FetchFlags`, and the
 //! `HardcodedModule` re-export compile against the `lib.rs` stub surface.
@@ -19,12 +19,11 @@ use crate::{
     JSValue, JsError, JsResult, ResolvedSource,
 };
 
-// Re-exports (thin re-exports from the original Zig file).
+// Re-exports.
 pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 pub use bun_resolve_builtins::HardcodedModule;
 pub use bun_resolver::node_fallbacks;
 
-// Spec ModuleLoader.zig:4 — `pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;`
 // LAYERING: re-export from the crate-level mount (`crate::async_module`)
 // instead of `#[path]`-mounting `AsyncModule.rs` a second time. A duplicate
 // mount compiles two distinct `Queue` types — `VirtualMachine.modules` is
@@ -58,19 +57,18 @@ impl ModuleLoader {
     /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
     /// Access `module_loader` through `jsc_vm` instead.
     pub fn reset_arena(jsc_vm: &mut VirtualMachine) {
-        // Spec ModuleLoader.zig:24-29: `if (smol) reset() else
-        // reset(.{.retain_with_limit = 8M})`. The port collapses both arms to
-        // `reset()` — `MimallocArena` is not a bump allocator, so there is no
+        // Both the smol and non-smol arms collapse to `reset()` —
+        // `MimallocArena` is not a bump allocator, so there is no
         // capacity to retain (see `MimallocArena::reset_retain_with_limit`
         // PORT NOTE); mimalloc's per-thread segment cache already provides the
-        // warm-page reuse Zig's `.retain_with_limit` was after.
+        // warm-page reuse that `.retain_with_limit` was after.
         if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
             arena.reset();
         }
     }
 }
 
-/// RAII shape of Zig's `defer jsc_vm.module_loader.resetArena(jsc_vm)` — calls
+/// RAII guard that calls
 /// [`ModuleLoader::reset_arena`] on the held VM when dropped. Holds a
 /// [`BackRef`] (not `&mut`) so the body of the guarded scope may also reach
 /// into the VM via raw pointers without aliasing the guard; the VM-outlives-
@@ -149,9 +147,9 @@ pub struct TranspileArgs<'a> {
 /// `bun_runtime`) so both tiers agree on layout; every field type is already a
 /// `bun_jsc` dep (`bun_resolver`, `bun_bundler::options`, `bun_js_printer`).
 ///
-/// PORT NOTE: Zig passed these as positional params to `transpileSourceCode`
-/// (ModuleLoader.zig:90-96). They're bundled because the §Dispatch fn-ptr
-/// signature must be stable across the crate boundary.
+/// PORT NOTE: these were originally positional params to `transpileSourceCode`.
+/// They're bundled because the §Dispatch fn-ptr signature must be stable
+/// across the crate boundary.
 #[repr(C)]
 pub struct TranspileExtra {
     pub path: bun_resolver::fs::Path<'static>,
@@ -160,15 +158,13 @@ pub struct TranspileExtra {
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null
     /// when `extra` itself is non-null.
     pub source_code_printer: *mut bun_js_printer::BufferPrinter,
-    /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path
-    /// (ModuleLoader.zig:95). Null forbids async resolution.
+    /// Out-param for the async-module path. Null forbids async resolution.
     pub promise_ptr: *mut *mut JSInternalPromise,
 }
 
-/// Result of `LoaderHooks::fetch_builtin_module` — tri-state to mirror
-/// ModuleLoader.zig:861-876, where an ERROR during builtin lookup must be
-/// surfaced to C++ (return `true` with `ret` populated as `.err`) rather than
-/// falling through to filesystem resolution.
+/// Result of `LoaderHooks::fetch_builtin_module` — tri-state because an ERROR
+/// during builtin lookup must be surfaced to C++ (return `true` with `ret`
+/// populated as `.err`) rather than falling through to filesystem resolution.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FetchBuiltinResult {
@@ -209,7 +205,7 @@ pub struct LoaderHooks {
         out: *mut ResolvedSource,
     ) -> bool,
     /// `ModuleLoader.resolveEmbeddedFile(vm, &path_buf, input_path, "node")`
-    /// (spec ModuleLoader.zig:1332-1342) — extracts an embedded `.node` addon
+    /// — extracts an embedded `.node` addon
     /// from the standalone-module graph to a real on-disk temp file and writes
     /// the resulting path back into `*in_out_str`. Returns `true` on success.
     /// Body lives in `bun_runtime` (reaches into `node::fs` +
@@ -218,15 +214,15 @@ pub struct LoaderHooks {
         unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_core::String) -> bool,
     /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(res, global, specifier,
     /// source, query_string?, is_esm, is_a_file_path, is_user_require_resolve)`
-    /// (spec VirtualMachine.zig:1873-2016) — the resolution path behind
-    /// `Bun__resolveSync` / `Zig__GlobalObject__resolve` / `import.meta.resolve`.
+    /// — the resolution path behind
+    /// `Bun__resolveSync` / `Bun__GlobalObject__resolve` / `import.meta.resolve`.
     /// Body reaches into `transpiler.resolver.resolveAndAutoInstall`, the
     /// `PluginRunner`, `ObjectURLRegistry`, and `ServerEntryPoint` (all
     /// `bun_runtime` types), so the low tier owns the symbol and dispatches.
     ///
     /// Writes `*res` (always — `.ok` or `.err`); writes `*query_string` (if
     /// non-null) to a fresh owned `bun.String`. Returns `false` iff a JS
-    /// exception is pending on `global` (the Zig `bun.JSError!void` shape).
+    /// exception is pending on `global`.
     pub resolve: unsafe fn(
         res: *mut ErrorableString,
         global: *mut JSGlobalObject,
@@ -237,16 +233,16 @@ pub struct LoaderHooks {
         is_a_file_path: bool,
         is_user_require_resolve: bool,
     ) -> bool,
-    /// `Bun__transpileVirtualModule` body (spec ModuleLoader.zig:1234-1304) —
+    /// `Bun__transpileVirtualModule` body —
     /// transpiles plugin-provided source through the per-thread `BufferPrinter`
     /// (a `bun_runtime` thread-local). Writes `*ret` (always — `.ok` or `.err`)
-    /// and returns `true` (the only `false` return in Zig is unreachable here
+    /// and returns `true` (the only `false` return is unreachable here
     /// because the C++ caller already proved `plugin_runner != null`).
     pub transpile_virtual_module: unsafe fn(
         global: *mut JSGlobalObject,
         specifier: *const bun_core::String,
         referrer: *const bun_core::String,
-        source_code: *mut bun_core::ZigString,
+        source_code: *mut bun_core::UnsafeStringView,
         loader: bun_options_types::schema::api::Loader,
         ret: *mut ErrorableResolvedSource,
     ) -> bool,
@@ -283,7 +279,7 @@ fn loader_hooks() -> Option<&'static LoaderHooks> {
 }
 
 /// `ModuleLoader.transpileSourceCode(...)` — thin shim over the §Dispatch
-/// hook. PERF(port): was inline switch — direct call in Zig; the indirection
+/// hook. PERF(port): was an inline switch / direct call; the indirection
 /// is one fn-ptr per import, dwarfed by the parser/printer work it does.
 pub fn transpile_source_code(
     jsc_vm: &mut VirtualMachine,
@@ -315,14 +311,14 @@ pub fn fetch_builtin_module(
 }
 
 /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(...)` — thin shim over the
-/// §Dispatch hook. Spec VirtualMachine.zig:1873. The body lives in
+/// §Dispatch hook. The body lives in
 /// `bun_runtime::jsc_hooks` because it drives `transpiler.resolver` (forward
 /// dep on `bun_jsc`).
 ///
-/// PORT NOTE: `is_a_file_path` was a Zig `comptime bool`; demoted to runtime
+/// PORT NOTE: `is_a_file_path` was a compile-time bool; demoted to runtime
 /// because the §Dispatch fn-ptr signature must be monomorphic across the crate
 /// boundary. The branch is a single length-check / `dirWithTrailingSlash` —
-/// PERF(port): was inline switch; the fn-ptr indirection is one call per
+/// PERF(port): was an inline switch; the fn-ptr indirection is one call per
 /// `import` / `require.resolve`, dominated by the resolver's dir-cache walk.
 pub fn resolve_maybe_needs_trailing_slash(
     res: &mut ErrorableString,
@@ -343,8 +339,8 @@ pub fn resolve_maybe_needs_trailing_slash(
     let qs = query_string
         .map(|q| std::ptr::from_mut::<bun_core::String>(q))
         .unwrap_or(core::ptr::null_mut());
-    // SAFETY: hook contract — `global` is the live JS-thread global (Zig
-    // `*JSGlobalObject`, mutable: hook may throw on it); `res`/`qs` are valid
+    // SAFETY: hook contract — `global` is the live JS-thread global
+    // (mutable: hook may throw on it); `res`/`qs` are valid
     // out-params for the call (single-threaded, no aliasing).
     let ok = unsafe {
         (hooks.resolve)(
@@ -362,7 +358,7 @@ pub fn resolve_maybe_needs_trailing_slash(
 }
 
 /// `VirtualMachine.resolve(res, global, specifier, source, query_string,
-/// is_esm)` (spec VirtualMachine.zig:1854-1863) — the `Zig__GlobalObject__resolve`
+/// is_esm)` — the `Bun__GlobalObject__resolve`
 /// entry point. Thin wrapper that fixes `is_a_file_path = true`,
 /// `is_user_require_resolve = false`.
 #[inline]
@@ -462,7 +458,7 @@ pub extern "C" fn Bun__fetchBuiltinModule(
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let (jsc_vm, specifier, referrer, ret) =
         unsafe { (&mut *jsc_vm, &*specifier, &*referrer, &mut *ret) };
-    // PORT NOTE: spec ModuleLoader.zig:861-876 — when `fetchBuiltinModule`
+    // PORT NOTE: when `fetchBuiltinModule`
     // ERRORS, it calls `VirtualMachine.processFetchLog(..., ret, err)` and
     // returns **true** (so C++ surfaces the error instead of falling through to
     // filesystem resolution). The hook writes `ret` directly on Found/Errored.
@@ -486,7 +482,6 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     None
 }
 
-/// Spec ModuleLoader.zig:828-848.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
@@ -518,7 +513,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     true
 }
 
-/// Spec ModuleLoader.zig:1332-1342. Support embedded .node files.
+/// Support embedded .node files.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     vm: *mut VirtualMachine,
@@ -532,8 +527,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     // `StandaloneModuleGraph` — forward-dep on `bun_jsc`. Per §Dispatch the low
     // tier owns the extern symbol and dispatches through `LoaderHooks`; the
     // high tier extracts the embedded addon to a temp file and writes the
-    // on-disk path back into `*in_out_str` (spec ModuleLoader.zig:1332-1342:
-    // `bun.String.cloneUTF8(result)`).
+    // on-disk path back into `*in_out_str` via `bun.String.cloneUTF8(result)`.
     let Some(hooks) = loader_hooks() else {
         unreachable!()
     };
@@ -543,7 +537,6 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     unsafe { (hooks.resolve_embedded_node_file)(vm, in_out_str) }
 }
 
-/// Spec ModuleLoader.zig:1344-1347.
 #[unsafe(no_mangle)]
 pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
@@ -551,18 +544,18 @@ pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     bun_aliases_get(str).is_some()
 }
 
-// PORT NOTE (spec bundler_jsc/PluginRunner.zig:11-32): the pure byte-string
+// PORT NOTE: the pure byte-string
 // `extractNamespace` / `couldBePlugin` helpers live in
 // `bun_bundler::transpiler::PluginRunner` — `bun_bundler` is already a
 // `bun_jsc` dep, so `Bun__runVirtualModule` calls them directly rather than
 // duplicating them here.
 use bun_bundler::transpiler::PluginRunner;
 
-// PORT NOTE: `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71)
+// PORT NOTE: `ModuleLoader.resolveEmbeddedFile`
 // has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_file_to_buf`
 // per PORTING.md §Forbidden ("dep-cycle: MOVE the code to the right crate") —
 // the body reaches into `bun_standalone_graph` + `bun_sys::Tmpfile` +
-// `node::fs`, none of which are `bun_jsc` deps. Three Zig callers live in
+// `node::fs`, none of which are `bun_jsc` deps. Three callers live in
 // `bun_runtime`:
 //   - `Bun__resolveEmbeddedNodeFile` above (extname `"node"`, goes through
 //     `LoaderHooks::resolve_embedded_node_file` to bridge the crate gap).
@@ -570,7 +563,6 @@ use bun_bundler::transpiler::PluginRunner;
 //   - `ffi_body::FFI::open` (extname `"so"`/`"dylib"`/`"dll"`; same-crate
 //     call to `resolve_embedded_file_to_buf`, no hook needed).
 
-/// Spec ModuleLoader.zig:73-83.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
@@ -592,13 +584,12 @@ pub extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
-/// Spec ModuleLoader.zig:1234-1304.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__transpileVirtualModule(
     global: *mut JSGlobalObject,
     specifier: *const bun_core::String,
     referrer: *const bun_core::String,
-    source_code: *mut bun_core::ZigString,
+    source_code: *mut bun_core::UnsafeStringView,
     loader: bun_options_types::schema::api::Loader,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
@@ -622,7 +613,6 @@ pub extern "C" fn Bun__transpileVirtualModule(
     }
 }
 
-/// Spec ModuleLoader.zig:1122-1143.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
@@ -649,8 +639,8 @@ pub extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        bun_core::String::init(bun_core::ZigString::init(namespace)),
-        bun_core::String::init(bun_core::ZigString::init(after_namespace)),
+        bun_core::String::init(bun_core::UnsafeStringView::init(namespace)),
+        bun_core::String::init(bun_core::UnsafeStringView::init(after_namespace)),
         crate::BunPluginTarget::Bun,
     ) {
         // `catch return .zero` / `orelse return .zero`
@@ -658,5 +648,3 @@ pub extern "C" fn Bun__runVirtualModule(
         Ok(None) | Err(_) => JSValue::ZERO,
     }
 }
-
-// ported from: src/jsc/ModuleLoader.zig

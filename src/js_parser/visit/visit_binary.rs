@@ -12,12 +12,12 @@ use bun_ast::{
     expr::{Equality, LooseEql, StrictEql},
 };
 
-// PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
+// PORT NOTE: the original `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
 // returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
 // Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
 // the parser generics directly.
 // Phase B diff readers should map:
-//   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
+//   original: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
 //   Rust: BinaryExpressionVisitor<'arena, TS, J, SCAN>
 
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
@@ -99,13 +99,13 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
 }
 
 pub struct BinaryExpressionVisitor {
-    /// Arena handle to the in-place `E::Binary` node (Zig: `*E.Binary`).
+    /// Arena handle to the in-place `E::Binary` node (originally `*E.Binary`).
     /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
     /// encapsulate the AST-store invariant, so call sites need no raw-pointer
     /// round-trip to forge an `'arena` borrow.
     pub e: StoreRef<E::Binary>,
     pub loc: bun_ast::Loc,
-    // PORT NOTE: Zig field name `in` is a Rust keyword; renamed to `in_`.
+    // PORT NOTE: original field name `in` is a Rust keyword; renamed to `in_`.
     pub in_: ExprIn,
 
     /// Input for visiting the left child
@@ -523,7 +523,7 @@ impl BinaryExpressionVisitor {
                         return p.new_expr(
                             // Use libc fmod here to be consistent with what JavaScriptCore does
                             // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                            // PORT NOTE: Zig had a non-native fallback to std.math.mod; Rust targets are always native.
+                            // PORT NOTE: original had a non-native fallback to std.math.mod; Rust targets are always native.
                             E::Number {
                                 value: fmod(vals[0], vals[1]),
                             },
@@ -769,7 +769,7 @@ impl BinaryExpressionVisitor {
 
         Expr {
             loc: v.loc,
-            // Same arena slot Zig threads as `*E.Binary` — re-wrap the handle.
+            // Same arena slot the original threads as `*E.Binary` — re-wrap the handle.
             data: ExprData::EBinary(e_handle),
         }
     }
@@ -834,5 +834,3 @@ impl BinaryExpressionVisitor {
         None
     }
 }
-
-// ported from: src/js_parser/ast/visitBinaryExpression.zig

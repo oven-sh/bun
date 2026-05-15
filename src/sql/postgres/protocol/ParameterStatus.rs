@@ -8,8 +8,8 @@ pub struct ParameterStatus {
     pub value: Data,
 }
 
-// Zig `deinit` only forwards to `name.deinit()` / `value.deinit()`; in Rust those
-// fields drop automatically, so no explicit `impl Drop` is needed.
+// Cleanup only releases `name` / `value`; those fields drop automatically,
+// so no explicit `impl Drop` is needed.
 
 impl ParameterStatus {
     // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` to
@@ -27,12 +27,10 @@ impl ParameterStatus {
         })
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // Decoder helper — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/postgres/protocol/ParameterStatus.zig

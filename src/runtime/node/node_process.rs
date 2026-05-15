@@ -4,8 +4,8 @@ use core::ffi::c_char;
 
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
-use bun_jsc::zig_string::ZigString;
-use bun_jsc::{JSGlobalObject, JSValue, WebWorker, ZigStringJsc as _};
+use bun_jsc::unsafe_string_view::UnsafeStringView;
+use bun_jsc::{JSGlobalObject, JSValue, UnsafeStringViewJsc as _, WebWorker};
 
 // TODO(port): move to <area>_sys — extern decls colocated for now
 unsafe extern "C" {
@@ -24,7 +24,7 @@ pub extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
         .get(0)
         .map(|z| z.as_bytes())
         .unwrap_or(b"bun");
-    ZigString::from_utf8(argv0).to_js(global_object)
+    UnsafeStringView::from_utf8(argv0).to_js(global_object)
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
@@ -33,7 +33,7 @@ pub extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    ZigString::from_utf8(out.as_bytes()).to_js(global_object)
+    UnsafeStringView::from_utf8(out.as_bytes()).to_js(global_object)
 }
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
@@ -80,8 +80,8 @@ pub extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     }
 }
 
-// PORT NOTE: Zig `export const Foo: [*:0]const u8 = "..."` exports a static
-// pointing at rodata. Rust raw-pointer statics are `!Sync`; wrap in a
+// PORT NOTE: this exports a static pointing at rodata. Rust raw-pointer
+// statics are `!Sync`; wrap in a
 // `#[repr(transparent)]` newtype so the C++ side still sees a single
 // `const char*`-sized symbol.
 #[repr(transparent)]
@@ -127,9 +127,10 @@ mod _impl {
     use bun_core::env_var;
     use bun_core::{String as BunString, strings};
     use bun_jsc::bun_string_jsc;
-    use bun_jsc::zig_string::ZigString;
+    use bun_jsc::unsafe_string_view::UnsafeStringView;
     use bun_jsc::{
-        JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
+        JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, UnsafeStringViewJsc as _,
+        WebWorker,
     };
     use bun_paths::{PathBuffer, SEP};
     use bun_sys as Syscall;
@@ -159,22 +160,21 @@ mod _impl {
     pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
         // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
         // returning. `String` is `Copy`, so read it out by value and let
-        // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
+        // `OwnedString`'s Drop release the ref.
         let newvalue = bun_core::OwnedString::new(unsafe { *newvalue });
 
         // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
-        // the Zig OOM-throw path is unreachable here.
+        // the OOM-throw path is unreachable here.
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
-        // Zig: `if (old) |slice| allocator.free(slice); Bun__Node__ProcessTitle = new_title;`
-        // — assigning into the `Option<Box<[u8]>>` static drops the previous box.
+        // Assigning into the `Option<Box<[u8]>>` static drops the previous box.
         *crate::cli::Bun__Node__ProcessTitle.lock() = Some(new_title);
     }
 
     // ───────────────────────────── execArgv ─────────────────────────────
 
-    // Zig: `@export(&host_fn.wrap1(createExecArgv), ...)` — the C++ caller
-    // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
+    // The C++ caller (headers.h) declares
+    // `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
     // not a `JSHostFunctionType`. Hand-roll the wrap1 shim instead of `#[bun_jsc::host_fn]`.
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
@@ -271,7 +271,7 @@ mod _impl {
 
             // A set of execArgv args consume an extra argument, so we do not want to
             // confuse these with script names.
-            // TODO(port): the Zig builds this set at comptime by iterating
+            // TODO(port): this set should be derived by iterating
             // `bun.cli.Arguments.auto_params` and emitting `--long` / `-s` for every
             // param with `takes_value != .none`. Rust cannot reflect over that list
             // at compile time, so build the set lazily at runtime from the same
@@ -318,7 +318,7 @@ mod _impl {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
-        // PERF(port): was stack-fallback alloc (32 * sizeof(ZigString) + MAX_PATH_BYTES + 1 + 32) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (32 * sizeof(UnsafeStringView) + MAX_PATH_BYTES + 1 + 32) — profile in Phase B
 
         let worker: Option<&WebWorker> = vm.worker_ref();
 
@@ -393,16 +393,16 @@ mod _impl {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents()).to_js(global_object);
+            return UnsafeStringView::init(source.contents()).to_js(global_object);
         }
         JSValue::UNDEFINED
     }
 
     // ───────────────────────────── cwd ─────────────────────────────
 
-    // Zig: `pub const getCwd = host_fn.wrap1(getCwd_)` — C++ (headers.h) declares
-    // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the wrap1
-    // shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
+    // C++ (headers.h) declares `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`.
+    // Hand-roll the wrap1 shim instead of `#[bun_jsc::host_fn]` (caller is not a
+    // JSHostFunction).
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
@@ -411,23 +411,25 @@ mod _impl {
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let mut buf = PathBuffer::uninit();
         match crate::node::path::get_cwd(&mut buf) {
-            bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
+            bun_sys::Result::Ok(r) => Ok(UnsafeStringView::init(r)
+                .with_encoding()
+                .to_js(global_object)),
             bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
         }
     }
 
-    // Zig: `pub const setCwd = host_fn.wrap2(setCwd_)` — C++ (headers.h) declares
-    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
-    // the wrap2 shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
+    // C++ (headers.h) declares
+    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, UnsafeStringView*)`. Hand-roll
+    // the wrap2 shim; the second arg is the raw `*mut UnsafeStringView`, not a CallFrame.
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__Process__setCwd(
         global_object: &JSGlobalObject,
-        to: &ZigString,
+        to: &UnsafeStringView,
     ) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
     }
 
-    fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> {
+    fn set_cwd(global_object: &JSGlobalObject, to: &UnsafeStringView) -> JsResult<JSValue> {
         if to.length() == 0 {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
@@ -443,7 +445,7 @@ mod _impl {
             return Err(global_object.throw(format_args!("Invalid path")));
         };
 
-        // Zig: `Syscall.chdir(fs.top_level_dir, slice)` — path=cwd, dest=target so the
+        // `Syscall.chdir(fs.top_level_dir, slice)` — path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
         let top_level_dir: &[u8] = fs.top_level_dir;
@@ -467,8 +469,7 @@ mod _impl {
                 fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
                 fs.top_level_dir_buf[into_cwd_len] = 0;
                 // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
-                // FileSystem singleton; the detached borrow matches the Zig
-                // semantics (`top_level_dir = top_level_dir_buf[0..len :0]`).
+                // FileSystem singleton; the detached borrow points into it.
                 fs.top_level_dir =
                     unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
 
@@ -481,7 +482,7 @@ mod _impl {
                     fs.top_level_dir =
                         unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
                 }
-                // Zig has a single `bun.fs.FileSystem.instance.top_level_dir` field that
+                // There is a single `bun.fs.FileSystem.instance.top_level_dir` field that
                 // both this fn writes and `GlobWalker.init` reads. The Rust port split
                 // storage between the resolver's `FileSystem.top_level_dir` (written
                 // above) and `bun_core::TOP_LEVEL_DIR` (read by `bun_paths::fs::
@@ -513,7 +514,7 @@ mod _impl {
         if k.tag() == bun_core::Tag::Empty {
             return;
         }
-        // Zig: `k.value.WTFStringImpl` — `value` is a private union field in Rust;
+        // `k.value.WTFStringImpl` — `value` is a private union field in Rust;
         // `String::{is_8bit,latin1,utf16,length}` dispatch to the WTF impl when
         // `tag == WTFStringImpl` (guaranteed here: C++ caller passes WTF-backed
         // strings and we've already returned on `Empty`).
@@ -552,5 +553,3 @@ mod _impl {
         }
     }
 } // mod _impl
-
-// ported from: src/runtime/node/node_process.zig

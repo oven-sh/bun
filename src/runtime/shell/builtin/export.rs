@@ -35,9 +35,9 @@ impl Export {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
-            // Spec (export.zig): argv backing is freed when the Cmd retires,
-            // so the key/value MUST be duplicated into ref-counted storage —
-            // `init_slice` here would leave dangling EnvStr in `export_env`.
+            // The argv backing is freed when the Cmd retires, so the key/value
+            // MUST be duplicated into ref-counted storage — `init_slice` here
+            // would leave dangling EnvStr in `export_env`.
             let label = EnvStr::dupe_ref_counted(name);
             let val = EnvStr::dupe_ref_counted(value);
             let shell = interp.as_cmd(cmd).base.shell;
@@ -86,5 +86,3 @@ impl Export {
         Builtin::done(interp, cmd, if err.is_some() { 1 } else { 0 })
     }
 }
-
-// ported from: src/shell/builtin/export.zig

@@ -30,8 +30,8 @@ impl fmt::Display for Range {
         }
 
         if self.right.op == Op::Unset {
-            // TODO(port): Zig used `{}` on Comparator directly but Comparator has no
-            // top-level `format` in the source — likely dead/broken upstream. Mirroring shape.
+            // TODO(port): originally formatted Comparator directly but Comparator has no
+            // top-level `format` impl in the source — likely dead/broken. Mirroring shape.
             write!(f, "{}", ComparatorDisplay(&self.left))
         } else {
             write!(
@@ -44,11 +44,11 @@ impl fmt::Display for Range {
     }
 }
 
-// PORT NOTE: helper for Range's Display impl above (Zig relied on default struct formatting).
+// PORT NOTE: helper for Range's Display impl above (the original relied on default struct formatting).
 struct ComparatorDisplay<'a>(#[allow(dead_code)] &'a Comparator);
 impl fmt::Display for ComparatorDisplay<'_> {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): no buffer available here; upstream Zig path appears unused.
+        // TODO(port): no buffer available here; this path appears unused.
         Ok(())
     }
 }
@@ -297,5 +297,3 @@ impl fmt::Display for ComparatorFormatter<'_> {
         write!(f, "{}", self.comparator.version.fmt(self.buffer))
     }
 }
-
-// ported from: src/semver/SemverRange.zig

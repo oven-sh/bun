@@ -1,7 +1,7 @@
 #include "IsolatedModuleCache.h"
 #include "BunClientData.h"
 #include "ModuleLoader.h"
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 
 namespace Bun {
 
@@ -16,17 +16,17 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
     return true;
 }
 
-Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key)
+Bun::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key)
 {
     auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
     auto it = cache.find(key);
     if (it == cache.end())
         return nullptr;
     ASSERT(it->value);
-    return static_cast<Zig::SourceProvider*>(it->value.get());
+    return static_cast<Bun::SourceProvider*>(it->value.get());
 }
 
-void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
+void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Bun::SourceProvider& provider)
 {
     if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_resolvedSource.tag)))
         return;

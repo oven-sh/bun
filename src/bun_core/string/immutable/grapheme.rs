@@ -7,7 +7,7 @@ use super::grapheme_tables;
 
 /// Grapheme break property for codepoints, excluding control/CR/LF
 /// which are assumed to be handled externally.
-#[repr(u8)] // Zig: enum(u5) — Rust has no u5 repr; values fit in 5 bits
+#[repr(u8)] // values fit in 5 bits; widened to u8
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum GraphemeBreakNoControl {
     Other,
@@ -56,7 +56,7 @@ impl GraphemeBreakNoControl {
 }
 
 /// State maintained between sequential calls to grapheme_break.
-#[repr(u8)] // Zig: enum(u3) — Rust has no u3 repr; values fit in 3 bits
+#[repr(u8)] // values fit in 3 bits; widened to u8
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum BreakState {
     Default,
@@ -70,8 +70,7 @@ impl BreakState {
     #[inline]
     pub const fn from_raw(n: u8) -> Self {
         // #[repr(u8)] enum with variants 0..=4; caller guarantees range
-        // (round-tripped through `state as u8`). Out-of-range traps —
-        // matches Zig's safety-checked `@enumFromInt`.
+        // (round-tripped through `state as u8`). Out-of-range panics.
         match n {
             0 => Self::Default,
             1 => Self::RegionalIndicator,
@@ -96,14 +95,13 @@ pub struct Tables<Elem: 'static> {
 impl<Elem: Copy + 'static> Tables<Elem> {
     #[inline]
     pub fn get(&self, cp: u32) -> Elem {
-        // Zig: cp is u21; Rust uses u32 (caller must pass valid codepoint <= 0x10FFFF).
+        // `cp` is a Unicode scalar value; caller must pass a valid codepoint <= 0x10FFFF.
         let high = cp >> 8;
         let low = cp & 0xFF;
         self.stage3[self.stage2[self.stage1[high as usize] as usize + low as usize] as usize]
     }
 }
 
-// TODO(port): grapheme_tables is generated — re-run generator with .rs output.
 pub use grapheme_tables::TABLE;
 
 /// Determines if there is a grapheme break between two codepoints.
@@ -128,7 +126,7 @@ pub fn grapheme_break(cp1: u32, cp2: u32, state: &mut BreakState) -> bool {
 mod precompute {
     use super::{BreakState, GraphemeBreakNoControl, compute_grapheme_break_no_control};
 
-    /// Zig: packed struct(u13) { state: u3, gb1: u5, gb2: u5 } (LSB-first field order).
+    /// 13-bit key packed as `state(3) | gb1(5)<<3 | gb2(5)<<8` (LSB-first).
     #[repr(transparent)]
     #[derive(Copy, Clone)]
     pub(super) struct Key(u16);
@@ -149,7 +147,7 @@ mod precompute {
         }
     }
 
-    /// Zig: packed struct(u4) { result: bool, state: u3 } (LSB-first field order).
+    /// 4-bit value packed as `result(1) | state(3)<<1` (LSB-first).
     #[repr(transparent)]
     #[derive(Copy, Clone)]
     pub(super) struct Value(u8);
@@ -171,13 +169,13 @@ mod precompute {
         }
     }
 
-    // Zig: std.math.maxInt(u13) + 1
+    // 2^13: every possible 13-bit `Key` value.
     const DATA_LEN: usize = 1 << 13;
 
     pub(super) static DATA: [Value; DATA_LEN] = {
         let mut result = [Value(0); DATA_LEN];
 
-        // Zig computed max enum field value via @typeInfo; here it's known: 4.
+        // Highest `BreakState` discriminant.
         let max_state_int: usize = 4;
 
         // PERF(port): was comptime (@setEvalBranchQuota); const-eval in Rust.
@@ -202,7 +200,6 @@ mod precompute {
             state_int += 1;
         }
 
-        // Zig: bun.assert(@sizeOf(@TypeOf(result)) == 8192);
         const _: () = assert!(core::mem::size_of::<[Value; DATA_LEN]>() == 8192);
         result
     };
@@ -416,5 +413,3 @@ const fn is_extended_pictographic(gb: GraphemeBreakNoControl) -> bool {
         GraphemeBreakNoControl::ExtendedPictographic | GraphemeBreakNoControl::EmojiModifierBase
     )
 }
-
-// ported from: src/string/immutable/grapheme.zig

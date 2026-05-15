@@ -87,7 +87,7 @@ impl PmPkgCommand {
                 "<r>"
             )
         ));
-        // Note: Zig `{{` / `}}` escapes are for std.fmt; Rust raw string keeps literal braces.
+        // Note: Rust raw string keeps literal braces; no escape sequences needed.
         const HELP_TEXT: &str = r#"  Manage data in package.json
 
 <b>Subcommands<r>:
@@ -151,13 +151,13 @@ impl PmPkgCommand {
         };
 
         let source = Source::init_path_string(path, &contents[..]);
-        // Zig passes the global allocator; use the process-lifetime CLI arena
+        // Use the process-lifetime CLI arena
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let log: &mut Log = unsafe { ctx.log_mut() };
-        // const generics mirror Zig `.{ .is_json, .allow_comments,
-        // .allow_trailing_commas, .guess_indentation = true }` with the
+        // const generics mirror `{ is_json, allow_comments,
+        // allow_trailing_commas, guess_indentation = true }` with the
         // remaining JSONOptions fields at their defaults (false).
         let result = match json::parse_package_json_utf8_with_opts::<
             true,  // IS_JSON
@@ -656,8 +656,8 @@ impl PmPkgCommand {
                 .unwrap()
                 .put(dummy_bump(), &path_parts[0], expr)?;
 
-            // PORT NOTE: Zig's `path_parts[0] = ""` here was an ownership-transfer hack to neuter
-            // the caller's `defer allocator.free(part)`. That defer is gone (Vec<Box<[u8]>> drops
+            // PORT NOTE: `path_parts[0] = ""` here was an ownership-transfer hack to neuter
+            // the caller's deferred free. That deferred free is gone (Vec<Box<[u8]>> drops
             // its elements), so the assignment is deleted.
             return Ok(());
         }
@@ -722,8 +722,8 @@ impl PmPkgCommand {
             return Ok(());
         }
 
-        // PORT NOTE: Zig's `path[0] = ""` writes were an ownership-transfer hack to neuter the
-        // caller's `defer allocator.free(part)` (manual move semantics). In Zig, `current_key`
+        // PORT NOTE: `path[0] = ""` writes were an ownership-transfer hack to neuter the
+        // caller's deferred free (manual move semantics). `current_key`
         // is a VALUE copy of the slice descriptor taken before the clear, so `root.get(current_key)`
         // still sees the original key. That defer is gone in Rust (Drop handles it), so the
         // clears are deleted and `path` no longer needs interior mutation here.
@@ -885,7 +885,7 @@ impl PmPkgCommand {
             return Ok(false);
         }
         let old_len = old_props.len();
-        // G::Property is !Copy/!Clone in Rust. Zig bitwise-copies each kept
+        // G::Property is !Copy/!Clone in Rust. The original bitwise-copies each kept
         // entry and leaves the old buffer to the arena. Mirror that: take the
         // old list, ptr::read kept entries into the new list, then forget the
         // old buffer (CLI is one-shot — leak is intentional, see
@@ -901,7 +901,7 @@ impl PmPkgCommand {
                 }
             }
             // SAFETY: `old` is forgotten below so each Property is moved (not
-            // duplicated) into `new_props`, matching Zig's value-copy loop.
+            // duplicated) into `new_props`, matching the value-copy loop.
             new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
         }
         core::mem::forget(old);
@@ -938,7 +938,7 @@ impl PmPkgCommand {
         }
 
         let content = writer.ctx.written_without_trailing_zero();
-        // TODO(port): Zig used std.fs.cwd().writeFile; using bun_sys per porting rules (no std::fs).
+        // TODO(port): using bun_sys per porting rules (no std::fs).
         let path_z = bun_core::ZBox::from_bytes(path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(
@@ -954,5 +954,3 @@ impl PmPkgCommand {
 // ───── helpers ────────────────────────────────────────────────────────────
 
 use bun_core::fmt::parse_f64;
-
-// ported from: src/cli/pm_pkg_command.zig

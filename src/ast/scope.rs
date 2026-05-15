@@ -10,15 +10,14 @@ use crate::ts::TSNamespaceScope;
 /// Backed by `AstAlloc` so the table allocation *and* the per-key boxes land
 /// in the thread-local AST `mi_heap` and are reclaimed by the same
 /// `mi_heap_destroy` that frees the arena-allocated `Scope` holding the map.
-/// In Zig this was `bun.StringHashMapUnmanaged(Member)` whose backing array
-/// lived in the parser arena; the original Rust port placed both on the
-/// global heap, and since `Scope` itself sits in an arena slot whose `Drop`
-/// never runs, every member map leaked.
+/// The backing array used to live in the parser arena; an earlier Rust port
+/// placed both on the global heap, and since `Scope` itself sits in an arena
+/// slot whose `Drop` never runs, every member map leaked.
 pub type MemberHashMap = StringHashMap<Member, AstAlloc>;
 
-// PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
-// hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
-// longer derives `Clone` (private `origin` field); callers that need a shallow copy must
+// PORT NOTE: `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
+// hold it by value and `toAST` / `init` bitwise-copy it. Vec no longer derives
+// `Clone` (private `origin` field); callers that need a shallow copy must
 // `core::mem::take` or `core::ptr::read` instead.
 pub struct Scope {
     pub id: usize,
@@ -27,12 +26,12 @@ pub struct Scope {
     // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
     // `unsafe { &*parent.as_ptr() }` at every walk site.
     pub parent: Option<StoreRef<Scope>>,
-    /// `AstVec` for the same reason as `members` above — Zig's
-    /// `ArrayListUnmanaged(*Scope)` was arena-backed. Elements are `StoreRef`
-    /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
+    /// `AstVec` for the same reason as `members` above — arena-backed.
+    /// Elements are `StoreRef` so iteration yields safe `Deref` instead of
+    /// `unsafe { child.as_ref() }`.
     pub children: AstVec<StoreRef<Scope>>,
     pub members: MemberHashMap,
-    /// `AstVec`: Zig `ArrayListUnmanaged(Ref)`, arena-backed.
+    /// `AstVec`: arena-backed.
     pub generated: AstVec<Ref>,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
@@ -116,8 +115,7 @@ impl Scope {
         // SAFETY: `name` is always a slice into either the source-file contents
         // or the lexer string-table (the only producers of identifier text in
         // the parser). Both outlive the `AstAlloc` arena that owns this
-        // `Scope`, so storing the slice by reference (Zig's
-        // `StringHashMapUnmanaged` semantics) is sound — the map is freed by
+        // `Scope`, so storing the slice by reference is sound — the map is freed by
         // the same arena reset that would invalidate the source/string-table.
         // This avoids one `mi_heap_malloc` per declared identifier per scope,
         // which profiling showed as the parser's hottest slow-path allocation.
@@ -266,7 +264,7 @@ pub struct Member {
 impl Member {
     #[inline]
     pub fn eql(a: Member, b: Member) -> bool {
-        // PERF(port): Zig used @call(bun.callmod_inline, Ref.eql, ...) — forced inline.
+        // PERF(port): could force-inline `Ref::eql`.
         a.ref_.eql(b.ref_) && a.loc.start == b.loc.start
     }
 }
@@ -302,9 +300,7 @@ pub enum Kind {
 impl Kind {
     // TODO(port): std.json.Stringify protocol — confirm Rust-side json writer trait.
     pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // Zig: writer.write(@tagName(self)) — std.json writer wraps strings in quotes.
+        // JSON writers wrap strings in quotes.
         write!(writer, "\"{}\"", <&'static str>::from(self))
     }
 }
-
-// ported from: src/js_parser/ast/Scope.zig

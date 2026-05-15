@@ -17,7 +17,6 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
-// `pub const SSLConfig = @import("../socket/SSLConfig.zig");`
 pub use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 
@@ -26,7 +25,7 @@ pub struct ServerConfig {
     pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub has_idle_timeout: bool,
     // TODO: use webkit URL parser instead of bun's
-    // PORT NOTE: Zig stores `base_url: URL` borrowing into `base_uri: []const u8`
+    // PORT NOTE: previously stored `base_url: URL` borrowing into `base_uri: []const u8`
     // (self-referential). Rust keeps only the owned buffer; callers parse on
     // demand via [`ServerConfig::base_url`] so the borrow lifetime is tied to
     // `&self` instead of erased to `'static` (PORTING.md §Forbidden — lifetime
@@ -34,7 +33,7 @@ pub struct ServerConfig {
     pub base_uri: Box<[u8]>,
 
     pub ssl_config: Option<SSLConfig>,
-    // TODO(port): verify Vec<SSLConfig> drops elements; Zig looped + deinit each.
+    // TODO(port): verify Vec<SSLConfig> drops elements; original looped + deinit each.
     pub sni: Option<Vec<SSLConfig>>,
     pub max_request_body_size: usize,
     pub development: DevelopmentOption,
@@ -108,7 +107,7 @@ pub enum Address {
         port: u16,
         hostname: Option<ZBox>,
     },
-    /// Zig `[:0]const u8` — leading NUL is valid (Linux abstract sockets).
+    /// NUL-terminated bytes — leading NUL is valid (Linux abstract sockets).
     Unix(ZBox),
 }
 
@@ -121,8 +120,7 @@ impl Default for Address {
     }
 }
 
-// PORT NOTE: Zig `address.deinit(allocator)` freed hostname/unix and reset to .tcp{}.
-// In Rust, ZBox frees on Drop; resetting is `*self = Address::default()`.
+// PORT NOTE: ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DevelopmentOption {
@@ -146,7 +144,7 @@ impl ServerConfig {
         self.development.is_development()
     }
 
-    /// Parsed view over [`Self::base_uri`]. Replaces the Zig `base_url: URL`
+    /// Parsed view over [`Self::base_uri`]. Replaces the previous `base_url: URL`
     /// field, which borrowed self-referentially into `base_uri`.
     // PERF(port): re-parses on each call. The only out-of-module reader takes
     // `href` (== `base_uri`) directly; in-module reads happen once in `from_js`.
@@ -191,7 +189,7 @@ impl Default for RouteDeclaration {
     }
 }
 
-// PORT NOTE: Zig `RouteDeclaration.deinit` only freed `path`; ZBox drops automatically.
+// PORT NOTE: `RouteDeclaration.deinit` only freed `path`; ZBox drops automatically.
 
 // TODO: rename to StaticRoute.Entry
 pub struct StaticRouteEntry {
@@ -205,8 +203,8 @@ impl StaticRouteEntry {
         self.path.len() + self.route.memory_cost()
     }
 
-    /// Zig `isLessThan` — strict-weak ordering for `std.mem.sort`
-    /// (descending by path). Kept for API parity with the spec; the Rust
+    /// `is_less_than` — strict-weak ordering
+    /// (descending by path). Kept for API parity; the Rust
     /// `sort_by` callsite uses `strings::order` directly so it can return
     /// `Ordering::Equal` (Rust 1.81+ panics on a comparator that never does).
     pub fn is_less_than(_: (), this: &StaticRouteEntry, other: &StaticRouteEntry) -> bool {
@@ -262,7 +260,7 @@ impl ServerConfig {
         }
 
         // sort the cloned static routes by name for determinism
-        // PORT NOTE: Zig `std.mem.sort` takes a strict-weak `lessThan(a,b)` and
+        // PORT NOTE: a strict-weak `lessThan(a,b)`
         // tolerates `false`/`false` for equal elements; Rust `sort_by` requires
         // a total `Ordering`. `is_less_than` ≡ `strings::order(a,b) == Greater`
         // (descending by path), so the 3-way equivalent is `order(b, a)`.
@@ -272,7 +270,7 @@ impl ServerConfig {
     }
 
     pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
-        // Zig: `var that = this.*` (bitwise copy) then nulls ONLY {ssl_config,
+        // The original took a bitwise copy then nulled ONLY {ssl_config,
         // sni, address, websocket, bake} on `this`, leaving `this` aliasing
         // every other heap field with `that`. The sole caller is
         // `self.config = self.config.clone_for_reloading_static_routes()?;`, so
@@ -281,7 +279,7 @@ impl ServerConfig {
         //
         // Rust cannot alias owned Vec/Box/Strong; instead move every owning
         // field into `that` and leave the Copy scalars in place on `self` —
-        // matching Zig's observable post-state for `self` (idle_timeout,
+        // matching the observable post-state for `self` (idle_timeout,
         // development, reuse_port, http1/http3, etc. retained; resources gone) and
         // ensuring the assignment-drop of the residual `self` is a no-op.
         let mut that = ServerConfig {
@@ -336,10 +334,10 @@ impl ServerConfig {
     }
 }
 
-// PORT NOTE: Zig `applyStaticRoute` used comptime closures over (ssl, T) passed
+// PORT NOTE: `applyStaticRoute` used to pass closures over (ssl, T)
 // as C-style fn pointers to uws app.head/any/method. Rust monomorphizes free
 // `extern "C"` fns per `<SSL, T>` and registers them via the raw
-// `c::uws_method_handler` overload — equivalent to the Zig `handler_wrap` struct.
+// `c::uws_method_handler` overload.
 
 pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
@@ -461,7 +459,7 @@ pub fn apply_static_route_h3<T>(
 }
 
 /// Per-route trait that `apply_static_route{,_h3}` monomorphizes over —
-/// expresses Zig's `comptime T: type` (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
+/// (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
 /// Receivers are raw `*mut Self` because the route is registered as the uWS
 /// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
 /// `*mut` to mutate state and stash `self` into onAborted callbacks.
@@ -485,7 +483,7 @@ pub trait StaticRouteLike<const SSL: bool>: 'static {
 
 // PORT NOTE (layering): the Phase-A `RequestUnion`/`ResponseUnion` placeholders
 // were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse` (which already
-// model Zig's `.{ .h1 = req }` / `.{ .SSL = resp }`). Re-export the real types
+// model the `.h1 / .SSL` request/response unions). Re-export the real types
 // so any straggler reference resolves to the canonical opaque.
 pub use bun_uws_sys::AnyRequest as RequestUnion;
 pub use bun_uws_sys::AnyResponse as ResponseUnion;
@@ -649,7 +647,7 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 
 /// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
 /// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
-/// (`&'static [u8]`-backed, consumed by `Framework::auto`). Both mirror Zig's
+/// (`&'static [u8]`-backed, consumed by `Framework::auto`). Both mirror the
 /// single `bake.Framework.FileSystemRouterType`; the duplication is a Phase-A
 /// layering wart and this conversion stands in for an arena-dupe until the two
 /// structs unify. All bytes are duped into `arena` so the resulting `&'static`
@@ -719,7 +717,7 @@ impl ServerConfig {
         };
         let mut has_hostname = false;
 
-        // PORT NOTE: Zig `defer { if !hmr { assert(bake == null) } }` — moved to end of fn.
+        // PORT NOTE: deferred `{ if !hmr { assert(bake == null) } }` — moved to end of fn.
 
         if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
             args.development = DevelopmentOption::Production;
@@ -762,12 +760,11 @@ impl ServerConfig {
         };
 
         if let Some(origin) = &arguments.vm.transpiler.options.transform_options.origin {
-            // Zig: dupeZ — but base_uri is []const u8; the NUL is incidental.
+            // base_uri is plain bytes; any NUL is incidental.
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
-        // PORT NOTE: Zig `defer { if global.hasException() { ssl_config.deinit() } }` —
-        // SSLConfig drops automatically when `args` drops on error path.
+        // PORT NOTE: SSLConfig drops automatically when `args` drops on error path.
 
         let Some(arg) = arguments.next() else {
             return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
@@ -829,7 +826,7 @@ impl ServerConfig {
             };
             args.had_routes_object = true;
 
-            // PORT NOTE: in Zig the iterator options are a comptime struct; the
+            // PORT NOTE: the iterator options used to be compile-time; the
             // Rust port carries them as a runtime arg to `init()`.
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
             let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
@@ -845,8 +842,8 @@ impl ServerConfig {
             // iter drops at scope end
 
             let mut init_ctx_ = ServerInitContext {
-                // PORT NOTE: Zig threaded a `std.heap.ArenaAllocator` here; the
-                // Rust `ServerInitContext` dropped that field — bake owns the
+                // PORT NOTE: a per-init arena allocator used to be threaded here;
+                // `ServerInitContext` dropped that field — bake owns the
                 // arena instead (created below and moved into `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
@@ -892,7 +889,7 @@ impl ServerConfig {
                 }
 
                 if value == JSValue::FALSE {
-                    // Zig: `dupeZ(u8, path)` — appends a sentinel NUL without
+                    // Append a sentinel NUL without
                     // rejecting interior NULs (which already passed `is_all_ascii`).
                     let duped = ZBox::from_bytes(&*path);
                     args.negative_routes.push(duped);
@@ -1013,7 +1010,7 @@ impl ServerConfig {
                     use crate::bake::bake_body as bb;
                     use bun_options_types::schema::api::DotEnvBehavior;
 
-                    // PORT NOTE: Zig threaded `init_ctx.arena` from
+                    // PORT NOTE: `init_ctx.arena` used to be threaded from
                     // `ServerInitContext`; the Rust `ServerInitContext` dropped
                     // that field, so the arena is created here and moved into
                     // `UserOptions` (same lifetime: lives until `args.bake`
@@ -1091,7 +1088,7 @@ impl ServerConfig {
                     // init_ctx.arena drops at scope end
                 }
             } else {
-                // TODO(port): Zig asserted arena was empty (state.end_index == 0 && first == null).
+                // TODO(port): originally asserted arena was empty (state.end_index == 0 && first == null).
                 // bumpalo has no equivalent; skip assertion.
                 // init_ctx.arena drops at scope end
             }
@@ -1181,8 +1178,8 @@ impl ServerConfig {
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {
-                // Zig: `dupeZ(u8, host_str.slice())` — does not reject interior
-                // NUL; the C `bind()` consumer will simply truncate at it.
+                // Does not reject interior NUL; the C `bind()` consumer will
+                // simply truncate at it.
                 let hostname = ZBox::from_bytes(host_str.slice());
                 if let Address::Tcp { hostname: h, .. } = &mut args.address {
                     *h = Some(hostname);
@@ -1370,7 +1367,7 @@ impl ServerConfig {
                         if args.ssl_config.is_none() {
                             args.ssl_config = Some(ssl_config);
                         } else {
-                            // Zig: `ssl_config.server_name[0] == 0` (empty C string)
+                            // `ssl_config.server_name[0] == 0` (empty C string).
                             if ssl_config.server_name_bytes().unwrap_or(b"").is_empty() {
                                 drop(ssl_config);
                                 return Err(global.throw_invalid_arguments(format_args!(
@@ -1497,7 +1494,6 @@ impl ServerConfig {
                         );
                     }
                 }
-                // Zig: `const original_base_uri = args.base_uri; defer free(original_base_uri);`
                 // `base_url` (and so `hostname`/`pathname`) borrow into the
                 // original allocation; drop the borrow before reassigning.
                 drop(base_url);
@@ -1617,5 +1613,3 @@ pub struct UserRouteBuilder {
     pub route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }
-
-// ported from: src/runtime/server/ServerConfig.zig

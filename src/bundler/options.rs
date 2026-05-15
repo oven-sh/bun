@@ -27,7 +27,7 @@ mod analytics {
     #[allow(non_upper_case_globals)]
     pub mod features {
         use core::sync::atomic::AtomicUsize;
-        // Zig: `analytics.Features.{define,loaders,macros,external} += n`.
+        // Mirror of `analytics.Features.{define,loaders,macros,external}` counters.
         // Real statics live in `bun_analytics::features::*` (AtomicUsize).
         pub static define: AtomicUsize = AtomicUsize::new(0);
         pub static loaders: AtomicUsize = AtomicUsize::new(0);
@@ -48,16 +48,16 @@ pub use bun_options_types::global_cache::GlobalCache;
 
 // ── B-2 type aliases for incomplete lower-tier surfaces ──
 // TODO(b2-blocked): bun_resolver::package_json::ESModule::ConditionsMap — module
-// path doesn't expose this yet; local alias matches Zig `StringArrayHashMap(void)`.
+// path doesn't expose this yet; local alias matches the original `StringArrayHashMap(void)`.
 pub type ConditionsMap = StringArrayHashMap<()>;
 // TODO(b2-blocked): bun_sys::Dir — directory handle. Mapped to Fd for now
 // (matches `bun.FD.fromStdDir` pattern).
 pub type Dir = bun_sys::Fd;
-/// `Loader.HashTable` (Zig nested type alias). Unified with the canonical
+/// `Loader.HashTable` (originally a nested type alias). Unified with the canonical
 /// `bun_ast::LoaderHashTable` so the resolver and
 /// bundler share one nominal map type (PORTING.md crate-tier rule).
 pub(crate) use bun_ast::LoaderHashTable;
-/// `Loader.Map` (Zig nested type alias).
+/// `Loader.Map` (originally a nested type alias).
 pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
 
 /// `bun.http.MimeType` lives in `bun_http_types` (lower tier), not `bun_http`.
@@ -67,7 +67,7 @@ mod bun_http {
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
-/// `options.zig:Framework.ClientCssInJs` — TYPE_ONLY moved to top of module so
+/// `Framework.ClientCssInJs` — TYPE_ONLY moved to top of module so
 /// `entry_points.rs` (and the inline `options` mod) can resolve it before the
 /// gated `Framework` impl block below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -96,9 +96,9 @@ pub fn validate_path(
         return Box::default();
     }
     // TODO: switch to getFdPath()-based implementation
-    // PORT NOTE: Zig used `std.fs.path.resolve(arena, &.{cwd, rel_path})`;
+    // PORT NOTE: original resolved against `cwd` then dupe'd into an arena;
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
-    // buffer which is then boxed (matches the arena.dupe in the Zig path).
+    // buffer which is then boxed.
     let _ = path_kind;
     let out =
         bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
@@ -117,9 +117,9 @@ pub fn validate_path(
     Box::from(out)
 }
 
-// PORT NOTE: options.zig `stringHashMapFromArrays` — use `bun_core::util::{MapLike, from_entries}`
+// PORT NOTE: `stringHashMapFromArrays` — use `bun_core::util::{MapLike, from_entries}`
 // or inline the construction (see definesFromTransformOptions / loadersFromTransformOptions below).
-// Note `from_entries` reserves `iter.len()`; if you need the Zig over-reserve (`keys.len + N`),
+// Note `from_entries` reserves `iter.len()`; if you need the original over-reserve (`keys.len + N`),
 // call `MapLike::ensure_unused_capacity(total_cap)` yourself before zipping keys/values.
 
 // `AllowUnresolved` is defined canonically in
@@ -137,7 +137,7 @@ pub use bun_js_parser::options::AllowUnresolved;
 // plain `.clone()`.
 pub use bun_resolver::options::{ExternalModules, WildcardPattern};
 
-/// `options.zig` `ExternalModules.isNodeBuiltin`. Free fn (not an inherent
+/// `ExternalModules.isNodeBuiltin`. Free fn (not an inherent
 /// method) because `ExternalModules` is now a foreign type and Rust forbids
 /// inherent impls across crates (E0116).
 pub fn is_node_builtin(str: &[u8]) -> bool {
@@ -160,7 +160,7 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
         .collect()
 }
 
-/// `options.zig` `ExternalModules.init`. Free fn for the same orphan-rule
+/// `ExternalModules.init`. Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
 /// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
 pub fn init_external_modules(
@@ -260,7 +260,7 @@ pub use bun_options_types::bundle_enums::ModuleType;
 pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = ModuleType::LIST;
 
 // Re-export of `bun_ast::Target`.
-// Spec options.zig:379 has exactly ONE `Target`; re-export the canonical enum so
+// Spec has exactly ONE `Target`; re-export the canonical enum so
 // `BundleOptions.target`, `js_printer::Options.target`, the resolver, and css
 // targets all share one nominal type (kills the `to_bundle_enums_target` shim).
 pub(crate) use bun_ast::Target;
@@ -368,7 +368,7 @@ impl TargetExt for Target {
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
         ];
 
-        // PERF(port): keys were `&'static` in Zig; `StringHashMap` owns keys via
+        // PERF(port): keys were `&'static` originally; `StringHashMap` owns keys via
         // `Box<[u8]>` so `put` copies — tiny startup cost.
         if self == Target::Node {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
@@ -394,7 +394,7 @@ pub use bun_options_types::Format;
 pub use bun_options_types::WindowsOptions;
 
 // Re-export of `bun_ast::Loader`.
-// Spec options.zig:568 has exactly ONE `Loader`; re-export so the bundler's
+// Spec has exactly ONE `Loader`; re-export so the bundler's
 // `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the
 // same nominal type.
 pub(crate) use bun_ast::{Loader, LoaderOptional};
@@ -442,7 +442,7 @@ pub trait LoaderExt: Copy {
     // cross-crate callers (bun_jsc / bun_runtime) resolve them without a trait
     // import.
 
-    // TODO(port): `obj: anytype` — Zig duck-typed `.get(ext) -> Option<Loader>`.
+    // TODO(port): `obj: anytype` — original duck-typed `.get(ext) -> Option<Loader>`.
     // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`);
     // a `MapLike` trait is overkill for one call site.
     fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
@@ -593,7 +593,7 @@ pub fn get_loader_and_virtual_source<'a>(
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
         // Spec: `bun.pathLiteral("/[eval]")` — the eval/stdin entry path is built
-        // via `bun.pathLiteral` (cli.zig / run_command.zig / bun.js.zig), which
+        // via `bun.pathLiteral` (cli / run_command / bun_jsc), which
         // rewrites `/` → `\` on Windows, so the suffix uses the platform separator.
         const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
             b"\\[eval]"
@@ -634,7 +634,7 @@ pub fn get_loader_and_virtual_source<'a>(
             if !jsc_vm.blob_needs_read_file(blob) {
                 // SAFETY: `path.text` aliases jsc_vm-owned storage (blob filename
                 // or normalized specifier), which outlives the `virtual_source`
-                // returned to the caller — matches Zig `getLoaderAndVirtualSource`
+                // returned to the caller — matches the original `getLoaderAndVirtualSource`
                 // where `Fs.Path` and `logger.Source.path` share one type.
                 let static_text: &'static [u8] = bun_ast::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(bun_ast::Source {
@@ -710,7 +710,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
 #[cfg(windows)]
 const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh)];
 
-/// File-extension → default [`Loader`] map (options.zig `defaultLoaders`).
+/// File-extension → default [`Loader`] map (`defaultLoaders`).
 ///
 /// PERF(port): was `phf::Map<&[u8], Loader>`. phf hashes the full key (SipHash
 /// over up to 9 bytes) + probes a displacement table + does a final memcmp on
@@ -785,7 +785,7 @@ impl DefaultLoaders {
 #[test]
 fn default_loaders_match_table() {
     // Guard against drift between the length-gated match and the canonical
-    // tuple list above (Zig source of truth).
+    // tuple list above (canonical source of truth).
     for (ext, loader) in DEFAULT_LOADERS_POSIX {
         assert_eq!(DEFAULT_LOADERS.get(ext), Some(loader), "ext {:?}", ext);
     }
@@ -798,7 +798,7 @@ fn default_loaders_match_table() {
         b"".as_slice(),
         b".",
         b".rs",
-        b".zig",
+        b".lua",
         b".json6",
         b".markdow",
         b".markdownn",
@@ -959,7 +959,7 @@ pub fn defines_from_transform_options(
         None => (&[], &[]),
     };
 
-    // PORT NOTE: Zig stringHashMapFromArrays — inlined as concrete RawDefines build (over-reserves +4).
+    // PORT NOTE: original `stringHashMapFromArrays` — inlined as concrete RawDefines build (over-reserves +4).
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
     user_defines.reserve(input_keys.len() + 4);
     for (i, key) in input_keys.iter().enumerate() {
@@ -1136,7 +1136,7 @@ impl ResolveFileExtensions {
 }
 
 /// Convert a static `&[&[u8]]` default into an owned `Box<[Box<[u8]>]>`.
-/// PERF(port): the Zig kept these as borrowed `[]const string`; we own them so
+/// PERF(port): the original kept these as borrowed `[]const string`; we own them so
 /// user-provided lists (e.g. `transform.extension_order`) can be stored without
 /// `Box::leak` (PORTING.md §Forbidden patterns).
 #[inline]
@@ -1193,7 +1193,7 @@ pub fn loaders_from_transform_options(
         loaders.insert(ext, loader_values[i]);
     }
 
-    // PORT NOTE: Zig `getOrPutValue` → contains+insert; `Loader` is not `Default`
+    // PORT NOTE: original `getOrPutValue` → contains+insert; `Loader` is not `Default`
     // so the `V: Default`-gated `StringArrayHashMap::get_or_put_value` does not
     // apply. Semantics are identical (insert only when absent).
     for ext in DEFAULT_LOADER_EXT {
@@ -1302,10 +1302,10 @@ pub struct BundleOptions<'a> {
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
     ///
-    /// Zig: `*const bun.StringSet = &Runtime.Features.empty_bundler_feature_flags`.
+    /// Originally `*const bun.StringSet = &Runtime.Features.empty_bundler_feature_flags`.
     /// `None` ≡ the static empty set; `Some` is the owned `Box` returned by
     /// `Runtime::Features::init_bundler_feature_flags` (freed on Drop, matching
-    /// options.zig:1888-1892 which frees iff distinct from the static empty set).
+    /// the original which frees iff distinct from the static empty set).
     pub bundler_feature_flags: Option<Box<StringSet>>,
     pub loaders: LoaderHashTable,
     pub resolve_dir: Cow<'static, [u8]>,
@@ -1321,7 +1321,7 @@ pub struct BundleOptions<'a> {
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
     pub inject: Option<Box<[Box<[u8]>]>>,
-    // TODO(port): lifetime — `bun_url::URL<'a>` borrows its input string. Zig
+    // TODO(port): lifetime — `bun_url::URL<'a>` borrows its input string. Original
     // stored it borrowing `transform_options.origin` (sibling field). Using the
     // owned variant so the struct is self-contained.
     pub origin: bun_url::OwnedURL,
@@ -1346,7 +1346,7 @@ pub struct BundleOptions<'a> {
     pub target: Target,
     pub main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
-    /// PORT NOTE: raw `*mut` (not `&'a mut`) — Zig aliases the same `*Log`
+    /// PORT NOTE: raw `*mut` (not `&'a mut`) — original aliases the same `*Log`
     /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
     /// `&'a mut` here would assert uniqueness for `'a` and make every access
     /// through those sibling raw pointers UB under stacked borrows.
@@ -1395,7 +1395,7 @@ pub struct BundleOptions<'a> {
     pub global_cache: GlobalCache,
     pub prefer_offline_install: bool,
     pub prefer_latest_install: bool,
-    /// Spec `options.zig:1753`: `?*const Api.BunInstall`. Stored as a raw
+    /// Spec: `?*const Api.BunInstall`. Stored as a raw
     /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
     /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
     /// unrelated to `'a`; a typed reference forced an `unsafe { &*(p as *const _) }`
@@ -1504,7 +1504,7 @@ impl<'a> BundleOptions<'a> {
     /// them on the worker dropped the parent's allocation). Every owned field
     /// is `Clone`d; raw-pointer / `Copy` / `&'a` fields copy directly.
     ///
-    /// PERF(port): Zig's `transpiler.* = from.*` is a shallow struct copy
+    /// PERF(port): the original `transpiler.* = from.*` is a shallow struct copy
     /// (slices alias the parent's arena). The Rust port owns these as `Box`,
     /// so a per-worker clone allocates. Profile in Phase B; the hot fields
     /// (`define`, `loaders`, `conditions`) are O(dozens) entries.
@@ -1635,7 +1635,7 @@ impl<'a> BundleOptions<'a> {
     /// Shared-borrow the per-Transpiler `Log`.
     ///
     /// SAFETY: `self.log` is non-null once `from_api` / `Transpiler::init` has
-    /// run (Zig spec `options.zig:1714`: `log: *logger.Log`, non-optional).
+    /// run (spec: `log: *logger.Log`, non-optional).
     /// The pointee is the caller-owned arena `Log` which outlives `self`. The
     /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
@@ -1708,7 +1708,7 @@ impl<'a> BundleOptions<'a> {
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), bun_core::Error> {
         // PORT NOTE: spec `loadDefines(..., env: ?*const options.Env)` had its
-        // sole caller pass `&this.options.env` (transpiler.zig:334). Forwarding
+        // sole caller pass `&this.options.env`. Forwarding
         // that as `Option<&Env>` forced the caller into an aliased-`&mut` UB
         // raw-pointer dance under Stacked Borrows. Dropped the param and read
         // `&self.env` here instead — disjoint from the `self.define` /
@@ -1789,13 +1789,13 @@ impl<'a> BundleOptions<'a> {
                 .collect::<Vec<&[u8]>>(),
         );
 
-        // TODO(port): many fields below have Zig defaults via `= ...`; in Rust we initialize
+        // TODO(port): many fields below have struct-literal defaults in the original; in Rust we initialize
         // each explicitly. Phase B: add a `Default`-ish builder.
         let mut opts = BundleOptions {
             footer: Cow::Borrowed(b""),
             banner: Cow::Borrowed(b""),
             log,
-            // PORT NOTE: `define` is `undefined` in Zig and filled by `loadDefines` later;
+            // PORT NOTE: `define` is uninitialized in the original and filled by `loadDefines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
             define: Box::new(defines::Define {
                 identifiers: Default::default(),
@@ -1921,7 +1921,7 @@ impl<'a> BundleOptions<'a> {
         opts.env.disable_default_env_files = transform.disable_default_env_files;
 
         if let Some(origin) = &transform.origin {
-            // PORT NOTE: ownership — `URL<'_>` borrows its input. The Zig
+            // PORT NOTE: ownership — `URL<'_>` borrows its input. The original
             // `URL.parse` borrowed `transform.origin` (a sibling of
             // `opts.transform_options`); here `OwnedURL` owns the href and
             // callers borrow via `.url()`.
@@ -2001,7 +2001,7 @@ impl<'a> BundleOptions<'a> {
                 .collect();
         }
 
-        // PORT NOTE: Zig passed `log` directly; reborrow the raw `*mut Log`
+        // PORT NOTE: original passed `log` directly; reborrow the raw `*mut Log`
         // for the duration of this call only.
         opts.external = init_external_modules(
             &mut fs.fs,
@@ -2034,7 +2034,7 @@ impl<'a> BundleOptions<'a> {
         if opts.write && !opts.output_dir.is_empty() {
             let handle = open_output_dir(&opts.output_dir)?;
             opts.output_dir_handle = Some(handle);
-            // PORT NOTE: Zig `fs.getFdPath(.fromStdDir(handle))` interns into
+            // PORT NOTE: original `fs.getFdPath(.fromStdDir(handle))` interns into
             // `dirname_store`; the inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
             let mut buf = bun_paths::PathBuffer::uninit();
@@ -2067,7 +2067,7 @@ impl Drop for BundleOptions<'_> {
     fn drop(&mut self) {
         // self.define dropped automatically (Box<Define>).
         //
-        // bundler_feature_flags: Zig compared the pointer to
+        // bundler_feature_flags: original compared the pointer to
         // `&Runtime.Features.empty_bundler_feature_flags` and freed iff distinct.
         // In Rust the field is `Option<Box<StringSet>>`; `None` ≡ the static
         // empty set (nothing to free), `Some` drops the Box here automatically.
@@ -2109,12 +2109,11 @@ pub mod bundle_options_defaults {
 }
 
 pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
-    // PORT NOTE: Zig used `std.fs.cwd().openDir/.makeDir`; routed through
-    // `bun_sys` per CLAUDE.md (never `std::fs`).
+    // PORT NOTE: routed through `bun_sys` per CLAUDE.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(d),
         Err(_) => {
-            // Zig: `std.fs.cwd().makeDir(output_dir)` — single-level mkdir
+            // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
             // recursive `mkdir -p` variant) here.
             let mut buf = bun_paths::PathBuffer::uninit();
@@ -2148,7 +2147,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
     }
 }
 
-/// Port of `fs.zig` `Fs.File` (path + contents pair). `bun_resolver::fs`
+/// Port of `Fs.File` (path + contents pair). `bun_resolver::fs`
 /// does not surface this type yet (TODO(b2-blocked)); local mirror keeps
 /// `TransformOptions.entry_point` self-contained.
 pub struct EntryPointFile {
@@ -2216,7 +2215,7 @@ impl TransformOptions {
             loader,
             resolve_dir: Box::from(entry_point.path.name.dir),
             entry_point,
-            // TODO(port): resolve_dir borrows from entry_point in Zig; cloned here
+            // TODO(port): resolve_dir borrows from entry_point in the original; cloned here
             main_fields: Target::default_main_fields_map()[Target::Browser],
             jsx: if loader.is_jsx() {
                 Some(jsx::Pragma::default())
@@ -2540,7 +2539,7 @@ pub enum PlaceholderField {
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
 pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
-    // TODO(port): Zig used comptime @tagName concatenation; here we match explicitly.
+    // TODO(port): original used comptime tag-name concatenation; here we match explicitly.
     let needle: &[u8] = match field {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
@@ -2552,8 +2551,8 @@ pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool 
 }
 
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
-// PORT NOTE: Zig `format(self, comptime _, _, writer: anytype)` writes raw path bytes via
-// writer.writeAll; mapped to a byte-writer free fn (not `core::fmt::Display`) per
+// PORT NOTE: the original duck-typed `format(...)` writes raw path bytes via
+// `writer.writeAll`; mapped to a byte-writer free fn (not `core::fmt::Display`) per
 // PORTING.md "(comptime X: type, arg: X) writer → &mut impl bun_io::Write (bytes)".
 pub(crate) fn path_template_print<W: bun_io::Write>(
     writer: &mut W,
@@ -2723,7 +2722,7 @@ pub static PLACEHOLDER_MAP: phf::Map<&'static [u8], PlaceholderField> = phf::phf
     b"target" => PlaceholderField::Target,
 };
 
-// TODO(port): Zig PathTemplate constants used &'static str fields; Rust struct uses Box<[u8]>.
+// TODO(port): the original PathTemplate constants used &'static str fields; Rust struct uses Box<[u8]>.
 // PathTemplateConst is a const-friendly mirror; convert to PathTemplate at use sites.
 #[derive(Debug, Clone, Copy)]
 pub struct PathTemplateConst {
@@ -2751,8 +2750,8 @@ impl PlaceholderConst {
 }
 
 impl PathTemplateConst {
-    /// Byte-writer form mirroring [`PathTemplate::print`] (Zig
-    /// `PathTemplate.format`). Kept as an inherent method so callers writing
+    /// Byte-writer form mirroring [`PathTemplate::print`]
+    /// (`PathTemplate.format`). Kept as an inherent method so callers writing
     /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
     /// blanket [`core::fmt::Display`] impl below.
     pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
@@ -2774,7 +2773,7 @@ impl PathTemplateConst {
 
 impl core::fmt::Display for PathTemplateConst {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORT NOTE: Zig `format` writes raw bytes; route through a Vec then
+        // PORT NOTE: original `format` writes raw bytes; route through a Vec then
         // emit via `write_str` (paths are UTF-8 in practice; lossy fallback
         // mirrors `bstr::BStr` Display semantics).
         let mut buf = Vec::<u8>::new();
@@ -2785,7 +2784,7 @@ impl core::fmt::Display for PathTemplateConst {
 
 impl core::fmt::Display for PathTemplate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORT NOTE: Zig `PathTemplate.format` writes raw path bytes via
+        // PORT NOTE: original `PathTemplate.format` writes raw path bytes via
         // `writer.writeAll`; route through a Vec then emit via `write_str`
         // (paths are UTF-8 in practice; lossy fallback mirrors `bstr::BStr`
         // Display semantics). Mirrors `PathTemplateConst` Display above.
@@ -2809,5 +2808,3 @@ impl From<PathTemplateConst> for PathTemplate {
         }
     }
 }
-
-// ported from: src/bundler/options.zig

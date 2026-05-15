@@ -115,7 +115,7 @@ interface TypePropsMap<T> {
 type PropertyMapKeys = keyof TypePropsMap<any>;
 type Props<T, K extends TypeKind> = K extends PropertyMapKeys ? TypePropsMap<T>[K] : BaseTypeProps<T, K>;
 
-export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "zigVirtualMachine">;
+export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "nativeVirtualMachine">;
 
 function builtinType<T>() {
   return <K extends TypeKind>(kind: K) => new TypeImpl(kind, undefined as any, {}) as Type<T, any> as Type<T, K>;
@@ -132,7 +132,7 @@ export namespace t {
    * Can only be used as an argument type.
    * Tells the code generator to pass `*JSC.VirtualMachine` as a parameter
    */
-  export const zigVirtualMachine = builtinType<never>()("zigVirtualMachine");
+  export const nativeVirtualMachine = builtinType<never>()("nativeVirtualMachine");
 
   /**
    * Provides the raw JSValue from the JavaScriptCore API. Avoid using this if
@@ -211,9 +211,9 @@ export namespace t {
    * })
    * ```
    *
-   * ```zig
-   * // foo.zig
-   * pub fn foo(bar: []const u8) void {
+   * ```rust
+   * // foo.rs
+   * pub fn foo(bar: &[u8]) {
    *   // ...
    * }
    * ```
@@ -288,11 +288,11 @@ export namespace t {
   }
 
   /**
-   * Equivalent to `stringEnum`, but using an enum sourced from the given Zig
+   * Equivalent to `stringEnum`, but using an enum sourced from the given Rust
    * file. Use this to get an enum type that can have functions added.
    */
-  export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
-    return new TypeImpl("zigEnum", { file, impl });
+  export function nativeEnum(file: string, impl: string): Type<string, "nativeEnum"> {
+    return new TypeImpl("nativeEnum", { file, impl });
   }
 }
 
@@ -321,14 +321,14 @@ interface FuncOptionsWithVariant extends FuncMetadata {
    * });
    * ```
    *
-   * ```zig
-   * // foo.zig
-   * pub fn foo1(a: i32) i32 {
-   *    return a;
+   * ```rust
+   * // foo.rs
+   * pub fn foo1(a: i32) -> i32 {
+   *    a
    * }
    *
-   * pub fn foo2(a: i32, b: i32) bool {
-   *     return a == b;
+   * pub fn foo2(a: i32, b: i32) -> bool {
+   *     a == b
    * }
    * ```
    */

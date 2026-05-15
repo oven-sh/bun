@@ -35,7 +35,7 @@
 #include "headers.h"
 #include "blob.h"
 #include "BunString.h"
-#include "ZigGeneratedClasses.h"
+#include "BunGeneratedClasses.h"
 #include "CloseEvent.h"
 #include <wtf/text/Base64.h>
 // #include "ContentSecurityPolicy.h"
@@ -549,8 +549,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     // Materialize host/path as WTF::String so the BunString wrappers hold a
     // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
-    // ZigString wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
-    // tag and corrupt the HTTP upgrade request build in Zig.
+    // UnsafeStringView wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
+    // tag and corrupt the HTTP upgrade request build on the native side.
     String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
     String unixSocketPathString;
@@ -603,7 +603,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         port = userPort.value();
     }
 
-    // Hold WTF::Strings so the BunString wrappers stay valid for the Zig call.
+    // Hold WTF::Strings so the BunString wrappers stay valid for the native call.
     Vector<String, 8> headerNameStrings;
     Vector<String, 8> headerValueStrings;
     Vector<BunString, 8> headerNames;
@@ -694,7 +694,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
     BunString targetAuth = Bun::toString(targetAuthorization);
 
-    // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
+    // Pass SSLConfig pointer to the upgrade client (ownership transferred - it will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
     void* sslConfig = m_sslConfig.release();
 
@@ -885,15 +885,15 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 {
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        auto zigStr = Zig::toZigString(message);
-        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr, static_cast<uint8_t>(op));
+        auto strView = Bun::toUnsafeStringView(message);
+        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &strView, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        auto zigStr = Zig::toZigString(message);
-        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr, static_cast<uint8_t>(op));
+        auto strView = Bun::toUnsafeStringView(message);
+        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &strView, static_cast<uint8_t>(op));
         break;
     }
     // case ConnectedWebSocketKind::Server: {
@@ -917,7 +917,7 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 
 // Called from close()/terminate() while m_state == CONNECTING.
 //
-// The Zig-side upgrade client's cancel() clears its back-pointer to us
+// The native upgrade client's cancel() clears its back-pointer to us
 // without calling didAbruptClose, so none of didConnect /
 // didFailWithErrorCode / didClose will ever fire for this socket. We
 // must therefore finish the close ourselves: cancel the upgrade, queue
@@ -991,15 +991,15 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
-        Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonZigStr);
+        UnsafeStringView reasonStrView = Bun::toUnsafeStringView(reason);
+        Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonStrView);
         updateHasPendingActivity();
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
-        Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonZigStr);
+        UnsafeStringView reasonStrView = Bun::toUnsafeStringView(reason);
+        Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonStrView);
         updateHasPendingActivity();
         // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
@@ -1500,7 +1500,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             context->postTask([name = eventName, buffer = WTF::move(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
                 auto* globalObject = context.jsGlobalObject();
-                auto* subclassStructure = static_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
+                auto* subclassStructure = static_cast<Bun::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
                 JSUint8Array* uint8array = JSUint8Array::create(globalObject, subclassStructure, buffer.copyRef(), 0, length);
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
                 MessageEvent::Init init;
@@ -1896,9 +1896,9 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
     webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
 }
 
-extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
+extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const UnsafeStringView* str)
 {
-    WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
+    WTF::String wtf_str = clone ? Bun::toStringCopy(*str) : Bun::toString(*str);
     webSocket->didReceiveMessage(WTF::move(wtf_str));
 }
 extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, const uint8_t* bytes, size_t len, const uint8_t op)

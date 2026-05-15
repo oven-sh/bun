@@ -39,10 +39,10 @@ impl AdditionalOnAbortCallback {
     }
 }
 
-// PORT NOTE (transport selection): Zig `NewRequestContext` is a comptime
-// type-function over `(ssl_enabled, debug_mode, ThisServer, http3)` and picks
+// PORT NOTE (transport selection): `NewRequestContext` is parameterized
+// over `(ssl_enabled, debug_mode, ThisServer, http3)` and picks
 // `Resp = uws.H3.Response | uws.NewApp(ssl).Response` / `Req = uws.H3.Request |
-// uws.Request` at comptime. Stable Rust cannot drive an associated type from a
+// uws.Request`. Stable Rust cannot drive an associated type from a
 // const-generic `bool` without specialization, and an early `Transport`
 // helper-trait approach forced `where TransportFor<SSL,H3>: Transport` bounds
 // onto every generic that named `RequestContext` (which Rust then *cannot*
@@ -123,9 +123,9 @@ pub type RequestContextStackAllocator<
 > = bun_collections::hive_array::Fallback<RequestContext<ThisServer, SSL, DBG, H3>, 2048>;
 
 thread_local! {
-    // TODO(port): Zig `pub threadlocal var pool: ?*RequestContextStackAllocator = null;` is
-    // per-monomorphization. Rust thread_local! cannot be generic; Phase B: move into ThisServer
-    // or use a per-instantiation static via macro.
+    // TODO(port): the `pool` thread-local was per-monomorphization. Rust thread_local!
+    // cannot be generic; Phase B: move into ThisServer or use a per-instantiation
+    // static via macro.
     static POOL: core::cell::Cell<*mut c_void> = const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 
@@ -145,7 +145,7 @@ pub struct RequestContext<
     // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
-    // PORT NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
+    // PORT NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
     // the C++ allocation. Store the raw pointer. The request holds TWO counts:
     // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
@@ -279,7 +279,7 @@ use bun_jsc::event_loop::EventLoop;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///
-/// Replaces the Zig `defer ctx.deref()` pattern in promise-callback host
+/// Replaces the `defer ctx.deref()` pattern in promise-callback host
 /// functions — `NativePromiseContext::take` hands back a +1 ref, and the
 /// callback must drop it on every exit path. Holds the raw pointer (not
 /// `&mut`) so the body can keep using its own `&mut Self` view without
@@ -311,7 +311,7 @@ where
 /// `from_js` returns the C++-owned cell pointer for `value`. The caller must
 /// guarantee that:
 /// - no other Rust `&mut Response` aliasing this cell is live for the
-///   lifetime of the returned reference (the .zig spec returns a raw
+///   lifetime of the returned reference (the original returned a raw
 ///   `?*Response` with no exclusivity claim — the `&mut` here is a port-side
 ///   upgrade), and
 /// - `value` is kept GC-rooted (ensure_still_alive / protect()) for as long
@@ -350,14 +350,14 @@ mod shim {
         // See `signal_aborted` — counted ref keeps pointee live.
         bun_ptr::BackRef::from(*s).signal(g, r)
     }
-    /// Release BOTH refcounts the request holds on its AbortSignal, mirroring
-    /// the Zig `defer { signal.pendingActivityUnref(); signal.unref(); }` pair.
+    /// Release BOTH refcounts the request holds on its AbortSignal:
+    /// `signal.pendingActivityUnref()` then `signal.unref()`.
     /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline]
     pub fn signal_release(s: NonNull<AbortSignal>) {
-        // See `signal_aborted`. Order matches Zig: pending-activity first,
+        // See `signal_aborted`. Order: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.
         let signal = bun_ptr::BackRef::from(s);
@@ -422,9 +422,9 @@ use bun_js_parser::parser::Runtime::Fallback;
 /// PORT NOTE: `Api.JsException` is split across two crates in the Rust port —
 /// `bun_jsc::schema_api::JsException` (carries `stack`, used by
 /// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
-/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle). In
-/// Zig these are the *same* struct, so `runErrorHandler` populates the list and
-/// `Problems.exceptions` consumes it directly. Bridge the two here so the
+/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle).
+/// Originally these were the *same* struct, so `runErrorHandler` populated the
+/// list and `Problems.exceptions` consumed it directly. Bridge the two here so the
 /// fallback page actually carries the captured exceptions instead of an empty
 /// array (react-response.test.ts asserts `exceptions[0].message`).
 fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
@@ -446,10 +446,10 @@ macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $(
 macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
 
 /// Per-monomorphization C-ABI shim table for the four promise-reaction host
-/// fns. Zig's `toJSHostFn(onResolve)` mints a fresh `extern fn` per comptime
-/// instantiation **and `@export`s the same pointer**, so the value passed to
-/// `then_with_value` is identical to the `Bun__HTTPRequestContext*__on*`
-/// symbol that C++'s `GlobalObject::promiseHandlerID` compares against.
+/// fns. The exported wrapper and the value passed to `then_with_value` must
+/// be the *same* function pointer — that is what C++'s
+/// `GlobalObject::promiseHandlerID` compares against
+/// (`Bun__HTTPRequestContext*__on*`).
 ///
 /// In Rust the `#[no_mangle]` exports cannot live on a generic fn, so they are
 /// emitted as concrete wrappers by `request_ctx_exports!` below. The trait
@@ -539,10 +539,9 @@ where
     // These consts must resolve to the *exported* `#[no_mangle]` symbols
     // (`Bun__HTTPRequestContext*__on*`), not the inner generic
     // `host_on_*::<..>` shims: the function-pointer value is what C++'s
-    // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
+    // `GlobalObject::promiseHandlerID` compares against (BunGlobalObject.cpp),
     // and the exported wrapper has a different address from the generic it
-    // forwards to. The Zig spec gets this for free because `@export` re-labels
-    // the existing fn; in Rust we route through a const-fn lookup keyed on the
+    // forwards to. We route through a const-fn lookup keyed on the
     // (SSL, DEBUG, H3) tuple so the blanket impl can name concrete exports.
     const ON_RESOLVE: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).0;
     const ON_REJECT: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).1;
@@ -621,7 +620,7 @@ where
 
     /// Take the pooled request-body slot out of `self` and release the
     /// intrusive ref this context held on it (returns it to the hive when
-    /// last). Mirrors the Zig `body.unref()` on `deinit` / final body chunk.
+    /// last). Equivalent to `body.unref()` on `deinit` / final body chunk.
     #[inline]
     fn request_body_take_unref(&mut self) {
         if let Some(mut p) = self.request_body.take() {
@@ -651,7 +650,7 @@ where
         if let Some(server) = self.server {
             // SAFETY: BACKREF. `ServerLike::vm()` returns `&VirtualMachine`
             // but `drain_microtasks` needs `&mut`; cast through the raw
-            // pointer (Zig held a `*VirtualMachine`).
+            // pointer.
             unsafe {
                 let vm = std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut();
                 (*vm).drain_microtasks();
@@ -1038,7 +1037,7 @@ where
         log: &mut bun_ast::Log,
         err: bun_core::Error,
         exceptions: &[Api::JsException],
-        fmt: core::fmt::Arguments<'_>, // TODO(port): Zig `comptime fmt: string, args: anytype`
+        fmt: core::fmt::Arguments<'_>, // TODO(port): was a comptime format string + args tuple
     ) {
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
@@ -1060,7 +1059,6 @@ where
             reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd: Some(cwd.to_vec().into_boxed_slice()),
             problems: Some(Api::Problems {
-                // Zig: `@truncate(@intFromError(err))`.
                 code: err.as_u16(),
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
@@ -1403,8 +1401,7 @@ where
         let vm = std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut();
         let global_this = server.global_this();
         // Drop one ref on every exit path. Declared before the microtask drain
-        // so it runs *after* (LIFO) — matches Zig `defer this.deref()` ordered
-        // after `defer drainMicrotasks()`.
+        // so it runs *after* (LIFO) — `deref()` ordered after `drainMicrotasks()`.
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1683,7 +1680,7 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets
+                // TODO(port): `withPathLike(file.pathlike)` also set
                 // `.fd` for the Fd arm; `bun_sys::Error` only carries a path
                 // slice, so render the fd as bytes for the error path.
                 let js_err = match &file.pathlike {
@@ -1711,7 +1708,7 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets `.fd`
+                // TODO(port): `withPathLike(file.pathlike)` also set `.fd`
                 // for the Fd arm; `bun_sys::Error::with_path` only carries a
                 // path slice, so the fd arm gets no path attached.
                 let path_bytes: &[u8] = match &file.pathlike {
@@ -1926,7 +1923,7 @@ where
     }
 
     /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
-    /// Mirrors Zig `response_stream.detach(); response_stream.sink.destroy()` —
+    /// Equivalent to `response_stream.detach(); response_stream.sink.destroy()` —
     /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
     /// outer allocation.
     fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
@@ -2099,8 +2096,8 @@ where
                         stream_log!("promise Fulfilled");
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        // PORT NOTE: reshaped for borrowck — Zig `defer` runs
-                        // after handle_resolve_stream; emulate by running the
+                        // PORT NOTE: reshaped for borrowck — the deferred cleanup
+                        // ran after handle_resolve_stream; emulate by running the
                         // body first then the deferred cleanup.
                         Self::handle_resolve_stream(this);
                         stream.done(global_this);
@@ -2766,9 +2763,9 @@ where
         }
 
         if let Some(resp) = req.response_weakref.get() {
-            // PORT NOTE: Zig captures `bodyValue` ptr first then derefs after
-            // the stream calls; reordered here for borrowck (semantically
-            // identical — the Zig check reads through the pointer post-detach).
+            // PORT NOTE: original captured the `bodyValue` ptr first then deref'd
+            // after the stream calls; reordered here for borrowck (semantically
+            // identical — the original check read through the pointer post-detach).
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
@@ -2898,7 +2895,7 @@ where
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
                     if let Some(stream) = lock.readable.get(global_this) {
                         // we hold the stream alive until we're done with it
-                        // PORT NOTE: Zig `= lock.readable` is a bitwise struct copy (no
+                        // PORT NOTE: `= lock.readable` was a bitwise struct copy (no
                         // dtor); Rust `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref =
                             core::mem::take(&mut lock.readable);
@@ -3376,8 +3373,7 @@ where
 
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), &self.blob);
-        // PORT NOTE: Zig `defer if (content_type_needs_free) content_type.deinit()`.
-        // `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
+        // PORT NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
             // Drop of `content_type` (moved into closure capture below would
@@ -3399,7 +3395,7 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            // Zig: `defer headers_.deref()`. `HeadersRef` is RAII — its Drop
+            // `HeadersRef` is RAII — its Drop
             // already calls `WebCore__FetchHeaders__deref`, so an explicit
             // `.deref()` here would resolve (via DerefMut) to the inherent
             // `FetchHeaders::deref` and double-free the C++ object.
@@ -3637,7 +3633,7 @@ where
 
         // This is the start of a task, so it's a good time to drain
         if let Some(body) = this.request_body_mut() {
-            // The up-front maxRequestBodySize check in server.zig only
+            // The up-front maxRequestBodySize check in the server only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
             // omit it, so cap accumulated bytes here too — otherwise a
             // single CL-less stream can grow request_body_buf without
@@ -3698,7 +3694,7 @@ where
                     //     body.value = .{ .InlineBlob = jsc.WebCore.InlineBlob.concat(bytes.items, chunk) };
                     //     this.request_body_buf.clearAndFree(this.allocator);
                     // } else {
-                    // TODO(port): ensureTotalCapacityPrecise can OOM in Zig; Rust Vec aborts.
+                    // TODO(port): ensureTotalCapacityPrecise was fallible-on-OOM; Rust Vec aborts.
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
                     bytes.extend_from_slice(chunk);
                     debug_assert_eq!(bytes.len(), total);
@@ -3851,8 +3847,7 @@ bun_jsc::jsc_host_abi! {
 }
 
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────
-// Zig: `comptime { @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" }); ... }`
-// where `export_prefix = "Bun__HTTPRequestContext" ++ (debug ? "Debug" : "") ++ (h3 ? "H3" : ssl ? "TLS" : "")`.
+// Each export name is `"Bun__HTTPRequestContext" ++ (debug ? "Debug" : "") ++ (h3 ? "H3" : ssl ? "TLS" : "")` ++ "__on*".
 // Rust generics cannot own `#[no_mangle]` symbols, so each of the 6 concrete
 // instantiations × 4 callbacks is spelled out via `request_ctx_exports!`. The
 // generic body lives on the `impl<ThisServer, ..> RequestContext` block above
@@ -3866,7 +3861,7 @@ macro_rules! request_ctx_exports {
     );* $(;)?) => {$(
         // Named C-ABI symbols for the C++ side. The bodies forward to the
         // generic `host_on_*` shims monomorphized at this tuple — `#[no_mangle]`
-        // pins the link name (Zig: `@export(&jsc.toJSHostFn(onResolve), …)`).
+        // pins the link name.
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
@@ -4042,9 +4037,9 @@ pub struct SendfileContext {
     pub total: BlobSizeType,
 }
 
-// `NewFlags(comptime debug_mode: bool)` — packed struct(u16). All fields are bool
-// (with two debug-conditional ones), so `bitflags!` over u16 works. The Zig void/padding
-// fields collapse to absent bits in release; here we keep all bits and just gate the
+// `NewFlags` — packed struct(u16). All fields are bool
+// (with two debug-conditional ones), so `bitflags!` over u16 works. The original
+// void/padding fields collapse to absent bits in release; here we keep all bits and just gate the
 // `is_web_browser_navigation` / `has_finalized` accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
@@ -4183,9 +4178,8 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();
-                // Zig: `if (content_slice.allocator.isNull()) null else allocator` —
-                // i.e. dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
+                // Dupe only when the latin1/utf16 slice was heap-converted.
+                let dupe = matches!(content_slice, bun_core::UTF8Slice::Owned(_));
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,
@@ -4216,5 +4210,3 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 // `NewServer` monomorphizations.
 
 static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz");
-
-// ported from: src/runtime/server/RequestContext.zig

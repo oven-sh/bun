@@ -21,8 +21,8 @@ pub use streaming::StreamingClap;
 pub use bun_clap_macros::{__parse_param_impl, __parse_params_impl};
 
 /// Parse a single param spec string (e.g. `"-h, --help  Display this help"`)
-/// into a const `Param<Help>` literal at compile time. This is the Rust
-/// equivalent of Zig's comptime `clap.parseParam(...) catch unreachable`.
+/// into a const `Param<Help>` literal at compile time. This is the const
+/// form of `clap.parseParam(...)`.
 ///
 /// The argument **must** be a string literal; parse errors surface as compile
 /// errors at the call site.
@@ -33,7 +33,7 @@ macro_rules! parse_param {
     };
 }
 
-/// Alias for [`parse_param!`] matching the Zig call-site spelling
+/// Alias for [`parse_param!`] matching the original call-site spelling
 /// (`clap.parseParam` → `clap::param!`).
 #[macro_export]
 macro_rules! param {
@@ -42,8 +42,8 @@ macro_rules! param {
     };
 }
 
-/// Const-time `Param<Help>` slice concatenation — the Rust analogue of Zig's
-/// comptime `a ++ b ++ c` over param tables. Produces a `&'static [Param<Help>]`
+/// Const-time `Param<Help>` slice concatenation over param tables.
+/// Produces a `&'static [Param<Help>]`
 /// baked into rodata; no `LazyLock`, no heap, no init closure in `.text`.
 ///
 /// Every `$part` must be a `const`-evaluable `&[Param<Help>]` (a `const` item or
@@ -59,7 +59,7 @@ macro_rules! concat_params {
 }
 
 /// Build a `&'static ConvertedTable` from a const-evaluable
-/// `&[Param<Help>]` at compile time — the Rust analogue of Zig's
+/// `&[Param<Help>]` at compile time — the const-eval form of the
 /// `ComptimeClap(Id, params)` type-generator. The converted `[Param<usize>; N]`
 /// array, the three category counts, the short-name index, *and* the sorted
 /// long-name hash index all land in rodata, so [`parse_with_table`] does no
@@ -257,7 +257,6 @@ impl Names {
     /// long, or any long alias. Shared predicate for `has_flag`/`find_param`.
     pub fn matches(&self, name: &[u8]) -> bool {
         if let Some(s) = self.short {
-            // Zig: mem.eql(u8, name, "-" ++ [_]u8{s})
             if name.len() == 2 && name[0] == b'-' && name[1] == s {
                 return true;
             }
@@ -310,8 +309,7 @@ pub struct Param<Id> {
 
 impl<Id: Default> Default for Param<Id> {
     fn default() -> Self {
-        // SAFETY note: Zig used `std.mem.zeroes(Id)` / `std.mem.zeroes(Names)`.
-        // We require `Id: Default` instead — same effect for the `Help` payload.
+        // We require `Id: Default` so the `Help` payload zeroes cleanly.
         Self {
             id: Id::default(),
             names: Names::default(),
@@ -340,8 +338,8 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 }
 
 /// Optional diagnostics used for reporting useful errors
-// PORT NOTE: Zig `Diagnostic` borrows `arg`/`name.long` from the arg iterator. Rust
-// can't tie that lifetime through `&mut Diagnostic` without invariance headaches, and
+// PORT NOTE: the original `Diagnostic` borrows `arg`/`name.long` from the arg iterator.
+// Rust can't tie that lifetime through `&mut Diagnostic` without invariance headaches, and
 // this is an error-path-only struct, so it owns its bytes instead. The `name: Names`
 // field is flattened to `short`/`long` because `Names.long` is `&'static`.
 #[derive(Default)]
@@ -420,8 +418,8 @@ fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
 #[derive(Clone, Copy)]
 pub struct Help {
     /// The description text exactly as written in the param spec — may still
-    /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which (like
-    /// Zig's `clap.help`) emit it verbatim, and as the source for the ANSI form
+    /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which
+    /// emit it verbatim, and as the source for the ANSI form
     /// built lazily by [`pretty_help_desc`] on the `bun --help` colour path.
     pub msg: &'static [u8],
     /// `msg` with `<tag>` colour markup stripped — the non-TTY / piped help form.
@@ -478,8 +476,8 @@ fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
 /// output is actually requested. That `<tag>`→ANSI rewrite only ever runs on
 /// `bun --help` / `bun run --help`; `--print` and ordinary runs never reach this
 /// path, so they pay neither the per-invocation reparse nor the extra rodata a
-/// baked-in `msg_ansi` array would cost on every flag and subcommand. (Zig did
-/// the rewrite at `comptime` via `Output.prettyFmt` inside
+/// baked-in `msg_ansi` array would cost on every flag and subcommand. (The
+/// original did the rewrite at compile time via `Output.prettyFmt` inside
 /// `clap.simpleHelpBunTopLevel`; the colour case is rare enough that doing it
 /// lazily at runtime is the better trade for binary size.)
 #[cold]
@@ -502,8 +500,8 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
 // stable-Rust equivalent. B-2 carries `params` at runtime; a Phase-B proc-macro
 // can restore the per-table monomorphization.
 pub struct Args<Id: 'static> {
-    // PORT NOTE: Zig stored `arena: bun.ArenaAllocator` here and `deinit` freed it.
-    // Non-AST crate → arena removed; `ComptimeClap` owns its allocations.
+    // PORT NOTE: an `arena` allocator field was removed (non-AST crate);
+    // `ComptimeClap` owns its allocations.
     // PERF(port): was arena bulk-free — profile in Phase B
     pub clap: ComptimeClap<Id>,
     pub exe_arg: Option<&'static [u8]>,
@@ -551,8 +549,7 @@ pub fn parse<Id: 'static>(
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
 
-    // PORT NOTE: Zig reused `iter.arena` as the allocator for `parseEx` and
-    // moved it into `res.arena`. Arena removed in port; ownership flows through
+    // PORT NOTE: arena removed in the port; ownership flows through
     // `ComptimeClap` directly.
     let clap = parse_ex::<Id, _>(
         params,
@@ -694,7 +691,7 @@ where
 }
 
 /// Shared by `print_param` and `usage_full`: emit the ` <val>` / ` <val>?` /
-/// ` <val>...` suffix for a param's `takes_value`. Mirrors clap.zig:459/672.
+/// ` <val>...` suffix for a param's `takes_value`.
 #[cold]
 #[inline(never)]
 fn write_takes_value_suffix<W, Id, E, C>(
@@ -854,9 +851,9 @@ pub fn simple_help(params: &[Param<Help>]) {
         let spaces_after = vec![b' '; num_spaces_after];
 
         simple_print_param(param).expect("unreachable");
-        // Zig's `Output.pretty("  {s}  {s}", …)` (clap.zig:567) only runs prettyFmt
-        // over the comptime template, so `<tag>` markers inside `desc_text` leak
-        // through verbatim there. That is observably wrong (`bun run --help` prints
+        // `Output.pretty("  {s}  {s}", …)` only runs prettyFmt over the const
+        // template, so `<tag>` markers inside `desc_text` would leak through
+        // verbatim. That is observably wrong (`bun run --help` prints
         // literal `<d>$cwd<r>`); `pretty_help_desc` resolves the `<tag>` markup
         // (ANSI on a colour TTY, stripped otherwise) so `--help` output is
         // tag-clean regardless of which helper a command uses.
@@ -872,16 +869,16 @@ pub fn simple_help(params: &[Param<Help>]) {
 #[cold]
 #[inline(never)]
 pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
-    // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
-    // `@compileError` on overflow, plus uses `inline for` + comptime string
-    // concat (`space_buf[..n] ++ desc_text`). None of that is const-evaluable
-    // in Rust over a slice param. Runtime equivalent below; Phase B can macro-gen.
+    // TODO(port): `computed_max_spacing` could be evaluated at compile time
+    // and emit a build error on overflow, plus use compile-time string concat
+    // (`space_buf[..n] ++ desc_text`). None of that is const-evaluable in Rust
+    // over a slice param. Runtime equivalent below; Phase B can macro-gen.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
 
     let computed_max_spacing: usize = compute_max_help_spacing(params);
 
-    // Zig: @compileError; here a debug-time assert.
+    // Debug-time assert (would ideally be a build error).
     debug_assert!(
         computed_max_spacing <= MAX_SPACING,
         "a parameter is too long to be nicely printed in `bun --help`"
@@ -897,9 +894,9 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
                 let total_len = param_display_width(param);
                 let num_spaces_after = MAX_SPACING - total_len;
 
-                // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
-                // is the *format string*, so `<tag>` markers inside `desc_text` are
-                // rewritten at `comptime`. Mirror that via `pretty_help_desc`, which
+                // The original concatenated `space_buf[0..n] ++ desc_text` into the
+                // *format string*, so `<tag>` markers inside `desc_text` were rewritten
+                // at compile time. Mirror that via `pretty_help_desc`, which
                 // resolves the markup (ANSI on a colour TTY, stripped otherwise).
                 let desc = pretty_help_desc(param);
                 Output::pretty(format_args!(
@@ -949,8 +946,8 @@ where
         }
 
         if cos.count == 0 {
-            // PORT NOTE: Zig wrote "[-" to `stream` (not `cs`), bypassing the
-            // counter. Preserving that quirk by writing to the inner writer.
+            // PORT NOTE: the original wrote "[-" to `stream` (not `cs`), bypassing
+            // the counter. Preserving that quirk by writing to the inner writer.
             write!(cos.inner(), "[-")?;
         }
         cos.write_char(name as char)?;
@@ -971,8 +968,7 @@ where
             b"--"
         };
 
-        // Zig had a workaround `@as([*]const u8, @ptrCast(s))[0..1]` for taking
-        // a 1-byte slice of the short char. Rust expresses this as a 1-elem array.
+        // Take a 1-byte slice of the short char via a 1-elem array.
         let short_buf;
         let name: &[u8] = if let Some(s) = param.names.short {
             short_buf = [s];
@@ -1276,5 +1272,3 @@ mod tests {
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].takes_value, Values::One);
     }
 }
-
-// ported from: src/clap/clap.zig

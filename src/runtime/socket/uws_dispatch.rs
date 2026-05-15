@@ -19,8 +19,8 @@ use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket
 
 use super::uws_handlers as handlers;
 
-// (Zig had a `comptime { _ = us_dispatch_*; }` force-reference block here to
-// keep the exports in the link even if nothing in Zig calls them. Rust links
+// (The original had a `comptime { _ = us_dispatch_*; }` force-reference block here to
+// keep the exports in the link even if nothing called them. Rust links
 // every `#[no_mangle] pub extern "C"` symbol unconditionally, so it is dropped.)
 
 /// kind → vtable. Rust kinds get a comptime-generated `Trampolines<H>` vtable
@@ -30,11 +30,11 @@ use super::uws_handlers as handlers;
 ///
 /// `Invalid` is intentionally null so a missed `kind` stamp crashes here
 /// instead of dispatching into the wrong handler.
-// PERF(port): Zig built this at comptime into .rodata. `LazyLock` adds a
+// PERF(port): the original built this at comptime into .rodata. `LazyLock` adds a
 // once-init branch; once `vtable::make` is `const fn`, switch to a plain
 // `static`/`const`.
 //
-// PORT NOTE: Zig used `std.EnumArray(SocketKind, ?*const VTable)`. `SocketKind`
+// PORT NOTE: the original used a dense enum-indexed array of `?*const VTable`. `SocketKind`
 // is `#[repr(u8)]` with dense 0..N discriminants (see uws/lib.rs), so a plain
 // array indexed by `kind as usize` is the exact equivalent — no `enum_map`
 // derive needed on the upstream type.
@@ -199,7 +199,7 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
         // guarantees the buffer outlives this call.
         let slice =
             unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
-        // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
+        // `raw.onData(TLSSocket.Socket.from(s), data[..])` where
         // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
         // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
         // `&mut` exists. `on_data` takes `*mut Self` (noalias re-entrancy fix).
@@ -207,5 +207,3 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     }
     s
 }
-
-// ported from: src/runtime/socket/uws_dispatch.zig

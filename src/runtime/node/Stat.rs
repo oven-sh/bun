@@ -12,10 +12,9 @@ const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
 /// Stats and BigIntStats classes from node:fs
-// PORT NOTE: Zig `fn StatType(comptime big: bool) type` → const-generic struct.
-// Zig's `const Float = if (big) i64 else f64;` cannot be expressed as a
-// const-generic-dependent type alias in stable Rust, so `to_time_ms` is split
-// into `to_time_ms_i64` / `to_time_ms_f64` and called from the appropriate
+// `StatType` is parameterized on `BIG`. A `BIG`-dependent float type alias
+// cannot be expressed in stable Rust, so `to_time_ms` is split into
+// `to_time_ms_i64` / `to_time_ms_f64` and called from the appropriate
 // branch in `stat_to_js`. Diff readers should expect this reshape.
 pub struct StatType<const BIG: bool> {
     pub value: PosixStat,
@@ -24,9 +23,9 @@ pub struct StatType<const BIG: bool> {
 type StatTimespec = Timespec;
 
 impl<const BIG: bool> StatType<BIG> {
-    // Zig: `pub const new = bun.TrivialNew(@This());` / `bun.TrivialDeinit(@This())`.
-    // In Rust the default `Box::new` / `Drop` give identical semantics (mimalloc-backed
-    // via the global allocator), so no explicit `new`/`deinit` methods are needed.
+    // The default `Box::new` / `Drop` give the required semantics
+    // (mimalloc-backed via the global allocator), so no explicit
+    // `new`/`deinit` methods are needed.
 
     #[inline]
     pub fn init(stat_: &PosixStat) -> Self {
@@ -35,9 +34,7 @@ impl<const BIG: bool> StatType<BIG> {
 
     #[inline]
     fn to_nanoseconds(ts: StatTimespec) -> u64 {
-        // PORT NOTE: Zig rebuilt a `bun.timespec` with `@intCast` on each field; since
-        // `StatTimespec == bun.timespec` those casts are identity — call methods on `ts`
-        // directly.
+        // `StatTimespec == bun.timespec`, so call methods on `ts` directly.
         if ts.sec < 0 {
             return ts.ns_signed().max(0) as u64;
         }
@@ -246,10 +243,7 @@ impl Stats {
         }
     }
 
-    // PORT NOTE: Zig defined `Stats.toJS` as a `@compileError` guard to force callers
-    // toward `toJSNewlyCreated`. Rust has no inherent-method `compile_error!`; the
-    // method is intentionally omitted so misuse is a hard "no method named `to_js`"
-    // compile error instead.
+    // `Stats.toJS` is intentionally absent to force callers toward
+    // `toJSNewlyCreated`. Misuse becomes a hard "no method named `to_js`"
+    // compile error.
 }
-
-// ported from: src/runtime/node/Stat.zig

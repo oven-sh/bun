@@ -41,5 +41,3 @@ pub fn to_be_valid_date(
         format_args!("\n\nReceived: <red>{}<r>\n", received),
     )
 }
-
-// ported from: src/test_runner/expect/toBeValidDate.zig

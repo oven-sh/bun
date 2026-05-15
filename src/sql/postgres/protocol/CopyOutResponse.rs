@@ -15,7 +15,7 @@ impl CopyOutResponse {
     }
 }
 
-// Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+// See src/sql/postgres/protocol/DecoderWrap.rs
 impl CopyOutResponse {
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
@@ -24,5 +24,3 @@ impl CopyOutResponse {
         self.decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/postgres/protocol/CopyOutResponse.zig

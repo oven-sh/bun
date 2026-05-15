@@ -9,14 +9,13 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-/// Comptime diff configuration. Defaults are usually sufficient.
+/// Diff configuration. Defaults are usually sufficient.
 ///
-/// PORT NOTE: In Zig this is passed as a `comptime opts: Options` struct param.
-/// Rust cannot pass a struct as a const generic on stable, so the only
+/// NOTE: Rust cannot pass a struct as a const generic on stable, so the only
 /// behaviorally-meaningful field (`check_comma_disparity`) is hoisted to a
 /// `const CHECK_COMMA_DISPARITY: bool` generic on `Differ`. The two sizing
-/// fields only fed `std.heap.stackFallback`, which is dropped (see PERF notes
-/// in `diff`).
+/// fields only fed a stack-fallback allocator, which is dropped (see PERF
+/// notes in `diff`).
 #[derive(Clone, Copy)]
 pub struct Options {
     /// Guesstimate for the number of bytes `expected` and `actual` will be.
@@ -59,13 +58,12 @@ type uint = u32;
 #[allow(non_camel_case_types)]
 type int = i64; // must be large enough to hold all valid values of `uint` w/o overflow.
 
-/// PORT NOTE: Zig's `Differ` switches on the concrete `Line` type at comptime
-/// to pick an equality function (char `==` for `u8`/`u16`, `areStrLinesEqual`
-/// for slice types) and to detect "is this a pointer/slice" inside
-/// `backtrack`. Rust expresses both via this trait — implement it for any new
-/// line type instead of extending the type-switch.
+/// `Differ` needs to pick an equality function (char `==` for `u8`/`u16`,
+/// `areStrLinesEqual` for slice types) and to detect "is this a pointer/slice"
+/// inside `backtrack`. This trait expresses both — implement it for any new
+/// line type instead of extending a type-switch.
 pub trait Line: Copy {
-    /// `@typeInfo(Line) == .pointer` in the Zig.
+    /// Whether `Line` is a slice type.
     const IS_POINTER: bool;
     /// Equality with optional trailing-comma tolerance.
     fn line_eq<const CHECK_COMMA_DISPARITY: bool>(a: Self, b: Self) -> bool;
@@ -120,10 +118,10 @@ impl<'a> Line for &'a [u16] {
         matches!(self.last(), Some(&c) if c == u16::from(b','))
     }
 }
-// TODO(port): Zig also accepted `[:0]const u8`, `[:0]u8`, `[]u8`, `[:0]const u16`,
-// `[:0]u16`, `[]u16` — in Rust these all coerce to `&[u8]`/`&[u16]`, so the two
-// slice impls above cover them. Add `&bun_core::ZStr` / `&bun_core::WStr` impls in
-// Phase B if callers pass those directly.
+// TODO(port): byte/wide NUL-terminated and mutable slice flavors all coerce to
+// `&[u8]`/`&[u16]`, so the two slice impls above cover them. Add
+// `&bun_core::ZStr` / `&bun_core::WStr` impls in Phase B if callers pass those
+// directly.
 
 /// diffs two sets of lines, returning the minimal number of edits needed to
 /// make them equal.
@@ -146,31 +144,29 @@ impl<'a> Line for &'a [u16] {
 /// - [Node- `myers_diff.js`](https://github.com/nodejs/node/blob/main/lib/internal/assert/myers_diff.js)
 /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
 ///
-/// PORT NOTE: Zig's `Differ(Line, opts)` is a thin wrapper that picks an `eql`
-/// based on `Line` and delegates to `DifferWithEql`. In Rust the `eql` dispatch
-/// is the `Line` trait, so the two collapse into one type. To supply a custom
-/// equality function (Zig's `DifferWithEql`), implement `Line` for your type.
+/// NOTE: `Differ` and `DifferWithEql` collapse into one type — the `eql`
+/// dispatch is the `Line` trait. To supply a custom equality function,
+/// implement `Line` for your type.
 pub struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
 
 /// Like `Differ`, but allows the user to provide a custom equality function.
-/// PORT NOTE: in Rust, "custom eql" = "impl `Line` for your type". This alias
-/// exists only to keep the Zig API surface; both names resolve to the same
-/// struct.
+/// NOTE: "custom eql" = "impl `Line` for your type". This alias exists only
+/// to keep the historical API surface; both names resolve to the same struct.
 pub type DifferWithEql<L, const CHECK_COMMA_DISPARITY: bool = false> =
     Differ<L, CHECK_COMMA_DISPARITY>;
 
 impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY> {
     // `V = [-MAX, MAX]`.
-    // PORT NOTE: `graph_initial_size` (Zig) only fed `stackFallback`; dropped.
+    // PORT NOTE: `graph_initial_size` only fed a stack-fallback allocator; dropped.
 
     #[inline]
     pub fn eql(a: L, b: L) -> bool {
         L::line_eq::<CHECK_COMMA_DISPARITY>(a, b)
     }
 
-    // PORT NOTE: Zig `pub const LineType = L;` would be an inherent associated
-    // type in Rust, which is unstable (rust#8995). Dropped — callers spell `L`
-    // directly via the `Differ<L, ..>` generic param.
+    // PORT NOTE: a `pub const LineType = L;` alias would be an inherent
+    // associated type, which is unstable (rust#8995). Dropped — callers spell
+    // `L` directly via the `Differ<L, ..>` generic param.
 
     /// Compute the shortest edit path (diff) between two sets of lines.
     ///
@@ -211,15 +207,14 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
         };
 
         let mut graph: Vec<uint> = vec![0; graph_size as usize];
-        // (Zig: `defer graph_alloc.free(graph)` — Drop handles it.)
-        // (Zig: `@memset(graph, 0)` — vec! already zeroed.)
+        // (Drop frees it; vec! already zeroed.)
         // graph.len = graph_size; — already sized.
 
         let mut trace: Vec<Box<[uint]>> = Vec::new();
         // reserve enough space for each frame to avoid realloc on ptr list. Lists may end up in the heap, but
         // this list is at the very from (and ∴ on stack).
         trace.reserve_exact((max as usize) + 1);
-        // (Zig: defer { for frame free; trace.deinit() } — Drop handles it.)
+        // (Drop frees the per-frame buffers and the outer Vec.)
 
         // ================================================================
         // ==================== actual implementation =====================
@@ -386,9 +381,8 @@ where
     n.try_into().expect("infallible: size matches")
 }
 
-// TODO(port): `printDiff` wrote directly to stdout/stderr via `std.fs.File`.
-// Banned by §Ground rules (no `std::fs`). This is a debug-only helper used by
-// `zig test`; Phase B can route through `bun_core::Output` or drop it.
+// TODO(port): `printDiff` is a debug-only helper used by unit tests; Phase B
+// can route through `bun_core::Output` or drop it.
 pub fn print_diff<T: Line + fmt::Display>(diffs: &Vec<Diff<T>>) {
     for idx in 0..diffs.len() {
         let d = &diffs[diffs.len() - (idx + 1)];
@@ -413,8 +407,7 @@ fn are_chars_equal<T: PartialEq>(a: T, b: T) -> bool {
 
 #[inline]
 fn are_lines_equal<L: Line, const CHECK_COMMA_DISPARITY: bool>(a: L, b: L) -> bool {
-    // PORT NOTE: Zig switched on the concrete type here; the `Line` trait impls
-    // encode the same dispatch.
+    // The `Line` trait impls encode the per-type dispatch.
     L::line_eq::<CHECK_COMMA_DISPARITY>(a, b)
 }
 
@@ -427,7 +420,7 @@ where
     // TODO: check Godbolt
     // if (a.ptr == b.ptr) return true;
 
-    // []const u8 -> u8  (Zig: @typeInfo(T).pointer.child — here `C` is that child.)
+    // []const u8 -> u8  (`C` is the slice element type.)
 
     if !CHECK_COMMA_DISPARITY {
         return a == b;
@@ -491,16 +484,14 @@ pub struct Diff<T> {
 
 impl<T: PartialEq> Diff<T> {
     pub fn eql(&self, other: &Self) -> bool {
-        // PORT NOTE: Zig used `mem.eql(T, self.value, other.value)` which only
-        // compiles for slice `T`; `PartialEq` covers both slice and char cases.
+        // `PartialEq` covers both slice and char cases.
         self.kind == other.kind && self.value == other.value
     }
 }
 
 impl<T: fmt::Display> fmt::Display for Diff<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): Zig picked a format specifier ({c}/{u}/{s}) based on
-        // @typeInfo(T). For `&[u8]` callers, wrap value in `bstr::BStr::new`
+        // TODO(port): for `&[u8]` callers, wrap value in `bstr::BStr::new`
         // at the call site instead of `from_utf8`.
         write!(f, "{} {}", self.kind, self.value)
     }
@@ -643,18 +634,16 @@ pub fn split<T>(s: &[T]) -> Vec<&[T]>
 where
     T: PartialEq + Copy + From<u8>,
 {
-    // PORT NOTE: Zig restricted T to u8/u16 via @compileError; the From<u8>
-    // bound expresses the same constraint (need to compare against '\n').
+    // The `From<u8>` bound restricts `T` to byte-like element types
+    // (need to compare against '\n').
     let newline: T = T::from(b'\n');
     //
     // thing
     let mut lines: Vec<&[T]> = Vec::new();
     lines.reserve(s.len() >> 4);
-    // (Zig: errdefer lines.deinit — Drop handles it.)
+    // (Drop frees `lines` on early return.)
     for l in s.split(|c| *c == newline) {
         lines.push(l);
     }
     lines
 }
-
-// ported from: src/runtime/node/assert/myers_diff.zig

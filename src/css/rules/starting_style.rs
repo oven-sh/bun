@@ -34,5 +34,3 @@ impl<R> StartingStyleRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/starting_style.zig

@@ -19,8 +19,8 @@ use bun_wyhash::hash;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local libarchive C-API surface. Thin safe(ish) wrappers over the raw
-// `extern "C"` libarchive symbols, ported 1:1 from
-// `src/libarchive_sys/bindings.zig`. The opaque `Archive` / `Entry` types
+// `extern "C"` libarchive symbols, ported 1:1 from the original
+// libarchive bindings layer. The opaque `Archive` / `Entry` types
 // here are layout-compatible with libarchive's `struct archive` /
 // `struct archive_entry` (zero-sized, `#[repr(C)]`, !Unpin).
 // ──────────────────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ pub mod lib {
 
     // ── raw libarchive C FFI ───────────────────────────────────────────────
     // Signatures match `vendor/libarchive/archive.h` /
-    // `src/libarchive_sys/bindings.zig` exactly. `Result` is `#[repr(i32)]`
+    // the original bindings layer exactly. `Result` is `#[repr(i32)]`
     // so it is ABI-compatible with the C `int` return values.
     unsafe extern "C" {
         // read side
@@ -227,7 +227,7 @@ pub mod lib {
 
         pub fn write_zeros_to_file(file: &bun_sys::File, count: usize) -> Result {
             // Use a runtime memset (vs `[0u8; _]`) to keep .rodata small,
-            // matching the Zig (`@memset(&zero_buf, 0)`).
+            // matching the original (`@memset(&zero_buf, 0)`).
             let mut zero_buf = [0u8; 16 * 1024];
             zero_buf.fill(0);
             let mut remaining = count;
@@ -343,8 +343,8 @@ pub mod lib {
             }
             // SAFETY: libarchive owns the error string for the lifetime of the
             // archive; callers treat it as borrowed-until-next-call. The
-            // `'static` here mirrors Zig's `[]const u8` — caller must not
-            // outlive the archive (same as the Zig API).
+            // `'static` here mirrors the original `[]const u8` — caller must not
+            // outlive the archive (same as the original API).
             unsafe { ZStr::from_c_ptr(p) }.as_bytes()
         }
 
@@ -465,7 +465,7 @@ pub mod lib {
             unsafe { archive_entry_clear(self.as_mut_ptr()) }
         }
         /// Raw `archive_entry_set_pathname` — bytes are stored verbatim (no
-        /// charset conversion). Matches Zig's `setPathname` on POSIX.
+        /// charset conversion). Matches the original `setPathname` on POSIX.
         pub fn set_pathname(&self, name: &ZStr) {
             // SAFETY: self valid; name is NUL-terminated.
             unsafe { archive_entry_set_pathname(self.as_mut_ptr(), name.as_ptr()) }
@@ -598,7 +598,7 @@ pub mod lib {
         }
     }
 
-    // ── Archive::Iterator (port of `libarchive_sys/bindings.zig` Iterator) ─
+    // ── Archive::Iterator (port of the original bindings-layer Iterator) ─
     //
     // Thin streaming reader over a tar.gz blob: `init` opens the archive in
     // memory, `next` yields one header at a time, `read_entry_data` slurps the
@@ -606,7 +606,7 @@ pub mod lib {
     // libarchive `*mut Archive` plus a static message so callers can append
     // `Archive::error_string`.
 
-    /// Generic result type used by [`ArchiveIterator`] (Zig: `Iterator.Result(T)`).
+    /// Generic result type used by [`ArchiveIterator`] (originally `Iterator.Result(T)`).
     pub enum IteratorResult<T> {
         Err {
             archive: *mut Archive,
@@ -629,10 +629,10 @@ pub mod lib {
         }
     }
 
-    /// Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig).
+    /// Port of `Archive.Iterator` from the original bindings layer.
     pub struct ArchiveIterator {
         pub archive: *mut Archive,
-        // Zig: `std.EnumSet(std.fs.File.Kind)`; mapped to a u16 bitmask over
+        // Originally `std.EnumSet(std.fs.File.Kind)`; mapped to a u16 bitmask over
         // `bun_sys::FileKind` variants.
         pub filter: u16,
     }
@@ -728,7 +728,7 @@ pub mod lib {
             }
         }
 
-        /// Port of `Iterator.deinit` — Zig returned `Result(void)`, so this
+        /// Port of `Iterator.deinit` — original returned `Result(void)`, so this
         /// cannot be `Drop`. Explicit-close per PORTING.md §Idiom map.
         pub fn close(self) -> IteratorResult<()> {
             let a = self.archive();
@@ -860,7 +860,7 @@ pub mod lib {
     }
 
     // ── Archive::Iterator ──────────────────────────────────────────────────
-    // Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig). Thin
+    // Port of `Archive.Iterator` from the original bindings layer. Thin
     // wrapper that opens a tarball from memory and yields one
     // `IteratorEntry` per `next()`, used by `bun publish <tarball>`.
 
@@ -880,7 +880,7 @@ pub mod lib {
     /// (kept for `ArchiveIterator`); callers of `Iterator` use this alias.
     pub type IterResult<T> = core::result::Result<T, IteratorError>;
 
-    /// Port of `Iterator.NextEntry` (bindings.zig).
+    /// Port of `Iterator.NextEntry`.
     pub struct IteratorEntry {
         pub entry: *mut Entry,
         pub kind: bun_sys::FileKind,
@@ -893,7 +893,7 @@ pub mod lib {
             // libarchive guarantees it stays valid until the next header read.
             unsafe { &*self.entry }
         }
-        /// Port of `NextEntry.readEntryData` (bindings.zig). Allocates `size`
+        /// Port of `NextEntry.readEntryData`. Allocates `size`
         /// bytes and reads the current entry's data into it.
         pub fn read_entry_data(
             &self,
@@ -920,10 +920,10 @@ pub mod lib {
         }
     }
 
-    /// Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig).
+    /// Port of `Archive.Iterator` from the original bindings layer.
     pub struct Iterator {
         pub archive: *mut Archive,
-        // PORT NOTE: Zig had a `filter: std.EnumSet(std.fs.File.Kind)` field
+        // PORT NOTE: original had a `filter: std.EnumSet(std.fs.File.Kind)` field
         // that every caller leaves at `.initEmpty()` and never sets. Dropped
         // here (would need `EnumSetType` on `FileKind`); re-add if a caller
         // ever needs it.
@@ -941,7 +941,7 @@ pub mod lib {
             unsafe { &*self.archive }
         }
 
-        /// Port of `Iterator.init` (bindings.zig). Opens `tarball_bytes` as a
+        /// Port of `Iterator.init`. Opens `tarball_bytes` as a
         /// gzip-compressed (gnu)tar archive.
         pub fn init(tarball_bytes: &[u8]) -> IterResult<Self> {
             let archive = Archive::read_new();
@@ -997,7 +997,7 @@ pub mod lib {
             Ok(Iterator { archive })
         }
 
-        /// Port of `Iterator.next` (bindings.zig).
+        /// Port of `Iterator.next`.
         pub fn next(&mut self) -> IterResult<Option<IteratorEntry>> {
             let a = self.archive();
             let mut entry: *mut Entry = core::ptr::null_mut();
@@ -1021,8 +1021,8 @@ pub mod lib {
             }
         }
 
-        /// Port of `Iterator.deinit` (bindings.zig). Closes & frees the
-        /// underlying `*mut Archive`. NOT a `Drop` impl because the Zig
+        /// Port of `Iterator.deinit`. Closes & frees the
+        /// underlying `*mut Archive`. NOT a `Drop` impl because the original
         /// returns a `Result` the caller inspects for error reporting.
         pub fn deinit(&mut self) -> IterResult<()> {
             let a = self.archive();
@@ -1213,7 +1213,7 @@ impl BufferReadStream {
         let offset = isize::try_from(offset).expect("int cast");
 
         // libarchive only ever passes SEEK_SET/CUR/END; trap on anything
-        // else (matches Zig safety-checked `@enumFromInt(whence)` and the
+        // else (matches the original safety-checked `@enumFromInt(whence)` and the
         // diff's own convention for out-of-range bitfield decode).
         let whence = match whence {
             0 => Seek::Set,
@@ -1316,7 +1316,7 @@ fn is_symlink_target_safe(
     resolved.starts_with(fake_root)
 }
 
-/// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
+/// Port of `bun.MakePath.makePath(u16, dir, sub_path)` — the
 /// Windows arm calls `makeOpenPathAccessMaskW`, which component-iterates the
 /// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
 /// on `FileNotFound` and forward again on success. This stays in WTF-16
@@ -1326,7 +1326,7 @@ fn is_symlink_target_safe(
 #[cfg(windows)]
 fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
     use bun_sys::{E, WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
-    // Match Zig's access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
+    // Match the original access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
     // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) by setting `read_only`,
     // and `FILE_OPEN_IF` via `OpenOrCreate`.
     let opts = WindowsOpenDirOptions {
@@ -1360,7 +1360,7 @@ pub mod archiver {
         pub all_files: EntryMap,
     }
 
-    // TODO(port): Zig used a custom U64Context (hash = truncate u64→u32, eql = ==).
+    // TODO(port): original used a custom U64Context (hash = truncate u64→u32, eql = ==).
     // bun_collections::ArrayHashMap should accept a custom hasher; encode that here.
     pub type EntryMap = ArrayHashMap<u64, *mut u8>;
 
@@ -1420,7 +1420,7 @@ pub mod archiver {
 
 pub use archiver::{Context, ExtractOptions, Plucker};
 
-// TODO(port): Zig used `comptime FilePathAppender: type` + `@hasDecl` duck-typing
+// TODO(port): original used `comptime FilePathAppender: type` + `@hasDecl` duck-typing
 // for `onFirstDirectoryName` / `appendMutable` / `append`. Model as a trait with
 // default no-op impls; the `void` ContextType becomes `()` which uses the defaults.
 pub trait ArchiveAppender {
@@ -1482,7 +1482,7 @@ impl Archiver {
                 break 'brk d;
             }
         };
-        // PORT NOTE: Zig spec also lacks `defer dir.close()` here (pre-existing leak).
+        // PORT NOTE: spec also lacks `defer dir.close()` here (pre-existing leak).
         // Fd has no Drop impl; close explicitly on every return path to avoid leaking
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
@@ -1546,14 +1546,14 @@ impl Archiver {
                     let size: usize =
                         usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
                     if size > 0 {
-                        // PORT NOTE: Zig used `dir.openFile(pathname, .{ .mode = .write_only })`.
+                        // PORT NOTE: original used `dir.openFile(pathname, .{ .mode = .write_only })`.
                         let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
                         else {
                             continue 'loop_;
                         };
                         // PORT NOTE: defer opened.close()
                         let _close_guard = scopeguard::guard(opened, |fd| fd.close());
-                        // PORT NOTE: Zig `opened.getEndPos()` → bun_sys::get_file_size.
+                        // PORT NOTE: original `opened.getEndPos()` → bun_sys::get_file_size.
                         let stat_size = bun_sys::get_file_size(opened)?;
 
                         if stat_size > 0 {
@@ -1579,10 +1579,10 @@ impl Archiver {
 
                             let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
                             if !overwrite_entry.found_existing {
-                                // TODO(port): key ownership semantics — Zig stored the
+                                // TODO(port): key ownership semantics — original stored the
                                 // appender-owned slice as the map key. StringArrayHashMap
                                 // already boxed `path_to_use` on insert; overwrite with the
-                                // appender-owned bytes to match Zig lifetime intent.
+                                // appender-owned bytes to match the original lifetime intent.
                                 *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
                             }
                         }
@@ -1731,7 +1731,7 @@ impl Archiver {
                     normalized_buf[normalized_len] = 0;
                     // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
                     let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
-                    // TODO(port): Zig had `[:0]OSPathChar` here; the NUL is at path.len()
+                    // TODO(port): original had `[:0]OSPathChar` here; the NUL is at path.len()
                     if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
                         continue;
                     }
@@ -1807,7 +1807,7 @@ impl Archiver {
 
                             #[cfg(windows)]
                             {
-                                // Zig: `try bun.MakePath.makePath(u16, dir, path);`
+                                // Originally `try bun.MakePath.makePath(u16, dir, path);`
                                 make_path_u16(dir, path_slice)?;
                                 let _ = mode;
                             }
@@ -1828,7 +1828,7 @@ impl Archiver {
                                         // It's possible for some tarballs to return a directory twice, with and
                                         // without `./` in the beginning. So if it already exists, continue to the
                                         // next entry.
-                                        // PORT NOTE: Zig matched error.PathAlreadyExists / error.NotDir.
+                                        // PORT NOTE: original matched error.PathAlreadyExists / error.NotDir.
                                         match err.get_errno() {
                                             bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                             _ => {}
@@ -1876,7 +1876,7 @@ impl Archiver {
                                 };
                                 match bun_sys::symlinkat(link_target, dir_fd, path_z) {
                                     Ok(()) => {}
-                                    // PORT NOTE: Zig matched error.EPERM / error.ENOENT (errnoToZigErr maps 1:1).
+                                    // PORT NOTE: original matched error.EPERM / error.ENOENT (errno-to-error maps 1:1).
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EPERM | bun_sys::E::ENOENT => {
                                             let dirname = bun_paths::dirname_simple(path_slice);
@@ -1919,8 +1919,8 @@ impl Archiver {
                                     Ok(fd) => fd,
                                     Err(e) => match e.get_errno() {
                                         bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                            // Zig: `bun.Dirname.dirname(u16, path_slice) orelse
-                                            //        return bun.errnoToZigErr(e.errno)` —
+                                            // Originally `bun.Dirname.dirname(u16, path_slice) orelse
+                                            //        return errno-to-error(e.errno)` —
                                             // `std.fs.path.dirnameWindows` semantics (strips
                                             // trailing separators), NOT `bun.path.dirnameW`.
                                             let Some(dirname) =
@@ -1928,7 +1928,7 @@ impl Archiver {
                                             else {
                                                 return Err(e.into());
                                             };
-                                            // Zig: `bun.MakePath.makePath(u16, dir, …) catch {};`
+                                            // Originally `bun.MakePath.makePath(u16, dir, …) catch {};`
                                             let _ = make_path_u16(dir, dirname);
                                             bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
                                         }
@@ -1945,7 +1945,7 @@ impl Archiver {
                                 };
                                 match bun_sys::openat(dir_fd, path_z, flags, mode) {
                                     Ok(fd) => fd,
-                                    // PORT NOTE: Zig matched error.AccessDenied / error.FileNotFound.
+                                    // PORT NOTE: original matched error.AccessDenied / error.FileNotFound.
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EACCES
                                         | bun_sys::E::EPERM
@@ -2024,7 +2024,7 @@ impl Archiver {
                                     for plucker_ in ctx_.pluckers.iter_mut() {
                                         if plucker_.filename_hash == h {
                                             plucker_.contents.inflate(size)?;
-                                            // Zig: plucker_.contents.list.expandToCapacity()
+                                            // Originally `plucker_.contents.list.expandToCapacity()`
                                             let cap = plucker_.contents.list.capacity();
                                             plucker_.contents.list.resize(cap, 0);
                                             // SAFETY: archive valid
@@ -2124,7 +2124,7 @@ impl Archiver {
         appender: &mut A,
         options: ExtractOptions,
     ) -> Result<u32, bun_core::Error> {
-        // TODO(port): `options` was `comptime` in Zig — not used in a type position,
+        // TODO(port): `options` was originally `comptime` — not used in a type position,
         // so demoted to runtime. // PERF(port): was comptime monomorphization — profile in Phase B
         // TODO(port): narrow error set
         let dir: Fd = 'brk: {
@@ -2147,5 +2147,3 @@ impl Archiver {
         Self::extract_to_dir(file_buffer, dir, ctx, appender, options)
     }
 }
-
-// ported from: src/libarchive/libarchive.zig

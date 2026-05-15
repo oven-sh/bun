@@ -14,7 +14,7 @@
 //! the two serializer namespaces (`serialize::*`, `tocss_servo::*`).
 //! `builder.rs` carries `SelectorBuilder`.
 //!
-//! The `impl_::Selectors` marker (Rust trait-based reshaping of Zig's
+//! The `impl_::Selectors` marker (a trait-based reshaping of the original
 //! `selector.impl.Selectors.SelectorImpl` type-alias namespace) lives here in
 //! the hub so the parser↔selector cycle has a single anchor; both files reach
 //! it via `bun_css::selector::impl_` / `super::impl_`.
@@ -27,7 +27,7 @@ pub mod selector;
 pub use parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList};
 
 /// Our implementation of the `SelectorImpl` interface — the Rust-shaped
-/// equivalent of Zig's `selector.impl.Selectors`. Defined in the hub (not in
+/// equivalent of the original `selector.impl.Selectors`. Defined in the hub (not in
 /// `selector.rs`) to break the parser↔selector dependency cycle: `parser.rs`
 /// needs `impl_::Selectors` to instantiate `Component`/`Selector`/
 /// `SelectorList`, and `selector.rs` needs those instantiations.
@@ -49,7 +49,7 @@ pub mod impl_ {
         type LocalIdentifier = IdentOrRef;
         type LocalName = Ident;
         type NamespacePrefix = Ident;
-        // TODO(port): lifetime — Zig `[]const u8` type alias borrowing input.
+        // TODO(port): lifetime — type alias borrowing input.
         type NamespaceUrl = &'static [u8];
         type BorrowedNamespaceUrl = &'static [u8];
         type BorrowedLocalName = Ident;

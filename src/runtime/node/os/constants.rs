@@ -1,5 +1,5 @@
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum ConstantType {
@@ -10,18 +10,17 @@ enum ConstantType {
     Other,
 }
 
-// TODO(port): Zig used `@hasField(std.posix.E, name)` + `@intFromEnum(@field(...))` for
-// comptime reflection over the platform errno enum. Rust has no equivalent. Phase B must
-// provide `bun_sys::posix::errno::lookup(name) -> Option<i32>` (or per-constant `cfg`-gated
-// consts) so that names absent on the target platform are silently skipped, matching Zig.
+// TODO(port): Rust has no compile-time field reflection over the platform errno
+// enum. Phase B must provide `bun_sys::posix::errno::lookup(name) -> Option<i32>`
+// (or per-constant `cfg`-gated consts) so that names absent on the target
+// platform are silently skipped.
 macro_rules! get_errno_constant {
     ($name:ident) => {
         bun_sys::posix::errno::$name()
     };
 }
 
-// TODO(port): Zig used `@hasField(std.posix.E, name)` to gate, then
-// `@intFromEnum(@field(std.os.windows.ws2_32.WinsockError, name))`. Phase B must provide
+// TODO(port): Phase B must provide
 // `bun_sys::windows::ws2_32::winsock_error::lookup(name) -> Option<i32>`.
 macro_rules! get_windows_errno_constant {
     ($name:ident) => {
@@ -29,7 +28,7 @@ macro_rules! get_windows_errno_constant {
     };
 }
 
-// TODO(port): Zig used `@hasDecl(std.posix.SIG, name)` + `@field(...)`. Phase B must provide
+// TODO(port): Phase B must provide
 // `bun_sys::posix::sig::lookup(name) -> Option<i32>` with per-platform cfg gating.
 macro_rules! get_signals_constant {
     ($name:ident) => {
@@ -37,7 +36,7 @@ macro_rules! get_signals_constant {
     };
 }
 
-// TODO(port): Zig used `@hasDecl(std.posix.system.RTLD, name)` + `@field(...)`. Phase B must
+// TODO(port): Phase B must
 // provide `bun_sys::posix::rtld::lookup(name) -> Option<i32>` with per-platform cfg gating.
 macro_rules! get_dlopen_constant {
     ($name:ident) => {
@@ -45,7 +44,6 @@ macro_rules! get_dlopen_constant {
     };
 }
 
-// Zig: fn defineConstant(globalObject, object, comptime ctype, comptime name) void
 // Forwards to __define_constant with value = None.
 macro_rules! define_constant {
     ($global:expr, $object:expr, Errno, $name:ident) => {
@@ -62,15 +60,14 @@ macro_rules! define_constant {
     };
 }
 
-// Zig: fn __defineConstant(globalObject, object, comptime ctype, comptime name, comptime value: ?i32) void
-// The ctype + name are comptime and drive token-pasting ("E" ++ name, "SIG" ++ name, "RTLD_" ++ name),
-// so this must be a macro in Rust.
+// `ctype` + `name` drive token-pasting ("E" ++ name, "SIG" ++ name,
+// "RTLD_" ++ name), so this must be a macro in Rust.
 macro_rules! __define_constant {
     ($global:expr, $object:expr, Errno, $name:ident, $value:expr) => {{
         if let Some(constant) = get_errno_constant!($name) {
             $object.put(
                 $global,
-                ZigString::static_(concat!("E", stringify!($name))),
+                UnsafeStringView::static_(concat!("E", stringify!($name))),
                 JSValue::js_number(constant),
             );
         }
@@ -79,7 +76,7 @@ macro_rules! __define_constant {
         if let Some(constant) = get_windows_errno_constant!($name) {
             $object.put(
                 $global,
-                ZigString::static_(stringify!($name)),
+                UnsafeStringView::static_(stringify!($name)),
                 JSValue::js_number(constant),
             );
         }
@@ -88,7 +85,7 @@ macro_rules! __define_constant {
         if let Some(constant) = get_signals_constant!($name) {
             $object.put(
                 $global,
-                ZigString::static_(concat!("SIG", stringify!($name))),
+                UnsafeStringView::static_(concat!("SIG", stringify!($name))),
                 JSValue::js_number(constant),
             );
         }
@@ -97,7 +94,7 @@ macro_rules! __define_constant {
         if let Some(constant) = get_dlopen_constant!($name) {
             $object.put(
                 $global,
-                ZigString::static_(concat!("RTLD_", stringify!($name))),
+                UnsafeStringView::static_(concat!("RTLD_", stringify!($name))),
                 JSValue::js_number(constant),
             );
         }
@@ -106,7 +103,7 @@ macro_rules! __define_constant {
         let value: Option<i32> = $value;
         $object.put(
             $global,
-            ZigString::static_($name),
+            UnsafeStringView::static_($name),
             JSValue::js_number_from_int32(value.unwrap()),
         );
     }};
@@ -115,10 +112,10 @@ macro_rules! __define_constant {
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 0);
 
-    object.put(global, ZigString::static_("errno"), create_errno(global));
-    object.put(global, ZigString::static_("signals"), create_signals(global));
-    object.put(global, ZigString::static_("priority"), create_priority(global));
-    object.put(global, ZigString::static_("dlopen"), create_dlopen(global));
+    object.put(global, UnsafeStringView::static_("errno"), create_errno(global));
+    object.put(global, UnsafeStringView::static_("signals"), create_signals(global));
+    object.put(global, UnsafeStringView::static_("priority"), create_priority(global));
+    object.put(global, UnsafeStringView::static_("dlopen"), create_dlopen(global));
     __define_constant!(global, object, Other, "UV_UDP_REUSEADDR", Some(4));
 
     object
@@ -132,7 +129,7 @@ fn create_errno(global: &JSGlobalObject) -> JSValue {
 
     // Special-case: "2BIG" cannot be an ident token. See TODO above.
     if let Some(constant) = bun_sys::posix::errno::_2BIG() {
-        object.put(global, ZigString::static_("E2BIG"), JSValue::js_number(constant));
+        object.put(global, UnsafeStringView::static_("E2BIG"), JSValue::js_number(constant));
     }
     define_constant!(global, object, Errno, ACCES);
     define_constant!(global, object, Errno, ADDRINUSE);
@@ -347,4 +344,3 @@ fn create_dlopen(global: &JSGlobalObject) -> JSValue {
     object
 }
 
-// ported from: src/runtime/node/os/constants.zig

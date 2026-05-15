@@ -53,7 +53,7 @@ trait ExprStr {
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
 }
 impl ExprStr for Expr {
-    // Zig `Expr.asString` (expr.zig:477) — transparently transcodes UTF-16
+    // `Expr::as_string` transparently transcodes UTF-16
     // `EString`s. The earlier `is_utf8()` guard returned `None` for keys the
     // lexer stored as UTF-16 (e.g. `\u`-escaped non-ASCII), tripping the
     // `expect("unreachable")` callers below.
@@ -66,8 +66,8 @@ impl ExprStr for Expr {
     }
 }
 
-// Zig: `pub fn Package(comptime SemverIntType: type) type { return extern struct { ... } }`
-// Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
+// `Package(SemverIntType)` is generic over the semver integer width.
+// Defaulted to `u64` so bare `Package` matches the primary `Package(u64)`
 // instantiation (the only one the lockfile/PM call sites name unqualified).
 //
 // PORT NOTE: `` cannot be used here — the derive
@@ -75,7 +75,7 @@ impl ExprStr for Expr {
 // `__MAL_SIZES` const that fail to const-eval through the defaulted
 // `SemverIntType` param. The trait impl, field enum, and `PackageColumns` /
 // `PackageColumns` accessor traits are therefore expanded by hand below
-// (mirroring Zig's `MultiArrayList(Package).items(.field)`).
+// (mirroring `MultiArrayList(Package).items(.field)`).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Package<SemverIntType: VersionInt = u64> {
@@ -121,35 +121,35 @@ type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
-// Zig used `comptime ResolverContext: type` for `parse`/`parseWithJSON` and
+// `parse`/`parseWithJSON` were generic over `ResolverContext` and
 // branched on `ResolverContext == void` / `== PackageManager.GitResolver` at
 // comptime. Rust models this as a trait with associated consts; concrete
 // resolvers (folder/cache/git) override what they need. The `()` impl gives
 // the `void` semantics.
 pub trait ResolverContext {
-    /// Zig: `comptime ResolverContext == void`.
+    /// True for the no-op resolver (`()`).
     const IS_VOID: bool = false;
-    /// Zig: `comptime ResolverContext == PackageManager.GitResolver`.
+    /// True for `PackageManager.GitResolver`.
     const IS_GIT_RESOLVER: bool = false;
 
-    /// Zig: `ResolverContext.checkBundledDependencies()`.
+    /// `ResolverContext.checkBundledDependencies()`.
     fn check_bundled_dependencies() -> bool {
         false
     }
 
-    /// Zig: `resolver.count(builder, json)` — counts strings to be appended by
+    /// Counts strings to be appended by
     /// `resolve`. Default no-op for void/folder resolvers that don't need it.
     fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
 
-    /// Zig: `resolver.resolve(builder, json)` — produces the package's
+    /// Produces the package's
     /// `Resolution`. Only called when `!IS_VOID`.
     ///
-    /// No default body: Zig enforced this at comptime (a non-void resolver
-    /// without `resolve` failed to compile). Each concrete resolver supplies
-    /// its own body; `()` returns the zero-value `Resolution` to mirror Zig's
-    /// "void leaves `package.resolution` uninitialized" path.
+    /// No default body: the original enforced this at comptime (a non-void
+    /// resolver without `resolve` failed to compile). Each concrete resolver
+    /// supplies its own body; `()` returns the zero-value `Resolution` to
+    /// mirror the "void leaves `package.resolution` uninitialized" path.
     ///
-    /// Zig threaded `comptime IntType` through `parseWithJSON`, but the only
+    /// `parseWithJSON` was generic over `IntType`, but the only
     /// instantiation is `u64` (`Package.resolution: ResolutionType<u64>`), so
     /// the trait method is monomorphic — keeps `CacheFolderResolver::resolve`
     /// free of an identity `transmute`.
@@ -160,7 +160,7 @@ pub trait ResolverContext {
     ) -> Result<ResolutionType<u64>, bun_core::Error>;
 
     // ── GitResolver-only surface ────────────────────────────────────────────
-    // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
+    // The original accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
     // directly when `ResolverContext == GitResolver`. Trait methods so non-git
     // resolvers don't need the fields; default impls are dead code (gated on
     // `IS_GIT_RESOLVER`). The bodies here are never executed — calls are
@@ -199,8 +199,7 @@ impl ResolverContext for () {
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
-        // Zig: `if (comptime ResolverContext != void) { … }` — the void
-        // resolver never assigned `package.resolution`, so it kept its
+        // The void resolver never assigned `package.resolution`, so it kept its
         // zero-initialized value. The call site still gates on `!IS_VOID`,
         // but provide the equivalent behavior for trait completeness.
         Ok(ResolutionType::default())
@@ -294,7 +293,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
 /// once instead of per-`R`).
 #[inline]
 fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Ordering {
-    // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by` requires
+    // The original used a sort with a `<` predicate. `slice::sort_by` requires
     // a total order (and panics since 1.81 when violated), so derive
     // `Ordering::Equal` from the predicate symmetrically.
     if Dependency::is_less_than(buf, a, b) {
@@ -413,7 +412,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
 // PORT NOTE: `clone` / `from_package_json` / `from_npm` / `parse*` all interact
 // with `Lockfile`, whose package list is concretely `MultiArrayList<Package<u64>>`.
-// Zig's `Package(SemverIntType)` is only ever instantiated at `u64` for these
+// `Package(SemverIntType)` is only ever instantiated at `u64` for these
 // paths (the `u32` instantiation is migration-only and routed through
 // `Serializer::load`). Binding the impl to `u64` avoids spurious
 // `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
@@ -421,7 +420,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 impl Package<u64> {
     pub fn clone(&self, cloner: &mut Cloner) -> Result<PackageID, bun_core::Error> {
         // TODO(port): narrow error set
-        // PORT NOTE: Zig passes (`pm`, `old`, `new`, `package_id_mapping`,
+        // PORT NOTE: the original passed (`pm`, `old`, `new`, `package_id_mapping`,
         // `cloner`) separately, but `cloner` already owns `&mut` to all four.
         // Rust borrowck rejects the redundant aliasing at the call site, so
         // route everything through `cloner`'s disjoint fields here instead.
@@ -499,7 +498,7 @@ impl Package<u64> {
         // Default-fill the tail so it is valid before `bin.clone` overwrites
         // it (replaces `reserve` + raw `set_len`).
         bun_core::vec::grow_default(&mut new.buffers.extern_strings, new_extern_string_count);
-        // PORT NOTE: Zig passes both `new.buffers.extern_strings.items` (full slice) and a
+        // PORT NOTE: the original passed both `new.buffers.extern_strings.items` (full slice) and a
         // tail subslice into `bin.clone`; the full slice is only used to compute the tail's
         // offset for `ExternalStringList::init`. In Rust those two views would alias, so
         // `Bin::clone_with_buffers` takes the precomputed offset directly.
@@ -507,7 +506,7 @@ impl Package<u64> {
 
         let id = new.packages.len() as PackageID;
 
-        // PORT NOTE: Zig calls `appendPackageWithID` mid-body while still
+        // PORT NOTE: the original called `appendPackageWithID` mid-body while still
         // holding live slices into `new.buffers` and the `builder`. Rust can't
         // express that (the method borrows `&mut Lockfile` whole), so build the
         // `Package` value and clone the dependency strings *first* (only needs
@@ -645,7 +644,7 @@ impl Package<u64> {
             }
 
             let dep_start = dependencies_list.len();
-            // Zig: `@memset(items.ptr[len..total_len], .{})` then bump `.items.len`.
+            // Memset the new tail to default and bump the length.
             bun_core::vec::extend_from_fn(
                 dependencies_list,
                 total_dependencies_count as usize,
@@ -747,7 +746,7 @@ impl Package<u64> {
 
             // PERF(port): was `inline for` — profile in Phase B
             for group in dependency_groups {
-                // Zig uses `@field(package_version, group.field)` reflection;
+                // The original used field-name reflection;
                 // ported as `PackageVersion::dep_group(field) -> ExternalStringMap`.
                 let map: ExternalStringMap = package_version.dep_group(group.field);
                 let keys = map.name.get(&manifest.external_strings);
@@ -806,7 +805,7 @@ impl Package<u64> {
             }
 
             let dep_start = dependencies_list.len();
-            // Zig: `@memset(items.ptr[len..total_len], .{})` then bump `.items.len`.
+            // Memset the new tail to default and bump the length.
             bun_core::vec::extend_from_fn(
                 dependencies_list,
                 total_dependencies_count as usize,
@@ -1023,7 +1022,7 @@ impl DiffSummary {
 }
 
 impl Diff {
-    // PORT NOTE: Zig's `Package` here is the canonical `Package(u64)` (the only
+    // PORT NOTE: `Package` here is the canonical `Package(u64)` (the only
     // instantiation `Lockfile` ever holds). Dropping the generic avoids a
     // spurious `Package<I>` ≠ `Package<u64>` mismatch on the recursive call
     // through `from_lockfile.packages.get(...)`.
@@ -1040,7 +1039,7 @@ impl Diff {
         // TODO(port): narrow error set
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
-        // PORT NOTE: Zig held `to_deps` as a mutable slice binding and reassigned
+        // PORT NOTE: the original held `to_deps` as a mutable slice binding and reassigned
         // it after `parseWithJSON` (which may grow `to_lockfile.buffers
         // .dependencies` and invalidate the old slice). Mirror that with raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
@@ -1077,7 +1076,7 @@ impl Diff {
                 Output::pretty_errorln(format_args!("Overrides changed since last install"));
             }
         } else {
-            // PORT NOTE: reshaped for borrowck — Zig passed `from_lockfile`
+            // PORT NOTE: reshaped for borrowck — the original passed `from_lockfile`
             // twice (once as `&mut self` via `.overrides`, once as `lockfile`).
             // `OverrideMap::sort` only reads `lockfile.buffers.string_bytes`,
             // so split the borrow at the field.
@@ -1449,11 +1448,11 @@ impl Diff {
                         let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
                         // defer package_json_path.deinit(); — Drop handles it
 
-                        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        // OOM/capacity: original aborted; port keeps fire-and-forget
                         let _ = package_json_path.append(
                             workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()),
                         );
-                        let _ = package_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        let _ = package_json_path.append(b"package.json"); // OOM/capacity: original aborted; port keeps fire-and-forget
 
                         // PORT NOTE: `bun.sys.File.toSource` was removed from
                         // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.
@@ -1495,7 +1494,7 @@ impl Diff {
                         )?;
 
                         // `parse_with_json` may have grown `to_lockfile.buffers
-                        // .dependencies` — re-derive the slice (Zig did the same).
+                        // .dependencies` — re-derive the slice (the original did the same).
                         to_deps = to
                             .dependencies
                             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1638,7 +1637,7 @@ impl Package<u64> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
-        // Zig threaded `lockfile.allocator` for the JSON arena. The returned
+        // The original threaded `lockfile.allocator` for the JSON arena. The returned
         // `Expr` tree only needs to live until `parse_with_json` finishes, so
         // a function-local arena is sufficient (matches Scripts.rs / lockfile.rs
         // call sites) and avoids leaking.
@@ -1660,7 +1659,7 @@ impl Package<u64> {
     }
 
     /// Borrow-splitting bridge for `PackageManager` callers
-    /// (`processDependencyList`, `folder_resolver`). Zig passes
+    /// (`processDependencyList`, `folder_resolver`). The original passed
     /// `manager.lockfile`, `manager`, `manager.log` as three separate args;
     /// Rust borrowck rejects the overlap on `&mut self`, so split via raw
     /// pointer here once instead of at every call site.
@@ -1684,10 +1683,9 @@ impl Package<u64> {
         self.parse(lockfile, pm, log, source, resolver, features)
     }
 
-    // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
     // PERF(port): was comptime monomorphization on `group`/`tag` — profile in Phase B
     //
-    // PORT NOTE: Zig took `lockfile: *Lockfile`, but the live `StringBuilder`
+    // PORT NOTE: the original took `lockfile: *Lockfile`, but the live `StringBuilder`
     // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
     // body only otherwise touches `workspace_paths` / `workspace_versions`,
     // so accept those two maps directly and read `string_bytes` via the
@@ -1928,7 +1926,7 @@ impl Package<u64> {
                                     );
                                 #[cfg(windows)]
                                 {
-                                    // Zig spec (Package.zig:1175-1178) converts
+                                    // The intended behavior converts
                                     // `relative_to_common_path_buf()[0..rel.len]` in place but then
                                     // returns `rel`. With ALWAYS_COPY=false, `rel` may instead borrow
                                     // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
@@ -2119,7 +2117,7 @@ impl Package<u64> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         // TODO(port): narrow error set
-        // Zig threads `allocator` for `asString` transcoding; the Rust signature
+        // The original threaded `allocator` for `asString` transcoding; the Rust signature
         // dropped it, so use a function-local arena (transcoded strings are only
         // borrowed until `string_builder.append` copies them).
         let bump = bun_alloc::Arena::new();
@@ -2524,7 +2522,7 @@ impl Package<u64> {
             );
         }
 
-        // PORT NOTE: Zig slices `lockfile.buffers.dependencies.items.ptr[off..total_len]`
+        // PORT NOTE: the original sliced `lockfile.buffers.dependencies.items.ptr[off..total_len]`
         // — i.e. into reserved-but-uncommitted capacity *without* bumping `items.len`.
         // Mirroring that here matters: `parse_dependency` can return early with an error
         // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
@@ -2537,7 +2535,7 @@ impl Package<u64> {
         // assignment would drop garbage), build into a local `Vec` and `append` into the
         // lockfile buffer once all `?`-points are past. On early error the local vec is
         // dropped and `lockfile.buffers.dependencies.len()` is left untouched, preserving
-        // the `== resolutions.len()` invariant exactly as the Zig spare-capacity write
+        // the `== resolutions.len()` invariant exactly as the original spare-capacity write
         // did. Capacity for the final `append` was reserved above so it does not realloc.
         let mut package_dependencies: Vec<Dependency> = Vec::with_capacity(total_len - off);
 
@@ -2665,7 +2663,7 @@ impl Package<u64> {
                                 if cfg!(debug_assertions) {
                                     debug_assert!(i == extern_strings.len());
                                 }
-                                // PORT NOTE: Zig passed the full extern_strings
+                                // PORT NOTE: the original passed the full extern_strings
                                 // buffer + tail subslice; `init` only needs the
                                 // tail's offset, so construct directly to avoid
                                 // the aliasing borrow.
@@ -2783,7 +2781,7 @@ impl Package<u64> {
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
                         let mut cwd_buf = PathBuffer::uninit();
-                        // Zig `bun.getcwd` returned the slice; Rust port returns
+                        // The Rust `bun_sys::getcwd` returns
                         // the byte length — slice the buffer ourselves.
                         let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
                         let cwd: &[u8] = &cwd_buf.0[..cwd_len];
@@ -2831,8 +2829,8 @@ impl Package<u64> {
                                     // `note_src.path.text`, which itself borrows
                                     // `note_abs_path`; both drop before the log is
                                     // printed. `Location::clone` deep-copies `file`
-                                    // into a `Cow::Owned`, matching the Zig
-                                    // `allocator.dupeZ` lifetime.
+                                    // into a `Cow::Owned`, matching the original
+                                    // owned-dup lifetime.
                                     notes.push(bun_ast::Data {
                                         text: b"Package name is also declared here".to_vec().into(),
                                         location: bun_ast::Location::init_or_null(
@@ -3117,11 +3115,11 @@ pub type List<SemverIntType> = MultiArrayList<Package<SemverIntType>>;
 pub mod serializer {
     use super::*;
 
-    /// Number of columns in the on-disk package table. Zig: `sizes.Types.len`.
+    /// Number of columns in the on-disk package table.
     pub const FIELD_COUNT: usize = PackageField::ALL.len();
 
-    // Zig: comptime block computing per-field sizes/indices sorted by alignment
-    // (descending) via `@typeInfo`/`std.meta.fields`. Rust has no struct
+    // Originally a comptime block computing per-field sizes/indices sorted by
+    // alignment (descending) via reflection. Rust has no struct
     // reflection, so the 8 fields are hand-expanded and the same stable
     // insertion sort is reproduced at call time. (`Types` is dropped — Rust
     // can't store a `[type; N]`, and the only consumer was `AlignmentType`,
@@ -3131,7 +3129,7 @@ pub mod serializer {
         pub fields: [usize; FIELD_COUNT],
     }
 
-    /// Port of Package.zig `Serializer.sizes` comptime block, evaluated per
+    /// `Serializer.sizes` table, evaluated per
     /// `SemverIntType` instantiation.
     pub fn sizes<SemverIntType: VersionInt>() -> Sizes {
         #[derive(Copy, Clone)]
@@ -3165,8 +3163,7 @@ pub mod serializer {
             entry!(6, Bin),
             entry!(7, Scripts),
         ];
-        // Stable insertion sort, key = alignment descending (Zig:
-        // `std.sort.insertionContext` with `lessThan = lhs.align > rhs.align`).
+        // Stable insertion sort, key = alignment descending.
         let mut i = 1;
         while i < FIELD_COUNT {
             let mut j = i;
@@ -3187,12 +3184,11 @@ pub mod serializer {
         Sizes { bytes, fields }
     }
 
-    // Zig: `const FieldsEnum = @typeInfo(List.Field).@"enum";`
-    // → `PackageField::ALL` (declaration order, same as the MultiArrayList
-    //    field enum Zig reflects over).
+    // `PackageField::ALL` (declaration order, same as the MultiArrayList
+    // field enum the original reflected over).
 
     pub fn byte_size<SemverIntType: VersionInt>(list: &List<SemverIntType>) -> usize {
-        // Zig used a SIMD @Vector reduction over `sizes.bytes`; equivalent
+        // The original used a SIMD vector reduction over `sizes.bytes`; equivalent
         // scalar dot-product. Order is irrelevant for the sum, so use the
         // declaration-order size table directly.
         // PERF(port): comptime @Vector reduce — profile in Phase B.
@@ -3206,16 +3202,15 @@ pub mod serializer {
         sum
     }
 
-    // Zig: `const AlignmentType = sizes.Types[sizes.fields[0]];`
-    // Unused by save/load (the live aligner uses `@TypeOf(list.bytes)`), so
-    // it is intentionally not ported.
+    // `AlignmentType` is unused by save/load (the live aligner uses the
+    // backing-bytes type), so it is intentionally not ported.
 
     pub fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
     ) -> Result<(), bun_core::Error>
     where
-        // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over
+        // PORT NOTE: the original threaded a separate `stream` and `writer` over
         // the same buffer. Two `&mut` to one object is UB in Rust regardless of
         // access order, so the port collapses both roles onto one type —
         // `Serializer::StreamType` impls both `PositionalStream` and
@@ -3274,7 +3269,7 @@ pub mod serializer {
                 for val in resolutions {
                     // `ResolutionType::copy` builds a fresh zero-initialised
                     // `Resolution` and writes only the active union member,
-                    // matching Zig `val.copy()`. A bare `*val` would serialise
+                    // matching `val.copy()`. A bare `*val` would serialise
                     // garbage in the inactive union bytes (non-deterministic
                     // lockfile output).
                     let copy = val.copy();
@@ -3304,7 +3299,7 @@ pub mod serializer {
         pub needs_update: bool,
     }
 
-    // PORT NOTE: Zig parameterised on `SemverIntType`, but the v2-migration arm
+    // PORT NOTE: the original parameterised on `SemverIntType`, but the v2-migration arm
     // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
     // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
     // instead of carrying a phantom generic that can't typecheck the migrate arm.
@@ -3490,5 +3485,3 @@ pub mod serializer {
 }
 
 pub use serializer as Serializer;
-
-// ported from: src/install/lockfile/Package.zig

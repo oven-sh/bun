@@ -164,8 +164,8 @@ impl Seq {
     fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
         let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         // PORT NOTE: reshaped for borrowck — render entirely into a local
-        // Vec, then either enqueue it or write_no_io it. Zig wrote each
-        // number directly when !needs_io; we buffer once for simplicity.
+        // Vec, then either enqueue it or write_no_io it. We buffer once for
+        // simplicity rather than writing each number directly when !needs_io.
         let (start, end, incr, sep, term) = {
             let me = Self::state_mut(interp, cmd);
             (me.start, me.end, me.increment, me.separator, me.terminator)
@@ -177,7 +177,8 @@ impl Seq {
         } else {
             current >= end
         } {
-            // TODO(port): verify Rust `{}` f32 formatting matches Zig `{d}`.
+            // TODO(port): verify Rust `{}` f32 formatting matches the
+            // reference shell's decimal formatting.
             let _ = write!(&mut out, "{}", current);
             out.extend_from_slice(sep.slice());
             current += incr;
@@ -224,5 +225,3 @@ impl Seq {
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
     bun_core::fmt::parse_f32(bytes)
 }
-
-// ported from: src/shell/builtin/seq.zig

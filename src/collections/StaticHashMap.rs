@@ -8,16 +8,16 @@ use core::marker::PhantomData;
 use bun_alloc::AllocError;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Context trait — models Zig's `Context: type` with `.hash(k)` / `.eql(a, b)`
+// Context trait — `.hash(k)` / `.eql(a, b)`
 // ──────────────────────────────────────────────────────────────────────────
 
-// Canonical definitions live in `crate::zig_hash_map`; re-exported here so the
+// Canonical definitions live in `crate::unmanaged_hash_map`; re-exported here so the
 // path `bun_collections::static_hash_map::{HashContext, AutoContext}` keeps
 // resolving for downstream callers.
-pub use crate::zig_hash_map::{AutoHashContext as AutoContext, HashContext};
+pub use crate::unmanaged_hash_map::{AutoHashContext as AutoContext, HashContext};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Type aliases (Zig: AutoHashMap / AutoStaticHashMap)
+// Type aliases (AutoHashMap / AutoStaticHashMap)
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type AutoHashMap<K, V, const MAX_LOAD_PERCENTAGE: u64> =
@@ -51,8 +51,8 @@ impl<K, V> Entry<K, V> {
         K: Copy + Default,
         V: Copy + Default,
     {
-        // PORT NOTE: Zig used `std.mem.zeroes(K)` / `undefined` — key/value of
-        // an empty entry (hash == EMPTY_HASH) are never read. Rust cannot use
+        // PORT NOTE: key/value of an empty entry (hash == EMPTY_HASH) are never
+        // read. Rust cannot use
         // `mem::zeroed()` here: K may be `&[u8]` (or any `Copy` type with a
         // niche), for which all-zero bytes violate the validity invariant
         // regardless of whether the value is later read. Use `Default` for the
@@ -78,23 +78,22 @@ impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for Entry<K, V> {
 pub use crate::hash_map::GetOrPutResult;
 
 // ──────────────────────────────────────────────────────────────────────────
-// comptime helpers (Zig top-of-fn const expressions)
+// const helpers
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
 const fn compute_shift(capacity: u64) -> u8 {
-    // Zig: 63 - math.log2_int(u64, capacity) + 1
     (63 - capacity.ilog2() + 1) as u8
 }
 
 #[inline]
 const fn compute_overflow(capacity: u64, shift: u8) -> u64 {
-    // Zig: capacity / 10 + (63 - @as(u64, shift) + 1) << 1
-    // Zig precedence: `+` binds tighter than `<<`, so this is (a + b) << 1.
+    // Spec: capacity / 10 + (63 - shift + 1), then shifted left by 1.
+    // (Original-spec precedence: `+` binds tighter than `<<`, so this is (a + b) << 1.)
     (capacity / 10 + (63 - shift as u64 + 1)) << 1
 }
 
-/// Checked u64→usize narrowing for table indices (Zig indexes by u64 directly).
+/// Checked u64→usize narrowing for table indices (the spec indexes by u64 directly).
 #[inline]
 fn to_idx(x: u64) -> usize {
     usize::try_from(x).expect("int cast")
@@ -125,7 +124,7 @@ pub struct StaticHashMap<
 > {
     pub entries: [Entry<K, V>; SLOTS],
     pub len: usize,
-    /// Zig `u6`; stored as u8.
+    /// 6-bit value; stored as u8.
     pub shift: u8,
     // put_probe_count: usize,
     // get_probe_count: usize,
@@ -183,7 +182,7 @@ impl<K: 'static, V: 'static, Ctx, const CAPACITY: usize, const SLOTS: usize> Has
 pub struct HashMap<K, V, Ctx, const MAX_LOAD_PERCENTAGE: u64> {
     pub entries: Box<[Entry<K, V>]>,
     pub len: usize,
-    /// Zig `u6`; stored as u8.
+    /// 6-bit value; stored as u8.
     pub shift: u8,
     // put_probe_count: usize,
     // get_probe_count: usize,
@@ -226,7 +225,6 @@ impl<
         let overflow = compute_overflow(capacity, shift);
 
         let n = usize::try_from(capacity + overflow).expect("int cast");
-        // Zig: gpa.alloc + @memset(.{})
         let entries = vec![Entry::<K, V>::empty(); n].into_boxed_slice();
 
         Ok(Self {
@@ -261,8 +259,8 @@ impl<
 
         let mut map = Self::init_capacity(capacity * 2)?;
 
-        // PORT NOTE: reshaped for borrowck — Zig walks raw `[*]Entry` pointers
-        // (`src`, `dst`, `end`); here we iterate by index over the old slice and
+        // PORT NOTE: reshaped for borrowck — the original walks raw `[*]Entry`
+        // pointers (`src`, `dst`, `end`); here we iterate by index over the old slice and
         // index into the new boxed slice.
         let mut dst: usize = 0;
         let mut src: usize = 0;
@@ -274,7 +272,6 @@ impl<
             } else {
                 0
             };
-            // Zig: dst = if (@intFromPtr(p) >= @intFromPtr(dst)) p else dst;
             if i >= dst {
                 dst = i;
             }
@@ -284,7 +281,7 @@ impl<
             dst += 1;
         }
 
-        // Zig: self.deinit(gpa); — old Box drops on assignment below.
+        // Old Box drops on assignment below.
         self.entries = map.entries;
         self.shift = map.shift;
         Ok(())
@@ -318,8 +315,7 @@ impl<
 // HashMapMixin — shared method bodies for StaticHashMap & HashMap
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Mirrors Zig's `fn HashMapMixin(Self, K, V, Context) type`. Implementors
-/// supply the backing storage; default methods provide the Robin-Hood logic.
+/// Implementors supply the backing storage; default methods provide the Robin-Hood logic.
 pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn storage(&self) -> &[Entry<K, V>];
     fn storage_mut(&mut self) -> &mut [Entry<K, V>];
@@ -335,11 +331,11 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         *self.len_mut() = 0;
     }
 
-    /// Full backing slice (capacity + overflow). Matches Zig's `slice()`.
+    /// Full backing slice (capacity + overflow).
     fn slice(&mut self) -> &mut [Entry<K, V>] {
-        // Zig recomputes `capacity + overflow` from `shift`; with Box<[T]>/[T; N]
+        // The original recomputes `capacity + overflow` from `shift`; with Box<[T]>/[T; N]
         // the storage already carries its exact length, so just return it.
-        // PORT NOTE: assert kept for parity with Zig's implicit invariant.
+        // PORT NOTE: assert kept for parity with the implicit invariant.
         let capacity = 1u64 << (63 - self.shift() + 1);
         let overflow = compute_overflow(capacity, self.shift());
         debug_assert_eq!(
@@ -385,9 +381,9 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         V: Copy + Default,
         Ctx: HashContext<K>,
     {
-        // PORT NOTE: Zig left `value = undefined` (never read until the caller
-        // writes via `value_ptr`). Use `Default` for the placeholder — V may
-        // not be zero-valid.
+        // PORT NOTE: the original left `value` uninitialized (never read until
+        // the caller writes via `value_ptr`). Use `Default` for the placeholder —
+        // V may not be zero-valid.
         let mut it: Entry<K, V> = Entry {
             hash: Ctx::ctx_hash(&key),
             key,
@@ -573,7 +569,7 @@ impl<V> SortedEntry<V> {
     where
         V: Copy + Default,
     {
-        // PORT NOTE: value of an empty entry is never read (Zig `undefined`).
+        // PORT NOTE: value of an empty entry is never read.
         // Use `Default` — V may not be zero-valid (e.g. `&T`).
         Self {
             hash: SORTED_EMPTY_HASH,
@@ -584,7 +580,7 @@ impl<V> SortedEntry<V> {
 
 impl<V: fmt::Debug> fmt::Display for SortedEntry<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig: "(hash: {x}, value: {})" with {x} on mem.asBytes(&self.hash)
+        // Format: "(hash: <hex bytes>, value: <debug>)"
         write!(f, "(hash: ")?;
         write!(f, "{}", bun_core::fmt::hex_lower(&self.hash))?;
         write!(f, ", value: {:?})", self.value)
@@ -596,7 +592,7 @@ pub type SortedGetOrPutResult<'a, V> = crate::hash_map::GetOrPutResult<'a, V>;
 pub struct SortedHashMap<V, const MAX_LOAD_PERCENTAGE: u64> {
     pub entries: Box<[SortedEntry<V>]>,
     pub len: usize,
-    /// Zig `u6`; stored as u8.
+    /// 6-bit value; stored as u8.
     pub shift: u8,
     // put_probe_count: usize,
     // get_probe_count: usize,
@@ -710,8 +706,8 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
         debug_assert!((self.len as u64) < (1u64 << (63 - self.shift + 1)));
         debug_assert!(cmp(key, SORTED_EMPTY_HASH) != Ordering::Equal);
 
-        // PORT NOTE: Zig left `value = undefined` (never read until caller
-        // writes via `value_ptr`). Use `Default` — V may not be zero-valid.
+        // PORT NOTE: the original left `value` uninitialized (never read until
+        // caller writes via `value_ptr`). Use `Default` — V may not be zero-valid.
         let mut it: SortedEntry<V> = SortedEntry {
             hash: key,
             value: V::default(),
@@ -742,8 +738,8 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
                 }
                 it = entry;
             }
-            // PORT NOTE: Zig source has `self.put_probe_count += 1;` here referencing
-            // a commented-out field; preserved as a comment.
+            // PORT NOTE: upstream source has `self.put_probe_count += 1;` here
+            // referencing a commented-out field; preserved as a comment.
             // self.put_probe_count += 1;
             i += 1;
         }
@@ -776,7 +772,7 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
                 }
                 break;
             }
-            // PORT NOTE: Zig source has `self.del_probe_count += 1;` (commented-out field).
+            // PORT NOTE: upstream source has `self.del_probe_count += 1;` (commented-out field).
             // self.del_probe_count += 1;
             i += 1;
         }
@@ -805,19 +801,17 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
 /// equivalent.
 #[inline]
 fn cmp(a: [u8; 32], b: [u8; 32]) -> Ordering {
-    // Zig: @bitCast(a[0..8].*) — native-endian load.
+    // Native-endian load of the first 8 bytes.
     let msa = u64::from_ne_bytes(a[0..8].try_into().expect("infallible: size matches"));
     let msb = u64::from_ne_bytes(b[0..8].try_into().expect("infallible: size matches"));
     if msa != msb {
-        // Zig: mem.bigToNative(u64, msa) < mem.bigToNative(u64, msb)
         return if u64::from_be(msa) < u64::from_be(msb) {
             Ordering::Less
         } else {
             Ordering::Greater
         };
     } else if a == b {
-        // PERF(port): Zig uses @reduce(.And, @Vector(32,u8) ==) — `[u8;32] == [u8;32]`
-        // should vectorize identically; profile in Phase B.
+        // PERF(port): `[u8;32] == [u8;32]` should vectorize; profile in Phase B.
         return Ordering::Equal;
     } else {
         match u64::from_be_bytes(a[8..16].try_into().expect("infallible: size matches")).cmp(
@@ -857,7 +851,7 @@ fn idx(a: [u8; 32], shift: u8) -> usize {
 mod tests {
     use super::*;
 
-    // TODO(port): Zig tests use `std.rand.DefaultPrng` (xoshiro256++). Need a
+    // TODO(port): the original tests use a xoshiro256++ PRNG. Need a
     // matching PRNG for byte-identical key sequences, or accept any PRNG since
     // these tests only check sortedness/round-trip, not specific keys.
 
@@ -871,7 +865,7 @@ mod tests {
     #[test]
     fn hash_map_put_get_delete_grow() {
         for seed in 0..128u64 {
-            // TODO(port): replace with xoshiro256++ to match Zig DefaultPrng.
+            // TODO(port): replace with xoshiro256++ to match the original PRNG.
             let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
             let mut next = || {
                 state ^= state << 13;
@@ -945,7 +939,7 @@ mod tests {
 
     #[test]
     fn sorted_hash_map_put_get_delete_grow() {
-        // TODO(port): needs PRNG `fill(&mut [u8; 32])` matching Zig DefaultPrng.
+        // TODO(port): needs PRNG `fill(&mut [u8; 32])` matching the original PRNG.
     }
 
     #[test]
@@ -1022,5 +1016,3 @@ mod tests {
         assert_eq!(map.delete(key(2)).unwrap(), 2);
     }
 }
-
-// ported from: src/collections/StaticHashMap.zig

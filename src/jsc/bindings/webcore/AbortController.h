@@ -27,7 +27,7 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "ScriptWrappable.h"
 #include <wtf/Ref.h>
@@ -37,7 +37,7 @@ namespace JSC {
 class JSValue;
 }
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
@@ -58,7 +58,7 @@ public:
 
     AbortSignal& signal();
     Ref<AbortSignal> protectedSignal() const;
-    void abort(Zig::GlobalObject&, JSC::JSValue reason);
+    void abort(Bun::GlobalObject&, JSC::JSValue reason);
 
     WebCoreOpaqueRoot opaqueRoot();
 

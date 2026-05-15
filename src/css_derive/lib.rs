@@ -1,11 +1,10 @@
 //! Proc-macro derives for `bun_css`.
 //!
-//! `#[derive(DeepClone)]` is the compile-time port of Zig's
-//! `css.implementDeepClone(@This(), this, allocator)` (`src/css/generics.zig`).
-//! The Zig original is `@typeInfo(T)` reflection that walks struct fields /
-//! union variants and calls `.deepClone(allocator)` on each. Rust has no
-//! reflection, so the derive emits the equivalent field-wise / variant-wise
-//! recursion as an `impl bun_css::generics::DeepClone<'bump> for T`.
+//! `#[derive(DeepClone)]` is the compile-time replacement for the original
+//! `css.implementDeepClone(this, allocator)` reflection helper, which walked
+//! struct fields / union variants and called `.deepClone(allocator)` on each.
+//! Rust has no runtime reflection, so the derive emits the equivalent field-wise
+//! / variant-wise recursion as an `impl bun_css::generics::DeepClone<'bump> for T`.
 //!
 //! The generated body uses **UFCS** dispatch
 //! (`::bun_css::generics::DeepClone::deep_clone(&field, bump)`), so the call
@@ -44,9 +43,9 @@ use syn::{
 // The five derives below already exist (entry points: `DeepClone`, `CssEql`,
 // `IsCompatible`, `Parse`, `ToCss`) and already emit exactly the per-variant
 // dispatch the hand-expansions at the listed sites spell out by hand. They are
-// the direct Rust port of Zig's `css.DeriveParse` / `css.DeriveToCss` /
-// `css.implementDeepClone` / `css.implementEql` / `comptime is_compatible`
-// field-walks. Nothing is added here; this comment is the contract surface the
+// the direct Rust replacements for the original `css.DeriveParse` / `css.DeriveToCss` /
+// `css.implementDeepClone` / `css.implementEql` / `is_compatible`
+// reflection field-walks. Nothing is added here; this comment is the contract surface the
 // `css-value-enum-to_css-deep_clone-hand-dispatch` migration relies on.
 
 #[proc_macro_derive(DeepClone)]
@@ -61,21 +60,19 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 // `CssEql` / `CssHash`
 // ════════════════════════════════════════════════════════════════════════════
 //
-// Port of `implementEql` / `implementHash` in `src/css/generics.zig`.
-//
-// Zig's `implementEql` / `implementHash` use `@typeInfo(T)` to walk struct
-// fields or `union(enum)` variants and recurse via `eql(field.type, …)` /
-// `hash(field.type, …)`, which in turn dispatch to `T.eql` / `T.hash` if the
-// type `@hasDecl`s one. The derives below emit **UFCS** calls
+// Replacement for the original `implementEql` / `implementHash` reflection
+// helpers, which walked struct fields or tagged-union variants and recursed via
+// `eql(field, …)` / `hash(field, …)`, in turn dispatching to `T.eql` / `T.hash`
+// if the type declared one. The derives below emit **UFCS** calls
 // (`::bun_css::generics::CssEql::eql(&field, other)`,
 //  `::bun_css::generics::CssHash::hash(&field, hasher)`) so dispatch is
 // *always* through the trait — an inherent `eql`/`hash` on a field type is
 // ignored and never shadows. Every field type reached by the derive must
 // therefore carry a real `CssEql`/`CssHash` impl (blanket or derived).
 //
-// Unions: Zig prefixes the hash with `bun.writeAnyToHasher(@intFromEnum(this))`.
-// The derive feeds the variant index as a `u32` (CSS hashing is in-process
-// dedup only — self-consistency, not Zig-byte-identity, is the contract).
+// Unions: the original prefixed the hash with the integer discriminant of the
+// active variant. The derive feeds the variant index as a `u32` (CSS hashing is
+// in-process dedup only — self-consistency, not byte-identity, is the contract).
 
 #[proc_macro_derive(CssEql, attributes(css))]
 pub fn derive_css_eql(input: TokenStream) -> TokenStream {
@@ -94,7 +91,7 @@ pub fn derive_css_hash(input: TokenStream) -> TokenStream {
 }
 
 /// `#[css(skip)]` on a field (or variant) excludes it from the derived
-/// `eql` / `hash` / `is_compatible` body. Mirrors the Zig pattern where some
+/// `eql` / `hash` / `is_compatible` body. Mirrors the original pattern where some
 /// struct fields (e.g. `loc: bun.logger.Loc`, `vendor_prefix: VendorPrefix`)
 /// are not part of value identity / browser-compat.
 fn has_css_skip(attrs: &[Attribute]) -> bool {
@@ -227,8 +224,7 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
                     }
                 }
             });
-            // Zig: `if (@intFromEnum(this) != @intFromEnum(other)) return false;`
-            // — i.e. mismatched tags are simply unequal.
+            // Mismatched discriminant tags are simply unequal.
             quote! {
                 match (self, __other) {
                     #(#arms)*
@@ -288,7 +284,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
             let arms = e.variants.iter().enumerate().map(|(i, v)| {
                 let vname = &v.ident;
                 let disc = i as u32;
-                // Zig: `bun.writeAnyToHasher(hasher, @intFromEnum(this))`.
+                // Mix the variant discriminant into the hash before fields.
                 let tag = quote! { __hasher.update(&(#disc as u32).to_ne_bytes()); };
                 match &v.fields {
                     Fields::Unit => quote! {
@@ -357,12 +353,11 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
 // `IsCompatible`
 // ════════════════════════════════════════════════════════════════════════════
 //
-// Port of `isCompatible` in `src/css/generics.zig`. The Zig dispatches via
-// `@hasDecl(T, "isCompatible")` for leaf types, dereferences pointers, and
-// iterates list containers — anything else is a `@compileError`. The trait
+// Replacement for the original `isCompatible` reflection helper, which dispatched
+// to a per-type `isCompatible` for leaf types, dereferenced pointers, and
+// iterated list containers — anything else was a compile error. The trait
 // blanket impls in `bun_css::generics` cover refs/containers; this derive
-// handles the *compound* shapes the Zig leaves to per-type `isCompatible`
-// methods:
+// handles the *compound* shapes left to per-type `isCompatible` methods:
 //
 //   * structs → AND of every (non-`#[css(skip)]`) field's `.is_compatible(b)`
 //     (the hand-written pattern in e.g. `BorderImageRepeat`, `Rect<T>`,
@@ -590,36 +585,31 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
 // `DefineEnumProperty` / `DeriveParse` / `DeriveToCss`
 // ════════════════════════════════════════════════════════════════════════════
 //
-// Port of `src/css/css_parser.zig`:
+// Replacement for the original `DefineEnumProperty(T)` reflection helper, which
+// generated:
 //
-//   pub fn DefineEnumProperty(comptime T: type) type {
-//       const fields = std.meta.fields(T);
-//       return struct {
-//           pub fn parse(input)  → expectIdent → eqlCaseInsensitiveASCII vs field.name
-//           pub fn toCss(this)   → dest.writeStr(@tagName(this.*))
-//           pub fn eql / hash / deepClone …
-//       };
-//   }
+//   * `parse(input)`  → expectIdent → eqlCaseInsensitiveASCII vs the field name
+//   * `toCss(this)`   → dest.writeStr(<variant tag name>)
+//   * `eql` / `hash` / `deepClone` …
 //
-// Zig's `@tagName` yields the literal field identifier (`@"table-row-group"`),
-// so the CSS keyword is encoded directly in the variant name. Rust variant
-// names are PascalCase, so the derive maps `TableRowGroup → "table-row-group"`
-// by default and accepts an explicit `#[css(name = "…")]` / `#[css("…")]`
-// override where the kebab-case mapping doesn't round-trip (e.g.
-// `Preserve3d → "preserve-3d"`).
+// The original encoded the CSS keyword directly in the variant identifier
+// (`@"table-row-group"`). Rust variant names are PascalCase, so the derive maps
+// `TableRowGroup → "table-row-group"` by default and accepts an explicit
+// `#[css(name = "…")]` / `#[css("…")]` override where the kebab-case mapping
+// doesn't round-trip (e.g. `Preserve3d → "preserve-3d"`).
 //
 // Generated surface for a unit-only enum `T`:
 //   * `impl From<T> for &'static str` — satisfies `EnumProperty: Into<&'static str>`
 //   * `impl bun_css::EnumProperty for T { fn from_ascii_case_insensitive }`
 //   * inherent `T::as_str` / `T::parse` / `T::to_css` so call-sites needn't
-//     import the trait (mirrors Zig's `pub const parse = css_impl.parse;`)
+//     import the trait.
 //
-// `Parse` / `ToCss` (port of Zig's `DeriveParse` / `DeriveToCss`) handle
-// `union(enum)`-shaped Rust enums: unit variants serialize as keywords,
-// single-payload tuple variants delegate to the payload's own
-// `parse` / `to_css`. Ordering follows the Zig `generateCode` contract: void
-// and payload variants must each be contiguous; whichever group is declared
-// first is attempted first.
+// `Parse` / `ToCss` (replacements for the original `DeriveParse` / `DeriveToCss`)
+// handle tagged-union-shaped Rust enums: unit variants serialize as keywords,
+// single-payload tuple variants delegate to the payload's own `parse` / `to_css`.
+// Ordering follows the original `generateCode` contract: void and payload
+// variants must each be contiguous; whichever group is declared first is
+// attempted first.
 
 /// Convert a Rust `PascalCase` identifier to a CSS kebab-case keyword.
 /// `TableRowGroup` → `table-row-group`, `RunIn` → `run-in`, `Nowrap` → `nowrap`.
@@ -779,7 +769,7 @@ fn expand_enum_property(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[automatically_derived]
         #[allow(dead_code)]
         impl #name {
-            /// CSS keyword for this variant (Zig: `@tagName`).
+            /// CSS keyword for this variant (the variant tag name as a string).
             #[inline]
             pub const fn as_str(&self) -> &'static str {
                 match *self { #(#to_str_arms)* }
@@ -831,8 +821,8 @@ enum VariantShape<'a> {
         ident: &'a syn::Ident,
         ty: &'a syn::Type,
     },
-    /// `Foo { f1, f2, … }` — inline struct payload. Direct Rust analogue of the
-    /// Zig `union(enum)` arm carrying an anonymous `struct { … __generateToCss }`;
+    /// `Foo { f1, f2, … }` — inline struct payload. Direct Rust analogue of a
+    /// tagged-union arm carrying an anonymous `struct { … __generateToCss }`;
     /// the printer is the field sequence (see [`gen_field_seq_to_css`]).
     NamedFields {
         ident: &'a syn::Ident,
@@ -860,7 +850,7 @@ fn classify<'a>(data: &'a syn::DataEnum) -> syn::Result<Vec<VariantShape<'a>>> {
                 return Err(syn::Error::new_spanned(
                     &v.ident,
                     "#[derive(Parse/ToCss)] supports unit variants, single-field tuple \
-                     variants, and named-field struct variants (Zig `union(enum)` shape)",
+                     variants, and named-field struct variants (tagged-union shape)",
                 ));
             }
         }
@@ -895,7 +885,7 @@ fn has_css_flag(attrs: &[Attribute], flag: &str) -> bool {
 /// Emit the `__generateToCss` field-sequence body shared by the struct branch
 /// and named-field enum variants: each field is `to_css`'d in declaration
 /// order, `Option<_>` fields are unwrapped, and a single space is written
-/// between fields (unconditionally — matching the Zig, which does not elide the
+/// between fields (unconditionally — the original did not elide the
 /// separator when an optional field is `None`).
 ///
 /// `access` maps a field ident to the expression that reads it (`self.f` for
@@ -930,7 +920,7 @@ fn gen_field_seq_to_css<'a>(
 
 /// `true` when `ty` is spelled `Option<…>` (any path ending in `Option` with one
 /// generic argument). Used by the struct branch of `expand_derive_to_css` to
-/// mirror Zig's `@typeInfo(field.type) == .optional` unwrap.
+/// mirror the original optional-field unwrap.
 fn is_option_type(ty: &syn::Type) -> bool {
     let syn::Type::Path(tp) = ty else {
         return false;
@@ -957,28 +947,27 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let body = match &input.data {
         // ── Struct branch ──────────────────────────────────────────────────
-        // Port of the `__generateToCss` auto-serializer in Zig's
-        // `DeriveToCss` (`src/css/css_parser.zig:821-843`): for a payload
-        // struct whose Zig original carried `pub fn __generateToCss() void {}`,
+        // Replacement for the original `__generateToCss` auto-serializer in
+        // `DeriveToCss`: for a payload struct that opted into auto-serialization,
         // the printer is the field sequence, space-separated, with optionals
         // unwrapped (and the inter-field space emitted unconditionally — that
-        // is what the Zig does, so we do not second-guess it here).
+        // matches the original, so we do not second-guess it here).
         //
-        // The Zig dispatched this from inside the *enum*'s `toCss` via
-        // `@typeInfo` reflection on the payload type. Rust proc-macros cannot
-        // see through a type name, so the equivalent is deriving `ToCss`
-        // directly on the payload struct; the enum arm's
-        // `__inner.to_css(__dest)` then resolves to this generated impl.
+        // The original dispatched this from inside the *enum*'s `toCss` via
+        // reflection on the payload type. Rust proc-macros cannot see through a
+        // type name, so the equivalent is deriving `ToCss` directly on the
+        // payload struct; the enum arm's `__inner.to_css(__dest)` then resolves
+        // to this generated impl.
         Data::Struct(s) => {
             let Fields::Named(named) = &s.fields else {
                 return Err(syn::Error::new_spanned(
                     name,
                     "#[derive(ToCss)] on a struct requires named fields \
-                     (Zig `__generateToCss` shape)",
+                     (`__generateToCss` shape)",
                 ));
             };
             // `#[css(generate_to_css)]` is accepted (and recommended) as an
-            // explicit opt-in marker mirroring Zig's `pub fn __generateToCss()`,
+            // explicit opt-in marker mirroring the original `__generateToCss()` hook,
             // but the behaviour is identical with or without it — deriving
             // `ToCss` on a named-field struct always emits the field-sequence
             // printer. The flag exists so the port can record intent at the
@@ -996,9 +985,9 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
                 }
                 VariantShape::Payload { ident, .. } => {
                     // The payload type is opaque to a proc-macro, so we delegate. If
-                    // the payload is a ported "anonymous struct" (Zig
-                    // `__generateToCss`), give it `#[derive(ToCss)]` — the struct
-                    // branch above generates the matching field-sequence printer.
+                    // the payload is a ported "anonymous struct" (`__generateToCss`
+                    // shape), give it `#[derive(ToCss)]` — the struct branch above
+                    // generates the matching field-sequence printer.
                     quote! { #name::#ident(__inner) => __inner.to_css(__dest), }
                 }
                 VariantShape::NamedFields { ident, fields } => {
@@ -1073,10 +1062,10 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
     let shapes = classify(data)?;
     let (_, ty_g, _) = input.generics.split_for_impl();
 
-    // Zig `DeriveParse` requires void variants and payload variants to each be
-    // contiguous, and tries them in declaration-block order. We honour the same
-    // contract: split into the two contiguous groups and emit whichever is
-    // declared first, first.
+    // The original `DeriveParse` requires void variants and payload variants to
+    // each be contiguous, and tries them in declaration-block order. We honour
+    // the same contract: split into the two contiguous groups and emit whichever
+    // is declared first, first.
     let mut units: Vec<(&syn::Ident, String)> = Vec::new();
     let mut payloads: Vec<(&syn::Ident, &syn::Type)> = Vec::new();
     let units_first = matches!(shapes.first(), Some(VariantShape::Unit { .. }));
@@ -1085,9 +1074,9 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
             VariantShape::Unit { ident, keyword } => units.push((ident, keyword.clone())),
             VariantShape::Payload { ident, ty } => payloads.push((ident, ty)),
             VariantShape::NamedFields { ident, .. } => {
-                // Zig `DeriveParse` only dispatches on void variants and
+                // The original `DeriveParse` only dispatches on void variants and
                 // payload types that themselves expose `parse`; the inline
-                // `__generateToCss` structs in align.zig each hand-write
+                // `__generateToCss` structs in `align` each hand-write
                 // `parse`. The Rust port lifts those into named structs with a
                 // `parse` inherent and wraps them in a single-field tuple
                 // variant, so this arm is unreachable for any faithful port.
@@ -1104,8 +1093,7 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
     // Build the unit-variant matcher as a closure body. When this is the *last*
     // attempted group it is invoked directly (its error propagates); when a
     // payload group follows, it is wrapped in `try_parse` so the cursor rewinds
-    // on no-match (Zig: `input.tryParse(Parser.expectIdent, .{})` then
-    // `input.reset(&state)`).
+    // on no-match (`input.tryParse(Parser.expectIdent)` then `input.reset(&state)`).
     let unit_matcher = {
         let arms = units.iter().map(|(ident, kw)| {
             let kw = syn::LitByteStr::new(kw.as_bytes(), ident.span());
@@ -1132,7 +1120,7 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     // Payload block builder. `terminal` controls whether the *last* payload
-    // propagates its error (Zig: `i == last_payload_index && last > void_index`)
+    // propagates its error (i.e. payload group is declared after the void group)
     // or is `try_parse`d like the others so a following unit block can run.
     let payload_block = |terminal: bool| -> TokenStream2 {
         if payloads.is_empty() {
@@ -1196,8 +1184,8 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
     // Emit the body in the **trait** impl so `css::generic::parse[_with_options]`
     // (bounded on `T: generics::Parse[WithOptions]`) resolves. An inherent
     // `parse` is kept as a thin forwarder for call sites that don't import the
-    // trait. `ParseWithOptions` ignores options (Zig fallthrough) — types that
-    // genuinely consume options hand-write their own impl instead of deriving.
+    // trait. `ParseWithOptions` ignores options (matches the original fallthrough) —
+    // types that genuinely consume options hand-write their own impl instead of deriving.
     let bounded = with_trait_bounds(&input, quote!(::bun_css::generics::Parse));
     let (b_impl_g, _, b_where_g) = bounded.split_for_impl();
 

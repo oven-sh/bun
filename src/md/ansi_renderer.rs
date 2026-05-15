@@ -38,7 +38,7 @@ pub struct Theme<'a> {
     /// `collectImageUrls` + the CLI entry point) so `emitImage` can
     /// send remote images through Kitty's `t=f` path. When null, http
     /// and https URLs fall through to the alt-text fallback.
-    // LIFETIMES.tsv: BORROW_PARAM. Zig type is
+    // LIFETIMES.tsv: BORROW_PARAM. Original type is
     // `bun.StringHashMapUnmanaged([]const u8)` — keys are URL bytes,
     // values are file-path bytes.
     pub remote_image_paths: Option<&'a StringHashMap<Box<[u8]>>>,
@@ -80,7 +80,7 @@ impl ImageUrlCollector {
     }
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
+// PORT NOTE: original manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for ImageUrlCollector {
     fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> {
         Ok(())
@@ -2432,7 +2432,7 @@ pub fn detect_kitty_graphics() -> bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
-    // Zig: `if (comptime !bun.Environment.isPosix) return false;`
+    // POSIX-only probe; non-POSIX targets return false unconditionally.
     #[cfg(not(unix))]
     {
         return false;
@@ -2479,7 +2479,7 @@ fn probe_kitty_graphics() -> bool {
             events: bun_sys::posix::POLL_IN,
             revents: 0,
         }];
-        // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
+        // bun.sys.poll has a Maybe variant flagged incomplete upstream — keep std.posix.poll.
         let ready = match bun_sys::posix::poll(&mut pfd, 80) {
             Ok(r) => r,
             Err(_) => return false,
@@ -2597,7 +2597,7 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
     Some(payload)
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
+// PORT NOTE: original manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for AnsiRenderer<'_> {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
         AnsiRenderer::enter_block(self, block_type, data, flags);
@@ -2641,5 +2641,3 @@ pub fn render_to_ansi<'a>(
         core::mem::take(&mut renderer.out.list).into_boxed_slice(),
     ))
 }
-
-// ported from: src/md/ansi_renderer.zig

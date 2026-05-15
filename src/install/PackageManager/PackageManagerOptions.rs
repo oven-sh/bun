@@ -106,7 +106,7 @@ impl Default for Options {
             // TODO(port): bun.pathLiteral("node_modules/.bin") — platform-specific separator at comptime
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
-            // PORT NOTE: Zig had `= undefined`; always assigned in `load()` before read.
+            // PORT NOTE: the original had `= undefined`; always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
             cache_directory: b"",
@@ -134,7 +134,7 @@ impl Default for Options {
             json_output: false,
             max_retry_count: 5,
             min_simultaneous_requests: 4,
-            // TODO(port): no default in Zig — caller must supply at construction
+            // TODO(port): no default in the original — caller must supply at construction
             max_concurrent_lifecycle_scripts: 0,
             publish_config: PublishConfig::default(),
             ca: Box::default(),
@@ -161,7 +161,7 @@ impl Default for Options {
     }
 }
 
-// PORT NOTE: was an anonymous `union(enum)` field type in Zig.
+// PORT NOTE: was an anonymous `union(enum)` field type in the original.
 pub enum PatchFeatures {
     Nothing,
     Patch,
@@ -193,7 +193,7 @@ impl Access {
         }
     }
 
-    /// Port of Zig `@tagName(access)` — lower-case tag name as written into the
+    /// Port of the original `@tagName(access)` — lower-case tag name as written into the
     /// publish JSON body and summary output.
     #[inline]
     pub const fn as_str(self) -> &'static str {
@@ -220,7 +220,7 @@ impl AuthType {
         }
     }
 
-    /// Port of Zig `@tagName(auth_type)` — lower-case tag name as used by
+    /// Port of the original `@tagName(auth_type)` — lower-case tag name as used by
     /// `npm-auth-type` header in `npm.whoami`.
     #[inline]
     pub const fn as_str(self) -> &'static str {
@@ -376,10 +376,10 @@ pub fn open_global_bin_dir(
     ))
 }
 
-// PORT NOTE: Zig borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
+// PORT NOTE: the original borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
 // arena). Rust `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
 // per Phase-A "no struct lifetime params". Park a clone for the lifetime of
-// the install command (matches Zig's never-reset config arena) via the named
+// the install command (matches the original's never-reset config arena) via the named
 // hand-off helper.
 #[inline]
 fn leak_static(s: &[u8]) -> &'static [u8] {
@@ -392,7 +392,7 @@ impl Options {
         log: &mut bun_ast::Log,
         env: &mut DotEnvLoader,
         maybe_cli: Option<CommandLineArguments>,
-        // Spec PackageManagerOptions.zig:224 `bun_install_: ?*Api.BunInstall` —
+        // Spec: `bun_install_: ?*Api.BunInstall` —
         // every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<&api::BunInstall>` / `*const ()`).
@@ -400,7 +400,7 @@ impl Options {
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
         let mut base = Api::NpmRegistry::default();
-        // PORT NOTE: reshaped for borrowck — Zig captures `*Api.BunInstall` twice via `if (bun_install_) |config|`.
+        // PORT NOTE: reshaped for borrowck — the original captures `*Api.BunInstall` twice via `if (bun_install_) |config|`.
         let bun_install_ref = bun_install_;
         if let Some(config) = bun_install_ref {
             if let Some(registry) = &config.default_registry {
@@ -414,10 +414,10 @@ impl Options {
         if base.url.is_empty() {
             base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
         }
-        // PORT NOTE: Zig passes `base` by-value (struct copy); clone so the
+        // PORT NOTE: the original passes `base` by-value (struct copy); clone so the
         // `base.url` fallback below in the scoped-registry loop stays valid.
         self.scope = Npm::registry::Scope::from_api(b"", base.clone(), env)?;
-        // PORT NOTE: Zig `defer { this.did_override_default_scope = ... }` moved to end of fn;
+        // PORT NOTE: the original `defer { this.did_override_default_scope = ... }` moved to end of fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
         if let Some(config) = bun_install_ref {
@@ -445,7 +445,7 @@ impl Options {
                         self.ca = ca_list.clone();
                     }
                     Api::Ca::Str(ca_str) => {
-                        // Zig `&.{ca_str}` — single-element slice; own it (no `Box::leak`).
+                        // the original `&.{ca_str}` — single-element slice; own it (no `Box::leak`).
                         self.ca = vec![ca_str.clone()].into_boxed_slice();
                     }
                 }
@@ -643,7 +643,7 @@ impl Options {
         }
 
         if let Some(retry_count) = env.get(b"BUN_CONFIG_HTTP_RETRY_COUNT") {
-            // PORT NOTE: Zig `parseInt(u16, str, 10) catch null` — `Result` → `.ok()`.
+            // PORT NOTE: the original `parseInt(u16, str, 10) catch null` — `Result` → `.ok()`.
             if let Ok(int) = bun_core::parse_int::<u16>(retry_count, 10) {
                 self.max_retry_count = int;
             }
@@ -773,7 +773,7 @@ impl Options {
                 } else {
                     LogLevel::Verbose
                 };
-                // SAFETY: main-thread CLI option load — single writer (Zig: `verbose_install = true`).
+                // SAFETY: main-thread CLI option load — single writer (originally: `verbose_install = true`).
                 super::PackageManager::set_verbose_install(true);
             } else if cli.silent {
                 self.log_level = LogLevel::Silent;
@@ -799,7 +799,7 @@ impl Options {
             }
 
             if let Some(backend) = cli.backend {
-                // Zig: `PackageInstall.supported_method = backend` — atomic store,
+                // original: `PackageInstall.supported_method = backend` — atomic store,
                 // main-thread CLI option load (single writer).
                 crate::package_install::SUPPORTED_METHOD
                     .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
@@ -973,7 +973,7 @@ impl Default for Enable {
     }
 }
 
-// Field-style accessors for Zig parity (`options.do.save_lockfile = false` /
+// Field-style accessors for the original parity (`options.do.save_lockfile = false` /
 // `if options.do.install_packages { ... }`). The bitflags struct is `Copy`,
 // so getters return by value and setters take `&mut self`.
 impl Do {
@@ -1091,7 +1091,7 @@ impl Do {
     }
 }
 
-// Field-style accessors for Zig parity (`options.enable.cache = false` /
+// Field-style accessors for the original parity (`options.enable.cache = false` /
 // `if options.enable.manifest_cache { ... }`). The bitflags struct is `Copy`,
 // so getters return by value and setters take `&mut self`.
 impl Enable {
@@ -1148,5 +1148,3 @@ impl Enable {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
 }
-
-// ported from: src/install/PackageManager/PackageManagerOptions.zig

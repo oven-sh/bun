@@ -6,7 +6,7 @@ pub struct StmtPrepareOKPacket {
     pub num_columns: u16,
     pub num_params: u16,
     pub warning_count: u16,
-    // TODO(port): Zig type is u24; Rust has no native u24. Value is bounded to 24 bits.
+    // TODO(port): wire format is u24; Rust has no native u24. Value is bounded to 24 bits.
     pub packet_length: u32,
 }
 
@@ -18,7 +18,7 @@ impl Default for StmtPrepareOKPacket {
             num_columns: 0,
             num_params: 0,
             warning_count: 0,
-            // packet_length has no default in Zig; caller must set it before decode.
+            // packet_length has no protocol-level default; caller must set it before decode.
             packet_length: 0,
         }
     }
@@ -45,7 +45,7 @@ impl StmtPrepareOKPacket {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+    // See Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
@@ -53,5 +53,3 @@ impl StmtPrepareOKPacket {
         self.decode_internal(reader)
     }
 }
-
-// ported from: src/sql/mysql/protocol/StmtPrepareOKPacket.zig

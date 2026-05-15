@@ -61,7 +61,7 @@ enum EasingKeyword {
     StepEnd,
 }
 
-/// Zig: `Map.getASCIIICaseInsensitive(ident)`.
+/// Case-insensitive lookup.
 ///
 /// PERF(port): was `phf::Map<&[u8], _>` + lowercase-into-stack-buf + `get`.
 /// 7 keys with near-unique lengths (only len 8 collides: `ease-out` /
@@ -266,7 +266,7 @@ enum StepPositionKeyword {
     JumpEnd,
 }
 
-/// Zig: `Map.getASCIIICaseInsensitive(ident)` — lowercase into a stack buffer,
+/// Case-insensitive lookup — lowercase into a stack buffer,
 /// then a length-gated byte match.
 ///
 /// PERF(port): was `phf::Map<&[u8], _>` (6 keys). phf hashes the whole slice
@@ -293,7 +293,7 @@ fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
 }
 
 impl StepPosition {
-    // TODO(port): Zig used `css.DeriveToCss(@This()).toCss` — reflection-derived serializer.
+    // TODO(port): originally a reflection-derived `toCss` serializer.
     // Phase B: replace with `#[derive(ToCss)]` once the trait/derive exists.
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_str(<&'static str>::from(*self))
@@ -327,5 +327,3 @@ impl Default for StepPosition {
         StepPosition::End
     }
 }
-
-// ported from: src/css/values/easing.zig

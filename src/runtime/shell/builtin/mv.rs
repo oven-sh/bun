@@ -46,7 +46,7 @@ pub enum MvState {
     Err,
 }
 
-/// Spec: mv.zig `Opts.ParseError` — mv uses its own simpler parser.
+/// mv uses its own simpler parser.
 pub enum MvParseError {
     IllegalOption(&'static [u8]),
     ShowUsage,
@@ -57,7 +57,6 @@ impl Mv {
         Self::next(interp, cmd)
     }
 
-    /// Spec: mv.zig `writeFailingError`.
     fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
@@ -75,7 +74,6 @@ impl Mv {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    /// Spec: mv.zig `next`.
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
@@ -145,10 +143,10 @@ impl Mv {
                     let maybe_fd: Option<bun_sys::Fd> = match result.unwrap() {
                         Ok(fd) => fd,
                         Err(e) => {
-                            // Spec mv.zig:228-247 — only ENOENT (rename to a
-                            // new path) is acceptable, and only with exactly
-                            // one source. Any other errno (EACCES, ELOOP, …)
-                            // is reported and fails regardless of source count.
+                            // Only ENOENT (rename to a new path) is acceptable,
+                            // and only with exactly one source. Any other errno
+                            // (EACCES, ELOOP, …) is reported and fails
+                            // regardless of source count.
                             let target = match &Self::state_mut(interp, cmd).state {
                                 MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
                                 _ => unreachable!(),
@@ -299,7 +297,6 @@ impl Mv {
         }
     }
 
-    /// Spec: mv.zig `checkTargetTaskDone`.
     pub fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
         if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
             t.done = true;
@@ -307,7 +304,6 @@ impl Mv {
         Self::next(interp, cmd).run(interp);
     }
 
-    /// Spec: mv.zig `batchedMoveTaskDone`.
     pub fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
         let (all_done, had_err) = {
             let MvState::Executing {
@@ -335,8 +331,8 @@ impl Mv {
                     MvState::Executing { err, .. } => err.take().unwrap(),
                     _ => unreachable!(),
                 };
-                // Spec mv.zig:374 — `writeFailingError(buf, err.errno)`: the
-                // failing rename's errno becomes the shell exit code.
+                // `writeFailingError(buf, err.errno)`: the failing rename's
+                // errno becomes the shell exit code.
                 let exit_code = e.errno as ExitCode;
                 let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
                 Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
@@ -347,7 +343,6 @@ impl Mv {
         }
     }
 
-    /// Spec: mv.zig `parseOpts` + `parseFlags`.
     fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<(), MvParseError> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
@@ -406,8 +401,8 @@ impl Mv {
 }
 
 impl Drop for Mv {
-    /// Spec: mv.zig `deinit` — close the directory fd opened by
-    /// `ShellMvCheckTargetTask` (`openat(target, O_RDONLY|O_DIRECTORY)`).
+    /// Close the directory fd opened by `ShellMvCheckTargetTask`
+    /// (`openat(target, O_RDONLY|O_DIRECTORY)`).
     /// `bun_sys::Fd` is `Copy` with no `Drop`, so without this every
     /// `mv srcs... dir/` leaks one open fd.
     fn drop(&mut self) {
@@ -423,8 +418,8 @@ enum MvFlag {
     IllegalOption(&'static [u8]),
 }
 
-/// Spec: mv.zig `ShellMvCheckTargetTask`. `openat(target, O_RDONLY|O_DIRECTORY)`
-/// on a worker thread to learn whether the destination is a directory.
+/// `openat(target, O_RDONLY|O_DIRECTORY)` on a worker thread to learn
+/// whether the destination is a directory.
 pub struct ShellMvCheckTargetTask {
     pub cmd: NodeId,
     pub cwd: bun_sys::Fd,
@@ -437,7 +432,6 @@ pub struct ShellMvCheckTargetTask {
 }
 
 impl ShellMvCheckTargetTask {
-    /// Spec: mv.zig `ShellMvCheckTargetTask.runFromThreadPool`.
     pub fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
         this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
@@ -455,12 +449,12 @@ impl ShellMvCheckTargetTask {
     }
 }
 
-/// Spec: mv.zig `ShellMvBatchedTask`. renameat() each source into the target.
+/// renameat() each source into the target.
 pub struct ShellMvBatchedTask {
     pub cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
-    /// can route to `Mv::batched_move_task_done` (Zig used `*ShellMvBatchedTask`
-    /// directly via `container_of`).
+    /// can route to `Mv::batched_move_task_done` (replaces a
+    /// `container_of`-style raw back-pointer).
     pub idx: usize,
     pub sources: Vec<ZBox>,
     pub target: ZBox,
@@ -479,7 +473,6 @@ pub struct ShellMvBatchedTask {
 impl ShellMvBatchedTask {
     pub const BATCH_SIZE: usize = 5;
 
-    /// Spec: mv.zig `ShellMvBatchedTask.runFromThreadPool`.
     pub fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
         // Moving multiple entries into a directory.
         if this.sources.len() > 1 {
@@ -510,7 +503,7 @@ impl ShellMvBatchedTask {
         // Bounce-back is posted by `shell_task_trampoline`.
     }
 
-    /// Spec: mv.zig `ShellMvBatchedTask.moveInDir` — `renameat(cwd, src,
+    /// `renameat(cwd, src,
     /// target_fd, basename(src))`. Reshaped for borrowck: free fn over the
     /// fields it touches so `src` can borrow `self.sources[_]` while `self.err`
     /// is written by the caller.
@@ -533,15 +526,14 @@ impl ShellMvBatchedTask {
         buf[len] = 0;
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
         bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
-            // Spec mv.zig:122-128 — surface `target/basename(src)` as the
-            // failing path. `with_path` heap-clones, so the Zig
-            // `err_path_owned` bookkeeping is unnecessary here (`Drop` frees).
+            // Surface `target/basename(src)` as the failing path. `with_path`
+            // heap-clones, so no separate `err_path_owned` bookkeeping is
+            // needed here (`Drop` frees).
             let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
             e.with_path(joined.as_bytes())
         })
     }
 
-    /// Spec: mv.zig `ShellMvBatchedTask.moveMultipleIntoDir`.
     fn move_multiple_into_dir(&mut self) {
         let mut buf = PathBuffer::uninit();
         // `target_fd` is always Some when sources.len() > 1 — `next` rejected
@@ -570,9 +562,9 @@ impl ShellMvBatchedTask {
         }
     }
 
-    /// Spec: mv.zig `ShellMvBatchedTask.moveAcrossFilesystems` — `rename(2)`
-    /// fails with EXDEV across mounts; fall back to `cp -pRP` + `rm -rf`.
-    /// TODO(port): unimplemented in Zig too.
+    /// `rename(2)` fails with EXDEV across mounts; fall back to `cp -pRP` +
+    /// `rm -rf`.
+    /// TODO(port): not implemented yet.
     #[allow(dead_code)]
     fn move_across_filesystems(&mut self, _src: &ZStr, _dest: &ZStr) {}
 
@@ -635,5 +627,3 @@ impl Default for Opts {
         }
     }
 }
-
-// ported from: src/shell/builtin/mv.zig

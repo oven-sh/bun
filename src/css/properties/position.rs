@@ -30,8 +30,7 @@ enum PositionKeyword {
 }
 
 fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
-    // ≤8 entries → plain match per PORTING.md (Zig: `bun.ComptimeEnumMap` +
-    // `getASCIIICaseInsensitive`).
+    // ≤8 entries → plain match per PORTING.md.
     use bun_core::eql_case_insensitive_ascii_check_length as eq;
     Some(if eq(ident, b"static") {
         PositionKeyword::Static
@@ -83,16 +82,12 @@ impl Position {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        // Zig: css.implementEql(@This(), lhs, rhs) — comptime-reflection structural eq.
-        // Rust: covered by #[derive(PartialEq)].
+        // Structural equality — covered by #[derive(PartialEq)].
         self == rhs
     }
 
     pub fn deep_clone(&self) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, arena) — comptime-reflection deep copy.
-        // Rust: covered by #[derive(Clone)]; arena param dropped (global mimalloc).
+        // Deep copy — covered by #[derive(Clone)]; arena param dropped (global mimalloc).
         self.clone()
     }
 }
-
-// ported from: src/css/properties/position.zig

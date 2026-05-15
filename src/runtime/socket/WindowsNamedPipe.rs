@@ -44,7 +44,6 @@ use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTim
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
-// Zig `pub const CertError = UpgradedDuplex.CertError;`
 pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
@@ -53,7 +52,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,
-    /// Non-owning alias of the heap `uv::Pipe` (Zig: `?*uv.Pipe`). The owning
+    /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
     /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
     /// ever observes/null-checks the handle, never frees it.
@@ -182,8 +181,8 @@ impl WindowsNamedPipe {
     /// adopts it (before adoption it is the leaked `Box` from [`from`]).
     /// Single JS thread; the writer never holds a competing `&mut uv::Pipe`
     /// across a call into this struct, so the borrow is exclusive for its
-    /// duration. FFI-adjacent: this is the libuv-handle raw-pointer deref the
-    /// Zig `this.pipe.?` does implicitly.
+    /// duration. FFI-adjacent: this is the libuv-handle raw-pointer deref
+    /// `this.pipe.?` does implicitly in the original.
     #[cfg(windows)]
     #[inline]
     fn pipe_mut(&mut self) -> Option<&mut uv::Pipe> {
@@ -204,8 +203,8 @@ impl WindowsNamedPipe {
     /// `handle_queue` with no `uv_close` ever scheduled (loop never drains).
     /// `close_and_destroy` covers both states via its `loop_.is_null()` branch.
     ///
-    /// PORT NOTE: the Zig spec has the same gap (WindowsNamedPipe.zig
-    /// L334-401); this is a deliberate divergence to plug a pre-existing leak,
+    /// PORT NOTE: the original implementation had the same gap; this is a
+    /// deliberate divergence to plug a pre-existing leak,
     /// not a transcription mismatch.
     ///
     /// MUST NOT be called once `start_with_pipe` has adopted the allocation
@@ -241,7 +240,7 @@ impl WindowsNamedPipe {
         {
             // Non-owning `NonNull` — clearing it does NOT free. The writer's
             // `Source::Pipe(Box)` is the sole owner and frees via
-            // `close_and_destroy` (Zig: `this.pipe = null` is a raw-ptr null-out).
+            // `close_and_destroy` (`this.pipe = null` is a raw-ptr null-out).
             self.pipe = None;
         }
         self.on_close();
@@ -255,7 +254,7 @@ impl WindowsNamedPipe {
 
     // PORT NOTE: takes `nread` (not the libuv `buffer` slice) because that
     // slice points *into* `self.incoming` — see `StreamReader::on_read` below
-    // for the Stacked-Borrows split. The Zig `is_slice_in_buffer` debug assert
+    // for the Stacked-Borrows split. The `is_slice_in_buffer` debug assert
     // is dropped: libuv guarantees the read buffer is the one returned from
     // `on_read_alloc`, and we no longer hold the original pointer here.
     fn on_read(&mut self, nread: usize) {
@@ -275,7 +274,7 @@ impl WindowsNamedPipe {
         //   (b) call `receive_data` through a raw `*mut WrapperType` so no
         //       outer `&mut self.wrapper` Unique tag is held across the
         //       re-entrant retag (raw-ptr-per-field pattern, see jsc_hooks.rs).
-        // The Zig original aliases freely (`wrapper.receiveData(data)` while
+        // The original aliases freely (`wrapper.receiveData(data)` while
         // `data` points into `this.incoming`); Rust needs the explicit detach.
         let mut data = core::mem::take(&mut self.incoming);
 
@@ -318,7 +317,7 @@ impl WindowsNamedPipe {
         } else {
             (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
         }
-        // Zig: `this.incoming.len = 0` — restore the (cleared) allocation so
+        // Restore the (cleared) allocation so
         // the next `on_read_alloc` reuses it instead of growing from empty.
         data.clear();
         self.incoming = data;
@@ -342,7 +341,7 @@ impl WindowsNamedPipe {
                 // unref after sending all data
                 #[cfg(windows)]
                 if let Some(source) = self.writer.source.as_mut() {
-                    // Zig: `source.pipe.unref()` — Rust `Source` is an enum;
+                    // `source.pipe.unref()` — Rust `Source` is an enum;
                     // `unref()` matches the active variant (always `Pipe` here
                     // via `start_with_pipe`).
                     source.unref();
@@ -434,7 +433,7 @@ impl WindowsNamedPipe {
             // scheduled `uv_close` → `Box::from_raw` on it (PipeWriter::close),
             // so the alias is about to dangle. Clear it here so later
             // `pipe_mut()` callers (e.g. `pause_stream` exported to JS) observe
-            // `None` instead of a freed pointer. The Zig spec's `onPipeClose`
+            // `None` instead of a freed pointer. The original `onPipeClose`
             // (which would null `this.pipe`) is dead code there too — the
             // writer's `.onClose` slot is wired to `onClose`, not `onPipeClose`.
             self.pipe = None;
@@ -444,7 +443,7 @@ impl WindowsNamedPipe {
             // Drop the non-owning alias now: the writer's `close()` has
             // already handed the Box off to libuv's async close callback (or
             // will), so any later `pause_stream()` would deref freed memory.
-            // (Zig leaves `this.pipe` dangling here — its `onPipeClose` is
+            // (The original leaves `this.pipe` dangling here — its `onPipeClose` is
             // dead code; we diverge to avoid the latent UAF.)
             #[cfg(windows)]
             {
@@ -461,7 +460,7 @@ impl WindowsNamedPipe {
                 // ref because we have pending data
                 #[cfg(windows)]
                 if let Some(source) = self.writer.source.as_mut() {
-                    // Zig: `source.pipe.ref()` — see `on_write` for the
+                    // `source.pipe.ref()` — see `on_write` for the
                     // enum-vs-union note.
                     source.ref_();
                 }
@@ -634,13 +633,12 @@ impl WindowsNamedPipe {
         handlers: Handlers,
         vm: &'static VirtualMachine,
     ) -> WindowsNamedPipe {
-        // Zig: `if (Environment.isPosix) @compileError(...)` — the whole fn is
-        // now `#[cfg(windows)]`-gated so POSIX builds never see `uv::Pipe`.
+        // The whole fn is `#[cfg(windows)]`-gated so POSIX builds never see `uv::Pipe`.
         WindowsNamedPipe {
             vm,
             event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
-            // Leak the `Box` and keep only a non-owning `NonNull` alias (Zig:
-            // `?*uv.Pipe`). Ownership of the allocation is later transferred to
+            // Leak the `Box` and keep only a non-owning `NonNull` alias
+            // (`?*uv.Pipe`). Ownership of the allocation is later transferred to
             // `self.writer.source` via `start_with_pipe` in `start()`, which
             // re-materialises the `Box` and is responsible for freeing it.
             pipe: Some(NonNull::from(Box::leak(pipe))),
@@ -651,9 +649,8 @@ impl WindowsNamedPipe {
             incoming: Vec::new(),
             ssl_error: CertError::default(),
             connect_req: bun_core::ffi::zeroed::<uv::uv_connect_t>(),
-            // Zig: `.{ .next = .epoch, .tag = .WindowsNamedPipe }` with field
-            // defaults `state = .PENDING`, `heap = .{}`, `in_heap = .none` —
-            // exactly what `init_paused` produces.
+            // `init_paused` produces `next = .epoch`, `tag = .WindowsNamedPipe`,
+            // `state = .PENDING`, `heap = .{}`, `in_heap = .none`.
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
             current_timeout: 0,
             flags: Flags::DISCONNECTED, // disconnected: bool = true is the only non-false default
@@ -684,7 +681,7 @@ impl WindowsNamedPipe {
 
     #[cfg(windows)]
     fn on_connect(&mut self, status: uv::ReturnCode) {
-        // PORT NOTE: reshaped — Zig `defer this.deref()` cannot be a scopeguard here (would need
+        // PORT NOTE: reshaped — `defer this.deref()` cannot be a scopeguard here (would need
         // to capture &mut self alongside body uses). Call deref() explicitly at each return.
 
         #[cfg(windows)]
@@ -693,13 +690,13 @@ impl WindowsNamedPipe {
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
-            // PORT NOTE: divergence from Zig spec — on async connect failure the
+            // PORT NOTE: divergence from the original — on async connect failure the
             // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
             // (`start_with_pipe` only runs on the success branch below), so
             // `on_error → close → writer.end()` is a no-op for it. Reclaim it
             // here via `discard_unadopted_pipe` (which schedules `uv_close` and
             // `Box::from_raw`s in the callback), mirroring the synchronous
-            // early-error paths in `connect`/`open`/`get_accepted_by`. The Zig
+            // early-error paths in `connect`/`open`/`get_accepted_by`. The
             // original leaks the init'd `uv_pipe_t` in this path.
             self.discard_unadopted_pipe();
             self.on_error(err);
@@ -904,7 +901,7 @@ impl WindowsNamedPipe {
         }
 
         // BORROW_PARAM: `connect()` takes `&mut self.connect_req`, a `*mut c_void`
-        // context, and `&mut self.pipe` simultaneously (Zig: all `*T` alias freely).
+        // context, and `&mut self.pipe` simultaneously (the original: all `*T` alias freely).
         // Derive `ctx` first via `addr_of_mut!` (no intermediate `&mut Self` retag),
         // then project `req`/`pipe` *from `ctx`* so all three share one provenance
         // root — taking `&mut self.connect_req` followed by `self as *mut Self`
@@ -1065,7 +1062,7 @@ impl WindowsNamedPipe {
             };
             self.pipe_mut().unwrap().unref();
             // raw self-ptr first to dodge the &mut self.writer / &mut *self overlap
-            // (Zig: `this.writer.setParent(this)` — `this` is already `*WindowsNamedPipe`).
+            // (`this.writer.setParent(this)` — `this` is already `*WindowsNamedPipe`).
             let this: *mut Self = core::ptr::from_mut(self);
             self.writer.set_parent(this);
             // SAFETY: `start_with_pipe`'s contract is "Box-allocated pointer;
@@ -1076,7 +1073,7 @@ impl WindowsNamedPipe {
             // `self.writer.source` holds the SOLE `Box` for the allocation;
             // `self.pipe` remains a non-owning alias for `pause_stream`. NOTE:
             // nothing clears that alias when the writer frees the Box (the
-            // `on_pipe_close` method above is dead code, matching Zig) — so
+            // `on_pipe_close` method above is dead code) — so
             // `on_close` nulls it defensively and `Drop` only reclaims when
             // `PIPE_ADOPTED` was never set.
             self.flags.insert(Flags::PIPE_ADOPTED);
@@ -1334,7 +1331,7 @@ impl WindowsNamedPipe {
     }
 
     /// Free internal resources, it can be called multiple times.
-    // PORT NOTE: Zig `pub fn deinit` → private idempotent helper invoked from on_close and Drop.
+    // PORT NOTE: `deinit` → private idempotent helper invoked from on_close and Drop.
     // Owned fields (writer, wrapper, ssl_error) free themselves via their own Drop impls; only
     // the side effects (timer cancel, read_stop, take()) remain explicit here.
     fn release_resources(&mut self) {
@@ -1347,7 +1344,7 @@ impl WindowsNamedPipe {
             // succeeds and is a no-op if not reading.
             unsafe { (*stream).read_stop() };
         }
-        // Zig: `this.writer.deinit()` → `closeWithoutReporting(); outgoing.deinit();
+        // `this.writer.deinit()` → `closeWithoutReporting(); outgoing.deinit();
         // current_payload.deinit();`. The earlier port skipped
         // `closeWithoutReporting()` on the assumption that "the source is already
         // closed by the time on_close reaches here (that close is what fired the
@@ -1355,7 +1352,7 @@ impl WindowsNamedPipe {
         // (`WindowsStreamingWriterParent::on_close`). It is FALSE when we arrive
         // via `ssl_on_close` (TLS close_notify): the underlying `uv_pipe_t` is
         // still open and in libuv's handle_queue, so without an explicit close
-        // here the HANDLE outlives Zig's by ≥ one event-loop tick (until the
+        // here the HANDLE outlives the original's by ≥ one event-loop tick (until the
         // embedding context's refcount hits 0 and `WindowsStreamingWriter::Drop`
         // finally runs). Inline `close_without_reporting()` (private on the
         // writer) so the source pipe is `uv_close`d NOW; the `get_fd() != INVALID`
@@ -1444,7 +1441,7 @@ bun_io::impl_streaming_writer_parent! {
     deref      = |this| (&mut *this).deref(),
 }
 
-/// Port of the three `comptime` fn-pointer args to Zig `stream.readStart(this,
+/// Port of the three fn-pointer args to `stream.readStart(this,
 /// onReadAlloc, onReadError, onRead)` — Rust bakes them into a trait so the
 /// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
 #[cfg(windows)]
@@ -1455,10 +1452,10 @@ impl uv::StreamReader for WindowsNamedPipe {
     }
     #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        // Zig: `ReturnCodeI64.init(nreads).errEnum() orelse .CANCELED` — but
+        // The original: `ReturnCodeI64.init(nreads).errEnum() orelse .CANCELED` — but
         // `errEnum()` returns `null` ONLY for non-negative values, and the
         // trampoline only reaches this arm when `nreads < 0`, so the `orelse`
-        // is dead in spec. For any negative code `translateUVErrorToE` already
+        // is dead. For any negative code `translateUVErrorToE` already
         // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
         // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
@@ -1478,5 +1475,3 @@ impl uv::StreamReader for WindowsNamedPipe {
         WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
     }
 }
-
-// ported from: src/runtime/socket/WindowsNamedPipe.zig

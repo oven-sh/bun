@@ -6,8 +6,8 @@ pub type AddressableSize = u64;
 
 /// `TaggedPtr::Tag` — logically u15, carried in u16. (Inherent assoc types are nightly; hoisted here.)
 pub type TagType = u16;
-/// Zig: `packed struct(u64) { _ptr: u49, data: u15 }`
-/// Packed-struct field order in Zig is LSB-first, so:
+/// Bit-packed `u64`: low 49 bits are the pointer address, high 15 bits are the
+/// tag.
 ///   bits  0..49 → `_ptr`
 ///   bits 49..64 → `data`
 #[repr(transparent)]
@@ -24,9 +24,8 @@ impl TaggedPtr {
 
     #[inline]
     pub fn init<T>(ptr: *const T, data: TagType) -> TaggedPtr {
-        // Zig's `if (Ptr == @TypeOf(null))` branch is subsumed: a null `*const T`
-        // yields address 0 below. The `@typeInfo(Ptr) != .pointer` compile error
-        // is enforced by `*const T` in the signature.
+        // A null `*const T` yields address 0 below; `*const T` in the
+        // signature already enforces "must be a pointer".
         let address = ptr as usize;
         TaggedPtr(
             (address as u64 & Self::ADDR_MASK) // @truncate to u49
@@ -58,16 +57,14 @@ impl TaggedPtr {
 
     #[inline]
     pub fn to(self) -> *mut c_void {
-        // @ptrFromInt(@bitCast(this)) — note: includes the tag bits in the high
-        // word, matching Zig. This is intentional: round-tripping through
-        // `*anyopaque` preserves the tag.
+        // Note: includes the tag bits in the high word. This is intentional:
+        // round-tripping through `*c_void` preserves the tag.
         self.0 as usize as *mut c_void
     }
 }
 
-// Zig `from(val: anytype)` dispatches on @TypeOf(val):
-//   f64 | i64 | u64        => @bitCast(val)
-//   ?*anyopaque|*anyopaque => @bitCast(@intFromPtr(val))
+// `From` impls cover the input types: `u64`/`i64`/`f64` are reinterpreted
+// bitwise; `*mut c_void` / `Option<*mut c_void>` use the address.
 impl From<u64> for TaggedPtr {
     #[inline]
     fn from(val: u64) -> Self {
@@ -104,22 +101,19 @@ impl From<Option<*mut c_void>> for TaggedPtr {
 // TaggedPointerUnion
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Zig builds this with heavy comptime reflection: `@typeName`, `@Type` to mint
-// an enum, `@hasField`/`@field` for membership checks, and `inline for` over a
-// type tuple. None of that exists in Rust. We model it with two traits:
+// Modeled with two traits:
 //
 //   - `TypeList`      : implemented for the tuple `(T1, T2, ...)`; carries the
 //                       variant count and the tag→name table.
 //   - `UnionMember<L>`: implemented for each `Ti` against its list `L`; carries
-//                       that type's tag value (1024 - index, matching Zig).
+//                       that type's tag value (`1024 - index`).
 //
-// `assert_type` / `@hasField` become a `T: UnionMember<Ts>` bound — the compile
-// error is the trait-bound failure.
+// Membership checks become a `T: UnionMember<Ts>` bound — the compile error is
+// the trait-bound failure.
 //
-// Tag values are assigned exactly as Zig does: `1024 - i` for index `i`. Zig
-// also reifies a non-exhaustive `enum(u15)` for the tag; we keep the raw u15
-// and expose `tag()` as the integer (callers that need an enum can define one
-// per instantiation).
+// Tag values are assigned `1024 - i` for index `i`. We keep the raw u15 and
+// expose `tag()` as the integer (callers that need an enum can define one per
+// instantiation).
 
 /// Implemented for the tuple of types passed to `TaggedPtrUnion<(...)>`.
 pub trait TypeList {
@@ -133,18 +127,15 @@ pub trait TypeList {
 }
 
 /// `T: UnionMember<Ts>` ⇔ `T` is one of the types in the list `Ts`.
-/// Replaces Zig's `assert_type` / `@hasField(Tag, @typeName(Type))`.
 pub trait UnionMember<Ts: TypeList> {
     const TAG: TagType;
     const NAME: &'static str;
 }
 
 /// Generates `TypeList` for `($($T,)*)` and `UnionMember<($($T,)*)>` for each
-/// `$T`, assigning tags `1024 - i` to match Zig's `TagTypeEnumWithTypeMap`.
-// TODO(port): proc-macro — Zig uses `@typeName` for both the tag enum field
-// name and the `name` string. `stringify!($T)` is the closest analogue but
-// won't match Zig's fully-qualified `@typeName` output; Phase B should confirm
-// no caller depends on the exact string.
+/// `$T`, assigning tags `1024 - i`.
+// TODO(port): proc-macro — `stringify!($T)` won't match a fully-qualified
+// type-name; Phase B should confirm no caller depends on the exact string.
 #[macro_export]
 macro_rules! impl_tagged_ptr_union {
     ($($T:ty),+ $(,)?) => {
@@ -212,9 +203,7 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     }
 
     pub fn type_name(self) -> Option<&'static str> {
-        // Zig: @tagName(this.tag()) — on a non-exhaustive enum this is defined
-        // for known fields. We return None for unknown tags to match the
-        // optional return type the Zig caller sees.
+        // Return None for unknown tags.
         Ts::type_name_from_tag(self.repr.data())
     }
 
@@ -229,18 +218,18 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
 
     #[inline]
     pub fn tag(self) -> TagType {
-        // Zig returns the reified enum; we return the raw integer.
+        // Return the raw tag integer.
         self.repr.data()
     }
 
-    /// Zig `case(comptime Type) Tag` → the tag constant for `Type`.
+    /// Tag constant for `Type`.
     #[inline]
     pub const fn case<Type: UnionMember<Ts>>() -> TagType {
         Type::TAG
     }
 
     /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
-    // PORT NOTE: Zig name is `as`, which is a Rust keyword.
+    // PORT NOTE: named `as_unchecked` because `as` is a Rust keyword.
     #[inline]
     pub fn as_unchecked<Type: UnionMember<Ts>>(self) -> *mut Type {
         self.repr.get::<Type>()
@@ -299,8 +288,8 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
 
     #[inline]
     pub fn init<Type: UnionMember<Ts>>(ptr: *const Type) -> Self {
-        // Zig splits `init` (infers Type via std.meta.Child) and `initWithType`.
-        // In Rust the generic param IS the inferred child type, so both collapse.
+        // The generic param IS the inferred child type, so `init` and
+        // `init_with_type` collapse.
         Self::init_with_type::<Type>(ptr)
     }
 
@@ -325,5 +314,3 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     // `match self.tag()` (or use a per-instantiation `dispatch!` macro). Each
     // callsite of `.call(...)` needs to be rewritten in Phase B.
 }
-
-// ported from: src/ptr/tagged_pointer.zig

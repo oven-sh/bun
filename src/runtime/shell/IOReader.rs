@@ -1,8 +1,8 @@
 //! Similar to `IOWriter` but for reading.
 //!
 //! *NOTE* This type is reference counted (via `Arc` in the Rust port). The
-//! Zig version queued deinitialization onto the event loop to prevent bugs;
-//! see the `Drop` impl note for the Rust equivalent.
+//! original implementation queued deinitialization onto the event loop to
+//! prevent bugs; see the `Drop` impl note for the Rust equivalent.
 
 #![allow(dead_code)]
 
@@ -15,13 +15,13 @@ use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
 // ──────────────────────────────────────────────────────────────────────────
-// ChildPtr (NodeId-arena port of Zig TaggedPointerUnion<{Cat}>)
+// ChildPtr (NodeId-arena port of TaggedPointerUnion<{Cat}>)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// In the NodeId-arena port, listeners are identified by `(NodeId, ReaderTag)`
 /// — the node id of the owning Cmd plus a tag saying which builtin impl to
-/// dispatch the `on_read_chunk`/`on_reader_done` callback to. Replaces the
-/// Zig `TaggedPtrUnion<(Cat,)>`.
+/// dispatch the `on_read_chunk`/`on_reader_done` callback to. Replaces a
+/// `TaggedPtrUnion<(Cat,)>`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChildPtr {
     pub node: NodeId,
@@ -34,7 +34,7 @@ pub enum ReaderTag {
     Cat,
 }
 
-/// Spec: IOReader.zig `Readers = SmolList(ChildPtr, 4)`.
+/// `Readers = SmolList(ChildPtr, 4)`.
 // PERF(port): was inline-4 small-vec — profile in Phase B.
 type Readers = Vec<ChildPtr>;
 
@@ -42,7 +42,7 @@ type Readers = Vec<ChildPtr>;
 // IOReader
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Spec: IOReader.zig `ReaderImpl = bun.io.BufferedReader`.
+/// `ReaderImpl = bun_io::BufferedReader`.
 pub type ReaderImpl = bun_io::BufferedReader;
 
 struct State {
@@ -53,8 +53,8 @@ struct State {
     err: Option<sys::SystemError>,
     /// The raw `sys::Error` that produced `err`. `SystemError` is not `Clone`
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
-    /// `SystemError` per callee in `on_reader_done_cb` (Spec IOReader.zig:189
-    /// passes `this.err` ref'd to each child).
+    /// `SystemError` per callee in `on_reader_done_cb` (which passes `this.err`
+    /// ref'd to each child).
     raw_err: Option<sys::Error>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
@@ -83,9 +83,9 @@ unsafe impl Send for IOReader {}
 unsafe impl Sync for IOReader {}
 
 impl IOReader {
-    /// Spec: IOReader.zig `__deinit` (body `AsyncDeinitReader` posts back to
-    /// main). Drops the last strong ref so the underlying `BufferedReader`
-    /// closes on the JS thread.
+    /// Drops the last strong ref so the underlying `BufferedReader`
+    /// closes on the JS thread (originally `AsyncDeinitReader` posted back
+    /// to main).
     pub fn deinit_on_main_thread(this: *mut IOReader) {
         // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
         // the async-deinit task.
@@ -96,7 +96,7 @@ impl IOReader {
 impl IOReader {
     #[inline]
     fn state(&self) -> &mut State {
-        // SAFETY: single-threaded; matches Zig `*IOReader` model.
+        // SAFETY: single-threaded.
         unsafe { &mut *self.state.get() }
     }
 
@@ -117,8 +117,8 @@ impl IOReader {
 
     /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
     /// whose child callback may drop the last external ref and free us
-    /// mid-method. Spec gets the same guarantee from `asyncDeinit`'s next-tick
-    /// hop (IOReader.zig:197); here we keep a strong ref on the stack instead.
+    /// mid-method. The original got the same guarantee from `asyncDeinit`'s
+    /// next-tick hop; here we keep a strong ref on the stack instead.
     #[inline]
     fn keepalive(&self) -> std::sync::Arc<IOReader> {
         self.state()
@@ -206,7 +206,7 @@ impl IOReader {
         self.state().evtloop.as_event_loop_ctx()
     }
 
-    /// Only does things on windows. Spec: IOReader.zig `setReading`.
+    /// Only does things on windows.
     #[inline]
     fn set_reading(&self, reading: bool) {
         #[cfg(windows)]
@@ -216,7 +216,7 @@ impl IOReader {
         let _ = reading;
     }
 
-    /// Idempotent function to start the reading. Spec: IOReader.zig `start`.
+    /// Idempotent function to start the reading.
     pub fn start(&self) -> Yield {
         self.state().started = true;
         #[cfg(not(windows))]
@@ -250,7 +250,7 @@ impl IOReader {
         }
     }
 
-    /// Spec: IOReader.zig `addReader`. Only adds if not already present.
+    /// Only adds if not already present.
     pub fn add_reader(&self, reader: ChildPtr) {
         let s = self.state();
         if !s.readers.contains(&reader) {
@@ -258,7 +258,6 @@ impl IOReader {
         }
     }
 
-    /// Spec: IOReader.zig `removeReader`.
     pub fn remove_reader(&self, reader: ChildPtr) {
         let s = self.state();
         if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
@@ -266,7 +265,7 @@ impl IOReader {
         }
     }
 
-    /// Spec: IOReader.zig `onReadChunk` (the `BufferedReader.onReadChunk` hook).
+    /// The `BufferedReader.onReadChunk` hook.
     fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
         // `dispatch_read_chunk` → `Cat::on_io_reader_chunk` may drop the last
         // external Arc; hold one across the whole body so the trailing
@@ -278,8 +277,8 @@ impl IOReader {
         // both re-derive `state()` (and the interpreter callback may re-enter
         // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
         // `&mut State` across the dispatch. Re-derive `state()` per access
-        // instead, mirroring Zig's `this.readers.len()`/`this.readers.get(i)`
-        // pattern (IOReader.zig:143-153).
+        // instead, mirroring the `this.readers.len()`/`this.readers.get(i)`
+        // pattern.
         let mut i = 0usize;
         while i < self.state().readers.len() {
             let r = self.state().readers[i];
@@ -296,7 +295,7 @@ impl IOReader {
         let should_continue = has_more != bun_io::ReadState::Eof;
         if should_continue && !self.state().readers.is_empty() {
             self.set_reading(true);
-            // PORT NOTE: Spec IOReader.zig:159-167 calls
+            // PORT NOTE: original called
             // `this.reader.registerPoll()` (posix) / `startWithCurrentPipe()`
             // (windows) here. In Rust this would re-derive a second
             // `&mut ReaderImpl` while the bun_io read loop still holds one on
@@ -315,10 +314,9 @@ impl IOReader {
         should_continue
     }
 
-    /// Spec: IOReader.zig `onReaderError`.
     fn on_reader_error(&self, err: sys::Error) {
         // `dispatch_reader_done` may drop the last external Arc; keep `self`
-        // alive across the loop. Spec gets this from `asyncDeinit`'s hop.
+        // alive across the loop. Originally guaranteed by `asyncDeinit`'s hop.
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
@@ -335,7 +333,6 @@ impl IOReader {
         }
     }
 
-    /// Spec: IOReader.zig `onReaderDone`.
     fn on_reader_done_cb(&self) {
         // `dispatch_reader_done` → `Cat::on_io_reader_done` drops Cat's
         // `Arc<IOReader>`; if that was the last external ref, `self` is freed
@@ -346,7 +343,7 @@ impl IOReader {
         let s = self.state();
         let readers: Vec<ChildPtr> = s.readers.clone();
         let interp = s.interp;
-        // Spec IOReader.zig:189-193: pass `this.err` (ref'd) if set.
+        // Pass `this.err` (ref'd) if set.
         // `SystemError` isn't `Clone` in the Rust port yet, so we kept the
         // source `sys::Error` (which IS `Clone`) and re-derive a fresh
         // `SystemError` per callee — same approach as `on_reader_error`.
@@ -379,7 +376,7 @@ impl IOReader {
 // no `&mut IOReader` is materialized, satisfying the init() *const→*mut
 // invariant. Aliasing with the caller's live `&mut ReaderImpl` is handled by
 // the state/reader UnsafeCell split — callbacks touch only `state`, never
-// `reader()`. `loop_` spec: IOReader.zig `loop()`.
+// `reader()`.
 bun_io::impl_buffered_reader_parent! {
     ShellIoReader for IOReader;
     has_on_read_chunk = true;
@@ -391,12 +388,12 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Drop (replaces Zig RefCount.deref → asyncDeinit → asyncDeinitCallback)
+// Drop (replaces RefCount.deref → asyncDeinit → asyncDeinitCallback)
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Drop for IOReader {
     fn drop(&mut self) {
-        // Spec: IOReader.zig `asyncDeinitCallback`. The async hop guarded
+        // The async hop in the original `asyncDeinitCallback` guarded
         // against being deref'd from inside a read callback while
         // BufferedReader is still iterating; with `Arc` the last ref drops
         // after the callback returns.
@@ -491,5 +488,3 @@ pub fn on_reader_done(
         }
     }
 }
-
-// ported from: src/shell/IOReader.zig

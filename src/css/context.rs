@@ -236,9 +236,9 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    // PORT NOTE: reshaped — Zig passed `comptime dir: []const u8` and `comptime decls: []const u8`
-    // and used `@field` to select the Direction variant and the self.ltr/self.rtl Vec by name.
-    // Rust has no @field; pass the Direction value and a borrow of the decls Vec directly.
+    // PORT NOTE: reshaped — the original took a compile-time field name and used reflection
+    // to select the Direction variant and the self.ltr/self.rtl Vec by name.
+    // Rust has no equivalent; pass the Direction value and a borrow of the decls Vec directly.
     pub fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
@@ -332,13 +332,13 @@ impl<'a> PropertyHandlerContext<'a> {
         }
 
         let fallbacks = unparsed.value.get_fallbacks(bump, self.targets);
-        // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value; `SmallList`
-        // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
+        // PORT NOTE: iterate fallbacks by value; `SmallList` has no `IntoIterator`,
+        // so spill to a Vec to preserve P3-before-LAB order.
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
             self.add_conditional_property(
                 condition_and_fallback.0,
                 css::Property::Unparsed(UnparsedProperty {
-                    // `PropertyId` is `Copy`; Zig `deepClone` was identity.
+                    // `PropertyId` is `Copy`; deep clone is identity.
                     property_id: unparsed.property_id,
                     value: condition_and_fallback.1,
                 }),
@@ -346,5 +346,3 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 }
-
-// ported from: src/css/context.zig

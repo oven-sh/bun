@@ -31,28 +31,27 @@ pub const CACHE_LINE_LENGTH: usize = 64;
 
 /// Intrusive next-pointer accessors for `UnboundedQueue<T>` nodes.
 ///
-/// Zig's `UnboundedQueue(T, next_field)` is parametric on the *field name* and
-/// uses `@field` / `@hasDecl` to branch at comptime between (a) a plain `?*T`
-/// field and (b) a packed-pointer field exposing `getPtr`/`setPtr`/
-/// `atomicLoadPtr`/`atomicStorePtr`. Rust cannot name a field generically, so
-/// both shapes collapse into this trait: implement it for each node type and
-/// route to the appropriate field.
+/// Two node shapes exist: (a) a plain `*mut T` next-pointer field and (b) a
+/// packed-pointer field exposing `getPtr`/`setPtr`/`atomicLoadPtr`/
+/// `atomicStorePtr`. Rust cannot name a field generically, so both shapes
+/// collapse into this trait: implement it for each node type and route to the
+/// appropriate field.
 ///
 /// # Safety
 /// Implementors must guarantee that the four methods access the *same*
 /// intrusive link field, and that `atomic_*` variants are truly atomic with
 /// the given ordering. `item` is always a valid, non-null, properly aligned
 /// pointer when called by `UnboundedQueue`.
-// TODO(port): the Zig `has_custom_accessors` comptime branch is folded into
-// this trait — verify each concrete `T` picks the right impl in Phase B.
+// TODO(port): the custom-accessor branch is folded into this trait — verify
+// each concrete `T` picks the right impl in Phase B.
 pub unsafe trait Node: Sized {
-    /// Zig: `getNext(item: *T) ?*T`
+    /// Load the next-pointer (non-atomic).
     unsafe fn get_next(item: *mut Self) -> *mut Self;
-    /// Zig: `setNext(item: *T, ptr: ?*T) void`
+    /// Store the next-pointer (non-atomic).
     unsafe fn set_next(item: *mut Self, ptr: *mut Self);
-    /// Zig: `atomicLoadNext(item: *T, ordering) ?*T`
+    /// Atomically load the next-pointer.
     unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self;
-    /// Zig: `atomicStoreNext(item: *T, ptr: ?*T, ordering) void`
+    /// Atomically store the next-pointer.
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering);
 }
 
@@ -109,8 +108,8 @@ pub unsafe trait Linked: Sized {
 // SAFETY: all four accessors route through `T::link(item)`, which by `Linked`'s
 // contract returns the same embedded `Link<Self>` field every time; `Link` is a
 // `#[repr(transparent)]` `AtomicPtr`, so atomic ops are truly atomic at the
-// requested ordering and the non-atomic get/set degrade to Relaxed (matching
-// Zig's plain `?*T` field access — never concurrent with the atomic path).
+// requested ordering and the non-atomic get/set degrade to Relaxed (never
+// concurrent with the atomic path).
 unsafe impl<T: Linked> Node for T {
     #[inline]
     unsafe fn get_next(item: *mut Self) -> *mut Self {
@@ -160,7 +159,7 @@ impl<T: Node> BatchIterator<T> {
             return ptr::null_mut();
         }
         let front = self.batch.front;
-        debug_assert!(!front.is_null()); // Zig: `orelse unreachable`
+        debug_assert!(!front.is_null());
         // SAFETY: `front` is non-null (count > 0 invariant) and points to a
         // live node previously linked into this batch by `pop_batch`.
         self.batch.front = unsafe { T::get_next(front) };
@@ -175,11 +174,11 @@ impl<T: Node> Batch<T> {
     }
 }
 
-/// Per-arch cache-half-line aligned wrapper — Zig's `align(queue_padding_length)`
-/// on `UnboundedQueue.back`/`.front`. Rust cannot express per-field alignment
-/// with a non-literal const, so this newtype is `#[repr(align(N))]`-cfg'd to
-/// `CACHE_LINE_LENGTH / 2` per target arch, keeping producer (CAS on `back`)
-/// and consumer (swap on `front`) on separate cache halves.
+/// Per-arch cache-half-line aligned wrapper for `UnboundedQueue.back`/`.front`.
+/// Rust cannot express per-field alignment with a non-literal const, so this
+/// newtype is `#[repr(align(N))]`-cfg'd to `CACHE_LINE_LENGTH / 2` per target
+/// arch, keeping producer (CAS on `back`) and consumer (swap on `front`) on
+/// separate cache halves.
 #[cfg_attr(
     any(
         target_arch = "x86_64",
@@ -241,7 +240,7 @@ impl<T: Node> UnboundedQueue<T> {
     }
 
     pub fn push_batch(&self, first: *mut T, last: *mut T) {
-        // SAFETY: caller guarantees `last` is a valid live node (Zig `*T` is non-null).
+        // SAFETY: caller guarantees `last` is a valid, non-null, live node.
         unsafe { T::set_next(last, ptr::null_mut()) };
         if cfg!(debug_assertions) {
             let mut item = first;
@@ -343,7 +342,7 @@ impl<T: Node> UnboundedQueue<T> {
         // pushed *after* `first`, because the Acquire load of `self.front` synchronizes-with
         // the Release store in push/push_batch. So we know it's reachable from `first`.
         let last = self.back.0.swap(ptr::null_mut(), Ordering::Relaxed);
-        debug_assert!(!last.is_null()); // Zig: `.?`
+        debug_assert!(!last.is_null());
         let mut next_item = first;
         while next_item != last {
             next_item = loop {
@@ -368,5 +367,3 @@ impl<T: Node> UnboundedQueue<T> {
         self.back.0.load(Ordering::Acquire).is_null()
     }
 }
-
-// ported from: src/threading/unbounded_queue.zig

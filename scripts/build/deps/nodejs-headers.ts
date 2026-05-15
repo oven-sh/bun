@@ -10,8 +10,8 @@ import { resolve } from "node:path";
 import type { Dependency } from "../source.ts";
 
 /**
- * Node.js compat version — reported via process.version, used for headers
- * download URL, and passed to zig as -Dreported_nodejs_version.
+ * Node.js compat version — reported via process.version, used for the headers
+ * download URL, and embedded into the binary at build time.
  * Override via `--nodejs-version=X.Y.Z` to test a bump.
  */
 export const NODEJS_VERSION = "24.3.0";

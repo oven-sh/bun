@@ -81,7 +81,7 @@ pub struct TSNamespaceScope {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    // Zig default: `= .{}` — callers should init with `StringArrayHashMap::default()`.
+    // Callers should init with `StringArrayHashMap::default()`.
     pub property_accesses: StringArrayHashMap<Ref>,
 
     /// Even though enums are like namespaces and both enums and namespaces allow
@@ -138,8 +138,8 @@ pub enum Data {
 
 impl Data {
     pub fn is_enum(&self) -> bool {
-        // PORT NOTE: Zig used `inline else` + comptime `@tagName` prefix check ("enum_").
-        // Expanded to an explicit match over the enum_* variants.
+        // PORT NOTE: explicit match over the enum_* variants (no tag-prefix
+        // reflection).
         matches!(
             self,
             Data::EnumNumber(_) | Data::EnumString(_) | Data::EnumProperty
@@ -172,8 +172,7 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // TODO(port): Zig used `std.ArrayListUnmanaged(Ref)`. This is an AST crate;
-    // if this list is arena-backed in practice, switch to
+    // TODO(port): if this list is arena-backed in practice, switch to
     // `bun_alloc::ArenaVec<'bump, Ref>`.
     MDot(Vec<Ref>),
 }
@@ -306,7 +305,5 @@ impl Metadata {
     }
 }
 
-// Zig file ends with `pub const Class = G.Class;` — re-export.
+// Re-export `Class` for compatibility.
 pub use crate::g::Class;
-
-// ported from: src/js_parser/ast/TS.zig

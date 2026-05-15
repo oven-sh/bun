@@ -13,9 +13,8 @@ use bun_jsc::{
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
-/// Local shim for the missing `ZigString::to_js` extension — Zig's
-/// `ZigString.fromUTF8(slice).toJS(global)` is equivalent to creating a JS
-/// string directly from UTF-8 bytes.
+/// Local shim for the missing `UnsafeStringView::to_js` extension —
+/// equivalent to creating a JS string directly from UTF-8 bytes.
 #[inline]
 fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, bytes)
@@ -93,9 +92,9 @@ pub fn hostent_with_ttls_to_js_response(
             if addr.is_null() {
                 break;
             }
-            // PORT NOTE: Zig built std.net.Address via .initIp4/.initIp6. Rust
-            // bun_dns::Address (= bun_sys::net::Address) only exposes init_posix,
-            // so build a sockaddr_in/in6 on the stack and copy through that.
+            // PORT NOTE: bun_dns::Address (= bun_sys::net::Address) only exposes
+            // init_posix, so build a sockaddr_in/in6 on the stack and copy through
+            // that.
             let addr_string = {
                 // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
                 let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
@@ -126,7 +125,7 @@ pub fn hostent_with_ttls_to_js_response(
             } else {
                 None
             };
-            // PORT NOTE: Zig used `JSValue.createObject2`. No such helper on
+            // PORT NOTE: no `createObject2` helper on
             // `bun_jsc::JSValue`; build via `create_empty_object` + `put`.
             let result_object = JSValue::create_empty_object(global_this, 2);
             result_object.put(global_this, b"address", addr_string);
@@ -145,7 +144,7 @@ pub fn hostent_with_ttls_to_js_response(
 
         Ok(array)
     } else {
-        // Zig: @compileError — the comptime param guaranteed only "a"/"aaaa" reach here.
+        // Only "a"/"aaaa" reach here by construction.
         unreachable!("Unsupported hostent_with_ttls record type");
     }
 }
@@ -195,9 +194,9 @@ pub fn addr_info_to_js_array(
         while !current.is_null() {
             // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
             let this_node = unsafe { &*current };
-            // PORT NOTE: Zig matched on family and union-viewed std.net.Address.
-            // bun_dns::Address::init_posix copies from the raw sockaddr by family,
-            // so we hand it `this_node.addr` directly after asserting a known family.
+            // PORT NOTE: bun_dns::Address::init_posix copies from the raw sockaddr
+            // by family, so we hand it `this_node.addr` directly after asserting a
+            // known family.
             debug_assert!(
                 this_node.family == c_ares::AF::INET || this_node.family == c_ares::AF::INET6
             );
@@ -225,11 +224,11 @@ pub fn addr_info_to_js_array(
 // ── shared count-then-walk → JS array helper ───────────────────────────────
 //
 // Every `struct_ares_*_reply` is an intrusive singly-linked list with a
-// `.next: *mut Self` field. Zig open-codes the same two-pass walk (count,
-// then `create_empty_array` + `put_index`) once per record type; here we do
-// it once generically. The trait is `unsafe` because impls promise `next()`
+// `.next: *mut Self` field. The two-pass walk (count, then
+// `create_empty_array` + `put_index`) is done once generically here rather than
+// once per record type. The trait is `unsafe` because impls promise `next()`
 // is either null or a valid pointer into the same c-ares-owned list.
-// PERF(port): each Zig caller used stack-fallback + arena bulk-free — profile in Phase B.
+// PERF(port): callers previously used stack-fallback + arena bulk-free — profile in Phase B.
 
 /// SAFETY: impls must return null or a valid pointer into the same
 /// c-ares-owned linked list.
@@ -398,8 +397,8 @@ pub fn txt_reply_to_js_for_any(
 ) -> JsResult<JSValue> {
     let array =
         cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
-    // PORT NOTE: Zig used `JSObject.create(.{ .entries = array }, global)`. No
-    // anon-struct builder on `bun_jsc::JSObject`; use `create_empty_object` + `put`.
+    // PORT NOTE: no anon-struct builder on `bun_jsc::JSObject`;
+    // use `create_empty_object` + `put`.
     let obj = JSValue::create_empty_object(global_this, 1);
     obj.put(global_this, b"entries", array);
     Ok(obj)
@@ -521,8 +520,8 @@ fn any_reply_append(
     lookup_name: &'static [u8],
 ) -> JsResult<()> {
     let transformed = if response.is_string() {
-        // PORT NOTE: Zig used `JSObject.create(.{ .value = response }, global)`. No
-        // anon-struct builder on `bun_jsc::JSObject`; use `create_empty_object` + `put`.
+        // PORT NOTE: no anon-struct builder on `bun_jsc::JSObject`;
+        // use `create_empty_object` + `put`.
         let obj = JSValue::create_empty_object(global_this, 1);
         obj.put(global_this, b"value", response);
         obj
@@ -555,8 +554,8 @@ fn any_reply_append_all(
     response: JSValue,
     lookup_name: &'static [u8],
 ) -> JsResult<()> {
-    // PORT NOTE: Zig used `reply: anytype` + `@hasDecl(.., "toJSForAny")` to dispatch between
-    // `toJSForAny` (only `txt`) and `toJSResponse` (everything else). The caller now computes
+    // PORT NOTE: dispatch between `toJSForAny` (only `txt`) and `toJSResponse`
+    // (everything else) is done by the caller, which now computes
     // `response` and passes it in directly — see any_reply_to_js below.
     if response.is_array() {
         let mut iterator = response.array_iterator(global_this)?;
@@ -573,9 +572,8 @@ pub fn any_reply_to_js(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig used `inline for (@typeInfo(struct_any_reply).@"struct".fields)` to
-    // iterate every `*_reply` field. Rust has no struct reflection, so the field set is
-    // expanded manually here. Keep in lockstep with `c_ares::struct_any_reply`'s fields.
+    // PORT NOTE: the field set is expanded manually here (no struct reflection).
+    // Keep in lockstep with `c_ares::struct_any_reply`'s fields.
     let len: usize = this.a_reply.is_some() as usize
         + this.aaaa_reply.is_some() as usize
         + (!this.mx_reply.is_null()) as usize
@@ -610,8 +608,8 @@ pub fn any_reply_to_js(
     }
     if !this.txt_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
-        // PORT NOTE: txt is the only reply type whose Zig struct defines `toJSForAny`, so
-        // `anyReplyAppendAll`'s `@hasDecl(.., "toJSForAny")` branch dispatched to it.
+        // PORT NOTE: txt is the only reply type that uses `toJSForAny` instead of
+        // `toJSResponse`.
         let response =
             txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
         any_reply_append_all(global_this, array, &mut i, response, b"txt")?;
@@ -675,7 +673,7 @@ impl ErrorDeferred {
 
     pub fn reject(mut self: Box<Self>, global_this: &JSGlobalObject) -> JsResult<()> {
         let code = self.errno.code();
-        // TODO(port): bun.String.createFormat used Zig {f} spec for bun.String — verify Display impl
+        // TODO(port): verify bun.String's Display impl matches the original `{f}` formatting
         let message = if let Some(hostname) = &self.hostname {
             bstr::String::create_format(format_args!(
                 "{} {} {}",
@@ -707,8 +705,8 @@ impl ErrorDeferred {
             bstr::String::static_(b"DNSException").to_js(global_this)?,
         );
 
-        // `self` (and thus self.promise / self.hostname) drops at scope exit — matches
-        // Zig's `defer this.deinit()`; hostname was `take()`n above to avoid double-deref.
+        // `self` (and thus self.promise / self.hostname) drops at scope exit;
+        // hostname was `take()`n above to avoid double-deref.
         Ok(self.promise.reject(global_this, Ok(instance))?)
     }
 
@@ -749,7 +747,7 @@ impl ErrorDeferred {
 }
 
 // Drop: hostname (bun_core::String) and promise (JSPromiseStrong) drop their own resources.
-// Zig's deinit() additionally did `bun.destroy(this)` — handled by Box drop at the call site.
+// Self-destruction is handled by Box drop at the call site.
 
 pub fn error_to_deferred(
     this: c_ares::Error,
@@ -818,8 +816,8 @@ pub fn error_to_js_with_syscall_and_hostname(
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
-// Zig: `@export(&jsc.toJSHostFn(Bun__canonicalizeIP_), .{ .name = "Bun__canonicalizeIP" })`
-// — `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
+// `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under the link name
+// `Bun__canonicalizeIP`.
 #[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
 pub fn bun_canonicalize_ip(
     global_this: &JSGlobalObject,
@@ -853,5 +851,3 @@ pub fn bun_canonicalize_ip(
 
     bun_string_jsc::create_utf8_for_js(global_this, slice)
 }
-
-// ported from: src/runtime/dns_jsc/cares_jsc.zig

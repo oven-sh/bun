@@ -2,9 +2,9 @@ use crate::string::strings;
 
 const SPECIAL_CHARACTERS: &[u8] = b"|\\{}()[]^$+*?.-";
 
-// TODO(port): writer trait — Zig uses `*std.Io.Writer` (byte writer). Mapping to
-// `&mut impl std::io::Write` per PORTING.md; Phase B may swap to the concrete
-// crate-local byte-writer trait once `bun_io` is wired.
+// TODO(port): writer trait — uses `&mut impl std::io::Write` per PORTING.md;
+// Phase B may swap to the concrete crate-local byte-writer trait once
+// `bun_io` is wired.
 pub fn escape_reg_exp<W: std::io::Write>(
     input: &[u8],
     writer: &mut W,
@@ -57,8 +57,6 @@ pub fn escape_reg_exp_for_package_name_matching<W: std::io::Write>(
     writer.write_all(remain)
 }
 
-// PORT NOTE: the Zig file re-exported `jsEscapeRegExp` / `jsEscapeRegExpForPackageNameMatching`
-// from `../jsc/bun_string_jsc.zig`. Per PORTING.md these `*_jsc` alias lines are deleted —
+// PORT NOTE: `jsEscapeRegExp` / `jsEscapeRegExpForPackageNameMatching` are not
+// re-exported here. Per PORTING.md these `*_jsc` alias lines are deleted —
 // the JS-facing wrappers live in the `*_jsc` crate as extension-trait methods.
-
-// ported from: src/string/escapeRegExp.zig

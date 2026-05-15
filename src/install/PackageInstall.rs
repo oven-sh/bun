@@ -20,7 +20,7 @@ use crate::{
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
 };
 
-// TODO(port): `std.fs.Dir` is used pervasively here; Zig has a TODO to switch to `bun.FD.Dir`.
+// TODO(port): `std.fs.Dir` is used pervasively here; the original has a TODO to switch to `bun.FD.Dir`.
 // Phase A maps it to `bun_sys::Dir` (an Fd-backed dir handle). Method names (.close(), .fd,
 // .makeOpenPath, .deleteTree, .realpath, .makeDirZ) are assumed on that type.
 
@@ -156,7 +156,7 @@ impl Method {
         {
             return Self::macos()[self];
         }
-        // PORT NOTE: Zig `Environment.isLinux` (os.tag == .linux) includes the Android ABI,
+        // PORT NOTE: the original `Environment.isLinux` (os.tag == .linux) includes the Android ABI,
         // whereas Rust's `target_os = "linux"` does not — list `android` explicitly.
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
@@ -256,7 +256,7 @@ pub static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos
 });
 
 impl PackageInstall<'_> {
-    /// Read accessor for the [`SUPPORTED_METHOD`] global (Zig:
+    /// Read accessor for the [`SUPPORTED_METHOD`] global (originally
     /// `PackageInstall.supported_method`). Associated fn so cross-module
     /// callers keep the `PackageInstall::supported_method()` call shape.
     #[inline]
@@ -276,10 +276,10 @@ impl PackageInstall<'_> {
 
 struct InstallDirState {
     cached_package_dir: Dir,
-    // PORT NOTE: `Walker` has no `Default`; Zig used `undefined`. Wrap in Option.
+    // PORT NOTE: `Walker` has no `Default`; the original used `undefined`. Wrap in Option.
     walker: Option<Walker>,
     subdir: Dir,
-    // PORT NOTE: Zig's `buf: bun.windows.WPathBuffer = undefined` is in-place
+    // PORT NOTE: the original's `buf: bun.windows.WPathBuffer = undefined` is in-place
     // (result-location, no zero-fill). A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
     // thread-local pool guard (heap-backed, uninit) so construction is O(1)
@@ -288,7 +288,7 @@ struct InstallDirState {
     buf: bun_paths::w_path_buffer_pool::Guard,
     #[cfg(windows)]
     buf2: bun_paths::w_path_buffer_pool::Guard,
-    // PORT NOTE: Zig kept `to_copy_buf: []u16` as a self-referential slice into
+    // PORT NOTE: the original kept `to_copy_buf: []u16` as a self-referential slice into
     // `buf`. The Rust port only ever read its `.len()` to recover the offset, so
     // store the offset directly — no self-referential raw fat pointer needed.
     #[cfg(windows)]
@@ -307,7 +307,7 @@ impl InstallDirState {
 
 impl Default for InstallDirState {
     fn default() -> Self {
-        // TODO(port): Zig used `undefined` for most fields; we need a sentinel.
+        // TODO(port): the original used `undefined` for most fields; we need a sentinel.
         Self {
             cached_package_dir: Dir::from_fd(Fd::INVALID),
             walker: None,
@@ -344,9 +344,9 @@ impl Drop for InstallDirState {
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// Zig: `node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false)`.
+/// original: `node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false)`.
 ///
-/// Port of the NodeFS recursive-mkdir algorithm (node_fs.zig:4080) restricted to the
+/// Port of the NodeFS recursive-mkdir algorithm restricted to the
 /// `Ctx == void, return_path = false` instantiation used here. The previous routing to
 /// `bun_sys::make_path_w` was wrong: that helper transcodes to UTF-8, strips the `\\?\`
 /// prefix and forward-iterates components via `mkdirat(Fd::cwd(), comp)`, so the first
@@ -358,7 +358,7 @@ impl Drop for InstallDirState {
 fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     use sys::E;
     let path = fullpath.as_slice();
-    // u16 to mirror Zig's `@truncate(path.len)`.
+    // u16 to mirror the original's `@truncate(path.len)`.
     let len = path.len() as u16;
 
     // First, attempt to create the desired directory.
@@ -379,7 +379,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         },
     }
 
-    // Zig routes through `node_fs_for_package_installer()`, whose `working_mem`
+    // the original routes through `node_fs_for_package_installer()`, whose `working_mem`
     // is `&this.sync_error_buf` — a buffer in the threadlocal NodeFS struct,
     // not stack. Use the thread-local WPathBuffer pool so we don't add 64 KB
     // of stack on ThreadPool worker threads (HardLinkWindowsInstallTask::run).
@@ -402,7 +402,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
                 Err(err) => {
                     match err.get_errno() {
                         E::EEXIST => {
-                            // node_fs.zig:4159-4172 — on Windows, if the existing
+                            // On Windows, if the existing
                             // entry is a *file*, bail with ENOTDIR instead of
                             // forward-walking under it. `parent` is still
                             // NUL-terminated (separator not yet restored).
@@ -442,7 +442,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         i += 1;
     }
 
-    // Final component (no trailing sep case — Zig's `first_match + 1 != len` check).
+    // Final component (no trailing sep case — the original's `first_match + 1 != len` check).
     working_mem[usize::from(len)] = 0;
     let leaf = bun_core::WStr::from_buf(&working_mem[..], usize::from(len));
     match sys::mkdir_w(leaf) {
@@ -454,7 +454,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     }
 }
 
-/// Zig: `bun.openDir(dir, subpath)` — open a directory handle relative to `dir`.
+/// original: `bun.openDir(dir, subpath)` — open a directory handle relative to `dir`.
 #[inline]
 fn open_dir(dir: Dir, subpath: &ZStr) -> Result<Dir, bun_core::Error> {
     sys::open_dir_at(dir.fd(), subpath.as_bytes())
@@ -462,7 +462,7 @@ fn open_dir(dir: Dir, subpath: &ZStr) -> Result<Dir, bun_core::Error> {
         .map_err(Into::into)
 }
 
-/// Zig: `bun.openDirA(dir, subpath)` — non-Z-terminated variant.
+/// original: `bun.openDirA(dir, subpath)` — non-Z-terminated variant.
 #[inline]
 fn open_dir_a(dir: Dir, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
     sys::open_dir_at(dir.fd(), subpath)
@@ -471,7 +471,7 @@ fn open_dir_a(dir: Dir, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
 }
 
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
-// (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The Zig source matched on the raw
+// (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The original source matched on the raw
 // `int` return + thread-local errno; the wrapper preserves the errno via
 // `Error::get_errno()`, so the per-errno branching below is unchanged.
 
@@ -559,7 +559,7 @@ impl HardLinkWindowsInstallTask {
         // whose internal Release/Acquire on the task queue is what publishes the
         // first-call `MaybeUninit::write` below.
         //
-        // PORT NOTE: Zig re-assigns the whole struct each call (`queue = Queue{...}`).
+        // PORT NOTE: the original re-assigns the whole struct each call (`queue = Queue{...}`).
         // We must NOT do that: even though `copy()` always reaches `queue.wait()`
         // before returning (see the loop_err handling there), `WaitGroup::wait()` can
         // return while the last worker is still inside `WaitGroup::finish()` *after*
@@ -627,7 +627,7 @@ impl HardLinkWindowsInstallTask {
             // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
             let boxed = unsafe { bun_core::heap::take(self_) };
             // First-write-wins: keep only the first error. Any later failing task
-            // simply drops its Box here (the Zig original leaks the loser; in Rust
+            // simply drops its Box here (the original leaks the loser; in Rust
             // that would also leak the inner `Box<[u16]>` per failed file).
             let mut slot = queue.errored_task.lock();
             if slot.is_none() {
@@ -722,7 +722,7 @@ impl UninstallTask {
         let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
 
         // PORT NOTE: declared *before* the Box is reclaimed so it drops *after* the
-        // Box — Rust drops locals in reverse declaration order. Zig's `defer task.deinit()`
+        // Box — Rust drops locals in reverse declaration order. the original's `defer task.deinit()`
         // runs before `defer { decrementPendingTasks(); wake() }`, i.e. the task is freed
         // before the main thread can observe pending_tasks==0.
         scopeguard::defer! {
@@ -926,7 +926,7 @@ impl<'a> PackageInstall<'a> {
         mutable.expand_to_capacity();
 
         let dest_len = self.destination_dir_subpath.len();
-        // Zig: `bun.copy(u8, buf[len..], sep_str ++ "package.json")` — write the
+        // original: `bun.copy(u8, buf[len..], sep_str ++ "package.json")` — write the
         // literal directly into the path buffer; no intermediate Vec.
         let suffix: &[u8] = &[
             SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n',
@@ -1004,7 +1004,7 @@ impl<'a> PackageInstall<'a> {
         root_node_modules_dir: Dir,
         resolution_tag: resolution::Tag,
     ) -> bool {
-        // Zig: `var body_pool = BodyPool.get(); var mutable = body_pool.data;
+        // original: `var body_pool = BodyPool.get(); var mutable = body_pool.data;
         //        defer { body_pool.data = mutable; BodyPool.release(body_pool); }`
         // PoolGuard derefs straight to the pooled MutableString and releases on Drop,
         // so the take/put-back dance is unnecessary here.
@@ -1028,11 +1028,11 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
-        // PORT NOTE: Zig passed `allocator` (= `bun.default_allocator`, the global
+        // PORT NOTE: the original passed `allocator` (= `bun.default_allocator`, the global
         // mimalloc heap). `Arena::new()` here was creating + destroying a fresh
         // `mi_heap` per package — measurable on no-op installs (~390× heap churn
         // on create-next/elysia). `borrowing_default()` wraps `mi_heap_main()`
-        // with a no-op Drop, matching the Zig semantics exactly. The lexer
+        // with a no-op Drop, matching the original semantics exactly. The lexer
         // scratch frees its own buffers on `Lexer::deinit()` via the checker's
         // Drop, so nothing leaks.
         let bump = bun_alloc::Arena::borrowing_default();
@@ -1300,7 +1300,7 @@ impl<'a> PackageInstall<'a> {
             ) {
                 Ok(d) => d,
                 Err(err) => {
-                    // PORT NOTE: Zig closed cached_package_dir/walker explicitly here because the
+                    // PORT NOTE: the original closed cached_package_dir/walker explicitly here because the
                     // caller's `defer state.deinit()` is placed AFTER the `is_fail()` early-return.
                     // In Rust, Drop on the caller's `state` runs unconditionally on that early
                     // return, so explicit close here would double-close. Drop handles it.
@@ -1376,7 +1376,7 @@ impl<'a> PackageInstall<'a> {
                 // here would double-close (see posix branch above for full rationale).
                 return InstallResult::fail(err, Step::CopyingFiles, None);
             }
-            // PORT NOTE: borrowck — Zig held `cache_path = buf2[0..len]` while mutating
+            // PORT NOTE: borrowck — the original held `cache_path = buf2[0..len]` while mutating
             // buf2; index by `cache_path_length` directly so no shared borrow is live.
             state.to_copy_buf2_off = if state.buf2[cache_path_length - 1] != u16::from(b'\\') {
                 state.buf2[cache_path_length] = u16::from(b'\\');
@@ -1405,7 +1405,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type WinOffset = ();
 
-        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
+        // PORT NOTE: reshaped for borrowck — the original passed two overlapping slices into the
         // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
         // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
         // offset and reslice inside.
@@ -1529,7 +1529,7 @@ impl<'a> PackageInstall<'a> {
                         destination_dir_.fd(),
                         bstr::BStr::new(entry.path.as_bytes())
                     );
-                    // Zig: `std.fs.Dir.createFile(dir, path, .{})` — open O_WRONLY|O_CREAT|O_TRUNC,
+                    // original: `std.fs.Dir.createFile(dir, path, .{})` — open O_WRONLY|O_CREAT|O_TRUNC,
                     // mode = std.fs.File.default_mode (0o666).
                     let create = |path: &ZStr| {
                         sys::openat(
@@ -1581,7 +1581,7 @@ impl<'a> PackageInstall<'a> {
                         };
                         // `sys::fchmod` is the safe by-value-fd wrapper (kernel
                         // validates the fd; no memory-safety preconditions).
-                        // Result intentionally ignored to match Zig's `_ = c.fchmod(...)`.
+                        // Result intentionally ignored to match the original's `_ = c.fchmod(...)`.
                         let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
                     }
 
@@ -1653,7 +1653,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type WinOffset = ();
 
-        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
+        // PORT NOTE: reshaped for borrowck — the original passed two overlapping slices into the
         // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
         // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
         // offset and reslice inside.
@@ -1705,7 +1705,7 @@ impl<'a> PackageInstall<'a> {
                                 destination_dir.fd(),
                                 entry.path,
                             ) {
-                                // Map raw errno to the Zig error names std.posix.linkatZ would
+                                // Map raw errno to the original error names std.posix.linkatZ would
                                 // produce, so the caller's `NotSameFileSystem` / `ENXIO` checks
                                 // (and the copyfile fallback in `install()`) actually fire.
                                 match err.get_errno() {
@@ -1800,7 +1800,7 @@ impl<'a> PackageInstall<'a> {
         self.file_count = match result {
             Ok(n) => n,
             Err(err) => {
-                // bun.handleErrorReturnTrace — debug-only diagnostics in Zig; no-op here.
+                // bun.handleErrorReturnTrace — debug-only diagnostics in the original; no-op here.
 
                 #[cfg(windows)]
                 {
@@ -1858,7 +1858,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type Head2Char = u8;
 
-        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
+        // PORT NOTE: reshaped for borrowck — the original passed two overlapping slices into the
         // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
         // two live `&mut` that alias is UB in Rust, so pass head buffer + tail offset
         // and reslice inside.
@@ -2182,7 +2182,7 @@ impl<'a> PackageInstall<'a> {
             self.uninstall_before_install(destination_dir);
         }
 
-        // PORT NOTE: Zig `std.fs.path.dirname` returns null when there is no directory
+        // PORT NOTE: the original `std.fs.path.dirname` returns null when there is no directory
         // component; mirror that with an Option around resolve_path::dirname.
         let dirname_slice =
             path::resolve_path::dirname::<path::platform::Auto>(dest_path.as_bytes());
@@ -2194,11 +2194,11 @@ impl<'a> PackageInstall<'a> {
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         let symlinked_path = self.cache_dir_subpath;
         let mut to_buf = PathBuffer::uninit();
-        // Zig: `this.cache_dir.realpath(symlinked_path, &to_buf)` — open the target relative
+        // original: `this.cache_dir.realpath(symlinked_path, &to_buf)` — open the target relative
         // to cache_dir, then resolve its canonical path.
         // PORT NOTE: reshaped from an IIFE — returning a borrow of `to_buf` from an
         // `FnMut` closure is rejected by borrowck, so inline the open/getFdPath/close.
-        // PORT NOTE: Zig `std.fs.Dir.realpath` returns std-style error names
+        // PORT NOTE: the original `std.fs.Dir.realpath` returns std-style error names
         // (`error.FileNotFound`, `error.AccessDenied`, …), not raw errno tags.
         // `bun_sys::Error::into()` would yield `ENOENT`/`EACCES`, so map the
         // openat errno to the std name to preserve the user-visible error tag
@@ -2216,7 +2216,7 @@ impl<'a> PackageInstall<'a> {
             }
         };
         let to_path: &[u8] = {
-            // Zig: `std.fs.Dir.realpath` opens with `.filter = .any` (Windows) /
+            // original: `std.fs.Dir.realpath` opens with `.filter = .any` (Windows) /
             // `O_PATH` (Linux). `symlinked_path` is always a package *directory*;
             // bare `O::RDONLY` on Windows routes to the file-open NtCreateFile arm
             // which requests `FILE_WRITE_ATTRIBUTES` (may be denied on RO dirs).
@@ -2322,7 +2322,7 @@ impl<'a> PackageInstall<'a> {
                     }
 
                     return InstallResult::fail(
-                        bun_sys::errno_to_zig_err(err.errno.into()),
+                        bun_sys::errno_to_bun_raw_err(err.errno.into()),
                         Step::LinkingDependency,
                         None,
                     );
@@ -2357,7 +2357,7 @@ impl<'a> PackageInstall<'a> {
 
             let target = path::resolve_path::relative(dest_dir_path, to_path);
             // PORT NOTE: `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
-            // copies in stack buffers (Zig used `std.posix.symlinkat` which does this internally).
+            // copies in stack buffers (originally used `std.posix.symlinkat` which does this internally).
             let mut target_buf = PathBuffer::uninit();
             target_buf[..target.len()].copy_from_slice(target);
             target_buf[target.len()] = 0;
@@ -2407,7 +2407,7 @@ impl<'a> PackageInstall<'a> {
                     let exists = match resolution_tag {
                         resolution::Tag::Npm => 'package_json_exists: {
                             // SAFETY: thread-local PathBuffer; this is the only borrower on
-                            // this thread for the duration of the block (Zig: `var buf = ...`).
+                            // this thread for the duration of the block (originally: `var buf = ...`).
                             let buf: &mut [u8] = unsafe {
                                 (*crate::package_manager::cached_package_folder_name_buf())
                                     .as_mut_slice()
@@ -2454,7 +2454,7 @@ impl<'a> PackageInstall<'a> {
                     });
                 let cache_dir_subpath_without_patch_hash =
                     &self.cache_dir_subpath.as_bytes()[..idx];
-                // PORT NOTE: Zig wrote into the global `bun.path.join_buf` thread-local; use a
+                // PORT NOTE: the original wrote into the global `bun.path.join_buf` thread-local; use a
                 // stack PathBuffer here instead (same size, no shared state).
                 let mut join_buf = PathBuffer::uninit();
                 join_buf[..cache_dir_subpath_without_patch_hash.len()]
@@ -2609,7 +2609,5 @@ impl<'a> PackageInstall<'a> {
 }
 
 // ───────────────────────────── imports note ─────────────────────────────
-// Walker: src/sys/walker_skippable.zig
+// Walker: bun_sys::walker_skippable
 type Walker = walker_skippable::Walker;
-
-// ported from: src/install/PackageInstall.zig

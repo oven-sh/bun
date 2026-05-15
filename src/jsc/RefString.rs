@@ -7,16 +7,14 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-// Zig's `bun.WTF.StringImpl` is the *pointer* type `*WTFStringImplStruct`;
-// in Rust that's `bun_core::WTFStringImpl` (= `*mut WTFStringImplStruct`).
+// `bun_core::WTFStringImpl` is the *pointer* type (= `*mut WTFStringImplStruct`).
 use bun_core::WTFStringImpl;
 use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_core::String`
 
 pub type Hash = u32;
 
-/// `std.HashMap(Hash, *RefString, bun.IdentityContext(Hash), 80)`
-// `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
-// max-load-percentage has no direct knob on the Rust side.
+/// Identity-hashed map from precomputed `Hash` → `*mut RefString`.
+// `bun.IdentityContext` is an identity hasher (key is already a hash).
 pub type Map =
     bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
 
@@ -29,23 +27,20 @@ pub struct RefString {
     // `impl` is a Rust keyword — renamed to `impl_`.
     pub impl_: WTFStringImpl,
 
-    // Zig field `allocator: std.mem.Allocator` dropped — non-AST crate uses the
-    // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
-    // frees via `heap::take`.
+    // No per-instance allocator field — non-AST crate uses the global mimalloc
+    // allocator (see PORTING.md §Allocators). `destroy` below frees via `heap::take`.
     pub ctx: Option<NonNull<c_void>>,
     pub on_before_deinit: Option<Callback>,
 }
 
 impl RefString {
     pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Zig: `bun.String.init(this.impl).toJS(global)` — wrap the raw
-        // `WTFStringImpl` pointer without bumping the refcount (`String` has
-        // no `Drop`, so this is the same adopt-then-forget as Zig's init).
+        // Wrap the raw `WTFStringImpl` pointer without bumping the refcount
+        // (`String` has no `Drop`, so this is adopt-then-forget).
         bun_core::String::adopt_wtf_impl(self.impl_).to_js(global)
     }
 
     pub fn compute_hash(input: &[u8]) -> u32 {
-        // Zig: `std.hash.XxHash32.hash(0, input)`.
         bun_hash::XxHash32::hash(0, input)
     }
 
@@ -71,7 +66,6 @@ impl RefString {
     }
 
     pub fn leak(&self) -> &[u8] {
-        // Zig: `@setRuntimeSafety(false); return this.ptr[0..this.len];`
         // SAFETY: `ptr` points to a live allocation of `len` bytes for the
         // lifetime of `self` (freed only in `destroy`).
         unsafe { bun_core::ffi::slice(self.ptr, self.len) }
@@ -83,8 +77,7 @@ impl RefString {
 
     /// Called when the underlying `WTF::StringImpl` refcount reaches zero.
     ///
-    /// Zig signature: `pub fn deinit(this: *RefString) void` — frees the byte
-    /// buffer and then `allocator.destroy(this)` (self-destroying). Because
+    /// Frees the byte buffer and then frees `self` (self-destroying). Because
     /// `RefString` is heap-allocated and held as `*mut RefString` (see `Map`),
     /// this stays an explicit raw-pointer destroy rather than `impl Drop`.
     ///
@@ -100,24 +93,21 @@ impl RefString {
         // below operate on those owned allocations.
         unsafe {
             if let Some(on_before_deinit) = (*this).on_before_deinit {
-                // Zig does `this.ctx.?` — caller guarantees `ctx` is set
-                // whenever `on_before_deinit` is set.
+                // Caller guarantees `ctx` is set whenever `on_before_deinit` is set.
                 on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
             }
 
-            // `allocator.free(this.leak())` — reconstitute the owned byte slice
-            // and drop it. Build the fat `*mut [u8]` as a raw pointer (no `&mut`
-            // materialized — the WTF::StringImpl finalizer may still hold a
-            // shared view at this instant, so forming `&mut [u8]` would assert
-            // exclusivity we cannot prove).
+            // Reconstitute the owned byte slice and drop it. Build the fat
+            // `*mut [u8]` as a raw pointer (no `&mut` materialized — the
+            // WTF::StringImpl finalizer may still hold a shared view at this
+            // instant, so forming `&mut [u8]` would assert exclusivity we
+            // cannot prove).
             drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                 (*this).ptr.cast_mut(),
                 (*this).len,
             )));
-            // `allocator.destroy(this)`
+            // Free `self`.
             drop(bun_core::heap::take(this));
         }
     }
 }
-
-// ported from: src/jsc/RefString.zig

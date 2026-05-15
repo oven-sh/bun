@@ -212,5 +212,3 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         qs.want_write(true);
     }
 }
-
-// ported from: src/http/h3_client/encode.zig

@@ -47,9 +47,8 @@ impl PollOrFd {
         }
     }
 
-    // TODO(port): Zig's `comptime onCloseFn: anytype` allowed passing `void` for
-    // "no callback" (checked via `@TypeOf(onCloseFn) != void`). Represented here
-    // as `Option<F>`; callers that passed `{}` should pass `None::<fn(*mut c_void)>`.
+    // TODO(port): "no callback" is represented as `Option<F>`; callers that
+    // previously passed an empty placeholder should pass `None::<fn(*mut c_void)>`.
     pub fn close_impl<F>(
         &mut self,
         ctx: Option<*mut c_void>,
@@ -84,7 +83,7 @@ impl PollOrFd {
                         close_async = false;
                     }
                 }
-                // Consumes the underlying allocation (Zig: poll.deinitForceUnregister()).
+                // Consumes the underlying allocation (force-unregisters the poll).
                 poll.deinit_force_unregister();
             }
         }
@@ -108,9 +107,8 @@ impl PollOrFd {
                 }
             }
             if let Some(f) = on_close_fn {
-                // SAFETY: Zig: onCloseFn(@ptrCast(@alignCast(ctx.?))) — caller
-                // guarantees ctx is Some and properly aligned for the callback's
-                // expected pointee type.
+                // SAFETY: caller guarantees ctx is Some and properly aligned for
+                // the callback's expected pointee type.
                 f(ctx.expect("ctx must be Some when on_close_fn is provided"));
             }
         } else {
@@ -142,5 +140,3 @@ pub enum ReadState {
     /// Received an EAGAIN
     Drained,
 }
-
-// ported from: src/io/pipes.zig

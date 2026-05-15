@@ -32,9 +32,9 @@ pub struct Snapshots<'a> {
 
     pub file_buf: &'a mut Vec<u8>,
     // PORT NOTE: LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
-    // Key is u64 to match `bun.hash` (Zig uses IdentityContext(usize) but hash returns u64; avoids narrowing cast).
+    // Key is u64 to match `bun.hash` (avoids narrowing the u64 hash to usize).
     pub values: &'a mut HashMap<u64, Box<[u8]>>,
-    // PORT NOTE: LIFETIMES.tsv said `HashMap<String, usize>`; Zig is `bun.StringHashMap(usize)` → byte-keyed wyhash map.
+    // PORT NOTE: LIFETIMES.tsv said `HashMap<String, usize>`; this is a byte-keyed wyhash map.
     pub counts: &'a mut StringHashMap<usize>,
     pub _current_file: Option<File>,
     // TODO(port): lifetime — borrows Jest.runner.files[..].source.path; BACKREF (not owned, never freed).
@@ -95,7 +95,7 @@ impl InlineSnapshotToWrite {
 
 pub struct File {
     pub id: FileId,
-    // TODO(port): Zig used `std.fs.File` (via `fd.stdFile()`); std::fs is banned. Using bun_sys::File.
+    // TODO(port): std::fs is banned. Using bun_sys::File.
     pub file: bun_sys::File,
 }
 
@@ -116,9 +116,9 @@ impl<'a> Snapshots<'a> {
         // TODO(port): narrow error set
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
-        // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key_ptr/value_ptr together.
-        // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
-        // owned `snapshot_name` (same bytes as the interned key) instead.
+        // PORT NOTE: reshaped for borrowck — bun_collections::StringHashMap::get_or_put can't
+        // hand out `key_ptr`, so return the owned `snapshot_name` (same bytes as the interned
+        // key) instead.
         let gop = self.counts.get_or_put(&snapshot_name).map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
@@ -220,8 +220,7 @@ impl<'a> Snapshots<'a> {
             vm.transpiler.options.jsx.clone().into(),
             bun_ast::Loader::Js,
         );
-        // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
-        // since js_parser is bump-allocated in the Rust port.
+        // PERF(port): thread a per-call arena since js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
 
@@ -324,7 +323,7 @@ impl<'a> Snapshots<'a> {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig's chained `.data == .x and .data.x.y == ...` becomes nested if-let.
+        // PORT NOTE: reshaped for borrowck — chained data-shape comparisons become nested if-let.
         let _ = &mut ast;
         Ok(())
     }
@@ -341,7 +340,7 @@ impl<'a> Snapshots<'a> {
 
             // values: owned strings dropped by clear()
             self.values.clear();
-            // PERF(port): Zig clearAndFree() also releases capacity; HashMap::clear keeps it.
+            // PERF(port): HashMap::clear keeps capacity; consider shrinking here.
 
             // counts: owned key strings dropped by clear()
             self.counts.clear();
@@ -386,7 +385,6 @@ impl<'a> Snapshots<'a> {
                 .get_mut(&file_id)
                 .expect("unreachable");
 
-            // Zig: `defer if (log.errors > 0) { log.print(...); success = false; }`
             // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
@@ -438,9 +436,9 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            // Zig: `errdefer file.file.close()` — fires on `?` error returns only.
-            // PORT NOTE: Zig never closes on the success path (or `continue`); preserve that by
-            // disarming via `into_inner` on every non-`?` exit below.
+            // PORT NOTE: the file must NOT be closed on the success path (or `continue`),
+            // only on `?` error returns; preserve that by disarming via `into_inner` on
+            // every non-`?` exit below.
             let mut file = scopeguard::guard(
                 File { id: file_id, file: bun_sys::File::from_fd(fd) },
                 |f| { let _ = bun_sys::close(f.file.handle); },
@@ -548,12 +546,12 @@ impl<'a> Snapshots<'a> {
                     }
                     next_start += fn_name.len();
 
-                    // PORT NOTE: Zig passed `&log` to both `Lexer.initWithoutReading` and
-                    // `TSXParser.init` (aliasing `*Log`). Rust forbids two live `&'a mut Log`;
-                    // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
-                    // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
-                    // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
-                    // reborrow via the scopeguard between parser uses.
+                    // PORT NOTE: both `Lexer.initWithoutReading` and `TSXParser.init` need a
+                    // `&mut Log`. Rust forbids two live `&'a mut Log`; derive a raw pointer so
+                    // borrowck doesn't track the lexer/parser borrow, matching the pattern in
+                    // `js_parser::Parser::init`. The unique `&mut` logically lives inside
+                    // `parser.lexer`; `log.add_error_fmt` calls below reborrow via the
+                    // scopeguard between parser uses.
                     // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
                     // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
                     // discussion.
@@ -569,16 +567,14 @@ impl<'a> Snapshots<'a> {
                         lexer.step();
                     }
                     lexer.next()?;
-                    // PORT NOTE: `ParserOptions` isn't `Clone`; rebuild per-iteration
-                    // (Zig passed by value-copy).
+                    // PORT NOTE: `ParserOptions` isn't `Clone`; rebuild per-iteration.
                     let opts = js_parser::ParserOptions::init(
                         vm.transpiler.options.jsx.clone().into(),
                         bun_ast::Loader::Js,
                     );
-                    // PORT NOTE: `P::init` takes an out-param (Zig:
-                    // `var p: ParserType = undefined; try ParserType.init(.., &p)`)
-                    // since 9a98701c980c — `P` is ~5 KiB and the previous
-                    // `let p = P::init(..)?` shape forced 2-3 by-value moves.
+                    // PORT NOTE: `P::init` takes an out-param since 9a98701c980c — `P` is
+                    // ~5 KiB and the previous `let p = P::init(..)?` shape forced 2-3
+                    // by-value moves.
                     // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
                     // (that macro is crate-local).
                     let mut __parser_slot =
@@ -806,9 +802,9 @@ impl<'a> Snapshots<'a> {
                 result_text.extend_from_slice(b"`");
 
                 if ils.is_added {
-                    // PORT NOTE: Zig spec does `Jest.runner.?.snapshots.added += 1` (snapshot.zig:461),
-                    // but `runner.snapshots` *is* `*self`. Going back through `Jest::runner()` would
-                    // create a second `&mut Snapshots` aliasing `self` (UB) and invalidate `ils_info`.
+                    // PORT NOTE: `runner.snapshots` *is* `*self`. Going back through
+                    // `Jest::runner()` would create a second `&mut Snapshots` aliasing `self`
+                    // (UB) and invalidate `ils_info`.
                     self.added += 1;
                 }
             }
@@ -856,7 +852,7 @@ impl<'a> Snapshots<'a> {
                 }
             }
 
-            // disarm errdefer (success path) — Zig never closes on success.
+            // disarm the close-on-error guard (success path) — never closes on success.
             let _ = scopeguard::ScopeGuard::into_inner(file);
         }
         Ok(success.get())
@@ -964,5 +960,3 @@ impl<'a> Snapshots<'a> {
         Ok(bun_sys::Result::Ok(()))
     }
 }
-
-// ported from: src/test_runner/snapshot.zig

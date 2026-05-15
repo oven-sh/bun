@@ -528,7 +528,7 @@ devTest("css import before create project relative", {
     }),
   },
   async test(dev) {
-    dev.mkdir("style"); // (See DevServer.zig "BUN-10968")
+    dev.mkdir("style"); // (See DevServer/DirectoryWatchStore.rs "BUN-10968")
     await using c = await dev.client("/", {
       errors: ['html/index.html: error: Could not resolve: "/style/styles.css"'],
     });

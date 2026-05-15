@@ -4,14 +4,13 @@ use crate::host_fn::from_js_host_call_generic;
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_core as bstr;
 
-/// Comptime config struct in Zig (`JSPropertyIterator.zig:1-7`); ported as a runtime
-/// flag set passed to [`JSPropertyIterator::init`].
+/// Runtime flag set passed to [`JSPropertyIterator::init`].
 ///
-/// `Default` mirrors the Zig field defaults: `own_properties_only = true`,
+/// `Default` defaults: `own_properties_only = true`,
 /// `observable = true`, `only_non_index_properties = false`.
-// PERF(port): was comptime monomorphization (`fn JSPropertyIterator(comptime options) type`).
-// Demoted to runtime flags because the branches gate per-property work, not a hot inner
-// loop, and the monomorphization fan-out would be 32 instantiations. Profile in Phase B.
+// PERF(port): was compile-time monomorphization. Demoted to runtime flags
+// because the branches gate per-property work, not a hot inner loop, and the
+// monomorphization fan-out would be 32 instantiations. Profile in Phase B.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSPropertyIteratorOptions {
     pub skip_empty_name: bool,
@@ -22,9 +21,9 @@ pub struct JSPropertyIteratorOptions {
 }
 
 impl JSPropertyIteratorOptions {
-    /// Shorthand matching the Zig spec's most common call-site shape
-    /// `.{ .skip_empty_name = …, .include_value = … }`; the remaining three options
-    /// take the Zig struct defaults.
+    /// Shorthand matching the most common call-site shape (only
+    /// `skip_empty_name` and `include_value` specified); the remaining three
+    /// options take their defaults.
     pub const fn new(skip_empty_name: bool, include_value: bool) -> Self {
         Self {
             skip_empty_name,
@@ -49,8 +48,8 @@ impl Default for JSPropertyIteratorOptions {
     }
 }
 
-/// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining three options
-/// take the Zig struct defaults via the `From` conversion.
+/// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining three
+/// options take their defaults via the `From` conversion.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PropertyIteratorOptions {
     pub skip_empty_name: bool,
@@ -64,8 +63,8 @@ impl From<PropertyIteratorOptions> for JSPropertyIteratorOptions {
     }
 }
 
-/// Conversion shim so [`JSPropertyIterator::init`]'s `object` argument accepts the
-/// same operand shapes Zig callers use (`*JSObject`, `&JSObject`).
+/// Conversion shim so [`JSPropertyIterator::init`]'s `object` argument accepts
+/// several operand shapes (`*mut JSObject`, `&JSObject`, `NonNull<JSObject>`, …).
 pub trait IntoIterObject {
     fn into_iter_object(self) -> *mut JSObject;
 }
@@ -248,7 +247,6 @@ impl<'a> Drop for JSPropertyIterator<'a> {
             // freed (we only free here, once).
             unsafe { Bun__JSPropertyIterator__deinit(impl_.as_ptr()) };
         }
-        // Zig: `this.* = undefined;` — no-op in Rust.
     }
 }
 
@@ -283,7 +281,7 @@ impl JSPropertyIteratorImpl {
         property_name: &mut bstr::String,
         i: usize,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: Zig wrapped this in a manual `TopExceptionScope.init/deinit` +
+        // PORT NOTE: equivalent to a manual `TopExceptionScope.init/deinit` +
         // `returnIfException`; that is exactly `from_js_host_call_generic`'s contract
         // (the FFI may return `.zero` without throwing, so the non-generic
         // `from_js_host_call` — which treats empty as thrown — is wrong here).
@@ -351,5 +349,3 @@ unsafe extern "C" {
         object: &JSObject,
     ) -> usize;
 }
-
-// ported from: src/jsc/JSPropertyIterator.zig

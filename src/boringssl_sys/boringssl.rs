@@ -1,12 +1,9 @@
 //! Hand-rolled BoringSSL FFI surface.
 //!
-//! Ground truth: `src/boringssl_sys/boringssl.zig` (translate-c output) and
-//! `vendor/boringssl/include/openssl/*.h`. This file exposes only the subset
-//! of symbols Bun's Rust crates actually consume — it is **not** a full
-//! bindgen dump. When the bindgen pipeline lands this module is replaced
-//! wholesale.
-//
-// ported from: src/boringssl_sys/boringssl.zig
+//! Ground truth: `vendor/boringssl/include/openssl/*.h`. This file exposes
+//! only the subset of symbols Bun's Rust crates actually consume — it is
+//! **not** a full bindgen dump. When the bindgen pipeline lands this module
+//! is replaced wholesale.
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
@@ -154,7 +151,7 @@ pub union env_md_ctx_md_data {
 
 /// `struct env_md_ctx_st` — laid out to match
 /// `vendor/boringssl/include/openssl/digest.h` so it can live by-value on the
-/// Rust side (the Zig port stores it inline, not behind `EVP_MD_CTX_new`).
+/// Rust side (stored inline, not behind `EVP_MD_CTX_new`).
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct EVP_MD_CTX {
@@ -446,12 +443,11 @@ unsafe extern "C" {
 // Typed STACK_OF(...) inline wrappers
 //
 // BoringSSL defines these as `static inline` in C, so they have no exported
-// symbol — they bottom out on the untyped `sk_*` ABI above. Mirrors the
-// translate-c bodies in `boringssl.zig`.
+// symbol — they bottom out on the untyped `sk_*` ABI above.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Per-stack free callback type used by `sk_GENERAL_NAME_pop_free`
-/// (matches Zig's `stack_GENERAL_NAME_free_func`).
+/// (`stack_GENERAL_NAME_free_func`).
 pub type sk_GENERAL_NAME_free_func = unsafe extern "C" fn(*mut struct_stack_st_GENERAL_NAME);
 
 #[inline]
@@ -574,7 +570,7 @@ pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
 pub type CRYPTO_refcount_t = u32;
 
 /// `ossl_ssize_t` — signed counterpart of `size_t` for BoringSSL "length or -1"
-/// parameters. Mirrors the `isize` definition in `boringssl.zig`.
+/// parameters.
 pub type ossl_ssize_t = isize;
 
 /// `bio_info_cb` — callback type for `BIO_METHOD.callback_ctrl`.
@@ -598,7 +594,7 @@ pub struct BIO_METHOD {
     pub callback_ctrl: Option<unsafe extern "C" fn(*mut BIO, c_int, bio_info_cb) -> c_long>,
 }
 
-/// `struct bio_st` — exposed by-value because the Zig side reaches into
+/// `struct bio_st` — exposed by-value because callers reach into
 /// `flags`/`num`/`ptr` directly when implementing custom BIO backends.
 #[repr(C)]
 #[derive(Copy, Clone)]

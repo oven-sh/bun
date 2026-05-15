@@ -180,7 +180,7 @@ ffiWrappers[FFIType.int32_t] = "val|0";
 // The trick to fixing the bug: after using |0 to misinterpret and force the integer into Int32Tag,
 // when passing the value to the C ffi code, misinterpret it again, resulting in the correct uint32_t.
 //
-// To do this in native code, there is a spot in zig where uint32_t just prints int32_t.
+// To do this in native code, there is a spot in the native FFI layer where uint32_t just prints int32_t.
 ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
 ffiWrappers[FFIType.i64_fast] = `{
   if (typeof val === "bigint") {
@@ -421,7 +421,7 @@ const native = {
   },
 };
 
-const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
+const ccFn = $newRustFunction("ffi_body.rs", "Bun__FFI__cc", 1);
 
 function normalizePath(path) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {

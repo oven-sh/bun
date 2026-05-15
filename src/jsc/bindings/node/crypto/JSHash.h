@@ -41,7 +41,7 @@ public:
 
     void finishCreation(JSC::VM& vm);
     bool init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EVP_MD* md, std::optional<uint32_t> xofLen);
-    bool initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigHash::Hasher* hasher, std::optional<uint32_t> xofLen);
+    bool initExtern(JSGlobalObject* globalObject, ThrowScope& scope, ExternCryptoHash::Hasher* hasher, std::optional<uint32_t> xofLen);
     bool update(std::span<const uint8_t> input);
 
     ncrypto::EVPMDCtxPointer m_ctx;
@@ -51,7 +51,7 @@ public:
 
     Vector<uint8_t, EVP_MAX_MD_SIZE> m_digestBuffer;
 
-    ExternZigHash::Hasher* m_zigHasher { nullptr };
+    ExternCryptoHash::Hasher* m_externHasher { nullptr };
 };
 
 class JSHashPrototype final : public JSC::JSNonFinalObject {

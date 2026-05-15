@@ -131,9 +131,9 @@ impl FileRoute {
     fn deinit(this: *mut FileRoute) {
         // SAFETY: `this` was allocated via heap::alloc in init_from_blob/from_js and the
         // intrusive ref_count has reached 0.
-        // Mirror Zig FileRoute.zig:53 `this.blob.deinit()` — `Blob` has no Drop,
-        // so its raw `content_type: Cell<*const [u8]>` (when
-        // `content_type_allocated`) would otherwise leak on Box auto-drop.
+        // `Blob` has no Drop, so its raw `content_type: Cell<*const [u8]>` (when
+        // `content_type_allocated`) would otherwise leak on Box auto-drop —
+        // call `blob.deinit()` explicitly.
         // `headers` is freed by its own Drop when the Box is dropped.
         unsafe {
             (*this).blob.deinit();
@@ -223,7 +223,7 @@ impl FileRoute {
         let buf = self.headers.buf.as_slice();
 
         debug_assert_eq!(names.len(), values.len());
-        // PORT NOTE: Zig `switch (resp) { inline else => |s, tag| { ... } }` expanded per-variant.
+        // PORT NOTE: per-variant inline switch expanded by hand.
         // S008: variant payloads are ZST opaques — safe `*mut → &mut` deref.
         match resp {
             AnyResponse::SSL(s) => {
@@ -376,18 +376,15 @@ impl FileRoute {
             }
         });
 
-        // PORT NOTE (intentional spec divergence): Zig writes
-        // `req.dateForHeader(..) catch return` — i.e. on a JS parse exception
-        // the handler bails with NO response written (the defer above closes
-        // the fd and decrements the route ref, leaving the client hung until
-        // timeout). That `catch return` is itself flagged as a TODO in the
-        // .zig. `parse_http_date` instead maps a parse failure to `None`, so a
-        // malformed If-Modified-Since header degrades to "serve the file
-        // unconditionally" — the RFC 9110 §13.1.3-correct behaviour and what
-        // the Zig TODO is asking for. Kept divergent on purpose.
+        // PORT NOTE (intentional behaviour change): the previous implementation
+        // bailed with NO response written on a JS date-parse exception (leaving
+        // the client hung until timeout). `parse_http_date` instead maps a parse
+        // failure to `None`, so a malformed If-Modified-Since header degrades to
+        // "serve the file unconditionally" — the RFC 9110 §13.1.3-correct
+        // behaviour. Kept divergent on purpose.
         //
-        // LAYERING: Zig's `req.dateForHeader` was a method on `uws.Request`;
-        // in Rust the parse step lives HERE (T6) because it needs `bun_jsc` —
+        // LAYERING: `dateForHeader` used to be a method on `uws.Request`;
+        // here the parse step lives at T6 because it needs `bun_jsc` —
         // call site moved up so `bun_uws_sys` (T0) carries no upward hook.
         let input_if_modified_since_date: Option<u64> = req
             .header(b"if-modified-since")
@@ -396,7 +393,7 @@ impl FileRoute {
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
-                // PORT NOTE: file_type is `undefined` in Zig here; never read because can_serve_file == false
+                // PORT NOTE: file_type is a dummy here; never read because can_serve_file == false
                 Err(_) => break 'brk (false, 0, FileType::File, false),
             };
 
@@ -585,5 +582,3 @@ fn on_stream_complete(ctx: *mut c_void, resp: AnyResponse) {
 fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
     FileRoute::on_response_complete(ctx.cast::<FileRoute>(), resp);
 }
-
-// ported from: src/runtime/server/FileRoute.zig

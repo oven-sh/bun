@@ -28,7 +28,7 @@
 #include "JSPerformanceObserver.h"
 #include "JSPerformanceObserverEntryList.h"
 #include "ScriptExecutionContext.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;

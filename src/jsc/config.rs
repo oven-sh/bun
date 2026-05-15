@@ -1,8 +1,7 @@
 use bun_options_types::schema::api;
 
-// PORT NOTE: Zig `DefaultBunDefines` is a namespace-only struct with nested
-// namespace-only structs. Ported as nested modules; inner consts were NOT `pub`
-// in the Zig source, mirrored here.
+// `DefaultBunDefines` groups namespace-only constants as nested modules.
+// Inner consts are intentionally not `pub`.
 #[allow(non_snake_case, dead_code)]
 pub mod DefaultBunDefines {
     #[allow(non_snake_case)]
@@ -34,5 +33,3 @@ pub fn configure_transform_options_for_bun(
     args.target = Some(api::Target::Bun);
     Ok(args)
 }
-
-// ported from: src/jsc/config.zig

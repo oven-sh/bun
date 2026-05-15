@@ -51,9 +51,9 @@ impl Default for MySQLStatement {
             params_received: 0,
             columns: Vec::new(),
             columns_received: 0,
-            // TODO(port): Signature has no Zig default; callers must supply it. This Default
-            // impl exists only to mirror Zig's per-field defaults — prefer a `new(signature)`
-            // constructor in Phase B.
+            // TODO(port): Signature has no meaningful default; callers must supply it.
+            // This Default impl exists only to mirror per-field defaults — prefer a
+            // `new(signature)` constructor in Phase B.
             signature: Signature::default(),
             status: Status::Parsing,
             error_response: ErrorPacket::default(),
@@ -76,13 +76,13 @@ bitflags::bitflags! {
         /// been consumed. This prevents the intermediate EOF from being mistakenly
         /// treated as end-of-result-set.
         const COLUMNS_EOF_RECEIVED = 1 << 3;
-        // _: u4 padding in Zig — unused high bits.
+        // High 4 bits unused.
     }
 }
 
 impl Default for ExecutionFlags {
     fn default() -> Self {
-        // Zig: header_received=false, needs_duplicate_check=true, need_to_send_params=true, columns_eof_received=false
+        // header_received=false, needs_duplicate_check=true, need_to_send_params=true, columns_eof_received=false
         ExecutionFlags::NEEDS_DUPLICATE_CHECK | ExecutionFlags::NEED_TO_SEND_PARAMS
     }
 }
@@ -96,11 +96,11 @@ pub enum Status {
 }
 
 impl MySQLStatement {
-    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
-    /// refcount at construction time, before any `ref_()`/`deref()`. The
-    /// `ref_count` field is private (refcount invariant), so callers building
-    /// a statement with >1 owner (query + connection-map entry) go through
-    /// this instead of writing the field directly.
+    /// Set the initial intrusive refcount at construction time, before any
+    /// `ref_()`/`deref()`. The `ref_count` field is private (refcount
+    /// invariant), so callers building a statement with >1 owner (query +
+    /// connection-map entry) go through this instead of writing the field
+    /// directly.
     #[inline]
     pub fn init_exact_refs(&mut self, n: u32) {
         debug_assert!(n > 0);
@@ -124,9 +124,9 @@ impl MySQLStatement {
             .remove(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
 
         let mut seen_numbers: Vec<u32> = Vec::new();
-        // TODO(port): StringHashMap key lifetime — Zig stores borrowed `name.slice()` pointers
-        // that outlive the map (columns outlive this function). The Rust StringHashMap clones
-        // into owned `Box<[u8]>` keys; fine for a transient dedup set.
+        // TODO(port): StringHashMap key lifetime — `name.slice()` pointers outlive
+        // the map (columns outlive this function). StringHashMap clones into owned
+        // `Box<[u8]>` keys; fine for a transient dedup set.
         let mut seen_fields: StringHashMap<()> = StringHashMap::default();
         seen_fields.reserve(self.columns.len());
 
@@ -145,7 +145,7 @@ impl MySQLStatement {
                         .expect("OOM")
                         .found_existing;
                     if found_existing {
-                        // Zig: field.name_or_index.deinit(); — Drop on assignment handles this.
+                        // Drop on assignment frees the old identifier.
                         field.name_or_index = ColumnIdentifier::Duplicate;
                         flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     }
@@ -172,9 +172,9 @@ impl MySQLStatement {
         self.fields_flags = flags;
     }
 
-    // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
-    // here to avoid moving out of `self`; callers in Phase B may need `.clone()` if they require
-    // an owned copy.
+    // PORT NOTE: returns `&CachedStructure` rather than by value to avoid moving
+    // out of `self`; callers in Phase B may need `.clone()` if they require an
+    // owned copy.
     pub fn structure(
         &mut self,
         owner: JSValue,
@@ -196,13 +196,13 @@ impl MySQLStatement {
 impl Drop for MySQLStatement {
     fn drop(&mut self) {
         bun_core::scoped_log!(MySQLStatement, "MySQLStatement deinit");
-        // Zig deinit body:
-        //   - per-column deinit + free(columns)  → Vec<ColumnDefinition41> Drop
+        // Cleanup is fully RAII:
+        //   - per-column cleanup + free(columns) → Vec<ColumnDefinition41> Drop
         //   - free(params)                       → Vec<Param> Drop
-        //   - cached_structure.deinit()          → field Drop
-        //   - error_response.deinit()            → field Drop
-        //   - signature.deinit()                 → field Drop
-        //   - bun.destroy(this)                  → handled by IntrusiveRc when refcount hits 0
+        //   - cached_structure                   → field Drop
+        //   - error_response                     → field Drop
+        //   - signature                          → field Drop
+        //   - object destruction                 → handled by IntrusiveRc when refcount hits 0
     }
 }
 
@@ -211,5 +211,3 @@ struct ParamUnused {
     r#type: types::FieldType,
     flags: ColumnFlags,
 }
-
-// ported from: src/sql_jsc/mysql/MySQLStatement.zig

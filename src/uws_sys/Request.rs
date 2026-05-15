@@ -1,10 +1,10 @@
 use core::ffi::{c_char, c_ushort};
 use core::marker::{PhantomData, PhantomPinned};
 
-// TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})
+// TODO(port): verify module path for H3 request opaque (`h3::Request`).
 use crate::h3::Request as H3Request;
 
-// PORT NOTE: `dateForHeader` (Request.zig:62) is NOT ported here. Parsing an
+// PORT NOTE: `dateForHeader` is NOT ported here. Parsing an
 // HTTP date needs `bun_jsc::VirtualMachine` (T6); rather than hook upward, the
 // sole caller (`bun_runtime::server::FileRoute`) does
 // `req.header(name).and_then(parse_http_date)` itself — call site moved UP per
@@ -138,5 +138,3 @@ mod c {
         ) -> usize;
     }
 }
-
-// ported from: src/uws_sys/Request.zig

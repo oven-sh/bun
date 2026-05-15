@@ -58,16 +58,16 @@ impl Default for ParsedSourceMap {
     }
 }
 
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2; packed into SourceContentPtr by shift below
+#[repr(u8)] // logically a 2-bit enum; packed into SourceContentPtr by shift below
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum SourceProviderKind {
-    Zig = 0,
+    Bun = 0,
     Bake = 1,
     DevServer = 2,
 }
 
 pub enum AnySourceProvider {
-    Zig(*mut SourceProviderMap),
+    Bun(*mut SourceProviderMap),
     Bake(*mut BakeSourceProvider),
     DevServer(*mut DevServerSourceProvider),
 }
@@ -75,7 +75,7 @@ pub enum AnySourceProvider {
 impl AnySourceProvider {
     pub fn ptr(&self) -> *mut c_void {
         match self {
-            AnySourceProvider::Zig(p) => (*p).cast::<c_void>(),
+            AnySourceProvider::Bun(p) => (*p).cast::<c_void>(),
             AnySourceProvider::Bake(p) => (*p).cast::<c_void>(),
             AnySourceProvider::DevServer(p) => (*p).cast::<c_void>(),
         }
@@ -91,7 +91,7 @@ impl AnySourceProvider {
             // SAFETY: pointers originate from SourceContentPtr::from_*_provider and are
             // FFI handles whose lifetime is tied to the JSC SourceProvider; valid while
             // the ParsedSourceMap is reachable.
-            AnySourceProvider::Zig(p) => unsafe {
+            AnySourceProvider::Bun(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
             AnySourceProvider::Bake(p) => unsafe {
@@ -104,8 +104,7 @@ impl AnySourceProvider {
     }
 }
 
-/// Zig: `packed struct(u64) { load_hint: SourceMapLoadHint, kind: SourceProviderKind, data: u60 }`
-/// Field order is low-bit-first: bits 0..2 = load_hint, bits 2..4 = kind, bits 4..64 = data.
+/// Packed u64: bits 0..2 = load_hint, bits 2..4 = kind, bits 4..64 = data.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SourceContentPtr(u64);
@@ -152,7 +151,7 @@ impl SourceContentPtr {
     fn kind(self) -> SourceProviderKind {
         // Only ever written via `new()` from a valid discriminant.
         match ((self.0 >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8 {
-            0 => SourceProviderKind::Zig,
+            0 => SourceProviderKind::Bun,
             1 => SourceProviderKind::Bake,
             v => {
                 debug_assert_eq!(v, 2);
@@ -169,7 +168,7 @@ impl SourceContentPtr {
     pub fn from_provider(p: *const SourceProviderMap) -> SourceContentPtr {
         Self::new(
             SourceMapLoadHint::None,
-            SourceProviderKind::Zig,
+            SourceProviderKind::Bun,
             u64::try_from(p as usize).expect("int cast"),
         )
     }
@@ -191,11 +190,11 @@ impl SourceContentPtr {
     }
 
     pub fn provider(self) -> Option<AnySourceProvider> {
-        // Zig returns `?AnySourceProvider` but every match arm yields a value; the
-        // optionality is implicit (data == 0 ⇒ null pointer). Preserve that here.
+        // Every match arm yields a value; the optionality is implicit
+        // (data == 0 ⇒ null pointer). Preserve that here.
         let data = self.data() as usize;
         match self.kind() {
-            SourceProviderKind::Zig => Some(AnySourceProvider::Zig(data as *mut SourceProviderMap)),
+            SourceProviderKind::Bun => Some(AnySourceProvider::Bun(data as *mut SourceProviderMap)),
             SourceProviderKind::Bake => {
                 Some(AnySourceProvider::Bake(data as *mut BakeSourceProvider))
             }
@@ -207,9 +206,9 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
+    /// Thread-safe ref-count helpers.
     ///
-    /// PORT NOTE: Zig uses an *intrusive* count (`bun.new` + embedded
+    /// PORT NOTE: original used an *intrusive* count (`bun.new` + embedded
     /// `ref_count`, freed via `bun.destroy`). The Rust port allocates every
     /// table-stored `ParsedSourceMap` via `Arc::into_raw` (see
     /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
@@ -218,7 +217,7 @@ impl ParsedSourceMap {
     /// `heap::take` would free an interior offset and trips
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
     /// `Arc::{increment,decrement}_strong_count` instead — same observable
-    /// `ref()`/`deref()` semantics as the Zig spec, with the allocator that
+    /// `ref()`/`deref()` semantics, with the allocator that
     /// actually owns the bytes. The embedded `ref_count` field is kept for
     /// layout/ABI parity but is NOT the live counter.
     ///
@@ -248,8 +247,7 @@ impl ParsedSourceMap {
     /// `mapping::List`. The blob's bytes are *borrowed* — `internal` is not
     /// freed on drop (see PORT NOTE on conditional Drop below).
     ///
-    /// Mirrors Zig `SourceMap.ParsedSourceMap{ .internal = ism, .input_line_count
-    /// = ism.inputLineCount() }` struct-init at the standalone-graph load site.
+    /// Used at the standalone-graph load site.
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
             input_line_count: internal.input_line_count(),
@@ -343,7 +341,7 @@ impl ParsedSourceMap {
     }
 }
 
-// PORT NOTE: Zig `deinit` conditionally skipped freeing `internal` when
+// PORT NOTE: the original `deinit` conditionally skipped freeing `internal` when
 // `is_standalone_module_graph` (the blob borrows bytes from the standalone
 // module graph section). The current `InternalSourceMap` stub has no Drop, so
 // the conditional is a no-op. When `InternalSourceMap.rs` is un-gated, retype
@@ -360,5 +358,3 @@ impl<'a> fmt::Display for VlqsFmt<'a> {
         self.0.write_vlqs(&mut adapter).map_err(|_| fmt::Error)
     }
 }
-
-// ported from: src/sourcemap/ParsedSourceMap.zig

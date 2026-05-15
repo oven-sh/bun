@@ -52,8 +52,7 @@ fn format_name(f: codecs::Format) -> &'static str {
 // provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
 // `generated_classes.rs::js_Image`; re-export that module here so callers use
-// `js::source_js_set_cached` / `js::source_js_get_cached` exactly as the Zig
-// did via `js.sourceJSSetCached`.
+// `js::source_js_set_cached` / `js::source_js_get_cached`.
 pub use crate::generated_classes::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -124,12 +123,12 @@ pub enum Source {
     Blob(Strong),
 }
 
-// `Source::deinit` in Zig only frees owned fields — `Vec<u8>`, `ZString`, and
-// `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
+// `Source` only owns `Vec<u8>`, `ZString`, and `Strong` fields — all implement
+// `Drop`, so no explicit `Drop` body is needed.
 
-// Faithful port of `Image.zig`'s local externs — these C++ helpers are
-// Image-specific (they pin/adopt typed-array storage for the off-thread
-// pipeline) and have no `bun_jsc` wrapper.
+// Local externs: these C++ helpers are Image-specific (they pin/adopt
+// typed-array storage for the off-thread pipeline) and have no `bun_jsc`
+// wrapper.
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
@@ -234,7 +233,7 @@ impl Default for Modulate {
 /// so the clamp stays in float space.
 ///
 /// Rust `as` already saturates on overflow/NaN, but we keep the explicit
-/// clamp so behaviour matches Zig exactly (NaN → `lo`, not 0).
+/// clamp so NaN maps to `lo`, not 0.
 macro_rules! coerce_int {
     ($T:ty, $x:expr, $lo:expr, $hi:expr) => {{
         let x: f64 = $x;
@@ -696,8 +695,8 @@ impl Image {
     /// nobody mutates a buffer they just handed to a decoder. The contract is
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to
-    /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.zig` cropping +
-    /// post-check, `codec_webp.zig` dim re-check. (If the attacker already runs
+    /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.rs` cropping +
+    /// post-check, `codec_webp.rs` dim re-check. (If the attacker already runs
     /// JS in-process the threat model is moot anyway; the surface that matters
     /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(
@@ -788,13 +787,13 @@ impl Image {
 // is emitted by `.classes.ts` codegen (`generated_classes.rs`) and calls them
 // as `Image::<fn>(…)`, so they live in an inherent `impl` with the codegen's
 // exact arity — including the trailing opaque `PropertyName` it threads
-// through but Zig's `getBackend` ignores.
+// through but `getBackend` ignores.
 
 impl Image {
     pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
         // `BACKEND` only ever stores a valid `Backend as u8` discriminant
         // (`set_backend` round-trips through `Backend`); any other value is
-        // corruption — trap (matches Zig's safety-checked `@enumFromInt`).
+        // corruption — trap.
         let b = match codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed) {
             0 => codecs::Backend::System,
             1 => codecs::Backend::Bun,
@@ -1185,11 +1184,11 @@ impl Image {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
-        // PORT NOTE: Zig `defer input.release()` is hoisted below — `input`
-        // moves into `task`, and `run()` is sync with no early returns, so we
+        // PORT NOTE: `input` is released below, not via a defer — it moves
+        // into `task`, and `run()` is sync with no early returns, so we
         // release via `task.input` after the result is extracted.
-        // PORT NOTE: Zig never calls `PipelineTask.deinit()` on this stack
-        // temporary (only `then()` does — Image.zig:1092). `Drop` here would
+        // PORT NOTE: `PipelineTask::Drop` must not run on this stack
+        // temporary (only `then()` calls it). `Drop` here would
         // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
         let mut task = mem::ManuallyDrop::new(PipelineTask {
             image: std::ptr::from_ref::<Image>(self),
@@ -1209,7 +1208,7 @@ impl Image {
             &mut task.result,
             TaskResult::Err(codecs::Error::DecodeFailed),
         );
-        // Zig `defer input.release()` (see PORT NOTE above).
+        // Release `input` here (see PORT NOTE above).
         mem::take(&mut task.input).release();
         match result {
             TaskResult::Encoded { out, format, w, h } => {
@@ -1369,7 +1368,7 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
         // SAFETY: `self` is the `&mut *heap::alloc(chain)` handed to
         // `read_bytes_to_handler` in `start()`; we are the sole consumer on
         // the JS thread. Reconstruct the Box so the body can move fields out
-        // and free the allocation (mirrors Zig `bun.destroy(self)`).
+        // and free the allocation.
         let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
         boxed.on_read_bytes_impl(result);
     }
@@ -2028,9 +2027,8 @@ fn apply_orientation(
 impl<'a> Drop for PipelineTask<'a> {
     fn drop(&mut self) {
         // Only reached from `then()` on the JS thread (the `encode_for_body`
-        // stack temporary is wrapped in `ManuallyDrop` — Zig never calls
-        // `deinit()` on that path), so the ref/count touch is safe without
-        // atomics.
+        // stack temporary is wrapped in `ManuallyDrop` and never dropped on
+        // that path), so the ref/count touch is safe without atomics.
         // `self.deliver.deinit()` — `Strong` Drop on the `WriteDest` arm.
         // SAFETY: `image` is a BACKREF kept alive by the wrapper's Strong
         // `this_ref` while pending_tasks > 0; we are on the JS thread.
@@ -2043,5 +2041,3 @@ impl<'a> Drop for PipelineTask<'a> {
         // `bun.destroy(this)` — `Box<PipelineTask>` drop is the caller.
     }
 }
-
-// ported from: src/runtime/image/Image.zig

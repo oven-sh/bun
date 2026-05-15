@@ -1,6 +1,6 @@
 #pragma once
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
@@ -16,7 +16,7 @@ namespace JSC {
 class JSGlobalObject;
 }
 
-namespace Zig {
+namespace Bun {
 
 using namespace JSC;
 
@@ -69,8 +69,8 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, Zig::GlobalObject*, unsigned length, const String& name, FFIFunction, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor);
-    JS_EXPORT_PRIVATE static JSFFIFunction* createForFFI(VM&, Zig::GlobalObject*, unsigned length, const String& name, CFFIFunction);
+    JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, Bun::GlobalObject*, unsigned length, const String& name, FFIFunction, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor);
+    JS_EXPORT_PRIVATE static JSFFIFunction* createForFFI(VM&, Bun::GlobalObject*, unsigned length, const String& name, CFFIFunction);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -97,4 +97,4 @@ private:
     CFFIFunction m_function;
 };
 
-} // namespace JSC
+} // namespace Bun

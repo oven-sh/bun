@@ -2,9 +2,8 @@
 //! for storing in an atomic and printing in panics so it lines up with what a
 //! debugger / `top -H` / Instruments shows.
 //!
-//! Ground truth is Zig's `std.Thread.Id` / `std.Thread.getCurrentId()`
-//! (vendor/zig/lib/std/Thread.zig). This is the single Rust port of that
-//! per-OS ladder; every other crate re-exports or widens from here:
+//! This is the single Rust home for the per-OS ladder that resolves the
+//! kernel TID; every other crate re-exports or widens from here:
 //!   * `bun_safety::thread_id`       → `pub use bun_core::thread_id::*;`
 //!   * `bun_threading::current_thread_id` → `current() as u64`
 //!   * `bun_core::util::debug_thread_id`  → `current() as u64` (debug-only)
@@ -13,9 +12,9 @@
 //! process-local monotonic counter (no `MAX`, no atomic repr, not the kernel
 //! TID), whereas every consumer (`CriticalSection`, `ThreadLock`, `ThreadCell`)
 //! needs a plain integer it can store in an atomic and compare against a
-//! sentinel — exactly Zig's semantics.
+//! sentinel.
 
-// ── ThreadId width (mirrors Zig `std.Thread.Id` switch) ───────────────────
+// ── ThreadId width (per-OS) ───────────────────────────────────────────────
 //   linux / *bsd / haiku / wasi / serenity → u32
 //   macOS / iOS / watchOS / tvOS / visionOS → u64
 //   Windows                                → DWORD (u32)
@@ -60,7 +59,7 @@ pub type ThreadId = u64;
 )))]
 pub type ThreadId = usize;
 
-// ── Atomic wrapper (Zig: `std.atomic.Value(Thread.Id)`) ───────────────────
+// ── Atomic wrapper ────────────────────────────────────────────────────────
 // Width-matched alias so `CriticalSection` can `compare_exchange` on it directly.
 #[cfg(any(
     target_os = "linux",
@@ -103,20 +102,17 @@ pub type AtomicThreadId = core::sync::atomic::AtomicU64;
 pub type AtomicThreadId = core::sync::atomic::AtomicUsize;
 
 /// A value that does not alias any other thread ID.
-/// See `Thread/Mutex/Recursive.zig` in the Zig standard library.
-// Zig: `pub const invalid = std.math.maxInt(std.Thread.Id);`
 pub const INVALID: ThreadId = ThreadId::MAX;
 
 /// Returns the platform's notion of the calling thread's ID.
 ///
-/// Port of Zig `std.Thread.getCurrentId()` (`PosixThreadImpl` / `WindowsThreadImpl` /
-/// `LinuxThreadImpl`). Attempts to use OS-specific primitives so the value matches what
+/// Attempts to use OS-specific primitives so the value matches what
 /// debuggers/tracers report; falls back to `pthread_self()` as a `usize` on unknown targets.
 #[inline]
 pub fn current() -> ThreadId {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // Zig: `LinuxThreadImpl.getCurrentId()` → `linux.gettid()`.
+        // Linux: `gettid()`.
         // SAFETY: `gettid` takes no arguments and cannot fail.
         return unsafe { libc::gettid() } as ThreadId;
     }
@@ -128,7 +124,7 @@ pub fn current() -> ThreadId {
         target_os = "visionos",
     ))]
     {
-        // Zig: `pthread_threadid_np(null, &thread_id)`.
+        // Darwin: `pthread_threadid_np(null, &thread_id)`.
         unsafe extern "C" {
             fn pthread_threadid_np(
                 thread: *mut core::ffi::c_void,
@@ -196,7 +192,7 @@ pub fn current() -> ThreadId {
         target_os = "visionos",
     )))]
     {
-        // Zig fallback: `@intFromPtr(c.pthread_self())`.
+        // Fallback: `pthread_self()` cast to a pointer-width integer.
         unsafe extern "C" {
             // safe: no args; infallible.
             safe fn pthread_self() -> usize;
@@ -204,5 +200,3 @@ pub fn current() -> ThreadId {
         return pthread_self() as ThreadId;
     }
 }
-
-// ported from: vendor/zig/lib/std/Thread.zig (Id / getCurrentId)

@@ -7,7 +7,7 @@ use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
 use bun_install::{Dependency, Lockfile, PackageManager};
-// PORT NOTE (layering): Zig `bun.ast.Expr` resolves to the full T4 parser AST,
+// PORT NOTE (layering): the `Expr` type would resolve to the full T4 parser AST,
 // but every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML into
 // the lower-tier `bun_ast::js_ast` shape (re-exported via `crate::bun_json`).
 // Importing `bun_js_parser` here forced a higher-tier dep and produced
@@ -29,7 +29,7 @@ pub struct CatalogMap {
     pub groups: ArrayHashMap<String, Map>,
 }
 
-/// Zig `String.arrayHashContext(lockfile, null)` — convenience constructor that
+/// `String.arrayHashContext(lockfile, null)` — convenience constructor that
 /// reads the lockfile's string buffer for both arg & existing sides. Lives here
 /// (not on `bun_semver::String`) to avoid a `bun_semver → bun_install` back-edge.
 #[inline]
@@ -68,7 +68,7 @@ impl CatalogMap {
         group.get_adapted(&dep_name, ctx(buf)).cloned()
     }
 
-    /// PORT NOTE: Zig took `lockfile: *Lockfile` but only reads its string
+    /// PORT NOTE: the original took `lockfile: *Lockfile` but only reads its string
     /// buffer for the hash context. Narrow to `buf: &[u8]` so callers can hold
     /// `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
     /// (disjoint field), instead of forcing a whole-`Lockfile` borrow that
@@ -110,7 +110,7 @@ impl CatalogMap {
         )
     }
 
-    // PORT NOTE: Zig took `lockfile: *Lockfile` only for `.allocator` (dropped
+    // PORT NOTE: the original took `lockfile: *Lockfile` only for `.allocator` (dropped
     // per global-mimalloc rule). Removing it lets `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
     pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
@@ -165,7 +165,7 @@ impl CatalogMap {
         }
     }
 
-    /// PORT NOTE: Zig threaded `lockfile: *Lockfile` for `.allocator` and
+    /// PORT NOTE: the original threaded `lockfile: *Lockfile` for `.allocator` and
     /// `.buffers.string_bytes`. The allocator is dropped (global mimalloc) and
     /// `builder` already holds `&mut string_bytes`, so read the buffer through
     /// `builder` and drop the `lockfile` param — otherwise call sites would
@@ -300,7 +300,7 @@ impl CatalogMap {
         Ok(found_any)
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig threads `*Lockfile` through, but
+    // PORT NOTE: reshaped for borrowck — the original threaded `*Lockfile` through, but
     // the only field this body touches is `lockfile.catalogs`, and the call
     // site in `pnpm.rs` must simultaneously hold `&mut StringBuf` (which
     // already borrows `lockfile.buffers.string_bytes` + `lockfile.string_pool`).
@@ -339,7 +339,7 @@ impl CatalogMap {
         Ok(())
     }
 
-    // PORT NOTE: Zig took `lockfile: *const Lockfile` but only reads its
+    // PORT NOTE: the original took `lockfile: *const Lockfile` but only reads its
     // string buffer. Narrow to `buffers: &Buffers` so the call site can hold
     // `&mut lockfile.catalogs` while only borrowing `lockfile.buffers`
     // immutably (disjoint fields), instead of forcing a whole-`Lockfile`
@@ -362,10 +362,10 @@ impl CatalogMap {
             });
     }
 
-    // Zig `deinit(allocator)` deleted: `Map` and `ArrayHashMap<String, Map>` are owned
-    // collections whose `Drop` recursively frees the nested maps.
+    // The explicit `deinit(allocator)` is deleted: `Map` and `ArrayHashMap<String, Map>`
+    // are owned collections whose `Drop` recursively frees the nested maps.
 
-    /// PORT NOTE: Zig took `*const Lockfile` but only ever read
+    /// PORT NOTE: the original took `*const Lockfile` but only ever read
     /// `lockfile.buffers.string_bytes` — accept the slice directly so callers
     /// can split-borrow the lockfile alongside a live `StringBuilder`.
     pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
@@ -387,7 +387,7 @@ impl CatalogMap {
         }
     }
 
-    /// PORT NOTE: Zig also passed `*Lockfile new`, but `builder` already
+    /// PORT NOTE: the original also passed `*Lockfile new`, but `builder` already
     /// borrows `new.buffers.string_bytes` — read the new-side buffer through
     /// it instead so the call site doesn't alias `&mut new` twice.
     /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
@@ -405,7 +405,7 @@ impl CatalogMap {
             .default
             .ensure_total_capacity(self.default.count())?;
 
-        // Zig re-reads `new.buffers.string_bytes.items` at every
+        // The original re-reads `new.buffers.string_bytes.items` at every
         // `putAssumeCapacityContext` call. Mirror that here: per insert,
         // finish the `&mut builder` appends FIRST, then snapshot the buffer
         // for the hash/eql closures. Snapshotting once up-front would freeze
@@ -523,5 +523,3 @@ fn put_entries_from_pnpm_lockfile(
     }
     Ok(())
 }
-
-// ported from: src/install/lockfile/CatalogMap.zig

@@ -1,7 +1,7 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
@@ -183,7 +183,7 @@ void ErrorCodeCache::finishCreation(VM& vm)
     }
 }
 
-static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
+static ErrorCodeCache* errorCache(Bun::GlobalObject* globalObject)
 {
     return static_cast<ErrorCodeCache*>(globalObject->nodeErrorCache());
 }
@@ -195,7 +195,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
-JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
+JSObject* ErrorCodeCache::createError(VM& vm, Bun::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* cache = errorCache(globalObject);
@@ -217,12 +217,12 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return created_error;
 }
 
-JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+JSObject* createError(VM& vm, Bun::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
 }
 
-JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+JSObject* createError(Bun::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(globalObject->vm(), globalObject, code, message);
 }
@@ -234,14 +234,14 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
 {
-    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
-        return createError(vm, zigGlobalObject, code, message, jsUndefined());
+    if (auto* bunGlobalObject = dynamicDowncast<Bun::GlobalObject>(globalObject))
+        return createError(vm, bunGlobalObject, code, message, jsUndefined());
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
     return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
 }
 
-JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
+JSC::JSObject* createError(VM& vm, Bun::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, message, options);
 }
@@ -251,7 +251,7 @@ JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const S
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
+JSObject* createError(Bun::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
 {
     auto& vm = JSC::getVM(globalObject);
     return createError(vm, globalObject, code, message);
@@ -322,7 +322,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Bun::functionName(vm, globalObject, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append("[Function: "_s);
@@ -401,7 +401,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
     }
     if (cell->isCallable()) {
         builder.append("function "_s);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Bun::functionName(vm, globalObject, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append(name);
@@ -596,7 +596,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return result.toString();
 }
 
-WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
+WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const UnsafeStringView* arg_name_string, const UnsafeStringView* expected_type_string, JSValue actual_value)
 {
     auto arg_name = std::span<const Latin1Character>(arg_name_string->ptr, arg_name_string->len);
     ASSERT(WTF::charactersAreAllASCII(arg_name));

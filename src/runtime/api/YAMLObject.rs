@@ -75,8 +75,8 @@ pub struct Stringifier {
 pub enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
-    /// `Space.deinit() → str.deref()`).
+    /// +1 WTF ref owned for the lifetime of the `Stringifier`; released
+    /// when the space is dropped.
     Str(OwnedString),
 }
 
@@ -122,9 +122,9 @@ pub struct AnchorAlias {
 impl Default for AnchorAlias {
     fn default() -> Self {
         // PORT NOTE: `HashMap::get_or_put` requires `V: Default` to fill the
-        // freshly-inserted slot before the caller overwrites `*value_ptr`. Zig
-        // left it `undefined`; this is the closest legal Rust equivalent and is
-        // immediately overwritten by the caller (see `find_anchors_and_aliases`).
+        // freshly-inserted slot before the caller overwrites `*value_ptr`.
+        // The slot is immediately overwritten by the caller (see
+        // `find_anchors_and_aliases`), so a zero default is sufficient.
         AnchorAlias {
             anchored: false,
             used: false,
@@ -851,7 +851,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
 
 /// Returns true when `str` would be parsed back as a number by `YAML.parse`.
 ///
-/// This mirrors the rules in `src/interchange/yaml.zig`'s `tryResolveNumber`:
+/// This mirrors the rules in the YAML parser's `tryResolveNumber`:
 /// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF` for signed infinity.
 /// - Otherwise a numeric mantissa: digits/`.`/`e`/`E`/hex letters, plus additional `+`/`-`
 ///   (the parser accepts any number of `+` after the leading sign as long as no `x` was
@@ -1172,5 +1172,3 @@ impl<'a> ParserCtx<'a> {
         }
     }
 }
-
-// ported from: src/runtime/api/YAMLObject.zig

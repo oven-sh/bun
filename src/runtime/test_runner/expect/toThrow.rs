@@ -3,7 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 use bun_jsc::JsClass;
-use bun_core::{strings, ZigString};
+use bun_core::{strings, UnsafeStringView};
 
 use super::Expect;
 use super::ExpectAny;
@@ -197,7 +197,7 @@ pub fn to_throw(
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut expected_class = ZigString::EMPTY;
+        let mut expected_class = UnsafeStringView::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
         let received_message: JSValue = result
             .fast_get(global, bun_jsc::BuiltinName::Message)?
@@ -382,8 +382,8 @@ pub fn to_throw(
 
         // error: received error not instance of received error constructor
         let mut formatter = Formatter::new(global).with_quote_strings(true);
-        let mut expected_class = ZigString::EMPTY;
-        let mut received_class = ZigString::EMPTY;
+        let mut expected_class = UnsafeStringView::EMPTY;
+        let mut received_class = UnsafeStringView::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
         result.get_class_name(global, &mut received_class)?;
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
@@ -409,8 +409,7 @@ pub fn to_throw(
     let result = return_value_from_function;
     let mut formatter = Formatter::new(global).with_quote_strings(true);
     let mut formatter2 = super::make_formatter(global);
-    // PORT NOTE: Zig `received_line` was concatenated via `++` into each fmt string
-    // below; Rust `format_args!` only accepts literals so the value is inlined at each site.
+    // PORT NOTE: `format_args!` only accepts literals, so `received_line` is inlined at each site.
     // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"
 
     if expected_value.is_empty() || expected_value.is_undefined() {
@@ -463,7 +462,7 @@ pub fn to_throw(
         );
     }
 
-    let mut expected_class = ZigString::EMPTY;
+    let mut expected_class = UnsafeStringView::EMPTY;
     expected_value.get_class_name(global, &mut expected_class)?;
     this.throw(
         global,
@@ -475,5 +474,3 @@ pub fn to_throw(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toThrow.zig

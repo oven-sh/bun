@@ -29,5 +29,3 @@ pub struct OriginalLocation {
     pub source: u32,
     pub name: Option<u32>,
 }
-
-// ported from: src/css/sourcemap.zig

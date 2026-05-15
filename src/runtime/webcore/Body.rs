@@ -16,14 +16,14 @@ use crate::webcore::{
 };
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
-// Re-export so callers can write `body::InternalBlob` (mirrors Zig nested-type access).
+// Re-export so callers can write `body::InternalBlob` (mirrors the original nested-type access).
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
-use bun_core::{MutableString, String as BunString, ZigString, strings};
+use bun_core::{MutableString, String as BunString, UnsafeStringView, strings};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::UnsafeStringViewJsc as _;
 use bun_jsc::{JsCell, StringJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
@@ -46,7 +46,7 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 /// Mutable view of a [`Blob`]'s backing `Store` through its
 /// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
 /// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `StoreRef::data_mut` already documents: Zig-semantics
+/// invariant `StoreRef::data_mut` already documents: original-semantics
 /// shared-mutable interior, single-threaded JS event-loop, no concurrent
 /// `&Store` outstanding for the borrow's duration.
 #[inline]
@@ -194,7 +194,7 @@ impl Body {
                 blob.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
             }
             v @ (Value::InternalBlob(_) | Value::WTFStringImpl(_)) => {
-                // Zig calls `this.value.size()` *inside* this arm only — do not hoist:
+                // the original calls `this.value.size()` *inside* this arm only — do not hoist:
                 // for `.Blob` it would stat the file, for `.Locked` it would deref the
                 // global. Compute the size from the matched payload directly.
                 let size = match v {
@@ -280,7 +280,7 @@ impl PendingValue {
 }
 
 impl Default for PendingValue {
-    /// PORT NOTE: Zig requires `global` to be set; callers using `..Default::default()`
+    /// PORT NOTE: originally requires `global` to be set; callers using `..Default::default()`
     /// must initialize `global` explicitly. Null here is the only viable Rust default.
     fn default() -> Self {
         Self {
@@ -473,7 +473,7 @@ impl Action {
     }
 }
 
-/// Tag-only equality (mirrors Zig union-tag comparison `action != .none`).
+/// Tag-only equality (mirrors the original union-tag comparison `action != .none`).
 /// `GetFormData` payload is ignored.
 impl PartialEq for Action {
     fn eq(&self, other: &Self) -> bool {
@@ -485,7 +485,7 @@ impl PartialEq for Action {
 /// JS-side properties, plus the weak `JsRef` back-pointer. Both `Request` and
 /// `Response` forward these 1:1 to `bun_jsc::generated::JS{Request,Response}`.
 ///
-/// Replaces Zig's `T.js.bodyGetCached` / `T.js.gc.stream.{get,set,clear}` /
+/// Replaces `T.js.bodyGetCached` / `T.js.gc.stream.{get,set,clear}` /
 /// `this.#js_ref.tryGet()` comptime duck-typing.
 pub trait BodyOwnerJs {
     /// `self.js_ref.get().try_get()` — the live JS wrapper, if any.
@@ -539,7 +539,7 @@ pub enum Value {
     /// This works for .json(), too.
     // PORT NOTE: `bun_core::WTFStringImpl` = `*mut WTFStringImplStruct` — a Copy raw
     // pointer to an *intrusively* refcounted WTF::StringImpl. We hold the +1 directly
-    // (no Arc) and ref/deref explicitly at the same points Zig does (from_js / clone /
+    // (no Arc) and ref/deref explicitly at the same points the original does (from_js / clone /
     // use_ / to_blob_if_possible / reset / use_as_any_blob*).
     WTFStringImpl(WTFStringImpl),
     /// Single-use Blob
@@ -564,7 +564,7 @@ pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZ
 
 /// Typed front-end for `VirtualMachine::init_request_body_value` (the hook is
 /// type-erased to break the `bun_jsc` → `bun_runtime` dep edge). Spec
-/// `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
+/// `VirtualMachine initRequestBodyValue` — moves `value` into a
 /// pooled `HiveRef` slot (ref_count = 1) and returns it.
 pub fn hive_alloc(vm: &mut VirtualMachine, value: Value) -> core::ptr::NonNull<HiveRef> {
     // The hook impl (`runtime/jsc_hooks.rs`) `ptr::read`s its `*mut Value`
@@ -609,7 +609,7 @@ impl ValueError {
     // per PORTING.md (never expose `pub fn deinit(&mut self)`).
     pub fn reset(&mut self) {
         match self {
-            // PORT NOTE: Zig `system_error.deref()` released the bun.String
+            // PORT NOTE: originally `system_error.deref()` released the bun.String
             // fields; in Rust those are dropped by the assignment below.
             ValueError::SystemError(_system_error) => {}
             ValueError::Message(message) => message.deref(),
@@ -669,7 +669,7 @@ impl ValueError {
     pub fn dupe(&self, global_object: &JSGlobalObject) -> Self {
         match self {
             // `.clone()` on BunString/SystemError already bumps the refcount (paired
-            // with their Drop deref). Zig did `var v = this.*; v.ref();` (bitwise copy
+            // with their Drop deref). The original did `var v = this.*; v.ref();` (bitwise copy
             // + one bump) — `.clone()` alone is the Rust equivalent. An extra `.ref_()`
             // here would leak +1 per dupe.
             ValueError::SystemError(e) => ValueError::SystemError(e.dupe()),
@@ -695,7 +695,7 @@ impl Value {
     /// Decrement the refcount of the enclosing pooled `HiveRef<Value>` slot.
     ///
     /// `RequestContext.request_body` stores `NonNull<Value>` (the pooled
-    /// payload), but the Zig field type is `?*Body.Value.HiveRef` — the slot
+    /// payload), but the original field type is `?*Body.Value.HiveRef` — the slot
     /// header carries the refcount + pool back-pointer. Recover the parent via
     /// `offset_of!``) and forward.
     ///
@@ -721,13 +721,13 @@ impl Value {
 
     /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
     ///
-    /// Port of the `Body.Value` special-case in `JSValue.as()` (JSValue.zig:449):
+    /// Port of the `Body.Value` special-case in `JSValue.as()` (JSValue):
     /// `Body.Value` is not itself a JS class — it lives inside a `Request` or
     /// `Response` wrapper — so the generic `JSValue::as_::<T: JsClass>()` path
     /// cannot be used. Instead, try both wrapper classes and return the inner
     /// body pointer.
     ///
-    /// Returns a raw pointer (mirrors Zig `?*Body.Value`); the storage is owned
+    /// Returns a raw pointer (mirrors `?*Body.Value`); the storage is owned
     /// by the JSC heap cell and outlives the call only as long as `value` is
     /// kept alive by the caller.
     pub fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
@@ -767,16 +767,16 @@ impl Value {
         }
     }
 
-    // TODO(b2-blocked): ZigStringSlice::slice() accessor + AnyBlob payload
+    // TODO(b2-blocked): UTF8Slice::slice() accessor + AnyBlob payload
     // matching depend on the wtf string slice port. `to_any_blob` itself is
     // un-gated above; only the WTFStringImpl→InternalBlob conversion blocks.
 
     pub fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
             if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
-                // Zig: `fromOwnedSlice(@constCast(bytes.slice()))` — the UTF-8 buffer is
+                // Originally: `fromOwnedSlice(@constCast(bytes.slice()))` — the UTF-8 buffer is
                 // already heap-owned by the slice wrapper; transfer it (no copy).
-                // Zig's `defer str.deref()` is now handled by `Value::drop` on the
+                // `defer str.deref()` is now handled by `Value::drop` on the
                 // overwritten `WTFStringImpl` variant — do NOT deref explicitly here.
                 *self = Value::InternalBlob(InternalBlob {
                     bytes: bytes.into_vec(),
@@ -842,7 +842,7 @@ impl Value {
         }
     }
 
-    /// Shorthand constructor for the `Blob` variant (mirrors Zig
+    /// Shorthand constructor for the `Blob` variant (mirrors the original
     /// `Body.Value{ .Blob = ... }` field-init syntax used by callers).
     #[inline]
     pub fn blob(b: Blob) -> Value {
@@ -881,7 +881,7 @@ impl Value {
             Value::Empty => ReadableStream::empty(global_this),
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
-                // Zig: `defer blob.detach()` — must run on every exit incl. `?` paths.
+                // Originally: `defer blob.detach()` — must run on every exit incl. `?` paths.
                 let mut blob = scopeguard::guard(self.use_(), |mut b| b.detach());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
@@ -917,7 +917,7 @@ impl Value {
                 // `to_readable_stream()` below (freed by the GC finalizer).
                 let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
                     webcore::readable_stream::NewSource {
-                        // Zig: `.context = undefined` then `reader.context.setup()`; Rust
+                        // Originally: `.context = undefined` then `reader.context.setup()`; Rust
                         // default-constructs (ByteStream::default == post-setup state).
                         context: ByteStream::default(),
                         global_this: Some(bun_ptr::BackRef::new(global_this)),
@@ -996,7 +996,7 @@ impl Value {
 
             debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
 
-            // Zig accessed `str.value.WTFStringImpl` directly; `leak_wtf_impl()` transfers
+            // the original accessed `str.value.WTFStringImpl` directly; `leak_wtf_impl()` transfers
             // the +1 ref out of the bun_core::String wrapper.
             return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));
         }
@@ -1009,7 +1009,7 @@ impl Value {
                     return Ok(Value::Empty);
                 }
 
-                // PORT NOTE: Zig threw "Failed to clone ArrayBufferView" on OOM; Rust's
+                // PORT NOTE: originally threw "Failed to clone ArrayBufferView" on OOM; Rust's
                 // global allocator aborts on OOM, so the error path is unreachable.
                 return Ok(Value::InternalBlob(InternalBlob {
                     bytes: bytes.to_vec(),
@@ -1104,9 +1104,9 @@ impl Value {
             Ok(b) => b,
             Err(_err) => {
                 if !global_this.has_exception() {
-                    // PORT NOTE: Zig matched `error.InvalidArguments` here for an
+                    // PORT NOTE: originally matched `error.InvalidArguments` here for an
                     // "Expected an Array" message. With `REQUIRE_ARRAY = false` that
-                    // branch is unreachable in Zig's `Blob.get` too (the only
+                    // branch is unreachable in `Blob.get` too (the only
                     // `error.InvalidArguments` producer is gated on `require_array`),
                     // and every other failure path throws first (sets the exception).
                     // The Rust `JsResult` collapse is therefore semantics-preserving.
@@ -1138,7 +1138,7 @@ impl Value {
         &mut self,
         new: &mut Value,
         global: &JSGlobalObject,
-        // Zig: `?*FetchHeaders` — opaque C++ handle, mutated via FFI. Taking
+        // Originally: `?*FetchHeaders` — opaque C++ handle, mutated via FFI. Taking
         // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
         headers: Option<NonNull<FetchHeaders>>,
     ) -> JsTerminated<()> {
@@ -1187,10 +1187,10 @@ impl Value {
                     Action::GetFormData(form_data_slot) => 'inner: {
                         let mut blob = new.use_as_any_blob();
                         let Some(async_form_data) = form_data_slot.take() else {
-                            // Zig: `defer blob.detach()` covers the `try promise.reject(...)` error path.
+                            // Originally: `defer blob.detach()` covers the `try promise.reject(...)` error path.
                             let r = promise.reject(
                                 global,
-                                ZigString::init(
+                                UnsafeStringView::init(
                                     b"Internal error: task for FormData must not be null",
                                 )
                                 .to_error_instance(global),
@@ -1211,7 +1211,7 @@ impl Value {
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
                         if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
+                            // `headers` is a live C++ FetchHeaders handle (originally: `?*FetchHeaders`);
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             let fetch_headers =
                                 bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
@@ -1226,7 +1226,7 @@ impl Value {
                                     Some(&mut allocated),
                                 );
                                 blob.content_type_was_set.set(true);
-                                // PORT NOTE: ownership reshape vs Zig. Zig's MimeType has no destructor so
+                                // PORT NOTE: ownership reshape vs the original. The original MimeType has no destructor so
                                 // `blob.content_type` (freed via `content_type_allocated`) is the sole owner
                                 // and `store.mime_type` aliases it. Rust `MimeType.value` is `Cow` (RAII), so
                                 // we give the Store the owning Cow and let `blob.content_type` alias it
@@ -1325,13 +1325,13 @@ impl Value {
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
                 let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
-                    // Zig: `fromOwnedSlice(@constCast(allocated_slice.slice()))` — transfer
+                    // Originally: `fromOwnedSlice(@constCast(allocated_slice.slice()))` — transfer
                     // ownership of the heap-allocated UTF-8 buffer (no copy).
                     Blob::init(allocated_slice.into_vec(), global)
                 } else {
                     Blob::init(wtf_ref.latin1_slice().to_vec(), global)
                 };
-                // Zig: `defer wtf.deref()` — release the +1 the body held.
+                // Originally: `defer wtf.deref()` — release the +1 the body held.
                 wtf_ref.deref();
                 new_blob
             }
@@ -1346,14 +1346,14 @@ impl Value {
             //     *self = Value::Used;
             //     new_blob
             // }
-            // PORT NOTE: Zig passed `undefined` for global_this; `Blob::default()` leaves
+            // PORT NOTE: originally passed `undefined` for global_this; `Blob::default()` leaves
             // `global_this` null which matches the don't-care contract here.
             _ => Blob::default(),
         }
     }
 
     // TODO(b2-blocked): Blob::init_empty signature takes `&JSGlobalObject` (the
-    // un-gated B-2 ctor) but the Zig path passed `undefined`; needs a nullable
+    // un-gated B-2 ctor) but the original path passed `undefined`; needs a nullable
     // overload (or `Blob::default()`) before this type-checks.
 
     pub fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
@@ -1371,7 +1371,7 @@ impl Value {
                     return None;
                 }
             }
-            // Zig: `.Locked => this.Locked.toAnyBlobAllowPromise() orelse return null` — on Some
+            // Originally: `.Locked => this.Locked.toAnyBlobAllowPromise() orelse return null` — on Some
             // it falls through to `this.* = .{ .Used = {} }` below. `?` on Option early-returns None.
             Value::Locked(l) => l.to_any_blob_allow_promise()?,
             _ => return None,
@@ -1397,10 +1397,10 @@ impl Value {
                 let str = *str;
                 let wtf_ref = wtf_impl(&str);
                 if let Some(utf8) = wtf_ref.to_utf8_if_needed() {
-                    // Zig: `defer str.deref()` — handled by `Value::drop` on the
+                    // Originally: `defer str.deref()` — handled by `Value::drop` on the
                     // assignment below (the variant is still `WTFStringImpl(str)`).
                     break 'brk AnyBlob::InternalBlob(InternalBlob {
-                        // Zig: `fromOwnedSlice(@constCast(utf8.slice()))` — transfer
+                        // Originally: `fromOwnedSlice(@constCast(utf8.slice()))` — transfer
                         // ownership of the heap-allocated UTF-8 buffer (no copy).
                         bytes: utf8.into_vec(),
                         was_string: true,
@@ -1467,12 +1467,12 @@ impl Value {
                 unreachable!()
             };
 
-            // Zig: `defer strong_readable.deinit()` — must run on every exit incl. `?` paths.
+            // Originally: `defer strong_readable.deinit()` — must run on every exit incl. `?` paths.
             let strong_readable =
                 scopeguard::guard(core::mem::take(&mut locked.readable), |mut r| r.deinit());
 
             if let Some(promise_value) = locked.promise.take() {
-                // Zig: `defer promise_value.ensureStillAlive(); defer promise_value.unprotect();`
+                // Originally: `defer promise_value.ensureStillAlive(); defer promise_value.unprotect();`
                 // — non-Drop side effect (GC root decrement) that must run even if
                 // reject_with_async_stack errors.
                 let promise_value = scopeguard::guard(promise_value, |p| {
@@ -1542,8 +1542,8 @@ impl Value {
     }
 }
 
-/// Spec: `Body.Value.deinit` (Body.zig). Runs when a `HiveRef<Value>` slot is
-/// recycled (`HiveArray::Fallback::put` → `drop_in_place`) — Zig's
+/// Spec: `Body.Value.deinit` (Body). Runs when a `HiveRef<Value>` slot is
+/// recycled (`HiveArray::Fallback::put` → `drop_in_place`) — the original's
 /// `if @hasDecl(T, "deinit") this.value.deinit()` in `HiveRef::unref` was
 /// mapped to `T::drop` in the Rust port (see `bun_collections::HiveRef::unref`),
 /// so without this impl `Request`/`Response` GC finalization leaked
@@ -1581,7 +1581,7 @@ impl Value {
         owned_readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
         let Value::Locked(locked) = self else {
-            // TODO(port): Zig assumed self.* == .Locked at entry (caller guarantees).
+            // TODO(port): originally assumed self.* == .Locked at entry (caller guarantees).
             unreachable!("tee() called on non-Locked Value");
         };
         if let Some(readable) = owned_readable {
@@ -1730,7 +1730,7 @@ impl Value {
 // JSC-integration: extract / BodyMixin (host-fn methods) / ValueBufferer.
 // ────────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig `ArrayBufferSink.JSSink` is a nested type from `Sink.JSSink(@This(), name)`.
+// PORT NOTE: originally `ArrayBufferSink.JSSink` is a nested type from `Sink.JSSink(@This(), name)`.
 // Rust uses a free generic `sink::JSSink<T>` (inherent associated types are unstable).
 type ArrayBufferJSSink = sink::JSSink<ArrayBufferSink>;
 
@@ -1749,7 +1749,7 @@ pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
 
 /// `pub fn Mixin(comptime Type: type) type` → trait with provided methods.
 /// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
-/// and optionally override `get_body_readable_stream` (Zig `@hasDecl` check).
+/// and optionally override `get_body_readable_stream` (`@hasDecl` check (compile-time presence test)).
 ///
 /// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
 /// codegen shim still emits `this: &mut T` until Phase 1 lands — `&mut T`
@@ -1761,7 +1761,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
     /// short and do not hold it across a call that re-enters JS.
     #[allow(clippy::mut_from_ref)]
     fn get_body_value(&self) -> &mut Value;
-    /// Zig: `Type.getFetchHeaders(this) -> ?*FetchHeaders`. `FetchHeaders` is an
+    /// Originally: `Type.getFetchHeaders(this) -> ?*FetchHeaders`. `FetchHeaders` is an
     /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
@@ -1772,11 +1772,11 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
     // Twin methods (identical for Request/Response). These were previously
     // open-coded in both files against `js_gen::*` / `js::*` directly; the
     // [`BodyOwnerJs`] forwarders erase the per-class codegen module so the
-    // bodies can live here once. Zig had the same shape via comptime
+    // bodies can live here once. The original had the same shape via comptime
     // `T.js.gc.stream.*` duck-typing.
     // ────────────────────────────────────────────────────────────────────
 
-    /// Zig: `getBodyReadableStream`. JS-side `js.gc.stream` cache is the
+    /// Originally: `getBodyReadableStream`. JS-side `js.gc.stream` cache is the
     /// source of truth; fall back to the native `Locked.readable` slot.
     fn get_body_readable_stream(&self, global_object: &JSGlobalObject) -> Option<ReadableStream> {
         if let Some(js_ref) = self.js_ref() {
@@ -1797,21 +1797,21 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         None
     }
 
-    /// Zig: `detachReadableStream` — clear both the JS-side cache and the
+    /// Originally: `detachReadableStream` — clear both the JS-side cache and the
     /// native `Locked.readable` strong ref.
     fn detach_readable_stream(&self, global_object: &JSGlobalObject) {
         if let Some(js_ref) = self.js_ref() {
-            // Zig `js.gc.stream.clear(...)` → `set(.zero)`.
+            // Originally `js.gc.stream.clear(...)` → `set(.zero)`.
             Self::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
         if let Value::Locked(locked) = self.get_body_value() {
             // `mem::take` swaps in `Default` and drops the old value —
-            // equivalent to Zig's `old.deinit(); ... = .{}`.
+            // equivalent to `old.deinit(); ... = .{}`.
             let _ = core::mem::take(&mut locked.readable);
         }
     }
 
-    /// Zig: `checkBodyStreamRef`. Migrate any `Locked.readable` strong ref
+    /// Originally: `checkBodyStreamRef`. Migrate any `Locked.readable` strong ref
     /// into the GC-traced `js.gc.stream` slot to break the cycle (the JS
     /// wrapper owns the stream; native side must not hold it strongly).
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
@@ -2098,7 +2098,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
-                let _ = readable; // not consumed in this branch in Zig either
+                let _ = readable; // not consumed in this branch originally either
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
@@ -2226,7 +2226,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
+                // `fetch_headers` is a live C++ FetchHeaders handle (originally: `?*FetchHeaders`);
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
@@ -2235,7 +2235,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                     let mime_type =
                         MimeType::init(content_slice.slice(), true, Some(&mut allocated));
                     blob.content_type_was_set.set(true);
-                    // PORT NOTE: ownership reshape vs Zig — see `resolve` (Action::None|GetBlob).
+                    // PORT NOTE: ownership reshape vs the original — see `resolve` (Action::None|GetBlob).
                     // Store's Cow becomes the sole owner; Blob aliases it. With no store, Blob
                     // takes the buffer directly via `content_type_allocated`.
                     if let Some(store) = blob_store_mut(blob) {
@@ -2284,7 +2284,7 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
         .reject()
 }
 
-// TODO(port): `lifetimeWrap` returns a fn at comptime in Zig. The wrapped
+// TODO(port): `lifetimeWrap` returns a fn at comptime originally. The wrapped
 // call has been inlined at each `JSPromise::wrap` callsite as a closure;
 // keep this helper for reference / future macro extraction.
 #[allow(dead_code)]
@@ -2330,7 +2330,7 @@ impl<'a> Drop for ValueBufferer<'a> {
 
         if let Some(mut buffer_stream) = self.js_sink.take() {
             buffer_stream.detach_self(self.global);
-            // PORT NOTE: Zig `wrapper.sink.destroy()` frees the JSSink wrapper
+            // PORT NOTE: originally `wrapper.sink.destroy()` frees the JSSink wrapper
             // allocation (sink is at offset 0). In Rust the wrapper is a
             // `Box<JSSink<ArrayBufferSink>>`; dropping it frees the box and
             // runs `Vec<u8>`'s Drop — equivalent without the fragile
@@ -2362,7 +2362,7 @@ impl<'a> ValueBufferer<'a> {
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set — Zig used inferred `!void` with StreamAlreadyUsed/InvalidStream/etc.
+        // TODO(port): narrow error set — the original used inferred `!void` with StreamAlreadyUsed/InvalidStream/etc.
         value.to_blob_if_possible();
 
         match value {
@@ -2377,7 +2377,7 @@ impl<'a> ValueBufferer<'a> {
             }
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "Error");
-                // Zig passed the union by bitwise value (no destructors). In Rust the
+                // the original passed the union by bitwise value (no destructors). In Rust the
                 // payload (BunString / Strong) owns refs and has Drop, so a `ptr::read`
                 // bitwise copy would manufacture a second owner → double-deref when both
                 // sides drop. Produce a properly ref-bumped duplicate instead.
@@ -2393,7 +2393,7 @@ impl<'a> ValueBufferer<'a> {
 
                 if is_pending {
                     if let AnyBlob::Blob(blob) = &mut input {
-                        // PORT NOTE: Zig `comptime Function: anytype` becomes a ZST
+                        // PORT NOTE: originally `comptime Function: anytype` becomes a ZST
                         // `InternalReadFileFn<C>` impl so `do_read_file_internal` can
                         // monomorphize a `fn(*mut c_void, ReadFileResultType)` thunk.
                         struct LoadFileAdapter;
@@ -2519,11 +2519,11 @@ impl<'a> ValueBufferer<'a> {
         if let Some(mut wrapper) = self.js_sink.take() {
             wrapper.detach_self(self.global);
             // PORT NOTE: see `Drop` impl — dropping the Box frees the wrapper
-            // and runs `Vec<u8>`'s Drop (≡ Zig `wrapper.sink.destroy()`).
+            // and runs `Vec<u8>`'s Drop (≡ `wrapper.sink.destroy()`).
             drop(wrapper);
         }
-        // Zig: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`
-        // — Zig's bitwise pass + `defer deinit` is only safe because Zig has no Drop. In
+        // Originally: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`
+        // — the original bitwise pass + `defer deinit` is only safe because the original had no Drop. In
         // Rust `jsc::strong::Optional` owns a GC root; `ptr::read`-duplicating it would
         // double-deinit. Transfer the single owner directly to the callback; the callback
         // (or its returned `ValueError`'s Drop) is responsible for releasing it.
@@ -2544,7 +2544,7 @@ impl<'a> ValueBufferer<'a> {
 
     #[allow(dead_code)]
     fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
-        // PORT NOTE: The Zig caller has this path commented out ("this is broken
+        // PORT NOTE: The caller has this path commented out ("this is broken
         // right now" — see buffer_locked_body_value below). Ported faithfully so
         // un-commenting that call site needs no further work.
         stream.value.ensure_still_alive();
@@ -2569,11 +2569,11 @@ impl<'a> ValueBufferer<'a> {
         debug_assert!(buffer_stream.sink.signal.is_dead());
 
         // PORT NOTE: reshaped for borrowck — capture the `signal.ptr` slot as a raw
-        // pointer before passing `buffer_stream` to FFI (Zig aliased both).
+        // pointer before passing `buffer_stream` to FFI (the original aliased both).
         let signal_ptr_slot: *mut *mut c_void =
             (&raw mut buffer_stream.sink.signal.ptr).cast::<*mut c_void>();
 
-        // Zig passes `buffer_stream` (the `*ArrayBufferSink.JSSink` wrapper). The
+        // the original passes `buffer_stream` (the `*ArrayBufferSink.JSSink` wrapper). The
         // Rust `assign_to_stream` takes `&mut T` and casts to `*mut c_void`; since
         // `JSSink<T>` is `#[repr(transparent)]` over `T`, `&mut buffer_stream.sink`
         // and `buffer_stream as *mut JSSink<T>` are address-identical. Reborrow the
@@ -2604,7 +2604,7 @@ impl<'a> ValueBufferer<'a> {
                             global_this,
                             std::ptr::from_mut::<Self>(self),
                         );
-                        // Zig: `catch {}` — termination is observed by the surrounding scope.
+                        // Originally: `catch {}` — termination is observed by the surrounding scope.
                         assignment_result.then_with_value(
                             global_this,
                             cell,
@@ -2640,10 +2640,10 @@ impl<'a> ValueBufferer<'a> {
         let readable_stream = 'brk: {
             if let Some(stream) = locked.readable.get(self.global) {
                 // keep the stream alive until we're done with it
-                // Zig: `sink.readable_stream_ref = locked.readable;` — bitwise struct
+                // Originally: `sink.readable_stream_ref = locked.readable;` — bitwise struct
                 // copy that aliases the same Strong. Transfer ownership: `*value =
                 // .Used` below would otherwise drop `locked.readable` anyway, so
-                // moving the existing GC root preserves the Zig refcount balance.
+                // moving the existing GC root preserves the original refcount balance.
                 self.readable_stream_ref = core::mem::take(&mut locked.readable);
                 break 'brk Some(stream);
             }
@@ -2724,7 +2724,7 @@ impl<'a> ValueBufferer<'a> {
             let readable = value
                 .to_readable_stream(self.global)
                 .map_err(|_| bun_core::err!("JSError"))?;
-            // TODO(port): Zig propagated bun.JSError here via `try`; bufferLockedBodyValue's
+            // TODO(port): originally propagated bun.JSError here via `try`; bufferLockedBodyValue's
             // inferred error set includes JSError. Mapping to bun_core::Error for now.
             readable.ensure_still_alive();
             readable.protect();
@@ -2758,7 +2758,7 @@ impl<'a> ValueBufferer<'a> {
     }
 }
 
-// PORT NOTE: Zig's `Pipe.Wrap(Type, fn)` took a comptime fn pointer; the Rust
+// PORT NOTE: `Pipe.Wrap(Type, fn)` took a comptime fn pointer; the Rust
 // `webcore::Wrap<T>` reshape requires `T: PipeHandler`.
 impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
     fn on_pipe(&mut self, stream: streams::Result) {
@@ -2795,5 +2795,3 @@ bun_jsc::jsc_host_abi! {
         jsc::to_js_host_fn_result(global, ValueBufferer::on_reject_stream(global, callframe))
     }
 }
-
-// ported from: src/runtime/webcore/Body.zig

@@ -10,5 +10,5 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-# XxHash32 / XxHash64 / XxHash3 — reference-compatible, matches Zig std.hash.XxHash* output.
+# XxHash32 / XxHash64 / XxHash3 — reference-compatible with Cyan4973's test vectors.
 twox-hash = { version = "2", default-features = false, features = ["xxhash32", "xxhash64", "xxhash3_64"] }

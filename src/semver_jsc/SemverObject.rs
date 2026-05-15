@@ -99,7 +99,7 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let left_version = left_result.version.min();
 
-    // `Query::parse` can only fail with OOM (Zig: `try` propagates allocator error).
+    // `Query::parse` can only fail with OOM.
     let right_group = match query::parse(
         right.slice(),
         SlicedString::init(right.slice(), right.slice()),
@@ -118,5 +118,3 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         left.slice(),
     )))
 }
-
-// ported from: src/semver_jsc/SemverObject.zig

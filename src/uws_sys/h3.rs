@@ -1,6 +1,6 @@
-//! HTTP/3 bindings. Method names mirror NewApp/NewResponse 1:1 so the
-//! comptime callers in server.zig and the `inline else` arms in AnyResponse
-//! see the same surface regardless of transport.
+//! HTTP/3 bindings. Method names mirror NewApp/NewResponse 1:1 so callers in
+//! server.rs and the dispatch arms in AnyResponse see the same surface
+//! regardless of transport.
 
 use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
@@ -94,7 +94,7 @@ impl Request {
     }
     /// Iterate all request headers.
     ///
-    /// Zig takes `comptime cb` and bakes it into the trampoline at
+    /// The callback is baked into the trampoline at
     /// monomorphization time. Rust models this by requiring `H` to be a
     /// zero-sized type (function item or capture-less closure): the trampoline
     /// is monomorphized over `H` and conjures the ZST inside, so the user
@@ -243,7 +243,7 @@ impl Response {
         }
         // SAFETY: uws returns a pointer+len pair valid while the response is alive
         let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
-        // TODO(port): SocketAddress.ip is a borrowed slice in Zig; Rust field type TBD
+        // TODO(port): SocketAddress.ip is a borrowed slice; Rust field type TBD
         Some(SocketAddress { ip, port, is_ipv6 })
     }
     pub fn force_close(&mut self) {
@@ -354,7 +354,7 @@ impl Response {
         c::uws_h3_res_on_data(self, None, ptr::null_mut())
     }
     pub fn corked(&mut self, handler: impl FnOnce()) {
-        // H3 has no corking; the Zig version just calls the handler immediately.
+        // H3 has no corking; just call the handler immediately.
         let _ = self;
         handler();
     }
@@ -405,7 +405,7 @@ bun_core::impl_tag_error!(AddServerNameError);
 /// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
 /// each forwarding to [`App::route`] with the matching [`RouteKind`].
 /// `connect`/`trace` are intentionally omitted — h3 exposes those only via
-/// [`App::method`], matching h3.zig.
+/// [`App::method`].
 macro_rules! h3_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
@@ -752,5 +752,3 @@ mod c {
         pub safe fn uws_h3_req_for_each_header(req: &mut Request, cb: HeaderCb, ud: *mut c_void);
     }
 }
-
-// ported from: src/uws_sys/h3.zig

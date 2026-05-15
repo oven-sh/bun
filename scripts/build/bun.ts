@@ -286,7 +286,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Unified sources: bundle the globbed .cpp into N-per-TU wrappers (see
   // unified.ts for N). Generated at configure time; depfiles track the underlying
   // .cpp files so editing one rebuilds its bundle. Codegen .cpp are kept
-  // separate — those are already large single TUs (ZigGeneratedClasses.cpp
+  // separate — those are already large single TUs (BunGeneratedClasses.cpp
   // is 3.3 MB) and bundling them would serialize work. Always called so
   // stale bundles are pruned even with --unifiedSources=false.
   const split = generateUnifiedSources(cfg, sources.cxx);

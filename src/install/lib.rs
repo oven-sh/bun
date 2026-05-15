@@ -71,7 +71,7 @@ use core::cell::Cell;
 use core::fmt;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Module declarations — Zig basenames preserved per PORTING.md, hence
+// Module declarations — original basenames preserved per PORTING.md, hence
 // explicit #[path] attrs for PascalCase files.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -147,7 +147,7 @@ pub mod lockfile {
     pub use crate::lockfile_real::LockfileFormat as Format;
     pub use crate::lockfile_real::Serializer::SerializerLoadResult;
     pub use crate::lockfile_real::package_index::Entry as PackageIndexEntry;
-    /// Zig callers spell `.root` (a `Resolution.Tag` literal) when invoking
+    /// Callers spell `.root` (a `Resolution.Tag` literal) when invoking
     /// `Scripts.createList` for the root package; alias the tag enum here so
     /// `lockfile::ScriptsListKind::Root` resolves.
     pub use crate::resolution::Tag as ScriptsListKind;
@@ -189,8 +189,8 @@ pub mod package_manager {
     #[allow(non_snake_case)]
     pub mod Options {
         pub use crate::package_manager_real::package_manager_options::*;
-        // `open_global_dir` lives in PackageManagerOptions.rs (`options::`
-        // namespace in Zig); re-export so `Options::open_global_dir` resolves.
+        // `open_global_dir` lives in PackageManagerOptions.rs (originally an
+        // `options::` namespace); re-export so `Options::open_global_dir` resolves.
         pub use crate::package_manager_real::package_manager_options::open_global_dir;
     }
 
@@ -202,7 +202,7 @@ pub mod package_manager {
     };
 
     /// `populateManifestCache` `Packages` union
-    /// (src/install/PackageManager/PopulateManifestCache.zig).
+    /// (`PackageManager::PopulateManifestCache`).
     pub enum ManifestCacheOptions<'a> {
         Ids(&'a [crate::PackageID]),
         Names(&'a [&'a [u8]]),
@@ -230,13 +230,14 @@ pub mod package_manager {
 
 /// `crate::install::…` shim — Phase-A drafts (bin.rs, repository.rs,
 /// migration.rs, resolvers/folder_resolver.rs) were written against a
-/// `bun_install::install` submodule path mirroring `install.zig`. The crate
-/// root *is* that file now, so re-export everything under both names.
+/// `bun_install::install` submodule path mirroring the original `install`
+/// module. The crate root *is* that module now, so re-export everything under
+/// both names.
 pub(crate) mod install {
     pub use crate::*;
 }
 
-/// `windows-shim/BinLinkingShim.zig` — `.bunx` shim encoder consumed by
+/// `windows-shim/BinLinkingShim` — `.bunx` shim encoder consumed by
 /// `bin::Linker` (Windows only at runtime, but the encoder types are
 /// referenced unconditionally so the module must exist on all targets).
 // PORT NOTE: `#[path]` inside an inline `mod {}` resolves relative to the
@@ -246,8 +247,8 @@ pub(crate) mod install {
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
 // `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls) —
-// in Zig it is a separate `exe` artifact whose output is `@embedFile`d above.
-// Unlike Zig the Rust port also compiles as a library `mod` (Windows-only) so
+// originally a separate `exe` artifact whose output was embedded above.
+// The Rust port also compiles as a library `mod` (Windows-only) so
 // `run_command.rs` can call `try_startup_from_bun_js` / `FromBunRunContext`
 // directly — the standalone PE entrypoint is gated behind
 // `feature = "shim_standalone"` inside the file, and there is no
@@ -353,11 +354,10 @@ pub type PreallocatedResolveTasksStub =
     bun_collections::HiveArrayFallback<package_manager_task::Task<'static>, 64>;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
-/// Port of the anonymous `comptime callbacks: anytype` struct passed to
-/// `PackageManager.runTasks` (src/install/PackageManager/runTasks.zig). Zig
-/// duck-types `@TypeOf(callbacks.onExtract) != void` etc.; the Rust shape is
-/// generic over each slot so call sites can pass `()` for unused hooks and a
-/// fn item for active ones. The trait-based dispatch lives in
+/// Anonymous `callbacks` struct passed to `PackageManager.runTasks`.
+/// Originally duck-typed (`@TypeOf(callbacks.onExtract) != void` etc.); the
+/// Rust shape is generic over each slot so call sites can pass `()` for unused
+/// hooks and a fn item for active ones. The trait-based dispatch lives in
 /// `package_manager_real::run_tasks::RunTasksCallbacks`; this value-level
 /// struct is only the call-site spelling.
 pub struct RunTasksCallbacks<E = (), R = (), M = (), D = ()> {
@@ -365,9 +365,9 @@ pub struct RunTasksCallbacks<E = (), R = (), M = (), D = ()> {
     pub on_resolve: R,
     pub on_package_manifest_error: M,
     pub on_package_download_error: D,
-    /// Zig: `comptime callbacks.progress_bar` (defaults absent → false).
+    /// `callbacks.progress_bar` (defaults absent → false).
     pub progress_bar: bool,
-    /// Zig: `comptime callbacks.manifests_only` (defaults absent → false).
+    /// `callbacks.manifests_only` (defaults absent → false).
     pub manifests_only: bool,
 }
 impl<E: Default, R: Default, M: Default, D: Default> Default for RunTasksCallbacks<E, R, M, D> {
@@ -400,7 +400,7 @@ pub struct PackageJSON {
     pub dependencies: PackageJSONDependencyMap,
 }
 
-/// Port of `bun.PackageJSON.DependencyMap` (src/resolver/package_json.zig).
+/// `PackageJSON::DependencyMap`.
 #[derive(Default)]
 pub struct PackageJSONDependencyMap {
     pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
@@ -415,7 +415,7 @@ pub struct PackageJSONDependencyMap {
 /// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
 pub mod ci_info {
     pub fn detect_ci_name() -> Option<&'static [u8]> {
-        // Port of the trailing fallback in `ci_info.zig:detectCiName` —
+        // Trailing fallback for `detectCiName` —
         // the per-vendor probes live in `bun_runtime` (T6) and are wired in
         // there; install only needs *some* answer for the user-agent string.
         if std::env::var_os("CI").is_some() {
@@ -443,9 +443,9 @@ pub mod ShellCompletions {
     }
 
     impl Shell {
-        /// Port of `Shell.fromEnv` (src/cli/shell_completions.zig). The Zig version was
-        /// generic over the string type purely so it could accept both `[]const u8` and
-        /// `[:0]const u8`; in Rust both coerce to `&[u8]`.
+        /// Detects the shell from a `$SHELL`-like value. The original was
+        /// generic over the string type purely so it could accept both NUL-
+        /// terminated and unterminated slices; in Rust both coerce to `&[u8]`.
         pub fn from_env(shell: &[u8]) -> Shell {
             use bun_core::strings;
             let basename = bun_paths::basename(shell);
@@ -473,8 +473,8 @@ pub mod ShellCompletions {
 // ──────────────────────────────────────────────────────────────────────────
 pub struct RunCommand;
 
-/// Canonical `PRETEND_TO_BE_NODE` flag (port of `Cli.pretend_to_be_node`,
-/// src/cli.zig). Set once during single-threaded startup by `Command::which()`
+/// Canonical `PRETEND_TO_BE_NODE` flag (`Cli.pretend_to_be_node`).
+/// Set once during single-threaded startup by `Command::which()`
 /// in `bun_runtime::cli` when argv[0] basename == "node"; read by both the
 /// runtime CLI and the install-tier `RunCommand` helpers below. Lives in
 /// `bun_install` (not `bun_runtime`) so both crates can address the SAME
@@ -495,7 +495,7 @@ impl RunCommand {
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
     pub const BUN_NODE_DIR: &'static str = {
-        // PORT NOTE: Zig used comptime `++`; `const_format::concatcp!` cannot host
+        // PORT NOTE: was comptime concat; `const_format::concatcp!` cannot host
         // `if` expressions inline, so split into helper consts.
         use const_format::concatcp;
         const TMP: &str = if cfg!(target_os = "macos") {
@@ -577,8 +577,8 @@ impl RunCommand {
         .as_deref()
     }
 
-    /// Port of `RunCommand.createFakeTemporaryNodeExecutable`
-    /// (src/cli/run_command.zig). Symlinks/hardlinks the running bun binary as
+    /// `RunCommand::createFakeTemporaryNodeExecutable`.
+    /// Symlinks/hardlinks the running bun binary as
     /// `node` + `bun` inside a temp dir and prepends that dir to `path`.
     ///
     /// `#[cold]`: only reached on the `bun run <script>` / lifecycle-script
@@ -609,29 +609,26 @@ impl RunCommand {
                 argv0
             } else if optional_bun_path.is_empty() {
                 // otherwise, ask the OS for the absolute path
-                // Zig: `try bun.selfExePath()` — propagate the error.
+                // Propagate the error from `self_exe_path()`.
                 let self_path = bun_core::self_exe_path()?;
                 if !self_path.as_bytes().is_empty() {
                     *optional_bun_path = self_path.as_bytes();
                     self_path
                 } else {
-                    // Zig: trailing `if (optional_bun_path.len == 0) argv0 = bun.argv[0];`
+                    // `optional_bun_path` is empty, so fall back to `argv[0]`.
                     argv0
                 }
             } else {
-                // Zig: `var argv0 = @ptrCast(optional_bun_path.ptr)` — when argv[0] is
-                // not absolute and the caller pre-supplied a path, that path is the
-                // symlink target (NOT bun.argv[0]).
+                // When argv[0] is not absolute and the caller pre-supplied a path,
+                // that path is the symlink target (NOT `argv[0]`).
                 // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
-                // self_exe_path / static literal), so `ptr[len] == 0` holds — same
-                // precondition Zig's `@ptrCast` relies on.
+                // self_exe_path / static literal), so `ptr[len] == 0` holds.
                 unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
             };
 
             #[cfg(debug_assertions)]
             {
-                // Zig: `std.fs.deleteTreeAbsolute(BUN_NODE_DIR) catch {}` —
-                // debug-only cleanup; failures are ignored. The EEXIST branch
+                // Debug-only cleanup; failures are ignored. The EEXIST branch
                 // below already handles a stale dir.
                 let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
             }
@@ -727,15 +724,14 @@ impl RunCommand {
                 )
             } as usize;
             if len == 0 {
-                // Zig: `Output.debug(...)` — non-fatal; fall through and leave
+                // Non-fatal; fall through and leave
                 // PATH unmodified. (No `RUN` scope is declared in this crate.)
                 return Ok(());
             }
 
             target_path_buffer[..prefix.len()].copy_from_slice(prefix);
 
-            // Zig: `comptime bun.strings.w("bun-node-" ++ git_sha_short)` —
-            // the dir name is ASCII-only, so widen the const `&str` byte-by-
+            // The dir name is ASCII-only, so widen the const `&str` byte-by-
             // byte into a small stack buffer at runtime (Rust macros require a
             // single string *literal* token, which `concatcp!` doesn't yield).
             let dir_name_str: &str = if cfg!(debug_assertions) {
@@ -756,13 +752,11 @@ impl RunCommand {
 
             #[cfg(debug_assertions)]
             {
-                // Zig: `std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
-                //       std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");`
                 // Debug builds wipe and recreate the bun-node temp dir so the
                 // ALREADY_EXISTS short-circuit below never reuses a stale
                 // hardlink at a previous debug binary.
                 //
-                // PORT NOTE: Zig's `@panic("huh?")` assumes the wipe always
+                // PORT NOTE: the original panicked here, assuming the wipe always
                 // leaves the path absent. `bun-run.test.ts` now uses
                 // `describe.concurrent`, so multiple debug processes race on
                 // this shared dir and `make_dir` can legitimately observe
@@ -779,7 +773,7 @@ impl RunCommand {
             let image_path = win::exe_path_w();
             for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // PORT NOTE: Zig held a `[]const u16` into `target_path_buffer`
+                // PORT NOTE: the original held a wide-char slice into `target_path_buffer`
                 // across in-place mutation (the dir-NUL/backslash toggle below).
                 // Under Stacked Borrows a `*const` derived via `Deref::deref`
                 // is invalidated by the intervening `&mut` from `IndexMut`, so
@@ -847,13 +841,13 @@ fn install_runner_arena() -> &'static bun_alloc::Arena {
 }
 
 impl RunCommand {
-    /// Port of `RunCommand.configureEnvForRun` (src/cli/run_command.zig:780).
+    /// `RunCommand::configureEnvForRun`.
     ///
-    /// DEP-CYCLE NOTE: the full Zig body walks `bun_resolver::DirInfo` and
+    /// DEP-CYCLE NOTE: the full implementation walks `bun_resolver::DirInfo` and
     /// reads `package.json` via the resolver — T6 work that lives in
     /// `bun_runtime::cli::RunCommand::configure_env_for_run`. The install
     /// tier needs the *Transpiler-initialisation* half of that contract
-    /// (run_command.zig:780 `this_transpiler.* = try Transpiler.init(...)`)
+    /// (`this_transpiler.* = try Transpiler.init(...)`)
     /// because callers (`configure_env_for_scripts_run`) `assume_init()` the
     /// out-param. This shim performs the init + the env-var seeding that has
     /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
@@ -868,7 +862,7 @@ impl RunCommand {
         use bun_core::Global;
 
         let args = ctx.args.clone();
-        // Spec run_command.zig:780: `this_transpiler.* = try Transpiler.init(ctx.allocator, ctx.log, args, env)`.
+        // `this_transpiler.* = try Transpiler.init(ctx.allocator, ctx.log, args, env)`.
         this_transpiler.write(bun_transpiler::Transpiler::init(
             install_runner_arena(),
             ctx.log,
@@ -883,8 +877,8 @@ impl RunCommand {
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = store_root_fd;
 
-        // Re-derive per-use rather than holding a long-lived `&mut` (matches
-        // Zig's per-statement `this_transpiler.env` deref and avoids
+        // Re-derive per-use rather than holding a long-lived `&mut` (mirrors
+        // the per-statement `this_transpiler.env` deref and avoids
         // Stacked-Borrows overlap with `run_env_loader`).
         let env_loader = this_transpiler.env_mut();
 
@@ -939,8 +933,7 @@ pub const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
 pub const MAX_HEX_HASH_LEN: usize = {
-    // Zig computed this with std.fmt.bufPrint at comptime; u64::MAX in hex is
-    // always 16 nibbles.
+    // u64::MAX in hex is always 16 nibbles.
     let mut n = u64::MAX;
     let mut len = 0usize;
     while n != 0 {
@@ -970,8 +963,8 @@ pub struct StorePathFormatter<'a> {
 }
 
 impl<'a> StorePathFormatter<'a> {
-    /// Spec install.zig:31-37 — `for (this.str) |c| writer.writeByte(c)` emits raw bytes
-    /// verbatim (mapping `/` and `\` to `+`). This is the byte-faithful sink; callers that
+    /// Emits raw bytes verbatim (mapping `/` and `\` to `+`).
+    /// This is the byte-faithful sink; callers that
     /// need an on-disk store path (legal non-UTF-8 on Linux) must use this, not `Display`.
     pub fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         // if (!this.opts.replace_slashes) {
@@ -990,8 +983,8 @@ impl<'a> StorePathFormatter<'a> {
 
 impl<'a> fmt::Display for StorePathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // PORT NOTE: `core::fmt` cannot emit non-UTF-8 bytes. The Zig spec writes raw
-        // bytes via `writer.writeByte(c)`; routing through `to_str_lossy()` here was wrong
+        // PORT NOTE: `core::fmt` cannot emit non-UTF-8 bytes. The intended behavior writes
+        // raw bytes; routing through `to_str_lossy()` here was wrong
         // (it silently expanded each invalid byte to U+FFFD = 3 bytes, changing on-disk
         // store directory names). We now build the raw byte sequence via `write_to` and
         // pass it through only when it is already valid UTF-8 — otherwise we surface
@@ -1033,8 +1026,7 @@ pub fn initialize_mini_store() {
     INSTANCE.with(|instance| {
         if instance.get().is_none() {
             let heap = Arena::new();
-            // Zig threads `heap.arena()` into the AST allocator; in Rust
-            // the Bump (`Arena`) is passed by reference.
+            // The Bump (`Arena`) is passed into the AST allocator by reference.
             let memory_store = bun_ast::ASTMemoryAllocator::new(&heap);
             let mini_store = bun_core::heap::into_raw(Box::new(MiniStore { heap, memory_store }));
             // SAFETY: just allocated, non-null, thread-local exclusive access
@@ -1047,11 +1039,11 @@ pub fn initialize_mini_store() {
             // SAFETY: pointer was heap-allocated on this thread in the branch above and is
             // never freed; INSTANCE is thread-local and `Cell::get` copies the raw pointer
             // out (no borrow of the Cell is held), so this `&mut` is the sole live reference
-            // to the allocation for its entire scope — no aliasing. Mirrors Zig's
-            // `threadlocal var instance: ?*MiniStore` single-owner deref.
+            // to the allocation for its entire scope — no aliasing. Mirrors the
+            // thread-local single-owner deref in the original.
             let mini_store = unsafe { &mut *instance.get().unwrap() };
-            // PORT NOTE: Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
-            // buffer.len() - 1` to decide whether to recycle the heap arena. The Rust
+            // PORT NOTE: the original checked a fixed-buffer watermark
+            // to decide whether to recycle the heap arena. The Rust
             // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena,
             // so there is no stack-buffer watermark to inspect — `reset()` already
             // releases all bump allocations.
@@ -1076,7 +1068,7 @@ pub use bun_install_types::{
     DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
     TruncatedPackageNameHash,
 };
-// Phase-A drafts use the Zig field-style lowercase names; alias both spellings.
+// Phase-A drafts use the legacy field-style lowercase names; alias both spellings.
 pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
@@ -1097,8 +1089,8 @@ impl Aligner {
     }
 
     /// Runtime-alignment variant of [`Aligner::write`] for call sites that
-    /// compute `align_of::<T>()` at the caller (Zig passed `comptime Type`;
-    /// Rust callers without a nameable `T` pass the alignment as a value).
+    /// compute `align_of::<T>()` at the caller (Rust callers without a
+    /// nameable `T` pass the alignment as a value).
     pub fn write_with_align<W: bun_io::Write>(
         align: usize,
         writer: &mut W,
@@ -1157,10 +1149,9 @@ pub struct ExtractData {
     pub integrity: Integrity,
 }
 
-/// Port of `DependencyInstallContext` (src/install/install.zig:213). Zig stores
-/// `path: std.array_list.Managed(u8) = .init(bun.default_allocator)` — an
-/// owned, growable buffer. Earlier port modelled this as a borrowed `*const
-/// [u8]` raw slice with `Copy` semantics, which broke ownership: Zig callers
+/// `DependencyInstallContext`. The original stored `path` as an
+/// owned, growable buffer. An earlier port modelled this as a borrowed `*const
+/// [u8]` raw slice with `Copy` semantics, which broke ownership: callers
 /// push into this buffer; the raw-ptr version cannot grow and aliases caller
 /// memory with no lifetime. Own the buffer.
 #[derive(Clone, Default)]
@@ -1208,5 +1199,3 @@ pub enum PackageManifestError {
 bun_core::impl_tag_error!(PackageManifestError);
 
 bun_core::named_error_set!(PackageManifestError);
-
-// ported from: src/install/install.zig

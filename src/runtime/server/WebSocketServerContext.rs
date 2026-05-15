@@ -4,7 +4,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
-    // TODO(port): lifetime — Zig leaves this `undefined` and server.zig:2784 assigns it later.
+    // TODO(port): lifetime — initially provisional; the server assigns the final value later.
     // LIFETIMES.tsv = JSC_BORROW; raw ptr until bun_jsc is a dep (shim type is opaque/Copy).
     pub global_object: *const JSGlobalObject,
     pub handler: Handler,
@@ -70,7 +70,7 @@ impl Handler {
         self.vm.get()
     }
 
-    /// Zig: `handler.active_connections +|= n` through a `*Handler`.
+    /// `handler.active_connections` saturating-add through a `*Handler`.
     /// PORT NOTE: takes `&self` and casts away const — the field is owned by
     /// `ServerConfig.websocket` and only ever touched on the JS thread, so the
     /// data race the borrow-checker would flag here is a false positive.
@@ -85,7 +85,7 @@ impl Handler {
         }
     }
 
-    /// Zig: `handler.active_connections -|= n` — see `active_connections_saturating_add`.
+    /// `handler.active_connections` saturating-sub — see `active_connections_saturating_add`.
     #[inline]
     pub fn active_connections_saturating_sub(&self, n: usize) {
         // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
@@ -110,7 +110,7 @@ impl Handler {
             return;
         }
 
-        // Zig signature is `vm: *jsc.VirtualMachine` (mutable). VirtualMachine is the
+        // VirtualMachine is the
         // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
         // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
         // mutable pointer from the stored BackRef (== `vm`) rather than casting the
@@ -140,9 +140,8 @@ impl Handler {
 
         let mut valid = false;
 
-        // PORT NOTE: Zig used `inline for` over a tuple of (key, field-name) pairs with
-        // `@field(handler, pair[1]) = cb`. Rust has no field-by-name reflection, so we
-        // iterate over (key, &mut field) pairs instead — disjoint field borrows are allowed.
+        // PORT NOTE: Rust has no field-by-name reflection, so iterate over
+        // (key, &mut field) pairs instead — disjoint field borrows are allowed.
         let pairs: [(&'static str, &mut JSValue); 7] = [
             ("error", &mut handler.on_error),
             ("message", &mut handler.on_message),
@@ -256,29 +255,29 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-// TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
-// which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
-// `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; Phase B should
-// verify UTF-16-backed ZigStrings still match.
-fn lookup_zig_string(
+// TODO(port): phf custom hasher — the original compared an `UnsafeStringView`
+// (possibly UTF-16) against the literal keys directly. Here we go through
+// `UnsafeStringView::as_bytes_if_latin1()` (or equivalent) and look up in the phf map;
+// Phase B should verify UTF-16-backed UnsafeStringViews still match.
+fn lookup_unsafe_string_view(
     table: &phf::Map<&'static [u8], i32>,
-    key: &bun_core::ZigString,
+    key: &bun_core::UnsafeStringView,
 ) -> Option<i32> {
     table.get(key.slice()).copied()
 }
 
 // TODO(b2-blocked): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
-// get_zig_string, to_int64, is_any_int}.
+// get_unsafe_string_view, to_int64, is_any_int}.
 
 pub fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
-    // PORT NOTE: Zig wrote `var server = WebSocketServerContext{};` (all field defaults,
-    // `globalObject`/`handler.vm`/`handler.globalObject` left `undefined`) and then assigned
+    // PORT NOTE: original constructed with all field defaults
+    // (`globalObject`/`handler.vm`/`handler.globalObject` left uninitialized) and then assigned
     // `server.handler` on the next line. Rust cannot leave `&JSGlobalObject` fields
     // uninitialized, so we construct the struct with the handler and explicit defaults
-    // up front. The top-level `global_object` is provisionally set to the param; server.zig
+    // up front. The top-level `global_object` is provisionally set to the param; the server
     // overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
@@ -323,8 +322,8 @@ pub fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.get_zig_string(global_object)?;
-                    let Some(v) = lookup_zig_string(&COMPRESS_TABLE, &key) else {
+                    let key = compression.get_unsafe_string_view(global_object)?;
+                    let Some(v) = lookup_unsafe_string_view(&COMPRESS_TABLE, &key) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
@@ -347,8 +346,8 @@ pub fn on_create(
                         0
                     };
                 } else if compression.is_string() {
-                    let key = compression.get_zig_string(global_object)?;
-                    let Some(v) = lookup_zig_string(&DECOMPRESS_TABLE, &key) else {
+                    let key = compression.get_unsafe_string_view(global_object)?;
+                    let Some(v) = lookup_unsafe_string_view(&DECOMPRESS_TABLE, &key) else {
                         return Err(global_object.throw_invalid_arguments(format_args!(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
@@ -450,5 +449,3 @@ pub fn on_create(
     server.protect();
     Ok(server)
 }
-
-// ported from: src/runtime/server/WebSocketServerContext.zig

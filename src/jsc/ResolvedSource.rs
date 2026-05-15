@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use bun_core::String as BunString;
 
 use crate::JSValue;
-// `@import("ResolvedSourceTag")` is a build-system module (codegen → ResolvedSourceTag.zig).
 // The Rust mirror lives inline in `crate::resolved_source_tag` so it can be kept in
 // lock-step with the C `uint32_t tag` field in src/jsc/bindings/headers-handwritten.h.
 pub use crate::resolved_source_tag::ResolvedSourceTag as Tag;
@@ -107,7 +106,7 @@ impl OwnedResolvedSource {
 
     /// Hand the raw value to C++ (which takes over the `deref()` obligation
     /// per `headers-handwritten.h` `BunString::deref` callers in
-    /// `Zig::ResolvedSource` consumers). After this, Rust must not touch the
+    /// `Bun::ResolvedSource` consumers). After this, Rust must not touch the
     /// strings.
     #[inline]
     pub fn into_ffi(self) -> ResolvedSource {
@@ -144,5 +143,3 @@ impl Drop for OwnedResolvedSource {
         self.0.bytecode_origin_path.deref();
     }
 }
-
-// ported from: src/jsc/ResolvedSource.zig

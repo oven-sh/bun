@@ -5,7 +5,7 @@
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bun {
 
@@ -44,11 +44,11 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
     }
 
     // Get the appropriate structure and create the DiffieHellmanGroup object
-    auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = dynamicDowncast<Bun::GlobalObject>(globalObject);
+    JSC::Structure* structure = bunGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(bunGlobalObject);
     JSC::JSValue newTarget = callFrame->newTarget();
 
-    if (zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (bunGlobalObject->m_JSDiffieHellmanGroupClassStructure.constructor(bunGlobalObject) != newTarget) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwError(globalObject, scope, ErrorCode::ERR_INVALID_THIS, "Class constructor DiffieHellmanGroup cannot be invoked without 'new'"_s);

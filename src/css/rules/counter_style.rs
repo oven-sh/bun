@@ -35,5 +35,3 @@ impl CounterStyleRule {
         }
     }
 }
-
-// ported from: src/css/rules/counter_style.zig

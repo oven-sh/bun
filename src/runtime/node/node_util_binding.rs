@@ -1,5 +1,5 @@
 use bun_core::strings::EncodingNonAscii;
-use bun_core::{self as bstr, OwnedString, String as BunString, ZigString, strings};
+use bun_core::{self as bstr, OwnedString, String as BunString, UnsafeStringView, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sys::UV_E;
 
@@ -68,7 +68,7 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
     }
 }
 
-// PERF(port): `encoding` was a comptime parameter (Zig); demoted to runtime
+// PERF(port): `encoding` was originally a const parameter; demoted to runtime
 // because `EncodingNonAscii` doesn't derive `ConstParamTy` (would need nightly
 // `adt_const_params`). The hot u8/u16 split is still type-dispatched below.
 fn split(
@@ -83,11 +83,10 @@ fn split(
     // — `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
     // the success path after `to_js_array` and any `?` early-return). Raw
     // `bun_core::String` is `Copy` and has NO Drop, so a `Vec<BunString>` would
-    // leak; `OwnedString` is the RAII wrapper that mirrors Zig's defer loop.
+    // leak; `OwnedString` is the RAII wrapper that derefs on drop.
     let mut lines: Vec<OwnedString> = Vec::new();
 
-    // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
-    // PORT NOTE: reshaped — comptime enum cannot select an associated type in
+    // PORT NOTE: reshaped — a const enum cannot select an associated type in
     // stable Rust; split into two arms over the buffer's element type.
     match encoding {
         EncodingNonAscii::Utf16 => {
@@ -185,11 +184,9 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     for (k, v) in map.iter() {
         obj.put(
             global,
-            &ZigString::init_utf8(k),
+            &UnsafeStringView::init_utf8(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }
     Ok(obj)
 }
-
-// ported from: src/runtime/node/node_util_binding.zig

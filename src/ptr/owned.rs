@@ -1,27 +1,26 @@
 //! Owned pointer abstractions.
 //!
-//! PORT NOTE: The Zig `Owned(comptime Pointer: type)` is a single type-returning function that
-//! dispatches on `@typeInfo(Pointer)` (single-item vs slice, optional vs non-optional). Rust has
-//! no `@typeInfo`, so the four shapes become four distinct std types per the crate map:
+//! PORT NOTE: an "owned pointer" wrapper here maps to four distinct std types
+//! depending on shape (single-item vs slice, optional vs non-optional):
 //!
-//!   Zig                       Rust
+//!   shape                     Rust
 //!   ───────────────────────   ──────────────────────────
-//!   Owned(*T)                 Box<T>
-//!   Owned([]T)                Box<[T]>   (or Vec<T> if it grows)
-//!   Owned(?*T)                Option<Box<T>>
-//!   Owned(?[]T)               Option<Box<[T]>>
-//!   OwnedIn(P, Allocator)     Box<T> — allocator param deleted (global mimalloc)
-//!   Dynamic(P)                Box<T> — std.mem.Allocator field deleted
-//!   Unmanaged                 Box<T> — managed/unmanaged split disappears
+//!   single, non-optional      Box<T>
+//!   slice                     Box<[T]>   (or Vec<T> if it grows)
+//!   optional single           Option<Box<T>>
+//!   optional slice            Option<Box<[T]>>
+//!   custom allocator          Box<T> — allocator param deleted (global mimalloc)
+//!   runtime allocator         Box<T> — allocator field deleted
+//!   unmanaged                 Box<T> — managed/unmanaged split disappears
 //!
 //! Phase-A callers should use the std types directly (PORTING.md §Pointers). This file exists so
-//! `bun_ptr::owned::*` resolves and so the Zig API surface has a 1:1 diffable mapping comment.
+//! `bun_ptr::owned::*` resolves and as a 1:1 diffable mapping comment.
 
 use core::mem::ManuallyDrop;
 
 use bun_alloc::AllocError;
 
-use super::meta::{AddConst, PointerInfo}; // TODO(port): meta.zig helpers are @typeInfo-based; likely unused in Rust
+use super::meta::{AddConst, PointerInfo}; // TODO(port): meta helpers are type-reflection-based; likely unused in Rust
 
 /// An owned pointer or slice that was allocated using the default allocator.
 ///
@@ -39,10 +38,9 @@ use super::meta::{AddConst, PointerInfo}; // TODO(port): meta.zig helpers are @t
 /// only the `*T` (single, non-optional) case, which is the overwhelmingly common one. Slice and
 /// optional callers use `Box<[T]>` / `Option<Box<T>>` directly.
 pub type Owned<T> = Box<T>;
-// TODO(port): Zig `Owned` accepts a *pointer type* (`*T`, `[]T`, `?*T`, `?[]T`) and branches on
-// kind via @typeInfo. Rust generics cannot inspect "is T a slice / is T optional", so a single
-// alias cannot cover all four. Phase B: audit call sites; they should already be `Box<T>` /
-// `Box<[T]>` / `Option<Box<_>>` per PORTING.md §Pointers and LIFETIMES.tsv.
+// TODO(port): Rust generics cannot inspect "is T a slice / is T optional", so a single
+// alias cannot cover all four shapes. Phase B: audit call sites; they should already be
+// `Box<T>` / `Box<[T]>` / `Option<Box<_>>` per PORTING.md §Pointers and LIFETIMES.tsv.
 
 /// An owned pointer or slice allocated using any `std.mem.Allocator`.
 ///
@@ -74,9 +72,9 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // PORTING.md forbids it (delete allocator params). Keeping the alias single-param.
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
-// The block below mirrors the body of `fn OwnedIn(...) type { return struct { ... } }` so that
-// Phase-B reviewers can diff method-by-method against owned.zig. Each Zig method is mapped to
-// its `Box<T>` / `Box<[T]>` / `Option<Box<_>>` equivalent.
+// The block below documents the original `OwnedIn` method surface so that Phase-B reviewers
+// can diff method-by-method. Each method is mapped to its `Box<T>` / `Box<[T]>` /
+// `Option<Box<_>>` equivalent.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
 // const Self = @This();
@@ -91,7 +89,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 
 // pub const Unmanaged = owned.Unmanaged(Pointer, Allocator);
 //   → managed/unmanaged split disappears (no allocator field to elide). `Box<T>` is already
-//     "unmanaged" in the Zig sense (no per-value allocator storage).
+//     "unmanaged" (no per-value allocator storage).
 
 // ── alloc ────────────────────────────────────────────────────────────────────────────────────
 // Allocates a new owned pointer with a default-initialized `Allocator`.
@@ -103,7 +101,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //   .slice:  alloc(count: usize, elem: Child) AllocError!Self   (shallow copies of `elem`)
 //     → vec![elem; count].into_boxed_slice()    where Child: Clone
 //
-// PORT NOTE: Zig returns `AllocError!Self`; Rust `Box::new` aborts on OOM. PORTING.md says
+// PORT NOTE: Rust `Box::new` aborts on OOM. PORTING.md says
 // `bun.handleOom(expr)` → `expr`, so the fallible form is not needed at most call sites.
 
 // ── allocIn ──────────────────────────────────────────────────────────────────────────────────
@@ -113,8 +111,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //   .slice:  allocIn(count, elem, allocator)
 //     → vec![elem; count].into_boxed_slice()                     (allocator param deleted)
 //
-// The Zig body does `bun.memory.create` / `allocator.alloc` + `@memset`. In Rust the vec! macro
-// handles both allocation and fill.
+// In Rust the vec! macro handles both allocation and fill.
 
 // ── new ──────────────────────────────────────────────────────────────────────────────────────
 // Allocates an owned pointer for a single item, and calls `bun.outOfMemory` if allocation fails.
@@ -140,13 +137,12 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //                  unsafe { Vec::from_raw_parts(ptr, len, cap) }.into_boxed_slice()
 //     optional:  → if data.is_null() { None } else { Some(unsafe { bun_core::heap::take(data) }) }
 //
-// PORT NOTE: the Zig doc's caveat about `bun.new` vs `bun.default_allocator.create` is the
+// PORT NOTE: the historical caveat about `bun.new` vs `bun.default_allocator.create` is the
 // typed-mimalloc-heap distinction; in Rust both paths go through the same `#[global_allocator]`,
 // so the caveat does not apply.
 
 // ── fromRawIn ────────────────────────────────────────────────────────────────────────────────
 //   fromRawIn(data, allocator) → same as fromRaw; allocator param deleted.
-//   Zig sets `#allocator = undefined` when optional+null — irrelevant in Rust (no field).
 
 // ── deinit ───────────────────────────────────────────────────────────────────────────────────
 // Calls `deinit` on the underlying data (pointer target or slice elements) and then frees.
@@ -275,7 +271,7 @@ pub type Unmanaged<T /*, Allocator */> = Box<T>;
 /// `Owned([]T).alloc(count, elem)` → `vec![elem; count].into_boxed_slice()`
 #[inline]
 pub fn alloc_slice<T: Clone>(count: usize, elem: T) -> Box<[T]> {
-    // PERF(port): Zig used allocator.alloc + @memset (no per-elem clone for Copy types).
+    // PERF(port): could special-case Copy types to avoid per-elem clone.
     vec![elem; count].into_boxed_slice()
 }
 
@@ -284,9 +280,9 @@ pub fn alloc_slice<T: Clone>(count: usize, elem: T) -> Box<[T]> {
 /// Shallow-copies `data` into a freshly heap-allocated boxed slice.
 /// For empty input this returns a zero-length `Box` with a dangling
 /// pointer and **no allocation** — identical to `Box::<[T]>::default()`,
-/// so callers MUST NOT add their own `is_empty()` guard (that pattern is
-/// a Zig-port artifact where the static `""` must not be freed — irrelevant
-/// in Rust where empty boxed slices are non-allocating).
+/// so callers MUST NOT add their own `is_empty()` guard (that was a port
+/// artifact where a static `""` must not be freed — irrelevant in Rust
+/// where empty boxed slices are non-allocating).
 #[inline]
 pub fn alloc_dupe_slice<T: Clone>(data: &[T]) -> Box<[T]> {
     Box::<[T]>::from(data)
@@ -300,7 +296,7 @@ pub fn alloc_dupe_slice<T: Clone>(data: &[T]) -> Box<[T]> {
 /// and must not be freed elsewhere for the life of the returned `Box`.
 #[inline]
 pub unsafe fn from_raw<T>(data: *mut T) -> Box<T> {
-    // SAFETY: caller contract above mirrors Zig `fromRaw` requirements.
+    // SAFETY: caller contract above.
     unsafe { bun_core::heap::take(data) }
 }
 
@@ -313,5 +309,3 @@ pub fn into_raw<T>(boxed: Box<T>) -> *mut T {
 // Suppress unused-import warnings until Phase B prunes.
 #[allow(unused_imports)]
 use {AddConst as _, AllocError as _, ManuallyDrop as _, PointerInfo as _};
-
-// ported from: src/ptr/owned.zig

@@ -8,8 +8,8 @@ use bun_core::strings;
 use crate::range::{Comparator, Op as RangeOp};
 use crate::{Range, SlicedString, Version, version};
 
-// Re-export sub-namespace mirroring Zig's `Query.Token.Wildcard` path so
-// `crate::query::token::Wildcard` resolves for sibling modules.
+// Re-export sub-namespace so `crate::query::token::Wildcard` resolves for
+// sibling modules.
 pub mod token {
     pub use super::{Token, TokenTag, Wildcard};
 }
@@ -125,9 +125,8 @@ pub struct List {
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
 // by this `List` (see `and_range`); it never aliases data owned by another
-// thread. Zig models this as a plain `*Query` and freely sends `Group`/`List`
-// across the lockfile thread pool. Auto-`!Send` from `NonNull` is overly
-// conservative here.
+// thread. The lockfile thread pool freely sends `Group`/`List` across threads,
+// so the auto-`!Send` from `NonNull` is overly conservative here.
 unsafe impl Send for List {}
 unsafe impl Sync for List {}
 
@@ -241,7 +240,7 @@ pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
     pub tail: Option<NonNull<List>>,
-    /// Borrowed view into the caller's source buffer (Zig: `input: string = ""`).
+    /// Borrowed view into the caller's source buffer.
     /// Stored as a raw fat pointer per PORTING.md §`[]const u8` struct-field
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
     /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
@@ -255,9 +254,9 @@ pub struct Group {
 // by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
 // the caller's source buffer (PORTING.md §`[]const u8` struct-field) and is
 // only dereferenced under the same single-thread parse/stringify call. Neither
-// pointer aliases data owned by another thread. Zig models both as plain
-// pointers and freely sends `Group` across the lockfile/resolver thread pool;
-// auto-`!Send` from `NonNull`/`*const` is overly conservative here.
+// pointer aliases data owned by another thread. The lockfile/resolver thread
+// pool freely sends `Group` across threads, so the auto-`!Send` from
+// `NonNull`/`*const` is overly conservative here.
 unsafe impl Send for Group {}
 unsafe impl Sync for Group {}
 
@@ -305,14 +304,14 @@ impl Group {
     }
 
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        // TODO(port): Zig called `this.fmt()` with no buf arg (looks like a latent bug upstream).
+        // TODO(port): original called `this.fmt()` with no buf arg (looks like a latent bug upstream).
         // TODO(port): std.json.encodeJsonString — needs a JSON string encoder in bun_core/serde.
         let temp = {
             use std::io::Write as _;
             let mut v: Vec<u8> = Vec::new();
             // SAFETY: `input` points into the parse source buffer which the
-            // caller must keep alive for the lifetime of this Group (Zig
-            // stored a bare `[]const u8` with the same contract).
+            // caller must keep alive for the lifetime of this Group (same
+            // borrowed-slice contract as the rest of the parser).
             let input = unsafe { &*self.input };
             let _ = write!(&mut v, "{}", self.fmt(input));
             v
@@ -369,7 +368,7 @@ impl Group {
             && self.head.head.range.left.op == RangeOp::Eql
     }
 
-    /// Zig name: `@"is *"`
+    /// Whether this group matches the universal `*` range.
     pub fn is_star(&self) -> bool {
         let left = &self.head.head.range.left;
         self.head.head.range.right.op == RangeOp::Unset
@@ -709,7 +708,7 @@ impl Token {
     }
 }
 
-#[allow(unused_variables, unused_assignments)] // prev_token is dead in upstream Zig too
+#[allow(unused_variables, unused_assignments)] // prev_token has always been dead
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
@@ -986,5 +985,3 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
     Ok(list)
 }
-
-// ported from: src/semver/SemverQuery.zig

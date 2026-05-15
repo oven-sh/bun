@@ -146,5 +146,3 @@ impl JSONLineBuffer {
 }
 
 // `pub fn deinit` dropped: Vec<u8>'s Drop frees the backing allocation (global mimalloc).
-
-// ported from: src/jsc/JSONLineBuffer.zig

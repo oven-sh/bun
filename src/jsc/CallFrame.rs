@@ -111,8 +111,8 @@ impl CallFrame {
     #[inline]
     fn as_unsafe_js_value_array(&self) -> *const JSValue {
         // SAFETY: CallFrame is an opaque handle whose address IS the base of the
-        // JSC register array; reinterpreting &self as *const JSValue mirrors the
-        // Zig @ptrCast(@alignCast(self)).
+        // JSC register array; reinterpreting &self as *const JSValue is a direct
+        // pointer cast over the same allocation.
         std::ptr::from_ref::<CallFrame>(self).cast::<JSValue>()
     }
 
@@ -291,20 +291,19 @@ impl<'a> Iterator<'a> {
 /// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
     /// Backing storage for the remaining-args view. Borrowed (`init`) or
-    /// heap-owned dupe (`init_async`) — Zig's `initAsync` does
-    /// `bun.default_allocator.dupe(jsc.JSValue, slice)` so the remaining slice
-    /// survives the original CallFrame stack slot being reused before async
-    /// work consumes the arguments. A borrowed `&'a [JSValue]` here would
-    /// dangle in that case.
+    /// heap-owned dupe (`init_async`) — `init_async` clones the slice so the
+    /// remaining view survives the original CallFrame stack slot being reused
+    /// before async work consumes the arguments. A borrowed `&'a [JSValue]`
+    /// here would dangle in that case.
     remaining_buf: Cow<'a, [JSValue]>,
-    /// Cursor into `remaining_buf`; advances on `eat()`. Replaces Zig's
-    /// `remaining.ptr += 1` reslice (which a `Cow` can't express in-place).
+    /// Cursor into `remaining_buf`; advances on `eat()`. Replaces an in-place
+    /// pointer-bump reslice (which a `Cow` can't express).
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    /// Zig: `bun.ArenaAllocator` (= `std.heap.ArenaAllocator`), which is **lazy** —
-    /// `init()` allocates nothing. The Rust `bun_alloc::Arena` is a `MimallocArena`
-    /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
-    /// caller actually needs scratch storage (currently none do in the Rust port).
+    /// The original arena was lazy — `init()` allocated nothing. The Rust
+    /// `bun_alloc::Arena` is a `MimallocArena` whose `new()` calls
+    /// `mi_heap_new()` eagerly, so we keep it `None` until a caller actually
+    /// needs scratch storage (currently none do).
     pub arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
     pub threw: bool,
@@ -319,7 +318,7 @@ impl<'a> ArgumentsSlice<'a> {
         &self.remaining_buf[self.remaining_start..]
     }
 
-    /// Lazily create the scratch arena (Zig: `slice.arena.allocator()`).
+    /// Lazily create the scratch arena.
     #[inline]
     pub fn arena(&mut self) -> &bun_alloc::Arena {
         self.arena.get_or_insert_with(bun_alloc::Arena::new)
@@ -338,8 +337,7 @@ impl<'a> ArgumentsSlice<'a> {
             return;
         }
         // `remaining_buf.len() == all.len()` for both init variants, so
-        // `all.len() - remaining().len()` reduces to `remaining_start` —
-        // matching Zig's `self.all.len - self.remaining.len`.
+        // `all.len() - remaining().len()` reduces to `remaining_start`.
         let index = self.all.len() - self.remaining().len();
         self.protected.set(index);
         self.all[index].protect();
@@ -355,7 +353,7 @@ impl<'a> ArgumentsSlice<'a> {
 
     pub fn from(vm: &'a VirtualMachine, slice: &'a [JSValueRef]) -> ArgumentsSlice<'a> {
         // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64);
-        // mirrors Zig @ptrCast(slice.ptr).
+        // direct pointer cast over the same allocation.
         let as_values =
             unsafe { bun_core::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
         Self::init(vm, as_values)
@@ -375,8 +373,8 @@ impl<'a> ArgumentsSlice<'a> {
     }
 
     pub fn init_async(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
-        // Spec (CallFrame.zig:258-265): `.remaining = bun.default_allocator.dupe(jsc.JSValue, slice)`.
-        // `all` stays borrowed (matches Zig) so `protect_eat` index math holds.
+        // `remaining_buf` is a heap dupe; `all` stays borrowed so `protect_eat`
+        // index math holds.
         ArgumentsSlice {
             remaining_buf: Cow::Owned(slice.to_vec()),
             remaining_start: 0,
@@ -438,5 +436,3 @@ unsafe extern "C" {
     #[cfg(debug_assertions)]
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;
 }
-
-// ported from: src/jsc/CallFrame.zig

@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 
 use bun_ast::{Data, Level, Location, Log, Metadata, Msg};
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 
 use bun_jsc::{
     self as jsc, BuildMessage, JSGlobalObject, JSValue, JsError, JsResult, ResolveMessage,
@@ -14,19 +14,19 @@ use bun_jsc::{
 };
 
 pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) -> JsResult<Msg> {
-    let mut zig_exception_holder = jsc::zig_exception::Holder::init();
+    let mut bun_exception_holder = jsc::bun_exception::Holder::init();
 
     if let Some(value) = err.to_error() {
-        value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
+        value.to_bun_exception(global_object, bun_exception_holder.bun_exception());
     } else {
-        zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?;
+        bun_exception_holder.bun_exception().message = err.to_bun_string(global_object)?;
     }
 
     Ok(Msg {
         data: Data {
             text: Cow::Owned(
-                zig_exception_holder
-                    .zig_exception()
+                bun_exception_holder
+                    .bun_exception()
                     .message
                     .to_owned_slice(),
             ),
@@ -59,9 +59,8 @@ pub fn level_from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<O
         );
     }
 
-    // Zig: `Log.Level.Map.fromJS` — ComptimeStringMap JSC-aware lookup.
-    // Rust: `Level::MAP` is the `phf::Map`; the `.fromJS` helper lives in
-    // `bun_jsc::comptime_string_map_jsc`.
+    // ComptimeStringMap JSC-aware lookup: `Level::MAP` is the `phf::Map`; the
+    // `.fromJS` helper lives in `bun_jsc::comptime_string_map_jsc`.
     comptime_string_map_jsc::from_js(&Level::MAP, global_this, value)
 }
 
@@ -90,7 +89,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
                     }
                 };
             }
-            let out = ZigString::init(message);
+            let out = UnsafeStringView::init(message);
             let agg = global.create_aggregate_error(&errors_stack[..usize::from(count)], &out)?;
             Ok(agg)
         }
@@ -110,5 +109,3 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
     let msgs: &[Msg] = this.msgs.as_slice();
     JSValue::create_array_from_iter(global, msgs.iter(), |msg| msg_to_js(msg.clone(), global))
 }
-
-// ported from: src/logger_jsc/logger_jsc.zig

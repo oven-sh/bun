@@ -115,7 +115,7 @@ impl UntrustedCommand {
         let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
         while let Some(node_modules) = tree_iterator.next(None) {
-            // PORT NOTE: Zig `node_modules_path.save()/.restore()` — `ResetScope`
+            // PORT NOTE: `node_modules_path.save()/.restore()` — `ResetScope`
             // exclusively borrows the path in Rust, so save/restore the length
             // explicitly. Restored at end of each iteration; the inner-loop
             // `continue`/`return` paths only need the inner `folder_saved`
@@ -206,14 +206,14 @@ impl UntrustedCommand {
 
 pub struct TrustCommand;
 
-/// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
+/// Value type stored in `scripts_at_depth` (originally an anonymous struct).
 struct ScriptInfo {
     package_id: PackageID,
     scripts_list: ScriptsList,
     skip: bool,
 }
 
-// PORT NOTE: Zig had `TrustCommand.Sorter` nested struct; Rust cannot nest
+// PORT NOTE: was a nested `TrustCommand.Sorter` struct; Rust cannot nest
 // structs in impl blocks — hoisted to module level.
 pub struct TrustCommandSorter;
 impl TrustCommandSorter {
@@ -364,7 +364,7 @@ impl TrustCommand {
                     Err(e) => return Err(e),
                 };
             // PORT NOTE: `defer node_modules_dir.close()` — `Dir` has no `Drop`;
-            // closed explicitly at end of iteration. The Zig only opened it to
+            // closed explicitly at end of iteration. The original only opened it to
             // detect ENOENT; nothing reads from it.
 
             for &dep_id in node_modules.dependencies {
@@ -474,7 +474,7 @@ impl TrustCommand {
         // PORT NOTE: `scripts_at_depth.values()` is taken twice (run, then
         // print). Rust can't move `scripts_list: List` out for
         // `spawn_package_lifecycle_scripts` and still print it later, so clone
-        // the `List` per spawn (matches the by-value Zig pass).
+        // the `List` per spawn (matches the original by-value pass).
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
                 if info.skip {
@@ -545,7 +545,7 @@ impl TrustCommand {
         // SAFETY: `pm_raw` singleton; `root_package_json_file` owned by `pm`.
         // `File` is `#[repr(transparent)]` over `Fd` (Copy) but not itself
         // `Copy`; rebuild a local handle so `close()` (which takes `self`) can
-        // consume it after the final write — matches Zig's by-value `File`.
+        // consume it after the final write — matches the original by-value `File`.
         let root_file = unsafe { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
         let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
 
@@ -713,5 +713,3 @@ impl TrustCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/pm_trusted_command.zig

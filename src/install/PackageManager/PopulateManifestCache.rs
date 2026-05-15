@@ -10,7 +10,7 @@ use crate::PackageID;
 use crate::Resolution;
 use crate::dependency::Behavior;
 use crate::invalid_package_id;
-// `Task::Id` is a namespaced type in Zig (`PackageManagerTask.Id`); import the
+// `Task::Id` was a namespaced type (`PackageManagerTask.Id`); import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
 use super::PackageManager;
@@ -52,7 +52,7 @@ fn start_manifest_task(
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
-    // PORT NOTE: Zig passes the *raw packed-struct bit* `dep.behavior.optional`
+    // PORT NOTE: the original passes the *raw packed-struct bit* `dep.behavior.optional`
     // — not `Behavior.isOptional()` (which is `optional && !peer`). For
     // optional-peer deps the raw bit is `true` but `is_optional()` is `false`,
     // which would flip both the dedupe-map `is_required` bookkeeping and
@@ -64,7 +64,7 @@ fn start_manifest_task(
     }
     manager.start_progress_bar_if_none();
 
-    // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`
+    // PORT NOTE: reshaped for borrowck — the original writes the whole struct via `.* = .{}`
     // and reads `manager` again for `scopeForPackageName`. `get_network_task()`
     // borrows `&mut manager.preallocated_network_tasks`, so compute everything
     // that needs `&manager` *before* taking that borrow, then populate the pool
@@ -77,8 +77,8 @@ fn start_manifest_task(
     // Take the pool slot as a raw pointer so borrowck releases `manager` for the
     // `enqueue_network_task` tail.
     let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
-    // Zig: `task.* = .{ .package_manager = manager, .callback = undefined,
-    //                   .task_id = task_id, .allocator = manager.allocator };`
+    // Reinitialize the slot in place: `task.* = .{ .package_manager = manager,
+    //   .callback = undefined, .task_id = task_id, .allocator = manager.allocator };`
     // — full struct overwrite that resets every other field to its struct
     // default. The slot may be uninitialized (heap fallback) or stale (reused
     // hive slot).
@@ -108,7 +108,7 @@ pub enum Packages<'a> {
 }
 
 /// `RunTasksCallbacks` impl for the void-callback `runTasks` call in
-/// `populateManifestCache` (Zig passed an anonymous struct with `void` hooks).
+/// `populateManifestCache` (the original passed an anonymous struct with `void` hooks).
 struct ManifestsOnlyCallbacks;
 impl RunTasksCallbacks for ManifestsOnlyCallbacks {
     type Ctx = ();
@@ -126,7 +126,7 @@ pub fn populate_manifest_cache(
     // TODO(port): narrow error set
     let log_level = manager.options.log_level;
 
-    // PORT NOTE: heavy borrowck overlap — Zig holds slices into
+    // PORT NOTE: heavy borrowck overlap — the original holds slices into
     // `manager.lockfile` while the loop body calls `&mut`-taking methods on
     // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
     // not resized by anything below, so derive the slices through a raw
@@ -269,7 +269,7 @@ pub fn populate_manifest_cache(
 
     if run_tasks::pending_task_count(manager) > 0 {
         struct RunClosure {
-            // PORT NOTE: Zig stores `*PackageManager` non-exclusively;
+            // PORT NOTE: the original stores `*PackageManager` non-exclusively;
             // `sleep_until` also receives this raw pointer, so storing
             // `&mut PackageManager` here would alias under Stacked Borrows.
             manager: *mut PackageManager,
@@ -283,7 +283,7 @@ pub fn populate_manifest_cache(
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
                 // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
-                // `manager` as both receiver and ctx (aliased &mut). Zig passed
+                // `manager` as both receiver and ctx (aliased &mut). The original passed
                 // `(comptime *PackageManager, closure.manager)`; the generic context
                 // pair collapses to `&mut ()` in Rust.
                 if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
@@ -330,5 +330,3 @@ pub fn populate_manifest_cache(
 
 #[allow(unused_imports)]
 use Options::LogLevel;
-
-// ported from: src/install/PackageManager/PopulateManifestCache.zig

@@ -1,12 +1,11 @@
 use crate::webcore::Blob;
-use bun_core::ZigStringSlice;
+use bun_core::UTF8Slice;
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hash algorithm abstraction
 //
-// Zig's `hashWrap` uses `@hasDecl` / `std.meta.ArgsTuple` / `@TypeOf` to
-// reflect on each `std.hash.*` type's inconsistent interface (1-arg vs
+// The various hash backends have inconsistent interfaces (1-arg vs
 // 2-arg, seed-first vs bytes-first, `hash` vs `hashWithSeed`). Per
 // PORTING.md §Comptime reflection, that collapses to a trait: every hasher
 // presents a uniform `hash(seed, input) -> Output` and the per-type impl
@@ -34,15 +33,13 @@ impl HashOutput for u64 {
 pub trait HashAlgorithm {
     type Output: HashOutput;
     /// `seed` is always passed as u64 from JS; impls truncate to their native
-    /// seed width (matches Zig's `@truncate(seed)`). Hashers that take no
-    /// seed (Adler32) ignore it — matches the Zig 1-arg branch.
+    /// seed width. Hashers that take no seed (Adler32) ignore it.
     fn hash(seed: u64, input: &[u8]) -> Self::Output;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hasher impls — one unit struct per algorithm.
-// TODO(port): the underlying hash functions reference Zig's `std.hash.*`.
-// Phase B must wire these to Rust equivalents (or FFI to the existing
+// TODO(port): Phase B must wire these to backends (or FFI to the existing
 // implementations) that produce **bit-identical** output.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -58,7 +55,7 @@ pub struct Adler32;
 impl HashAlgorithm for Adler32 {
     type Output = u32;
     fn hash(_seed: u64, input: &[u8]) -> u32 {
-        // Zig: std.hash.Adler32.hash(input) — single-arg, seed ignored.
+        // Single-arg Adler32 — seed ignored.
         bun_hash::Adler32::hash(input)
     }
 }
@@ -92,9 +89,8 @@ pub struct CityHash32;
 impl HashAlgorithm for CityHash32 {
     type Output = u32;
     fn hash(_seed: u64, input: &[u8]) -> u32 {
-        // Zig: std.hash.CityHash32.hash(str) — single-arg, seed ignored
-        // (Zig's CityHash32 has no `hashWithSeed`, so hashWrap takes the
-        // 1-arg branch and never reads the JS seed).
+        // Single-arg CityHash32 — seed ignored (no `hashWithSeed` variant
+        // exists, so the JS seed is never read).
         bun_hash::CityHash32::hash(input)
     }
 }
@@ -103,7 +99,7 @@ pub struct CityHash64;
 impl HashAlgorithm for CityHash64 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        // Zig: std.hash.CityHash64.hashWithSeed(str, seed) — bytes-first.
+        // CityHash64.hashWithSeed(str, seed) — bytes-first.
         bun_hash::CityHash64::hash_with_seed(input, seed)
     }
 }
@@ -134,8 +130,8 @@ impl HashAlgorithm for XxHash3 {
     fn hash(seed: u64, input: &[u8]) -> u64 {
         // sidestep .hash taking in anytype breaking ArgTuple
         // downstream by forcing a type signature on the input.
-        // Zig wrapper forces a u32 seed (via @truncate) before widening
-        // back to XxHash3's native u64 — preserve that truncation.
+        // The wrapper forces a u32 seed before widening back to XxHash3's
+        // native u64 — preserve that truncation.
         bun_hash::XxHash3::hash(seed as u32 as u64, input)
     }
 }
@@ -144,7 +140,7 @@ pub struct Murmur32v2;
 impl HashAlgorithm for Murmur32v2 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
-        // Zig: std.hash.murmur.Murmur2_32.hashWithSeed(str, seed)
+        // Murmur2_32.hashWithSeed(str, seed)
         bun_hash::Murmur2_32::hash_with_seed(input, seed as u32)
     }
 }
@@ -153,7 +149,7 @@ pub struct Murmur32v3;
 impl HashAlgorithm for Murmur32v3 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
-        // Zig: std.hash.murmur.Murmur3_32.hashWithSeed(str, seed)
+        // Murmur3_32.hashWithSeed(str, seed)
         bun_hash::Murmur3_32::hash_with_seed(input, seed as u32)
     }
 }
@@ -162,7 +158,7 @@ pub struct Murmur64v2;
 impl HashAlgorithm for Murmur64v2 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        // Zig: std.hash.murmur.Murmur2_64.hashWithSeed(str, seed)
+        // Murmur2_64.hashWithSeed(str, seed)
         bun_hash::Murmur2_64::hash_with_seed(input, seed)
     }
 }
@@ -171,15 +167,14 @@ pub struct Rapidhash;
 impl HashAlgorithm for Rapidhash {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        // Zig: bun.deprecated.RapidHash.hash(seed, input)
+        // RapidHash.hash(seed, input)
         bun_hash::RapidHash::hash(seed, input)
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Host functions — one per algorithm. Zig expressed these as
-// `pub const wyhash = hashWrap(std.hash.Wyhash);` (comptime fn returning a
-// JSHostFnZig). Rust spells the monomorphization explicitly.
+// Host functions — one per algorithm. The monomorphization over each
+// `HashAlgorithm` impl is spelled out explicitly here.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn]
@@ -271,14 +266,14 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 
 fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<2>();
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global
-    // (see JSGlobalObject.zig:620); ArgumentsSlice borrows it for the call.
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global;
+    // ArgumentsSlice borrows it for the call.
     let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     let mut input: &[u8] = b"";
-    let mut input_slice = ZigStringSlice::empty();
-    // Hoisted to outlive the borrow stored in `input` (Zig's stack-value
-    // `array_buffer` lived for the whole function; mirror that scope here).
+    let mut input_slice = UTF8Slice::empty();
+    // Hoisted to outlive the borrow stored in `input` — `array_buffer` must
+    // live for the whole function.
     let array_buffer;
     if let Some(arg) = args.next_eat() {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
@@ -318,11 +313,8 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
     }
 
-    // std.hash has inconsistent interfaces
-    //
-    // PORT NOTE: the Zig used `@hasDecl`/`ArgsTuple`/`bun.trait.isNumber` to
-    // pick between `hash` vs `hashWithSeed`, 1-arg vs 2-arg, and seed-first
-    // vs bytes-first. That dispatch is absorbed into `HashAlgorithm::hash`
+    // PORT NOTE: dispatch between `hash` vs `hashWithSeed`, 1-arg vs 2-arg,
+    // and seed-first vs bytes-first is absorbed into `HashAlgorithm::hash`
     // per-impl above; here we always read an optional seed and pass it.
     let mut seed: u64 = 0;
     if let Some(arg) = args.next_eat() {
@@ -334,5 +326,3 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     let value = H::hash(seed, input);
     Ok(value.to_js(global))
 }
-
-// ported from: src/runtime/api/HashObject.zig

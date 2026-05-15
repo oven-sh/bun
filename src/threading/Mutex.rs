@@ -1,7 +1,4 @@
-//! This is a copy-pasta of std.Thread.Mutex with some changes.
-//! - No assert with unreachable
-//! - uses bun.Futex instead of std.Thread.Futex
-//! Synchronized with std as of Zig 0.14.1
+//! Mutex built on Bun's Futex.
 //!
 //! Mutex is a synchronization primitive which enforces atomic access to a shared region of code known as the "critical section".
 //! It does this by blocking ensuring only one thread is in the critical section at any given point in time by blocking the others.
@@ -33,12 +30,12 @@ use crate::Futex;
 #[derive(Default)]
 pub struct Mutex {
     // `pub(crate)` so `Condition` can reach `srwlock` / `locking_thread` for
-    // `SleepConditionVariableSRW` (mirrors Zig's same-module field access).
+    // `SleepConditionVariableSRW`.
     pub(crate) impl_: Impl,
 }
 
 impl Mutex {
-    /// Const-init an unlocked mutex (Zig: `.{}`). Required for `static` items.
+    /// Const-init an unlocked mutex. Required for `static` items.
     pub const fn new() -> Self {
         Self { impl_: Impl::new() }
     }
@@ -82,14 +79,13 @@ impl Mutex {
 
     /// Acquires the mutex and returns an RAII guard that releases it on `Drop`.
     ///
-    /// This is the idiomatic Rust spelling of Zig's `m.lock(); defer m.unlock();`
-    /// — prefer it over a bare [`lock`]/[`unlock`] pair so the critical section
+    /// Prefer this over a bare [`lock`]/[`unlock`] pair so the critical section
     /// is released on every return path (including `?`).
     ///
     /// The returned [`MutexGuard`] holds the mutex by raw pointer rather than a
     /// borrowed `&'a Mutex`, so holding the guard does **not** keep a borrow of
-    /// the owning struct alive. This matches the Zig pattern where the mutex is
-    /// a plain field and the rest of `self` remains freely accessible while
+    /// the owning struct alive — the mutex is a plain field and the rest of
+    /// `self` remains freely accessible while
     /// locked. Caller must ensure the `Mutex` outlives the guard (trivially
     /// true for `'static`/singleton mutexes and for guards that drop before the
     /// owning `self` does).
@@ -126,9 +122,8 @@ impl Drop for MutexGuard {
     }
 }
 
-// Zig: `pub const deinit = void;` — no-op; Drop is implicit and there is nothing to free.
+// Drop is implicit and there is nothing to free.
 
-// TODO(port): Zig also gates on `!builtin.single_threaded`; Rust has no direct equivalent.
 #[cfg(debug_assertions)]
 type Impl = DebugImpl;
 #[cfg(not(debug_assertions))]
@@ -173,7 +168,7 @@ impl DebugImpl {
     fn try_lock(&self) -> bool {
         let locking = self.impl_.try_lock();
         if locking {
-            // PORT NOTE: Zig uses .unordered; Rust's weakest is Relaxed.
+            // PORT NOTE: Rust's weakest atomic ordering is Relaxed.
             self.locking_thread
                 .store(current_thread_id(), Ordering::Relaxed);
         }
@@ -335,7 +330,7 @@ impl FutexImpl {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             let locked_bit: u32 = Self::LOCKED.trailing_zeros();
-            // PERF(port): Zig emits `lock bts` via atomic bitSet; fetch_or is the closest stable
+            // PERF(port): `lock bts` is the ideal codegen here; fetch_or is the closest stable
             // Rust atomic — profile in Phase B and consider inline asm if needed.
             return (self.state.fetch_or(1 << locked_bit, Ordering::Acquire) & (1 << locked_bit))
                 == 0;
@@ -395,9 +390,8 @@ impl FutexImpl {
     }
 }
 
-// PORT NOTE: Zig had `pub const Type` inside each impl as an associated alias.
-// Inherent associated types are unstable in Rust; the per-platform alias is
-// already exposed as the module-level `ExternImpl` type above.
+// PORT NOTE: inherent associated types are unstable in Rust; the per-platform
+// alias is exposed as the module-level `ExternImpl` type above.
 
 pub fn spin_cycle() {}
 
@@ -417,5 +411,3 @@ pub extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
 
 #[unsafe(no_mangle)]
 pub static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
-
-// ported from: src/threading/Mutex.zig

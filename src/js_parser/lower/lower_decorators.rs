@@ -7,7 +7,7 @@
     clippy::needless_late_init
 )]
 //! Lowering for TC39 standard ES decorators.
-//! Extracted from P.zig to reduce duplication via shared helpers.
+//! Extracted from the parser core to reduce duplication via shared helpers.
 
 use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
@@ -21,8 +21,7 @@ use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, StmtN
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
-// Zig: `pub fn LowerDecorators(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
 // ── Local helper types ───────────────────────────────────────────────────────
@@ -75,7 +74,7 @@ enum RewriteKind {
 }
 
 // ── Shallow-copy helpers (Property / Class are not `Clone` because they hold
-//    raw arena pointers; copying the pointers is the intended Zig semantic). ──
+//    raw arena pointers; copying the pointers is the intended semantic). ──
 
 #[inline]
 fn prop_copy(p: &Property) -> Property {
@@ -88,7 +87,7 @@ fn prop_copy(p: &Property) -> Property {
         key: p.key,
         value: p.value,
         // SAFETY: `Metadata` is a plain data enum (no Drop); shallow read is the
-        // intended Zig copy semantic.
+        // intended copy semantic.
         ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
     }
 }
@@ -1065,8 +1064,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
 
-        // Zig: `const class_decorators = class.ts_decorators; class.ts_decorators = .{};`
-        // — a shallow `BabyList` copy. In Rust `ExprNodeList = Vec<Expr>` owns its
+        // The original took a shallow copy of `class.ts_decorators` and then
+        // reset the field. In Rust `ExprNodeList = Vec<Expr>` owns its
         // buffer, so this MUST be a real ownership transfer; the previous
         // `ptr::read` left a second owner in the local that dropped at function
         // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
@@ -2352,7 +2351,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 comma_parts.push(ba);
             }
 
-            // PORT NOTE: Zig used a local anonymous-struct fn; can't capture
+            // PORT NOTE: original used a local helper fn; can't capture
             // `&mut self` in a Rust closure while also calling `p.method()`, so
             // inline both call sites against a `&[Stmt]` slice array.
             for stmts_list in [&pre_eval_stmts[..], &prefix_stmts[..]] {
@@ -2495,5 +2494,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/lowerDecorators.zig

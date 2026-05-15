@@ -20,8 +20,7 @@ pub struct Execute<'a> {
     pub param_types: &'a [Param],
 }
 
-// PORT NOTE: Zig `deinit` iterated `params` and called `param.deinit()` on each.
-// In Rust, `Data` owns its resources via `Drop`, and `Execute` only borrows the
+// PORT NOTE: `Data` owns its resources via `Drop`, and `Execute` only borrows the
 // slice, so the slice owner is responsible for cleanup. No `Drop` impl here.
 // TODO(port): verify caller of Execute handles Data cleanup after write.
 
@@ -77,7 +76,7 @@ impl<'a> Execute<'a> {
                     "Write param type {} len {} hex {:02x?}",
                     <&'static str>::from(param_type.r#type),
                     value.len(),
-                    // TODO(port): Zig `{x}` hex-dumps the slice; verify formatting matches
+                    // TODO(port): verify hex-dump formatting matches the original
                     value,
                 );
                 if param_type.r#type.is_binary_format_supported() {
@@ -91,8 +90,7 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = writeWrap(Execute, writeInternal).write;`
-    // PORT NOTE: Zig's `writeWrap` constructs a `NewWriter` around a raw context
+    // PORT NOTE: `write_wrap` constructs a `NewWriter` around a raw context
     // and calls `write_internal`. Here `writer` is already wrapped, so forward
     // directly — `write_wrap`'s only job (the wrapping) is done by the caller.
     pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), bun_core::Error> {
@@ -100,8 +98,8 @@ impl<'a> Execute<'a> {
     }
 }
 
-// Zig: `writer: anytype` — body calls .start/.int1/.write. Bound on the
-// concrete `NewWriter<C>` shape (the only `anytype` instantiation in-tree).
+// Body calls .start/.int1/.write. Bound on the concrete `NewWriter<C>` shape
+// (the only generic-writer instantiation in-tree).
 pub fn execute<C: WriterContext>(
     query: &[u8],
     writer: NewWriter<C>,
@@ -113,5 +111,3 @@ pub fn execute<C: WriterContext>(
     packet.end()?;
     Ok(())
 }
-
-// ported from: src/sql/mysql/protocol/Query.zig

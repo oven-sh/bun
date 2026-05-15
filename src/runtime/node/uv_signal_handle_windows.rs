@@ -70,5 +70,3 @@ pub extern "C" fn Bun__UVSignalHandle__close(
     unsafe { libuv::uv_close(signal.cast(), Some(free_with_default_allocator)) };
     core::ptr::null_mut()
 }
-
-// ported from: src/runtime/node/uv_signal_handle_windows.zig

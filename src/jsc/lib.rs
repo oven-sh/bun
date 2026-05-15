@@ -1,14 +1,14 @@
 //! Bindings to JavaScriptCore and other JavaScript primitives such as
-//! VirtualMachine, JSGlobalObject (Zig::GlobalObject), and the event loop.
+//! VirtualMachine, JSGlobalObject (Bun::GlobalObject), and the event loop.
 //!
 //! Web and runtime-specific APIs should go in `bun.webcore` and `bun.api`.
 //!
-//! LAYERING: `jsc.zig` carries deprecated aliases `WebCore = bun.webcore`,
+//! LAYERING: this crate historically carried deprecated aliases `WebCore = bun.webcore`,
 //! `API = bun.api`, `Node = bun.api.node`, `Subprocess = bun.api.Subprocess`.
 //! In the Rust crate graph those targets live in `bun_runtime`, which depends
-//! on this crate — re-exporting them here would create a cycle. The Zig source
-//! already marks every one of them `Deprecated` with a "TODO: Remove" header,
-//! so the Rust port drops the aliases outright. Callers reference
+//! on this crate — re-exporting them here would create a cycle. They were
+//! already marked `Deprecated` with a "TODO: Remove" header,
+//! so the aliases are dropped outright. Callers reference
 //! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
 //! constructed those types (e.g. `output_file_jsc`, `BlobArrayBuffer_deallocator`)
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
@@ -22,8 +22,8 @@
     non_snake_case
 )]
 #![allow(unexpected_cfgs)]
-// `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag` to
-// preserve Zig's comptime monomorphization (zig:2210). `Tag` is a fieldless
+// `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag` so
+// each format arm is monomorphized. `Tag` is a fieldless
 // enum, so this is the structural-match subset of the feature.
 #![feature(adt_const_params)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
@@ -54,8 +54,8 @@ pub use bun_jsc_macros::{JsClass, JsClassDerive, codegen_cached_accessors, host_
 
 /// The calling convention used for JavaScript functions <> Native.
 ///
-/// In Zig this is a `std.builtin.CallingConvention` value (`.x86_64_sysv` on
-/// Windows-x64, `.c` elsewhere). Rust cannot express an ABI as a runtime value
+/// JSC host functions use the System V x86-64 ABI on Windows-x64 and the
+/// platform C ABI elsewhere. Rust cannot express an ABI as a runtime value
 /// — `extern "..."` takes a string literal, not an expression. The
 /// `#[bun_jsc::host_fn]` / `#[bun_jsc::host_call]` attribute macros emit the
 /// correct ABI per-target instead. See PORTING.md §FFI / §JSC types.
@@ -73,6 +73,12 @@ pub const CONV: &str = "C";
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 un-gated modules (real Phase-A draft code, now compiling).
 // ──────────────────────────────────────────────────────────────────────────
+#[path = "BunErrorType.rs"]
+pub mod bun_error_type;
+#[path = "BunStackFrameCode.rs"]
+pub mod bun_stack_frame_code;
+#[path = "BunStackFramePosition.rs"]
+pub mod bun_stack_frame_position;
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]
@@ -117,21 +123,14 @@ pub mod text_codec;
 pub mod url_search_params;
 #[path = "WTF.rs"]
 pub mod wtf;
-#[path = "ZigErrorType.rs"]
-pub mod zig_error_type;
-#[path = "ZigStackFrameCode.rs"]
-pub mod zig_stack_frame_code;
-#[path = "ZigStackFramePosition.rs"]
-pub mod zig_stack_frame_position;
 
-/// `bun.schema.api` types that reference `ZigStackFramePosition` (this crate)
+/// `bun.schema.api` types that reference `BunStackFramePosition` (this crate)
 /// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
-/// Ported from `src/options_types/schema.zig` (`StackFrameScope`, `StackFrame`,
-/// `StackFramePosition`, `SourceLine`, `StackTrace`).
+/// (`StackFrameScope`, `StackFrame`, `StackFramePosition`, `SourceLine`, `StackTrace`).
 pub mod schema_api {
-    use crate::ZigStackFramePosition;
+    use crate::BunStackFramePosition;
 
-    /// schema.zig:373 — `enum(u8) { _none, eval, module, function, global, wasm,
+    /// `enum(u8) { _none, eval, module, function, global, wasm,
     /// constructor, _ }` (non-exhaustive). Newtype keeps any-u8 FFI-safe.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -147,10 +146,10 @@ pub mod schema_api {
         pub const CONSTRUCTOR: Self = Self(6);
     }
 
-    /// schema.zig:431 — `pub const StackFramePosition = bun.jsc.ZigStackFramePosition;`
-    pub type StackFramePosition = ZigStackFramePosition;
+    /// `pub const StackFramePosition = bun.jsc.BunStackFramePosition;`
+    pub type StackFramePosition = BunStackFramePosition;
 
-    /// schema.zig:401 — `struct StackFrame`.
+    /// `struct StackFrame`.
     #[derive(Clone)]
     pub struct StackFrame {
         /// function_name
@@ -174,7 +173,7 @@ pub mod schema_api {
         }
     }
 
-    /// schema.zig:433 — `struct SourceLine`.
+    /// `struct SourceLine`.
     #[derive(Clone, Default)]
     pub struct SourceLine {
         /// line
@@ -183,7 +182,7 @@ pub mod schema_api {
         pub text: Box<[u8]>,
     }
 
-    /// schema.zig:455 — `struct StackTrace`.
+    /// `struct StackTrace`.
     #[derive(Clone, Default)]
     pub struct StackTrace {
         /// source_lines
@@ -192,9 +191,9 @@ pub mod schema_api {
         pub frames: Vec<StackFrame>,
     }
 
-    /// schema.zig:475 — peechy `message JsException` (all fields optional).
+    /// peechy `message JsException` (all fields optional).
     /// Lives here (not `bun_options_types::schema::api`) because `stack`'s
-    /// [`StackTrace`] transitively names `ZigStackFramePosition` from this
+    /// [`StackTrace`] transitively names `BunStackFramePosition` from this
     /// crate; the `bun_options_types` copy omits `stack` to avoid the cycle.
     #[derive(Clone, Default)]
     pub struct JsException {
@@ -251,12 +250,12 @@ pub mod strong;
 pub mod task;
 #[path = "TopExceptionScope.rs"]
 pub mod top_exception_scope;
+#[path = "UnsafeStringView.rs"]
+pub mod unsafe_string_view;
 #[path = "uuid.rs"]
 pub mod uuid;
 #[path = "Weak.rs"]
 pub mod weak;
-#[path = "ZigString.rs"]
-pub mod zig_string;
 
 pub use self::js_value::{
     BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
@@ -264,9 +263,9 @@ pub use self::js_value::{
     SerializedFlags, SerializedScriptValue,
 };
 
-// LAYERING (PORTING.md §Dispatch): `Task.run` (jsc/Task.zig:39) is a giant
+// LAYERING (PORTING.md §Dispatch): `Task.run` is a giant
 // `switch` over every concrete task variant — most of which live in
-// `bun_runtime`. The Rust port follows the §Dispatch convention: this crate
+// `bun_runtime`. We follow the §Dispatch convention: this crate
 // stores the erased `(tag, *mut ())` `Task` and exposes the queue; the high
 // tier (`bun_runtime::dispatch::tick_queue_with_count`) owns the `match` loop
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
@@ -289,14 +288,14 @@ pub use self::task::Taskable;
 
 /// Trait surface for `write_format`-style hooks on runtime types
 /// (`Response::write_format`, `Request::write_format`, `S3File::write_format`,
-/// …). Mirrors the duck-typed `*ConsoleObject.Formatter` parameter in Zig —
+/// …). Trait abstraction over the `*ConsoleObject.Formatter` parameter —
 /// callers only ever touch `globalThis` and `printAs`, so the trait exposes
 /// just those two and the `bun_jsc::Formatter` struct provides the canonical
 /// impl.
 pub trait ConsoleFormatter {
     fn global_this(&self) -> &JSGlobalObject;
-    /// `Formatter.printAs(comptime Format, Writer, writer, value, jsType)` —
-    /// the const-generic `ENABLE_ANSI_COLORS` mirrors Zig's comptime bool.
+    /// `Formatter.printAs(Format, Writer, writer, value, jsType)` —
+    /// `ENABLE_ANSI_COLORS` is a const generic so each color path monomorphizes.
     fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         tag: FormatTag,
@@ -310,9 +309,9 @@ pub trait ConsoleFormatter {
     /// calling this pair manually when the indented region contains `?` early
     /// returns.
     fn indent_inc(&mut self);
-    /// `formatter.indent -|= 1` — saturating decrement (Zig spelling).
+    /// Saturating-decrement the indent level.
     fn indent_dec(&mut self);
-    /// Zig: `formatter.indent += 1; defer formatter.indent -|= 1;`.
+    /// Bump indent for a scope, restoring it on every exit path.
     ///
     /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
     /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and
@@ -333,8 +332,8 @@ pub trait ConsoleFormatter {
     ) -> core::fmt::Result;
 }
 
-/// RAII indent guard for [`ConsoleFormatter`] — Zig's
-/// `formatter.indent += 1; defer formatter.indent -|= 1;` pair.
+/// RAII indent guard for [`ConsoleFormatter`] — increments indent on entry,
+/// decrements on every exit path.
 ///
 /// Increments on construction, decrements on `Drop`. `Deref`s to the wrapped
 /// formatter so the guard can shadow the original binding for the indented
@@ -451,8 +450,8 @@ pub use self::top_exception_scope::{
     call_false_is_throw_at, call_null_is_throw, call_null_is_throw_at, call_zero_is_throw,
     call_zero_is_throw_at,
 };
-/// Generated FFI wrappers for C++ `[[ZIG_EXPORT(mode)]]` functions — Rust analogue of
-/// Zig's `bun.cpp.*`. Emitted by `src/codegen/cppbind.ts` into
+/// Generated FFI wrappers for C++ `[[RUST_EXPORT(mode)]]` functions, surfaced as
+/// `bun.cpp.*`. Emitted by `src/codegen/cppbind.ts` into
 /// `${BUN_CODEGEN_DIR}/cpp.rs` and `include!`d here so every throwing C++ FFI
 /// is reachable as `bun_jsc::cpp::Name(...)` with a properly-scoped exception
 /// check (no `global.has_exception()` after-the-fact).
@@ -461,6 +460,9 @@ pub use self::common_strings::CommonStrings;
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
+pub use self::bun_error_type::BunErrorType;
+pub use self::bun_stack_frame_code::BunStackFrameCode;
+pub use self::bun_stack_frame_position::BunStackFramePosition;
 pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
 pub use self::custom_getter_setter::CustomGetterSetter;
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
@@ -482,9 +484,6 @@ pub use self::source_provider::SourceProvider;
 pub use self::source_type::SourceType;
 pub use self::text_codec::TextCodec;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_error_type::ZigErrorType;
-pub use self::zig_stack_frame_code::ZigStackFrameCode;
-pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
 #[path = "GarbageCollectionController.rs"]
 pub mod garbage_collection_controller;
@@ -523,6 +522,12 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "BunException.rs"]
+pub mod bun_exception;
+#[path = "BunStackFrame.rs"]
+pub mod bun_stack_frame;
+#[path = "BunStackTrace.rs"]
+pub mod bun_stack_trace;
 #[path = "javascript_core_c_api.rs"]
 pub mod c_api;
 #[path = "CachedBytecode.rs"]
@@ -545,12 +550,6 @@ pub mod system_error;
 pub mod url;
 #[path = "VM.rs"]
 pub mod vm;
-#[path = "ZigException.rs"]
-pub mod zig_exception;
-#[path = "ZigStackFrame.rs"]
-pub mod zig_stack_frame;
-#[path = "ZigStackTrace.rs"]
-pub mod zig_stack_trace;
 // `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
 // every aliased type lives in api/webcore/test_runner/bake, so mounting it
 // here would create a `bun_jsc → bun_runtime` cycle.
@@ -587,9 +586,9 @@ pub mod process_auto_killer;
 #[path = "WorkTask.rs"]
 pub mod work_task;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
+/// Binding for JSCInitialize in BunGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
-    // Spec jsc.zig:251 — `bun.analytics.Features.jsc += 1`. Counter lives in
+    // `bun.analytics.Features.jsc += 1`. Counter lives in
     // `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
@@ -638,7 +637,7 @@ fn is_one_shot_eval_invocation() -> bool {
     false
 }
 
-/// Port of `onJSCInvalidEnvVar` (jsc.zig:254).
+/// `onJSCInvalidEnvVar` callback handed to `JSCInitialize`.
 extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     // SAFETY: C++ guarantees `name[..len]` is valid for the call.
     let name = unsafe { bun_core::ffi::slice(name, len) };
@@ -653,8 +652,8 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
-/// `JsResult<T>` is the Rust spelling of Zig's `bun.JSError!T`.
+/// `bun.JSError` — the canonical Bun JS error union (`Thrown | OutOfMemory | Terminated`).
+/// `JsResult<T>` is the Rust spelling of `bun.JSError!T`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
     /// A JavaScript exception is pending in the VM's exception scope.
@@ -757,8 +756,8 @@ impl<T> JsResultExt for JsResult<T> {
 
 impl From<bun_core::Error> for JsError {
     fn from(_: bun_core::Error) -> Self {
-        // PORT NOTE: Zig coerces arbitrary `anyerror` into the JS error union by
-        // throwing a generic Error; the throw happens at the call site. Mapping
+        // PORT NOTE: arbitrary `bun_core::Error` values are coerced into the JS error
+        // union by throwing a generic Error; the throw happens at the call site. Mapping
         // to `Thrown` here lets `?` propagate while the actual throw is handled
         // by the host-fn wrapper.
         JsError::Thrown
@@ -766,27 +765,26 @@ impl From<bun_core::Error> for JsError {
 }
 
 impl From<JsError> for bun_core::Error {
-    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
-    /// the exact Zig tag (`@errorName`) so call sites that round-trip through
+    /// Widen a `bun.JSError` value back into the `bun_core::Error` newtype. Preserves
+    /// the exact tag string so call sites that round-trip through
     /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
-    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
+    /// boundary) keep `OutOfMemory` distinguishable from `JSError`.
     #[inline]
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            // `Terminated` is a Rust-port addition (worker shutdown); it has no
-            // distinct Zig `error.` tag, so collapse into `JSError` like every
-            // other thrown JS exception.
+            // `Terminated` (worker shutdown) has no distinct tag string of its
+            // own; collapse into `JSError` like every other thrown JS exception.
             JsError::Thrown | JsError::Terminated => bun_core::err!("JSError"),
         }
     }
 }
 
-/// Adapter for Zig-style `(comptime fmt, args)` throw helpers ported to Rust.
+/// Adapter for `(fmt, args)`-style throw helpers.
 ///
-/// Zig's `globalThis.throw("msg {s}", .{x})` formats `fmt` with `args` and
-/// throws the result. The mechanically-ported call sites pass either `()`
-/// (Zig `.{}`, no interpolation — message *is* the literal) or a pre-expanded
+/// `globalThis.throw("msg {}", x)` formats `fmt` with `args` and
+/// throws the result. Call sites pass either `()`
+/// (no interpolation — message *is* the literal) or a pre-expanded
 /// `format_args!(..)` (interpolation already applied — message *is* the
 /// `Arguments` value). This trait dispatches both shapes onto the canonical
 /// [`JSGlobalObject::throw`] / [`JSGlobalObject::throw_invalid_arguments`]
@@ -804,7 +802,7 @@ pub trait ThrowFmtArgs: Sized {
 impl ThrowFmtArgs for () {
     #[inline]
     fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
-        // Zig `.{}` — no interpolation; the literal IS the message. Route
+        // No interpolation args; the literal IS the message. Route
         // through `throw` with an `Arguments` whose `as_str()` is `Some(fmt)`
         // so `create_error_instance` hits its static-string fast path.
         global.throw(format_args!("{fmt}"))
@@ -837,14 +835,14 @@ impl ThrowFmtArgs for core::fmt::Arguments<'_> {
 /// must use absolute `::bun_jsc::` paths and cannot assume `::bun_core` is in
 /// the consumer crate's dep graph.
 pub use bun_core::heap;
-/// Debug-only binding-presence marker. In Zig this is `jsc.markBinding(@src())`.
+/// Debug-only binding-presence marker (`jsc.markBinding`).
 /// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_io` /
 /// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
 /// Re-exported here so existing `crate::mark_binding!()` call sites resolve.
 pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
-    JSHostFn, JSHostFnZig, JSHostFnZigWithContext, JSHostFunctionTypeWithContext,
+    JSHostFn, JSHostFnSafe, JSHostFnSafeWithContext, JSHostFunctionTypeWithContext,
     from_js_host_call, from_js_host_call_generic, host_construct_result, host_fn_result,
     host_setter_result, to_js_host_call, to_js_host_fn, to_js_host_fn_result,
     to_js_host_fn_with_context,
@@ -862,7 +860,7 @@ pub mod __macro_support {
 
     /// Normalizes a host-fn body's return type to `JsResult<JSValue>` so the
     /// proc-macro can wrap bodies that return either `JSValue` or
-    /// `JsResult<JSValue>` (mirrors Zig's `anytype` dispatch in `toJSHostFn`).
+    /// `JsResult<JSValue>` (the dispatch surface used by `toJSHostFn`).
     pub trait IntoHostFnResult {
         fn into_host_fn_result(self) -> JsResult<JSValue>;
     }
@@ -910,8 +908,8 @@ pub mod __macro_support {
     }
 
     /// Map a `JsResult<JSValue>` from a Rust host fn to the raw `JSValue` the
-    /// JSC ABI expects (`.ZERO` when an exception is/was thrown). Mirrors
-    /// `host_fn.zig:toJSHostCall` — installs an `ExceptionValidationScope`
+    /// JSC ABI expects (`.ZERO` when an exception is/was thrown). Like
+    /// `toJSHostCall` — installs an `ExceptionValidationScope`
     /// pinned at the macro caller's `Location` and asserts the empty/thrown
     /// invariant.
     ///
@@ -925,9 +923,9 @@ pub mod __macro_support {
         global: &JSGlobalObject,
         f: impl FnOnce() -> R,
     ) -> JSValue {
-        // PORT NOTE: Zig passed `@src()` explicitly; `to_js_host_call` is
-        // `#[track_caller]` so the caller's `Location` propagates through this
-        // `#[track_caller]` shim into `ExceptionValidationScope::init`.
+        // `to_js_host_call` is `#[track_caller]` so the caller's `Location`
+        // propagates through this `#[track_caller]` shim into
+        // `ExceptionValidationScope::init`.
         super::host_fn::to_js_host_call(global, move || f().into_host_fn_result())
     }
 
@@ -1022,13 +1020,13 @@ mod __macro_smoke {
 // JSC Classes Bindings — re-exported from their per-type modules (declared
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder
 // newtypes; the real opaque-FFI structs now live in their own files and are
-// surfaced here at the crate root to match `jsc.zig`'s flat namespace.
+// surfaced here at the crate root in a flat namespace.
+pub use self::bun_stack_frame::BunStackFrame;
+pub use self::bun_stack_trace::BunStackTrace;
 pub use self::cached_bytecode::CachedBytecode;
 pub use self::deferred_error::DeferredError;
 pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
-pub use self::zig_stack_frame::ZigStackFrame;
-pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
@@ -1040,7 +1038,7 @@ pub use self::js_global_object::{GlobalRef, JSGlobalObject};
 pub use self::vm::{HeapType, Lock as ApiLock, VM};
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
-/// Mirrors Zig's `IntegerRange` (comptime min/max collapsed to i128 so every
+/// `IntegerRange` (min/max collapsed to i128 so every
 /// signed/unsigned primitive's bounds + MIN/MAX_SAFE_INTEGER fit without
 /// narrowing). Defined at crate root so `bun_runtime` callers and
 /// `JSGlobalObject.rs` (which re-exports it) share one type.
@@ -1067,17 +1065,17 @@ pub type IntegerRangeOptions = IntegerRange;
 // ──────────────────────────────────────────────────────────────────────────
 // ResolvedSource — un-gated (B-2). `#[repr(C)]` mirror of the C struct in
 // src/jsc/bindings/headers-handwritten.h:115. Passed by value across the
-// Zig/Rust → C++ module-loader boundary (`ErrorableResolvedSource`).
+// Rust → C++ module-loader boundary (`ErrorableResolvedSource`).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "ResolvedSource.rs"]
 pub mod resolved_source;
 pub use self::resolved_source::ResolvedSource;
 
-/// `ResolvedSource.Tag` — `enum(u32)` in Zig, plain `uint32_t` in C++
+/// `ResolvedSource.Tag` — plain `uint32_t` on the C++ side
 /// (`headers-handwritten.h:123`). Modelled as a transparent `u32` newtype so
 /// the generated InternalModuleRegistry IDs (`(1 << 9) | id`, see
-/// `build/*/codegen/ResolvedSourceTag.zig`) round-trip without an exhaustive
-/// Rust enum.
+/// `build/*/codegen/SyntheticModuleType.h` / `bundle-modules.ts`) round-trip
+/// without an exhaustive Rust enum.
 pub mod resolved_source_tag {
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
@@ -1086,8 +1084,8 @@ pub mod resolved_source_tag {
     #[allow(non_upper_case_globals)]
     impl ResolvedSourceTag {
         // Structural variants — keep in lock-step with
-        // `build/*/codegen/ResolvedSourceTag.zig` lines 3-16 and
-        // `src/jsc/bindings/headers-handwritten.h` (`ResolvedSourceTagPackageJSONTypeModule = 1`).
+        // `src/jsc/bindings/headers-handwritten.h` (`ResolvedSourceTagPackageJSONTypeModule = 1`)
+        // and `build/*/codegen/SyntheticModuleType.h`.
         pub const Javascript: Self = Self(0);
         pub const PackageJsonTypeModule: Self = Self(1);
         pub const PackageJsonTypeCommonjs: Self = Self(2);
@@ -1104,8 +1102,7 @@ pub mod resolved_source_tag {
         pub const CommonJsCustomExtension: Self = Self(10);
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
-        /// InternalModuleRegistry tag (`(1 << 9) | id`). Ports Zig's
-        /// `@field(ResolvedSource.Tag, @tagName(hardcoded))` (ModuleLoader.zig).
+        /// InternalModuleRegistry tag (`(1 << 9) | id`).
         ///
         /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
         /// callers feed only `HardcodedModule` strum values, so a miss means
@@ -1130,12 +1127,13 @@ pub mod resolved_source_tag {
         }
     }
 
-    /// Generated from `build/*/codegen/ResolvedSourceTag.zig` — the
-    /// `(1 << 9) | id` half of the enum. Keys are the canonical specifier
+    /// Mirror of the `(1 << 9) | id` half of the enum
+    /// (`build/*/codegen/SyntheticModuleType.h`, generated by
+    /// `src/codegen/bundle-modules.ts`). Keys are the canonical specifier
     /// strings as surfaced by `HardcodedModule`'s `strum::IntoStaticStr` impl
     /// (which is what `jsc_hooks::js_synthetic_module` feeds in).
-    // PORT NOTE: `@vercel/fetch` is aliased — Zig's `HardcodedModule` tag-name
-    // is `vercel_fetch` but the Rust strum serialisation is the npm specifier.
+    // PORT NOTE: `@vercel/fetch` is aliased — `HardcodedModule`'s historic tag-name
+    // is `vercel_fetch` but the strum serialisation is the npm specifier.
     static INTERNAL_MODULE_TAG: phf::Map<&'static [u8], ResolvedSourceTag> = phf::phf_map! {
         b"bun:ffi" => ResolvedSourceTag(512),
         b"bun:sql" => ResolvedSourceTag(513),
@@ -1305,7 +1303,7 @@ pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
 /// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index
 /// into `BuiltinNamesMap` (src/jsc/bindings/bindings.cpp).
 ///
-/// The Zig source (JSValue.zig:1491) uses lowercase variant names; downstream
+/// The C++ side uses lowercase variant names; downstream
 /// Rust callers were drafted with PascalCase. Associated-const aliases below
 /// keep both spellings working until the call sites converge.
 #[repr(u8)]
@@ -1408,32 +1406,31 @@ impl Drop for EnsureStillAlive {
 /// `jsc.JSPromise.Strong` — a `Strong.Optional` typed to hold a `JSPromise`.
 pub use self::js_promise::Strong as JSPromiseStrong;
 
-/// `JSPromise.Status` (JSPromise.zig) — surfaced at the crate root as
+/// `JSPromise.Status` — surfaced at the crate root as
 /// `PromiseStatus` for downstream callers (web_worker.rs / fetch.rs reference
 /// it via `jsc::PromiseStatus::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Status as PromiseStatus;
 
 /// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
+/// `crate::RefPtr<SourceProvider>` (BunStackTrace.rs) resolves without every
 /// submodule taking a direct `bun_ptr` dep.
 pub use bun_ptr::RefPtr;
 
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
-/// so submodules ported from Zig can write `crate::String` (the Zig spelling
-/// is `bun.String`, which the lazy import graph routed via `jsc`).
+/// so submodules can write `crate::String`.
 pub use bun_core::String;
 
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
 /// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
-/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
+/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
 pub use self::any_promise::AnyPromise;
 
-/// `JSPromise.UnwrapMode` (JSPromise.zig:349).
+/// `JSPromise.UnwrapMode`.
 pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
 
-/// `JSPromise.Unwrapped` (JSPromise.zig:343) — surfaced at the crate root as
+/// `JSPromise.Unwrapped` — surfaced at the crate root as
 /// `PromiseResult` for downstream callers (Macro.rs / JSBundler.rs reference it
 /// via `jsc::PromiseResult::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Unwrapped as PromiseResult;
@@ -1442,48 +1439,53 @@ pub use self::js_promise::Unwrapped as PromiseResult;
 // defined in `js_property_iterator` and re-exported below alongside
 // `JSPropertyIterator`.
 
-// `ZigString` → JS bridges used by the `ZigStringJsc` extension trait below
+// `UnsafeStringView` → JS bridges used by the `UnsafeStringViewJsc` extension trait below
 // (the rest of the `JSGlobalObject` extern surface lives in `JSGlobalObject.rs`).
 unsafe extern "C" {
-    // safe: `ZigString` is `#[repr(C)]` and read-only across the call; `JSGlobalObject` is an
+    // safe: `UnsafeStringView` is `#[repr(C)]` and read-only across the call; `JSGlobalObject` is an
     // opaque `UnsafeCell`-backed ZST handle. `&T` is ABI-identical to a non-null `*const T`.
-    safe fn ZigString__toErrorInstance(
-        this: &bun_core::ZigString,
+    safe fn UnsafeStringView__toErrorInstance(
+        this: &bun_core::UnsafeStringView,
         global: &JSGlobalObject,
     ) -> JSValue;
-    safe fn ZigString__toTypeErrorInstance(
-        this: &bun_core::ZigString,
+    safe fn UnsafeStringView__toTypeErrorInstance(
+        this: &bun_core::UnsafeStringView,
         global: &JSGlobalObject,
     ) -> JSValue;
-    safe fn ZigString__toSyntaxErrorInstance(
-        this: &bun_core::ZigString,
+    safe fn UnsafeStringView__toSyntaxErrorInstance(
+        this: &bun_core::UnsafeStringView,
         global: &JSGlobalObject,
     ) -> JSValue;
-    safe fn ZigString__toRangeErrorInstance(
-        this: &bun_core::ZigString,
+    safe fn UnsafeStringView__toRangeErrorInstance(
+        this: &bun_core::UnsafeStringView,
         global: &JSGlobalObject,
     ) -> JSValue;
-    safe fn ZigString__toDOMExceptionInstance(
-        this: &bun_core::ZigString,
+    safe fn UnsafeStringView__toDOMExceptionInstance(
+        this: &bun_core::UnsafeStringView,
         global: &JSGlobalObject,
         code: u8,
     ) -> JSValue;
-    safe fn ZigString__toValueGC(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
-    safe fn ZigString__toAtomicValue(
-        this: &bun_core::ZigString,
+    safe fn UnsafeStringView__toValueGC(
+        this: &bun_core::UnsafeStringView,
         global: &JSGlobalObject,
     ) -> JSValue;
-    // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
-    safe fn ZigString__toJSONObject(this: &bun_core::ZigString, global: &JSGlobalObject)
-    -> JSValue;
-    // safe: `ZigString`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
+    safe fn UnsafeStringView__toAtomicValue(
+        this: &bun_core::UnsafeStringView,
+        global: &JSGlobalObject,
+    ) -> JSValue;
+    // UnsafeStringView__toExternalValue: use the generated `cpp::` re-export (canonical signature).
+    safe fn UnsafeStringView__toJSONObject(
+        this: &bun_core::UnsafeStringView,
+        global: &JSGlobalObject,
+    ) -> JSValue;
+    // safe: `UnsafeStringView`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
     // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
     // pointer C++ stores into the external string's finalizer slot and forwards
     // to `callback` on GC (never dereferenced as Rust data) — same contract as
     // `JSC__JSGlobalObject__queueMicrotaskCallback`. The caller-side ownership
     // transfer is documented at the (already-safe) public wrapper.
-    safe fn ZigString__external(
-        this: &bun_core::ZigString,
+    safe fn UnsafeStringView__external(
+        this: &bun_core::UnsafeStringView,
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
@@ -1533,7 +1535,7 @@ impl JSGlobalObject {
 /// expect (`jsc.RangeErrorOptions`).
 pub type RangeErrorOptions<'a> = bun_core::fmt::OutOfRangeOptions<'a>;
 
-/// `JSGlobalObject.GregorianDateTime` (JSGlobalObject.zig:35).
+/// `JSGlobalObject.GregorianDateTime`.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GregorianDateTime {
@@ -1546,9 +1548,9 @@ pub struct GregorianDateTime {
     pub weekday: i32,
 }
 
-/// `JSGlobalObject.validateObject`'s anonymous options struct
-/// (JSGlobalObject.zig:710). Field names match Zig (`nullable`, not
-/// `allow_nullable`) so callers porting from Zig don't have to rename.
+/// `JSGlobalObject.validateObject`'s anonymous options struct.
+/// Field names match the historic spelling (`nullable`, not
+/// `allow_nullable`) so older callers don't have to rename.
 #[derive(Default, Copy, Clone)]
 pub struct ValidateObjectOpts {
     pub allow_array: bool,
@@ -1556,7 +1558,7 @@ pub struct ValidateObjectOpts {
     pub nullable: bool,
 }
 
-/// Mirrors `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig). Defined once
+/// `JSGlobalObject.BunPluginTarget`. Defined once
 /// in `bun_bundler::transpiler` (lowest tier) and re-exported via
 /// `js_global_object` so `crate::BunPluginTarget` and every consumer share one
 /// nominal type.
@@ -1576,8 +1578,8 @@ pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, J
 pub mod call_frame;
 pub use self::call_frame::{ArgumentsSlice, CallFrame};
 
-/// `JSValue.toEnumFromMap(global, "signal", SignalCode, SignalCode.Map)`
-/// (JSValue.zig:1703). Lives here (not in `bun_sys_jsc`) because the orphan
+/// `JSValue.toEnumFromMap(global, "signal", SignalCode, SignalCode.Map)`.
+/// Lives here (not in `bun_sys_jsc`) because the orphan
 /// rule requires either the trait or the type to be local; `FromJsEnum` is.
 impl FromJsEnum for bun_sys::SignalCode {
     fn from_js_value(
@@ -1597,8 +1599,8 @@ impl FromJsEnum for bun_sys::SignalCode {
         s.deref();
         match hit {
             Some(code) => Ok(code),
-            // Zig builds the `'SIGHUP', 'SIGINT' or ...` list at comptime; at
-            // 31 variants the runtime port keeps the message terse.
+            // The full `'SIGHUP', 'SIGINT' or ...` list is 31 variants; keep
+            // the runtime message terse.
             None => Err(global.throw_invalid_arguments(format_args!(
                 "{property_name} must be one of the SignalCode names"
             ))),
@@ -1696,7 +1698,7 @@ pub mod module_loader;
 pub use self::module_loader as ModuleLoader;
 
 pub type ErrorableResolvedSource = Errorable<ResolvedSource>;
-pub type ErrorableZigString = Errorable<bun_core::ZigString>;
+pub type ErrorableUnsafeStringView = Errorable<bun_core::UnsafeStringView>;
 pub type ErrorableJSValue = Errorable<JSValue>;
 pub type ErrorableString = Errorable<bun_core::String>;
 
@@ -1716,11 +1718,10 @@ pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
 pub mod web_worker;
 pub use self::web_worker::WebWorker;
 
-// LAYERING: `jsc.zig:121-124` re-exports `Jest`/`TestScope`/`Expect`/`Snapshot`
+// LAYERING: this crate historically re-exported `Jest`/`TestScope`/`Expect`/`Snapshot`
 // from `../runtime/test_runner/` — a forward-dep on `bun_runtime`, which itself
-// depends on `bun_jsc`. The Zig side gets away with this via lazy compilation;
-// in Rust it is a hard cycle. The Zig spec already marks these
-// `// TODO: move into bun.api`, so the Rust port executes that TODO: callers
+// depends on `bun_jsc`. In the Rust crate graph that is a hard cycle, and these
+// were already marked `// TODO: move into bun.api`, so we executed the TODO: callers
 // reference `bun_runtime::test_runner::{jest, expect, snapshot}` directly
 // instead of routing through `bun_jsc`. No alias is exported here.
 
@@ -1747,15 +1748,15 @@ pub type PlatformEventLoop = bun_uws::Loop;
 pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::c_api as C;
-/// Legacy lower-case alias (Zig: `jsc.c`).
+/// Legacy lower-case alias (`jsc.c`).
 pub use self::c_api as c;
 /// Deprecated: Remove all of these please.
 pub use self::sizes as Sizes;
-/// Deprecated: Use `bun_core::ZigString`
+/// Deprecated: Use `bun_core::UnsafeStringView`
 #[deprecated]
-pub type ZigString = bun_core::ZigString;
-/// `ZigString.Slice` — re-exported under the path dependents expect.
-pub type ZigStringSlice = bun_core::ZigStringSlice;
+pub type UnsafeStringView = bun_core::UnsafeStringView;
+/// `UnsafeStringView.Slice` — re-exported under the path dependents expect.
+pub type UTF8Slice = bun_core::UTF8Slice;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Core webcore data types (Blob/Store/BuildArtifact) and node path types,
@@ -1776,7 +1777,7 @@ pub mod webcore_types;
 // so `bun_runtime` callers don't reach through `node_path`.
 pub use self::node_path::{ThreadSafe, Unprotect};
 
-/// `jsc.WebCore` (jsc.zig:163, deprecated alias) — only the data-shape subset
+/// `jsc.WebCore` (deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the
 /// full API surface.
 #[allow(non_snake_case)]
@@ -1784,7 +1785,7 @@ pub mod WebCore {
     pub use crate::webcore_types::store::{Store, StoreRef};
     pub use crate::webcore_types::{Blob, MAX_SIZE, SizeType};
 }
-/// Lower-case alias + nested `blob` namespace (Zig: `jsc.webcore.blob.Store`).
+/// Lower-case alias + nested `blob` namespace (`jsc.webcore.blob.Store`).
 pub mod webcore {
     pub use crate::webcore_types::{Blob, MAX_SIZE, SizeType};
     pub mod blob {
@@ -1792,12 +1793,12 @@ pub mod webcore {
         pub use crate::webcore_types::{MAX_SIZE, SizeType};
     }
 }
-/// `jsc.Node` (jsc.zig:165, deprecated alias) — `PathLike`/`PathOrFileDescriptor`
+/// `jsc.Node` (deprecated alias) — `PathLike`/`PathOrFileDescriptor`
 /// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
 #[allow(non_snake_case)]
 pub mod Node {
-    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes. The Zig spec
-    /// defines this in `runtime/node/types.zig` as a re-export of the codegen
+    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes. Originally
+    /// a re-export of the codegen
     /// `Error` enum; in the Rust port that enum is [`crate::ErrorCode`], so the
     /// `node::ErrorCode` alias resolves to it directly (LAYERING: avoids a
     /// `bun_jsc → bun_runtime` cycle for `DeferredError` / `node_error_binding`).
@@ -1806,18 +1807,16 @@ pub mod Node {
 }
 pub use self::Node as node;
 
-/// `jsc.zig:170 markBinding(@src())` — opt-in `BUN_DEBUG_JSC=1` trace of every
-/// FFI binding entry. Zig: `log("{s} ({s}:{d})", .{src.fn_name, src.file, src.line})`
-/// where `log = Output.scoped(.JSC, .hidden)`.
+/// `markBinding` — opt-in `BUN_DEBUG_JSC=1` trace of every
+/// FFI binding entry. Logs `({file}:{line})` under the `JSC` scoped logger.
 ///
 /// LAYERING: the `JSC` scoped logger lives in `bun_core::Global::JSC_SCOPE` (it
 /// has no jsc dep) so lower-tier crates can mark bindings without depending on
-/// `bun_jsc`. This fn is the thin wrapper `jsc.zig` exposes for in-crate use.
+/// `bun_jsc`. This fn is the thin wrapper exposed for in-crate use.
 ///
-/// PORT NOTE: `std.builtin.SourceLocation.fn_name` has no Rust equivalent;
-/// `#[track_caller]` only surfaces file/line, so the leading `{fn_name}` is
-/// dropped. Prefer the `mark_binding!()` macro form (re-exported above) which
-/// captures `module_path!()` at the call site.
+/// PORT NOTE: `#[track_caller]` only surfaces file/line, so the function name
+/// is dropped. Prefer the `mark_binding!()` macro form (re-exported above)
+/// which captures `module_path!()` at the call site.
 #[track_caller]
 #[inline]
 pub fn mark_binding() {
@@ -1827,8 +1826,7 @@ pub fn mark_binding() {
     }
 }
 
-/// `jsc.zig:173 markMemberBinding(class, @src())` —
-/// `log("{s}.{s} ({s}:{d})", .{class, src.fn_name, src.file, src.line})`.
+/// `markMemberBinding(class, src)` — logs `{class} ({file}:{line})`.
 #[inline]
 pub fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
     if cfg!(debug_assertions) && bun_core::Global::JSC_SCOPE.is_visible() {
@@ -1841,9 +1839,9 @@ pub fn mark_member_binding(class: &'static str, src: &core::panic::Location<'sta
     }
 }
 
-// LAYERING: `jsc.zig:183` aliases `Subprocess = bun.api.Subprocess`, but that
-// type lives in `bun_runtime::api` (forward-dep). The Rust port drops the
-// alias; callers reference `bun_runtime::api::Subprocess` directly.
+// LAYERING: this crate historically aliased `Subprocess = bun.api.Subprocess`, but that
+// type lives in `bun_runtime::api` (forward-dep). The alias is dropped;
+// callers reference `bun_runtime::api::Subprocess` directly.
 
 /// Generated classes — re-run generate-classes.ts with .rs output.
 pub mod codegen {
@@ -1864,11 +1862,11 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-// `jsc.zig:202` — `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
+// `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
 // (layering: every aliased type is defined above `bun_jsc`).
 
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
-/// Mirrors the `pub usingnamespace` in bun_string_jsc.zig.
+/// Surfaces the JSC-touching helpers from `bun_string_jsc`.
 pub trait StringJsc {
     fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String>;
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
@@ -1904,7 +1902,7 @@ impl StringJsc for bun_core::String {
 
 /// Extension trait providing JSC-aware methods on
 /// `bun_core::SliceWithUnderlyingString` (lower-tier, no JSC dep).
-/// Mirrors the JSC-touching methods on Zig's `SliceWithUnderlyingString`
+/// Surfaces the JSC-touching `SliceWithUnderlyingString` helpers
 /// (`toJS`, `transferToJS`, `reportExtraMemory`); the free-function bodies
 /// live in [`bun_string_jsc`].
 pub trait SliceWithUnderlyingStringJsc {
@@ -1921,7 +1919,7 @@ impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
     fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::slice_with_underlying_string_transfer_to_js(self, global)
     }
-    /// `SliceWithUnderlyingString.reportExtraMemory` (string.zig:1041) —
+    /// `SliceWithUnderlyingString.reportExtraMemory` —
     /// account `utf8`'s backing allocation against the GC heap unless it is
     /// already JSC-owned (WTF-backed) or borrowed.
     fn report_extra_memory(&mut self, vm: &VM) {
@@ -1937,37 +1935,37 @@ impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
     }
 }
 
-/// Extension trait providing JSC-aware methods on `bun_core::ZigString`.
+/// Extension trait providing JSC-aware methods on `bun_core::UnsafeStringView`.
 ///
-/// `bun_core::ZigString` is a lower-tier (no JSC dep) `#[repr(C)]` struct;
+/// `bun_core::UnsafeStringView` is a lower-tier (no JSC dep) `#[repr(C)]` struct;
 /// JSC-side conversions (`toJS`, `toExternalValue`, `external`,
 /// `toJSONObject`, `toErrorInstance`, …) live as inherent methods on the
-/// `bun_jsc::zig_string::ZigString` twin. Higher-tier crates that import
-/// `bun_core::ZigString` (e.g. `bun_runtime::webcore::Blob`) cannot reach those
+/// `bun_jsc::unsafe_string_view::UnsafeStringView` twin. Higher-tier crates that import
+/// `bun_core::UnsafeStringView` (e.g. `bun_runtime::webcore::Blob`) cannot reach those
 /// inherent methods cross-crate, so this trait re-surfaces them on the
 /// canonical type.
-pub trait ZigStringJsc: Sized {
+pub trait UnsafeStringViewJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toSyntaxErrorInstance` (ZigString.zig:814).
+    /// `UnsafeStringView.toSyntaxErrorInstance`.
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toRangeErrorInstance` (ZigString.zig:819).
+    /// `UnsafeStringView.toRangeErrorInstance`.
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toDOMExceptionInstance` (ZigString.zig:809).
+    /// `UnsafeStringView.toDOMExceptionInstance`.
     fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
     -> JSValue;
-    /// `ZigString.toJS` — copies into a GC-managed `JSString` (or hands an
+    /// `UnsafeStringView.toJS` — copies into a GC-managed `JSString` (or hands an
     /// external value if globally allocated).
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toAtomicValue` — interns the string as a `JSC::Identifier`
+    /// `UnsafeStringView.toAtomicValue` — interns the string as a `JSC::Identifier`
     /// (atom). Prefer for short strings that will be compared by identity.
     fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toExternalValue` — transfers ownership of a globally-allocated
+    /// `UnsafeStringView.toExternalValue` — transfers ownership of a globally-allocated
     /// buffer to JSC's external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toJSONObject` — `JSON.parse` over the bytes.
+    /// `UnsafeStringView.toJSONObject` — `JSON.parse` over the bytes.
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.external` — like `to_external_value` but with a caller-supplied
+    /// `UnsafeStringView.external` — like `to_external_value` but with a caller-supplied
     /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
     fn external(
         &self,
@@ -1975,25 +1973,25 @@ pub trait ZigStringJsc: Sized {
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
     ) -> JSValue;
-    /// `ZigString.withEncoding` — returns `self` tagged UTF-8 if its bytes
+    /// `UnsafeStringView.withEncoding` — returns `self` tagged UTF-8 if its bytes
     /// contain non-ASCII (mirrors `setOutputEncoding`'s effect for the value
     /// case).
     fn with_encoding(self) -> Self;
 }
-impl ZigStringJsc for bun_core::ZigString {
+impl UnsafeStringViewJsc for bun_core::UnsafeStringView {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toErrorInstance(self, global)
+        UnsafeStringView__toErrorInstance(self, global)
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toTypeErrorInstance(self, global)
+        UnsafeStringView__toTypeErrorInstance(self, global)
     }
     #[inline]
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toSyntaxErrorInstance(self, global)
+        UnsafeStringView__toSyntaxErrorInstance(self, global)
     }
     #[inline]
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toRangeErrorInstance(self, global)
+        UnsafeStringView__toRangeErrorInstance(self, global)
     }
     #[inline]
     fn to_dom_exception_instance(
@@ -2001,18 +1999,18 @@ impl ZigStringJsc for bun_core::ZigString {
         global: &JSGlobalObject,
         code: DOMExceptionCode,
     ) -> JSValue {
-        ZigString__toDOMExceptionInstance(self, global, code as u8)
+        UnsafeStringView__toDOMExceptionInstance(self, global, code as u8)
     }
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         if self.is_globally_allocated() {
             return self.to_external_value(global);
         }
-        ZigString__toValueGC(self, global)
+        UnsafeStringView__toValueGC(self, global)
     }
     #[inline]
     fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toAtomicValue(self, global)
+        UnsafeStringView__toAtomicValue(self, global)
     }
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
@@ -2034,13 +2032,13 @@ impl ZigStringJsc for bun_core::ZigString {
                 .throw();
             return JSValue::ZERO;
         }
-        // SAFETY: `self` is a valid `&ZigString`; `JSGlobalObject` is an opaque
+        // SAFETY: `self` is a valid `&UnsafeStringView`; `JSGlobalObject` is an opaque
         // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        unsafe { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
+        unsafe { cpp::UnsafeStringView__toExternalValue(self, global.as_ptr()) }
     }
     #[inline]
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toJSONObject(self, global)
+        UnsafeStringView__toJSONObject(self, global)
     }
     #[inline]
     fn external(
@@ -2070,7 +2068,7 @@ impl ZigStringJsc for bun_core::ZigString {
             return JSValue::ZERO;
         }
         // Ownership of the buffer + `ctx` transfers to JSC's finalizer.
-        ZigString__external(self, global, ctx, callback)
+        UnsafeStringView__external(self, global, ctx, callback)
     }
     #[inline]
     fn with_encoding(mut self) -> Self {
@@ -2081,22 +2079,26 @@ impl ZigStringJsc for bun_core::ZigString {
     }
 }
 
-/// Free-function form of `ZigString.toExternalU16` for callers that import
-/// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
+/// Free-function form of `UnsafeStringView.toExternalU16` for callers that import
+/// `bun_core::UnsafeStringView`. Forwards to the canonical impl in [`unsafe_string_view`].
 #[inline]
-pub fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
-    crate::zig_string::to_external_u16(ptr, len, global)
+pub fn unsafe_string_view_to_external_u16(
+    ptr: *const u16,
+    len: usize,
+    global: &JSGlobalObject,
+) -> JSValue {
+    crate::unsafe_string_view::to_external_u16(ptr, len, global)
 }
 
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
-/// Mirrors `Error.toJS` / `Error.throw` in src/sys/Error.zig.
+/// Surfaces `Error.toJS` / `Error.throw`.
 pub trait SysErrorJsc {
     fn to_system_error(&self) -> SystemError;
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
     fn throw(&self, global: &JSGlobalObject) -> JsError;
 }
 impl SysErrorJsc for bun_sys::Error {
-    /// `bun.sys.Error.toSystemError()` (src/sys/Error.zig:toSystemError).
+    /// `bun.sys.Error.toSystemError()`.
     fn to_system_error(&self) -> SystemError {
         SystemError::from(bun_sys::Error::to_system_error(self))
     }
@@ -2109,12 +2111,12 @@ impl SysErrorJsc for bun_sys::Error {
 }
 
 /// Extension trait providing JSC-aware methods on `bun_ast::Log`.
-/// Mirrors `Log.toJS` / `Log.toJSArray` in src/logger.zig.
+/// Surfaces `Log.toJS` / `Log.toJSArray`.
 pub trait LogJsc {
     fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue>;
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
-/// Spec `msgToJS` (src/logger_jsc/logger_jsc.zig:23) — wrap a single `Msg` in
+/// `msgToJS` — wrap a single `Msg` in
 /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
 fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     match msg.metadata {
@@ -2135,7 +2137,7 @@ impl LogJsc for bun_ast::Log {
                 for msg in &msgs[0..count] {
                     errors_stack.push(msg_to_js(msg, global)?);
                 }
-                let out = bun_core::ZigString::init(message.as_bytes());
+                let out = bun_core::UnsafeStringView::init(message.as_bytes());
                 global.create_aggregate_error(&errors_stack, &out)
             }
         }
@@ -2156,7 +2158,7 @@ impl<V: Copy> ComptimeStringMapExt<V> for phf::Map<&'static [u8], V> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
+// B-2 Track A — BuildMessage / ResolveMessage / BunException::Holder / JsClass.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "BuildMessage.rs"]
 pub mod build_message;
@@ -2166,7 +2168,7 @@ pub use self::build_message::BuildMessage;
 pub mod resolve_message;
 pub use self::resolve_message::ResolveMessage;
 
-pub use self::zig_exception::ZigException;
+pub use self::bun_exception::BunException;
 
 /// Trait implemented by `#[bun_jsc::JsClass]`-derived types. The proc-macro
 /// emits `to_js`/`from_js`/`from_js_direct` per type; this is the trait shape.
@@ -2190,7 +2192,7 @@ pub trait JsClass: Sized {
 
     /// Dynamic heap footprint reported to JSC's GC via
     /// `reportExtraMemoryAllocated` / `reportExtraMemoryVisited`
-    /// (generate-classes.ts:1656-1660, 1913-1916). Mirrors the Zig
+    /// (generate-classes.ts:1656-1660, 1913-1916). Implements the
     /// `${typeName}.estimatedSize(thisValue)` contract: types that own large
     /// out-of-line buffers (Blob/Request/Response bodies) override this so the
     /// collector sees real memory pressure, not just `size_of::<Self>()`.
@@ -2209,9 +2211,7 @@ pub trait JsClass: Sized {
 /// resolution on `${T}::finalize` picks an *inherent* `fn finalize(self:
 /// Box<Self>)` first when one exists (refcounted / leak-on-pending types),
 /// otherwise falls through to this trait's default: drop the `Box`, running
-/// `T`'s `Drop` glue and freeing the allocation. Zig has no `Drop`, so every
-/// `*.zig` sibling must spell `bun.destroy(this)` per type; in Rust the
-/// trivial body collapses to this one default.
+/// `T`'s `Drop` glue and freeing the allocation.
 ///
 /// **Override by defining an inherent `pub fn finalize(self: Box<Self>)` on
 /// the concrete type** — do *not* `impl JsFinalize for MyType`; the blanket
@@ -2261,7 +2261,6 @@ pub fn opaque_wrap<Context, F>() -> OpaqueCallback
 where
     F: FnTyped<Context>,
 {
-    // TODO(port): Zig used `comptime Function: fn(*Context) void` as a value param.
     extern "C" fn callback<Context, F: FnTyped<Context>>(ctx: *mut c_void) {
         // SAFETY: caller guarantees ctx is a valid *mut Context.
         let context: &mut Context = unsafe { bun_ptr::callback_ctx::<Context>(ctx) };
@@ -2275,21 +2274,18 @@ pub trait FnTyped<Context> {
     fn call(this: &mut Context);
 }
 
-/// `jsc.zig:239` — `Error = @import("ErrorCode").Error`. The codegen module
-/// (`build/*/codegen/ErrorCode.zig`) defines `pub const Error = enum(u16)`;
-/// the Rust port of that enum is [`ErrorCode`] (`src/jsc/ErrorCode.rs`), so
-/// this alias resolves to the same type under both names.
+/// Alias for the codegen `ErrorCode` enum, surfaced at the crate root so
+/// `jsc::Error` resolves to the same type under both names.
 pub type Error = ErrorCode;
 
-/// Maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
+/// Maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (52-bit).
 pub const INIT_TIMESTAMP: JSTimeType = (1u64 << 52) - 1;
-// TODO(port): Zig u52 — Rust has no u52. Using u64.
+// Logically a 52-bit value; Rust has no u52, so represent as u64.
 pub type JSTimeType = u64;
 
-/// `jsc.zig:245 toJSTime(sec, nsec)`. Zig: `@intCast` (safety-checked sign
-/// cast) into `u64`, then `@truncate(u52)`. Compute in `i128` first so the
-/// `sec * 1000` widening cannot overflow `isize`, then cast to `u64` (matching
-/// `@intCast` for non-negative inputs) before masking to 52 bits (`@truncate`).
+/// `toJSTime(sec, nsec)`. Compute in `i128` first so the
+/// `sec * 1000` widening cannot overflow `isize`, then cast to `u64`
+/// (non-negative inputs) before masking to 52 bits.
 pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
     const MS_PER_S: i128 = bun_core::time::MS_PER_S as i128;
     let millisec = (nsec as i128) / bun_core::time::NS_PER_MS as i128;
@@ -2319,10 +2315,8 @@ pub(crate) use bun_ast::math;
 #[path = "generated.rs"]
 pub mod generated;
 
-/// `bun.gen` — bindgen dispatch shims (`src/jsc/bindings/GeneratedBindings.zig`).
+/// `bun.gen` — bindgen dispatch shims (`src/jsc/bindings/GeneratedBindings.rs`).
 /// Hand-ported per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
 /// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
 #[path = "bindings/GeneratedBindings.rs"]
 pub mod r#gen;
-
-// ported from: src/jsc/jsc.zig

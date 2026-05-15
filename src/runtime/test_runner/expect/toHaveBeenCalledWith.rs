@@ -103,9 +103,8 @@ pub fn to_have_been_called_with(
     }
 
     // If there are multiple calls, list them all to help debugging.
-    // PORT NOTE: reshaped for borrowck — Zig shares one `&formatter` between to_fmt and
-    // list_formatter; in Rust the AllCallsWithArgsFormatter holds an exclusive borrow, so
-    // we allocate a second ConsoleObject formatter for the list.
+    // PORT NOTE: reshaped for borrowck — AllCallsWithArgsFormatter holds an exclusive
+    // borrow of the formatter, so we allocate a second ConsoleObject formatter for the list.
     let mut list_fmt = super::make_formatter(global);
     let list_formatter = mock::AllCallsWithArgsFormatter {
         global_this: global,
@@ -113,10 +112,10 @@ pub fn to_have_been_called_with(
         formatter: core::cell::RefCell::new(&mut list_fmt),
     };
 
-    // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
-    // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
+    // TODO(port): Output.prettyFmt color dispatch — branch on
+    // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags.
     // Re-expand to `if b { throw::<true>() } else { throw::<false>() }` once `bun_core::pretty_fmt!` exists.
-    // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+    // PERF(port): const-bool dispatch — profile in Phase B
     this.throw(
         global,
         signature,
@@ -128,5 +127,3 @@ pub fn to_have_been_called_with(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledWith.zig

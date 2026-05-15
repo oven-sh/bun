@@ -1,6 +1,4 @@
 //! CSS property definitions.
-//!
-//! Ported from `src/css/properties/properties.zig`.
 
 #![allow(unused_imports)]
 #![warn(unused_must_use)]
@@ -26,10 +24,10 @@ use crate as css;
 /// un-gate, these no-op stubs keep `DeclarationHandler` compiling against
 /// the now-real `Property` enum.
 ///
-/// PORT NOTE: Zig handlers are plain structs with `handleProperty(*Self,
-/// *const Property, *DeclarationList, *PropertyHandlerContext) bool` +
-/// `finalize(*Self, *DeclarationList, *PropertyHandlerContext) void`. Same
-/// shape here; lifetimes on `DeclarationList<'bump>` / context are erased
+/// PORT NOTE: handlers are plain structs with
+/// `handle_property(&mut self, &Property, &mut DeclarationList, &mut PropertyHandlerContext) -> bool`
+/// + `finalize(&mut self, &mut DeclarationList, &mut PropertyHandlerContext)`.
+/// Lifetimes on `DeclarationList<'bump>` / context are erased
 /// behind anonymous lifetimes since the stub bodies touch neither.
 macro_rules! handler_stub {
     ($($Handler:ident),+ $(,)?) => {$(
@@ -57,9 +55,8 @@ macro_rules! handler_stub {
 }
 
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
-// Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
-// Zig's `css.DefineRectShorthand` / `css.DefineSizeShorthand` comptime mixins
-// (src/css/css_parser.zig:502 / :532).
+// Shared by `border.rs` and `margin_padding.rs`. These replace the original
+// reflection-driven `DefineRectShorthand` / `DefineSizeShorthand` mixins.
 //
 // `impl_rect_shorthand!` / `impl_size_shorthand!` stamp out the inherent
 // `parse`/`to_css` pair (and the `generic::{Parse,ToCss}` forwarders) for a
@@ -138,7 +135,7 @@ macro_rules! define_rect_shorthand {
         impl $crate::properties::margin_padding::RectShorthand for $name {
             type Value = $inner;
         }
-        // Zig `css.DefineRectShorthand(@This(), V)` — parse/to_css via `Rect<V>`.
+        // Rect shorthand — parse/to_css via `Rect<V>`.
         impl_rect_shorthand!($name, $inner);
     };
 }
@@ -171,7 +168,6 @@ macro_rules! impl_size_shorthand {
 }
 
 // ─── Submodule declarations ────────────────────────────────────────────────
-// (Zig: `pub const X = @import("./X.zig");`)
 //
 // B-2 round 8: the leaf property modules below are un-gated — their value
 // *types* (and handler ZSTs) compile for real and replace the former
@@ -212,7 +208,7 @@ pub mod font;
 pub mod grid;
 // `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
 // live in `list.rs`. PredefinedCounterStyle / SymbolsType / ListStylePosition /
-// ListStyle / MarkerSide are uninhabited (Zig source is `@compileError`).
+// ListStyle / MarkerSide are uninhabited (intentionally unimplemented upstream).
 pub mod list;
 pub mod margin_padding;
 pub mod masking;
@@ -253,8 +249,7 @@ pub use self::custom::CustomPropertyName;
 pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
-// Zig: `css.DefineEnumProperty(@This())` provides eql/hash/parse/toCss/deepClone via
-// comptime reflection over @tagName. The Rust derive emits `EnumProperty` +
+// `DefineEnumProperty` derive emits `EnumProperty` +
 // `From<Self> for &'static str` + inherent `parse`/`to_css`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum CSSWideKeyword {
@@ -453,10 +448,7 @@ mod generic_registrations {
 pub(crate) use generic_registrations::GenericBorderImpl;
 
 // ─── Dead code (not ported) ────────────────────────────────────────────────
-// The original Zig file contains ~1800 lines of commented-out code (lines 60–1876)
-// implementing the old `DefineProperties(...)` comptime-reflection approach that
-// predates `properties_generated.zig`. It is dead reference material and is
-// intentionally omitted here. See `src/css/properties/properties.zig` for the
-// historical block; the live definitions come from `properties_generated`.
-
-// ported from: src/css/properties/properties.zig
+// The original implementation contained ~1800 lines of commented-out code
+// implementing the old reflection-driven `DefineProperties(...)` approach that
+// predates `properties_generated`. It is dead reference material and is
+// intentionally omitted here; the live definitions come from `properties_generated`.

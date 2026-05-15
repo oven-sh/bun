@@ -20,9 +20,8 @@ pub struct SystemError {
     pub dest: String,
 }
 
-// Zig `extern struct` field defaults: `errno=0, code/path/syscall/hostname/dest=.empty,
-// fd=c_int::MIN`. Provide `Default` so call sites can `..Default::default()`-init the
-// way Zig partial-inits.
+// Field defaults: `errno=0, code/path/syscall/hostname/dest=.empty, fd=c_int::MIN`.
+// Provide `Default` so call sites can `..Default::default()`-init partially.
 impl Default for SystemError {
     fn default() -> Self {
         Self {
@@ -39,9 +38,9 @@ impl Default for SystemError {
 }
 
 /// Reshape the T1 `bun_sys::SystemError` (non-`#[repr(C)]`, different field
-/// order) into the `#[repr(C)]` extern layout C++ reads. In Zig there is one
-/// `jsc.SystemError`; the Rust port split data (T1) from the JSC bridge (T6) —
-/// this `From` is the canonical layering seam (see PORTING.md §_jsc bridge).
+/// order) into the `#[repr(C)]` extern layout C++ reads. The data type (T1) is
+/// split from the JSC bridge (T6) — this `From` is the canonical layering seam
+/// (see PORTING.md §_jsc bridge).
 impl From<bun_sys::SystemError> for SystemError {
     fn from(e: bun_sys::SystemError) -> Self {
         Self {
@@ -97,23 +96,22 @@ impl SystemError {
         self.dest.ref_();
     }
 
-    /// Bitwise-copy + bump every `bun_core::String` ref. Mirrors Zig
-    /// `var v = this.*; v.ref();` (used by `Body.ValueError.dupe`).
-    /// `bun_core::String` has no `Clone` impl (intrusive WTF refcount), so
-    /// `#[derive(Clone)]` is unavailable; this is the manual equivalent.
+    /// Bitwise-copy + bump every `bun_core::String` ref (used by
+    /// `Body.ValueError.dupe`). `bun_core::String` has no `Clone` impl
+    /// (intrusive WTF refcount), so `#[derive(Clone)]` is unavailable; this
+    /// is the manual equivalent.
     pub fn dupe(&self) -> SystemError {
         // SAFETY: `SystemError` is `#[repr(C)]` and every field is either `c_int`
         // (trivially copyable) or `bun_core::String` — a `#[repr(C)]` smart-ptr
         // whose bitwise copy is sound provided we immediately bump each ref
-        // (preventing a double-free on drop). This is exactly the Zig spec
-        // `var v = this.*; v.ref();`.
+        // (preventing a double-free on drop).
         let mut v: SystemError = unsafe { core::ptr::read(self) };
         v.ref_();
         v
     }
 
     pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        // Zig: defer this.deref();
+        // Always deref after building the JS error instance.
         let result = SystemError__toErrorInstance(self, global);
         self.deref();
         result
@@ -153,7 +151,7 @@ impl SystemError {
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
     pub fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue {
-        // Zig: defer this.deref();
+        // Always deref after building the JS error instance.
         let result = SystemError__toErrorInstanceWithInfoObject(self, global);
         self.deref();
         result
@@ -166,7 +164,7 @@ impl SystemError {
 /// LAYERING: lives here (not `bun_runtime::socket::uws_jsc`) so both
 /// `bun_runtime` and `bun_sql_jsc` import the single canonical body — both
 /// crates already depend on `bun_jsc` + `bun_uws`, and the body touches
-/// nothing higher-tier. Spec: `src/runtime/socket/uws_jsc.zig`.
+/// nothing higher-tier.
 pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
@@ -224,5 +222,3 @@ impl fmt::Display for SystemError {
         }
     }
 }
-
-// ported from: src/jsc/SystemError.zig

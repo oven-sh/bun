@@ -1,23 +1,20 @@
 //! Forward-decl shell task types referenced by `runtime::dispatch::run_task`.
 //!
-//! The Zig spec (`src/jsc/Task.zig`) names ~16 shell task structs in its
-//! 96-arm switch. The Rust shell port collapsed several into the NodeId-arena
-//! state machine (`interpreter.rs`) and gated the rest behind
-//! `interpreter_body_gated.rs`. The high-tier dispatcher must still cast the
-//! erased `Task.ptr` to a concrete type and call the per-type entry point, so
-//! the shapes are declared here. Bodies that already exist elsewhere re-export
-//! through this module; the rest carry the spec-faithful body inline (mostly
-//! `runFromMainThread()` → resume the parent state via NodeId).
-//!
-//! Spec: `src/shell/interpreter.zig` + per-builtin `src/shell/interpreter/*.zig`.
+//! The task dispatcher names ~16 shell task structs in its 96-arm switch.
+//! The shell collapsed several into the NodeId-arena state machine
+//! (`interpreter.rs`) and gated the rest behind `interpreter_body_gated.rs`.
+//! The high-tier dispatcher must still cast the erased `Task.ptr` to a
+//! concrete type and call the per-type entry point, so the shapes are declared
+//! here. Bodies that already exist elsewhere re-export through this module;
+//! the rest carry the body inline (mostly `runFromMainThread()` → resume the
+//! parent state via NodeId).
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
-/// bounce back to the main thread. In Zig the `Async` state struct *is* the
-/// task; in the Rust NodeId-arena port the state lives in `interp.nodes`, so
-/// the enqueued payload is `(interp, node)`.
+/// bounce back to the main thread. In the NodeId-arena design the state
+/// lives in `interp.nodes`, so the enqueued payload is `(interp, node)`.
 #[repr(C)]
 pub struct ShellAsyncTask {
     pub interp: *mut Interpreter,
@@ -36,8 +33,6 @@ pub struct ShellAsyncSubprocessDone {
 }
 
 impl ShellAsyncSubprocessDone {
-    /// Spec: interpreter.zig `ShellAsyncSubprocessDone.runFromMainThread`.
-    ///
     /// Reached only via `runtime::dispatch::run_task` for
     /// `task_tag::ShellAsyncSubprocessDone`, which always passes the
     /// `heap::alloc` payload enqueued by `ShellSubprocess::on_process_exit`.
@@ -94,8 +89,8 @@ impl AsyncDeinitReader {
     }
 }
 
-/// Spec: `Interpreter.CondExpr.ShellCondExprStatTask`. Wraps an inner
-/// [`ShellTask`] (the Zig spec dispatches via `.task.runFromMainThread()`).
+/// `Interpreter.CondExpr.ShellCondExprStatTask`. Wraps an inner
+/// [`ShellTask`] (dispatched via `.task.runFromMainThread()`).
 #[repr(C)]
 pub struct ShellCondExprStatTask {
     pub task: CondExprStatInner,
@@ -164,7 +159,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
 }
 
 impl ShellGlobTask {
-    /// Spec: Expansion.zig `ShellGlobTask.createOnMainThread` + `schedule`.
+    /// `ShellGlobTask.createOnMainThread` + `schedule`.
     pub fn create_and_schedule(
         interp: &Interpreter,
         expansion: NodeId,
@@ -184,7 +179,6 @@ impl ShellGlobTask {
         unsafe { ShellTask::schedule::<ShellGlobTask>(this) };
     }
 
-    /// Spec: Expansion.zig `ShellGlobTask.walkImpl`.
     fn walk_impl(
         walker: &mut bun_glob::BunGlobWalkerZ,
         result: &mut Vec<Vec<u8>>,
@@ -218,5 +212,3 @@ impl ShellGlobTask {
 /// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
 /// for the verbose-write bounce-back.
 pub use crate::shell::builtins::rm::DirTask as ShellRmDirTask;
-
-// ported from: src/shell/interpreter.zig

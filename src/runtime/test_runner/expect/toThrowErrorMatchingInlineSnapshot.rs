@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 
 use super::Expect;
 
@@ -10,8 +10,8 @@ pub fn to_throw_error_matching_inline_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — guard owns the &mut and Derefs to it.
+    // PORT NOTE: reshaped for borrowck — guard owns the &mut, Derefs to it, and runs
+    // `post_match` on every exit path.
     let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
@@ -31,13 +31,13 @@ pub fn to_throw_error_matching_inline_snapshot(
     }
 
     let mut has_expected = false;
-    let mut expected_string: ZigString = ZigString::EMPTY;
+    let mut expected_string: UnsafeStringView = UnsafeStringView::EMPTY;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
                 has_expected = true;
-                arguments[0].to_zig_string(&mut expected_string, global)?;
+                arguments[0].to_unsafe_string_view(&mut expected_string, global)?;
             } else {
                 return this.throw(
                     global,
@@ -55,8 +55,7 @@ pub fn to_throw_error_matching_inline_snapshot(
         }
     }
 
-    // Zig: `expected_string.toSlice(default_allocator)` + `defer expected.deinit()`.
-    // Allocator param dropped; the returned slice owns its buffer and frees on Drop.
+    // The returned slice owns its buffer and frees on Drop.
     let expected = expected_string.to_slice();
 
     let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
@@ -88,5 +87,3 @@ pub fn to_throw_error_matching_inline_snapshot(
         "toThrowErrorMatchingInlineSnapshot",
     )
 }
-
-// ported from: src/test_runner/expect/toThrowErrorMatchingInlineSnapshot.zig

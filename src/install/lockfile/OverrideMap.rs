@@ -14,15 +14,15 @@ use super::{StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
-// is always UTF-8, so `as_utf8_string_literal()` is the allocator-free port of
-// Zig's `asString(lockfile.allocator)`.
+// is always UTF-8, so `as_utf8_string_literal()` is the allocator-free
+// equivalent of `asString(lockfile.allocator)`.
 use crate::bun_json::{Expr, ExprData};
 
 declare_scope!(OverrideMap, visible);
 
 #[derive(Default)]
 pub struct OverrideMap {
-    // Zig used ArrayIdentityContext.U64 (identity hash on u64 key); the Rust
+    // The original used ArrayIdentityContext.U64 (identity hash on u64 key); the Rust
     // `ArrayHashMap` defaults to identity hashing for integer keys.
     pub map: ArrayHashMap<PackageNameHash, Dependency>,
 }
@@ -42,7 +42,7 @@ impl OverrideMap {
         self.map.get(&name_hash).map(|dep| dep.version.clone())
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig took `*const Lockfile` but every
+    // PORT NOTE: reshaped for borrowck — the original took `*const Lockfile` but every
     // caller already holds `&mut self` on `lockfile.overrides`, so accept just
     // the string buffer (the only field `sort` reads).
     pub fn sort(&mut self, string_bytes: &[u8]) {
@@ -54,7 +54,7 @@ impl OverrideMap {
         });
     }
 
-    /// PORT NOTE: Zig took `*const Lockfile` but only ever read
+    /// PORT NOTE: the original took `*const Lockfile` but only ever read
     /// `lockfile.buffers.string_bytes` — accept the slice directly so callers
     /// can split-borrow the lockfile alongside a live `StringBuilder`.
     pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
@@ -63,7 +63,7 @@ impl OverrideMap {
         }
     }
 
-    /// PORT NOTE: Zig also passed `*Lockfile new`, but it was unused —
+    /// PORT NOTE: the original also passed `*Lockfile new`, but it was unused —
     /// the new-side buffer lives inside `new_builder`. Dropped to avoid the alias.
     /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
@@ -88,7 +88,7 @@ impl OverrideMap {
 
     // the rest of this struct is expression parsing code:
 
-    // PORT NOTE: Zig passed `lockfile: *Lockfile` solely for `lockfile.allocator`
+    // PORT NOTE: the original passed `lockfile: *Lockfile` solely for `lockfile.allocator`
     // (string transcode); JSON strings are already UTF-8 here, so the parameter
     // is dropped — also avoids the `&mut lockfile.overrides` / `&mut lockfile`
     // alias at the only call site.
@@ -426,7 +426,7 @@ impl OverrideMap {
 // Only used in warning-message formatting, so runtime &'static str is fine.
 pub fn parse_override_value(
     field: &'static str,
-    // PORT NOTE: Zig took `*Lockfile` but only read `buffers.dependencies` and
+    // PORT NOTE: the original took `*Lockfile` but only read `buffers.dependencies` and
     // `buffers.string_bytes`. Callers hold a live `StringBuilder` (which owns
     // `&mut string_bytes`), so accept the dependency slice directly and read
     // string-bytes through `builder.string_bytes`.
@@ -511,5 +511,3 @@ pub fn parse_override_value(
         behavior: Behavior::default(),
     }))
 }
-
-// ported from: src/install/lockfile/OverrideMap.zig

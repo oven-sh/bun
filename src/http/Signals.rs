@@ -48,12 +48,12 @@ impl Signals {
     // PERF(port): was `comptime field: std.meta.FieldEnum(Signals)` + `@field` reflection —
     // demoted to a runtime match; profile in Phase B.
     pub fn get(self, field: Field) -> bool {
-        // Zig .monotonic == LLVM monotonic == Rust Relaxed
+        // LLVM monotonic == Rust Relaxed
         self.slot(field).is_some_and(|a| a.load(Ordering::Relaxed))
     }
 
     /// Store `value` into the named signal slot if present. No-op when the
-    /// slot is `None` (matches Zig `if (this.signals.<field>) |p| p.store(..)`).
+    /// slot is `None`.
     pub fn store(self, field: Field, value: bool, ordering: Ordering) {
         if let Some(a) = self.slot(field) {
             a.store(value, ordering);
@@ -102,5 +102,3 @@ pub enum Field {
     CertErrors,
     Upgraded,
 }
-
-// ported from: src/http/Signals.zig

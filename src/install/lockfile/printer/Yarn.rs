@@ -14,8 +14,9 @@ use bun_install::dependency::{self, Behavior, VersionExt as _};
 use bun_install::lockfile::package;
 // PORT NOTE: `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
-// column accessors are an extension trait (Zig's `slice.items(.field)` is
-// comptime-dispatched, Rust models it as a hand-expanded trait per Package.rs).
+// column accessors are an extension trait (`slice.items(.field)` is
+// comptime-dispatched in the original, Rust models it as a hand-expanded trait
+// per Package.rs).
 use crate::integrity;
 use crate::lockfile_real::Printer;
 
@@ -55,12 +56,11 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
 
-    // Zig: std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80)
     // PORT NOTE: reshaped for borrowck — store (start, len) into
     // `all_requested_versions_buf` instead of overlapping &mut [Version] slices.
     let mut requested_versions: HashMap<PackageID, (usize, usize)> = HashMap::default();
 
-    // PERF(port): Zig was raw `allocator.alloc(Dependency.Version, resolutions_buffer.len)` of
+    // PERF(port): originally a raw allocation of
     // uninit memory + cursor slicing. We push into a pre-reserved Vec instead — set_len would
     // drop uninit tail elements (and index-assign would drop uninit old values). Profile in Phase B.
     let mut all_requested_versions_buf: Vec<dependency::Version> =
@@ -256,5 +256,3 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
     Ok(())
 }
-
-// ported from: src/install/lockfile/printer/Yarn.zig

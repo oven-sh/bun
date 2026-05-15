@@ -22,21 +22,19 @@ pub struct Cat {
 pub enum CatState {
     #[default]
     Idle,
-    /// Spec cat.zig `.exec_stdin`.
     ExecStdin {
         in_done: bool,
         chunks_queued: usize,
         chunks_done: usize,
         errno: ExitCode,
     },
-    /// Spec cat.zig `.exec_filepath_args`.
     ExecFilepathArgs {
         /// Index into argv where filepath args start.
         args_start: usize,
         /// Current index into the filepath args.
         idx: usize,
-        /// Per-file reader (Spec: `reader: ?*IOReader`). Dropping the `Arc`
-        /// IS the Zig `r.deref()`.
+        /// Per-file reader. Dropping the `Arc` releases the reader's
+        /// refcount.
         reader: Option<Arc<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
@@ -96,7 +94,6 @@ impl Cat {
         Self::next(interp, cmd)
     }
 
-    /// Spec: cat.zig `writeFailingError`.
     fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
@@ -114,7 +111,6 @@ impl Cat {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    /// Spec: cat.zig `next`.
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // PORT NOTE: reshaped for borrowck — read scalars, drop borrow, act.
         enum Branch {
@@ -244,7 +240,6 @@ impl Cat {
         }
     }
 
-    /// Spec: cat.zig `onIOWriterChunk`.
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -261,7 +256,7 @@ impl Cat {
             };
             // Writing to stdout errored: cancel everything and finish.
             // PORT NOTE: reshaped for borrowck — pull the reader `Arc` out of
-            // state before calling `remove_reader`, then drop it (= Zig deref).
+            // state before calling `remove_reader`, then drop it to release.
             match &mut Self::state_mut(interp, cmd).state {
                 CatState::ExecStdin {
                     in_done,
@@ -330,7 +325,6 @@ impl Cat {
         }
     }
 
-    /// Spec: cat.zig `onIOReaderChunk`.
     pub fn on_io_reader_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -356,7 +350,6 @@ impl Cat {
         Yield::done()
     }
 
-    /// Spec: cat.zig `onIOReaderDone`.
     pub fn on_io_reader_done(
         interp: &Interpreter,
         cmd: NodeId,
@@ -473,5 +466,3 @@ impl FlagParser for Opts {
         }
     }
 }
-
-// ported from: src/shell/builtin/cat.zig

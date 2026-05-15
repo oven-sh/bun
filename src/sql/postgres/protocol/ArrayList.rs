@@ -2,7 +2,7 @@ use super::new_writer::{NewWriter, WriterContext};
 use crate::postgres::AnyPostgresError;
 
 pub struct ArrayList<'a> {
-    // TODO(port): lifetime — Zig `*std.array_list.Managed(u8)`; classified as BORROW_PARAM (mutable borrow of caller's buffer)
+    // TODO(port): lifetime — classified as BORROW_PARAM (mutable borrow of caller's buffer)
     pub array: &'a mut Vec<u8>,
 }
 
@@ -22,9 +22,9 @@ impl<'a> ArrayList<'a> {
     }
 }
 
-// PORT NOTE: Zig methods took `@This()` by value (a `*ArrayList(u8)` is Copy).
-// `WriterContext` requires `Copy`, so the context wraps a `BackRef` to the
-// caller's `Vec<u8>`; the `'a` borrow is the safety invariant (Vec outlives ctx).
+// PORT NOTE: `WriterContext` requires `Copy`, so the context wraps a `BackRef`
+// to the caller's `Vec<u8>`; the `'a` borrow is the safety invariant (Vec
+// outlives ctx).
 #[derive(Clone, Copy)]
 pub struct ArrayListCtx<'a> {
     array: bun_ptr::BackRef<Vec<u8>>,
@@ -68,5 +68,3 @@ impl<'a> WriterContext for ArrayListCtx<'a> {
 }
 
 pub type Writer<'a> = NewWriter<ArrayListCtx<'a>>;
-
-// ported from: src/sql/postgres/protocol/ArrayList.zig

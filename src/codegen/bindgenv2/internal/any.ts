@@ -7,7 +7,7 @@ export const RawAny = new (class extends Type {
   get bindgenType() {
     return "bindgen.BindgenRawAny";
   }
-  zigType(style?: CodeStyle) {
+  bunType(style?: CodeStyle) {
     return "bun.bun_js.jsc.JSValue";
   }
   toCpp(value: any): string {
@@ -22,11 +22,11 @@ export const StrongAny = new (class extends Type {
   get bindgenType() {
     return "bindgen.BindgenStrongAny";
   }
-  zigType(style?: CodeStyle) {
+  bunType(style?: CodeStyle) {
     return "bun.bun_js.jsc.Strong";
   }
-  optionalZigType(style?: CodeStyle) {
-    return this.zigType(style) + ".Optional";
+  optionalBunType(style?: CodeStyle) {
+    return this.bunType(style) + ".Optional";
   }
   toCpp(value: any): string {
     throw RangeError("`StrongAny` cannot have a default value");

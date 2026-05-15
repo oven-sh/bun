@@ -1247,13 +1247,13 @@ test.skipIf(!isDebug && !isASAN)(
   120_000,
 );
 
-// Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`
+// Regression: src/js_printer/renamer.rs `assignNamesRecursiveWithNumberScope`
 // walks a linear single-child scope chain in a `while(true)` loop, allocating a
 // fresh `NumberScope` from `number_scope_pool` for every level that declares
 // symbols. The trailing `defer if (s != initial_scope) { s.deinit; pool.put(s) }`
 // only returns the FINAL `s` to the pool — every intermediate NumberScope (and its
 // `name_counts` map) is abandoned. In Zig this is harmless: `name_counts` is backed
-// by the per-chunk worker arena (renamer.zig:533 `number_scope_pool = .init(arena)`,
+// by the per-chunk worker arena (renamer.rs `number_scope_pool`,
 // findUnusedName puts via `r.allocator` = worker MimallocArena) and is bulk-freed
 // when the build completes. A port that drops the arena and backs `name_counts`
 // with the global heap leaks one HashMap per intermediate nested scope, per build,

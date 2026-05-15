@@ -66,11 +66,9 @@ it("regex literal should work with non-latin1", () => {
 
 In the future, a bot will automatically close or re-open issues when a regression is detected or resolved.
 
-## Zig tests
+## Rust unit tests
 
-These tests live in various `.zig` files throughout Bun's codebase, leveraging Zig's builtin `test` keyword.
-
-Currently, they're not run automatically nor is there a simple way to run all of them. We will make this better soon.
+Native unit tests live in `#[cfg(test)]` modules inside the Rust source under `src/`. Run them with `cargo test` (or `cargo test -p <crate>` for a single crate).
 
 ## TypeScript
 

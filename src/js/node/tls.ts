@@ -2,7 +2,7 @@
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
-const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
+const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateString } = require("internal/validators");
@@ -396,11 +396,11 @@ function checkServerIdentity(hostname, cert) {
 }
 
 // Native SSL_CTX wrapper. `intern()` is WeakGCMap-memoised by config digest
-// (the native `SSLContextCache` underneath is shared with every Zig consumer
+// (the native `SSLContextCache` underneath is shared with every native consumer
 // — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
 // native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
 // that used to live in this file.
-const NativeSecureContext = $zig("SecureContext.zig", "js.getConstructor");
+const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
 
 // Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
 // boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
@@ -664,7 +664,7 @@ TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(abbreviated
 };
 
 TLSSocket.prototype.getCertificate = function getCertificate() {
-  // need to implement certificate on socket.zig
+  // need to implement certificate on socket.rs
   const cert = this._handle?.getCertificate?.();
   if (cert) {
     // It's not a peer cert, but the formatting is identical.
@@ -735,7 +735,7 @@ function Server(options, secureConnectionListener): void {
     }
     if (this._handle) {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
-      // the Zig side detects it via SecureContext.fromJS and up_refs.
+      // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(this._handle, hostname, context.context);
     } else {
       if (!contexts) contexts = new Map();
@@ -951,7 +951,7 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
-const getUseSystemCA = $newZigFunction("bun.zig", "getUseSystemCA", 0);
+const getUseSystemCA = $newRustFunction("bun.rs", "getUseSystemCA", 0);
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {

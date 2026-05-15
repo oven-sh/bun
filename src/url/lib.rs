@@ -37,7 +37,7 @@ pub mod route_param {
 pub use route_param::List as ParamsList;
 
 // ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
-// Ground truth: src/jsc/URL.zig. The JS-value entry points (`hrefFromJS`, `fromJS`)
+// The JS-value entry points (`hrefFromJS`, `fromJS`)
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
@@ -81,10 +81,10 @@ pub mod whatwg {
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
 
-    // PORT NOTE: Zig takes `bun.String` by value then `var input = str; f(&input)` to
-    // obtain a mutable address for C ABI. We take `&String` (matching existing call sites
-    // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
-    // local and pass `&mut local`. This mirrors the Zig spec exactly and avoids casting
+    // PORT NOTE: the C ABI wants a mutable address for the string. We take
+    // `&String` (matching existing call sites in this crate) and — since
+    // `bun_core::String: Copy` — bit-copy into a mutable local and pass
+    // `&mut local`. This avoids casting
     // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
     // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
     // sound regardless.
@@ -198,8 +198,7 @@ pub use whatwg::{
 };
 
 // PORT NOTE: URL is a pure view struct — every field is a slice into `href` (or a
-// literal default). Zig expresses this with `[]const u8` fields borrowing the
-// caller-provided `base`.
+// literal default), borrowing from the caller-provided `base`.
 #[derive(Clone)]
 pub struct URL<'a> {
     pub hash: &'a [u8],
@@ -242,10 +241,9 @@ impl<'a> Default for URL<'a> {
 }
 
 /// An owning URL — holds the normalized `href` buffer that the borrowed
-/// `URL<'_>` view slices into. Port of `URL.fromString`'s ownership model:
-/// Zig returned a `URL` borrowing from a fresh allocation the caller had to
-/// `allocator.free(url.href)`; in Rust, `OwnedURL` owns that buffer and
-/// `Drop` frees it.
+/// `URL<'_>` view slices into. `URL.fromString` originally returned a `URL`
+/// borrowing from a fresh allocation the caller had to free; in Rust,
+/// `OwnedURL` owns that buffer and `Drop` frees it.
 #[derive(Default, Clone)]
 pub struct OwnedURL {
     href: Box<[u8]>,
@@ -254,8 +252,8 @@ pub struct OwnedURL {
 impl OwnedURL {
     /// Borrow as a parsed `URL` view. All slices in the returned `URL` borrow
     /// `self.href`.
-    // PERF(port): re-parses on each call. Zig parsed once into a borrowing
-    // struct the caller held alongside the buffer; Rust cannot express that
+    // PERF(port): re-parses on each call. Could parse once into a borrowing
+    // struct held alongside the buffer, but Rust cannot express that
     // self-reference without unsafe lifetime extension (PORTING.md §Forbidden).
     // Callers in practice call this once and hold the borrow — profile in
     // Phase B; if hot, store component `(u32, u32)` offsets here instead.
@@ -365,8 +363,8 @@ impl<'a> URL<'a> {
     // PORT NOTE: `fromJS` alias to url_jsc deleted per PORTING.md — JSC interop lives
     // in bun_url_jsc as an extension trait.
 
-    // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
-    // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
+    // PORT NOTE: ownership — historically this returned a `URL` borrowing from a
+    // freshly-allocated owned slice; caller freed `url.href` later. Per
     // PORTING.md §Forbidden (no Box::leak / mem::forget / unsafe lifetime
     // extension), Rust returns an `OwnedURL` that owns the buffer; callers borrow
     // via `.url()` and Drop frees it.
@@ -375,8 +373,8 @@ impl<'a> URL<'a> {
         if href.tag() == BunStringTag::Dead {
             return Err(bun_core::err!("InvalidURL"));
         }
-        // Zig: `defer href.deref()` — `to_owned_slice` is infallible so explicit
-        // ordering suffices (no error path between alloc and deref).
+        // `to_owned_slice` is infallible so explicit ordering suffices (no
+        // error path between alloc and deref).
         let owned = href.to_owned_slice().into_boxed_slice();
         href.deref();
         Ok(OwnedURL { href: owned })
@@ -456,9 +454,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Zig: `std.fmt.allocPrint(alloc, "{s}://{f}/{s}/", .{
-    ///     url.displayProtocol(), url.displayHost(),
-    ///     std.mem.trim(u8, url.pathname, "/") })`.
+    /// Allocates and formats `"{protocol}://{host}/{pathname trimmed of '/'}/`.
     ///
     /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
     /// `Display`); the other two pieces are raw byte slices, so we assemble
@@ -557,7 +553,6 @@ impl<'a> URL<'a> {
             buf[buf_i..buf_i + part.len()].copy_from_slice(part);
             buf_i += part.len();
         }
-        // Zig: resolve_path.normalizeStringBuf(buf[0..buf_i], out, false, .loose, false)
         resolve_path::normalize_string_buf::<false, platform::Loose, false>(&buf[0..buf_i], out)
     }
 
@@ -573,7 +568,7 @@ impl<'a> URL<'a> {
         let mut out = [0u8; 2048];
         let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
 
-        // Zig: writer.print("{s}/{s}", .{ this.origin, normalized_path })
+        // Writes `{origin}/{normalized_path}`.
         writer.write_all(self.origin)?;
         writer.write_all(b"/")?;
         writer.write_all(normalized_path)?;
@@ -616,7 +611,7 @@ impl<'a> URL<'a> {
         }
         let mut url = URL::default();
         url.href = base;
-        // PORT NOTE: Zig uses u31; Rust has no u31 — using u32 (values never approach 2^31).
+        // Offsets are well under 2^31 — `u32` is plenty.
         let mut offset: u32 = 0;
         match base[0] {
             b'@' => {
@@ -906,7 +901,7 @@ pub struct Param {
     pub value: api::StringPointer,
 }
 
-// PERF(port): Zig uses `std.MultiArrayList(Param)` for SoA cache-friendly column
+// PERF(port): a struct-of-arrays layout would give cache-friendly column
 // scans. bun_collections::MultiArrayList exists but requires `MultiArrayElement`
 // (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
 // revisit once `` lands.
@@ -1209,8 +1204,8 @@ impl QueryStringMap {
         let mut buf: Vec<u8> = Vec::with_capacity(estimated_str_len);
         let mut buf_writer_pos: u32 = 0;
 
-        // PORT NOTE: reshaped for borrowck — Zig captured `list.slice()` once outside
-        // the loop; here we re-slice per iteration to avoid holding a borrow across push().
+        // PORT NOTE: reshaped for borrowck — instead of capturing `list.slice()` once
+        // outside the loop, we re-slice per iteration to avoid holding a borrow across push().
         while let Some(result) = scanner.next() {
             let mut name = result.name;
             let mut value = result.value;
@@ -1273,7 +1268,7 @@ impl QueryStringMap {
 
 // Assume no query string param map will exceed 2048 keys
 // Browsers typically limit URL lengths to around 64k
-// PORT NOTE: Zig `StaticBitSet(2048)` resolves to `ArrayBitSet(usize, 2048)`.
+// PORT NOTE: a 2048-bit static bit set is needed.
 // bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
 // pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 type VisitedMap = ArrayBitSet<2048, { num_masks_for(2048) }>;
@@ -1398,8 +1393,8 @@ impl PercentEncoding {
         let mut buf: Vec<u8> = Vec::with_capacity(input.len());
         // errdefer allocator.free(buf) — Vec drops automatically on error
 
-        // TODO(port): Zig used fixedBufferStream into a pre-sized [u8; input.len];
-        // here we just write into a Vec and truncate.
+        // TODO(port): could write into a pre-sized `[u8; input.len]` buffer;
+        // for now we just write into a Vec and truncate.
         let len = Self::decode(&mut buf, input)?;
 
         buf.truncate(len as usize);
@@ -1649,8 +1644,8 @@ impl<'a> Scanner<'a> {
     /// Get the next query string parameter without allocating memory.
     pub fn next(&mut self) -> Option<ScannerResult> {
         let mut relative_i: usize = 0;
-        // PORT NOTE: Zig used `defer this.i += relative_i;` — emulated by applying
-        // the deferred add at every return point.
+        // PORT NOTE: `self.i += relative_i` must be applied on every exit
+        // path, so the add is repeated at every return point.
 
         // reuse stack space
         // otherwise we'd recursively call the function
@@ -1750,5 +1745,3 @@ impl<'a> Scanner<'a> {
         }
     }
 }
-
-// ported from: src/url/url.zig

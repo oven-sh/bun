@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 use super::package_manager_options as Options;
 
 /// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
-/// literal then write to stdout. The Zig version did this at comptime; here the
+/// literal then write to stdout. The original version did this at comptime; here the
 /// help strings are runtime `&str`s so we use the runtime expander.
 #[inline]
 fn pretty_help(text: &str) {
@@ -38,16 +38,16 @@ fn pretty_help(text: &str) {
 
 type ParamType = clap::Param<clap::Help>;
 
-// Zig `++` does comptime array concatenation. `bun_clap::concat_params!` is a
+// `++` does comptime array concatenation. `bun_clap::concat_params!` is a
 // const-fn slice concat over `Param<Help>`, so combined tables
 // (`INSTALL_PARAMS`, …) are baked into rodata with zero runtime init.
 use bun_clap::concat_params;
 
-// PORT NOTE: Zig builds the `--backend` param spec via comptime string `++` against
+// PORT NOTE: the original builds the `--backend` param spec via comptime string `++` against
 // `platform_specific_backend_label`. `clap::param!` is a proc-macro that requires a
 // *literal* token (it parses the spec at compile time), so `const_format::concatcp!`
 // can't feed it. Instead we cfg-select the fully-expanded literal per platform —
-// semantically identical to the Zig comptime concat.
+// semantically identical to the original comptime concat.
 #[cfg(target_os = "macos")]
 const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
@@ -356,7 +356,7 @@ static WHY_PARAMS: &[ParamType] = concat_params![
 // per PORTING.md (no `deinit`, never `allocator.free`d). Phase B may want to thread an explicit
 // lifetime if `clap::Args` ever becomes scoped.
 //
-// `Clone` mirrors Zig value-copy semantics — `updatePackageJSONAndInstall`
+// `Clone` mirrors the original value-copy semantics — `updatePackageJSONAndInstall`
 // passes `cli` by value into `PackageManager.init` while retaining its own
 // copy.
 #[derive(Clone)]
@@ -1002,12 +1002,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         let mut diag = clap::Diagnostic::default();
 
-        // PORT NOTE: Zig kept `args` (and its arena) alive for the program duration —
+        // PORT NOTE: the original kept `args` (and its arena) alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
         // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
         // are parsed exactly once per process, so this is the semantic equivalent
-        // of the Zig arena that was never `deinit`'d.
+        // of the original arena that was never `deinit`'d.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
@@ -1464,5 +1464,3 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         Ok(cli)
     }
 }
-
-// ported from: src/install/PackageManager/CommandLineArguments.zig

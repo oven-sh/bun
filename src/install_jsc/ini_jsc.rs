@@ -41,11 +41,11 @@ impl IniTestingAPIs {
         // (all `allocator.create`/`toOwnedSlice` below now use the global mimalloc)
 
         let envjs = frame.argument(1);
-        // PORT NOTE: reshaped for borrowck — Zig returned either a VM-owned *Loader or
-        // an arena-allocated *Loader from a labeled block. Per PORTING.md §Forbidden
-        // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
-        // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
-        // return — same lifetime as the original arena.
+        // PORT NOTE: reshaped for borrowck — the original returned either a VM-owned
+        // *Loader or an arena-allocated *Loader from a labeled block. Per PORTING.md
+        // §Forbidden (`Box::leak` is banned), keep both `Map` and `Loader` owned in
+        // fn-scope `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at
+        // fn return — same lifetime as the original arena.
         let mut map_storage: Option<Box<dotenv::Map>> = None;
         let mut env_storage: Option<dotenv::Loader<'_>> = None;
         let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
@@ -74,10 +74,10 @@ impl IniTestingAPIs {
                     continue;
                 }
 
-                let value_str = value.get_zig_string(global)?;
+                let value_str = value.get_unsafe_string_view(global)?;
                 let slice = value_str.to_owned_slice();
 
-                // Zig: `catch return globalThis.throwOutOfMemoryValue()` — Rust aborts on OOM.
+                // Original threw `OutOfMemory` to JS — Rust aborts on OOM.
                 envmap.put(
                     &keyslice,
                     dotenv::map::Entry {
@@ -89,7 +89,7 @@ impl IniTestingAPIs {
 
             map_storage = Some(Box::new(dotenv::Map { map: envmap }));
             // SAFETY-NOTE: `Loader` borrows from `map_storage`; both live until fn
-            // return, mirroring the Zig arena's bulk-free.
+            // return.
             let map_ref: &mut dotenv::Map = map_storage.as_deref_mut().unwrap();
             env_storage = Some(dotenv::Loader::init(map_ref));
             // `Loader<'a>` is invariant in `'a` (holds `&'a mut Map`); erase to `'static`
@@ -214,10 +214,10 @@ impl IniTestingAPIs {
         let src: &'static [u8] = bun_ast::IntoStr::into_str(utf8str.slice());
         let mut parser = Parser::init(b"<src>", src, env);
 
-        // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed
-        // `parser.arena.arena()`); split the borrow via raw ptr so the bump
-        // outlives the `&mut parser` for the call. SAFETY: `parser.arena` is
-        // not moved/dropped for the lifetime of `parser`.
+        // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena`; split the
+        // borrow via raw ptr so the bump outlives the `&mut parser` for the
+        // call. SAFETY: `parser.arena` is not moved/dropped for the lifetime
+        // of `parser`.
         let bump: &bun_alloc::Arena = unsafe { &*(&raw const parser.arena) };
         parser.parse(bump)?;
 
@@ -227,5 +227,3 @@ impl IniTestingAPIs {
         }
     }
 }
-
-// ported from: src/install_jsc/ini_jsc.zig

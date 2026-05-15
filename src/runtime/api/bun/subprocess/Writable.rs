@@ -18,7 +18,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
 pub enum Writable<'a> {
-    // PORT NOTE: Zig uses intrusive-refcounted `*FileSink` (manual ref/deref).
+    // PORT NOTE: the original used intrusive-refcounted `*FileSink` (manual ref/deref).
     // Keep a raw NonNull and call `FileSink::deref` explicitly to mirror that.
     Pipe(NonNull<FileSink>),
     Fd(Fd),
@@ -137,7 +137,7 @@ impl<'a> Writable<'a> {
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
     //
-    // PORT NOTE: reshaped for borrowck — Zig `@fieldParentPtr("stdin", this)`
+    // PORT NOTE: reshaped for borrowck — the original `@fieldParentPtr("stdin", this)`
     // recovers `*Subprocess` from `*Writable` and freely interleaves access to
     // both. In Rust, deriving the parent from `&mut self` is out-of-provenance
     // (the `&mut` only covers the `stdin` field). Instead the `SignalHandler`
@@ -150,9 +150,9 @@ impl<'a> Writable<'a> {
             }
         }
 
-        // Moving the payload out and writing `.Ignore` here hoists Zig's
+        // Moving the payload out and writing `.Ignore` here hoists the original
         // trailing `this.* = .{.ignore}` ahead of `on_stdin_destroyed` — in
-        // Zig that write follows a `deref()` that may free `process`, which
+        // the original that write follows a `deref()` that may free `process`, which
         // would be a write-after-free. The only observable difference is
         // `has_pending_activity_stdio()` seeing `Ignore` (== false) instead of
         // a just-deref'd `Buffer` (== true) inside
@@ -202,7 +202,7 @@ impl<'a> Writable<'a> {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buffer) = result {
                         // Ownership of the `Box<uv::Pipe>` transfers to the
-                        // FileSink's writer (mirrors Zig where `result.buffer`
+                        // FileSink's writer (`result.buffer`
                         // is a heap pointer the sink takes over).
                         let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
                         // `create_with_pipe` returns a freshly-boxed non-null pointer.
@@ -320,7 +320,7 @@ impl<'a> Writable<'a> {
                     }
                 }
 
-                // Zig: `pipe.writer.handle.poll.flags.insert(.socket);`
+                // `pipe.writer.handle.poll.flags.insert(.socket);`
                 // `handle` is `PollOrFd` (enum) in Rust; flag mutation goes
                 // through the FilePoll vtable shim.
                 pipe.writer.with_mut(|w| {
@@ -377,7 +377,7 @@ impl<'a> Writable<'a> {
                 super::source_from_array_buffer(core::mem::take(array_buffer)),
             ))),
             Stdio::Memfd(_) => {
-                // Transfer ownership: Zig's `Writable.init` never calls
+                // Transfer ownership: `Writable.init` never calls
                 // `stdio.deinit()`. `Stdio`'s Drop would close the memfd, so
                 // take it out via ManuallyDrop (same pattern as the Blob arm)
                 // to keep the caller's `stdio[0]` drop from double-closing the
@@ -397,7 +397,7 @@ impl<'a> Writable<'a> {
     }
 
     pub fn to_js(subprocess: &Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
-        // PORT NOTE: reshaped for borrowck — Zig passed `*Writable` (== `&stdin`)
+        // PORT NOTE: reshaped for borrowck — the original passed `*Writable` (== `&stdin`)
         // and `*Subprocess` separately, which alias. Take only the parent and
         // project `stdin` here so no two `&mut` overlap at any point.
         match subprocess.stdin.replace(Writable::Ignore) {
@@ -419,7 +419,7 @@ impl<'a> Writable<'a> {
                 JSValue::UNDEFINED
             }
             Writable::Pipe(pipe_nn) => {
-                // stdin already replaced with Ignore above (mirrors Zig `this.* = .{ .ignore = {} }`)
+                // stdin already replaced with Ignore above (`this.* = .{ .ignore = {} }`)
                 // pipe is live (held a +1 in this enum); separate allocation
                 // from `*subprocess` so the borrows are disjoint.
                 if subprocess.has_exited()
@@ -449,7 +449,7 @@ impl<'a> Writable<'a> {
                             &subprocess.process().status,
                         )
                     };
-                    // Rust `FileSink::to_js` takes its own per-wrapper +1 (Zig's
+                    // Rust `FileSink::to_js` takes its own per-wrapper +1 (the original
                     // `toJS` *transfers* the create-time +1). Release the
                     // enum's create-time +1 now that the wrapper holds its own
                     // — mirrors Blob.rs:1899-1902. `stdin` was already swapped
@@ -493,7 +493,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — see `on_close`. Zig
+    // PORT NOTE: reshaped for borrowck — see `on_close`. The original
     // `@fieldParentPtr("stdin", this)` is replaced by the caller passing the
     // parent; deriving it from `&mut self` on `Writable` would be
     // out-of-provenance.
@@ -518,7 +518,7 @@ impl<'a> Writable<'a> {
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(&buffer).update_ref(false);
-                // PORT NOTE: Zig calls `buffer.deref()` without reassigning to `.ignore`;
+                // PORT NOTE: the original calls `buffer.deref()` without reassigning to `.ignore`;
                 // RefPtr::deref drops the held ref.
                 buffer.deref();
             }
@@ -556,7 +556,7 @@ impl<'a> Writable<'a> {
     }
 }
 
-// PORT NOTE: Zig wires `pipe.signal = Signal.init(&subprocess.stdin)` and the
+// PORT NOTE: the original wires `pipe.signal = Signal.init(&subprocess.stdin)` and the
 // callbacks then `@fieldParentPtr` back to the `Subprocess`. Registering the
 // `*mut Writable` and recovering the parent inside the callback is
 // out-of-provenance in Rust (the `&mut Writable` formed by the vtable thunk
@@ -570,5 +570,3 @@ impl<'a> SignalHandler for Subprocess<'a> {
     fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
     fn on_start(&mut self) {}
 }
-
-// ported from: src/runtime/api/bun/subprocess/Writable.zig

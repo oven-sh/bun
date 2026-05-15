@@ -20,8 +20,8 @@ use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena (Zig: `*FileSystem.FilenameStore`,
-// fs.zig:77). The bun_sys-level `FilenameStore` exposes `append` /
+// names into the resolver's filename arena (originally: `*FileSystem.FilenameStore`,
+// `fs::FilenameStore`). The bun_sys-level `FilenameStore` exposes `append` /
 // `append_lower_case` but doesn't itself implement `strings::Appender` (that
 // impl lives in `bun_resolver`, which this crate can't reach without a cycle).
 pub struct FilenameStoreAppender<'a>(pub &'a FilenameStore);
@@ -35,8 +35,8 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 }
 
 /// Convenience: returns an `Appender` over the global filename store, matching
-/// Zig `*FileSystem.FilenameStore` callsites in `runTasks.zig` /
-/// `PackageManagerEnqueue.zig`.
+/// the original `*FileSystem.FilenameStore` callsites in `runTasks` /
+/// `PackageManagerEnqueue`.
 #[inline]
 pub fn filename_store_appender() -> FilenameStoreAppender<'static> {
     FilenameStoreAppender(FileSystem::instance().filename_store())
@@ -49,7 +49,7 @@ pub struct NetworkTask {
     // PORT NOTE: `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
     // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
-    // overwritten by plain `=` in `for_manifest`/`for_tarball`. Zig has no
+    // overwritten by plain `=` in `for_manifest`/`for_tarball`. the original has no
     // destructors so the `= undefined` field was simply overwritten;
     // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
     // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
@@ -64,10 +64,10 @@ pub struct NetworkTask {
     pub response: HTTPClientResult<'static>,
     pub task_id: crate::package_manager_task::Id,
     // TODO(port): owned in `for_manifest` (toOwnedSlice) but borrowed from
-    // `tarball.url` in `for_tarball`; Zig leaks/aliases — verify ownership in Phase B.
+    // `tarball.url` in `for_tarball`; the original leaks/aliases — verify ownership in Phase B.
     pub url_buf: Box<[u8]>,
     pub retried: u16,
-    // Zig: `std.mem.Allocator param` — dropped (global mimalloc); see §Allocators.
+    // original: `std.mem.Allocator param` — dropped (global mimalloc); see §Allocators.
     pub request_buffer: MutableString,
     pub response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -96,7 +96,7 @@ pub struct NetworkTask {
     /// `async_network_task_queue` — the extract Task published by
     /// `TarballStream.finish()` owns the NetworkTask's lifetime instead
     /// (its `resolve_tasks` handler returns it to the pool). Also read by
-    /// the main-thread fallback / retry paths in `runTasks.zig` to assert
+    /// the main-thread fallback / retry paths in `runTasks` to assert
     /// the stream was never started.
     pub streaming_committed: bool,
     /// Backing store for the streaming signal the HTTP client polls.
@@ -104,7 +104,7 @@ pub struct NetworkTask {
 }
 
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
-// these accessors by `UnboundedQueue<NetworkTask>`. Mirrors Zig's
+// these accessors by `UnboundedQueue<NetworkTask>`. Mirrors the original's
 // `@field(item, "next")` over `bun.UnboundedQueue(NetworkTask, .next)`.
 unsafe impl bun_threading::Linked for NetworkTask {
     #[inline]
@@ -114,7 +114,7 @@ unsafe impl bun_threading::Linked for NetworkTask {
     }
 }
 
-/// Zig: `union(Task.Tag)` — tag type is `Task.Tag`.
+/// original: `union(Task.Tag)` — tag type is `Task.Tag`.
 // TODO(port): ensure discriminants match `crate::task::Tag` ordering for any
 // code that transmutes between them.
 pub enum Callback {
@@ -133,7 +133,7 @@ pub enum Callback {
 pub struct DedupeMapEntry {
     pub is_required: bool,
 }
-// Zig: `std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80)`
+// original: `std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80)`
 // TODO(port): IdentityContext (hash = value bits) + 80% load factor — verify
 // `bun_collections::HashMap` exposes an identity hasher, or newtype `task::Id`
 // with a pass-through `Hash` impl.
@@ -213,7 +213,7 @@ impl NetworkTask {
             // status *and* the tarball is large enough to be worth the
             // overhead. For small bodies, or any 4xx/5xx / transport error,
             // fall back to the buffered path so the existing retry and
-            // error-reporting code in runTasks.zig keeps working.
+            // error-reporting code in `runTasks` keeps working.
             let ok_status = stream.status_code >= 200 && stream.status_code <= 299;
             let big_enough = match result.body_size {
                 http::BodySize::ContentLength(len) => len >= TarballStream::min_size(),
@@ -239,7 +239,7 @@ impl NetworkTask {
                         this.streaming_committed = true;
                         // SAFETY: `stream` is the live heap-allocated
                         // `TarballStream` owned by this task. `on_chunk`
-                        // takes `*mut Self` (Zig: freely-aliasing
+                        // takes `*mut Self` (originally: freely-aliasing
                         // `*TarballStream`) because a worker may be inside
                         // `drain()` concurrently; coercing the `&mut` to a
                         // raw pointer here matches that contract.
@@ -259,7 +259,7 @@ impl NetworkTask {
                 // handles it.
                 if committed {
                     // SAFETY: see the `on_chunk` call above — `stream` is
-                    // live and `on_chunk` takes `*mut Self` to match Zig's
+                    // live and `on_chunk` takes `*mut Self` to match the original's
                     // freely-aliasing `*TarballStream` contract.
                     unsafe { TarballStream::on_chunk(stream, chunk, true, result.fail) };
                     // Do NOT touch `this` — or anything it owns — after
@@ -284,7 +284,7 @@ impl NetworkTask {
             }
             // Fall through to the normal completion path for anything that
             // did not commit: the buffered extractor / retry logic in
-            // runTasks.zig handles it exactly as it would without
+            // `runTasks` handles it exactly as it would without
             // streaming support.
         }
 
@@ -295,12 +295,12 @@ impl NetworkTask {
         // `wake_raw` path, mirroring `TarballStream::finish` /
         // `isolated_install::Installer::Task::callback`.
         let pm = this.package_manager.as_mut_ptr();
-        // Zig: `defer this.package_manager.wake();` — moved to end of fn (no
+        // original: `defer this.package_manager.wake();` — moved to end of fn (no
         // early returns past this point).
 
         // SAFETY: `real` is set by the HTTP thread before invoking the
-        // completion callback; Zig unwraps with `.?`.
-        // TODO(port): Zig does a struct-value copy `real.* = async_http.*` —
+        // completion callback; the original unwraps with `.?`.
+        // TODO(port): the original does a struct-value copy `real.* = async_http.*` —
         // requires `AsyncHTTP: Clone` or a bitwise copy helper.
         unsafe {
             let real = async_http.real.expect("unreachable").as_ptr();
@@ -313,7 +313,7 @@ impl NetworkTask {
         // SAFETY: `result.body` (the only borrowed field) points at
         // `this.response_buffer`, which `this` owns and outlives the stored
         // `HTTPClientResult`; erase the callback-scoped `'_` to `'static` to
-        // match the field type (Zig stores it lifetime-less).
+        // match the field type (originally stores it lifetime-less).
         this.response = unsafe { result.detach_lifetime() };
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
@@ -346,7 +346,7 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
 fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    // PORT NOTE: Zig `appendFmt("Authorization", "Bearer {s}", .{scope.token})`
+    // PORT NOTE: the original `appendFmt("Authorization", "Bearer {s}", .{scope.token})`
     // writes raw bytes; routing through `format_args!`/`BStr` Display would be
     // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
     // exact byte count reserved by `count_auth`. Use raw-byte append.
@@ -411,7 +411,7 @@ impl NetworkTask {
     ) -> Result<(), ForManifestError> {
         let pm = self.pm_mut();
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
-        // was constructed with; Zig dereferences `this.package_manager.log`.
+        // was constructed with; the original dereferences `this.package_manager.log`.
         let log = pm.log_mut();
 
         self.url_buf = 'blk: {
@@ -428,8 +428,8 @@ impl NetworkTask {
                 name
             };
 
-            // `OwnedString` derefs the WTF-backed result on scope exit (Zig:
-            // `defer tmp.deref()`, NetworkTask.zig:216) — covers both the
+            // `OwnedString` derefs the WTF-backed result on scope exit
+            // (`defer tmp.deref()`) — covers both the
             // success path and the InvalidURL early returns below.
             let tmp = bun_core::OwnedString::new(bun_url::join(
                 &bun_core::String::borrow_utf8(scope.url.href()),
@@ -535,7 +535,7 @@ impl NetworkTask {
                 // SAFETY (lifetime extension): the appended slice points into
                 // `header_builder.content`'s heap buffer, which is moved into
                 // `self.unsafe_http_client.request_header_buf` below and
-                // outlives the request (Zig leaks it). Detach the borrow so
+                // outlives the request (originally leaks it). Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
                 let appended = header_builder.content.append(last_modified);
                 last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
@@ -571,7 +571,7 @@ impl NetworkTask {
         // SAFETY (lifetime extension): `url_buf` and the header content buffer
         // are heap allocations owned by / leaked into `*self`, which outlives
         // the HTTP request. `AsyncHTTP::init` demands `'static` borrows
-        // because the HTTP thread reads them concurrently; the Zig source
+        // because the HTTP thread reads them concurrently; the original source
         // passes raw slices under the same ownership contract. See the
         // identical pattern in `s3/simple_request.rs`.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
@@ -581,7 +581,7 @@ impl NetworkTask {
         // below (`mem::forget`), so it genuinely outlives this frame.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
-        // PORT NOTE: Zig has no destructors — `header_builder.content` is
+        // PORT NOTE: the original has no destructors — `header_builder.content` is
         // intentionally leaked (ownership transfers to the HTTP client).
         // Forget it so `StringBuilder::drop` doesn't free the buffer that
         // `headers_buf` / `last_modified` now alias.
@@ -636,7 +636,7 @@ impl NetworkTask {
             // the leaked `header_builder.content` buffer (reassigned above) or
             // into the manifest's `string_buf`, which is the same allocation
             // referenced by the `PackageManifest` we just cloned into
-            // `self.callback`. Both outlive the HTTP request; Zig stores the
+            // `self.callback`. Both outlive the HTTP request; the original stores the
             // raw slice under the same contract.
             self.http_mut().client.if_modified_since =
                 unsafe { bun_ptr::detach_lifetime(last_modified) };
@@ -646,7 +646,7 @@ impl NetworkTask {
     }
 
     pub fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
-        // PORT NOTE: Zig `Callback.New(*NetworkTask, notify).init(this)` is a
+        // PORT NOTE: the original `Callback.New(*NetworkTask, notify).init(this)` is a
         // comptime type-erased thunk generator. `HTTPClientResultCallback::new`
         // performs the same erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
         HTTPClientResultCallback::new::<NetworkTask>(self, Self::notify)
@@ -706,7 +706,7 @@ impl NetworkTask {
                 pm.lockfile.buffers.string_bytes.as_slice(),
             )?)
         } else {
-            // TODO(port): Zig aliases `tarball.url` here without copying;
+            // TODO(port): the original aliases `tarball.url` here without copying;
             // `url_buf: Box<[u8]>` forces an allocation. Revisit ownership.
             Box::<[u8]>::from(tarball_url)
         };
@@ -717,7 +717,7 @@ impl NetworkTask {
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
             // SAFETY: `pm.log` is the long-lived `*mut Log` the package
-            // manager was constructed with; Zig dereferences
+            // manager was constructed with; the original dereferences
             // `this.package_manager.log`.
             pm.log_mut().add_error_fmt(
                 None,
@@ -776,7 +776,7 @@ impl NetworkTask {
             header_buf =
                 unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         }
-        // PORT NOTE: Zig has no destructors — `header_builder.content` is
+        // PORT NOTE: the original has no destructors — `header_builder.content` is
         // intentionally leaked (ownership transfers to the HTTP client).
         // Forget it so `StringBuilder::drop` doesn't free the buffer that
         // `header_buf` now aliases.
@@ -785,7 +785,7 @@ impl NetworkTask {
         // SAFETY (lifetime extension): `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
         // `'static` borrow because the HTTP thread reads it concurrently; the
-        // Zig source passes a raw slice under the same ownership contract. See
+        // the original source passes a raw slice under the same ownership contract. See
         // the identical pattern in `for_manifest` above.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
@@ -882,7 +882,7 @@ impl NetworkTask {
         self.response = HTTPClientResult::default();
     }
 
-    /// Initialize a freshly-vended pool slot in place, mirroring Zig's
+    /// Initialize a freshly-vended pool slot in place, mirroring the original's
     /// `network_task.* = .{ .task_id = …, .callback = undefined, .allocator = …,
     /// .package_manager = …, .apply_patch_task = … }` — a full struct overwrite
     /// that resets every other field to its struct default. The slot may be
@@ -892,7 +892,7 @@ impl NetworkTask {
     /// written via `addr_of_mut!().write()` without dropping the previous
     /// value — the slot is freshly poisoned/uninit from `get()`.
     ///
-    /// Fields that are `= undefined` in Zig (`unsafe_http_client`, `callback`,
+    /// Fields that are `= undefined` in the original (`unsafe_http_client`, `callback`,
     /// `request_buffer`, `response_buffer`) are written here with drop-safe
     /// placeholders so subsequent `=` assignments in `for_manifest`/
     /// `for_tarball` do not drop uninitialized memory. `unsafe_http_client`
@@ -903,7 +903,7 @@ impl NetworkTask {
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
     /// slot returned by `get()`; its prior contents are treated as garbage
-    /// (matches Zig — no destructors run).
+    /// (matches the original — no destructors run).
     pub unsafe fn write_init(
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,
@@ -919,7 +919,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).package_manager)
                 .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             addr_of_mut!((*slot).apply_patch_task).write(apply_patch_task);
-            // Struct-default fields (Zig: `= .{}` / `= 0` / `= null` / `= &[_]u8{}`).
+            // Struct-default fields (originally: `= .{}` / `= 0` / `= null` / `= &[_]u8{}`).
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).retried).write(0);
@@ -928,7 +928,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
             addr_of_mut!((*slot).streaming_committed).write(false);
             addr_of_mut!((*slot).signal_store).write(http::signals::Store::default());
-            // Zig-`undefined` fields: write drop-safe placeholders so the
+            // Originally-`undefined` fields: write drop-safe placeholders so the
             // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
             // (`unsafe_http_client` is `MaybeUninit` — left uninitialized.)
             addr_of_mut!((*slot).request_buffer).write(MutableString::init_empty());
@@ -937,5 +937,3 @@ impl NetworkTask {
         }
     }
 }
-
-// ported from: src/install/NetworkTask.zig

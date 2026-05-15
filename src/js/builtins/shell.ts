@@ -2,12 +2,12 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   const createShellInterpreter = createShellInterpreter_ as (
     resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
     reject: (code: number, stdout: Buffer, stderr: Buffer) => void,
-    args: $ZigGeneratedClasses.ParsedShellScript,
-  ) => $ZigGeneratedClasses.ShellInterpreter;
+    args: $BunGeneratedClasses.ParsedShellScript,
+  ) => $BunGeneratedClasses.ShellInterpreter;
   const createParsedShellScript = createParsedShellScript_ as (
     raw: string,
     args: string[],
-  ) => $ZigGeneratedClasses.ParsedShellScript;
+  ) => $BunGeneratedClasses.ParsedShellScript;
 
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
@@ -104,17 +104,17 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   }
 
   class ShellPromise extends Promise<ShellOutput> {
-    #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
+    #args: $BunGeneratedClasses.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
     #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
 
-    constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
+    constructor(args: $BunGeneratedClasses.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
       // of the shell script's invocation. Just creating the error should be
       // relatively cheap, the costly work is actually computing the stacktrace
-      // (`computeErrorInfo()` in ZigGlobalObject.cpp)
+      // (`computeErrorInfo()` in BunGlobalObject.cpp)
       let potentialError: ShellError | undefined = new ShellError();
       let resolve, reject;
 

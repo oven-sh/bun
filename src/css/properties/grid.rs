@@ -42,7 +42,7 @@ impl TrackList {
 
             if let Some(track_size) = input.try_parse(TrackSize::parse).ok() {
                 // TODO: error handling
-                // TODO(port): Zig original omits arena arg here (`items.append(.{...})`); mirroring with input.arena()
+                // TODO(port): the original omits arena arg here (`items.append(.{...})`); mirroring with input.arena()
                 items.push(TrackListItem::TrackSize(track_size));
             } else if let Some(repeat) = input.try_parse(TrackRepeat::parse).ok() {
                 // TODO: error handling
@@ -292,13 +292,13 @@ impl TrackRepeat {
         input.expect_function_matching(b"repeat")?;
 
         input.parse_nested_block(|i: &mut Parser| -> css::Result<TrackRepeat> {
-            // TODO(port): Zig uses `@call(.auto, @field(RepeatCount, "parse"), .{i})` — direct call here
+            // TODO(port): the original uses an indirect reflective call — direct call here
             let count = RepeatCount::parse(i)?;
 
             i.expect_comma()?;
 
             // TODO: this code will not compile if used
-            // TODO(port): Zig calls `bun.Vec(T).init(i.arena)` — using default + push(alloc, ..) here
+            // TODO(port): the original initializes an arena-backed vec — using default + push(alloc, ..) here
             let mut line_names = Vec::<CustomIdentList>::default();
             let mut track_sizes = Vec::<TrackSize>::default();
 
@@ -308,7 +308,7 @@ impl TrackRepeat {
                     .unwrap_or_else(|_| CustomIdentList::default());
                 line_names.push(line_name);
 
-                // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
+                // TODO(port): the original references outer `input` here (likely a bug); mirroring with `i`
                 if let Some(track_size) = i.try_parse(TrackSize::parse).ok() {
                     // TODO: error handling
                     track_sizes.push(track_size);
@@ -394,7 +394,7 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
     input.parse_nested_block(|i: &mut Parser| -> css::Result<CustomIdentList> {
         let mut values = CustomIdentList::default();
 
-        // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
+        // TODO(port): the original references outer `input` here (likely a bug); mirroring with `i`
         while let Some(ident) = i.try_parse(CustomIdent::parse).ok() {
             values.append(ident);
         }
@@ -457,7 +457,7 @@ pub enum GridTemplateAreas {
         columns: u32,
         /// A flattened list of grid area names.
         /// Unnamed areas specified by the `.` token are represented as null.
-        // TODO(port): arena-owned slice lifetime — Zig `?[]const u8` in CSS arena
+        // TODO(port): arena-owned slice lifetime — originally an optional borrowed slice in CSS arena
         areas: SmallList<Option<*const [u8]>, 1>,
     },
 }
@@ -487,7 +487,7 @@ impl GridTemplateAreas {
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {
-                    // TODO(port): Zig uses `.{input.newError(.qualified_rule_invalid)}` — anonymous struct shorthand; mapping to Err(..)
+                    // TODO(port): the original uses anonymous-struct error shorthand; mapping to Err(..)
                     return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
                 }
             };
@@ -539,8 +539,8 @@ impl GridTemplateAreas {
                     rest.len()
                 };
                 string = &rest[idx..];
-                // TODO(port): Zig original falls through here without `continue` — likely a bug (the `.` token
-                // is supposed to push None and continue). Mirroring Zig control flow exactly.
+                // TODO(port): the original falls through here without `continue` — likely a bug (the `.` token
+                // is supposed to push None and continue). Mirroring control flow exactly.
             }
 
             let starts_with_name_codepoint = 'brk: {
@@ -563,7 +563,7 @@ impl GridTemplateAreas {
                 rest.len()
             };
             let token = &rest[..token_len];
-            // TODO(port): arena-owned slice — Zig stores borrowed slice into SmallList; using raw ptr here
+            // TODO(port): arena-owned slice — the original stores borrowed slice into SmallList; using raw ptr here
             let _ = bump;
             tokens.append(Some(std::ptr::from_ref::<[u8]>(token)));
             string = &rest[token_len..];
@@ -584,5 +584,3 @@ fn is_name_codepoint(c: u8) -> bool {
 }
 
 crate::css_eql_partialeq!(TrackSize, RepeatCount);
-
-// ported from: src/css/properties/grid.zig

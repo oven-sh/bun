@@ -40,7 +40,7 @@ impl TextEncoderStreamEncoder {
             ));
         }
 
-        let str = arguments[0].get_zig_string(global)?;
+        let str = arguments[0].get_unsafe_string_view(global)?;
 
         if str.is_16bit() {
             return Ok(self.encode_utf16(global, str.utf16_slice_aligned()));
@@ -50,7 +50,7 @@ impl TextEncoderStreamEncoder {
     }
 
     pub fn encode_without_type_checks(&self, global: &JSGlobalObject, input: &JSString) -> JSValue {
-        let str = input.get_zig_string(global);
+        let str = input.get_unsafe_string_view(global);
 
         if str.is_16bit() {
             return self.encode_utf16(global, str.utf16_slice_aligned());
@@ -85,7 +85,7 @@ impl TextEncoderStreamEncoder {
         // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
         //
         //
-        // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
+        // TODO(port): should throw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
         let mut buffer: Vec<u8> = Vec::with_capacity(input.len() + prepend_replacement_len);
         if prepend_replacement_len > 0 {
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
@@ -105,10 +105,10 @@ impl TextEncoderStreamEncoder {
             remain = &remain[result.read as usize..];
 
             if result.written == 0 && result.read == 0 {
-                // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
+                // TODO(port): should throw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
                 buffer.reserve(2);
             } else if buffer.len() == buffer.capacity() && !remain.is_empty() {
-                // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
+                // TODO(port): should throw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
                 buffer.ensure_total_capacity(buffer.len() + remain.len() + 1);
             }
         }
@@ -186,7 +186,7 @@ impl TextEncoderStreamEncoder {
 
         let length = simdutf::length::utf8::from::utf16::le(remain);
 
-        // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
+        // TODO(port): should throw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
         let mut buf: Vec<u8> = Vec::with_capacity(
             length
                 + match prepend {
@@ -254,5 +254,3 @@ impl TextEncoderStreamEncoder {
         }
     }
 }
-
-// ported from: src/runtime/webcore/TextEncoderStreamEncoder.zig

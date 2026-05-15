@@ -22,9 +22,9 @@ pub mod version;
 pub use crate::semver_query as query;
 pub use crate::semver_range as range;
 
-/// Duck-typed surface for `Lockfile::str` (src/install/lockfile.zig:`str`): any
-/// value that can project itself into a string-bytes buffer. Implemented by
-/// `String` / `ExternalString` (and any other `slice(buf)`-shaped types).
+/// Duck-typed surface for `Lockfile::str`: any value that can project itself
+/// into a string-bytes buffer. Implemented by `String` / `ExternalString`
+/// (and any other `slice(buf)`-shaped types).
 pub trait Slicable {
     fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
 }
@@ -53,8 +53,8 @@ pub trait StringBuilder {
     fn count(&mut self, slice_: &[u8]);
     fn append<T: crate::semver_string::BuilderStringType>(&mut self, slice_: &[u8]) -> T;
 
-    /// Convenience wrapper for `append::<String>` so callers ported from Zig's
-    /// `builder.append(String, s)` don't each need a local adapter trait.
+    /// Convenience wrapper for `append::<String>` so callers don't each need a
+    /// local adapter trait.
     #[inline]
     fn append_string(&mut self, s: &[u8]) -> crate::semver_string::String {
         self.append::<crate::semver_string::String>(s)
@@ -79,7 +79,6 @@ impl StringBuilder for crate::semver_string::Builder {
 
 // ══════════════════════════════════════════════════════════════════════════
 // MOVE-IN: bun_install_types::sliced_string → bun_semver::sliced_string
-// Ground truth: src/install_types/SlicedString.zig
 // ══════════════════════════════════════════════════════════════════════════
 pub mod sliced_string {
     use super::external_string::ExternalString;
@@ -160,7 +159,6 @@ pub mod sliced_string {
 
 // ══════════════════════════════════════════════════════════════════════════
 // MOVE-IN: bun_install_types::external_string → bun_semver::external_string
-// Ground truth: src/install_types/ExternalString.zig
 // ══════════════════════════════════════════════════════════════════════════
 pub mod external_string {
     use core::cmp::Ordering;
@@ -239,7 +237,6 @@ pub mod external_string {
 
 // ══════════════════════════════════════════════════════════════════════════
 // MOVE-IN: bun_install_types::semver_string → bun_semver::semver_string
-// Ground truth: src/install_types/SemverString.zig
 // ══════════════════════════════════════════════════════════════════════════
 pub mod semver_string {
     use core::cmp::Ordering;
@@ -273,8 +270,8 @@ pub mod semver_string {
 
     impl fmt::Debug for String {
         // Buffer-relative `String` cannot be sliced without its arena, so debug
-        // output mirrors Zig's struct dump: the raw 8-byte handle. Callers that
-        // want the resolved text use `.fmt(buf)` / `.slice(buf)` instead.
+        // output is the raw 8-byte handle. Callers that want the resolved text
+        // use `.fmt(buf)` / `.slice(buf)` instead.
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("String")
                 .field("bytes", &self.bytes)
@@ -285,7 +282,7 @@ pub mod semver_string {
     // https://en.wikipedia.org/wiki/Intel_5-level_paging
     // https://developer.arm.com/documentation/101811/0101/Address-spaces-in-AArch64#:~:text=0%2DA%2C%20the%20maximum%20size,2%2DA.
     // X64 seems to need some of the pointer bits
-    // Zig: `const max_addressable_space = u63;` — Rust has no u63; use a mask for the @truncate semantics.
+    // Max addressable space is 63 bits; Rust has no u63 — use a mask for the truncation semantics.
     const MAX_ADDRESSABLE_SPACE_MASK: u64 = (1u64 << 63) - 1;
 
     const _: () = assert!(
@@ -301,7 +298,7 @@ pub mod semver_string {
         };
 
         /// Create an inline string
-        // TODO(port): make const fn once `init` is const-evaluable; Zig used `comptime` block.
+        // TODO(port): make const fn once `init` is const-evaluable.
         pub fn from(inlinable_buffer: &'static [u8]) -> String {
             debug_assert!(
                 !(inlinable_buffer.len() > Self::MAX_INLINE_LEN
@@ -504,8 +501,8 @@ pub mod semver_string {
         }
 
         pub fn init_append(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
-            // PERF(port): Zig used `try buf.appendSlice(allocator, in)`; Vec::extend_from_slice
-            // panics on OOM under the global mimalloc allocator instead of returning an error.
+            // PERF(port): Vec::extend_from_slice panics on OOM under the global
+            // mimalloc allocator instead of returning an error.
             buf.extend_from_slice(in_);
             let items = buf.as_slice();
             let in_buf = &items[items.len() - in_.len()..];
@@ -531,7 +528,7 @@ pub mod semver_string {
                 debug_assert!(b_off + b_len <= that_buf.len());
                 // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
                 // sub-slice of `buf` and is only ever projected back into the same buffer
-                // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast).
+                // (`buf[ptr.off..][..ptr.len]`, unchecked in release builds).
                 strings::eql(
                     unsafe { this_buf.get_unchecked(a_off..a_off + a_len) },
                     unsafe { that_buf.get_unchecked(b_off..b_off + b_len) },
@@ -608,7 +605,7 @@ pub mod semver_string {
                     debug_assert!(off + len <= buf.len());
                     // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
                     // sub-slice of `buf` and is only ever projected back into the same buffer
-                    // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast). The two
+                    // (`buf[ptr.off..][..ptr.len]`, unchecked in release builds). The two
                     // checked slice ops here were the dominant cost in install hot loops.
                     unsafe { buf.get_unchecked(off..off + len) }
                 }
@@ -881,7 +878,7 @@ pub mod semver_string {
             }
         }
 
-        /// Bit-reinterpret as `u64` (Zig `@bitCast`). `#[repr(C)]` lays out `off` at byte
+        /// Bit-reinterpret as `u64`. `#[repr(C)]` lays out `off` at byte
         /// offset 0 and `len` at offset 4; composing via native-endian byte arrays is
         /// byte-identical to a raw bitcast.
         #[inline]
@@ -906,7 +903,6 @@ pub mod semver_string {
     // ── String.Builder ────────────────────────────────────────────────────
 
     /// Trait abstracting over `String` and `ExternalString` for `Builder::append*` methods.
-    /// Replaces Zig's `comptime Type: type` + `switch (Type)` dispatch.
     pub trait BuilderStringType: Sized {
         fn from_init(allocated: &[u8], slice_: &[u8], hash: u64) -> Self;
         fn from_pooled(value: String, hash: u64) -> Self;
@@ -930,7 +926,7 @@ pub mod semver_string {
         }
     }
 
-    // Zig: `std.HashMap(u64, String, IdentityContext(u64), 80)`.
+    // u64-keyed identity-hashed pool (load factor 80).
     #[derive(Default)]
     pub struct StringPool {
         map: HashMap<u64, String, bun_collections::IdentityContext<u64>>,
@@ -951,13 +947,12 @@ pub mod semver_string {
         pub fn contains(&self, hash: &u64) -> bool {
             self.map.contains_key(hash)
         }
-        /// Zig `HashMap.capacity()` — number of slots reservable without rehash.
+        /// Number of slots reservable without rehash.
         #[inline]
         pub fn capacity(&self) -> usize {
             self.map.capacity()
         }
-        /// Zig `HashMap.ensureTotalCapacity(n)` — pre-reserve so `n` entries
-        /// fit without rehash.
+        /// Pre-reserve so `n` entries fit without rehash.
         #[inline]
         pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
             self.map.ensure_total_capacity(n)
@@ -977,7 +972,7 @@ pub mod semver_string {
                 len: 0,
                 cap: 0,
                 ptr: None,
-                // TODO(port): Zig had `= undefined`; callers must initialize before use.
+                // TODO(port): originally left uninitialized; callers must initialize before use.
                 string_pool: StringPool::default(),
             }
         }
@@ -1015,7 +1010,7 @@ pub mod semver_string {
         #[inline]
         pub fn allocated_slice(&self) -> &[u8] {
             if self.cap > 0 {
-                // SAFETY mirror: Zig did `this.ptr.?[0..this.cap]` — caller guarantees allocate() ran when cap > 0
+                // SAFETY: caller guarantees allocate() ran when cap > 0
                 &self.ptr.as_ref().expect("allocate() not called")[0..self.cap]
             } else {
                 &[]
@@ -1023,7 +1018,7 @@ pub mod semver_string {
         }
 
         pub fn allocate(&mut self) -> Result<(), AllocError> {
-            // PERF(port): Zig used uninitialized alloc; using zeroed Box<[u8]> here — profile in Phase B
+            // PERF(port): originally an uninitialized alloc; using zeroed Box<[u8]> here — profile in Phase B
             let ptr_ = vec![0u8; self.cap].into_boxed_slice();
             self.ptr = Some(ptr_);
             Ok(())
@@ -1136,5 +1131,3 @@ pub mod semver_string {
         "String types must be the same size",
     );
 }
-
-// ported from: src/semver/semver.zig

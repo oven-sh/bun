@@ -21,7 +21,7 @@ pub mod thread_id;
 // `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`)
 // directly. Instead of an erased fn-ptr hook, those crates push their
 // `&'static AllocatorVTable` addresses here at init; `alloc::has_ptr` then
-// does a plain pointer-equality scan. This is the same predicate Zig's
+// does a plain pointer-equality scan. This is the same predicate the
 // `is_instance` checks compute (vtable identity), just with the *data* moved
 // down rather than the *code* called up.
 // ──────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 /// crates at startup via [`register_alloc_vtable`].
 ///
 /// Lock-free fixed-capacity array: writes happen once at init, reads sit on
-/// `has_ptr()` (called from `CheckedAllocator` on debug paths). The Zig spec
+/// `has_ptr()` (called from `CheckedAllocator` on debug paths). The original
 /// is a chain of inline `ptr_eq` against compile-time-known vtable addresses,
 /// so a Relaxed scan over ≤16 words matches that cost profile.
 const KNOWN_ALLOC_CAP: usize = 16;
@@ -97,5 +97,3 @@ pub fn dump_stored_trace(trace: &bun_core::StoredTrace) {
         },
     );
 }
-
-// ported from: src/safety/safety.zig

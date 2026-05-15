@@ -3,8 +3,6 @@
 //! exceptions as well as bundler errors. A serialized failure carries a handle
 //! on the file or route it came from so the bundler can dismiss/update stale
 //! failures by index instead of resending the whole payload.
-//!
-//! Spec: src/runtime/bake/DevServer/SerializedFailure.zig
 
 use bun_io::Write as _;
 
@@ -16,8 +14,8 @@ use crate::bake::Side;
 ///
 /// Distinct from `Packed` (2-bit kind + 30-bit data) below: this encoding only
 /// covers `Client`/`Server` owners and is used as the `bundling_failures` map
-/// key (Zig hashed via `ArrayHashContextViaOwner`; the port keys the map by
-/// this newtype directly).
+/// key (an earlier design hashed via `ArrayHashContextViaOwner`; the port keys
+/// the map by this newtype directly).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 pub struct OwnerPacked(pub u32);
@@ -60,8 +58,7 @@ impl Owner {
     }
 }
 
-/// Zig: `packed struct(u32) { data: u30, kind: enum(u2) }`
-/// First field at LSB → `data` = bits 0..30, `kind` = bits 30..32.
+/// Bit-packed `u32`: `data` = bits 0..30, `kind` (2-bit enum) = bits 30..32.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Packed(u32);
@@ -115,13 +112,13 @@ impl Packed {
     }
 }
 
-// Zig: comptime { assert(@as(u32, @bitCast(Packed{ .kind = .none, .data = 1 })) == 1); }
+// Compile-time assert: `data` occupies the low bits, `kind == None` is 0.
 const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 
 /// Stored in `dev.bundling_failures` keyed by its `OwnerPacked`.
 ///
-/// PERF(port): Zig's `SerializedFailure` is a slice header (`data: []u8`) and
-/// gets shallow-copied between `bundling_failures` and the `failures_added`/
+/// PERF(port): an earlier design treated `SerializedFailure` as a slice header
+/// shallow-copied between `bundling_failures` and the `failures_added`/
 /// `failures_removed` lists. The Rust port owns `data` as `Box<[u8]>`, so
 /// `Clone` deep-copies — profile in Phase B if this shows up.
 #[derive(Clone, Default)]
@@ -131,8 +128,8 @@ pub struct SerializedFailure {
 }
 
 impl SerializedFailure {
-    /// `SerializedFailure.getOwner` — decodes the leading 4-byte `Owner.Packed`
-    /// from `data` (Zig: `std.mem.bytesAsValue(Owner.Packed, data[0..4]).decode()`).
+    /// `SerializedFailure::get_owner` — decodes the leading 4-byte `Owner.Packed`
+    /// from `data`.
     pub fn get_owner(&self) -> Owner {
         let raw = u32::from_ne_bytes(
             self.data[0..4]
@@ -142,9 +139,8 @@ impl SerializedFailure {
         Packed::from_bits(raw).decode()
     }
 
-    /// `SerializedFailure.deinit` — releases `data`. The dev-server owns the
-    /// allocator in Zig; here `Box<[u8]>` drop suffices, but we keep the
-    /// signature so call sites stay 1:1 with the spec.
+    /// `SerializedFailure::deinit` — releases `data`. `Box<[u8]>` drop suffices,
+    /// but we keep the signature so call sites stay 1:1 with the spec.
     pub fn deinit<D>(&self, _dev: &D) {
         // Drop happens via owner; nothing to do for the borrow form used by
         // `index_failures` (which iterates `&SerializedFailure`).
@@ -172,8 +168,8 @@ impl SerializedFailure {
             write_log_msg(msg, w);
         }
 
-        // Zig avoided re-cloning if the stack-fallback had spilled to heap; with
-        // a plain Vec the buffer is always heap-backed, so just take ownership.
+        // With a plain Vec the buffer is always heap-backed, so just take
+        // ownership (no need to special-case a stack-fallback spill).
         Ok(SerializedFailure {
             data: payload.into_boxed_slice(),
         })
@@ -230,11 +226,10 @@ pub enum ErrorKind {
 }
 
 // All "write" functions get a corresponding "read" function in ./client/error.ts
-// Zig: const Writer = std.array_list.Managed(u8).Writer;
 type Writer = Vec<u8>;
 
 fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
-    // Zig: switch (msg.kind) { inline else => |k| @intFromEnum(@field(ErrorKind, "bundler_log_" ++ @tagName(k))) }
+    // Map each `bun_ast::Kind` variant to the matching `ErrorKind::BundlerLog*` discriminant.
     let kind_byte = match msg.kind {
         bun_ast::Kind::Err => ErrorKind::BundlerLogErr,
         bun_ast::Kind::Warn => ErrorKind::BundlerLogWarn,

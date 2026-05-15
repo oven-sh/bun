@@ -1,8 +1,8 @@
 #include "config.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bun {
 
-JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createNodePathBinding(Bun::GlobalObject* globalObject);
 
 } // namespace Bun

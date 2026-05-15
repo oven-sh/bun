@@ -164,7 +164,7 @@ def WTFStringImpl_SummaryProvider(value, _=None):
     except:
         return '<error>'
 
-def ZigString_SummaryProvider(value, _=None):
+def UnsafeStringView_SummaryProvider(value, _=None):
     try:
         value = value.GetNonSyntheticValue()
         
@@ -264,14 +264,14 @@ def bun_String_SummaryProvider(value, _=None):
         # Map tag values to names
         tag_names = {
             0: 'Dead',
-            1: 'WTFStringImpl', 
-            2: 'ZigString',
-            3: 'StaticZigString',
+            1: 'WTFStringImpl',
+            2: 'UnsafeStringView',
+            3: 'StaticUnsafeStringView',
             4: 'Empty'
         }
-        
+
         tag_name = tag_names.get(tag_value, 'Unknown')
-        
+
         if tag_name == 'Empty':
             return '""'
         elif tag_name == 'Dead':
@@ -284,17 +284,20 @@ def bun_String_SummaryProvider(value, _=None):
             if not impl_value or not impl_value.IsValid():
                 return '<no WTFStringImpl field>'
             return WTFStringImpl_SummaryProvider(impl_value, _)
-        elif tag_name == 'ZigString' or tag_name == 'StaticZigString':
+        elif tag_name == 'UnsafeStringView' or tag_name == 'StaticUnsafeStringView':
             value_union = value.GetChildMemberWithName('value')
             if not value_union or not value_union.IsValid():
                 return '<no value field>'
-            field_name = 'ZigString' if tag_name == 'ZigString' else 'StaticZigString'
-            zig_string_value = value_union.GetChildMemberWithName(field_name)
-            if not zig_string_value or not zig_string_value.IsValid():
-                return '<no %s field>' % field_name
-            result = ZigString_SummaryProvider(zig_string_value, _)
+            # Both tags alias the same union member: `unsafe_string_view` in the
+            # Rust `StringImpl` union (`view` on the C++ `BunStringImpl` side).
+            view_value = value_union.GetChildMemberWithName('unsafe_string_view')
+            if not view_value or not view_value.IsValid():
+                view_value = value_union.GetChildMemberWithName('view')
+            if not view_value or not view_value.IsValid():
+                return '<no unsafe_string_view field>'
+            result = UnsafeStringView_SummaryProvider(view_value, _)
             # Add static marker if needed
-            if tag_name == 'StaticZigString':
+            if tag_name == 'StaticUnsafeStringView':
                 result = result.replace(']', ' static]')
             return result
         else:
@@ -316,11 +319,11 @@ def __lldb_init_module(debugger, _=None):
     add(debugger, category='bun', type='string.WTFStringImplStruct', identifier='WTFStringImpl', summary=True)
     add(debugger, category='bun', type='*string.WTFStringImplStruct', identifier='WTFStringImpl', summary=True)
     
-    # Add ZigString pretty printer - try multiple possible type names
-    add(debugger, category='bun', type='ZigString', identifier='ZigString', summary=True)
-    add(debugger, category='bun', type='bun.js.bindings.ZigString', identifier='ZigString', summary=True)
-    add(debugger, category='bun', type='bindings.ZigString', identifier='ZigString', summary=True)
-    
+    # Add UnsafeStringView pretty printer - try multiple possible type names
+    add(debugger, category='bun', type='UnsafeStringView', identifier='UnsafeStringView', summary=True)
+    add(debugger, category='bun', type='bun_alloc::UnsafeStringView', identifier='UnsafeStringView', summary=True)
+    add(debugger, category='bun', type='bun_core::string::UnsafeStringView', identifier='UnsafeStringView', summary=True)
+
     # Add bun.String pretty printer - try multiple possible type names
     add(debugger, category='bun', type='String', identifier='bun_String', summary=True)
     add(debugger, category='bun', type='bun.String', identifier='bun_String', summary=True)
@@ -328,11 +331,11 @@ def __lldb_init_module(debugger, _=None):
     add(debugger, category='bun', type='BunString', identifier='bun_String', summary=True)
     add(debugger, category='bun', type='bun::String', identifier='bun_String', summary=True)
     add(debugger, category='bun', type='bun::string::String', identifier='bun_String', summary=True)
-    
+
     # Try regex patterns for more flexible matching
     add(debugger, category='bun', regex=True, type='.*String$', identifier='bun_String', summary=True)
     add(debugger, category='bun', regex=True, type='.*WTFStringImpl.*', identifier='WTFStringImpl', summary=True)
-    add(debugger, category='bun', regex=True, type='.*ZigString.*', identifier='ZigString', summary=True)
+    add(debugger, category='bun', regex=True, type='.*UnsafeStringView.*', identifier='UnsafeStringView', summary=True)
     
     # Enable the category
     debugger.HandleCommand('type category enable bun')

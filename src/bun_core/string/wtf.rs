@@ -1,6 +1,6 @@
 use crate::string::strings;
-// TODO(port): ZigString.Slice is a nested type in Zig; in Rust it lives alongside ZigString.
-use crate::string::ZigStringSlice;
+// `UTF8Slice` lives alongside `UnsafeStringView` in `crate::string`.
+use crate::string::UTF8Slice;
 
 // Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
 // `is_wtf_allocator` vtable-identity check is a local pointer compare with no
@@ -24,18 +24,18 @@ pub type RefPtr<T> = crate::external_shared::ExternalShared<T>;
 pub type StringImpl = WTFStringImplStruct;
 
 /// Extension methods on [`WTFStringImplStruct`] that depend on
-/// `bun_string` types ([`ZigStringSlice`], `crate::ZBox`) or
+/// `bun_string` types ([`UTF8Slice`], `crate::ZBox`) or
 /// `crate::string::strings::*` transcoding. Kept as a trait because the struct is
 /// defined in `bun_alloc` and an inherent `impl` here would violate the orphan
 /// rule. Glob-imported via `bun_core::WTFStringImplExt` so method-call syntax
 /// keeps working at every existing callsite.
 pub trait WTFStringImplExt {
-    fn to_latin1_slice(&self) -> ZigStringSlice;
-    fn to_utf8(&self) -> ZigStringSlice;
-    fn to_utf8_without_ref(&self) -> ZigStringSlice;
-    fn to_utf8_borrowed(&self) -> ZigStringSlice;
+    fn to_latin1_slice(&self) -> UTF8Slice;
+    fn to_utf8(&self) -> UTF8Slice;
+    fn to_utf8_without_ref(&self) -> UTF8Slice;
+    fn to_utf8_borrowed(&self) -> UTF8Slice;
     fn to_owned_slice_z(&self) -> crate::ZBox;
-    fn to_utf8_if_needed(&self) -> Option<ZigStringSlice>;
+    fn to_utf8_if_needed(&self) -> Option<UTF8Slice>;
     fn can_use_as_utf8(&self) -> bool;
     fn utf8_byte_length(&self) -> usize;
     fn utf8_slice(&self) -> &[u8];
@@ -43,16 +43,16 @@ pub trait WTFStringImplExt {
 
 impl WTFStringImplExt for WTFStringImplStruct {
     #[inline]
-    fn to_latin1_slice(&self) -> ZigStringSlice {
+    fn to_latin1_slice(&self) -> UTF8Slice {
         self.r#ref();
         let s = self.latin1_slice();
-        // ZigStringSlice::WTF derefs `self` on Drop — replaces the Zig
-        // StringImplAllocator vtable trick with explicit ownership.
+        // UTF8Slice::WTF derefs `self` on Drop — explicit ownership
+        // replaces the legacy StringImplAllocator vtable trick.
         // SAFETY: `self` is a live WTF::StringImpl with refcount just bumped above;
         // we store only a `*const` (never materialize `&mut`) and the matching
         // deref happens via FFI on Drop. Mutation of m_ref_count is C++-side
         // interior mutability, same as `r#ref`/`deref` already rely on.
-        ZigStringSlice::WTF {
+        UTF8Slice::WTF {
             string_impl: std::ptr::from_ref::<Self>(self),
             ptr: s.as_ptr(),
             len: s.len(),
@@ -60,60 +60,60 @@ impl WTFStringImplExt for WTFStringImplStruct {
     }
 
     #[inline]
-    fn to_utf8(&self) -> ZigStringSlice {
+    fn to_utf8(&self) -> UTF8Slice {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
-                return ZigStringSlice::init_owned(utf8);
+                return UTF8Slice::init_owned(utf8);
             }
 
             return self.to_latin1_slice();
         }
 
-        ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
+        UTF8Slice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
     }
 
     #[inline]
-    fn to_utf8_without_ref(&self) -> ZigStringSlice {
+    fn to_utf8_without_ref(&self) -> UTF8Slice {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
-                return ZigStringSlice::init_owned(utf8);
+                return UTF8Slice::init_owned(utf8);
             }
 
-            return ZigStringSlice::from_utf8_never_free(self.latin1_slice());
+            return UTF8Slice::from_utf8_never_free(self.latin1_slice());
         }
 
-        ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
+        UTF8Slice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
     }
 
     /// Like [`to_utf8`] but the 8-bit all-ASCII fast path returns a non-owning
-    /// [`ZigStringSlice::WtfBorrowed`] view (no `r#ref`/`deref` pair) instead of
-    /// the ref-holding [`ZigStringSlice::WTF`]. The caller MUST keep this impl
+    /// [`UTF8Slice::WtfBorrowed`] view (no `r#ref`/`deref` pair) instead of
+    /// the ref-holding [`UTF8Slice::WTF`]. The caller MUST keep this impl
     /// alive for the lifetime of the returned slice — `bun.String::to_slice`
     /// does so via `SliceWithUnderlyingString.underlying`. `WtfBorrowed` still
     /// records `self` so a later thread-safe migration can re-derive the view.
     ///
     /// [`to_utf8`]: WTFStringImplExt::to_utf8
     #[inline]
-    fn to_utf8_borrowed(&self) -> ZigStringSlice {
+    fn to_utf8_borrowed(&self) -> UTF8Slice {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
-                return ZigStringSlice::init_owned(utf8);
+                return UTF8Slice::init_owned(utf8);
             }
 
             // All-ASCII Latin-1: borrow the impl's own bytes, no refcount bump.
             let s = self.latin1_slice();
-            return ZigStringSlice::WtfBorrowed {
+            return UTF8Slice::WtfBorrowed {
                 string_impl: std::ptr::from_ref::<Self>(self),
                 ptr: s.as_ptr(),
                 len: s.len(),
             };
         }
 
-        ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
+        UTF8Slice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
     }
 
     /// Allocates a NUL-terminated UTF-8 copy. Port of `toOwnedSliceZ`.
-    /// `.len()` excludes the sentinel (Zig `[:0]u8` semantics).
+    /// `.len()` excludes the trailing NUL sentinel.
     fn to_owned_slice_z(&self) -> crate::ZBox {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1_z(self.latin1_slice()) {
@@ -125,16 +125,16 @@ impl WTFStringImplExt for WTFStringImplStruct {
         strings::to_utf8_alloc_z(self.utf16_slice())
     }
 
-    fn to_utf8_if_needed(&self) -> Option<ZigStringSlice> {
+    fn to_utf8_if_needed(&self) -> Option<UTF8Slice> {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
-                return Some(ZigStringSlice::init_owned(utf8));
+                return Some(UTF8Slice::init_owned(utf8));
             }
 
             return None;
         }
 
-        Some(ZigStringSlice::init_owned(strings::to_utf8_alloc(
+        Some(UTF8Slice::init_owned(strings::to_utf8_alloc(
             self.utf16_slice(),
         )))
     }
@@ -149,10 +149,9 @@ impl WTFStringImplExt for WTFStringImplStruct {
         if self.is_8bit() {
             let input = self.latin1_slice();
             if !input.is_empty() {
-                // Port: latin1→utf8 length is just elementLengthLatin1IntoUTF8
-                // (each high byte becomes 2 utf8 bytes). The Zig went through
-                // jsc.WebCore.encoding.byteLengthU8 but for Utf8 target that
-                // reduces to the same arithmetic.
+                // latin1→utf8 length is just elementLengthLatin1IntoUTF8
+                // (each high byte becomes 2 utf8 bytes). Equivalent to
+                // jsc.WebCore.encoding.byteLengthU8 for the Utf8 target.
                 strings::element_length_latin1_into_utf8(input)
             } else {
                 0
@@ -177,14 +176,12 @@ impl WTFStringImplExt for WTFStringImplStruct {
     }
 }
 
-// PORT NOTE: Zig's `StringImplAllocator` was a `std.mem.Allocator` vtable trick
-// (alloc() bumped ref, free() dropped it) so a `ZigString.Slice` would deref the
-// WTFStringImpl when freed. Replaced by `ZigStringSlice::WTF { .. }` explicit
+// PORT NOTE: the legacy `StringImplAllocator` was an allocator vtable trick
+// (alloc() bumped ref, free() dropped it) so a slice would deref the
+// WTFStringImpl when freed. Replaced by `UTF8Slice::WTF { .. }` explicit
 // ownership variant — see `to_latin1_slice` above. No allocator trait needed.
 
 // `WTF.parseDouble` canonical now lives in bun_core::fmt (tier-0) so
 // `bun_interchange` (yaml/toml) and `bun_js_parser::lexer` can call it without
-// any string/jsc dep. Re-exported here to keep the Zig namespace shape.
+// any string/jsc dep. Re-exported here to keep the historical namespace shape.
 pub use crate::fmt::{InvalidCharacter, parse_double};
-
-// ported from: src/string/wtf.zig

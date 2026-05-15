@@ -59,7 +59,7 @@ impl TestingAPIs {
         };
 
         let obj = JSValue::create_empty_object(global, 5);
-        // PORT NOTE: stub `JSValue::put` takes `&[u8]` directly (Zig used `ZigString.static_`).
+        // PORT NOTE: stub `JSValue::put` takes `&[u8]` directly.
         obj.put(
             global,
             b"generatedLine",
@@ -104,5 +104,3 @@ pub fn testing_to_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 pub fn testing_find(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::find(global, frame)
 }
-
-// ported from: src/sourcemap_jsc/internal_jsc.zig

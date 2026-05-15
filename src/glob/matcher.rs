@@ -37,7 +37,7 @@ struct Brace {
 }
 type BraceStack = BoundedArray<Brace, 10>;
 
-// PORT NOTE: made `pub` — Zig leaks this private type through `pub fn match`; Rust forbids private-in-public.
+// PORT NOTE: made `pub` — `pub fn match` returns this type; Rust forbids private-in-public.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MatchResult {
     NoMatch,
@@ -163,7 +163,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
 // `glob_start` is the index where the glob pattern starts
 #[inline(always)]
-// PERF(port): Zig `inline fn` on a fn that recurses through match_brace_branch — profile in Phase B
+// PERF(port): force-inlined despite recursing through match_brace_branch — profile in Phase B
 fn glob_match_impl(
     state: &mut State,
     glob: &[u8],
@@ -563,7 +563,7 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
 
 /// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
 ///
-/// Mirrors the open-coded triple in matcher.zig (`wtf8ByteSequenceLength` + `decodeWTF8RuneT`).
+/// Combines `wtf8ByteSequenceLength` + `decodeWTF8RuneT` into a single helper.
 #[inline(always)]
 fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
     let len = strings::wtf8_byte_sequence_length(bytes[idx]);
@@ -586,7 +586,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
     const BACKSLASH: u32 = b'\\' as u32;
     match *c {
         // ascii range excluding backslash
-        // PORT NOTE: Zig `0x0...('\\'-1), '\\'+1...0x7F` — 0x5C is '\\'
+        // ASCII excluding backslash — 0x5C is '\\'
         0x00..=0x5B | 0x5D..=0x7F => {
             return true;
         }
@@ -644,5 +644,3 @@ struct BraceIndex {
     start: u32,
     end: u32,
 }
-
-// ported from: src/glob/matcher.zig

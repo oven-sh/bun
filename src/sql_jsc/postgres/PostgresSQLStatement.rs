@@ -35,8 +35,8 @@ pub struct PostgresSQLStatement {
 
 impl Default for PostgresSQLStatement {
     fn default() -> Self {
-        // TODO(port): `signature` has no default in Zig; callers must set it. This Default
-        // exists only to mirror the per-field `= ...` initializers.
+        // TODO(port): `signature` has no meaningful default; callers must set it. This Default
+        // exists only to mirror the original per-field initializers.
         Self {
             cached_structure: PostgresCachedStructure::default(),
             ref_count: Cell::new(1),
@@ -57,7 +57,7 @@ pub enum Error {
 }
 
 impl Error {
-    // Zig `deinit` only forwarded to `ErrorResponse.deinit()`; that is now `Drop` on
+    // Cleanup only forwards to `ErrorResponse`; that is handled by `Drop` on
     // `protocol::ErrorResponse`, so no explicit `Drop` impl is needed here.
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -86,8 +86,8 @@ impl Status {
 }
 
 impl PostgresSQLStatement {
-    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
-    /// refcount at construction time, before any `ref_()`/`deref()`. The
+    /// Set the initial intrusive refcount at construction time, before any
+    /// `ref_()`/`deref()`. The
     /// `ref_count` field is private (refcount invariant), so callers building
     /// a statement with >1 owner (query + connection-map entry) go through
     /// this instead of writing the field directly.
@@ -117,7 +117,7 @@ impl PostgresSQLStatement {
                 ColumnIdentifier::Name(name) => {
                     // PORT NOTE: reshaped for borrowck — compute `found_existing`
                     // before mutating `field.name_or_index`.
-                    // TODO(port): Zig `getOrPut` keys on the borrowed slice;
+                    // TODO(port): the upstream map keys on the borrowed slice;
                     // StringHashMap clones to an owned `Box<[u8]>` key. Fine for
                     // a transient dedup set; revisit if profiling flags it.
                     let found_existing = seen_fields
@@ -151,7 +151,7 @@ impl PostgresSQLStatement {
         self.fields_flags = flags;
     }
 
-    // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning
+    // PORT NOTE: the original returned `CachedStructure` by value (struct copy). Returning
     // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
     // a `Box<[ExternColumnIdentifier]>` and a `StrongOptional`, neither `Copy`).
     pub fn structure(
@@ -185,5 +185,3 @@ impl Drop for PostgresSQLStatement {
         // not here — Drop must not free `self`'s storage.
     }
 }
-
-// ported from: src/sql_jsc/postgres/PostgresSQLStatement.zig

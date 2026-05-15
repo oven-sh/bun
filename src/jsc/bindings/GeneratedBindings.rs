@@ -1,5 +1,5 @@
 //! Hand-ported surface of `src/codegen/bindgen.ts` output
-//! (source: src/jsc/bindings/GeneratedBindings.zig — bindgen dispatch shims).
+//! (source: the bindgen dispatch shim — bindgen dispatch shims).
 //!
 //! Until the generator grows a `.rs` backend, the modules required by
 //! downstream Rust callers are ported here by hand. Each `create_*_callback`
@@ -9,9 +9,9 @@
 
 #![allow(non_snake_case)]
 
-use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn, zig_string};
+use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn, unsafe_string_view};
 
-/// Generated for "src/jsc/bindgen_test.zig"
+/// Generated for "src/jsc/bindgen_test.rs"
 pub mod bindgen_test {
     use super::*;
 
@@ -28,7 +28,7 @@ pub mod bindgen_test {
     pub fn create_add_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&zig_string::static_(b"add")),
+            Some(&unsafe_string_view::static_(b"add")),
             3,
             JS_ADD,
             false,
@@ -39,7 +39,7 @@ pub mod bindgen_test {
     pub fn create_required_and_optional_arg_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&zig_string::static_(b"requiredAndOptionalArg")),
+            Some(&unsafe_string_view::static_(b"requiredAndOptionalArg")),
             4,
             JS_REQUIRED_AND_OPTIONAL_ARG,
             false,
@@ -48,4 +48,4 @@ pub mod bindgen_test {
     }
 }
 
-// ported from: src/jsc/bindings/GeneratedBindings.zig
+// ported from: the bindgen dispatch shim

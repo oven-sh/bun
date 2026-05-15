@@ -1,10 +1,8 @@
 //! Base header struct embedded in every state-machine node.
 //!
-//! In Zig this carried `interpreter: *Interpreter` and `shell: *ShellExecEnv`
-//! back-pointers. In the NodeId-arena port the interpreter is passed as
-//! `&Interpreter` to every method, so only `parent: NodeId` and the
-//! `*mut ShellExecEnv` (which may be owned or borrowed — see field doc) are
-//! stored here.
+//! In the NodeId-arena design the interpreter is passed as `&Interpreter`
+//! to every method, so only `parent: NodeId` and the `*mut ShellExecEnv`
+//! (which may be owned or borrowed — see field doc) are stored here.
 
 use crate::shell::interpreter::{NodeId, ShellExecEnv, StateKind};
 
@@ -12,7 +10,7 @@ pub struct Base {
     pub kind: StateKind,
     /// Index of the parent node in `Interpreter::nodes`, or
     /// `NodeId::INTERPRETER` if the parent is the interpreter itself.
-    /// Replaces Zig's `parent: ParentPtr` tagged-pointer back-ref.
+    /// Replaces a `ParentPtr` tagged-pointer back-ref.
     pub parent: NodeId,
     /// Borrowed or owned in specific cases — affects whether this node must
     /// `deinit` it. Owned when created via `dupe_for_subshell` (Script,
@@ -34,7 +32,7 @@ impl Base {
         }
     }
 
-    /// Kept for call-site parity with the Zig state machine; in Rust the
+    /// Kept for call-site parity with the original state machine; the
     /// owned-vs-borrowed distinction is carried by `EnvStr` itself, so there
     /// is no per-node allocation scope to borrow.
     #[inline]
@@ -42,7 +40,7 @@ impl Base {
         Self::new(kind, parent, shell)
     }
 
-    /// No-op kept for call-site parity. Zig used this to flush the per-node
+    /// No-op kept for call-site parity. Originally flushed the per-node
     /// debug allocation scope; Rust ownership (`EnvStr`, `Box`, `Vec`) makes
     /// that tracking redundant.
     #[inline]
@@ -71,5 +69,3 @@ pub enum TryError {
     #[error("Sys")]
     Sys,
 }
-
-// ported from: src/shell/states/Base.zig

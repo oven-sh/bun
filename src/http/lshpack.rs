@@ -131,7 +131,7 @@ impl HPACK {
                 dst_buffer_offset,
             )
         };
-        // PORT NOTE: Zig compared `offset <= 0` on a usize; only `== 0` is reachable.
+        // PORT NOTE: a previous formulation compared `offset <= 0` on a usize; only `== 0` is reachable.
         if offset == 0 {
             return Err(HpackError::UnableToEncode);
         }
@@ -146,8 +146,8 @@ impl HPACK {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
-    // PORT NOTE: Zig `destroy` (raw `*mut HPACK` teardown) is subsumed by the
-    // safe [`HpackHandle`] RAII wrapper below — every Rust owner holds an
+    // PORT NOTE: the raw `*mut HPACK` teardown is subsumed by the
+    // safe [`HpackHandle`] RAII wrapper below — every owner holds an
     // `HpackHandle`, so the raw destructor is private to `HpackHandle::drop`.
 }
 
@@ -251,5 +251,3 @@ unsafe extern "C" {
         buffer_offset: usize,
     ) -> usize;
 }
-
-// ported from: src/http/lshpack.zig

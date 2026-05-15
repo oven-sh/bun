@@ -191,8 +191,8 @@ impl<'a> DataURL<'a> {
             return buf;
         }
 
-        // TODO(port): Zig source's `bufPrint` writes `text` raw with `{s}` here, not the
-        // base64-encoded form — ported faithfully; verify upstream intent in Phase B.
+        // TODO(port): the original wrote `text` raw here, not the base64-encoded
+        // form — kept faithfully; verify upstream intent in Phase B.
         let mut base64buf = Vec::with_capacity(total_base64_encode_len);
         base64buf.extend_from_slice(b"data:");
         base64buf.extend_from_slice(mime_type);
@@ -265,8 +265,8 @@ impl<'a> DataURL<'a> {
 }
 
 /// Abstraction over `Vec<u8>` and `CountingBuf` for `encode_string_as_percent_escaped_data_url`
-/// (Zig used `buf: anytype` calling `.appendSlice`/`.append`).
-// PERF(port): Zig anytype was infallible OOM-abort via Vec; trait methods are infallible here.
+/// — a small writer interface (`append_slice`/`append`).
+// PERF(port): writes are infallible (OOM-abort via Vec); trait methods are infallible here.
 pub trait DataUrlBuf {
     fn append_slice(&mut self, slice: &[u8]);
     fn append(&mut self, c: u8);
@@ -298,5 +298,3 @@ impl DataUrlBuf for CountingBuf {
         self.len += 1;
     }
 }
-
-// ported from: src/resolver/data_url.zig

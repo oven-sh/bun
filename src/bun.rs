@@ -38,7 +38,7 @@ pub use bun_sys::tmp::Tmpfile;
 pub use bun_sys::windows;
 pub use bun_platform::darwin;
 pub use bun_platform::linux;
-/// Translated from `c-headers-for-zig.h` for the current platform.
+/// Translated from `c-headers.h` for the current platform.
 pub use bun_sys::c; // translated-c-headers
 
 pub use bun_sha_hmac as sha;
@@ -146,7 +146,7 @@ pub use bun_crash_handler::handle_error_return_trace as handleErrorReturnTrace;
 pub use bun_crash_handler::handle_oom::handle_oom as handleOom;
 
 pub use bun_jsc::uuid as UUID;
-pub use bun_core::ZigString;
+pub use bun_core::UnsafeStringView;
 // TODO(port): move to *_jsc — `bun_js` re-exports
 pub use crate::bun_js::{jsc, webcore, api};
 pub mod bun_js {
@@ -176,7 +176,7 @@ pub const use_mimalloc: bool = bun_build_options::USE_MIMALLOC;
 // `default_allocator` / `z_allocator` / `DefaultAllocator` are erased — global
 // mimalloc is the `#[global_allocator]` (see PORTING.md §Allocators).
 // TODO(port): debug_allocator_data — Rust uses `#[global_allocator]` + miri/asan
-// for leak detection; the Zig DebugAllocator vtable shim is not portable.
+// for leak detection; the legacy DebugAllocator vtable shim is not portable.
 
 // ─── error types ──────────────────────────────────────────────────────────────
 pub use bun_alloc::AllocError as OOM;
@@ -221,8 +221,8 @@ pub fn clamp_float<F: Copy + PartialOrd>(self_: F, min: F, max: F) -> F {
 
 /// Converts a floating-point value to an integer following Rust semantics.
 /// Rust's `as` cast already saturates and maps NaN→0, so this is a thin wrapper.
-// PORT NOTE: Zig needed this because @intFromFloat is UB on overflow; in Rust
-// `value as Int` already implements exactly these semantics.
+// PORT NOTE: kept for callers that still spell `int_from_float`; in Rust
+// `value as Int` already implements exactly these saturating semantics.
 #[inline]
 pub fn int_from_float_f64<Int: FromF64Saturating>(value: f64) -> Int {
     Int::from_f64_saturating(value)
@@ -322,7 +322,7 @@ pub struct ThreadlocalBuffers<T: Default + 'static> {
 impl<T: Default + 'static> ThreadlocalBuffers<T> {
     // Header + payload allocated together so the type-erased free function can
     // recover the full allocation from the node pointer.
-    // TODO(port): Zig used distinct `threadlocal var instance` per monomorphization.
+    // TODO(port): the original implementation used a distinct thread-local per monomorphization.
     // Rust can't declare a generic `thread_local!` directly; Phase B should use a
     // macro to stamp out a per-type `thread_local!` static.
 
@@ -386,7 +386,7 @@ pub fn free_all_threadlocal_buffers() {
 }
 
 // ─── cast / len / span / sliceTo ──────────────────────────────────────────────
-// These are Zig comptime-reflection helpers over @typeInfo with no direct Rust
+// These were comptime-reflection helpers with no direct Rust
 // equivalent. Callers should use Rust-native idioms instead:
 //   `bun.cast(*T, p)`       → `p.cast::<T>()` / `p as *mut T`
 //   `bun.len(p)`            → `slice.len()` / `bun_core::ffi::cstr(p).to_bytes().len()`
@@ -406,7 +406,7 @@ pub unsafe fn len_cstr(value: *const c_char) -> usize {
     unsafe { bun_core::ffi::cstr(value) }.to_bytes().len()
 }
 
-/// Zig `bun.span(p)` — bytes of a NUL-terminated C string (excludes NUL).
+/// `bun.span(p)` — bytes of a NUL-terminated C string (excludes NUL).
 pub use bun_core::ffi::cstr_bytes as span;
 
 /// Scan `pointer` until `end` or NUL sentinel, return the slice.
@@ -496,7 +496,7 @@ pub use bun_core::csprng;
 
 // Dedup D084: canonical impl lives in bun_core::util::fast_random (re-exported
 // at bun_core root via `pub use util::*`). Collapsing the two SEED statics +
-// thread-local PRNG cells into one is more spec-correct — bun.zig has a single
+// thread-local PRNG cells into one is more spec-correct — there is a single
 // process-wide seed.
 pub use bun_core::fast_random;
 
@@ -530,7 +530,7 @@ pub fn unreachable_panic(args: core::fmt::Arguments<'_>) -> ! {
 
 // ─── onceUnsafe ───────────────────────────────────────────────────────────────
 // TODO(port): onceUnsafe — Rust: use `std::sync::OnceLock` (single-thread callers
-// can use `Once` below). Zig version was not thread-safe.
+// can use `Once` below). The original version was not thread-safe.
 
 pub fn is_heap_memory<T>(mem: *const T) -> bool {
     if use_mimalloc {
@@ -995,13 +995,13 @@ pub use bun_core::{
 // ─── StringSet ────────────────────────────────────────────────────────────────
 // Canonical impl lives in bun_collections (tier-0). The previous local copy was
 // dead code — every caller already imports `bun_collections::StringSet` directly.
-// `init_comptime()` had zero callers (Rust callers model the Zig static empty set
+// `init_comptime()` had zero callers (callers model the static empty set
 // as `Option<Box<StringSet>> = None`); add a `const fn` to the canonical if a
 // future static needs it.
 pub use bun_collections::StringSet;
 
 // ─── StringMap ────────────────────────────────────────────────────────────────
-// Canonical port of Zig `bun.StringMap` lives in bun_collections (lower-tier
+// Canonical `bun.StringMap` lives in bun_collections (lower-tier
 // crate, spec-correct `StringArrayHashMap<Box<[u8]>>` inner type, getOrPut
 // semantics on insert). Re-export here for `bun::StringMap` path parity.
 pub use bun_collections::StringMap;
@@ -1022,7 +1022,7 @@ impl StringMapExt for StringMap {
 // PERF(port): threadLocalAllocator — global mimalloc is already thread-local-cached
 
 // ─── HiveRef ──────────────────────────────────────────────────────────────────
-// Zig spec `bun.HiveRef` (src/bun.zig:1860) is ported in bun_collections::hive_array
+// `bun.HiveRef` lives in bun_collections::hive_array
 // alongside its only collaborator `Fallback`; re-export here so the `bun::HiveRef`
 // namespace stays addressable.
 pub use bun_collections::{HiveRef, hive_array::HiveAllocator};
@@ -1232,7 +1232,7 @@ impl<Parent, const FIELD_OFFSET: usize> LazyBool<Parent, FIELD_OFFSET> {
     }
 }
 
-// TODO(port): serializable / serializableInto — Zig field-reflection to zero
+// TODO(port): serializable / serializableInto — field-reflection to zero
 // padding bytes. Rust `#[repr(C)]` + `unsafe { mem::zeroed() }` then field-assign
 // is the equivalent; needs a derive macro for ergonomics.
 
@@ -1320,7 +1320,7 @@ macro_rules! os_path_literal {
 // a `ComponentIterator<u16>` directly (e.g. `bun_libarchive::make_path_u16`);
 // the `componentIterator<T>` half is `bun_paths::ComponentIterator::init`.
 
-/// Zig-API parity re-export. The body that lived here was a verbatim duplicate
+/// API-parity re-export. The body that lived here was a verbatim duplicate
 /// of `bun_paths::Dirname` (its non-Windows arm even called the *private*
 /// `bun_paths::dirname_posix`, so it could not compile if instantiated).
 /// Canonical impl: `bun_paths::Dirname::dirname` → `path::dirname_generic`.
@@ -1329,7 +1329,7 @@ pub use bun_paths::Dirname;
 // Canonical impl lives in `bun_alloc` (T0); it dispatches through the
 // link-time `__bun_crash_handler_out_of_memory` symbol defined by
 // `bun_crash_handler`, which routes to `crashHandler(.out_of_memory, ..)` —
-// matching `src/bun.zig:2632 outOfMemory()`. Re-export so `bun::out_of_memory()`
+// matching the historical `outOfMemory()`. Re-export so `bun::out_of_memory()`
 // callers (zlib, test_command) keep working without taking a direct
 // crash_handler dep.
 pub use bun_alloc::out_of_memory;
@@ -1398,10 +1398,10 @@ pub fn delete_all_pools_for_thread_exit() {
 }
 
 // ─── errno mapping ────────────────────────────────────────────────────────────
-// Port of `bun.errnoToZigErr` lives in bun_core (delegates to `Error::from_errno`,
+// `bun.errno_to_bun_raw_err` lives in bun_core (delegates to `Error::from_errno`,
 // which reproduces the comptime `errno_map` table — including the sparse Windows
 // UV_* range that `SystemErrno::from_raw` alone does not cover).
-pub use bun_core::errno_to_zig_err;
+pub use bun_core::errno_to_bun_raw_err;
 
 pub fn iterate_dir(dir: FD) -> DirIterator::Iterator {
     DirIterator::iterate(dir, DirIterator::Encoding::U8).iter
@@ -1758,7 +1758,7 @@ pub type mach_port = libc::mach_port_t;
 #[cfg(not(target_os = "macos"))]
 pub type mach_port = u32;
 
-/// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
+/// Automatically generated C++ bindings for functions marked with `[[RUST_EXPORT(...)]]`
 pub use bun_cpp_sys as cpp;
 
 pub fn contains<T: PartialEq + Copy>(item: T, list: &Vec<T>) -> bool {
@@ -1777,5 +1777,3 @@ pub fn get_use_system_ca(
             .load(core::sync::atomic::Ordering::Relaxed),
     ))
 }
-
-// ported from: src/bun.zig

@@ -4,9 +4,7 @@ use super::border::{GenericBorder, LineStyle};
 pub type Outline = GenericBorder<OutlineStyle, 11>;
 
 /// A value for the [outline-style](https://drafts.csswg.org/css-ui/#outline-style) property.
-// `DeriveParse`/`DeriveToCss` in Zig are comptime-reflection helpers that iterate variants
-// to implement the domain protocol — in Rust the protocol is a trait and we derive it.
-// `implementEql`/`implementDeepClone` are field-iteration eq/clone → `#[derive(PartialEq, Clone)]`.
+// Parse/ToCss are derived; field-iteration eq/clone → `#[derive(PartialEq, Clone)]`.
 #[derive(Clone, PartialEq, crate::Parse, crate::ToCss)]
 pub enum OutlineStyle {
     /// The `auto` keyword.
@@ -31,5 +29,3 @@ impl OutlineStyle {
         self.clone()
     }
 }
-
-// ported from: src/css/properties/outline.zig

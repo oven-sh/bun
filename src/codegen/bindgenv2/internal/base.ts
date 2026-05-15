@@ -20,16 +20,16 @@ export abstract class Type {
 
   /**
    * This can be overridden to make the generated code clearer. If overridden, it must return an
-   * expression that evaluates to the same type as `${this.bindgenType}.ZigType`; it should not
+   * expression that evaluates to the same type as `${this.bindgenType}.BunType`; it should not
    * actually change the type.
    */
-  zigType(style?: CodeStyle): string {
-    return this.bindgenType + ".ZigType";
+  bunType(style?: CodeStyle): string {
+    return this.bindgenType + ".BunType";
   }
 
-  /** This must be overridden if bindgen.zig defines a custom `OptionalZigType`. */
-  optionalZigType(style?: CodeStyle): string {
-    return `?${this.zigType(style)}`;
+  /** This must be overridden if bindgen.rs defines a custom `OptionalBunType`. */
+  optionalBunType(style?: CodeStyle): string {
+    return `?${this.bunType(style)}`;
   }
 
   /** Converts a JS value into a C++ expression. Used for default values. */
@@ -56,17 +56,11 @@ export abstract class NamedType extends Type {
   get cppSource(): string | null {
     return null;
   }
-  get zigSource(): string | null {
-    return null;
-  }
   // These getters are faster than `.cppHeader != null` etc.
   get hasCppHeader(): boolean {
     return false;
   }
   get hasCppSource(): boolean {
-    return false;
-  }
-  get hasZigSource(): boolean {
     return false;
   }
   getHeaders(result: Set<string>): void {

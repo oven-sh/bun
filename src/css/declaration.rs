@@ -46,7 +46,7 @@ pub struct DeclarationBlock<'bump> {
 // SAFETY: `bun_alloc::ArenaVec<'bump, T>` is `!Send`/`!Sync` because it
 // holds a raw `NonNull<T>` and `&'bump Bump` (Bump is `!Sync`). After parsing,
 // the CSS AST is treated as an immutable, owned tree shared read-only across
-// the bundler thread pool (Zig passes the same arena-backed AST between
+// the bundler thread pool (the same arena-backed AST is shared between
 // threads freely). The `&Bump` is never used to allocate post-parse, and the
 // element storage is uniquely owned exactly like `Vec<T>`, so thread-safety
 // follows `Property`'s auto-traits.
@@ -55,13 +55,13 @@ unsafe impl<'bump> Sync for DeclarationBlock<'bump> {}
 
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
-// blocked_on: Printer::new signature (Zig passes arena + Managed(u8) +
+// blocked_on: Printer::new signature (originally took arena + managed buffer +
 // writer + options + null + null + &symbols; the Rust ctor shape is unsettled).
 
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // PORT NOTE: debug formatter — uses a throwaway local arena for the
-        // printer's scratch buffers (Zig threaded the parser arena).
+        // printer's scratch buffers (rather than threading the parser arena).
         let bump = Bump::new();
         let mut arraylist: Vec<u8> = Vec::new();
         let symbols = bun_ast::symbol::Map::init_list(Default::default());
@@ -113,13 +113,13 @@ impl<'bump> DeclarationBlock<'bump> {
         important_handler: &mut DeclarationHandler<'bump>,
         context: &mut css::PropertyHandlerContext,
     ) {
-        // PORT NOTE: Zig threaded `context.arena` through every append; the
+        // PORT NOTE: `context.arena` used to be threaded through every append; the
         // Rust `PropertyHandlerContext` dropped that field, so we recover the
         // arena from the handler's own bump-backed accumulator instead.
         let bump: &'bump Bump = handler.decls.bump();
 
-        // PORT NOTE: Zig used a local generic `handle` fn with comptime field
-        // name + bool. Unrolled to two calls over a shared inner fn; reshaped
+        // PORT NOTE: originally a local generic `handle` fn parameterized on
+        // field name + bool. Unrolled to two calls over a shared inner fn; reshaped
         // for borrowck (iterate via &mut, move prop out and overwrite slot).
         #[inline]
         fn handle<'bump>(
@@ -134,8 +134,7 @@ impl<'bump> DeclarationBlock<'bump> {
                 let handled = hndlr.handle_property(prop, ctx);
 
                 if !handled {
-                    // Zig: `hndlr.decls.append(prop.*); prop.* = .{ .all = .@"revert-layer" }`
-                    // — move the value out and overwrite the slot with a
+                    // Move the value out and overwrite the slot with a
                     // non-allocating placeholder so the source list's drop is a
                     // no-op.
                     hndlr
@@ -155,17 +154,17 @@ impl<'bump> DeclarationBlock<'bump> {
 
         handler.finalize(context);
         important_handler.finalize(context);
-        // PORT NOTE: Zig swapped old lists out, deferred their deinit, then
-        // assigned the handler accumulators. In Rust the old bumpalo Vecs drop
-        // implicitly on overwrite (arena reclaims on reset).
+        // PORT NOTE: previously the old lists were swapped out and explicitly
+        // deinit'd before assigning the handler accumulators. In Rust the old
+        // bumpalo Vecs drop implicitly on overwrite (arena reclaims on reset).
         self.important_declarations =
             core::mem::replace(&mut important_handler.decls, DeclarationList::new_in(bump));
         self.declarations = core::mem::replace(&mut handler.decls, DeclarationList::new_in(bump));
     }
 }
 
-/// Non-allocating placeholder used by `minify()` to overwrite moved-out slots.
-/// Zig: `css.Property{ .all = .@"revert-layer" }`.
+/// Non-allocating placeholder used by `minify()` to overwrite moved-out slots
+/// (`Property::All(RevertLayer)`).
 #[inline(always)]
 fn placeholder_property() -> css::Property {
     css::Property::All(crate::css_properties::CSSWideKeyword::RevertLayer)
@@ -178,7 +177,7 @@ impl<'bump> DeclarationBlock<'bump> {
         let length = self.len();
         let mut i: usize = 0;
 
-        // PORT NOTE: Zig used `inline for` over field names with @field; unrolled to 2 arms.
+        // PORT NOTE: originally a compile-time loop over field names; unrolled to 2 arms.
         for decl in self.declarations.iter() {
             decl.to_css(dest, false)?;
             if i != length - 1 {
@@ -208,7 +207,7 @@ impl<'bump> DeclarationBlock<'bump> {
         let mut i: usize = 0;
         let length = self.len();
 
-        // PORT NOTE: Zig used `inline for` over field names with @field; unrolled to 2 arms.
+        // PORT NOTE: originally a compile-time loop over field names; unrolled to 2 arms.
         for decl in self.declarations.iter() {
             dest.newline()?;
             decl.to_css(dest, false)?;
@@ -284,8 +283,8 @@ impl DeclarationBlock<'static> {
 // ─── hash / eql / deep_clone (gated) ──────────────────────────────────────
 // blocked_on: properties_generated — `Property` lacks `DeepClone`/`CssEql`
 // derives and `PropertyId` lacks a `hash(&mut Wyhash)` method. The bodies
-// below are the real manual unrolls of Zig's comptime-reflection helpers
-// (`implementEql`/`implementDeepClone`); they un-gate the moment the
+// below are the real manual unrolls of the original compile-time-reflection
+// helpers (`implementEql`/`implementDeepClone`); they un-gate the moment the
 // per-variant trait impls land in `properties_generated.rs`.
 
 impl<'bump> DeclarationBlock<'bump> {
@@ -344,9 +343,9 @@ pub struct PropertyDeclarationParser<'a, 'bump> {
     pub options: &'a css::ParserOptions<'a>,
 }
 
-// PORT NOTE: Zig's nested AtRuleParser/QualifiedRuleParser/DeclarationParser/
-// RuleBodyItemParser are structural duck-typing namespaces consumed by
-// RuleBodyParser(T) at comptime. In Rust these are trait impls.
+// PORT NOTE: the nested AtRuleParser/QualifiedRuleParser/DeclarationParser/
+// RuleBodyItemParser were originally structural duck-typing namespaces consumed
+// by a generic RuleBodyParser at compile time. In Rust these are trait impls.
 
 impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
@@ -443,8 +442,8 @@ pub fn parse_declaration<'bump>(
     )
 }
 
-// PORT NOTE: Zig `composes_ctx: anytype` — branches on
-// `comptime @TypeOf(composes_ctx) != void`. The Rust shape is a `ComposesCtx`
+// PORT NOTE: `composes_ctx` was originally a duck-typed parameter, branching at
+// compile time on whether it was the unit type. The Rust shape is a `ComposesCtx`
 // trait (defined in `css_parser.rs`); `NoComposesCtx` returns
 // `DisallowEntirely` so the `void` fast-path collapses into the match's
 // no-op arm.
@@ -461,7 +460,6 @@ where
 {
     let property_id = css::PropertyId::from_string(name);
     let mut delimiters = css::Delimiters::BANG;
-    // Zig: `if (property_id != .custom or property_id.custom != .custom)` —
     // i.e. NOT (tag == .custom AND payload tag == .custom).
     if !matches!(
         property_id,
@@ -470,7 +468,7 @@ where
         delimiters |= css::Delimiters::CURLY_BRACKET;
     }
     let source_location = input.current_source_location();
-    // PORT NOTE: Zig threaded `&closure` + fn through `parseUntilBefore`; the
+    // PORT NOTE: `parseUntilBefore` originally took a `&closure` + fn pair; the
     // Rust method takes a single `FnOnce(&mut Parser)`, so capture by move
     // (`PropertyId` is `Copy`, `options` is a borrow).
     let mut property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
@@ -492,8 +490,8 @@ where
                     composes_ctx.record_composes(composes);
                 }
                 css::ComposesState::DisallowNested(info) => {
-                    // PORT NOTE: Zig passed an empty notes slice; `warn_fmt`
-                    // is the no-notes path.
+                    // PORT NOTE: `warn_fmt` is the no-notes path (the original
+                    // passed an empty notes slice).
                     options.warn_fmt(
                         format_args!("\"composes\" is not allowed inside nested selectors"),
                         info.line,
@@ -530,7 +528,7 @@ where
 ///
 /// PORT NOTE: each `*Handler` is a `handler_stub!` ZST until its leaf module
 /// un-gates; `Direction` is the data-only `properties::text` enum. The struct
-/// shape is the real Zig layout — only the handler *bodies* are deferred.
+/// shape is the real layout — only the handler *bodies* are deferred.
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,
@@ -652,5 +650,3 @@ impl<'bump> DeclarationHandler<'bump> {
         }
     }
 }
-
-// ported from: src/css/declaration.zig

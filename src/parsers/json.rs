@@ -23,13 +23,11 @@ const LEXER_DEBUGGER_WORKAROUND: bool = false;
 mod hash_map_pool {
     use super::*;
 
-    // Zig: std.HashMap(u64, void, IdentityContext, 80)
     // TODO(port): identity-hash u64 set with 80% max-load — verify bun_collections has an
     // identity-hasher variant; otherwise add one. Using HashMap<u64, ()> for now.
     pub(super) type HashMap = bun_collections::HashMap<u64, ()>;
 
-    // Zig used a threadlocal SinglyLinkedList<HashMap> as a freelist.
-    // PORT NOTE: reshaped for borrowck — Rust thread_local + Vec<HashMap> freelist;
+    // PORT NOTE: reshaped for borrowck — `thread_local` + `Vec<HashMap>` freelist;
     // a borrowed Node* across calls is replaced by an owned HashMap moved out/in.
     thread_local! {
         static LIST: RefCell<Vec<HashMap>> = const { RefCell::new(Vec::new()) };
@@ -57,12 +55,13 @@ fn new_expr<Ty>(t: Ty, loc: bun_ast::Loc) -> Expr
 where
     Ty: js_ast::ExprInit, // TODO(port): bound to whatever trait Expr::init accepts
 {
-    // Zig had: if @typeInfo(Type) == .pointer => @compileError — Rust's type system
-    // already prevents passing a reference where a value is expected; no runtime check needed.
+    // The original rejected pointer types at compile time — Rust's type system
+    // already prevents passing a reference where a value is expected; no runtime
+    // check needed.
 
     #[cfg(debug_assertions)]
     {
-        // TODO(port): the Zig code asserted, when Ty == E.Object, that every property
+        // TODO(port): originally asserted, when Ty == E.Object, that every property
         // has key.is_some(), value.is_some(), initializer.is_none(). Requires
         // specialization or a method on the ExprInit trait; deferring to Phase B.
     }
@@ -74,19 +73,19 @@ where
 // JSONLikeParser
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Zig defines two layers:
-//   fn JSONLikeParser(comptime opts: JSONOptions) type   — wrapper
-//   fn JSONLikeParser_(comptime ...8 bools...) type      — "hack fixes using LLDB"
+// The original implementation split this into two layers:
+//   JSONLikeParser(opts)            — wrapper
+//   JSONLikeParser_(...8 bools...)  — "hack fixes using LLDB"
 //
 // The Rust port collapses both into a *single* concrete type carrying
-// `JSONOptions` at runtime. The earlier port mirrored Zig's comptime layer
-// with 8 struct-level `const bool` generics plus 2 more on `parse_expr`; that
-// gave a 2^10 monomorphization surface (6+ live combos in-tree, more once
-// downstream crates pick their own), each re-emitted in every crate that
-// touched a new combo. The body is I/O-bound on lexer reads and the option
-// branches are perfectly predicted, so a runtime `opts` field costs nothing
-// measurable while letting `parse_expr` be `#[inline(never)]` and emitted
-// exactly once in `bun_parsers`. (benches: startup/npm-script.)
+// `JSONOptions` at runtime. The earlier port mirrored the per-options
+// monomorphization with 8 struct-level `const bool` generics plus 2 more on
+// `parse_expr`; that gave a 2^10 monomorphization surface (6+ live combos
+// in-tree, more once downstream crates pick their own), each re-emitted in
+// every crate that touched a new combo. The body is I/O-bound on lexer reads
+// and the option branches are perfectly predicted, so a runtime `opts` field
+// costs nothing measurable while letting `parse_expr` be `#[inline(never)]`
+// and emitted exactly once in `bun_parsers`. (benches: startup/npm-script.)
 //
 // `crate::json_lexer::Lexer` already carries a runtime `JSONOptions` (the JSON
 // token loop is small enough that comptime specialisation bought nothing), so
@@ -94,11 +93,11 @@ where
 
 pub struct JSONLikeParser<'a, 'bump> {
     pub lexer: js_lexer::Lexer<'a, 'bump>,
-    // PORT NOTE — Stacked Borrows: the Zig spec stores a second `*logger.Log`
-    // here (json.zig:103). In Rust that would alias the lexer's `*mut Log`; a
-    // live `&'a mut Log` field would invalidate the lexer's SharedReadWrite tag
-    // on first use (UB on the next lexer error). All log writes route through
-    // `self.lexer.log_mut()` instead — single provenance chain.
+    // PORT NOTE — Stacked Borrows: a second `*logger.Log` field would alias
+    // the lexer's `*mut Log`; a live `&'a mut Log` field would invalidate the
+    // lexer's SharedReadWrite tag on first use (UB on the next lexer error).
+    // All log writes route through `self.lexer.log_mut()` instead — single
+    // provenance chain.
     pub bump: &'bump Bump,
     pub list_bump: &'bump Bump,
     pub stack_check: StackCheck,
@@ -133,8 +132,8 @@ where
         // TODO(port): narrow error set
         Expr::data_store_assert();
         Stmt::data_store_assert();
-        // TODO(port): Zig calls Expr.Data.Store.assert() / Stmt.Data.Store.assert();
-        // map to whatever the typed-arena store assertion becomes in bun_js_parser.
+        // TODO(port): map Expr.Data.Store.assert() / Stmt.Data.Store.assert()
+        // to whatever the typed-arena store assertion becomes in bun_js_parser.
 
         Ok(Self {
             lexer: js_lexer::Lexer::init(log, source_, bump, opts)?,
@@ -165,7 +164,6 @@ where
         force_utf8: bool,
     ) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            // Zig: `bun.throwStackOverflow()`.
             return Err(bun_core::err!("StackOverflow"));
         }
 
@@ -207,9 +205,8 @@ where
             T::TOpenBracket => {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
-                // PORT NOTE: Zig grew an `ArrayList(Expr)` in `list_allocator` and
-                // `moveFromList`-ed it. The Rust `Vec` is `Vec`-backed (global
-                // allocator), so build a `Vec<Expr>` directly and hand it off.
+                // PORT NOTE: build a `Vec<Expr>` directly (global allocator) and hand
+                // it off via `move_from_list` rather than growing in a list arena.
                 let mut exprs: Vec<Expr> = Vec::new();
                 // errdefer exprs.deinit() — dropped automatically on `?`.
 
@@ -229,7 +226,7 @@ where
                     }
 
                     let item = self.parse_expr(false, force_utf8)?;
-                    exprs.push(item); // PERF(port): Zig used `catch unreachable` (OOM crash)
+                    exprs.push(item); // OOM aborts (matches the original `catch unreachable`)
                 }
 
                 if self.lexer.has_newline_before {
@@ -253,8 +250,8 @@ where
                 let mut properties: Vec<G::Property> = Vec::new();
                 // errdefer properties.deinit() — dropped automatically on `?`.
 
-                // PORT NOTE: reshaped for borrowck — Zig used `void`/`*Node` when
-                // json_warn_duplicate_keys is false; Rust uses Option to keep one code path.
+                // PORT NOTE: reshaped for borrowck — `Option` keeps one code path
+                // whether or not json_warn_duplicate_keys is set.
                 let warn_dup = self.opts.json_warn_duplicate_keys;
                 let mut duplicates: Option<hash_map_pool::HashMap> = if warn_dup {
                     Some(hash_map_pool::get())
@@ -266,7 +263,7 @@ where
                         hash_map_pool::release(map);
                     }
                 });
-                // PORT NOTE: Zig `defer` — scopeguard runs on both success and error paths.
+                // PORT NOTE: scopeguard runs on both success and error paths.
 
                 while self.lexer.token != T::TCloseBrace {
                     if !properties.is_empty() {
@@ -288,9 +285,9 @@ where
                     };
 
                     let key_range = self.lexer.range();
-                    // Zig copied the `E.String` by value; `EString` is intentionally
-                    // not `Clone` (rope `next` would alias) — `shallow_clone` is the
-                    // explicit field-copy that matches the Zig struct copy.
+                    // `EString` is intentionally not `Clone` (rope `next` would alias)
+                    // — `shallow_clone` is the explicit field-copy that matches the
+                    // original by-value struct copy.
                     let key = new_expr(str.shallow_clone(), key_range.loc);
                     self.lexer.expect(T::TStringLiteral)?;
 
@@ -324,7 +321,7 @@ where
                         initializer: None,
                         ..Default::default()
                     });
-                    // PERF(port): Zig used `catch unreachable` (OOM crash)
+                    // OOM aborts (matches the original `catch unreachable`)
                 }
 
                 if self.lexer.has_newline_before {
@@ -415,8 +412,8 @@ pub struct PackageJSONVersionChecker<'a, 'bump> {
     pub found_version_buf: [u8; 1024],
     pub found_name_buf: [u8; 1024],
 
-    // PORT NOTE: reshaped for borrowck — Zig stored `found_name: []const u8` as a
-    // self-referential slice into `found_name_buf`. Rust stores the length instead;
+    // PORT NOTE: reshaped for borrowck — `found_name` was a self-referential
+    // slice into `found_name_buf`. Rust stores the length instead;
     // use `.found_name()` / `.found_version()` accessors.
     found_name_len: usize,
     found_version_len: usize,
@@ -427,7 +424,6 @@ pub struct PackageJSONVersionChecker<'a, 'bump> {
     pub name_loc: bun_ast::Loc,
 }
 
-// Zig: const opts = if (LEXER_DEBUGGER_WORKAROUND) JSONOptions{} else JSONOptions{ is_json=true, json_warn_duplicate_keys=false, allow_trailing_commas=true, allow_comments=true }
 // TODO(port): wire as const-generic params on the lexer type once js_lexer::NewLexer is ported.
 const PKG_JSON_OPTS: js_lexer::JSONOptions = if LEXER_DEBUGGER_WORKAROUND {
     js_lexer::JSONOptions::DEFAULT
@@ -479,7 +475,6 @@ where
 
     pub fn parse_expr(&mut self) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            // Zig: `bun.throwStackOverflow()`.
             return Err(bun_core::err!("StackOverflow"));
         }
 
@@ -540,10 +535,10 @@ where
             T::TOpenBrace => {
                 self.lexer.next()?;
                 self.depth += 1;
-                // PORT NOTE: Zig `defer p.depth -= 1` — wrap body in a closure so `?`
-                // returns here and depth is decremented exactly once on every exit path
-                // (Ok, Err, early break). scopeguard cannot hold `&mut self.depth` while
-                // the body re-borrows `&mut self`.
+                // PORT NOTE: wrap body in a closure so `?` returns here and depth is
+                // decremented exactly once on every exit path (Ok, Err, early break).
+                // scopeguard cannot hold `&mut self.depth` while the body re-borrows
+                // `&mut self`.
                 let result = (|| -> Result<Expr, bun_core::Error> {
                     let mut has_properties = false;
                     while self.lexer.token != T::TCloseBrace {
@@ -569,10 +564,9 @@ where
                             if let (Some(key_s), Some(val_s)) =
                                 (key.data.as_e_string(), value.data.as_e_string())
                             {
-                                // Zig matched on `.e_string` tag and read
-                                // `.e_string.data` directly; `as_e_string()` returns
-                                // `StoreRef<EString>` which derefs to the payload, so
-                                // `.data` is the raw byte slice.
+                                // `as_e_string()` returns `StoreRef<EString>` which
+                                // derefs to the payload, so `.data` is the raw byte
+                                // slice.
                                 if !self.has_found_name && key_s.data == b"name" {
                                     let len = val_s.data.len().min(self.found_name_buf.len());
 
@@ -635,9 +629,9 @@ where
 // toAST
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Zig `toAST` switches on `@typeInfo(Type)` to recursively convert any value
-// into a `js_ast.Expr`. Rust has no `@typeInfo`; this becomes a trait with
-// per-type impls. Struct/enum/union arms require a derive macro.
+// `toAST` recursively converts any value into a `js_ast.Expr`. The original
+// dispatched on type reflection; Rust has no equivalent, so this becomes a
+// trait with per-type impls. Struct/enum/union arms require a derive macro.
 
 pub trait ToAst {
     fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error>;
@@ -665,9 +659,8 @@ macro_rules! impl_to_ast_int {
     )*};
 }
 // PORT NOTE: `u8` is intentionally omitted so the generic `impl<T: ToAst> for [T]`
-// / `[T; N]` does NOT match byte arrays — Zig special-cases `Array.child == u8`
-// (json.zig:557-565) to emit `E::String`, not `E::Array`. See dedicated
-// `[u8]` / `[u8; N]` impls below.
+// / `[T; N]` does NOT match byte arrays — byte arrays must emit `E::String`,
+// not `E::Array`. See dedicated `[u8]` / `[u8; N]` impls below.
 impl_to_ast_int!(i8, i16, i32, i64, isize, u16, u32, u64, usize);
 
 macro_rules! impl_to_ast_float {
@@ -718,7 +711,7 @@ impl<T: ToAst, const N: usize> ToAst for [T; N] {
     }
 }
 
-// Spec json.zig:557-565 — `Array.child == u8` → `E::String` (not `E::Array`).
+// Byte arrays emit `E::String` (not `E::Array`).
 impl<const N: usize> ToAst for [u8; N] {
     fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
         Ok(Expr::init(
@@ -755,9 +748,8 @@ impl ToAst for bun_core::Error {
     }
 }
 
-// TODO(port): proc-macro — Zig's `.@"struct"` arm iterates `@typeInfo(Type).Struct.fields`
-// and emits an `E.Object` keyed by field name. Provide `#[derive(ToAst)]` that
-// expands to:
+// TODO(port): proc-macro — the struct arm iterates the fields and emits an
+// `E.Object` keyed by field name. Provide `#[derive(ToAst)]` that expands to:
 //   impl ToAst for Foo {
 //     fn to_ast(&self, bump: &Bump) -> Result<Expr, _> {
 //       let mut properties = Vec::<G::Property>::with_capacity(bump, N);
@@ -771,12 +763,12 @@ impl ToAst for bun_core::Error {
 //     }
 //   }
 //
-// TODO(port): proc-macro — Zig's `.@"enum"` arm validates the discriminant via
-// `intToEnum` (returns null on failure) then emits `@tagName(value)` as a string.
+// TODO(port): proc-macro — the unit-enum arm validates the discriminant
+// (returns null on failure) then emits the variant name as a string.
 // Map to `#[derive(strum::IntoStaticStr)]` + `<&'static str>::from(*self).as_bytes().to_ast()`.
 //
-// TODO(port): proc-macro — Zig's `.@"union"` arm (tagged union) constructs a
-// single-field anonymous struct `{ <variant_name>: payload }` and recurses.
+// TODO(port): proc-macro — the tagged-union arm constructs a single-field
+// anonymous struct `{ <variant_name>: payload }` and recurses.
 // In Rust this is the natural shape of `enum` payloads; the derive should emit
 // `match self { Variant(v) => /* { "Variant": v } */ }`.
 
@@ -788,12 +780,12 @@ pub fn to_ast<Ty: ToAst + ?Sized>(bump: &Bump, value: &Ty) -> Result<Expr, bun_c
 // Parser option presets
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Zig spelt these as distinct `JSONLikeParser(.{...})` *types*. With the
-// const-generic surface collapsed (see `JSONLikeParser` note), they become
-// plain `JSONOptions` constants fed to the one concrete parser.
+// These were originally distinct monomorphized `JSONLikeParser(...)` *types*.
+// With the const-generic surface collapsed (see `JSONLikeParser` note), they
+// become plain `JSONOptions` constants fed to the one concrete parser.
 //
-// Spec lexer.zig:50 — `json_warn_duplicate_keys: bool = true` is the DEFAULT;
-// json.zig:647-655/734 do not override it for the first four presets.
+// `json_warn_duplicate_keys: bool = true` is the DEFAULT and is not overridden
+// for the first four presets.
 
 const JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
     is_json: true,
@@ -833,8 +825,8 @@ const PACKAGE_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): these were `var` (mutable file-scope) in Zig because Expr.Data
-// stores `*E.Object` etc. Never mutated — `RacyCell` only because
+// TODO(port): these were mutable file-scope statics because Expr.Data stores
+// `*E.Object` etc. Never mutated — `RacyCell` only because
 // `StoreRef::from_raw` wants a `*mut T` and the payload types are `!Sync`.
 // Phase B: prefer `Expr::Data` constructors that don't need a backing static
 // (e.g. inline empty-object sentinel).
@@ -971,10 +963,9 @@ impl Default for JsonResult {
     }
 }
 
-// Zig signature takes `comptime opts: js_lexer.JSONOptions`. The 8-bool
-// const-generic spelling is kept *only* as a back-compat shim for existing
-// call sites in downstream crates; it immediately reifies the flags into a
-// runtime `JSONOptions` and forwards to the single non-generic body below.
+// The 8-bool const-generic spelling is kept *only* as a back-compat shim for
+// existing call sites in downstream crates; it immediately reifies the flags
+// into a runtime `JSONOptions` and forwards to the single non-generic body below.
 // Each monomorphized shim is a handful of instructions — the heavy
 // `parse_expr` body is shared.
 #[inline]
@@ -1246,7 +1237,7 @@ pub fn parse_for_bundling(
         _ => {}
     }
 
-    // NOTE: Zig passes `source.*` (by value) here, unlike every other call site.
+    // NOTE: the original passed `source` by value here, unlike every other call site.
     // TODO(port): verify whether JSONParser::init wants by-ref or by-value source.
     let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
     let result = parser.parse_expr(false, true)?;
@@ -1383,7 +1374,6 @@ mod tests {
     use bun_js_printer as js_printer;
 
     fn expect_printed_json(_contents: &[u8], expected: &[u8]) -> Result<(), bun_core::Error> {
-        // Zig: Expr.Data.Store.create(); Stmt.Data.Store.create(); defer { ..reset() }.
         // RAII: `StoreResetGuard` resets both thread-local AST stores on every
         // exit path (including `?`).
         let _store_scope = js_ast::StoreResetGuard::new();
@@ -1415,7 +1405,6 @@ mod tests {
                 mangled_props: None,
             },
         )?;
-        // TODO(port): Zig accessed writer.ctx.buffer.list.items.ptr[0..written+1].
         let buf = writer.ctx.buffer.as_slice();
         let mut js = &buf[0..written + 1];
 
@@ -1433,5 +1422,3 @@ mod tests {
         Ok(())
     }
 }
-
-// ported from: src/interchange/json.zig

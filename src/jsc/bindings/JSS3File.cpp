@@ -1,8 +1,8 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
+#include "BunGlobalObject.h"
+#include "BunGeneratedClasses.h"
 
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/JSObject.h"

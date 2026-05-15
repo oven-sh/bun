@@ -127,7 +127,7 @@ A `dictionary` is a definition for a JavaScript object, typically as a function 
 To use [WebIDL's enumeration](https://webidl.spec.whatwg.org/#idl-enums) type, use either:
 
 - `t.stringEnum`: Create and codegen a new enum type.
-- `t.zigEnum`: Derive a bindgen type off of an existing enum in the codebase.
+- `t.nativeEnum`: Derive a bindgen type off of an existing enum in the codebase.
 
 An example of `stringEnum` as used in `fmt.zig` / `bun:internal-for-testing`
 
@@ -148,7 +148,7 @@ WebIDL strongly encourages using kebab case for enumeration values, to be consis
 
 ### Deriving enums from Zig code
 
-TODO: zigEnum
+TODO: nativeEnum
 
 ## `t.oneOf`
 

@@ -11,11 +11,10 @@
 
 use crate::PathChar;
 
-/// Runtime equivalent of Zig's `comptime path_type: PathType`. The hot
-/// `is_sep` branch inlines to a single compare on POSIX and two compares on
-/// Windows; we keep it a runtime enum (vs. a const-generic) so one
-/// monomorphisation per `T` covers both — call sites that hard-code the
-/// format still constant-fold via inlining.
+/// Runtime selector for the path format. The hot `is_sep` branch inlines to a
+/// single compare on POSIX and two compares on Windows; we keep it a runtime
+/// enum (vs. a const-generic) so one monomorphisation per `T` covers both —
+/// call sites that hard-code the format still constant-fold via inlining.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PathFormat {
     Posix,

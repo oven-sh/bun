@@ -1,61 +1,50 @@
 //! Comptime type-trait predicates.
 //!
-//! The Zig original (`src/meta/traits.zig`) is a set of `inline fn(comptime T: type) bool`
-//! helpers built on `@typeInfo(T)`. Rust has no `@typeInfo` reflection, so each predicate
-//! is ported as a **marker trait**: call sites that did `if (bun.meta.isNumber(T)) { ... }`
-//! become a trait bound `T: IsNumber` (or `where T: IsNumber`), and the `else` branch
-//! becomes the absence of the bound / a separate impl.
+//! These were originally compile-time predicates over an arbitrary `T`, built on
+//! type-level reflection. Rust has no such reflection, so each predicate is
+//! ported as a **marker trait**: call sites that branched on `isNumber(T)`
+//! become a trait bound `T: IsNumber` (or `where T: IsNumber`), and the `else`
+//! branch becomes the absence of the bound / a separate impl.
 //!
 //! Where a `const fn ...<T>() -> bool` shim is expressible on stable Rust it is provided,
 //! but in general callers should migrate to the trait bound directly.
 //!
 //! See PORTING.md §"Comptime reflection".
 
-// TODO(port): every predicate here relied on `@typeInfo`. The trait-based encoding below
-// is a reshape, not a 1:1 translation. Phase B must audit each call site of
-// `bun.meta.is*` and confirm the trait bound (or specialization) matches the Zig branch.
+// TODO(port): every predicate here relied on type reflection. The trait-based
+// encoding below is a reshape, not a 1:1 translation. Phase B must audit each
+// call site of `bun.meta.is*` and confirm the trait bound (or specialization)
+// matches the original branch.
 
 // ──────────────────────────────────────────────────────────────────────────────
-// isZigString
+// isByteString
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Returns true if the passed type will coerce to `[]const u8`.
-/// Any of the following are considered strings:
-/// ```text
-/// []const u8, [:S]const u8, *const [N]u8, *const [N:S]u8,
-/// []u8, [:S]u8, *[:S]u8, *[N:S]u8.
-/// ```
-/// These types are not considered strings:
-/// ```text
-/// u8, [N]u8, [*]const u8, [*:0]const u8,
-/// [*]const [N]u8, []const u16, []const i8,
-/// *const u8, ?[]const u8, ?*const [N]u8.
-/// ```
+/// Returns true if the passed type derefs/unsizes to `[u8]`.
 ///
-/// In Rust the closest equivalent of "coerces to `[]const u8`" is "derefs/unsizes to
-/// `[u8]`". Implemented for `&[u8]`, `&mut [u8]`, `&[u8; N]`, `&mut [u8; N]`, and the
-/// `bun_str` NUL-terminated slice types. **Not** implemented for `Option<_>`, `*const u8`,
-/// bare `[u8; N]`, or non-`u8` element types — matching the Zig exclusion list.
-pub trait IsZigString {}
+/// Implemented for `&[u8]`, `&mut [u8]`, `&[u8; N]`, `&mut [u8; N]`, and the
+/// `bun_str` NUL-terminated slice types. **Not** implemented for `Option<_>`,
+/// `*const u8`, bare `[u8; N]`, or non-`u8` element types.
+pub trait IsByteString {}
 
 // Only pointer types can be strings, no optionals
-// Check for CV qualifiers that would prevent coercion to []const u8
+// Check for CV qualifiers that would prevent coercion to a byte slice
 //   (Rust references are never volatile/allowzero, so no check needed.)
 
 // If it's already a slice, simple check.
-impl IsZigString for &[u8] {}
-impl IsZigString for &mut [u8] {}
+impl IsByteString for &[u8] {}
+impl IsByteString for &mut [u8] {}
 
 // Otherwise check if it's an array type that coerces to slice.
-impl<const N: usize> IsZigString for &[u8; N] {}
-impl<const N: usize> IsZigString for &mut [u8; N] {}
+impl<const N: usize> IsByteString for &[u8; N] {}
+impl<const N: usize> IsByteString for &mut [u8; N] {}
 
-// Sentinel-terminated slices ([:S]const u8 / [:S]u8) — bun_core::ZStr carries len+NUL.
+// Sentinel-terminated slices — bun_core::ZStr carries len+NUL.
 
 #[inline]
-pub const fn is_zig_string<T: IsZigString>() -> bool {
-    // TODO(port): Zig callers used this as a runtime-evaluable comptime bool to branch.
-    // Stable Rust cannot express `false` for `T: !IsZigString` without specialization;
+pub const fn is_byte_string<T: IsByteString>() -> bool {
+    // TODO(port): callers used this as a runtime-evaluable bool to branch.
+    // Stable Rust cannot express `false` for `T: !IsByteString` without specialization;
     // call sites must use the trait bound directly instead of branching on this fn.
     true
 }
@@ -64,7 +53,7 @@ pub const fn is_zig_string<T: IsZigString>() -> bool {
 // isSlice
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `@typeInfo(T) == .pointer and .pointer.size == .slice`
+/// True for slice types (`&[T]`, `&mut [T]`).
 pub trait IsSlice {
     type Elem;
 }
@@ -84,10 +73,7 @@ pub const fn is_slice<T: IsSlice>() -> bool {
 // isNumber
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `.int | .float | .comptime_int | .comptime_float`
-///
-/// Rust has no `comptime_int`/`comptime_float`; integer and float literals are already
-/// inferred to a concrete primitive, so only the concrete primitives are listed.
+/// True for primitive integer and floating-point types.
 pub trait IsNumber {}
 
 macro_rules! impl_is_number {
@@ -104,12 +90,13 @@ pub const fn is_number<T: IsNumber>() -> bool {
 // isContainer
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `.struct | .enum | .opaque | .union`
+/// True for struct/enum/opaque/union container types.
 ///
 /// Rust cannot reflect "is this a struct/enum/union" on an arbitrary `T`.
-// TODO(port): no sound stable-Rust encoding. Call sites of `isContainer` in Zig are
-// almost always guarding `@hasDecl(T, "...")` — port those call sites to a trait bound
-// on the decl they actually need (per PORTING.md §Comptime reflection) and drop this check.
+// TODO(port): no sound stable-Rust encoding. Call sites of `isContainer` were
+// almost always guarding a decl-presence check — port those call sites to a
+// trait bound on the decl they actually need (per PORTING.md §Comptime
+// reflection) and drop this check.
 pub trait IsContainer {}
 
 #[inline]
@@ -121,14 +108,12 @@ pub const fn is_container<T: IsContainer>() -> bool {
 // isSingleItemPtr
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `@typeInfo(T) == .pointer and .pointer.size == .One`
-// PORT NOTE: the Zig source has a typo (`.pointer.size` instead of `info.pointer.size`)
-// which would not compile; preserving the intended semantics here.
+/// True for a pointer/reference to exactly one `Sized` item.
 pub trait IsSingleItemPtr {
     type Pointee;
 }
-// NB: `T` is deliberately `Sized` here — Zig's `.pointer.size == .One` is mutually
-// exclusive with `.slice`, so `&[u8]` (a Zig slice) must NOT satisfy this trait.
+// NB: `T` is deliberately `Sized` here — single-item pointers are mutually
+// exclusive with slices, so `&[u8]` must NOT satisfy this trait.
 // `&[u8; N]` still matches because `[u8; N]: Sized`.
 impl<T> IsSingleItemPtr for &T {
     type Pointee = T;
@@ -152,9 +137,7 @@ pub const fn is_single_item_ptr<T: IsSingleItemPtr>() -> bool {
 // isExternContainer
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `.struct => |s| s.layout == .extern` / `.union => |u| u.layout == .extern`
-///
-/// i.e. "is `T` `#[repr(C)]`". Rust exposes no reflection for `repr`.
+/// True if `T` is `#[repr(C)]`. Rust exposes no reflection for `repr`.
 // TODO(port): cannot be queried generically on stable Rust. If a call site needs this,
 // add `#[derive(bun_meta::IsExternContainer)]` (proc-macro) on the `#[repr(C)]` type,
 // or hard-code the answer at the call site.
@@ -169,7 +152,7 @@ pub const fn is_extern_container<T: IsExternContainer>() -> bool {
 // isConstPtr
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `@typeInfo(T) == .pointer and info.pointer.is_const`
+/// True for shared-reference and `*const` pointer types.
 pub trait IsConstPtr {}
 impl<T: ?Sized> IsConstPtr for &T {}
 impl<T: ?Sized> IsConstPtr for *const T {}
@@ -183,19 +166,13 @@ pub const fn is_const_ptr<T: IsConstPtr>() -> bool {
 // isIndexable
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// ```text
-/// .pointer => |ptr| switch (ptr.size) {
-///     .One => @typeInfo(ptr.child) == .array,
-///     else => true,
-/// },
-/// .array, .vector => true,
-/// .struct => |s| s.is_tuple,
-/// else => false,
-/// ```
+/// True for types you can index by `usize`: slices, arrays, references to
+/// arrays, raw pointers, tuples, and SIMD vectors.
 ///
-/// In Rust this is approximately `T: core::ops::Index<usize>` plus arrays, slices, and
-/// tuples. There is no single std trait that exactly matches Zig's definition (Zig
-/// includes raw many-pointers and SIMD vectors; Rust tuples are not `Index`).
+/// In Rust this is approximately `T: core::ops::Index<usize>` plus arrays,
+/// slices, and tuples. There is no single std trait that exactly matches the
+/// original definition (it included raw many-pointers and SIMD vectors; Rust
+/// tuples are not `Index`).
 // TODO(port): provided impls cover the common cases (`&[T]`, `&[T; N]`, `[T; N]`, `Vec<T>`).
 // Tuple ("struct.is_tuple") and SIMD-vector arms are omitted — add per call site if needed.
 pub trait IsIndexable {}
@@ -212,5 +189,3 @@ impl<T> IsIndexable for *mut T {}
 pub const fn is_indexable<T: IsIndexable>() -> bool {
     true
 }
-
-// ported from: src/meta/traits.zig

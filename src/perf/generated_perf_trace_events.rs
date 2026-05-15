@@ -1,5 +1,5 @@
 // GENERATED: re-run scripts/generate-perf-trace-events.sh with .rs output
-// (source: src/perf/generated_perf_trace_events.zig — defines #[repr(i32)] enum PerfEvent)
+// Defines #[repr(i32)] enum PerfEvent.
 // TODO(port): teach the generator to emit Rust; do not hand-maintain this file.
 
 // TODO(b1): stub until generator emits real variants — variants are added
@@ -29,7 +29,7 @@ impl From<PerfEvent> for &'static str {
 }
 
 impl PerfEvent {
-    /// NUL-terminated tag name, mirroring Zig's `@tagName(this.event).ptr` which yields
+    /// NUL-terminated tag name, used by perf trace events to identify the event.
     /// `[*:0]const u8`. Required for FFI to `Bun__linux_trace_emit` (expects C string).
     pub fn as_cstr(&self) -> &'static core::ffi::CStr {
         match self {
@@ -44,5 +44,3 @@ impl PerfEvent {
         }
     }
 }
-
-// ported from: src/perf/generated_perf_trace_events.zig

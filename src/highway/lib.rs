@@ -230,12 +230,12 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     Some(result)
 }
 
-// TODO(port): Zig accepts `[]align(1) const u16` (unaligned). Rust `&[u16]` requires
+// TODO(port): the C++ kernel accepts unaligned u16. Rust `&[u16]` requires
 // 2-byte alignment; callers passing unaligned data must go through the raw extern.
 #[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
     // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
-    // (caller contract matches Zig: output.len >= input.len()).
+    // (caller contract: output.len >= input.len()).
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
@@ -262,11 +262,10 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
 
 /// In-place variant of [`fill_with_skip_mask`] for `output == input`.
 ///
-/// The Zig caller (`Mask.fill`) routinely passes the same buffer for both;
-/// the safe wrapper above can't express that without violating `&mut`/`&`
-/// aliasing. The C++ kernel reads-before-writes per lane (it's `dst[i] =
-/// src[i] ^ mask[i&3]`), so feeding it `src == dst` is sound — that's exactly
-/// what the Zig build does.
+/// `Mask.fill` routinely passes the same buffer for both; the safe wrapper
+/// above can't express that without violating `&mut`/`&` aliasing. The C++
+/// kernel reads-before-writes per lane (it's `dst[i] = src[i] ^ mask[i&3]`),
+/// so feeding it `src == dst` is sound.
 #[inline(always)]
 pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: bool) {
     if buf.is_empty() {
@@ -332,5 +331,3 @@ pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> 
 
     Some(result)
 }
-
-// ported from: src/highway/highway.zig

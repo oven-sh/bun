@@ -86,8 +86,8 @@ pub type z_free_func = free_func;
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
 //
-// Previously duplicated in win32.rs (translate-c output) and bun_zlib::lib.rs
-// (hand-port of zlib.zig). All resolve to ABI-identical primitives on every
+// Previously duplicated in win32.rs (translate-c output) and bun_zlib::lib.rs.
+// All resolve to ABI-identical primitives on every
 // target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
 // Unix) for the same reason zStream_struct above uses `c_ulong` directly.
 // ---------------------------------------------------------------------------
@@ -174,5 +174,3 @@ pub type z_stream_s = zStream_struct;
 // allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
 // is the documented pre-`inflateInit`/`deflateInit` state (S021).
 unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
-
-// ported from: src/zlib_sys/shared.zig

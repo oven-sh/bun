@@ -256,7 +256,7 @@ impl Source {
     pub fn get_handle(&mut self) -> *mut uv::Handle {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
-            // `&mut self` so the returned `*mut` carries write provenance (Zig: `getHandle` returns `*uv.Handle`).
+            // `&mut self` so the returned `*mut` carries write provenance.
             Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
@@ -266,7 +266,7 @@ impl Source {
     pub fn to_stream(&mut self) -> *mut uv::uv_stream_t {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
-            // `&mut self` so the returned `*mut` carries write provenance (Zig: `toStream` returns `*uv.uv_stream_t`).
+            // `&mut self` so the returned `*mut` carries write provenance.
             Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
@@ -327,7 +327,7 @@ impl Source {
     pub fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Box<Pipe>> {
         bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
         let mut pipe: Box<Pipe> = Box::new(bun_core::ffi::zeroed::<Pipe>());
-        // we should never init using IPC here see ipc.zig
+        // we should never init using IPC here — see the IPC module
         if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
             drop(pipe);
             return bun_sys::Result::Err(err);
@@ -406,7 +406,7 @@ impl Source {
         }
     }
 
-    /// Direct accessor for the `File`/`SyncFile` arm (Zig: `source.file`).
+    /// Direct accessor for the `File`/`SyncFile` arm.
     /// Panics on Pipe/Tty — callers gate on `matches!(.., File | SyncFile)`.
     pub fn file(&self) -> &File {
         match self {
@@ -462,7 +462,6 @@ pub mod stdin_tty {
     }
 
     pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
-        // Zig spec (source.zig:247-248): `lock.lock(); defer lock.unlock();`
         // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
         // unlock-on-drop, otherwise the mutex is held forever and the next call
         // (e.g. Source__setRawModeStdin → open_tty(stdin)) deadlocks/UB-relocks.
@@ -484,8 +483,8 @@ pub mod stdin_tty {
     }
 }
 
-/// Zig spec (source.zig:357) calls `bun.jsc.VirtualMachine.get().uvLoop()` directly,
-/// which is a T6 dependency. PORTING.md §Forbidden bans dep-cycle fn-ptr hooks, so
+/// Calling `bun.jsc.VirtualMachine.get().uvLoop()` directly here would be a
+/// T6 dependency. PORTING.md §Forbidden bans dep-cycle fn-ptr hooks, so
 /// the uv loop is taken as a parameter instead; the C++ caller
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
@@ -515,5 +514,3 @@ pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> 
     }
     0
 }
-
-// ported from: src/io/source.zig

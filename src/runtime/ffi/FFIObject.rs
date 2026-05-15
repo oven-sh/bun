@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSUint8Array,
@@ -28,7 +28,7 @@ unsafe fn deallocator_from_addr(addr: usize) -> jsc::c::JSTypedArrayBytesDealloc
     unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
 }
 
-/// Port of Zig `JSValue.createBufferWithCtx(global, slice, ctx, callback)` —
+/// `JSValue::createBufferWithCtx(global, slice, ctx, callback)` —
 /// unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
 /// memory is only freed by the user-supplied callback.
@@ -62,10 +62,9 @@ fn create_buffer_with_ctx(
     }
 }
 
-// ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
-// In Zig these are `@extern`ed by the comptime `DOMCall(...)` type-generator;
-// here we declare them directly since the `#[bun_jsc::dom_call]` proc-macro is
-// not yet implemented.
+// ── DOM-call C++ put helpers (generated in BunLazyStaticFunctions-inlines.h) ──
+// Declared directly since the `#[bun_jsc::dom_call]` proc-macro that would
+// generate these externs is not yet implemented.
 // TODO(port): move to <area>_sys
 #[allow(non_snake_case)]
 unsafe extern "C" {
@@ -105,7 +104,7 @@ pub fn new_cstring(
 // or codegen step (`bun_jsc::dom_call!`). Represented here as a const descriptor.
 // PORT NOTE: the `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed by
 // the C++ codegen, not the runtime descriptor; it lives in the generated
-// `ZigLazyStaticFunctions-inlines.h` already.
+// `BunLazyStaticFunctions-inlines.h` already.
 pub const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
     function_name: "ptr",
@@ -113,9 +112,7 @@ pub const DOM_CALL: DomCall = DomCall {
 };
 
 pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
-    // Zig: `inline for (comptime std.meta.fieldNames(@TypeOf(fields)))` — comptime
-    // reflection over an anonymous struct. Unrolled manually here; keep in sync with
-    // `FIELDS` below.
+    // Unrolled manually; keep in sync with `FIELDS` below.
     let fields = FIELDS();
     let object = JSValue::create_empty_object(global_object, fields.len() + 2);
 
@@ -156,10 +153,10 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    // TODO(port): same DOMCall codegen note as `DOM_CALL` above. In Zig this is an
-    // anonymous struct of 12 `DOMCall(...)` values iterated via `inline for`.
+    // TODO(port): same DOMCall codegen note as `DOM_CALL` above — these are
+    // 12 `DOMCall(...)` descriptors.
     // PORT NOTE: the `DOMEffect.forRead(.World)` argument is encoded on the C++ side
-    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the runtime
+    // (generated `Reader__*__put` in BunLazyStaticFunctions-inlines.h); the runtime
     // descriptor here only needs the `put` extern.
     pub const DOM_CALLS: &[(&str, DomCall)] = &[
         (
@@ -285,7 +282,7 @@ pub mod reader {
         Ok(arguments[0].as_ptr_address() + off)
     }
 
-    /// Read a `T` from a user-supplied raw address (unaligned, `*align(1)` in Zig).
+    /// Read a `T` from a user-supplied raw, unaligned address.
     ///
     /// Single audited primitive for all `bun:ffi` `read.*` host functions
     /// (slow-path and DOMJIT fast-path alike).
@@ -422,7 +419,7 @@ pub mod reader {
     }
 
     // ── fast-path (DOMJIT, no type checks) readers ────────────────────────────
-    // These are `callconv(jsc.conv)` in Zig — called directly from JIT code.
+    // These use the JSC host calling convention — called directly from JIT code.
     // TODO(port): `#[bun_jsc::host_call]` emits the correct ABI ("sysv64" on
     // win-x64, "C" elsewhere). Raw pointers are intentional (FFI boundary).
 
@@ -608,7 +605,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     }
 
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
-        // PORT NOTE: `JSType` derives `Debug` only; Zig used `@tagName`.
+        // PORT NOTE: `JSType` derives `Debug` only; print the variant name with `{:?}`.
         return global_this.to_invalid_arguments(format_args!(
             "Expected ArrayBufferView but received {:?}",
             value.js_type()
@@ -622,8 +619,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     }
 
     let mut addr: usize = array_buffer.ptr as usize;
-    // const Sizes = @import("../../jsc/sizes.zig");
-    // assert(addr == @intFromPtr(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
+    // assert(addr == value.asEncoded().ptr + Sizes::Bun_FFI_PointerOffsetToTypedArrayVector);
 
     if let Some(off) = byte_offset {
         if !off.is_empty_or_undefined_or_null() {
@@ -700,8 +696,7 @@ fn get_ptr_slice(
     //     return .{ .err = globalThis.toInvalidArguments("ptr must be a finite number.", .{}) };
     // }
 
-    // Zig: `@as(usize, @bitCast(num))` — `num` is already `usize` (asPtrAddress), so
-    // bitcast is a no-op. Preserved as identity assignment.
+    // `num` is already `usize` (asPtrAddress); identity assignment.
     let mut addr: usize = num;
 
     if let Some(byte_off) = byte_offset {
@@ -771,7 +766,7 @@ fn get_ptr_slice(
         }
     }
 
-    // Zig: `bun.span(@as([*:0]u8, @ptrFromInt(addr)))` — scan for NUL terminator.
+    // Scan for the NUL terminator.
     // SAFETY: caller asserts `addr` points at a NUL-terminated C string.
     let len = unsafe { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
         .to_bytes()
@@ -787,7 +782,7 @@ fn get_cptr(value: JSValue) -> Option<usize> {
             return Some(addr);
         }
     } else if value.is_big_int() {
-        // Zig: `@as(u64, @bitCast(value.toUInt64NoTruncate()))` — already u64; bitcast is no-op.
+        // `to_uint64_no_truncate` already returns a `u64`.
         let addr: u64 = value.to_uint64_no_truncate();
         if addr > 0 {
             return Some(addr as usize);
@@ -907,9 +902,9 @@ pub fn to_buffer(
                 ));
             }
 
-            // Spec (FFIObject.zig:596): `jsc.JSValue.createBuffer(globalThis, slice)`
-            // — installs `MarkedArrayBuffer_deallocator` so the slice is `mi_free`d
-            // on GC. Matches Zig exactly (including the free-foreign-memory footgun).
+            // `JSValue::create_buffer` installs `MarkedArrayBuffer_deallocator`
+            // so the slice is `mi_free`d on GC (deliberately preserving the
+            // free-foreign-memory footgun for compatibility).
             Ok(JSValue::create_buffer(global_this, slice))
         }
     }
@@ -936,14 +931,10 @@ pub fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 // ── `fields` host-fn thunks ──────────────────────────────────────────────────
-// Zig `fields` is an anonymous struct of `jsc.host_fn.wrapStaticMethod(...)`
-// values iterated via comptime reflection in `toJS`. `wrapStaticMethod` is a
-// comptime fn-signature reflector that decodes `CallFrame` arguments into the
-// target's parameter types (see src/jsc/host_fn.zig:654). Rust has no
-// `@typeInfo`, so the eight wrappers are unrolled manually here — each body is
-// exactly what `wrapStaticMethod(.., auto_protect=false)` would emit for that
-// signature (only the `*JSGlobalObject` / `JSValue` / `?JSValue` / `ZigString`
-// arms are exercised by this table).
+// The eight wrappers are unrolled manually here — each body is exactly what a
+// `wrapStaticMethod(.., auto_protect=false)`-style reflector would emit for its
+// signature (only the `*JSGlobalObject` / `JSValue` / `?JSValue` /
+// `UnsafeStringView` argument arms are exercised by this table).
 
 /// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
 /// `wrapStaticMethod`'s arena/protect machinery is unused for the FFI fields
@@ -963,22 +954,22 @@ fn eat_required(
     next_eat(iter).ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
 }
 
-/// `wrapStaticMethod` decode arm for `ZigString`.
+/// `wrapStaticMethod` decode arm for `UnsafeStringView`.
 #[inline]
-fn eat_zig_string(
+fn eat_unsafe_string_view(
     global: &JSGlobalObject,
     iter: &mut core::slice::Iter<'_, JSValue>,
-) -> JsResult<ZigString> {
+) -> JsResult<UnsafeStringView> {
     let string_value = next_eat(iter)
         .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
     if string_value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    string_value.get_zig_string(global)
+    string_value.get_unsafe_string_view(global)
 }
 
-/// Wrap a `JsHostFnZig` body into the raw `JSHostFn` ABI — runtime half of
-/// Zig's `toJSHostFn`. Mints a fresh `unsafe extern jsc.conv fn` per call site
+/// Wrap a `JsHostFnSafe` body into the raw `JSHostFn` ABI.
+/// Mints a fresh `unsafe extern jsc.conv fn` per call site
 /// so the address is usable in the static `FIELDS` table (Rust forbids
 /// fn-pointer const generics, so this is a `macro_rules!` rather than a
 /// generic fn). Uses `jsc_host_abi!` so the thunk gets `extern "sysv64"` on
@@ -1016,11 +1007,11 @@ mod fields {
         FfiImpl::print(global, object, is_callback)
     }
 
-    // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
+    // dlopen → FFI::open(global, UnsafeStringView, JSValue) -> JSValue
     pub fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let mut iter = args.slice().iter();
-        let name = eat_zig_string(global, &mut iter)?;
+        let name = eat_unsafe_string_view(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
         Ok(FfiImpl::open(global, name, object))
     }
@@ -1109,5 +1100,3 @@ const fn u56_max() -> usize {
     // std.math.maxInt(u56)
     (1usize << 56) - 1
 }
-
-// ported from: src/runtime/ffi/FFIObject.zig

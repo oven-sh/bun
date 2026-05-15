@@ -28,9 +28,9 @@ use crate::api::html_rewriter;
 use crate::api::server;
 use crate::webcore::body;
 
-// Zig's `server.HTTPServer.RequestContext` etc. are nested types on each
-// `NewServer(..)` instantiation. The Rust port flattens that to a single
-// generic `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
+// `server.HTTPServer.RequestContext` etc. are conceptually nested types on each
+// `NewServer(..)` instantiation. We flatten that to a single generic
+// `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
 // concrete monomorphizations here so the tag↔type mapping stays readable.
 type HTTPServerRequestContext = server::NewRequestContext<server::HTTPServer, false, false, false>;
 type HTTPSServerRequestContext = server::NewRequestContext<server::HTTPSServer, true, false, false>;
@@ -77,17 +77,16 @@ impl Tag {
     }
 }
 
-/// Maps a concrete native type to its `Tag`. This replaces Zig's
-/// `Tag.fromType(comptime T: type)` which switched on `@TypeOf` — Rust
-/// expresses the same compile-time mapping as a trait impl per type.
+/// Maps a concrete native type to its `Tag`. Expressed as a trait impl per
+/// type — a compile-time type→tag mapping.
 pub trait NativePromiseContextType {
     const TAG: Tag;
 }
 
 // PORT NOTE (layering): blanket-impl over `ThisServer` so that ANY server
 // type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
-// the tag depends only on (SSL, DBG, H3), never on the server type. This is
-// the Zig semantics (the Zig Tag enum cases name the (ssl,debug,h3) tuple).
+// the tag depends only on (SSL, DBG, H3), never on the server type — the Tag
+// enum cases name the (ssl, debug, h3) tuple.
 const fn npc_tag_for(ssl: bool, dbg: bool, h3: bool) -> Tag {
     match (ssl, dbg, h3) {
         (false, false, false) => Tag::HTTPServerRequestContext,
@@ -166,9 +165,8 @@ pub extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) 
 ///     │ ctx ptr (aligned)  │ our Tag │
 ///     └────────────────────┴─────────┘
 ///
-/// Zig packed both into a 49-bit bitfield via `setUintptr`; the Rust `Task`
-/// stores `{ tag, ptr }` as separate fields, so the discriminant is carried
-/// in `Task.tag` and only the ctx|Tag packing remains in `Task.ptr`.
+/// `Task` stores `{ tag, ptr }` as separate fields, so the discriminant is
+/// carried in `Task.tag` and only the ctx|Tag packing remains in `Task.ptr`.
 pub struct DeferredDerefTask;
 
 impl Taskable for DeferredDerefTask {
@@ -191,9 +189,7 @@ impl DeferredDerefTask {
         let addr = ctx as usize;
         debug_assert!(addr & Self::TAG_MASK == 0);
 
-        // Zig stamped the discriminant via `Task.init(&marker)` then overwrote
-        // the packed `_ptr` bitfield with `setUintptr(@truncate(addr | tag))`.
-        // The Rust `Task` is a plain `{ tag, ptr }` pair (no bitfield packing),
+        // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing),
         // so build it directly — dispatch unpacks via `task.ptr as usize`.
         let task = Task::new(
             <DeferredDerefTask as Taskable>::TAG,
@@ -255,5 +251,3 @@ const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
     assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
-
-// ported from: src/runtime/api/NativePromiseContext.zig

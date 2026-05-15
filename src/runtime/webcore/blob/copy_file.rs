@@ -23,7 +23,7 @@ use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 use bun_sys_jsc::ErrorJsc as _;
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
-// the same Zig `jsc.SystemError` extern struct; map field-by-field because the
+// the same `jsc.SystemError` extern struct layout; map field-by-field because the
 // two Rust definitions order their fields differently.
 #[allow(dead_code)]
 fn to_jsc_system_error(e: SystemError) -> jsc::SystemError {
@@ -241,13 +241,13 @@ impl<'a> CopyFile<'a> {
                         bun_sys::Result::Ok(result_fd) => result_fd,
                         bun_sys::Result::Err(errno) => {
                             self.system_error = Some(errno.to_system_error());
-                            return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                            return Err(bun_core::errno_to_bun_raw_err(errno.errno as i32));
                         }
                     }
                 }
                 bun_sys::Result::Err(errno) => {
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                    return Err(bun_core::errno_to_bun_raw_err(errno.errno as i32));
                 }
             };
         }
@@ -275,7 +275,7 @@ impl<'a> CopyFile<'a> {
                             bun_sys::Result::Ok(result_fd) => self.destination_fd = result_fd,
                             bun_sys::Result::Err(errno) => {
                                 self.system_error = Some(errno.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                                return Err(bun_core::errno_to_bun_raw_err(errno.errno as i32));
                             }
                         }
                     }
@@ -288,7 +288,7 @@ impl<'a> CopyFile<'a> {
                                     self.source_fd.close();
                                     self.source_fd = Fd::INVALID;
                                 }
-                                return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                                return Err(bun_core::errno_to_bun_raw_err(errno.errno as i32));
                             }
                             Retry::No => {}
                         }
@@ -303,7 +303,7 @@ impl<'a> CopyFile<'a> {
                                 .with_path(self.destination_file_store.pathlike.path().slice())
                                 .to_system_error(),
                         );
-                        return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                        return Err(bun_core::errno_to_bun_raw_err(errno.errno as i32));
                     }
                 }
                 break;
@@ -359,7 +359,7 @@ impl<'a> CopyFile<'a> {
             ) {
                 bun_sys::Result::Err(err) => {
                     self.system_error = Some(err.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                    return Err(bun_core::errno_to_bun_raw_err(err.errno as i32));
                 }
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -434,7 +434,7 @@ impl<'a> CopyFile<'a> {
                     ) {
                         bun_sys::Result::Err(err) => {
                             self.system_error = Some(err.to_system_error());
-                            return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                            return Err(bun_core::errno_to_bun_raw_err(err.errno as i32));
                         }
                         bun_sys::Result::Ok(()) => {
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -491,7 +491,7 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                                return Err(bun_core::errno_to_bun_raw_err(err.errno as i32));
                             }
                             bun_sys::Result::Ok(()) => {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
@@ -508,26 +508,26 @@ impl<'a> CopyFile<'a> {
 
                     self.system_error = Some(
                         bun_sys::Error {
-                            // PORT NOTE: @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
+                            // PORT NOTE: cast is identity here (E repr == Error.Int); bare `as` is the enum-to-int conversion.
                             errno: bun_sys::E::EINVAL as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_core::errno_to_zig_err(bun_sys::E::EINVAL as i32));
+                    return Err(bun_core::errno_to_bun_raw_err(bun_sys::E::EINVAL as i32));
                 }
                 errno => {
                     self.system_error = Some(
                         bun_sys::Error {
-                            // PORT NOTE: @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
+                            // PORT NOTE: cast is identity here (E repr == Error.Int); bare `as` is the enum-to-int conversion.
                             errno: errno as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_core::errno_to_zig_err(errno as i32));
+                    return Err(bun_core::errno_to_bun_raw_err(errno as i32));
                 }
             }
 
@@ -573,14 +573,14 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                                return Err(bun_core::errno_to_bun_raw_err(err.errno as i32));
                             }
                             bun_sys::Result::Ok(()) => {}
                         }
                     }
                     _ => {
                         self.system_error = Some(errno.to_system_error());
-                        return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                        return Err(bun_core::errno_to_bun_raw_err(errno.errno as i32));
                     }
                 }
             }
@@ -623,7 +623,7 @@ impl<'a> CopyFile<'a> {
                         Retry::No => {}
                     }
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(errno.errno as i32));
+                    return Err(bun_core::errno_to_bun_raw_err(errno.errno as i32));
                 }
                 bun_sys::Result::Ok(()) => {}
             }
@@ -782,7 +782,7 @@ impl<'a> CopyFile<'a> {
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Fd(_)
             ) {
-                // (empty in Zig)
+                // (intentionally empty)
             }
 
             let stat: Stat = match stat_ {
@@ -947,10 +947,9 @@ impl<'a> CopyFile<'a> {
 
 impl Drop for CopyFile<'_> {
     fn drop(&mut self) {
-        // Zig deinit():
         if let PathOrFileDescriptor::Path(p) = &self.source_file_store.pathlike {
             if p.is_string() && self.system_error.is_none() {
-                // TODO(port): the Zig frees the path slice here. In Rust, ownership of
+                // TODO(port): the original implementation freed the path slice here. In Rust, ownership of
                 // `source_file_store.pathlike.path` should be encoded in the type so
                 // Drop handles it. Phase B: verify Store::File path ownership.
             }
@@ -960,7 +959,7 @@ impl Drop for CopyFile<'_> {
     }
 }
 
-// Port of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length` (sys.zig).
+// Local mirror of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length`.
 // Kept local until bun_sys exports them; values match crate::node::fs.
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
@@ -1037,7 +1036,7 @@ impl Default for ReadWriteLoop {
             must_close_destination_fd: false,
             written: 0,
             read_buf: Vec::new(),
-            // Zig: `.{ .base = undefined, .len = 0 }`
+            // Zero-length placeholder buffer; `base` is filled before use.
             uv_buf: libuv::uv_buf_t {
                 len: 0,
                 base: core::ptr::null_mut(),
@@ -1046,7 +1045,7 @@ impl Default for ReadWriteLoop {
     }
 }
 
-// PORT NOTE: Zig defines `ReadWriteLoop.start/read` taking both `*ReadWriteLoop` and
+// PORT NOTE: the original defined `ReadWriteLoop.start/read` taking both `*ReadWriteLoop` and
 // `*CopyFileWindows`, but in Rust the former is a subobject of the latter, so passing
 // both as `&mut` is aliasing UB. These are hoisted onto `CopyFileWindows` so the
 // borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
@@ -1061,7 +1060,7 @@ impl<'a> CopyFileWindows<'a> {
 
     fn read_write_loop_read(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.clear();
-        // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
+        // PORT NOTE: reshaped for borrowck — `allocatedSlice()` upstream meant the full capacity slice.
         let cap = self.read_write_loop.read_buf.capacity();
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
             len: cap as libuv::ULONG,
@@ -1575,7 +1574,7 @@ impl<'a> CopyFileWindows<'a> {
         let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        // calls enter() now and exit() on drop (RAII equivalent of `loop.enter()` / deferred `loop.exit()`).
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
@@ -1661,7 +1660,7 @@ impl<'a> CopyFileWindows<'a> {
         // outlives `destroy(self)` for borrowck.
         let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        // calls enter() now and exit() on drop (RAII equivalent of `loop.enter()` / deferred `loop.exit()`).
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
@@ -1739,7 +1738,7 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.unref_concurrently();
 
         if let Some(err) = self.err.take() {
-            // PORT NOTE: Zig `var err2 = err; err2.deinit();` freed the borrowed path; in
+            // PORT NOTE: the original freed the borrowed path here; in
             // Rust `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with `err`
             // inside `throw`.
             self.throw(err);
@@ -1876,13 +1875,11 @@ fn unsupported_non_regular_file_error() -> SystemError {
         ..SystemError::default()
     }
 }
-// TODO(port): Zig had these as `const` values; SystemError contains bun.String which
+// TODO(port): originally these were `const` values; SystemError contains bun.String which
 // is not const-constructible in Rust. Using fns here. Phase B: consider lazy_static.
 
 pub type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
-// TODO(port): Zig `CopyFilePromiseTask.EventLoopTask` — exact Rust associated-type
+// TODO(port): `CopyFilePromiseTask.EventLoopTask` — exact Rust associated-type
 // path depends on bun_jsc::ConcurrentPromiseTask shape; using `jsc::EventLoopTask` for now.
 pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;
-
-// ported from: src/runtime/webcore/blob/copy_file.zig

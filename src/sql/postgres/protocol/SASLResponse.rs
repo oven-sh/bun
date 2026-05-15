@@ -21,7 +21,6 @@ impl SASLResponse {
         let count: usize = core::mem::size_of::<u32>() + data.len();
         let mut header = [0u8; 5];
         header[0] = b'p';
-        // std.mem.toBytes(Int32(count)) — Int32 byte-swaps to network order, then take native bytes
         // `int32(count)` already returns the big-endian `[u8; 4]`.
         header[1..5].copy_from_slice(&int32(count));
         writer.write(&header)?;
@@ -29,7 +28,7 @@ impl SASLResponse {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
+    // Thin wrapper mirroring `WriteWrap` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -37,5 +36,3 @@ impl SASLResponse {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/SASLResponse.zig

@@ -24,8 +24,8 @@ use bun_ast::g::Decl;
 use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
 use bun_ast::{DeclaredSymbol, StmtList};
 
-// Named instantiations of `P<'_, TS, SCAN>` matching the Zig
-// `JavaScriptParser`/`TypeScriptParser`/etc. comptime aliases.
+// Named instantiations of `P<'_, TS, SCAN>` matching the original
+// `JavaScriptParser`/`TypeScriptParser`/etc. compile-time aliases.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
 pub type JSXParser<'a> = P<'a, false, false>;
 pub type TypeScriptParser<'a> = P<'a, true, false>;
@@ -38,8 +38,8 @@ pub type TSXImportScanner<'a> = P<'a, true, true>;
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
-/// Stack-local in-place `P` constructor (Zig: `var p: ParserType = undefined;
-/// try ParserType.init(.., &p)`). `P` is ~5 KiB; the previous
+/// Stack-local in-place `P` constructor (mirrors a stack-allocated
+/// uninitialized `P` filled by `init`). `P` is ~5 KiB; the previous
 /// `let mut p = P::init(..)?` shape forced 2-3 by-value moves of the whole
 /// struct (ASM-verified: `_scan_imports` 14168-B frame, 5× `memcpy`). This
 /// macro reserves an uninitialized slot on the caller's stack, has `P::init`
@@ -64,7 +64,7 @@ macro_rules! init_p {
 pub struct Parser<'a> {
     pub options: Options<'a>,
     pub lexer: js_lexer::Lexer<'a>,
-    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` pointers; Rust
+    /// Raw pointer alias of `lexer.log`. The original held two raw `Log` pointers; Rust
     /// cannot hold two live `&'a mut Log`, so both the parser- and lexer-side
     /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
     /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
@@ -119,8 +119,8 @@ pub struct Options<'a> {
 
 impl<'a> Default for Options<'a> {
     fn default() -> Self {
-        // Zig: `macro_context = undefined` — modeled as `None`; caller must set
-        // before use. This impl exists so `_parse` can `core::mem::take` the
+        // `macro_context` was originally left uninitialized — modeled as `None`; caller
+        // must set before use. This impl exists so `_parse` can `core::mem::take` the
         // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
         // by value) instead of bitwise-copying it and double-freeing on drop.
         Options {
@@ -153,8 +153,8 @@ impl<'a> Default for Options<'a> {
 
 impl<'a> Options<'a> {
     /// Field-by-field clone for the bundler's empty-file fallback
-    /// (ParseTask.zig:335-342: `getEmptyAST(..., opts, ...)` after
-    /// `caches.js.parse(..., opts, ...)` returned null). Zig passed `opts` by
+    /// (ParseTask `getEmptyAST(..., opts, ...)` after
+    /// `caches.js.parse(..., opts, ...)` returned null). The original passed `opts` by
     /// value (bitwise copy) to *both* calls; in Rust `parse()` consumes `opts`,
     /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
     ///
@@ -245,7 +245,7 @@ impl<'a> Options<'a> {
                 // this holds the values for the jsx optimizaiton flags, which have both been removed
                 // as the optimizations break newer versions of react, see https://github.com/oven-sh/bun/issues/11025
                 let jsx_optimizations: [bool; 2] = [false, false];
-                // `bool: NoUninit`, `u8: AnyBitPattern`; matches Zig `std.mem.asBytes`.
+                // `bool: NoUninit`, `u8: AnyBitPattern`; raw byte view of the bool array.
                 hasher.update(bytemuck::cast_slice::<bool, u8>(&jsx_optimizations));
             } else {
                 hasher.update(b"NO_JSX");
@@ -272,7 +272,7 @@ impl<'a> Options<'a> {
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
-        // Zig left `macro_context` as `undefined` and the rest of the fields at
+        // The original left `macro_context` uninitialized and the rest of the fields at
         // their declared defaults. Rust models the undefined pointer as `None`
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
@@ -289,7 +289,7 @@ impl<'a> Options<'a> {
             bundle: false,
             code_splitting: false,
             package_version: b"",
-            // Zig: `macro_context: *MacroContextType() = undefined` — uninitialized
+            // `macro_context` was originally an uninitialized
             // raw pointer the caller overwrites before any read. In Rust,
             // materializing an invalid `&mut T` is immediate UB regardless of
             // use, so model "not yet set" as `None`; callers must assign `Some(_)`
@@ -311,7 +311,7 @@ impl<'a> Options<'a> {
 }
 
 // ── live `Parser::init` (round-E unblock) ─────────────────────────────────
-// Zig held two aliasing `*Log` pointers (parser + lexer). Rust models this as
+// The original held two aliasing raw `Log` pointers (parser + lexer). Rust models this as
 // `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
 // Stacked-Borrows tag is invalidated when accesses interleave.
 impl<'a> Parser<'a> {
@@ -349,7 +349,7 @@ impl<'a> Parser<'a> {
 }
 
 // ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
-// `parse()` is the real const-generic dispatcher (Zig: `if (ts && jsx.parse)
+// `parse()` is the real const-generic dispatcher (`if (ts && jsx.parse)
 // _parse(TSXParser) else …`). `_parse` carries the correct `<const TS, JX>`
 // shape but its body is blocked on `P::{init, prepare_for_visit_pass,
 // append_part, to_ast, …}` (gated in P.rs); the full ported body is preserved
@@ -398,8 +398,8 @@ impl<'a> Parser<'a> {
         scan_pass: &'a mut ScanPassResult,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+        // The original moved lexer/options by value into `P` and only
+        // a deferred `p.lexer.deinit()` cleaned up — there was no implicit destructor
         // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
         // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
         // when `self` later drops. Move them out, leaving inert placeholders.
@@ -420,7 +420,7 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
+        // matches the original two-aliasing-`Log`-pointer model with no `&mut` materialized.
         let mut __p = init_p!(Pi<'_, TS>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
@@ -514,7 +514,7 @@ impl<'a> Parser<'a> {
         // So we say "did we parse any JSX?"
         // if yes, just automatically add the import so that .bun knows to include the file.
         if p.options.jsx.parse && p.needs_jsx_import {
-            // PORT NOTE: Zig's `string` aliased the long-lived option storage
+            // PORT NOTE: the original `string` aliased the long-lived option storage
             // directly. `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
@@ -546,8 +546,8 @@ impl<'a> Parser<'a> {
         symbols: js_ast::symbol::List,
     ) -> Result<crate::Result, Error> {
         // TODO(port): narrow error set
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+        // The original moved lexer/options by value into `P` and only
+        // a deferred `p.lexer.deinit()` cleaned up — there was no implicit destructor
         // on `Parser.lexer`. In Rust we move them out and leave inert
         // placeholders so `self` may drop without double-free.
         //
@@ -566,7 +566,7 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
+        // matches the original two-aliasing-`Log`-pointer model with no `&mut` materialized.
         let mut __p = init_p!(JavaScriptParser<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
@@ -582,8 +582,8 @@ impl<'a> Parser<'a> {
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
         let mut symbols_ = symbols;
-        // PORT NOTE: Zig `moveToListManaged(arena)` rebinds the same
-        // backing storage to an `ArrayList(arena)`. The Rust Vec
+        // PORT NOTE: original `moveToListManaged(arena)` rebound the same
+        // backing storage to an arena-managed list. The Rust Vec
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
         // copy elements into the arena. Phase B may grow a zero-copy adapter.
         p.symbols =
@@ -662,7 +662,7 @@ impl<'a> Parser<'a> {
         let options = core::mem::take(&mut self.options);
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
+        // matches the original two-aliasing-`Log`-pointer model with no `&mut` materialized.
         let mut __p = init_p!(TSXParser<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
@@ -701,7 +701,7 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
-        // Zig spec (Parser.zig:292) reads `self.log.errors`; `p.log` and
+        // The original read `self.log.errors`; `p.log` and
         // `self.log` alias the same `NonNull<Log>` so either is fine — route
         // through `p` for clarity.
         if p.log().errors > 0 {
@@ -709,7 +709,7 @@ impl<'a> Parser<'a> {
             {
                 // If the logger is backed by console.log, every print appends a newline.
                 // so buffering is kind of mandatory here
-                // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
+                // TODO(port): original built a custom writer wrapping Output::print and a
                 // buffered writer over it. Phase B should provide a `bun_core::Output::buffered()`
                 // that returns an `impl core::fmt::Write` flushed on drop.
                 for msg in p.log().msgs.as_slice() {
@@ -738,12 +738,12 @@ impl<'a> Parser<'a> {
         // TODO(port): narrow error set
         // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
-        // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
+        // the lifetime on `Action` (original held the same pointer). Once unblocked:
         //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
         // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
 
-        // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+        // The original moved lexer/options by value into `P` and only
+        // a deferred `p.lexer.deinit()` cleaned up — there was no implicit destructor
         // on `Parser.lexer`. `parse()` consumes `self` by value, so we
         // destructure here and hand the owned `lexer`/`options` straight to
         // `P::init` — no `ptr::read`/`mem::replace` placeholder dance, no
@@ -762,7 +762,7 @@ impl<'a> Parser<'a> {
         let orig_error_count = lexer.log().errors;
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
-        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
+        // matches the original two-aliasing-`Log`-pointer model with no `&mut` materialized.
         let mut __p = init_p!(P<'_, TS, false>;
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
@@ -783,7 +783,7 @@ impl<'a> Parser<'a> {
         // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
-        // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)
+        // (The original asserted the stack-fallback arena owns the buffer; not applicable here.)
 
         // defer {
         //     if (p.allocated_names_pool) |pool| {
@@ -886,7 +886,7 @@ impl<'a> Parser<'a> {
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
-        // (defer after.deinit()/before.deinit() — Zig only frees the backing buffer; element
+        // (deferred after.deinit()/before.deinit() — original only freed the backing buffer; element
         // ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {
@@ -968,10 +968,10 @@ impl<'a> Parser<'a> {
 
             // PORT NOTE: `Loc` lacks `Hash` (logger crate), so the
             // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
-            // matches Zig's ArrayHashMap linear behaviour at small N (one
+            // matches the original ArrayHashMap linear behaviour at small N (one
             // entry per top-level `enum`). `scope_order_to_visit` is
             // `&'a [_]` (a `Copy` cursor) so save/restore is a plain value
-            // copy, mirroring the Zig `[]ScopeOrder` slice value.
+            // copy, mirroring the original `ScopeOrder` slice value.
             let arena = p.arena;
             let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> = BumpVec::new_in(arena);
             let mut preprocessed_enum_i: usize = 0;
@@ -985,7 +985,7 @@ impl<'a> Parser<'a> {
                             .iter()
                             .position(|k| *k == stmt.loc)
                             .expect("enum scope-order entry recorded during parse");
-                        // Map stores `&'a [ScopeOrder]` (Zig `[]ScopeOrder` slice
+                        // Map stores `&'a [ScopeOrder]` (originally a `ScopeOrder` slice
                         // value); shared borrow may freely alias the inner
                         // re-lookup performed by `append_part → visit_stmts`.
                         p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
@@ -1279,7 +1279,7 @@ impl<'a> Parser<'a> {
             if p.commonjs_named_exports.count() > 0 {
                 // PORT NOTE: borrowck — `deoptimize_commonjs_named_exports` mut-borrows
                 // `self`, so the `values()`/`keys()` slices are read once into locals
-                // (Zig kept slice handles across the call).
+                // (original kept slice handles across the call).
                 let export_names_len = p.commonjs_named_exports.keys().len();
                 let first_export_ref_loc = p.commonjs_named_exports.values()[0].loc_ref.loc;
                 let export_refs_len = p.commonjs_named_exports.values().len();
@@ -1556,7 +1556,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     let _ = &mut *part;
-                    // PORT NOTE: Zig had no explicit continue/break here; loop continues
+                    // PORT NOTE: original had no explicit continue/break here; loop continues
                     continue 'outer_part_loop;
                 }
             }
@@ -1573,7 +1573,7 @@ impl<'a> Parser<'a> {
             //    export * as ns from './foo'
             //
             if false
-            /* TODO(b2-blocked): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
+            /* TODO(b2-blocked): feature_flag — gated by FeatureFlags.export_star_redirect (false) */
             {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
@@ -1610,7 +1610,7 @@ impl<'a> Parser<'a> {
 
                     if let Some(star) = export_star_redirect {
                         return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                            // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
+                            // TODO(port): original set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
                             // See note on the matching arm above re double-ownership.
                             import_records: unsafe {
                                 Vec::from_bump_slice(p.import_records.items_mut())
@@ -1929,10 +1929,10 @@ impl<'a> Parser<'a> {
             }
 
             // if they didn't use any of the jest globals, don't inject it, I guess.
-            // PORT NOTE: Zig used `inline for (comptime std.meta.fieldNames(Jest))` — comptime
-            // reflection over Jest's Ref fields. Rust iterates the static `Jest::FIELDS`
+            // PORT NOTE: original used compile-time reflection over Jest's Ref fields.
+            // Rust iterates the static `Jest::FIELDS`
             // table (`&[(&'static str, fn(&Jest) -> Ref)]`) instead; declaration order
-            // matches the Zig struct so emitted clause/property order is identical.
+            // matches the original struct so emitted clause/property order is identical.
             let items_count: usize = {
                 let mut count: usize = 0;
                 for (_name, get_ref) in Jest::FIELDS {
@@ -2106,7 +2106,7 @@ impl<'a> Parser<'a> {
                 // PORT NOTE: snapshot to break the `&mut self` ↔ `&self.runtime_imports`
                 // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
                 // never touches `self.runtime_imports`, so the clone is purely a
-                // borrow-checker workaround (Zig passed by value here).
+                // borrow-checker workaround (original passed by value here).
                 let symbols = p.runtime_imports.clone();
                 p.generate_import_stmt(
                     RuntimeImports::NAME,
@@ -2131,7 +2131,7 @@ impl<'a> Parser<'a> {
             // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
             // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
             // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
-            // semantically a no-op vs. the Zig.
+            // semantically a no-op vs. the original.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
             let jsx_imports = core::mem::take(&mut p.jsx_imports);
@@ -2219,7 +2219,7 @@ impl<'a> Parser<'a> {
         }
 
         if !before.is_empty() || !after.is_empty() {
-            // Single up-front reserve preserves the Zig fused-growth; the inner
+            // Single up-front reserve preserves the original fused-growth; the inner
             // reserve() calls in prepend_from / append become no-ops.
             parts.reserve(before.len() + after.len());
             bun_collections::prepend_from(&mut parts, &mut before);
@@ -2340,5 +2340,3 @@ struct PragmaState {
 pub type MacroContext = Option<*mut c_void>;
 #[cfg(not(target_arch = "wasm32"))]
 pub type MacroContext = crate::Macro::MacroContext;
-
-// ported from: src/js_parser/ast/Parser.zig

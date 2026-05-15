@@ -33,12 +33,12 @@ pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// `bun.perf.trace(...)` lives in `bun_perf`; the drafts wrote
 /// `bun_core::perf::…`, so re-export under that name.
 ///
-/// `bun_perf::trace` now takes the generated `PerfEvent` enum (Zig used a
-/// `comptime [:0]const u8` and `@field(PerfEvent, name)`). The Rust generator
+/// `bun_perf::trace` now takes the generated `PerfEvent` enum (originally a
+/// compile-time string). The Rust generator
 /// hasn't emitted real variants yet (`PerfEvent::_Stub` only), so the bundler
 /// drafts that pass string literals would all be dead names. Shim a
 /// string-taking `trace` here that routes through `_Stub` so call sites stay
-/// 1:1 with the `.zig` literals.
+/// 1:1 with the original literals.
 /// TODO(b1): drop once `scripts/generate-perf-trace-events.sh` emits Rust.
 pub mod perf {
     pub use bun_perf::{Ctx, PerfEvent};
@@ -67,10 +67,10 @@ pub mod bun_css {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Value types extracted from `bundle_v2.zig`.
+// Value types extracted from `bundle_v2`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bundle_v2.zig:PartRange`.
+/// `bundle_v2::PartRange`.
 ///
 /// PORT NOTE: defined here (not in `bundle_v2`) so `Chunk.rs`
 /// (`parts_in_chunk_in_order: Box<[PartRange]>`) and the `bundle_v2.rs`
@@ -83,7 +83,7 @@ pub struct PartRange {
     pub part_index_end: u32,
 }
 
-/// `bundle_v2.zig:StableRef` — `packed struct(u96)`.
+/// `bundle_v2::StableRef` — `packed struct(u96)`.
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct StableRef {
@@ -100,10 +100,9 @@ impl StableRef {
 
 // PORT NOTE: `#[repr(packed)]` forbids derived comparison (would take an
 // unaligned `&self.field`). Manual impls copy the packed fields to locals
-// first. Ordering matches `bundle_v2.zig:StableRef.isLessThan` —
+// first. Ordering matches `StableRef.isLessThan` —
 // `(stable_source_index, ref.inner_index)` lexicographic — so
-// `slice.sort_unstable()` reproduces Zig `std.sort.pdq(StableRef, …,
-// isLessThan)` call sites.
+// `slice.sort_unstable()` reproduces the original pdq-sort call sites.
 impl PartialEq for StableRef {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -128,7 +127,7 @@ impl PartialOrd for StableRef {
     }
 }
 
-/// `bundle_v2.zig:ImportTracker`.
+/// `bundle_v2::ImportTracker`.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImportTracker {
     pub source_index: Index,
@@ -136,22 +135,22 @@ pub struct ImportTracker {
     pub import_ref: Ref,
 }
 
-/// `bundle_v2.zig:CrossChunkImport.Item`.
+/// `bundle_v2::CrossChunkImport.Item`.
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
     pub export_alias: Box<[u8]>,
     pub r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
-/// `bundle_v2.zig:CrossChunkImport`.
+/// `bundle_v2::CrossChunkImport`.
 #[derive(Default)]
 pub struct CrossChunkImport {
     pub chunk_index: IndexInt,
-    /// Borrowed view into `ImportsFromOtherChunks` — Zig's `BabyList` has no
+    /// Borrowed view into `ImportsFromOtherChunks` — the original `BabyList` has no
     /// destructor, so dropping `CrossChunkImport` must not free this buffer.
     pub sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
 }
-/// `Chunk.zig:ImportsFromOtherChunks`.
+/// `Chunk::ImportsFromOtherChunks`.
 pub mod cross_chunk_import {
     pub type ItemList = super::CrossChunkImportItemList;
 }
@@ -168,7 +167,7 @@ pub struct DeclInfo {
     pub kind: DeclInfoKind,
 }
 
-/// `bundle_v2.zig:CompileResult`.
+/// `bundle_v2::CompileResult`.
 pub enum CompileResult {
     Javascript {
         source_index: IndexInt,
@@ -200,7 +199,6 @@ impl CompileResult {
         }
     }
 
-    /// bundle_v2.zig:4215-4230.
     pub fn code(&self) -> &[u8] {
         match self {
             CompileResult::Javascript { result, .. } => match result {
@@ -217,7 +215,7 @@ impl CompileResult {
 
     /// Consume `self` and yield the owned code buffer. Used when the
     /// `StringJoiner` must outlive the `CompileResult` local that produced it
-    /// (Zig `j.push(code, allocator)` ownership-transfer semantics).
+    /// (original `j.push(code, allocator)` ownership-transfer semantics).
     pub fn into_code(self) -> Box<[u8]> {
         match self {
             CompileResult::Javascript { result, .. } => match result {
@@ -229,7 +227,6 @@ impl CompileResult {
         }
     }
 
-    /// bundle_v2.zig:4232-4241.
     pub fn source_map_chunk(&self) -> Option<&bun_sourcemap::Chunk> {
         match self {
             CompileResult::Javascript { result, .. } => match result {
@@ -245,7 +242,7 @@ impl CompileResult {
 // PORT NOTE: manual `Clone` because `bun_js_printer::PrintResult` doesn't
 // derive it (its fields are all `Clone`-able, so destructure and rebuild).
 // `vec![CompileResult::default(); n]` in `generateChunksInParallel.rs` needs
-// this to pre-size the per-chunk result buffers — Zig used `arena.alloc`
+// this to pre-size the per-chunk result buffers — original used `arena.alloc`
 // (uninit), Rust fills with defaults.
 impl Clone for CompileResult {
     fn clone(&self) -> Self {
@@ -305,7 +302,7 @@ impl Default for CompileResult {
     }
 }
 
-/// `bundle_v2.zig:genericPathWithPrettyInitialized`. This assigns a concise,
+/// `bundle_v2::genericPathWithPrettyInitialized`. This assigns a concise,
 /// predictable, and unique `.pretty` attribute to a Path. DevServer relies on
 /// pretty paths for identifying modules, so they must be unique.
 ///
@@ -336,7 +333,7 @@ pub fn generic_path_with_pretty_initialized(
     // "node:" prefix is not emitted.
     if path.is_file() || is_node {
         let mut buf2 = bun_paths::path_buffer_pool::get();
-        // TODO(port): in Zig buf2 aliases buf when target != ssr.
+        // TODO(port): in the original, buf2 aliases buf when target != ssr.
         let rel = bun_paths::resolve_path::relative_platform_buf::<
             bun_paths::resolve_path::platform::Loose,
             false,
@@ -350,7 +347,7 @@ pub fn generic_path_with_pretty_initialized(
             // the SSR graph needs different pretty names or else HMR mode will
             // confuse the two modules.
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            // PORT NOTE: Zig `bufPrint(buf, "ssr:{s}", .{rel})` writes bytes
+            // PORT NOTE: original wrote `"ssr:" ++ rel` bytes
             // verbatim; routing through `bstr::BStr` Display lossily replaces
             // non-UTF-8 path bytes (legal on Linux) with U+FFFD, corrupting
             // metafile `inputs` keys / HMR module identity. Write raw bytes.
@@ -381,11 +378,11 @@ pub fn generic_path_with_pretty_initialized(
     }
 }
 
-/// `bundle_v2.zig:fmtEscapedNamespace`. Doubles every `:` so a namespace
+/// `bundle_v2::fmtEscapedNamespace`. Doubles every `:` so a namespace
 /// containing colons cannot collide with the `<ns>:<path>` separator.
 ///
 /// PORT NOTE: byte-level `Write::write_all` (not `core::fmt::Display` over
-/// `bstr::BStr`) — Zig `writer.writeAll` emits raw bytes, and plugins may set
+/// `bstr::BStr`) — the original wrote raw bytes, and plugins may set
 /// arbitrary (non-UTF-8) namespace bytes that `BStr`'s Display would lossily
 /// replace with U+FFFD.
 fn write_escaped_namespace<W: bun_io::Write + ?Sized>(w: &mut W, slice: &[u8]) -> bun_io::Result {
@@ -398,7 +395,7 @@ fn write_escaped_namespace<W: bun_io::Write + ?Sized>(w: &mut W, slice: &[u8]) -
     w.write_all(rest)
 }
 
-/// `bundle_v2.zig:CompileResultForSourceMap`.
+/// `bundle_v2::CompileResultForSourceMap`.
 
 pub struct CompileResultForSourceMap {
     pub source_map_chunk: bun_sourcemap::Chunk,
@@ -414,13 +411,13 @@ bun_collections::multi_array_columns! {
     }
 }
 
-/// `bundle_v2.zig:ContentHasher` — `std.hash.XxHash64` (seed 0). xxhash64
+/// `bundle_v2::ContentHasher` — `std.hash.XxHash64` (seed 0). xxhash64
 /// outperforms wyhash above ~1KB.
 #[derive(Default)]
 pub struct ContentHasher {
     pub hasher: bun_hash::XxHash64Streaming,
 }
-// `bun.Output.scoped(.ContentHasher, .hidden)` (bundle_v2.zig:4258). The static
+// `bun.Output.scoped(.ContentHasher, .hidden)`. The static
 // (value namespace) deliberately puns the struct name (type namespace) — brace
 // structs only occupy the type namespace, so the two coexist.
 bun_core::declare_scope!(ContentHasher, hidden);
@@ -440,7 +437,7 @@ impl ContentHasher {
         h.write(bytes);
         h.digest()
     }
-    /// `bundle_v2.zig:ContentHasher.writeInts` — `std.mem.sliceAsBytes(i)`.
+    /// `bundle_v2::ContentHasher.writeInts` — hash the raw byte representation of `i`.
     pub fn write_ints(&mut self, i: &[u32]) {
         bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
         self.hasher.update(bytemuck::cast_slice::<u32, u8>(i));
@@ -450,13 +447,13 @@ impl ContentHasher {
     }
 }
 
-/// `bundle_v2.zig:cheapPrefixNormalizer` — moved down to `bun_string`
+/// `bundle_v2::cheapPrefixNormalizer` — moved down to `bun_string`
 /// (lower-tier crate shared with `css::printer`). Re-exported here so the
 /// existing `crate::cheap_prefix_normalizer` chain in `bundle_v2.rs` and the
 /// bundler call-sites keep working unchanged.
 pub use bun_core::cheap_prefix_normalizer;
 
-/// `bundle_v2.zig:targetFromHashbang`.
+/// `bundle_v2::targetFromHashbang`.
 pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
     const HB: &[u8] = b"#!/usr/bin/env bun";
     if buffer.len() > HB.len() && buffer.starts_with(HB) {
@@ -473,8 +470,8 @@ pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
 /// non-existent `bun_renamer` crate).
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
-    /// Owned renamer stored on `Chunk.renamer`. The Zig field is the union
-    /// `renamer.Renamer` set late (`= undefined`); the Rust `Renamer<'r,'src>`
+    /// Owned renamer stored on `Chunk.renamer`. The original field is the union
+    /// `renamer.Renamer` set late (uninitialized); the Rust `Renamer<'r,'src>`
     /// enum has borrowed lifetimes that can't be stored in a 'static-ish
     /// struct, so this owns the boxed concrete renamer instead and produces a
     /// borrowed `Renamer` view on demand. TODO(port): thread `'bump` once
@@ -502,7 +499,7 @@ pub mod bun_renamer {
                 // PORT NOTE: `Renamer<'r,'src>` borrows the concrete renamer
                 // (`&'r mut MinifyRenamer`); `ChunkRenamer` owns the `Box`, so
                 // the deref-coerced `&mut **r` yields a per-call borrowed view
-                // exactly like the Zig tag+ptr union.
+                // exactly like the original tag+ptr union.
                 ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
             }
         }
@@ -511,8 +508,7 @@ pub mod bun_renamer {
 
 /// `HTMLImportManifest` — bundler-calling-convention adapter over the real
 /// `crate::HTMLImportManifest` module so `Chunk.rs::IntermediateOutput::code`
-/// can call free functions matching the Zig surface (`std.fmt.count` /
-/// `std.io.fixedBufferStream`).
+/// can call free functions matching the original counting / fixed-buffer surface.
 pub mod html_import_manifest {
     use crate::Graph::Graph;
     use crate::HTMLImportManifest as real;
@@ -520,7 +516,7 @@ pub mod html_import_manifest {
 
     pub use real::{EscapedJson, HTMLImportManifest};
 
-    /// HTMLImportManifest.zig:116 `formatEscapedJSON` — returns a `Display`
+    /// `HTMLImportManifest::formatEscapedJSON` — returns a `Display`
     /// adapter that writes the manifest JSON, then re-escapes it as a JS string
     /// literal body (`writePreQuotedString`). Chunk.rs uses this with
     /// `bun_core::fmt::count` for the counting pass.
@@ -540,8 +536,8 @@ pub mod html_import_manifest {
         .format_escaped_json()
     }
 
-    /// HTMLImportManifest.zig:98 `writeEscapedJSON` — fixed-buffer variant.
-    /// `Chunk.rs` passes a `&mut &mut [u8]` cursor (Zig `fixedBufferStream`);
+    /// `HTMLImportManifest::writeEscapedJSON` — fixed-buffer variant.
+    /// `Chunk.rs` passes a `&mut &mut [u8]` cursor (a fixed-buffer stream);
     /// route through [`bun_io::FixedBufferStream`] and advance the caller's
     /// slice in place so it can recover `pos = before_len - cursor.len()`.
     pub fn write_escaped_json(
@@ -568,7 +564,7 @@ pub mod html_import_manifest {
 /// import record; with the real module un-gated there is no reason to shadow it.
 pub use crate::HTMLScanner as html_scanner;
 
-/// `LinkerGraph.zig:JSMeta` / `WrapKind` / `ExportData` — minimal surface so
+/// `LinkerGraph::JSMeta` / `WrapKind` / `ExportData` — minimal surface so
 /// `LinkerContext.rs` field types resolve while `LinkerGraph.rs` is gated.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -583,7 +579,7 @@ pub use crate::options_impl::PathTemplate;
 pub(crate) use bun_ast::ServerComponentBoundary;
 pub(crate) use bun_ast::UseDirective;
 
-/// `bundle_v2.zig:MangledProps`.
+/// `bundle_v2::MangledProps`.
 pub use bun_js_printer::MangledProps;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -608,7 +604,7 @@ pub use bun_js_printer::MangledProps;
 pub type JSAst = crate::BundledAst<'static>;
 pub(crate) use bun_ast::{Part, Ref, Symbol};
 
-/// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
+/// `bundle_v2::EntryPoint` — both a struct and (via the sibling module
 /// below) a namespace for `Kind`. Rust keeps types and modules in separate
 /// namespaces, so `use crate::EntryPoint` imports both.
 pub mod entry_point {
@@ -641,7 +637,7 @@ pub mod entry_point {
         }
     }
 
-    /// `bundle_v2.zig:EntryPoint.Kind` — inherent associated type so
+    /// `bundle_v2::EntryPoint.Kind` — inherent associated type so
     /// `EntryPoint::Kind` resolves at every use-site (the explicit struct
     /// re-export at the crate root shadows any glob-imported module of the
     /// same name, so a sibling `mod EntryPoint { … }` is unreachable there).
@@ -672,7 +668,6 @@ pub mod entry_point {
         pub fn is_server_entry_point(self) -> bool {
             self == Self::UserSpecified
         }
-        /// bundle_v2.zig:4021-4026.
         #[inline]
         pub fn output_kind(self) -> crate::options::OutputKind {
             match self {
@@ -683,7 +678,7 @@ pub mod entry_point {
     }
 }
 
-/// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see the gated
+/// `bundle_v2::ImportData` / `ExportData` / `JSMeta` — see the gated
 /// `bundle_v2.rs` draft body for full doc-comments.
 pub mod js_meta {
     use bun_ast::{Dependency, Ref};
@@ -711,7 +706,7 @@ pub mod js_meta {
     pub type ResolvedExports = StringArrayHashMap<ExportData>;
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
-    /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Field-style access
+    /// `bundle_v2::JSMeta.Flags` — packed struct(u8). Field-style access
     /// (`flags.is_async_or_has_async_dependency = true`) is what the Phase-A
     /// drafts wrote, so this is a plain struct of bools + `wrap` for now;
     /// pack into a u8 once callers move to setters. PERF(port).
@@ -758,7 +753,7 @@ pub mod js_meta {
     }
 
     /// Inherent associated types so `JSMeta::Flags` / `JSMeta::Wrap` resolve
-    /// (Zig nests them under the struct). A sibling `pub mod JSMeta` would
+    /// (originally nested under the struct). A sibling `pub mod JSMeta` would
     /// collide with the struct re-export (E0255).
     impl JSMeta {
         pub type Flags = Flags;
@@ -781,14 +776,14 @@ pub use js_meta::{
 /// `use crate::ungate_support::EntryPointColumns as _;`.
 pub use entry_point::EntryPointColumns;
 
-/// `bundle_v2.zig` aliased `EventLoop = bun.jsc.AnyEventLoop`; the bundler only
+/// `bundle_v2` aliases `EventLoop = bun.jsc.AnyEventLoop`; the bundler only
 /// stores it on `LinkerContext.loop` (already typed there as
 /// `Option<NonNull<()>>` — erased handle) and calls `.tick(...)` from
 /// `wait_for_parse`. Re-export the LinkerContext alias so `bundle_v2.rs` and
 /// `ParseTask.rs` agree on the spelling.
 pub use crate::linker_context_mod::EventLoop;
 
-// crate-private aliases mirroring Zig's `Index.Int` / `Part.List` /
+// crate-private aliases mirroring the original `Index.Int` / `Part.List` /
 // `ImportRecord.List` nesting.
 pub(crate) mod index {
     pub(crate) use bun_ast::{Index, IndexInt as Int};

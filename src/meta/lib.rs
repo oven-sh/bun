@@ -1,12 +1,12 @@
-//! Zig comptime-reflection helpers.
+//! Compile-time reflection helpers.
 //!
-//! Almost everything in `meta.zig` is built on `@typeInfo` / `@TypeOf` /
-//! `@hasDecl` / `@Type`, which have **no Rust equivalent** (see PORTING.md
-//! §Comptime reflection). In Rust the call sites should use:
-//!   - a generic `<T>` directly instead of `@TypeOf(anytype)`
-//!   - a trait bound instead of `@hasDecl` duck-typing
+//! The original implementation was built on type-level reflection primitives
+//! that have **no Rust equivalent** (see PORTING.md §Comptime reflection).
+//! In Rust the call sites should use:
+//!   - a generic `<T>` directly instead of inferring the argument type
+//!   - a trait bound instead of decl-based duck-typing
 //!   - `#[derive(...)]` instead of field iteration
-//!   - `core::any::type_name::<T>()` instead of `@typeName`
+//!   - `core::any::type_name::<T>()` instead of a type-name builtin
 //!
 //! The few items that *do* have a Rust shape are ported below; the rest are
 //! stubbed with `// TODO(port):` pointing callers at the idiomatic
@@ -36,24 +36,22 @@ pub use tagged_union::TaggedUnion;
 // return type. Rust has no fn-signature reflection; callers must name the
 // return type or use an associated type (`FnOnce() -> R` bound gives `R`).
 
-/// `@typeName(T)` with the namespace prefix stripped.
+/// `core::any::type_name::<T>()` with the namespace prefix stripped.
 ///
-/// Note: unlike the Zig version this is **not** `const` — `type_name` is not
-/// a `const fn` and string slicing on it cannot be done at compile time.
-/// Callers that needed a comptime string should use a literal or
-/// `const_format::formatcp!`.
+/// Note: this is **not** `const` — `type_name` is not a `const fn` and string
+/// slicing on it cannot be done at compile time. Callers that needed a
+/// compile-time string should use a literal or `const_format::formatcp!`.
 pub fn type_name<T: ?Sized>() -> &'static str {
     type_base_name(core::any::type_name::<T>())
 }
 
-/// partially emulates behaviour of @typeName in previous Zig versions,
-/// converting "some.namespace.MyType" to "MyType"
+/// converts "some.namespace.MyType" or "some::namespace::MyType" to "MyType"
 #[inline]
 pub fn type_base_name(fullname: &'static str) -> &'static str {
     // leave type name like "namespace.WrapperType(namespace.MyType)" as it is
     // PORT NOTE: Rust uses `<...>` for generics and `::` for paths, not `(` / `.`.
-    // Keep the Zig delimiters for parity (this fn is fed Zig-style names in
-    // some snapshot paths) and also handle the Rust forms.
+    // Keep the dotted/parenthesised delimiters for parity (this fn is fed
+    // dotted names in some snapshot paths) and also handle the Rust forms.
     if fullname.contains('(') || fullname.contains('<') {
         return fullname;
     }
@@ -88,9 +86,9 @@ pub fn type_base_name(fullname: &'static str) -> &'static str {
 // `@call`/ArgsTuple; callers invoke the fn directly with the args spelled
 // out. Delete at call sites.
 
-// TODO(port): `CreateUniqueTuple(N, types)` — `@Type` synthesis of a tuple
+// TODO(port): `CreateUniqueTuple(N, types)` — comptime synthesis of a tuple
 // struct. Rust tuples `(T0, T1, ...)` are the direct equivalent; no helper
-// needed. (This was `fn`-private in Zig anyway.)
+// needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Layout / copy / eql predicates — become marker-trait bounds
@@ -145,7 +143,7 @@ pub enum ListContainerType {
 // callers name `U` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
-// useAllFields — exhaustive-field-use lint (ziglang/zig#21879)
+// useAllFields — exhaustive-field-use lint
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(port): `useAllFields(T, _: VoidFields(T))` + `VoidFields(T)` are a
@@ -164,5 +162,3 @@ pub fn void_field_type_discard_helper<T>(_data: T) {
 // of erroring. Per PORTING.md: `@hasDecl` checks become trait bounds;
 // `@hasField` checks become exhaustive `match`/destructure. No runtime
 // helper is possible.
-
-// ported from: src/meta/meta.zig

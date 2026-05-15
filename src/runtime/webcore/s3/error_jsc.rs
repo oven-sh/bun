@@ -1,4 +1,4 @@
-//! JSC bridges for `s3_signing/error.zig`. The pure error-code/message tables
+//! JSC bridges for the s3_signing error module. The pure error-code/message tables
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
 use bun_core::String as BunString;
@@ -141,7 +141,7 @@ impl JSS3Error {
         }
     }
 
-    // Zig `deinit` only deref'd the three `bun.String` fields; `bun_core::String: Drop`
+    // The original `deinit` only deref'd the three `bun.String` fields; `bun_core::String: Drop`
     // handles that automatically, so no explicit `Drop` impl is needed here.
 
     pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
@@ -183,7 +183,7 @@ pub fn s3_error_to_js_with_async_stack(
 }
 
 /// Method-syntax extension over [`S3Error`] so call sites in `S3File` /
-/// `blob::Store` keep the Zig-spec spelling `err.to_js_with_async_stack(…)`.
+/// `blob::Store` keep the original spelling `err.to_js_with_async_stack(…)`.
 /// Forwards to the free fn above; returns `JsResult` because the consuming
 /// `JSPromiseStrong::reject` takes `JsResult<JSValue>`.
 pub trait S3ErrorJsc {
@@ -215,5 +215,3 @@ impl S3ErrorJsc for S3Error<'_> {
         ))
     }
 }
-
-// ported from: src/runtime/webcore/s3/error_jsc.zig

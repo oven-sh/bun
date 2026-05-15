@@ -120,8 +120,8 @@ pub enum Representation {
 // HostedGitInfo
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: reshaped for borrowck. The Zig stores `committish`/`project`/`user`
-// as `[]const u8` slices that alias into `_memory_buffer` (a single owned
+// PORT NOTE: reshaped for borrowck. The original stored `committish`/`project`/`user`
+// as slices that alias into `_memory_buffer` (a single owned
 // allocation). Rust can't express that self-reference safely without lifetimes
 // on the struct (forbidden in Phase A). We store byte ranges into
 // `_memory_buffer` instead and expose slice accessors.
@@ -168,8 +168,8 @@ impl HostedGitInfo {
     ) -> Result<Range<usize>, HostedGitInfoError> {
         let start = sb.len;
         let writable = sb.writable();
-        // PORT NOTE: Zig `PercentEncoding.decode(Writer, writer, input)` ported via the
-        // fixed-buffer `decode_into(out, input) -> Result<u32, _>` overload in bun_url.
+        // PORT NOTE: percent-decode via the fixed-buffer
+        // `decode_into(out, input) -> Result<u32, _>` overload in bun_url.
         let decoded_len = PercentEncoding::decode_into(writable, input)
             .map_err(|_| HostedGitInfoError::InvalidURL)? as usize;
         sb.len += decoded_len;
@@ -242,7 +242,7 @@ impl HostedGitInfo {
     // PORT NOTE: `pub const toJS = @import("../install_jsc/...")` deleted —
     // `to_js` is an extension-trait method living in `bun_install_jsc`.
 
-    // PORT NOTE: `pub const StringPair` was a Zig-nested struct; hoisted to module
+    // PORT NOTE: `StringPair` was originally a nested struct; hoisted to module
     // scope below (Rust forbids struct defs inside `impl`).
 
     /// Given a URL-like (including shortcuts) string, parses it into a HostedGitInfo structure.
@@ -344,11 +344,11 @@ impl HostedGitInfo {
     }
 }
 
-// PORT NOTE: Zig nested `pub const StringPair = struct {...}` inside HostedGitInfo;
+// PORT NOTE: `StringPair` was originally nested inside HostedGitInfo;
 // Rust can't nest struct defs inside `impl`, so it lives at module scope but is
 // re-exported through the type's namespace conceptually.
 pub struct StringPair {
-    // PORT NOTE: Zig `[]const u8` aliasing-semantics. No constructor in this module
+    // PORT NOTE: originally borrowed-slice semantics. No constructor in this module
     // (consumed by install_jsc), so own the buffers — callers allocate per use.
     pub save_spec: Box<[u8]>,
     pub fetch_spec: Option<Box<[u8]>>,
@@ -377,7 +377,7 @@ impl Drop for OwnedJscUrl {
     }
 }
 
-// PORT NOTE: anonymous return struct in Zig → named struct here.
+// PORT NOTE: anonymous return struct → named struct here.
 // `url` is OWNED per LIFETIMES.tsv (jsc.URL.fromString creates; caller deinits).
 pub struct ParsedUrl<'a> {
     pub url: OwnedJscUrl,
@@ -472,7 +472,7 @@ impl WellDefinedProtocol {
         b"ssh" => WellDefinedProtocol::Ssh,
     };
 
-    // PORT NOTE: Zig `strings.getKey(self)` did reverse lookup; provide explicit map.
+    // PORT NOTE: was a reverse lookup via `strings.getKey(self)`; provide explicit map.
     fn protocol_str(self) -> &'static [u8] {
         match self {
             Self::Bitbucket => b"bitbucket",
@@ -506,7 +506,7 @@ impl WellDefinedProtocol {
     }
 
     /// Maximum length of any protocol string in the strings map (computed at compile time).
-    // PORT NOTE: Zig computed this with a comptime loop over `strings.kvs`. The
+    // PORT NOTE: originally computed at compile time over `strings.kvs`. The
     // longest keys ("git+https", "git+rsync", "sourcehut", "bitbucket") are 9 bytes.
     pub const MAX_PROTOCOL_LENGTH: usize = 9;
 
@@ -628,7 +628,7 @@ pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
             }
             _ => {
                 // Implement spaceOnlyAfterHash
-                // PORT NOTE: match Zig std.ascii.isWhitespace exactly (includes VT 0x0B and FF 0x0C;
+                // PORT NOTE: match the original isWhitespace set exactly (includes VT 0x0B and FF 0x0C;
                 // Rust u8::is_ascii_whitespace excludes VT).
                 if matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) && pound_idx.is_none() {
                     return false;
@@ -652,7 +652,7 @@ pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
 // UrlProtocol / UrlProtocolPair
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig `union(enum) { custom: []const u8 }` borrowed the input `npa_str`.
+// PORT NOTE: the `Custom` variant borrows the input `npa_str`.
 // Carries a BORROW_PARAM lifetime; lives only for the duration of `parse_url`.
 #[derive(Debug, Clone, Copy)]
 pub enum UrlProtocol<'a> {
@@ -728,7 +728,7 @@ impl<'a> UrlProtocolPair<'a> {
 
     fn concat_parts_to_url(parts: &[&[u8]]) -> Option<OwnedJscUrl> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
-        // get rid of -- in theory, URL.zig could allocate once.
+        // get rid of -- in theory, the URL module could allocate once.
         let new_str = strings::concat(parts);
         // Drop handles `defer allocator.free(new_str)`.
         JscUrl::from_utf8(&new_str).map(OwnedJscUrl)
@@ -901,8 +901,8 @@ pub fn correct_url<'a>(
     }
 
     if col_idx == -1 && matches!(url_proto_pair.protocol, UrlProtocol::Unknown) {
-        // PORT NOTE: Zig copies `url_proto_pair.url` (a tagged union) by value. Here
-        // we know `normalize_protocol` only ever returns `Unmanaged`, so re-borrow.
+        // PORT NOTE: `url_proto_pair.url` (a tagged union) was copied by value originally.
+        // Here we know `normalize_protocol` only ever returns `Unmanaged`, so re-borrow.
         return Ok(UrlProtocolPair {
             url: match &url_proto_pair.url {
                 UrlProtocolPairUrl::Unmanaged(s) => UrlProtocolPairUrl::Unmanaged(s),
@@ -1035,7 +1035,7 @@ impl HostProvider {
     /// colon or not.
     // PERF(port): was comptime monomorphization — profile in Phase B
     fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
-        // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
+        // PORT NOTE: was a comptime-reflection loop over enum fields.
         for provider in Self::ALL {
             let shortcut_matches = if with_colon {
                 provider.shortcut() == shortcut_str
@@ -1053,7 +1053,7 @@ impl HostProvider {
 
     /// Find the appropriate host provider by its domain (e.g. "github.com").
     fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
-        // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
+        // PORT NOTE: was a comptime-reflection loop over enum fields.
         for provider in Self::ALL {
             if provider.domain() == domain_str {
                 return Some(provider);
@@ -1453,9 +1453,9 @@ pub mod formatters {
                 }
             }
 
-            // PORT NOTE: in Zig the `committish` borrow from `fragment_utf8` is freed
-            // before being copied into the StringBuilder. We hold the owned fragment
-            // here to keep the borrow valid until copied.
+            // PORT NOTE: originally the `committish` borrow from `fragment_utf8` was
+            // freed before being copied into the StringBuilder. We hold the owned
+            // fragment here to keep the borrow valid until copied.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
                 let fragment_str = OwnedString::new(url.fragment_identifier());
@@ -1736,8 +1736,8 @@ pub mod formatters {
                 return Ok(None);
             };
 
-            // PORT NOTE: Zig inlines PercentEncoding.decode here instead of calling
-            // decodeAndAppend (returns null instead of erroring on decode failure).
+            // PORT NOTE: PercentEncoding.decode is inlined here instead of calling
+            // decodeAndAppend (returns None instead of erroring on decode failure).
             let user_slice = 'blk: {
                 let start = sb.len;
                 let writable = sb.writable();
@@ -1971,7 +1971,5 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
 // PORT NOTE (layering): `pub const X = @import("../install_jsc/...")` aliases deleted —
 // `js_parse_url` / `js_from_url` live in `bun_install_jsc` (higher tier). Re-exporting
 // them here would re-introduce the install ↔ jsc cycle. Module kept as a marker so
-// Zig grep for `TestingAPIs` still lands here.
+// a grep for `TestingAPIs` still lands here.
 pub mod testing_apis {}
-
-// ported from: src/install/hosted_git_info.zig

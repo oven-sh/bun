@@ -10,10 +10,9 @@ const _: () = assert!(IMPORT_PATH.len() % 8 == 0);
 
 pub struct FallbackModule {
     pub path: fs::Path<'static>,
-    // PORT NOTE: Zig stored `*const PackageJSON` to a comptime literal (rvalue static
-    // promotion). PackageJSON has heap-backed fields (`Box<[u8]>`, hash maps) that cannot
-    // be const-constructed, so the LazyLock below owns the PackageJSONs and we hand out
-    // `&'static` borrows into it.
+    // PORT NOTE: PackageJSON has heap-backed fields (`Box<[u8]>`, hash maps) that
+    // cannot be const-constructed, so the LazyLock below owns the PackageJSONs and
+    // we hand out `&'static` borrows into it.
     pub package_json: &'static PackageJSON,
     pub code: fn() -> &'static str,
 }
@@ -22,9 +21,7 @@ pub struct FallbackModule {
 // Using `include_str!` forces you to wait for the native build to finish in
 // debug builds, even when you only changed JS builtins.
 //
-// PORT NOTE: Zig's `createSourceCodeGetter(comptime code_path: string)` returned a
-// `*const fn () string` by defining a nested struct with a `get` fn closing over the
-// comptime path. Rust fn pointers cannot close over const-generic `&str` on stable, so
+// PORT NOTE: Rust fn pointers cannot close over const-generic `&str` on stable, so
 // this is expressed as a macro that expands to a local `fn get()` and yields its pointer.
 macro_rules! create_source_code_getter {
     ($code_path:literal) => {{
@@ -38,12 +35,10 @@ macro_rules! create_source_code_getter {
     }};
 }
 
-// PORT NOTE: Zig's `pub fn init(comptime name: string) FallbackModule` did comptime string
-// concatenation (`++`) and took the address of a comptime `PackageJSON` literal. PackageJSON
-// is not const-constructible in Rust (Box<[u8]>/HashMap fields), so per PORTING.md
-// §Concurrency this is a `LazyLock` runtime-init singleton. `@setEvalBranchQuota` is dropped.
+// PORT NOTE: PackageJSON is not const-constructible (Box<[u8]>/HashMap fields),
+// so per PORTING.md §Concurrency this is a `LazyLock` runtime-init singleton.
 //
-// PERF(port): Zig used a comptime perfect-hash map; this builds at first access — profile in Phase B.
+// PERF(port): the lookup map is built at first access — profile in Phase B.
 macro_rules! fallback_module_init {
     ($name:literal, $code_path:literal) => {{
         const _VERSION: &[u8] = b"0.0.0-polyfill";
@@ -59,8 +54,8 @@ macro_rules! fallback_module_init {
                 name: Box::from($name.as_bytes()),
                 version: Box::from(_VERSION),
                 module_type: ModuleType::Esm,
-                // PORT NOTE: Zig used `undefined` for main_fields/browser_map (never read on
-                // this code path); Default::default() is the closest safe equivalent.
+                // PORT NOTE: main_fields/browser_map are never read on this code
+                // path; Default::default() is a safe filler.
                 source: bun_ast::Source::init_path_string(_PKGJSON_PATH, b""),
                 side_effects: SideEffects::False,
                 ..Default::default()
@@ -79,9 +74,9 @@ type FallbackEntry = (
 );
 
 // PORT NOTE: `PackageJSON` is `!Sync` (contains `StringArrayHashMap` with a
-// `Cell<bool>`), so it cannot live in `LazyLock`/`OnceLock`. Zig built this at
-// comptime (no thread-safety concern); the Rust port uses `RacyCell` + `Once`,
-// which matches the "process-lifetime singleton, init once, read-only thereafter"
+// `Cell<bool>`), so it cannot live in `LazyLock`/`OnceLock`. We use
+// `RacyCell` + `Once`, which matches the
+// "process-lifetime singleton, init once, read-only thereafter"
 // shape. All reads go through `modules()`/`map()` which assert init ordering.
 static MODULES: bun_core::RacyCell<Option<Box<[FallbackEntry]>>> = bun_core::RacyCell::new(None);
 static MAP: bun_core::RacyCell<Option<bun_collections::StringHashMap<FallbackModule>>> =
@@ -160,5 +155,3 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
 
     None
 }
-
-// ported from: src/resolver/node_fallbacks.zig

@@ -88,7 +88,7 @@ pub struct FileSink {
 // rather than `Rc<T>`.
 
 /// RAII owner of one intrusive ref on a `FileSink`. Drops the ref (and frees
-/// the allocation if it was the last) on scope exit. Replaces the Zig
+/// the allocation if it was the last) on scope exit. Replaces the original
 /// `self.ref(); defer self.deref();` pair without borrowing `self`.
 struct FileSinkRef(*mut FileSink);
 
@@ -199,11 +199,11 @@ pub mod testing_apis {
         Ok(JSValue::js_number(LIVE_COUNT.load(Ordering::Relaxed) as f64))
     }
 }
-// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (acronym splitter treats `AP|Is` as two words); alias so both resolve.
 pub use testing_apis as testing_ap_is;
 
-/// Port of `bun.sys.isPollable` (sys.zig:4162) — `bun_sys` does not yet export
+/// Port of `bun.sys.isPollable` (sys) — `bun_sys` does not yet export
 /// this helper, so re-derive it locally from `S_IFMT`. Windows always returns
 /// `false` (the spec gates on `bun.Environment.isWindows`).
 fn is_pollable(mode: sys::Mode) -> bool {
@@ -220,7 +220,7 @@ fn is_pollable(mode: sys::Mode) -> bool {
 }
 
 /// `bun.io.StreamingWriter(@This(), opaque { onClose, onWritable, onError, onWrite })`.
-/// The Zig passes a comptime vtable via an `opaque {}` with decls; in Rust the
+/// The the original passes a comptime vtable via an `opaque {}` with decls; in Rust the
 /// parent type implements the handler trait directly.
 pub type IOWriter = bun_io::StreamingWriter<FileSink>;
 pub type Poll = IOWriter;
@@ -310,7 +310,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     };
     // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>` (= ThisSink); the
     // first field is `sink: FileSink`, so `&(*this_ptr).sink` recovers the
-    // wrapped `*FileSink` (Zig: `@ptrCast(@alignCast(JSSink.fromJS(...) orelse return))`).
+    // wrapped `*FileSink` (originally: `@ptrCast(@alignCast(JSSink.fromJS(...) orelse return))`).
     let this: &FileSink = unsafe { &(*this_ptr).sink };
 
     #[cfg(not(windows))]
@@ -331,7 +331,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
                     bun_io::Source::Pipe(pipe) => {
                         // SAFETY: `pipe` is a live `Box<uv::Pipe>` owned by `writer.source`;
                         // `uv_pipe_t` is `#[repr(C)]` with `uv_stream_t` as its first field
-                        // (libuv handle subtyping), so the pointer cast is valid (Zig: `@ptrCast(pipe)`).
+                        // (libuv handle subtyping), so the pointer cast is valid (originally: `@ptrCast(pipe)`).
                         let rc = unsafe {
                             uv::uv_stream_set_blocking(
                                 (&mut **pipe) as *mut uv::Pipe as *mut uv::uv_stream_t,
@@ -345,7 +345,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
                     bun_io::Source::Tty(tty) => {
                         // SAFETY: `tty` is a live `NonNull<uv_tty_t>` (heap or static stdin tty);
                         // `uv_tty_t` embeds `uv_stream_t` as its first field, so the cast is the
-                        // libuv handle-subtype downcast (Zig: `@ptrCast(tty)`).
+                        // libuv handle-subtype downcast (originally: `@ptrCast(tty)`).
                         let rc = unsafe {
                             uv::uv_stream_set_blocking(tty.as_ptr().cast::<uv::uv_stream_t>(), 1)
                         };
@@ -637,7 +637,7 @@ impl FileSink {
             event_loop_handle: evtloop,
             // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
             // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
-            // Zig's `HandleMixin.fd` maps INVALID_HANDLE_VALUE → `bun.invalid_fd`
+            // `HandleMixin.fd` maps INVALID_HANDLE_VALUE → `bun.invalid_fd`
             // and otherwise tags kind=system via `.fromNative`.
             fd: Cell::new(match unsafe { (*pipe).fd() } {
                 h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
@@ -654,7 +654,7 @@ impl FileSink {
         this
     }
 
-    // No `#[cfg(not(windows))]` arm: Zig's `@compileError` is lazy (fires only if
+    // No `#[cfg(not(windows))]` arm: `@compileError` is lazy (fires only if
     // called on POSIX), but Rust's `compile_error!` is eager. Omitting the fn on
     // POSIX yields the equivalent "no associated function" compile error at call sites.
 
@@ -681,7 +681,7 @@ impl FileSink {
             return sys::Result::Ok(());
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig passed `self` + a closure that
+        // PORT NOTE: reshaped for borrowck — the original passed `self` + a closure that
         // mutated `self.force_sync`. Split into a local capture and apply after.
         // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
         let mut force_sync_out = self.force_sync.get();
@@ -862,12 +862,14 @@ impl FileSink {
                             PathOrFileDescriptor::Fd(*fd)
                         }
                         crate::webcore::PathOrFileDescriptor::Path(p) => {
-                            // `ZigStringSlice` is non-`Clone` (owns/WTF-refs its
+                            // `UTF8Slice` is non-`Clone` (owns/WTF-refs its
                             // bytes); borrow the bytes for the duration of
                             // `setup(&opts)` — `stream_start` (and thus `p`)
                             // outlives `opts` within this match arm.
                             PathOrFileDescriptor::Path(
-                                bun_core::zig_string::Slice::from_utf8_never_free(p.slice()),
+                                bun_core::unsafe_string_view::Slice::from_utf8_never_free(
+                                    p.slice(),
+                                ),
                             )
                         }
                     },
@@ -1091,7 +1093,7 @@ impl FileSink {
         // `ref_count=1` and that +1 belongs to the wrapper it's about to be
         // stored in, so no extra `ref_()` there.
         //
-        // PORT NOTE: Zig's `FileSink.toJS` does *not* `self.ref()` — it relies
+        // PORT NOTE: `FileSink.toJS` does *not* `self.ref()` — it relies
         // on the caller's existing +1 transferring to the wrapper. The Rust
         // port makes the per-wrapper +1 explicit so the protocol is locally
         // verifiable (N wrappers ⇒ N `ref_()` ⇒ N `finalize` ⇒ N `deref()`),
@@ -1301,7 +1303,7 @@ impl FileSink {
             // process_send's ref was the only one, vs (c) `done` never set →
             // end_from_js Wrote arm took a different path. The 3-tracer audit
             // (w9qxc9jg1) verified the static ladder is balanced 4:4 with
-            // Zig; this captures the dynamic state.
+            // the original; this captures the dynamic state.
             let state = format!(
                 "STATE: must_be_kept_alive={} done={} started={} fd={:?} written={} \
                  pending.state={} owns_fd={} writer.is_done={} writer.has_pending={} \
@@ -1325,7 +1327,7 @@ impl FileSink {
         #[cfg(windows)]
         self_.magic.set(FILESINK_DEAD);
         // PORT NOTE: pending/readable_stream/js_sink_ref are dropped by Box drop
-        // below; explicit `.deinit()` calls from the Zig are subsumed.
+        // below; explicit `.deinit()` calls from the original are subsumed.
         if let Some(global) = self_.js_global() {
             // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
             let vm = global.bun_vm().as_mut();
@@ -1542,7 +1544,7 @@ impl FileSink {
         }
     }
 
-    // Helper for struct-init defaults (Zig field defaults).
+    // Helper for struct-init defaults (the original field defaults).
     // TODO(port): replace with `impl Default for FileSink` once all field types
     // implement `Default`; kept private to avoid exposing a half-initialized state.
     fn default_fields() -> FileSink {
@@ -1679,9 +1681,9 @@ impl FileSink {
         // JSValue bits back through this `void**`.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
-        // Zig parity (FileSink.zig:801-802): only the transient `_guard` above
+        // parity (FileSink): only the transient `_guard` above
         // — NO per-wrapper +1 for the controller. df4f2c44 added a `ref_()`
-        // here under the (false) premise that Zig refs per-wrapper; it does
+        // here under the (false) premise that the original refs per-wrapper; it does
         // not. The JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
         // before GC, so the controller's dtor never reaches `finalize` and
@@ -1751,7 +1753,7 @@ impl FileSink {
 // function-pointer variables). C++ declares them via
 // `BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream)` and compares the
 // resulting symbol address against the handler passed to `JSValue::then` in
-// `Zig::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
+// `Bun::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
 // exports the address of an 8-byte data slot, which never equals the shim's
 // code address → RELEASE_ASSERT_NOT_REACHED at runtime.
 //
@@ -1787,7 +1789,5 @@ bun_jsc::jsc_host_abi! {
         }
     }
 }
-
-// ported from: src/runtime/webcore/FileSink.zig
 
 // ─── DIAGNOSTIC: FileSink layout probe (Windows fs-promises Strong corruption) ───

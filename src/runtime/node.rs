@@ -1,11 +1,11 @@
 //! Node.js APIs in Bun. Access this namespace with `bun.api.node`
 
-// PORT NOTE: the Zig `comptime { _ = @import(...) }` force-reference block maps
-// to explicit `pub mod` declarations below. Rust only compiles a `.rs` file if
-// it is reachable via a `mod` declaration — `#[no_mangle]` alone does NOT make
-// an orphaned file link. Every Windows-only force-referenced sibling
-// (`uv_signal_handle_windows`, `win_watcher`) must have a `#[cfg(windows)]
-// pub mod` entry here or its C-ABI exports will be missing at link time.
+// NOTE: each submodule is wired up via an explicit `pub mod` declaration
+// below. Rust only compiles a `.rs` file if it is reachable via a `mod`
+// declaration — `#[no_mangle]` alone does NOT make an orphaned file link.
+// Every Windows-only sibling (`uv_signal_handle_windows`, `win_watcher`)
+// must have a `#[cfg(windows)] pub mod` entry here or its C-ABI exports
+// will be missing at link time.
 
 // ─── compiling submodules ─────────────────────────────────────────────────
 #[path = "node/nodejs_error_code.rs"]
@@ -85,10 +85,9 @@ pub mod util {
 }
 pub use util::validators;
 
-// `crate::node::dirent::Kind` shim for dir_iterator.rs / node_fs.rs — the
-// Zig spec exports `Dirent = types.Dirent` and callers reach `.Kind` through
-// it. Rust can't hang an associated module off a struct re-export, so expose
-// a tiny module mirroring that shape.
+// `crate::node::dirent::Kind` shim for dir_iterator.rs / node_fs.rs — callers
+// reach `.Kind` through `Dirent`. Rust can't hang an associated module off a
+// struct re-export, so expose a tiny module mirroring that shape.
 pub mod dirent {
     pub use super::types::Dirent;
     pub use super::types::DirentKind as Kind;
@@ -109,8 +108,7 @@ pub mod path_watcher;
 #[cfg(windows)]
 #[path = "node/win_watcher.rs"]
 pub mod win_watcher;
-// Zig: `comptime { if (Environment.isWindows) _ = @import("./node/uv_signal_handle_windows.zig"); }`
-// — force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
+// Force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
 // for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
 // `#[no_mangle]` exports are never compiled into the binary.
 #[path = "node/node_fs_binding.rs"]
@@ -201,27 +199,26 @@ pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
 /// - "path"
 /// - "errno"
 ///
-/// We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
-/// and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
+/// We can't really use language-level error handling for syscalls because Node.js expects the "real" errno to be returned
+/// for arbitrary user input (e.g. .BADF must be reportable, not treated as unreachable).
 ///
 /// Phase F: collapsed from a bespoke `enum Maybe { Err, Result }` into a plain
-/// `core::result::Result` alias. The Zig-parity helper methods (`todo`,
+/// `core::result::Result` alias. The legacy helper methods (`todo`,
 /// `success`, `errno_sys*`, `to_js`, …) move to the [`MaybeExt`] /
 /// [`MaybeSysExt`] / [`MaybeToJsExt`] extension traits below so call sites can
 /// keep using `Maybe::<T>::helper()` while gaining `?` propagation for free.
 pub type Maybe<R, E = bun_sys::Error> = core::result::Result<R, E>;
 
-// `union(enum)` → Rust enum is the tagged union; the explicit `Tag` enum is
-// kept only for source parity with the Zig.
+// The explicit `Tag` enum is kept only for source parity with older call sites.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum MaybeTag {
     Err,
     Result,
 }
 
-/// Generic helper surface that the Zig `Maybe(R, E)` carried as inherent
-/// methods. `unwrap_or`/`is_ok`/`is_err`/`map_err` are already provided by
-/// `core::result::Result`, so only the Zig-specific constructors remain here.
+/// Generic helper surface for `Maybe(R, E)`. `unwrap_or`/`is_ok`/`is_err`/
+/// `map_err` are already provided by `core::result::Result`, so only the
+/// bespoke constructors remain here.
 pub trait MaybeExt<R, E>: Sized {
     fn todo() -> Self
     where
@@ -245,13 +242,10 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
         E: MaybeErrorTodo,
     {
         if cfg!(debug_assertions) {
-            // PORT NOTE: Zig branched on `ReturnType == void` only to vary the
-            // panic message; collapsed to a single panic + type name.
             panic!("TODO: Maybe({})", core::any::type_name::<R>());
         }
-        // TODO(port): Zig used `@hasDecl(E, "todo")` to optionally call
-        // `E::todo()` else default-construct. Modeled via `MaybeErrorTodo`
-        // trait with a default impl returning `E::default()`.
+        // Optional `E::todo()` else default-construct, modeled via the
+        // `MaybeErrorTodo` trait with a default impl returning `E::default()`.
         Err(E::todo())
     }
 
@@ -280,8 +274,7 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
     where
         R: Default,
     {
-        // PORT NOTE: Zig used `std.mem.zeroes(ReturnType)`. Mapped to
-        // `Default` here since the generic `R` may contain non-POD fields.
+        // Use `Default` since the generic `R` may contain non-POD fields.
         Ok(R::default())
     }
 
@@ -294,8 +287,7 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
     }
 }
 
-/// `Maybe<bool, E>::is_true()` — Zig `if (comptime ReturnType != bool)
-/// @compileError(...)` enforced by impl bound.
+/// `Maybe<bool, E>::is_true()` — restricted to `bool` results via the impl bound.
 pub trait MaybeBoolExt {
     fn is_true(self) -> bool;
 }
@@ -312,8 +304,7 @@ pub trait MaybeErrorRetry: Sized {
     fn retry() -> Self;
 }
 
-/// `@hasDecl(E, "todo")` shim — default falls back to `Default::default()`
-/// matching Zig's `ErrorType{}`.
+/// Optional `todo` constructor — default falls back to `Default::default()`.
 pub trait MaybeErrorTodo: Sized + Default {
     fn todo() -> Self {
         Self::default()
@@ -321,9 +312,9 @@ pub trait MaybeErrorTodo: Sized + Default {
 }
 
 /// Extension surface providing `Maybe::todo()` on `bun_sys::Maybe<T>`
-/// (= `core::result::Result<T, bun_sys::Error>`). Zig's `Maybe(T).todo()`
-/// returns `.{ .err = bun.sys.Error.todo() }`; this is the Rust equivalent for
-/// the upstream type-alias form of `Maybe` used throughout `node/`.
+/// (= `core::result::Result<T, bun_sys::Error>`). `Maybe(T).todo()` returns
+/// `Err(bun_sys::Error::todo())` for the upstream type-alias form of `Maybe`
+/// used throughout `node/`.
 pub trait MaybeTodo: Sized {
     fn todo() -> Self;
 }
@@ -337,10 +328,10 @@ impl<T> MaybeTodo for core::result::Result<T, bun_sys::Error> {
 
 // ─── methods that assume `E` carries an errno (i.e. `bun_sys::Error`) ─────
 
-/// Extension surface for `Maybe<R, bun_sys::Error>` carrying the Zig
-/// `Maybe(T)` errno helpers (`aborted`, `init_err_with_p`, `to_array_buffer`,
-/// `errno*`). Kept as a trait now that `Maybe` is a `Result` alias and can no
-/// longer host inherent impls.
+/// Extension surface for `Maybe<R, bun_sys::Error>` carrying the `Maybe(T)`
+/// errno helpers (`aborted`, `init_err_with_p`, `to_array_buffer`, `errno*`).
+/// Kept as a trait now that `Maybe` is a `Result` alias and can no longer
+/// host inherent impls.
 pub trait MaybeSysExt<R>: Sized {
     fn aborted() -> Self;
     fn init_err_with_p(
@@ -383,7 +374,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
     #[inline]
     fn aborted() -> Self {
         Err(bun_sys::Error {
-            // PORT NOTE: Zig `posix.E.INTR` → `SystemErrno::EINTR` (variants keep `E` prefix).
+            // `SystemErrno` variants keep their `E` prefix.
             errno: bun_sys::posix::E::EINTR as bun_sys::ErrorInt,
             syscall: bun_sys::Tag::access,
             ..Default::default()
@@ -414,7 +405,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         use bun_jsc::SysErrorJsc as _;
         match self {
             Ok(r) => {
-                // PORT NOTE: Zig hands the result slice straight to
+                // The result slice is handed straight to
                 // `ArrayBuffer.fromBytes` and ownership transfers to JSC — the
                 // GC-installed deallocator (`MarkedArrayBuffer_deallocator`)
                 // calls `mi_free` on the buffer when the JS object is
@@ -486,8 +477,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
     ) -> Option<Self> {
-        // PORT NOTE: Zig `@compileError` on `u16` paths is enforced by the
-        // `AsRef<[u8]>` bound — UTF-16 slices won't satisfy it.
+        // UTF-16 paths are rejected at compile time by the `AsRef<[u8]>` bound.
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -541,7 +531,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         file_path: impl AsRef<[u8]>,
         dest: impl AsRef<[u8]>,
     ) -> Option<Self> {
-        // PORT NOTE: Zig `@compileError` on `u16` paths enforced by `AsRef<[u8]>`.
+        // UTF-16 paths are rejected at compile time by the `AsRef<[u8]>` bound.
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -570,9 +560,9 @@ pub trait MaybeCssExt<R>: Sized {
 impl<R> MaybeCssExt<R> for Maybe<R, bun_css::BasicParseError> {
     #[inline]
     fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>> {
-        // Zig comptime-switched on `ErrorTypeT`; in Rust we express each arm
-        // as a separate trait impl. The `ParseError(ParserError)` and
-        // catch-all arms were `@compileError`s and need no Rust body.
+        // Each error-type arm is expressed as a separate trait impl. The
+        // `ParseError(ParserError)` and catch-all arms are unreachable here
+        // and need no body.
         self.map_err(|e| e.into_default_parse_error())
     }
 }
@@ -597,9 +587,8 @@ where
     }
 }
 
-/// Replaces the Zig `switch (ReturnType) { ... @typeInfo ... }` reflection in
-/// `Maybe.toJS`. Each concrete `R`/`E` opts in by implementing this trait;
-/// the Zig comptime `@typeInfo` arms map to per-type impls below.
+/// Per-type dispatch for `Maybe.toJS`. Each concrete `R`/`E` opts in by
+/// implementing this trait; the per-type impls live below.
 pub trait MaybeToJs {
     fn maybe_to_js(
         self,
@@ -672,14 +661,14 @@ macro_rules! impl_maybe_to_js_number {
 }
 impl_maybe_to_js_number!(i32, u32, f64, u64, usize);
 
-// `.pointer` (zig string) arm — `ZigString.init(..).withEncoding().toJS(..)`.
+// String-slice arm — `UnsafeStringView.init(..).withEncoding().toJS(..)`.
 impl MaybeToJs for &[u8] {
     fn maybe_to_js(
         self,
         global_object: &bun_jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-        use bun_jsc::ZigStringJsc as _;
-        Ok(bun_core::ZigString::init(self)
+        use bun_jsc::UnsafeStringViewJsc as _;
+        Ok(bun_core::UnsafeStringView::init(self)
             .with_encoding()
             .to_js(global_object))
     }
@@ -696,23 +685,22 @@ impl MaybeToJs for bun_sys::Error {
     }
 }
 
-// PORT NOTE: the Zig `.@"struct" / .@"enum" / .@"opaque" / .@"union"` and
-// non-string `.pointer` arms forwarded to `r.toJS(globalObject)`. In Rust each
-// such `R` implements `MaybeToJs` directly at its definition site (no blanket
-// `@typeInfo` reflection available); add per-type impls alongside the type.
+// Other result types forward to `r.toJS(globalObject)`. Each such `R`
+// implements `MaybeToJs` directly at its definition site; add per-type impls
+// alongside the type.
 
-// PORT NOTE: the Zig `Maybe.format` (Display) impl is dropped — `Maybe` is now
-// `core::result::Result`, which already has `Debug`, and a foreign `Display`
-// impl on a foreign type is not expressible. No call sites depended on it.
+// NOTE: a custom `Maybe.format` (Display) impl is intentionally absent —
+// `Maybe` is `core::result::Result`, which already has `Debug`, and a foreign
+// `Display` impl on a foreign type is not expressible. No call sites depend on it.
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 
-/// Abstracts over the `rc: anytype` parameter of the `errnoSys*` family.
-/// On Windows the Zig checked `@TypeOf(rc) == std.os.windows.NTSTATUS` to
-/// skip the `rc != 0 → null` early-out; that comptime type-compare is
-/// expressed here as the `IS_NTSTATUS` associated const.
+/// Abstracts over the return-code parameter of the `errnoSys*` family.
+/// On Windows, NTSTATUS values must skip the `rc != 0 → null` early-out;
+/// that type-level distinction is expressed here as the `IS_NTSTATUS`
+/// associated const.
 ///
-/// `syscall_errno` is the per-type Zig `sys.getErrno(rc)` dispatch: integer
+/// `syscall_errno` is the per-type `getErrno(rc)` dispatch: integer
 /// rc → libc/Win32 errno, NTSTATUS rc → `translateNTStatusToErrno(rc)`. This
 /// MUST live on the trait — the free `bun_sys::get_errno` on Windows is
 /// unbounded and *ignores `rc`* (reads `GetLastError()`), so routing an
@@ -723,8 +711,8 @@ pub trait SyscallRc: Copy {
     fn syscall_errno(self) -> bun_sys::posix::E;
 }
 
-// Integer rc types: Windows path applies the `rc != 0 → None` short-circuit
-// (Zig spec: `if (rc != 0) return null;` in the non-NTSTATUS arm).
+// Integer rc types: the Windows path applies the `rc != 0 → None` short-circuit
+// for the non-NTSTATUS arm.
 macro_rules! impl_syscall_rc_int {
     ($($t:ty),* $(,)?) => {$(
         impl SyscallRc for $t {
@@ -745,8 +733,7 @@ impl_syscall_rc_int!(i32, i64, isize, u32, usize);
 #[cfg(windows)]
 impl_syscall_rc_int!(u64);
 
-// Zig: `if (comptime @TypeOf(rc) == std.os.windows.NTSTATUS) {} else { ... }`
-// — NTSTATUS must OPT OUT of the `rc != 0 → None` short-circuit so real NT
+// NTSTATUS must OPT OUT of the `rc != 0 → None` short-circuit so real NT
 // error codes reach `get_errno`. The trait default is `false`, so this impl
 // MUST override `IS_NTSTATUS = true` explicitly.
 #[cfg(windows)]
@@ -758,9 +745,8 @@ impl SyscallRc for bun_sys::windows::NTSTATUS {
     }
     #[inline]
     fn syscall_errno(self) -> bun_sys::posix::E {
-        // Zig windows_errno.zig:286: NTSTATUS arm of `getErrno` →
-        // `bun.windows.translateNTStatusToErrno(rc)`. Do NOT fall through to
-        // `GetLastError()`.
+        // NTSTATUS arm of `getErrno` → `translate_ntstatus_to_errno(rc)`.
+        // Do NOT fall through to `GetLastError()`.
         bun_sys::windows::translate_ntstatus_to_errno(self)
     }
 }
@@ -780,7 +766,6 @@ impl IntoErrInt for bun_sys::posix::E {
 #[cfg(windows)]
 impl IntoErrInt for bun_sys::windows::NTSTATUS {
     fn into_err_int(self) -> bun_sys::ErrorInt {
-        // Zig: `@intFromEnum(bun.windows.translateNTStatusToErrno(err))`
         bun_sys::windows::translate_ntstatus_to_errno(self) as bun_sys::ErrorInt
     }
 }
@@ -788,5 +773,3 @@ impl IntoErrInt for bun_sys::windows::NTSTATUS {
 fn translate_to_err_int<Er: IntoErrInt>(err: Er) -> u16 {
     err.into_err_int()
 }
-
-// ported from: src/runtime/node.zig

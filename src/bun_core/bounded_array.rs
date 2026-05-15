@@ -1,5 +1,3 @@
-//! Removed from the Zig standard library in https://github.com/ziglang/zig/pull/24699/
-//!
 //! Modifications:
 //! - `len` is a field of integer-size instead of usize. This reduces memory usage.
 //!
@@ -33,9 +31,8 @@ crate::named_error_set!(OverflowError);
 /// runtime, but whose maximum size is known at comptime, without requiring
 /// an `Allocator`.
 pub type BoundedArray<T, const BUFFER_CAPACITY: usize> = BoundedArrayAligned<T, BUFFER_CAPACITY>;
-// PORT NOTE: Zig's `BoundedArray` delegates to `BoundedArrayAligned` with `@alignOf(T)`.
-// In Rust the natural alignment of `[T; N]` is already `align_of::<T>()`, so the alias is
-// transparent. The explicit `alignment` const-param is dropped (see below).
+// PORT NOTE: the natural alignment of `[T; N]` is already `align_of::<T>()`, so
+// the alias is transparent. The explicit `alignment` const-param is dropped (see below).
 
 /// A structure with an array, length and alignment, that can be used as a
 /// slice.
@@ -43,23 +40,22 @@ pub type BoundedArray<T, const BUFFER_CAPACITY: usize> = BoundedArrayAligned<T, 
 /// Useful to pass around small explicitly-aligned arrays whose exact size is
 /// only known at runtime, but whose maximum size is known at comptime, without
 /// requiring an `Allocator`.
-// TODO(port): Zig takes `comptime alignment: Alignment` and applies it via
-// `align(alignment.toByteUnits())` on the buffer field. Stable Rust cannot express
-// `#[repr(align(N))]` with a const-generic `N`. All in-tree callers use the default
-// `@alignOf(T)` via `BoundedArray`, so the param is dropped for Phase A. Revisit if a
-// caller needs over-alignment (would require a wrapper type per alignment).
+// TODO(port): an explicit alignment parameter on the buffer field is not
+// expressible in stable Rust (`#[repr(align(N))]` with a const-generic `N`).
+// All in-tree callers use the default `align_of::<T>()` via `BoundedArray`, so
+// the param is dropped for Phase A. Revisit if a caller needs over-alignment
+// (would require a wrapper type per alignment).
 pub struct BoundedArrayAligned<T, const BUFFER_CAPACITY: usize> {
     buffer: [MaybeUninit<T>; BUFFER_CAPACITY],
-    // TODO(port): Zig uses `Length = std.math.ByteAlignedInt(std.math.IntFittingRange(0, buffer_capacity))`
-    // (smallest byte-aligned uint that fits `0..=BUFFER_CAPACITY`) to shrink this field.
-    // Stable Rust const generics cannot pick an integer type from a const value without
+    // TODO(port): ideally `Length` would be the smallest byte-aligned uint that
+    // fits `0..=BUFFER_CAPACITY` to shrink this field. Stable Rust const
+    // generics cannot pick an integer type from a const value without
     // `generic_const_exprs`. Using `usize` for now.
     // PERF(port): was size-optimized integer field — profile in Phase B
     len: usize,
 }
 
-// `const Length = std.math.ByteAlignedInt(std.math.IntFittingRange(0, buffer_capacity));`
-// — see TODO above; collapsed to `usize`.
+// See TODO above; collapsed to `usize`.
 type Length = usize;
 
 impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_CAPACITY> {
@@ -71,8 +67,8 @@ impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_
     }
 }
 
-/// `pub const Buffer = @FieldType(Self, "buffer");` — inherent assoc types are
-/// unstable; only used for introspection in Zig, so expose as a free alias.
+/// Inherent assoc types are unstable; only used for introspection,
+/// so expose as a free alias.
 pub type BoundedBuffer<T, const N: usize> = [MaybeUninit<T>; N];
 
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
@@ -88,8 +84,8 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     }
 
     /// View the internal array as a slice whose size was previously set.
-    // PORT NOTE: Zig's `slice(self: anytype)` is mut/const-polymorphic via `@TypeOf`.
-    // Rust splits this into `slice(&mut self)` and `const_slice(&self)`.
+    // PORT NOTE: a single mut/const-polymorphic `slice` is split into
+    // `slice(&mut self)` and `const_slice(&self)` in Rust.
     pub fn slice(&mut self) -> &mut [T] {
         let len = self.len;
         // SAFETY: elements `[0..len]` are initialized by the public API's invariants.
@@ -127,7 +123,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         list.slice().copy_from_slice(m);
         Ok(list)
     }
-    // TODO(port): Zig `@memcpy` works for non-Copy `T` (bitwise). If a non-`Copy` caller
+    // TODO(port): if a non-`Copy` caller
     // appears, add a `from_slice_clone` or use `ptr::copy_nonoverlapping`.
 
     /// Return the element at index `i` of the slice.
@@ -168,8 +164,8 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         debug_assert!(self.len < BUFFER_CAPACITY);
         self.len += 1;
         let i = self.len - 1;
-        // SAFETY: index `i` is within `[0..len)`; caller treats the slot as uninitialized
-        // and must write before reading (matches Zig `addOneAssumeCapacity` contract).
+        // SAFETY: index `i` is within `[0..len)`; caller treats the slot as
+        // uninitialized and must write before reading.
         unsafe { &mut *self.buffer[i].as_mut_ptr() }
     }
 
@@ -178,8 +174,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     pub fn add_many_as_array<const N: usize>(&mut self) -> Result<&mut [T; N], OverflowError> {
         let prev_len = self.len;
         self.resize((self.len as usize) + N)?;
-        // SAFETY: `[prev_len .. prev_len+N]` is within capacity after resize; caller must
-        // initialize before reading (Zig returns `*[n]T` over undefined storage).
+        // SAFETY: `[prev_len .. prev_len+N]` is within capacity after resize;
+        // caller must initialize before reading (the returned array refers to
+        // uninitialized storage).
         let ptr = self.buffer[prev_len..][..N].as_mut_ptr().cast::<[T; N]>();
         Ok(unsafe { &mut *ptr })
     }
@@ -213,8 +210,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     pub fn unused_capacity_slice(&mut self) -> &mut [MaybeUninit<T>] {
         &mut self.buffer[self.len..]
     }
-    // PORT NOTE: returns `&mut [MaybeUninit<T>]` instead of `&mut [T]` because the region is
-    // uninitialized by definition; Zig's `[]T` over undefined memory has no safe Rust equivalent.
+    // PORT NOTE: returns `&mut [MaybeUninit<T>]` instead of `&mut [T]` because
+    // the region is uninitialized by definition; a `&mut [T]` over undefined
+    // memory has no safe Rust equivalent.
 
     /// Insert `item` at index `i` by moving `slice[n .. slice.len]` to make room.
     /// This operation is O(N).
@@ -223,7 +221,8 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
             return Err(OverflowError::Overflow);
         }
         let _ = self.add_one()?;
-        // PORT NOTE: reshaped for borrowck — Zig aliases `s[i+1..]` and `s[i..len-1]` from one slice.
+        // PORT NOTE: reshaped for borrowck — the original aliases `s[i+1..]`
+        // and `s[i..len-1]` from one slice.
         let s_len = self.len;
         // mem.copyBackwards(T, s[i + 1 .. s.len], s[i .. s.len - 1]);
         // SAFETY: ranges are within `[0..len)`; src and dst overlap, hence `ptr::copy` (memmove).
@@ -271,7 +270,8 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         T: Copy,
     {
         let after_range = start + len;
-        // PORT NOTE: reshaped for borrowck — Zig holds `range` borrow across `insertSlice`.
+        // PORT NOTE: reshaped for borrowck — the original holds a `range`
+        // borrow across `insert_slice`.
         let range_len = after_range - start;
 
         if range_len == new_items.len() {
@@ -284,8 +284,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         } else {
             self.slice()[start..after_range][..new_items.len()].copy_from_slice(new_items);
             let after_subrange = start + new_items.len();
-            // PORT NOTE: reshaped for borrowck — Zig reads `constSlice()[after_range..]` while
-            // writing `slice()[after_subrange..]` in the same loop body.
+            // PORT NOTE: reshaped for borrowck — the original reads
+            // `const_slice()[after_range..]` while writing
+            // `slice()[after_subrange..]` in the same loop body.
             let tail_len = self.len - after_range;
             for i in 0..tail_len {
                 let item = self.const_slice()[after_range + i];
@@ -294,16 +295,17 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
             self.len =
                 Length::try_from((self.len as usize) - (len as usize) - (new_items.len() as usize))
                     .unwrap();
-            // PORT NOTE: ported verbatim from Zig (`self.len - len - new_items.len`).
+            // PORT NOTE: kept the original arithmetic (`self.len - len - new_items.len`).
         }
         Ok(())
     }
 
     /// Extend the slice by 1 element.
     pub fn append(&mut self, item: T) -> Result<(), OverflowError> {
-        // PORT NOTE: Zig's `new_item_ptr.* = item` is a raw bitwise store. The naive Rust
-        // transliteration `*new_item_ptr = item` would drop the (uninitialized) prior occupant
-        // of the slot first — UB that manifests as a bad free when `T` owns heap memory.
+        // PORT NOTE: the slot is uninitialized — a naive `*new_item_ptr = item`
+        // would drop the (uninitialized) prior occupant of the slot first — UB
+        // that manifests as a bad free when `T` owns heap memory. Use
+        // `MaybeUninit::write` instead.
         self.ensure_unused_capacity(1)?;
         self.append_assume_capacity(item);
         Ok(())
@@ -315,8 +317,8 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         debug_assert!(self.len < BUFFER_CAPACITY);
         let i = self.len;
         self.len += 1;
-        // Write into the `MaybeUninit` slot directly so no drop runs on the previous
-        // (uninitialized) contents — matches Zig's raw `ptr.* = item` semantics.
+        // Write into the `MaybeUninit` slot directly so no drop runs on the
+        // previous (uninitialized) contents.
         self.buffer[i].write(item);
     }
 
@@ -333,7 +335,8 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
             return self.pop().unwrap();
         }
         let old_item = self.get(i);
-        // PORT NOTE: reshaped for borrowck — Zig writes through `*b` while calling `self.get()`.
+        // PORT NOTE: reshaped for borrowck — the original writes through a raw
+        // element pointer while calling `self.get()`.
         for j in 0..(newlen - i) {
             let v = self.get(i + 1 + j);
             self.slice()[i + j] = v;
@@ -408,7 +411,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
 }
 
 // Rust-idiom aliases (Vec-like surface) so callers don't need to know the
-// Zig-style names. Thin delegations; no behavior change.
+// legacy method names. Thin delegations; no behavior change.
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     #[inline]
     pub fn len(&self) -> usize {
@@ -451,8 +454,7 @@ impl<T, const N: usize> core::ops::DerefMut for BoundedArrayAligned<T, N> {
     }
 }
 
-// `pub const Writer = ... std.io.GenericWriter(*Self, error{Overflow}, appendWrite);`
-// Only defined for `T == u8` (Zig `@compileError`s otherwise).
+// Writer is only defined for `T == u8`.
 impl<const BUFFER_CAPACITY: usize> crate::io::Write for BoundedArrayAligned<u8, BUFFER_CAPACITY> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
@@ -478,12 +480,11 @@ impl<const BUFFER_CAPACITY: usize> BoundedArrayAligned<u8, BUFFER_CAPACITY> {
         self
     }
 
-    /// Same as `appendSlice` except it returns the number of bytes written, which is always the same
-    /// as `m.len`. The purpose of this function existing is to match `std.io.GenericWriter` API.
+    /// Same as `append_slice` except it returns the number of bytes written,
+    /// which is always the same as `m.len()`. Exists to match a generic-writer
+    /// API shape.
     fn append_write(&mut self, m: &[u8]) -> Result<usize, OverflowError> {
         self.append_slice(m)?;
         Ok(m.len())
     }
 }
-
-// ported from: src/collections/bounded_array.zig

@@ -40,7 +40,7 @@ impl<'a> Row<'a> {
         structure: JSValue,
         flags: SQLDataCellFlags,
         result_mode: SQLQueryResultMode,
-        // PORT NOTE: Zig `?CachedStructure` is by-value; passed by ref here because CachedStructure is non-Copy (owns Strong + Box).
+        // PORT NOTE: passed by ref because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
     ) -> crate::jsc::JsResult<JSValue> {
         let mut names: *mut ExternColumnIdentifier = ptr::null_mut();
@@ -134,7 +134,7 @@ impl<'a> Row<'a> {
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    // TODO(port): Zig used u24; Rust has no u24 — u32 parse then mask not needed (text protocol bounds)
+                    // INT24 is a 24-bit type; Rust has no u24 — u32 parse is fine, masking not needed (text protocol bounds).
                     let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {
                         tag: Tag::Uint4,
@@ -421,7 +421,7 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+    // See Decode trait in src/sql/mysql/protocol/NewReader.rs.
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
@@ -444,14 +444,11 @@ impl<'a> Drop for Row<'a> {
 
 #[inline]
 fn clone_wtf_string_or_null(slice: &[u8]) -> bun_core::WTFStringImpl {
-    // Zig: `bun.String.cloneUTF8(slice).value.WTFStringImpl` — extracts the raw
-    // WTFStringImpl* from a freshly-cloned bun.String (ownership transferred to the cell,
-    // freed via `free_value = 1`).
+    // Extracts the raw WTFStringImpl* from a freshly-cloned BunString
+    // (ownership transferred to the cell, freed via `free_value = 1`).
     if !slice.is_empty() {
         BunString::clone_utf8(slice).leak_wtf_impl()
     } else {
         ptr::null_mut()
     }
 }
-
-// ported from: src/sql_jsc/mysql/protocol/ResultSet.zig

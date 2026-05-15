@@ -1,4 +1,4 @@
-//! Port of `src/string/immutable/unicode.zig`.
+//! Unicode-aware string scanning, transcoding, and codepoint iteration.
 
 use crate::string::immutable::{
     self as strings, ASCII_VECTOR_SIZE, U3Fast, UNICODE_REPLACEMENT as unicode_replacement,
@@ -66,7 +66,7 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
     copy_u16_into_u8(unsafe { crate::vec::writable_slice(dst, src.len()) }, src);
 }
 
-// ───── canonical WTF-8 single-rune decode (Zig: unicode.zig decodeWTF8RuneT) ─────
+// ───── canonical WTF-8 single-rune decode ─────
 // Lives in `bun_core::string::immutable::unicode_draft` (this file), re-exported
 // through the inline `pub mod unicode` in immutable.rs and onward as
 // `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, codepoint_size}`.
@@ -75,9 +75,8 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
 // instead of carrying a second body, and so md/glob/parsers can call directly.
 
 /// Integer types usable as the codepoint result of [`decode_wtf8_rune_t`].
-/// Sealed to the two instantiations Zig uses (`i32` aka `CodePoint`, and `u32`);
-/// every caller in-tree is one of these. `ZERO_VALUE` is the per-type sentinel
-/// Zig threaded as a `comptime_int` (`-1` for i32, `0` for u32).
+/// Sealed to the two instantiations used in-tree (`i32` aka `CodePoint`, and
+/// `u32`). `ZERO_VALUE` is the per-type sentinel (`-1` for i32, `0` for u32).
 ///
 /// PORT NOTE: bounds widened from `From<u8>` to include the bit-ops needed by
 /// `decode_wtf8_rune_t_multibyte` plus a `from_u32` constructor (folds in the
@@ -119,7 +118,7 @@ impl CodePointZero for u32 {
     }
 }
 
-/// Zig: `fn NewCodePointIterator(comptime CodePointType_, comptime zeroValue) type`.
+/// Codepoint iterator generic over the codepoint integer type and its sentinel.
 pub(super) struct NewCodePointIterator<'a, C: CodePointZero> {
     pub bytes: &'a [u8],
     pub i: usize,
@@ -197,8 +196,8 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
             }
 
             // 3. Check if the character just decoded matches the scalar condition.
-            // PORT NOTE: Zig reads `it.c` here, but `next()` writes to `cursor.c` not `it.c`;
-            // preserved as-is (reads the iterator's `c` which is unchanged by `next`).
+            // PORT NOTE: this reads `it.c`, but `next()` writes to `cursor.c`
+            // not `it.c`; preserved as-is to match upstream behavior.
             if scalar(it.c) {
                 return SkipResult::Found; // Found it!
             }
@@ -350,11 +349,10 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
         let it = self;
         let slice = it.next_codepoint_slice();
 
-        // PORT NOTE: Zig calls std.unicode.utf8Decode{2,3,4}() `catch unreachable`
-        // here, which is UB in ReleaseFast on malformed continuation bytes /
-        // overlong / surrogate sequences. Route through the WTF-8 decoder
-        // instead so non-UTF-8 input (e.g. Latin-1, lone surrogates) yields a
-        // sentinel codepoint rather than aborting the process.
+        // PORT NOTE: route through the WTF-8 decoder so non-UTF-8 input
+        // (e.g. Latin-1, lone surrogates) yields a sentinel codepoint rather
+        // than aborting the process on malformed continuation bytes / overlong
+        // / surrogate sequences.
         it.c = match slice.len() {
             0 => C::ZERO_VALUE,
             1 => C::from(slice[0]),
@@ -377,7 +375,7 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
 
         let mut end_ix = original_i;
         for _ in 0..n {
-            // PORT NOTE: Zig used `orelse` on a non-optional slice; treat empty as EOF.
+            // PORT NOTE: treat the empty slice as EOF.
             let next_codepoint = it.next_codepoint_slice();
             if next_codepoint.is_empty() {
                 it.i = original_i;
@@ -439,8 +437,8 @@ pub(super) fn convert_utf16_to_utf8_without_invalid_surrogate_pairs(
     mut list: Vec<u8>,
     utf16: &[u16],
 ) -> Result<Vec<u8>, SurrogatePairError> {
-    // Zig writes into `list.allocatedSlice()` (offset 0..capacity) then sets
-    // `list.items.len = result.count` — i.e. discards any prior contents.
+    // Writes into `list`'s spare capacity then sets the new length —
+    // i.e. discards any prior contents.
     let result = simdutf_utf16le_into_allocated(&mut list, utf16);
     if result.status == simdutf::Status::SURROGATE {
         return Err(SurrogatePairError::SurrogatePair);
@@ -449,8 +447,8 @@ pub(super) fn convert_utf16_to_utf8_without_invalid_surrogate_pairs(
 }
 
 /// Returns `Some(u16)` (the trailing lead surrogate) when `SKIP_TRAILING_REPLACEMENT` and a
-/// dangling lead surrogate is at the end; otherwise `None`. When `SKIP_TRAILING_REPLACEMENT` is
-/// false the Zig version returned the list by value — in Rust the caller already owns `list`.
+/// dangling lead surrogate is at the end; otherwise `None`. The caller already
+/// owns `list`, so this writes in place rather than returning a new buffer.
 pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     list: &mut Vec<u8>,
     utf16: &[u16],
@@ -524,17 +522,15 @@ pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> 
 }
 
 // ─── CANONICAL: UTF-16 codepoint decode ─────────────────────────────────────
-// Faithful port of unicode.zig:569 / :1321 / :1325 / :1361. Re-exported from
-// immutable.rs as `strings::{utf16_codepoint, utf16_codepoint_with_fffd,
-// UTF16Replacement}`; the parallel Utf16CodepointLen + duplicate struct/fns
-// that lived in immutable.rs are deleted in favour of this single source of
-// truth. All callers (escapeHTML.rs ×5 — reads only `.len`; visible.rs ×1;
-// unicode.rs ×4; shell_parser/parse.rs ×1; TextEncoderStreamEncoder.rs ×1)
-// resolve through the `pub use unicode_draft::{…}` re-export with no source
-// change.
+// Re-exported from immutable.rs as `strings::{utf16_codepoint,
+// utf16_codepoint_with_fffd, UTF16Replacement}`; the parallel
+// Utf16CodepointLen + duplicate struct/fns that lived in immutable.rs are
+// deleted in favour of this single source of truth. All callers
+// (escapeHTML.rs ×5 — reads only `.len`; visible.rs ×1; unicode.rs ×4;
+// shell_parser/parse.rs ×1; TextEncoderStreamEncoder.rs ×1) resolve through
+// the `pub use unicode_draft::{…}` re-export with no source change.
 
-/// `strings.UTF16Replacement` (unicode.zig:569) — decoded UTF-16 codepoint
-/// with surrogate metadata.
+/// `strings.UTF16Replacement` — decoded UTF-16 codepoint with surrogate metadata.
 #[derive(Clone, Copy)]
 pub struct UTF16Replacement {
     pub code_point: u32,
@@ -833,7 +829,7 @@ pub(super) fn append_utf8_machine_word_to_utf16_machine_word(
     output: &mut [u16; core::mem::size_of::<usize>() / 2],
     input: &[u8; core::mem::size_of::<usize>() / 2],
 ) {
-    // PERF(port): Zig used @Vector(4, u8) -> @Vector(4, u16) widening; scalar widen here.
+    // PERF(port): consider SIMD u8→u16 widening; scalar widen here.
     for (o, &i) in output.iter_mut().zip(input.iter()) {
         *o = u16::from(i);
     }
@@ -844,8 +840,6 @@ pub fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
     let output = output_;
     let input = input_;
     debug_assert!(input.len() <= output.len());
-
-    // https://zig.godbolt.org/z/9rTn1orcY
 
     let n = input.len().min(output.len());
     for i in 0..n {
@@ -881,7 +875,6 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
 
     if to.len() >= 16 && crate::Environment::ENABLE_SIMD {
         const VECTOR_SIZE: usize = 16;
-        // https://zig.godbolt.org/z/qezsY8T3W
         let remain_in_u64_len = remain.len() - (remain.len() % VECTOR_SIZE);
         let to_in_u64_len = to.len() - (to.len() % VECTOR_SIZE);
         // PORT NOTE: reshaped for borrowck — operate on byte indices instead of bytesAsSlice(u64).
@@ -989,9 +982,9 @@ impl BOM {
             }
             BOM::Utf16Le => {
                 // `trimmed_bytes` is `&[u8]` at offset 2 of a `Vec<u8>`; alignment is
-                // not guaranteed ≥ 2, so casting to `&[u16]` (the Zig `@alignCast`
-                // port) is UB. Route through the byte-level helper which copies into
-                // an aligned `Vec<u16>` first.
+                // not guaranteed ≥ 2, so transmuting to `&[u16]` is UB. Route
+                // through the byte-level helper which copies into an aligned
+                // `Vec<u16>` first.
                 let trimmed_bytes = &bytes[Self::UTF16_LE_BYTES.len()..];
                 let out = crate::strings::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
@@ -1005,7 +998,7 @@ impl BOM {
         }
     }
 
-    /// This is required for fs.zig's `use_shared_buffer` flag. we cannot free that pointer.
+    /// Required for the fs `use_shared_buffer` path: we cannot free that pointer.
     /// The returned slice will always point to the base of the input.
     ///
     /// Requires an arraylist in case it must be grown.
@@ -1015,7 +1008,7 @@ impl BOM {
                 let n = Self::UTF8_BYTES.len();
                 let len = list.len();
                 list.copy_within(n.., 0);
-                // PORT NOTE: Zig returned a subslice without truncating; we mirror by returning a slice.
+                // PORT NOTE: returns a subslice without truncating the backing list.
                 &list[..len - n]
             }
             BOM::Utf16Le => {
@@ -1026,7 +1019,7 @@ impl BOM {
                 );
                 list.clear();
                 list.extend_from_slice(&out);
-                // TODO(port): Zig returned `out` (the new alloc); returning list slice instead to honor
+                // TODO(port): returns the list slice (not `out`) to honor the
                 // "always points to the base of the input" doc comment.
                 &list[..]
             }
@@ -1078,9 +1071,10 @@ crate::oom_from_alloc!(ToUTF16Error);
 pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
     bytes: &[u8],
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
-    // PORT NOTE: Zig's return type was `[:0]u16` vs `[]u16` based on SENTINEL. In Rust both are
-    // `Vec<u16>`; when SENTINEL the trailing 0 is included and the logical length is `len()-1`.
-    // TODO(port): consider returning `Box<WStr>` for the SENTINEL case in Phase B.
+    // PORT NOTE: both the sentinel-terminated and plain return shapes are
+    // `Vec<u16>`; when SENTINEL the trailing 0 is included and the logical
+    // length is `len()-1`.
+    // TODO(port): consider returning `Box<WStr>` for the SENTINEL case.
     let Some(i) = first_non_ascii(bytes) else {
         return Ok(None);
     };
@@ -1193,8 +1187,6 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
 }
 
 // TODO(port): move to *_jsc — `TestingAPIs` re-exported from bun_string_jsc.
-// pub const TestingAPIs = @import("../../jsc/bun_string_jsc.zig").UnicodeTestingAPIs;
-
 // this one does the thing it's named after
 pub(super) fn to_utf16_alloc_for_real<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
     bytes: &[u8],
@@ -1396,8 +1388,8 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
                 ..Default::default()
             };
         }
-        // PORT NOTE (unicode.zig:1378): Zig falls through with len=2 even when input[1]
-        // is not a trail surrogate; preserve that iteration behaviour.
+        // PORT NOTE: falls through with len=2 even when input[1] is not a
+        // trail surrogate; preserves the upstream iteration behaviour.
         UTF16Replacement {
             len: 2,
             code_point: u16_get_supplementary(c0, input[1]),
@@ -1421,7 +1413,7 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
 // TODO: remove this
 pub(super) use to_utf16_literal as w;
 
-/// Zig: `pub fn toUTF16Literal(comptime str) [:0]const u16` → use `$crate::w!("...")` macro.
+/// Const UTF-16 literal — alias for `$crate::w!("...")`.
 #[macro_export]
 macro_rules! to_utf16_literal {
     ($s:literal) => {
@@ -1430,9 +1422,10 @@ macro_rules! to_utf16_literal {
 }
 pub(super) use to_utf16_literal;
 
-/// Zig: `pub fn literal(comptime T, comptime str) *const [N:0]T`.
-/// In Rust: `b"..."` for u8, `$crate::w!("...")` for u16. No runtime fn possible.
-// TODO(port): callers should use byte/wide literals directly; this is a stub for diff parity.
+/// Const string literal of the given element type — `b"..."` for u8,
+/// `$crate::w!("...")` for u16.
+// TODO(port): callers should use byte/wide literals directly; this is a
+// thin compatibility shim.
 #[macro_export]
 macro_rules! literal {
     (u8, $s:literal) => {
@@ -1755,8 +1748,7 @@ pub(super) fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_S
         }
 
         utf16_remaining = &utf16_remaining[replacement.len as usize..];
-        // Zig does `remaining.ptr[0..4]` (a raw *[4]u8 with no bounds claim) and
-        // encodeWTF8RuneT only writes `width` bytes. In Rust, materializing
+        // `encode_wtf8_rune` only writes `width` bytes. Materializing
         // `&mut [u8; 4]` would assert 4 valid bytes even when remaining.len() < 4,
         // so encode into a stack buffer and copy the `width` bytes that were written.
         let mut four = [0u8; 4];
@@ -1815,10 +1807,11 @@ pub fn element_length_utf8_into_utf16(utf8: &[u8]) -> usize {
 
         utf8_remaining = &utf8_remaining[i..];
 
-        // PORT NOTE: Zig calls `utf16Codepoint` (which takes []const u16) on a []const u8 here —
-        // preserved as a TODO; this branch is dead when use_simdutf is true.
-        // TODO(port): dead non-simdutf path passes wrong slice type in Zig source
-        // SAFETY: dead path (use_simdutf always true); preserved verbatim from Zig which passes wrong slice type
+        // PORT NOTE: this passes a u8 slice to `utf16_codepoint` (which expects
+        // u16), preserving the original — this branch is dead when use_simdutf
+        // is true.
+        // TODO(port): dead non-simdutf path passes wrong slice type
+        // SAFETY: dead path (use_simdutf always true); preserved verbatim from upstream which passes the wrong slice type
         let replacement = utf16_codepoint(unsafe {
             core::slice::from_raw_parts(
                 utf8_remaining.as_ptr().cast::<u16>(),
@@ -1840,7 +1833,7 @@ pub(super) const fn encode_utf8_comptime<const CP: u32>() -> &'static [u8] {
     const HEADER_3BYTE: u8 = 0b11100000;
     const HEADER_4BYTE: u8 = 0b11100000;
 
-    // TODO(port): Zig returned distinct-length slices from comptime; in Rust we leak via const arrays.
+    // TODO(port): returns const arrays of varying length, promoted to 'static.
     match CP {
         0x0..=0x7F => &[CP as u8],
         0x80..=0x7FF => &[
@@ -1944,5 +1937,3 @@ pub fn decode_wtf8_rune_t_multibyte<T: CodePointZero>(p: &[u8; 4], len: U3Fast, 
 }
 
 // `from_u32_const` folded into `CodePointZero` trait above.
-
-// ported from: src/string/immutable/unicode.zig

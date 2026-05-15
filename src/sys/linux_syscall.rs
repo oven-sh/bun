@@ -1,6 +1,6 @@
 //! Raw Linux syscalls via `rustix` (linux_raw backend — no libc trampoline).
 //!
-//! Mirrors Zig's `std.os.linux.*`: every function here issues the kernel
+//! Every function here issues the kernel
 //! syscall directly (inline asm via rustix's `linux_raw` backend) instead of
 //! going through glibc's `open(3)`/`read(3)`/etc wrappers. This eliminates the
 //! PLT hop, the `errno` TLS write, and the pthread cancellation-point check
@@ -11,13 +11,11 @@
 //! `bun_sys::Error::from_code_int(e, tag)` — same shape as the existing
 //! `Maybe<T>` plumbing, just without the `last_errno()` round-trip.
 //!
-//! EINTR retry is handled here (matching the sys.zig Linux arms) so callers
-//! don't need to loop.
+//! EINTR retry is handled here so callers don't need to loop.
 //!
 //! Android: bionic is just another userspace libc on the same Linux kernel —
-//! every raw syscall here is identical (Zig's `std.os.linux.*` makes no
-//! gnu/musl/bionic distinction). Rust splits `target_os` into
-//! `linux`/`android`, so the gate must list both.
+//! every raw syscall here is identical regardless of gnu/musl/bionic. Rust
+//! splits `target_os` into `linux`/`android`, so the gate must list both.
 #![cfg(any(target_os = "linux", target_os = "android"))]
 #![allow(unreachable_pub)]
 
@@ -60,8 +58,7 @@ fn errno() -> i32 {
     bun_core::ffi::errno()
 }
 
-/// EINTR-retry a rustix call. Matches the `while (true) { ...; if .INTR continue }`
-/// loop in the sys.zig Linux arms.
+/// EINTR-retry a rustix call.
 #[inline(always)]
 fn retry<T>(mut f: impl FnMut() -> rustix::io::Result<T>) -> Result<T, i32> {
     loop {
@@ -73,8 +70,8 @@ fn retry<T>(mut f: impl FnMut() -> rustix::io::Result<T>) -> Result<T, i32> {
     }
 }
 
-/// Single-shot (no EINTR retry). Used for `close` and any path where the Zig
-/// surfaces EINTR to the caller.
+/// Single-shot (no EINTR retry). Used for `close` and any path where EINTR
+/// must be surfaced to the caller.
 #[inline(always)]
 fn once<T>(r: rustix::io::Result<T>) -> Result<T, i32> {
     r.map_err(raw)
@@ -127,7 +124,7 @@ pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Result<usize, i32> {
 
 /// `close(2)` — single shot, never retried (Linux may have already released
 /// the fd on EINTR; retrying could close a racing thread's new fd). Returns
-/// `Err(EBADF)` etc. on failure; callers only surface `EBADF` (fd.zig:266).
+/// `Err(EBADF)` etc. on failure; callers only surface `EBADF`.
 #[inline]
 pub fn close(fd: i32) -> Result<(), i32> {
     // rustix's safe `io::close(OwnedFd)` is infallible by design (it swallows
@@ -187,7 +184,7 @@ pub fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
 /// libc on those arches defines its userspace `struct stat` as a verbatim
 /// copy of the kernel layout so the syscall can write into it directly. The
 /// conversion is therefore a no-op `transmute` — no `zeroed()` memset, no
-/// 16-field move chain — matching Zig's single `fstat(fd, &out)` with zero
+/// 16-field move chain — a single `fstat(fd, &out)` with zero
 /// post-processing. The const assert turns any future layout divergence into
 /// a compile error rather than silent field corruption.
 ///
@@ -246,8 +243,8 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
 // hand us `vecs.as_ptr()` derived from a *shared* `&[PlatformIoVec]` —
 // fabricating a `&mut` slice from that pointer is UB under Stacked/Tree
 // Borrows regardless of whether rustix actually writes to the iovec array.
-// Instead pass the raw pointer straight to the kernel via `libc::syscall`,
-// exactly as the Zig `std.os.linux.readv` path does. `syscall(2)` is a thin
+// Instead pass the raw pointer straight to the kernel via `libc::syscall`.
+// `syscall(2)` is a thin
 // register-shuffle (no PLT entry per call, no pthread cancellation point);
 // glibc translates the kernel `-errno` to `-1`+TLS-errno, which `sys_retry`
 // decodes.
@@ -389,8 +386,7 @@ pub unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
 ///       depends on `EventData`/`EventFlags` having no invalid bit-patterns;
 ///   (c) synthesizing EINVAL for unknown `op` values ourselves rather than
 ///       letting the kernel reject them.
-/// Passing the raw quad straight through avoids all three and matches Zig's
-/// `std.os.linux.epoll_ctl` 1:1.
+/// Passing the raw quad straight through avoids all three.
 #[inline]
 pub unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::epoll_event) -> i32 {
     // SAFETY: raw `epoll_ctl(2)`; kernel validates `epfd`/`op`/`fd`; `event`
@@ -403,13 +399,11 @@ pub unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::epoll_eve
 /// Routed via `libc::syscall(SYS_sendfile, ..)` rather than rustix's
 /// `fs::sendfile` so that (a) `out_fd`/`in_fd == -1` yield EBADF instead of
 /// constructing a niche-invalid `BorrowedFd`, and (b) `offset` stays a raw
-/// `*mut loff_t` with no `&mut u64` type-pun. Matches Zig's
-/// `std.os.linux.sendfile` 1:1.
+/// `*mut loff_t` with no `&mut u64` type-pun.
 #[inline]
 pub unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> isize {
     // libc 0.2.186 omits `SYS_sendfile` from its aarch64 syscall tables (gnu,
-    // musl, *and* android — every other arch has it). Zig didn't hit this
-    // because `std.os.linux.SYS` is a complete kernel-derived table. The
+    // musl, *and* android — every other arch has it). The
     // generic-syscall ABI (aarch64/riscv64/loongarch64) places `sendfile` at
     // 71; the legacy ABIs that *do* have the constant differ, so the polyfill
     // is aarch64-only and the rest still come from `libc`.
@@ -426,9 +420,8 @@ pub unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) 
 ///
 /// Routed via `libc::syscall(SYS_copy_file_range, ..)` rather than rustix's
 /// `fs::copy_file_range` because the rustix wrapper hard-codes `flags = 0`.
-/// The Zig `std.os.linux.copy_file_range` and the pre-refactor path both
-/// forward `flags` verbatim so the kernel can EINVAL future flag bits;
-/// preserve that behavior exactly. Also avoids the `BorrowedFd` niche hazard
+/// We forward `flags` verbatim so the kernel can EINVAL future flag bits.
+/// Also avoids the `BorrowedFd` niche hazard
 /// and `*mut i64 → &mut u64` type-pun on the offset pointers.
 #[inline]
 pub unsafe fn copy_file_range(
@@ -491,8 +484,7 @@ pub unsafe fn getdents64(fd: i32, buf: *mut u8, len: usize) -> isize {
     // rustix only exposes `RawDir` (which owns the parse loop). We need the
     // raw byte fill to keep the existing record parser, so issue the syscall
     // via `libc::syscall(SYS_getdents64, ..)`. This is a thin trampoline (no
-    // errno-on-return mangling beyond the standard `-1`/errno convention) and
-    // is what the Zig path compiles to as well.
+    // errno-on-return mangling beyond the standard `-1`/errno convention).
     // PERF(port): switch to `rustix::fs::RawDir` once `WrappedIterator` is
     // reworked to consume `RawDirEntry` instead of hand-parsing bytes.
     unsafe { libc::syscall(libc::SYS_getdents64, fd as libc::c_long, buf, len) as isize }

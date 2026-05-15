@@ -978,7 +978,7 @@ export const linkerFlags: Flag[] = [
   {
     flag: "-Wl,--gc-sections",
     when: c => c.linux && c.release,
-    desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
+    desc: "Garbage-collect unused sections (release only; debug keeps unreferenced symbols for debugging)",
   },
   {
     // Always icf=safe in release. The stripped `bun` shares its build-id

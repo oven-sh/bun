@@ -8,7 +8,7 @@ use bun_jsc::{
     ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
@@ -62,12 +62,12 @@ pub struct Expect {
 }
 
 pub struct TestScope<'a> {
-    // Zig: `TestRunner.Test.ID = u32`
+    // `TestRunner.Test.ID = u32`
     pub test_id: u32,
     pub describe: &'a DescribeScope,
 }
 
-// PORT NOTE: Zig `enum(u2)`; Rust has no `u2`. Stored packed inside `Flags(u8)`
+// PORT NOTE: originally `enum(u2)`; Rust has no `u2`. Stored packed inside `Flags(u8)`
 // bits 0..2, so `repr(u8)` here only governs the standalone discriminant size.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -78,7 +78,7 @@ pub enum Promise {
     Rejects = 2,
 }
 
-#[repr(u8)] // TODO(port): Zig used u5; encoded inside Flags packed repr
+#[repr(u8)] // TODO(port): originally u5; encoded inside Flags packed repr
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum AsymmetricMatcherConstructorType {
     #[default]
@@ -107,7 +107,7 @@ impl AsymmetricMatcherConstructorType {
         // C++ side opens `DECLARE_THROW_SCOPE` and returns -1 ⟺ threw; under
         // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so
         // open a validation scope here and assert the sentinel/exception biconditional
-        // (Zig: `bun.cpp.AsymmetricMatcherConstructorType__fromJS` is `zero_is_throw`-shaped
+        // (`AsymmetricMatcherConstructorType__fromJS` is `zero_is_throw`-shaped
         // with -1 as the sentinel).
         bun_jsc::validation_scope!(scope, global_object);
         // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
@@ -132,7 +132,7 @@ impl AsymmetricMatcherConstructorType {
 }
 
 /// note: keep this struct in sync with C++ implementation (at bindings.cpp)
-// Zig: packed struct(u8) { promise: u2, not: bool, asymmetric_matcher_constructor_type: u5 }
+// Layout: packed u8 { promise: 2 bits, not: 1 bit, asymmetric_matcher_constructor_type: 5 bits }
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct Flags(pub u8);
@@ -147,7 +147,7 @@ impl Flags {
 
     #[inline]
     pub fn promise(self) -> Promise {
-        // PORT NOTE: Zig `enum(u2)` tolerates the unused bit pattern 3 inside a
+        // PORT NOTE: a 2-bit packed enum tolerates the unused bit pattern 3 inside a
         // packed struct; Rust does not — transmuting an out-of-range
         // discriminant is instant UB. `Flags` is fed from C++ via
         // `from_bitset`/`decode`, so the bits are not statically constrained.
@@ -172,7 +172,7 @@ impl Flags {
     }
     #[inline]
     pub fn asymmetric_matcher_constructor_type(self) -> AsymmetricMatcherConstructorType {
-        // PORT NOTE: Zig `enum(u5)` with 10 variants — values 10..=31 are
+        // PORT NOTE: a 5-bit packed enum with 10 variants — values 10..=31 are
         // representable in the packed bits but are not valid Rust
         // discriminants, and `Flags` arrives from C++ via `from_bitset`, so
         // a checked match is required (transmute would be UB).
@@ -228,9 +228,9 @@ impl Expect {
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
             if let Some(reporter) = buntest.reporter {
-                // SAFETY: Zig source mutates `reporter.summary()` directly; the
-                // field is `Option<NonNull<CommandLineReporter>>` (Zig
-                // `?*CommandLineReporter`), owned by `test_command` for the
+                // SAFETY: `reporter.summary()` is mutated directly; the
+                // field is `Option<NonNull<CommandLineReporter>>`,
+                // owned by `test_command` for the
                 // process lifetime, never aliased mutably elsewhere here.
                 unsafe {
                     let s = (*reporter.as_ptr()).summary();
@@ -250,13 +250,13 @@ impl Expect {
         args: &'static str,
         not: bool,
     ) -> &'static str {
-        // .zig:103-109 comptime-concats `received ++ [not.] ++ matcher_name ++ (args)`
-        // into rodata. Rust has no comptime string concat across runtime call
-        // sites (all ~188 callers pass literals, but the `not` bool is runtime
+        // The original concatenated `received ++ [not.] ++ matcher_name ++ (args)`
+        // into rodata at compile time. Rust has no comptime string concat across runtime
+        // call sites (all ~188 callers pass literals, but the `not` bool is runtime
         // in some), so emulate via a process-lifetime intern table: each
         // unique (matcher, args, not) triple is rendered exactly once and the
         // boxed str is owned by the static `CACHE` for the rest of the process
-        // — same lifetime semantics as the Zig comptime result. Returning
+        // — same lifetime semantics as a comptime constant. Returning
         // `&'static str` keeps the ~188 call sites and `throw()`'s `signature:
         // &'static str` parameter unchanged.
         use std::collections::HashMap;
@@ -290,7 +290,7 @@ impl Expect {
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
-        // PORT NOTE: Zig took `comptime message_fmt: string` + `message_args` and
+        // PORT NOTE: the original took `comptime message_fmt: string` + `message_args` and
         // concatenated `message_fmt` onto the signature template before
         // substitution. Rust can't splice runtime args into a const format
         // string, so callers pre-render the message body (prose + args) into a
@@ -325,11 +325,11 @@ impl Expect {
             }
         };
         // PERF(port): was comptime bool dispatch on use_default_label — profile in Phase B
-        // PORT NOTE: expect.zig:119-128 binds `use_default_label = !custom_label.isEmpty()`
-        // and so prints the *signature* when a custom label is present and the
-        // (empty) `{custom_label}` when it is absent — a misnamed variable in
-        // the Zig spec. The condition below intentionally matches the correct
-        // semantics of `Expect.throw` (expect.zig:373-379) instead: empty label
+        // PORT NOTE: the original bound `use_default_label = !custom_label.isEmpty()`
+        // and so printed the *signature* when a custom label was present and the
+        // (empty) `{custom_label}` when it was absent — a misnamed variable in
+        // the original spec. The condition below intentionally matches the correct
+        // semantics of `Expect.throw` instead: empty label
         // → default signature header, non-empty label → user's label header.
         if custom_label.is_empty() {
             global_this.throw_pretty(format_args!(
@@ -383,7 +383,7 @@ impl Expect {
         &self,
         global_this: &JSGlobalObject,
         this_value: JSValue,
-        // PORT NOTE: Zig took `[]const u8`; every caller passes a string literal,
+        // PORT NOTE: originally took a byte slice; every caller passes a string literal,
         // so accept `&str` (BStr::new below takes `AsRef<[u8]>`, so no copy).
         matcher_name: &str,
         matcher_params_fmt: &'static str,
@@ -627,7 +627,6 @@ impl Expect {
 
     pub fn finalize(mut self: Box<Self>) {
         self.custom_label.deref();
-        // .zig:331 `if (this.parent) |parent| parent.deref();`
         // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
         // so the Box drop below would leak the +1 — release explicitly.
         if let Some(parent) = self.parent.take() {
@@ -692,9 +691,9 @@ impl Expect {
         signature: &'static str,
         args: fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        // TODO(port): Zig comptime-concats `signature ++ fmt` into a single
-        // pretty template; Rust has no comptime string concat across runtime
-        // call sites, so render at runtime. Revisit with const_format if the
+        // TODO(port): the original concatenated `signature ++ fmt` into a single
+        // pretty template at compile time; Rust has no comptime string concat across
+        // runtime call sites, so render at runtime. Revisit with const_format if the
         // matcher set ever passes literal-only fmt strings.
         Err(if self.custom_label.is_empty() {
             global_this.throw_pretty(format_args!("{signature}{args}"))
@@ -714,10 +713,10 @@ impl Expect {
         _fmt: &'static str,
         args: fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        // `_fmt` was the Zig comptime template tail (e.g. "\n\n{s}\n"). Rust
+        // `_fmt` was the original comptime template tail (e.g. "\n\n{s}\n"). Rust
         // cannot interpolate a runtime-literal format string, so every caller
         // bakes the rendered tail (literal text + substitutions) into `args`
-        // and passes the original Zig template here only for documentation.
+        // and passes the original template here only for documentation.
         // If `args` is empty but `_fmt` is not, a caller forgot to migrate.
         debug_assert!(
             _fmt.is_empty() || args.as_str() != Some(""),
@@ -745,7 +744,7 @@ impl Expect {
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
+        let mut _msg: UnsafeStringView = UnsafeStringView::EMPTY;
 
         if !arguments.is_empty() {
             let value = arguments[0];
@@ -755,9 +754,9 @@ impl Expect {
                 return Err(global_this.throw_invalid_argument_type("pass", "message", "string"));
             }
 
-            value.to_zig_string(&mut _msg, global_this)?;
+            value.to_unsafe_string_view(&mut _msg, global_this)?;
         } else {
-            _msg = ZigString::from_bytes(b"passes by .pass() assertion");
+            _msg = UnsafeStringView::from_bytes(b"passes by .pass() assertion");
         }
 
         this.increment_expect_call_counter();
@@ -792,7 +791,7 @@ impl Expect {
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
+        let mut _msg: UnsafeStringView = UnsafeStringView::EMPTY;
 
         if !arguments.is_empty() {
             let value = arguments[0];
@@ -802,9 +801,9 @@ impl Expect {
                 return Err(global_this.throw_invalid_argument_type("fail", "message", "string"));
             }
 
-            value.to_zig_string(&mut _msg, global_this)?;
+            value.to_unsafe_string_view(&mut _msg, global_this)?;
         } else {
-            _msg = ZigString::from_bytes(b"fails by .fail() assertion");
+            _msg = UnsafeStringView::from_bytes(b"fails by .fail() assertion");
         }
 
         this.increment_expect_call_counter();
@@ -1098,9 +1097,9 @@ impl Expect {
 
             // 1. find the src loc of the snapshot
             let srcloc = call_frame.get_caller_src_loc(global_this);
-            // .zig:763 `defer srcloc.str.deref();` — bun_core::String is Copy
-            // with no Drop, so wrap in the RAII guard to release the +1 on
-            // every exit path (including the early returns below).
+            // bun_core::String is Copy with no Drop, so wrap `srcloc.str` in the
+            // RAII guard to release the +1 on every exit path (including the
+            // early returns below).
             let _srcloc_str_guard = bun_core::OwnedString::new(srcloc.str);
             let file_id = buntest.file_id;
             // PORT NOTE: MultiArrayList::get requires MultiArrayElement (derive pending);
@@ -1117,7 +1116,7 @@ impl Expect {
                         "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
                         bstr::BStr::new(fget_source_path_text),
                         fn_name,
-                        // TODO(port): std.zig.fmtString — escaped string display
+                        // TODO(port): escaped string display
                         bstr::BStr::new(srcloc.str.to_utf8().slice()),
                     ),
                 );
@@ -1374,7 +1373,7 @@ impl Expect {
                     let type_name = if matcher_fn.is_null() {
                         bun_core::String::static_("null")
                     } else {
-                        bun_core::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this))
+                        bun_core::String::init(matcher_fn.js_type_string(global_this).get_unsafe_string_view(global_this))
                     };
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "expect.extend: `{}` is not a valid matcher. Must be a function, is \"{}\"",
@@ -1386,7 +1385,7 @@ impl Expect {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                // PORT NOTE: Zig used `toJSHostFn(applyCustomMatcher)` (comptime fn-ptr
+                // PORT NOTE: the original used `toJSHostFn(applyCustomMatcher)` (comptime fn-ptr
                 // wrapping). Rust's `to_js_host_fn` returns an opaque closure, so emit
                 // an explicit C-ABI shim and pass its address.
                 bun_jsc::jsc_host_abi! {
@@ -1402,9 +1401,8 @@ impl Expect {
                 let host_fn_ptr: bun_jsc::JSHostFn = __apply_custom_matcher_shim;
                 // SAFETY: FFI call with valid global, &bun_core::String, host-fn ptr, and JSValue.
                 // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
-                // pointer-to-function-pointer — the Zig `*const jsc.JSHostFn` is itself the
-                // function-pointer type (Zig fn types aren't pointers), whereas Rust's
-                // `JSHostFn` already is, so pass it directly.
+                // pointer-to-function-pointer — Rust's `JSHostFn` is already the
+                // function-pointer type, so pass it directly.
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,
@@ -1527,7 +1525,6 @@ impl Expect {
         if pass || silent { return Ok(pass); }
 
         // handle failure
-        // .zig:1100-1101 `var message_text = bun.String.dead; defer message_text.deref();`
         // bun_core::String is Copy with no Drop, so wrap in OwnedString to
         // release the +1 returned by to_bun_string/from_js on scope exit.
         let message_text: bun_core::OwnedString = if message.is_undefined() {
@@ -1539,7 +1536,7 @@ impl Expect {
                 debug_assert!(message.is_callable()); // checked above
             }
 
-            // .zig:1112 `callWithGlobalThis` — pass the global object itself as `this`.
+            // `callWithGlobalThis` — pass the global object itself as `this`.
             let message_result = message.call_with_global_this(global_this, &[])?;
             bun_core::OwnedString::new(bun_core::String::from_js(message_result, global_this)?)
         };
@@ -1636,7 +1633,7 @@ impl Expect {
         Ok(this_value)
     }
 
-    // Zig: `pub const addSnapshotSerializer = notImplementedStaticFn;` — Rust has no associated
+    // `addSnapshotSerializer` is a `notImplementedStaticFn` alias — Rust has no associated
     // const-fn aliases that satisfy `Expect::add_snapshot_serializer(..)` UFCS, so forward.
     #[inline]
     pub fn add_snapshot_serializer(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
@@ -1729,7 +1726,7 @@ impl Expect {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
-    // PORT NOTE: Zig `notImplementedStaticProp` is a static-prop getter
+    // PORT NOTE: `notImplementedStaticProp` is a static-prop getter
     // (`(globalThis, JSValue, JSValue)`, no `*Expect` receiver). The
     // `host_fn(getter)` shape was wrong (it injects `&Self`). Unreferenced by
     // codegen today, so kept as a plain assoc fn matching the static ABI.
@@ -1743,7 +1740,7 @@ impl Expect {
         unsafe { (*vm).auto_garbage_collect() };
     }
 
-    /// RAII for Zig's `defer this.postMatch(globalThis)`. The returned guard holds the
+    /// RAII for the deferred `this.postMatch(globalThis)`. The returned guard holds the
     /// `&Expect` borrow, re-lends it via `Deref`, and calls `post_match` on drop so every
     /// exit path (success, `?`, explicit `return Err`) triggers the GC sweep.
     pub fn post_match_guard<'a>(&'a self, global: &'a JSGlobalObject) -> PostMatchGuard<'a> {
@@ -1799,8 +1796,8 @@ impl Expect {
 }
 
 /// RAII guard returned by [`Expect::post_match_guard`]. Holds an `&Expect` for the
-/// duration of a matcher body and runs `post_match` on drop — the Rust shape of Zig's
-/// `defer this.postMatch(globalThis)` shared by every `expect().toX()` matcher.
+/// duration of a matcher body and runs `post_match` on drop — the RAII shape of the
+/// deferred `this.postMatch(globalThis)` shared by every `expect().toX()` matcher.
 /// R-2: shared borrow only (no `DerefMut`); all `Expect` methods reachable from a
 /// matcher body take `&self`.
 pub struct PostMatchGuard<'a> {
@@ -1891,7 +1888,7 @@ impl ExpectStatic {
 
     // PORT NOTE: codegen passes `(&mut *this, this_value, global)` for `this: true` getters
     // (jest.classes.ts); the `#[host_fn(getter)]` proc-macro emits a 2-arg shim, so we drop
-    // it here and match the generated signature directly. `this_value` is unused (Zig ignores it).
+    // it here and match the generated signature directly. `this_value` is unused (ignored upstream).
     pub fn get_not(this: &Self, _this_value: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         flags.set_not(!this.flags.not());
@@ -2029,7 +2026,7 @@ impl_asymmetric_matcher_class!(
 // ─── unary-predicate matcher scaffold ────────────────────────────────────
 // Dedups the 22 hand-rolled `expect/toBe*.rs` files (~1270 LOC → ~300 LOC) and
 // fixes two latent port bugs (throw_fmt wrapper drop; post_match-before-throw
-// ordering). Mirrors the Zig per-file scaffold exactly.
+// ordering). Mirrors the original per-file scaffold exactly.
 impl Expect {
     /// Shared scaffold for zero-arg `expect(v).toBeX()` matchers whose pass/fail
     /// is a pure infallible predicate on the received `JSValue` and whose failure
@@ -2070,7 +2067,7 @@ impl Expect {
     /// `increment_expect_call_counter`, UTF-8 slice + predicate, `not`-xor, dual
     /// formatter, `get_signature`, `throw`.
     ///
-    /// Normalizes the inherited Zig inconsistency where `toInclude` passed `""`
+    /// Normalizes an inherited inconsistency where `toInclude` passed `""`
     /// to `get_value`'s `matcher_params` while the other two passed
     /// `"<green>expected<r>"` — all three now use the latter (matches the
     /// signature already used in their failure messages).
@@ -2145,14 +2142,14 @@ impl Expect {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared skeleton for the 8 jest-extended `toContain{Key,Keys,AllKeys,AnyKeys,
-// Value,Values,AllValues,AnyValues}` matchers. ~70% of each Zig body was the
+// Value,Values,AllValues,AnyValues}` matchers. ~70% of each matcher body was the
 // same boilerplate (post_match defer, arg-count check, expect-counter,
 // get_value, `.not` flip, dual-formatter failure throw); only the pass-loop
 // differs. Sibling to `run_unary_predicate` / `run_string_affix_matcher`.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Where `expected.is_array()` runs relative to `get_value` — observable when
-/// both would throw (Keys-family Zig validates *after*, Values-family *before*).
+/// both would throw (the Keys family validates *after*, the Values family *before*).
 pub enum ExpectedArray {
     /// `toContainKey` / `toContainValue`: scalar `expected`, no array check.
     None,
@@ -2197,7 +2194,7 @@ impl Expect {
     /// [`ExpectedArray`]), `.not` flip, and the dual-formatter failure throw —
     /// and delegates only the per-matcher pass-loop to `body`.
     ///
-    /// On pass, returns `frame.this()` (the original Zig matchers all returned
+    /// On pass, returns `frame.this()` (the original matchers all returned
     /// `thisValue`, not `undefined`).
     pub fn contain_matcher(
         &self,
@@ -2758,7 +2755,7 @@ impl ExpectCustomAsymmetricMatcher {
         // PERF(port): was stack-fallback allocator — profile in Phase B
         let mut mutable_string = bun_core::MutableString::init_2048()?;
 
-        // PORT NOTE: Zig call site (expect.zig:1772) omits the `comptime dontThrow`
+        // PORT NOTE: the original call site omits the `comptime dontThrow`
         // arg — dead/ill-typed in the spec. With `false`, JS exceptions surface
         // through `maybe_clear` as `Error::UNEXPECTED` while remaining set on
         // the VM; only allocation failures map to OOM. Propagate accordingly
@@ -2777,7 +2774,7 @@ impl ExpectCustomAsymmetricMatcher {
             let slice: &[u8] = mutable_string.slice();
             return bun_core::String::init(slice).to_js(global_this);
         }
-        // PORT NOTE: Zig (expect.zig:1776) passes `this: *ExpectCustomAsymmetricMatcher`
+        // PORT NOTE: the original passes `this: *ExpectCustomAsymmetricMatcher`
         // where `printValue` expects a `JSValue` — dead/ill-typed in the spec.
         // The intent is to pretty-print the matcher instance itself, available
         // here as `callframe.this()`.
@@ -2921,8 +2918,8 @@ impl ExpectMatcherUtils {
                 (),
             ));
         }
-        // .zig:1907 `defer matcher_name.deref();` — `to_bun_string` returns +1;
-        // bun_core::String is `Copy` with no `Drop`, so wrap in `OwnedString`.
+        // `to_bun_string` returns +1; bun_core::String is `Copy` with no `Drop`,
+        // so wrap in `OwnedString` to release on scope exit.
         let matcher_name = bun_core::OwnedString::new(arguments[0].to_bun_string(global_this)?);
 
         let received = if arguments.len() > 1 { arguments[1] } else { bun_core::String::static_("received").to_js(global_this)? };
@@ -2969,15 +2966,15 @@ impl ExpectMatcherUtils {
             not: is_not,
         };
 
-        // .zig:1948-1955 builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
-        // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`
-        // slots, then runs `Output.prettyFmt` over the *template* before
+        // The original built `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
+        // and substituted `(matcher_name, diff_formatter)` into the two `{f}`
+        // slots, then ran `Output.prettyFmt` over the *template* before
         // substitution. `pretty_fmt_rt` rewrites only the `<tag>` markers in
         // the static `RECEIVED`/`expected` literals — `matcher_name` and
         // `diff_formatter` are spliced in afterwards (matches `throw_pretty`'s
         // render-then-rewrite ordering, since Display output here contains no
         // `<tag>` literals).
-        // PERF(port): Zig used a 2048-byte stack-fallback MutableString — profile in Phase B.
+        // PERF(port): originally a 2048-byte stack-fallback MutableString — profile in Phase B.
         let colors = Output::enable_ansi_colors_stderr();
         let head = Output::pretty_fmt_rt("<d>expect(<r><red>received<r><d>).<r>", colors);
         let not = if is_not { Output::pretty_fmt_rt("not<d>.<r>", colors) } else { bun_core::output::PrettyBuf(Vec::new()) };
@@ -3027,7 +3024,7 @@ pub mod mock {
 
     // TODO(port): move to <area>_sys
     // C++: `JSC::EncodedJSValue JSMockFunction__get{Calls,Returns}(
-    //         JSC::JSGlobalObject*, EncodedJSValue)` — `[[ZIG_EXPORT(zero_is_throw)]]`.
+    //         JSC::JSGlobalObject*, EncodedJSValue)` — `[[RUST_EXPORT(zero_is_throw)]]`.
     // The leading `globalThis` parameter is load-bearing: the body opens a
     // `DECLARE_THROW_SCOPE(globalThis->vm())`, so omitting it shifts `value`
     // into the pointer slot and dereferences a garbage `JSGlobalObject*`
@@ -3198,7 +3195,7 @@ pub mod mock {
     }
 
     impl ReturnStatus {
-        // Zig: bun.ComptimeEnumMap(ReturnStatus)
+        // Compile-time string→variant map.
         pub const MAP: phf::Map<&'static [u8], ReturnStatus> = phf::phf_map! {
             b"throw" => ReturnStatus::Throw,
             b"return" => ReturnStatus::Return,
@@ -3305,8 +3302,7 @@ unsafe extern "C" {
         global_this: *const JSGlobalObject,
         symbol_name: *const bun_core::String,
         // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
-        // Zig spells this `*const jsc.JSHostFn` because Zig fn types need a `*const` to
-        // become pointers; Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
+        // Rust's `JSHostFn` is already the pointer type, so no extra `*const` indirection.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
         strong: bool,
@@ -3386,7 +3382,5 @@ mod tests {
         );
     }
 
-    // TODO(port): fuzz test — std.testing.fuzz(testOne, .{})
+    // TODO(port): fuzz test
 }
-
-// ported from: src/test_runner/expect.zig

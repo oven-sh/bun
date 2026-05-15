@@ -1,11 +1,9 @@
-//! Port of `src/jsc/ConsoleObject.zig`.
-//!
 //! Implements `console.*` printing for the Bun runtime: type-tag dispatch,
 //! recursive value formatting, table printing, `%`-format specifier handling,
 //! `console.count`/`time`/`timeEnd`, and the C ABI shims that JavaScriptCore
 //! calls into.
 
-use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
+use crate::{ComptimeStringMapExt as _, UnsafeStringViewJsc as _};
 use bun_io::Write as _;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
@@ -14,14 +12,15 @@ use core::fmt::Write as _;
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigException, ZigString,
+    BunException, CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult,
+    UnsafeStringView,
 };
 use bun_collections::HashMap;
 use bun_core::{Environment, Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
-/// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
+/// sites below keep their original spelling (`JSLexer.isLatin1Identifier`,
 /// `JSPrinter.writeJsonString`) while the underlying crates expose slightly
 /// different shapes (single generic identifier predicate; const-generic
 /// encoding on `write_json_string`).
@@ -30,9 +29,8 @@ mod JSLexer {
     pub fn is_latin1_identifier_u8(name: &[u8]) -> bool {
         bun_ast::lexer_tables::is_latin1_identifier(name)
     }
-    /// Zig `isLatin1Identifier(comptime []const u16, name)` — same predicate
-    /// over a UTF-16 slice. Canonical impl lives next to the u8 overload in
-    /// `bun_js_parser::lexer`.
+    /// Same predicate over a UTF-16 slice. Canonical impl lives next to the u8
+    /// overload in `bun_js_parser::lexer`.
     #[inline]
     pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
         bun_ast::lexer_tables::is_latin1_identifier_u16(name)
@@ -66,10 +64,9 @@ mod JSPrinter {
 }
 
 /// Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
-/// generic bool. Zig's `Output.prettyFmt(comptime fmt, comptime enable_colors)`
-/// took a comptime bool; the Rust macro only matches `true`/`false` literals,
-/// so monomorphized callers (`<const C: bool>`) branch here.
-// PERF(port): was comptime bool dispatch — both arms are `&'static str`.
+/// generic bool. The macro only matches `true`/`false` literals, so
+/// monomorphized callers (`<const C: bool>`) branch here.
+// PERF(port): was compile-time bool dispatch — both arms are `&'static str`.
 macro_rules! pfmt {
     ($fmt:expr, $colors:expr) => {
         if $colors {
@@ -99,11 +96,10 @@ pub struct ConsoleObject {
     stderr_buffer: [u8; 4096],
     stdout_buffer: [u8; 4096],
 
-    // TODO(port): Zig stores `Adapter` structs for the old→new `std.Io.Writer`
-    // bridge plus self-referential `*std.Io.Writer` pointers into them. In Rust
-    // we restructure as direct buffered writer fields and expose them via
-    // `error_writer()` / `writer()` getters (LIFETIMES.tsv: BORROW_FIELD →
-    // self-ref; restructure as getter).
+    // TODO(port): originally stored `Adapter` structs plus self-referential
+    // writer pointers into them. Restructured here as direct buffered writer
+    // fields exposed via `error_writer()` / `writer()` getters (LIFETIMES.tsv:
+    // BORROW_FIELD → self-ref; restructure as getter).
     error_writer_backing: Output::QuietWriterAdapter,
     writer_backing: Output::QuietWriterAdapter,
 
@@ -119,7 +115,7 @@ pub struct ConsoleObject {
 
 impl core::fmt::Display for ConsoleObject {
     fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Zig: `pub fn format(...) !void {}` — intentionally prints nothing.
+        // Intentionally prints nothing.
         Ok(())
     }
 }
@@ -207,13 +203,13 @@ impl ConsoleObject {
         out
     }
 
-    /// Replacement for Zig's self-referential `error_writer: *std.Io.Writer`.
+    /// Getter replacing the original self-referential `error_writer` pointer.
     #[inline]
     pub fn error_writer(&mut self) -> &mut bun_core::io::Writer {
         self.error_writer_backing.new_interface()
     }
 
-    /// Replacement for Zig's self-referential `writer: *std.Io.Writer`.
+    /// Getter replacing the original self-referential `writer` pointer.
     #[inline]
     pub fn writer(&mut self) -> &mut bun_core::io::Writer {
         self.writer_backing.new_interface()
@@ -231,12 +227,12 @@ pub enum MessageLevel {
 }
 
 impl MessageLevel {
-    /// Zig spec is `enum(u32) { ..., _ }` (non-exhaustive). Taking the
+    /// The C++ side treats this as a non-exhaustive `u32`. Taking the
     /// exhaustive Rust enum directly across the C ABI would be instant UB if
     /// JSC ever passes an out-of-range discriminant, so the
     /// `Bun__ConsoleObject__messageWithTypeAndLevel` shim accepts a raw `u32`
-    /// and routes through here. Unknown values fold to `Log` — no Zig codepath
-    /// branches on the `_` case, so any clamp is spec-equivalent.
+    /// and routes through here. Unknown values fold to `Log` — no codepath
+    /// branches on the unknown case, so any clamp is spec-equivalent.
     #[inline]
     pub const fn from_raw(raw: u32) -> Self {
         match raw {
@@ -270,8 +266,8 @@ pub enum MessageType {
 }
 
 impl MessageType {
-    /// See [`MessageLevel::from_raw`] — Zig spec is non-exhaustive
-    /// (`enum(u32) { ..., _ }`); fold unknown discriminants to `Log` so the
+    /// See [`MessageLevel::from_raw`] — the C++ side treats this as a
+    /// non-exhaustive `u32`; fold unknown discriminants to `Log` so the
     /// FFI boundary never constructs an invalid enum value.
     #[inline]
     pub const fn from_raw(raw: u32) -> Self {
@@ -313,7 +309,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // VM's lifetime; the C++ side never calls into `Bun__ConsoleObject__*`
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
-    // references — matches the Zig shape (`*ConsoleObject` field).
+    // references.
     global.bun_vm().as_mut().console.cast::<ConsoleObject>()
 }
 
@@ -343,7 +339,7 @@ thread_local! {
 /// RAII guard for the per-stream reentrant console lock. Acquires on
 /// construction (incrementing the thread-local count and locking the global
 /// mutex on first entry), releases on `Drop` (decrementing and unlocking on
-/// last exit). Replaces the Zig `defer { ... unlock() }` pair.
+/// last exit).
 struct ConsoleStreamLock {
     use_stderr: bool,
 }
@@ -389,8 +385,7 @@ impl Drop for ConsoleStreamLock {
     }
 }
 
-/// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`
-/// (Zig: `defer if (options.flush) writer.flush()`).
+/// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`.
 ///
 /// Owns the `&mut dyn Write` for its lifetime; the body of the scope must
 /// reborrow through `&mut *guard.writer` so that all body accesses are
@@ -580,8 +575,8 @@ fn message_with_type_and_level_(
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
                 if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
-                    // Match Zig `JSValue.toU16`: `@truncate(@max(toInt32(), 0))`
-                    // — clamp negatives to 0, then truncate (not saturate) to u16.
+                    // Match `JSValue.toU16` semantics: clamp negatives to 0,
+                    // then truncate (not saturate) to u16.
                     print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
                 } else if depth_prop.is_null() {
                     print_options.max_depth = u16::MAX;
@@ -707,9 +702,9 @@ impl<'a> TablePrinter<'a> {
     /// Compute how much horizontal space a `JSValue` will take when printed.
     fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
         let mut width: usize = 0;
-        // PERF(port): Zig used a 512-byte discard buffer between the generic
-        // writer adapter and the counter to amortize vtable calls; here we
-        // write straight into the counter. Profile in Phase B.
+        // PERF(port): the original used a 512-byte discard buffer between the
+        // generic writer adapter and the counter to amortize vtable calls; here
+        // we write straight into the counter. Profile in Phase B.
         let mut counter = VisibleCharacterCounter { width: &mut width };
         let mut value_formatter = self.value_formatter.shallow_clone();
 
@@ -900,8 +895,8 @@ impl<'a> TablePrinter<'a> {
                     TagPayload::String | TagPayload::StringPossiblyFormatted
                 ));
 
-                // `defer` block: release pooled visit map after formatting.
-                // PORT NOTE: Zig's `defer` body also nulls
+                // Release pooled visit map after formatting.
+                // PORT NOTE: the original deferred cleanup also nulled
                 // `this.value_formatter.map_node`, but `shallow_clone()`
                 // already guarantees the source's `map_node` is `None`, so
                 // only the local clone needs draining. `Formatter::Drop` does
@@ -1259,24 +1254,24 @@ impl<'a> DynWriteAdapter<'a> {
 }
 
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
-    let mut holder = crate::zig_exception::Holder::init();
+    let mut holder = crate::bun_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
 
-    let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
+    let mut source_code_slice: Option<bun_core::UTF8Slice> = None;
 
-    let err = ZigString::init(b"trace output").to_error_instance(global);
+    let err = UnsafeStringView::init(b"trace output").to_error_instance(global);
     {
-        let exception = holder.zig_exception();
-        err.to_zig_exception(global, exception);
+        let exception = holder.bun_exception();
+        err.to_bun_exception(global, exception);
     }
-    // PORT NOTE: reshaped for borrowck — Zig held `exception` and
+    // PORT NOTE: reshaped for borrowck — the original held `exception` and
     // `&holder.need_to_clear_parser_arena_on_deinit` simultaneously; in Rust
     // those are two `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
     let mut need_to_clear = holder.need_to_clear_parser_arena_on_deinit;
-    vm.remap_zig_exception(
-        holder.zig_exception(),
+    vm.remap_bun_exception(
+        holder.bun_exception(),
         err,
         None,
         &mut need_to_clear,
@@ -1288,14 +1283,13 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut adapter = DynWriteAdapter::new(writer);
     let _ = VirtualMachine::print_stack_trace(
         adapter.interface(),
-        &holder.zig_exception().stack,
+        &holder.bun_exception().stack,
         Output::enable_ansi_colors_stderr(),
     );
 
-    // Zig: `defer if (source_code_slice) |slice| slice.deinit();` —
-    // `ZigStringSlice` frees on `Drop`.
+    // `UTF8Slice` frees on `Drop`.
     drop(source_code_slice);
-    // Zig: `defer holder.deinit(vm);` — explicit (takes `vm`).
+    // Explicit deinit — takes `vm`.
     holder.deinit(vm);
 }
 
@@ -1519,7 +1513,7 @@ pub fn format2(
 
             let _ = writer.flush();
         } else {
-            // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
+            // PORT NOTE: deferred flush via RAII guard.
             // Reborrow through the guard so SB sees body writes as children
             // of the guard's borrow (see `FlushOnDrop` doc).
             let mut _flush = FlushOnDrop {
@@ -1540,7 +1534,7 @@ pub fn format2(
         return Ok(());
     }
 
-    // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
+    // PORT NOTE: deferred flush via RAII guard.
     // Reborrow through the guard so SB sees body writes as children of the
     // guard's borrow (see `FlushOnDrop` doc).
     let mut _flush = FlushOnDrop {
@@ -1636,8 +1630,8 @@ pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
 pub mod formatter {
     use super::*;
 
-    /// RAII: write `prev` back through `place` on drop (Zig
-    /// `defer this.field = prev;`). Holds a raw `*mut` so the body of the
+    /// RAII: write `prev` back through `place` on drop (deferred
+    /// field restore). Holds a raw `*mut` so the body of the
     /// scope can freely take `&mut self` without aliasing the borrow.
     ///
     /// NOTE(aliasing): the `addr_of_mut!(self.field)` → body uses `&mut self`
@@ -1675,7 +1669,7 @@ pub mod formatter {
         }
     }
 
-    /// RAII: `*place -|= 1` on drop (Zig `defer this.field -|= 1;`). Holds a
+    /// RAII: saturating-decrement `*place` on drop. Holds a
     /// raw `*mut` so the body can freely take `&mut self`.
     pub(super) struct Decrement<T: SaturatingDec> {
         place: *mut T,
@@ -1689,10 +1683,10 @@ pub mod formatter {
         }
     }
 
-    /// RAII: `map.remove(value)` on drop iff `*armed` (Zig
-    /// `defer { if (...) _ = this.map.remove(value); }` in `printAs`). Holds
-    /// raw pointers so the body can freely take `&mut self`; smaller than the
-    /// equivalent `scopeguard::defer!` closure under ASAN stack redzones.
+    /// RAII: `map.remove(value)` on drop iff `*armed` (deferred conditional
+    /// remove in `print_as`). Holds raw pointers so the body can freely take
+    /// `&mut self`; smaller than the equivalent `scopeguard::defer!` closure
+    /// under ASAN stack redzones.
     pub(super) struct VisitedRemove {
         map: *mut visited::Map,
         armed: *const bool,
@@ -1711,10 +1705,10 @@ pub mod formatter {
         }
     }
 
-    /// Mirror Zig's `defer this.field = prev;` without holding a live borrow
-    /// on `self` for the body of the scope. Zig `defer` reads at scope-exit
-    /// time and never aliases, so we capture a raw `*mut` to the field and
-    /// write through it on drop. This lets the body freely take `&mut self`.
+    /// Restore a field at scope exit without holding a live borrow on `self`
+    /// for the body of the scope. The restore reads at scope-exit time and
+    /// never aliases, so we capture a raw `*mut` to the field and write through
+    /// it on drop. This lets the body freely take `&mut self`.
     macro_rules! defer_restore {
         ($place:expr, $prev:expr) => {
             Restore {
@@ -1724,7 +1718,7 @@ pub mod formatter {
         };
     }
 
-    /// Mirror Zig's `defer this.field -|= 1;` without holding a live borrow.
+    /// Saturating-decrement a field at scope exit without holding a live borrow.
     macro_rules! defer_decrement {
         ($place:expr) => {
             Decrement {
@@ -1737,17 +1731,15 @@ pub mod formatter {
         pub global_this: &'a JSGlobalObject,
 
         /// Callers seat this to a stack slice and reset it to `EMPTY` before
-        /// the backing storage goes away (mirrors the Zig
-        /// `defer self.formatter.remaining_values = &.{}` pattern). A `&'a`
-        /// slice cannot express that without forcing `'a` to outlive locals;
-        /// `RawSlice` carries the outlives-holder invariant instead.
+        /// the backing storage goes away. A `&'a` slice cannot express that
+        /// without forcing `'a` to outlive locals; `RawSlice` carries the
+        /// outlives-holder invariant instead.
         pub remaining_values: bun_ptr::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
         /// Raw pointer (not `Box`) because `visited::Pool` owns the
-        /// `heap::alloc`/`from_raw` lifecycle — mirrors Zig
-        /// `?*Visited.Pool.Node`.
+        /// `heap::alloc`/`from_raw` lifecycle.
         pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
         pub hide_native: bool,
         pub indent: u32,
@@ -1772,7 +1764,7 @@ pub mod formatter {
     }
 
     impl<'a> Formatter<'a> {
-        /// Field-default constructor (Zig struct field defaults).
+        /// Field-default constructor.
         pub fn new(global_this: &'a JSGlobalObject) -> Self {
             Self {
                 global_this,
@@ -1792,9 +1784,9 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                // Zig field default `.{}` (`cached_stack_end = 0` ⇒ check
-                // always passes); callers that want a real bound overwrite
-                // with `StackCheck::init()` explicitly.
+                // Default `cached_stack_end = 0` ⇒ check always passes;
+                // callers that want a real bound overwrite with
+                // `StackCheck::init()` explicitly.
                 stack_check: StackCheck::default(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
@@ -1802,12 +1794,12 @@ pub mod formatter {
             }
         }
 
-        /// Zig copies `Formatter` by value (`var f = this.value_formatter;`).
-        /// In Rust `Formatter` has a `Drop` impl and owns `map`/`map_node`,
-        /// so a bit-copy via `ptr::read` would double-free. The Zig copy
-        /// only ever ships scalar config — `map`/`map_node` are always empty
-        /// on the source at the call sites — so we copy those fields
-        /// explicitly and leave `map`/`map_node` fresh on the clone.
+        /// `Formatter` is logically copied by value at some call sites, but
+        /// it has a `Drop` impl and owns `map`/`map_node`, so a bit-copy via
+        /// `ptr::read` would double-free. The copy only ever ships scalar
+        /// config — `map`/`map_node` are always empty on the source at the
+        /// call sites — so we copy those fields explicitly and leave
+        /// `map`/`map_node` fresh on the clone.
         pub(super) fn shallow_clone(&self) -> Self {
             debug_assert!(
                 self.map_node.is_none(),
@@ -1861,7 +1853,6 @@ pub mod formatter {
             if let Some(mut node) = self.map_node.take() {
                 // Move the working map back into the pooled node, shrink if it
                 // ballooned, then return the node to the thread-local pool.
-                // Mirrors `Formatter.deinit` (ConsoleObject.zig:1016-1024).
                 let map = core::mem::take(&mut self.map);
                 // `node_data_mut` is safe: `Map::INIT` is `Some`, so the
                 // pooled slot already holds an (empty, post-`take`) `Map`;
@@ -1896,21 +1887,19 @@ pub mod formatter {
         }
     }
 
-    /// `Display` adapter equivalent to Zig's `Formatter.ZigFormatter`.
+    /// `Display` adapter that formats a single `JSValue` through a borrowed
+    /// `Formatter`.
     ///
-    /// The Zig spec (`ConsoleObject.zig:1044-1062`) takes `self: ZigFormatter`
-    /// *by value* with a raw `*Formatter` field, so writing through
-    /// `self.formatter.*` carries no aliasing constraint. `Display::fmt` only
-    /// gives us `&self`, so the mutable handle is parked behind a `Cell` and
-    /// moved out for the duration of the call — this preserves unique-borrow
-    /// provenance without the `&shared → *const → *mut` cast that would be UB
-    /// under Stacked Borrows.
-    pub struct ZigFormatter<'a, 'b> {
+    /// `Display::fmt` only gives us `&self`, so the mutable handle is parked
+    /// behind a `Cell` and moved out for the duration of the call — this
+    /// preserves unique-borrow provenance without the `&shared → *const →
+    /// *mut` cast that would be UB under Stacked Borrows.
+    pub struct BunFormatter<'a, 'b> {
         pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
         pub value: JSValue,
     }
 
-    impl<'a, 'b> ZigFormatter<'a, 'b> {
+    impl<'a, 'b> BunFormatter<'a, 'b> {
         pub fn new(formatter: &'a mut Formatter<'b>, value: JSValue) -> Self {
             Self {
                 formatter: Cell::new(Some(formatter)),
@@ -1919,19 +1908,19 @@ pub mod formatter {
         }
     }
 
-    impl core::fmt::Display for ZigFormatter<'_, '_> {
+    impl core::fmt::Display for BunFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            // TODO(port): Zig writes through `*std.Io.Writer`; here we go
-            // through `core::fmt::Write`. Phase B may need a `bun_io::Write`
-            // adapter for `core::fmt::Formatter` to keep the byte path.
+            // TODO(port): we go through `core::fmt::Write` here. Phase B may
+            // need a `bun_io::Write` adapter for `core::fmt::Formatter` to
+            // keep the byte path.
             //
             // Move the unique `&mut Formatter` out of the cell for the body;
             // re-seat it (and clear `remaining_values`) on the way out so the
-            // adapter mirrors Zig's `defer` and stays reusable.
+            // adapter stays reusable.
             let formatter: &mut Formatter<'_> = self
                 .formatter
                 .take()
-                .expect("ZigFormatter::fmt re-entered or used after consumption");
+                .expect("BunFormatter::fmt re-entered or used after consumption");
 
             let one = [self.value];
             formatter.remaining_values = bun_ptr::RawSlice::new(&one);
@@ -1947,7 +1936,7 @@ pub mod formatter {
                     .map_err(|_| core::fmt::Error)
             })();
 
-            // Mirrors Zig `defer self.formatter.remaining_values = &.{}`.
+            // Reset `remaining_values` before the borrowed slice goes away.
             formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
@@ -1981,14 +1970,13 @@ pub mod formatter {
         }
 
         impl bun_collections::pool::ObjectPoolType for Map {
-            // Zig: `ObjectPool(Map, Map.init, true, 16)` — fresh nodes start
-            // with an empty map so `clearRetainingCapacity()` on first use is
-            // well-defined.
+            // Fresh nodes start with an empty map so `clearRetainingCapacity()`
+            // on first use is well-defined.
             const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
         }
 
-        // Thread-local free list, capped at 16 nodes — matches Zig
-        // `threadsafe = true, max_count = 16`.
+        // Thread-local free list, capped at 16 nodes (threadsafe = true,
+        // max_count = 16).
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
         pub type PoolNode = bun_collections::pool::Node<Map>;
 
@@ -2085,7 +2073,7 @@ pub mod formatter {
         }
     }
 
-    /// Zig: `union(Tag)`. Only `CustomFormattedObject` carries a payload.
+    /// Tagged union over [`Tag`]. Only `CustomFormattedObject` carries a payload.
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum TagPayload {
         StringPossiblyFormatted,
@@ -2123,14 +2111,14 @@ pub mod formatter {
     }
 
     impl TagPayload {
-        /// Zig `Formatter.Tag.get` — `TagPayload` is the Rust spelling of the
-        /// Zig union, so the constructor lives here as well as on the bare
-        /// discriminant `Tag`. Callers in sibling modules use either name.
+        /// `TagPayload` is the payload-carrying union over `Tag`, so the
+        /// constructor lives here as well as on the bare discriminant `Tag`.
+        /// Callers in sibling modules use either name.
         #[inline]
         pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
             Tag::get(value, global_this)
         }
-        /// Zig `Formatter.Tag.getAdvanced`.
+        /// See [`Tag::get_advanced`].
         #[inline]
         pub fn get_advanced(
             value: JSValue,
@@ -2393,11 +2381,11 @@ pub mod formatter {
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
-                    let mut react_element_legacy = ZigString::init(b"react.element");
+                    let mut react_element_legacy = UnsafeStringView::init(b"react.element");
                     // For React 19 - https://github.com/oven-sh/bun/issues/17223
                     let mut react_element_transitional =
-                        ZigString::init(b"react.transitional.element");
-                    let mut react_fragment = ZigString::init(b"react.fragment");
+                        UnsafeStringView::init(b"react.transitional.element");
+                    let mut react_fragment = UnsafeStringView::init(b"react.fragment");
 
                     if typeof_symbol.is_same_value(
                         JSValue::symbol_for(global_this, &mut react_element_legacy),
@@ -2519,7 +2507,7 @@ pub mod formatter {
         }
     }
 
-    /// Mirrors Zig's `jsc.C.CellType` — same enum as `JSType` in this codebase.
+    /// Alias kept for spec parity — same enum as `JSType` in this codebase.
     #[allow(dead_code)]
     type CellType = jsc::JSType;
 
@@ -2536,9 +2524,9 @@ pub mod formatter {
     }
 
     impl<'a> Formatter<'a> {
-        // TODO(port): Zig parameterizes over `Slice` (`[]const u8` or `[]const u16`)
-        // via `comptime Slice: type`. Phase A handles only the `&[u8]` path; the
-        // UTF-16 path was unused at the call site (`slice` always comes from
+        // TODO(port): the original was generic over the slice element type
+        // (`u8` or `u16`). Phase A handles only the `&[u8]` path; the UTF-16
+        // path was unused at the call site (`slice` always comes from
         // `toSlice` → UTF-8).
         fn write_with_formatting<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
@@ -2590,11 +2578,11 @@ pub mod formatter {
                                 // then skip the second % so we dont hit it again
                                 slice = &slice[slice.len().min((i + 1) as usize)..];
                                 len = slice.len() as u32;
-                                // PORT NOTE: replicates Zig's `while : (i += 1)` continue-
-                                // expression — Zig's `i = 0; continue;` is bumped to 1 by
-                                // the continue-expr, so the next iteration inspects
-                                // `slice[1]`, not `slice[0]`. (This is itself an upstream
-                                // off-by-one vs the WHATWG spec; tracked separately.)
+                                // PORT NOTE: replicates the original loop's continue-
+                                // expression bump — `i = 0; continue;` advances to 1
+                                // before the next iteration, so it inspects `slice[1]`,
+                                // not `slice[0]`. (This is itself an upstream off-by-one
+                                // vs the WHATWG spec; tracked separately.)
                                 i = 1;
                                 continue;
                             }
@@ -2797,8 +2785,7 @@ pub mod formatter {
 
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
-                                // for SIMD optimization
-                                // Zig: `defer str.deref()` — `OwnedString` releases the
+                                // for SIMD optimization. `OwnedString` releases the
                                 // +1 WTF ref on every exit (incl. the `?` below).
                                 let mut str = OwnedString::new(BunString::empty());
                                 next_value.json_stringify_fast(global, &mut str)?;
@@ -2822,9 +2809,9 @@ pub mod formatter {
         }
     }
 
-    /// Zig: `fn WrappedWriter(comptime Writer: type) type`. We collapse the
-    /// generic over `*std.Io.Writer` into `&mut dyn bun_io::Write`.
-    // PERF(port): was comptime monomorphization (`fn WrappedWriter(comptime Writer: type) type`) — profile in Phase B
+    /// Originally a per-writer monomorphized generic; collapsed into
+    /// `&mut dyn bun_io::Write`.
+    // PERF(port): was per-writer monomorphization — profile in Phase B
     pub struct WrappedWriter<'w> {
         pub ctx: &'w mut dyn bun_io::Write,
         pub failed: bool,
@@ -2903,8 +2890,8 @@ pub mod formatter {
             }
         }
 
-        // TODO(port): Zig computed `length_ignoring_formatted_values` at
-        // comptime by walking the format string. We need a `const fn` /
+        // TODO(port): the original computed `length_ignoring_formatted_values`
+        // at compile time by walking the format string. We need a `const fn` /
         // proc-macro to recover that; Phase A takes the count as a runtime
         // argument computed by the `pretty!` macro.
         pub fn pretty<const ENABLE_ANSI_COLOR: bool>(
@@ -2956,7 +2943,7 @@ pub mod formatter {
         }
 
         #[inline]
-        pub fn write_string(&mut self, str: &ZigString) {
+        pub fn write_string(&mut self, str: &UnsafeStringView) {
             self.print(format_args!("{str}"));
         }
 
@@ -3222,7 +3209,7 @@ pub mod formatter {
         #[inline(never)]
         fn write_property_key(
             writer: &mut WrappedWriter<'_>,
-            key: &ZigString,
+            key: &UnsafeStringView,
             is_symbol: bool,
             is_private_symbol: bool,
             quote_keys: bool,
@@ -3320,12 +3307,12 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut ZigString,
+            key: *mut UnsafeStringView,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*ZigString`.
+            // SAFETY: caller passes a valid `*UnsafeStringView`.
             let key = unsafe { &*key };
             if key.eql_comptime(b"constructor") {
                 return None;
@@ -3401,7 +3388,7 @@ pub mod formatter {
         pub extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
-            key: *mut ZigString,
+            key: *mut UnsafeStringView,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
@@ -3436,13 +3423,13 @@ pub mod formatter {
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<Option<ZigString>> {
-        let mut name_str = ZigString::init(b"");
+    ) -> JsResult<Option<UnsafeStringView>> {
+        let mut name_str = UnsafeStringView::init(b"");
         value.get_class_name(global_this, &mut name_str)?;
         if !name_str.eql_comptime(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-            return Ok(Some(ZigString::static_("[Object: null prototype]")));
+            return Ok(Some(UnsafeStringView::static_("[Object: null prototype]")));
         }
         Ok(None)
     }
@@ -3547,10 +3534,10 @@ pub mod formatter {
                 return Ok(());
             }
 
-            // Zig: `defer { if (... && remove_before_recurse) _ = this.map.remove(value); }`.
+            // Conditionally remove `value` from the visited map at scope exit.
             // The body mutates both `self` and `remove_before_recurse`, so
             // capture raw pointers and read the *current* `remove_before_recurse`
-            // at scope-exit time, exactly like Zig's late-evaluated `defer`.
+            // at scope-exit time.
             let _visited = VisitedRemove {
                 map: &raw mut self.map,
                 armed: &raw const remove_before_recurse,
@@ -3627,10 +3614,10 @@ pub mod formatter {
     // ───────────────────────────────────────────────────────────────────────
     // Per-tag helpers split out of print_as
     //
-    // In Zig these are inline `switch` arms in `printAs`, where the comptime
-    // `Format` parameter means each instantiation contains only one arm's
-    // code and stack locals. Rust does not DCE dead `match` arms on a const
-    // generic in debug builds, so keeping them inline would make every
+    // These were originally inline `switch` arms in `print_as`, where a
+    // compile-time `Format` parameter meant each instantiation contained only
+    // one arm's code and stack locals. Rust does not DCE dead `match` arms on
+    // a const generic in debug builds, so keeping them inline would make every
     // recursive `print_as` frame carry the union of all arms' locals. Each
     // body is therefore its own `#[inline(never)]` function.
     // ───────────────────────────────────────────────────────────────────────
@@ -3938,7 +3925,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let zstr = value.get_zig_string(self.global_this)?;
+            let zstr = value.get_unsafe_string_view(self.global_this)?;
             let out_str = zstr.slice();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
@@ -3970,11 +3957,11 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut number_name = ZigString::EMPTY;
+                let mut number_name = UnsafeStringView::EMPTY;
                 value.get_class_name(self.global_this, &mut number_name)?;
 
-                let mut number_value = ZigString::EMPTY;
-                value.to_zig_string(&mut number_value, self.global_this)?;
+                let mut number_value = UnsafeStringView::EMPTY;
+                value.to_unsafe_string_view(&mut number_value, self.global_this)?;
 
                 if number_name.slice() != b"Number" {
                     writer.add_for_new_line(
@@ -4377,10 +4364,10 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut bool_name = ZigString::EMPTY;
+                let mut bool_name = UnsafeStringView::EMPTY;
                 value.get_class_name(self.global_this, &mut bool_name)?;
-                let mut bool_value = ZigString::EMPTY;
-                value.to_zig_string(&mut bool_value, self.global_this)?;
+                let mut bool_value = UnsafeStringView::EMPTY;
+                value.to_unsafe_string_view(&mut bool_value, self.global_this)?;
 
                 if bool_name.slice() != b"Boolean" {
                     writer
@@ -4778,7 +4765,7 @@ pub mod formatter {
             js_type: jsc::JSType,
             remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
-            // LAYERING: the Zig spec walks an `if (value.as(T))` chain over
+            // LAYERING: the spec walks an `if (value.as(T))` chain over
             // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
             // `FetchHeaders`/`TimeoutObject`/`ImmediateObject`/`BuildMessage`/
             // `ResolveMessage`/Jest asymmetric matchers — all of which live in
@@ -4787,10 +4774,10 @@ pub mod formatter {
             // formatted `value`; otherwise we fall through to the generic
             // object printer below.
             if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                // Zig: `threadlocal var name_buf: [512]u8`. The hook only ever
-                // seeds a `ZigString` that `get_class_name` immediately
-                // overwrites with JSC-owned bytes, so a shared zero buffer is
-                // sufficient and keeps 512B off every recursive frame.
+                // The hook only ever seeds a `UnsafeStringView` that
+                // `get_class_name` immediately overwrites with JSC-owned bytes,
+                // so a shared zero buffer is sufficient and keeps 512B off
+                // every recursive frame.
                 static NAME_BUF: [u8; 512] = [0; 512];
                 let handled =
                     (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
@@ -4955,7 +4942,7 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    // Spec divergence: Zig's `.SetIterator` arm writes NOTHING in
+                    // Spec divergence: the upstream `.SetIterator` arm writes NOTHING in
                     // single-line mode (`if (count > 0 and !single_line) writeAll("\n")`),
                     // only `.MapIterator` writes a trailing space.
                     if count > 0 && label == "MapIterator" {
@@ -5106,9 +5093,9 @@ pub mod formatter {
                 }
             };
 
-            // PORT NOTE: Zig `@tagName(event_type)`. `EventType` is a transparent
-            // u8 newtype (non-exhaustive enum), so there is no derived `From<EventType>
-            // for &str`; only the two arms above can reach here.
+            // PORT NOTE: `EventType` is a transparent u8 newtype (non-exhaustive
+            // enum), so there is no derived `From<EventType> for &str`; only the
+            // two arms above can reach here.
             let event_tag_name: &'static str = match event_type {
                 EventType::MessageEvent => "MessageEvent",
                 EventType::ErrorEvent => "ErrorEvent",
@@ -5274,17 +5261,16 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            // PORT NOTE: Zig initialized `needs_space = false` / `tag_name_slice = .empty`,
-            // but both arms of the `type` if/else below assign them, so deferred init
-            // avoids the dead-store warning while keeping semantics identical.
+            // PORT NOTE: `needs_space` and `tag_name_slice` were originally
+            // pre-initialized, but both arms of the `type` if/else below assign
+            // them, so deferred init avoids the dead-store warning while keeping
+            // semantics identical.
             let mut needs_space: bool;
-            let mut tag_name_str = ZigString::init(b"");
+            let mut tag_name_str = UnsafeStringView::init(b"");
 
-            // PORT NOTE: Zig spelled this `ZigString.Slice` with an explicit
-            // `defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()`.
-            // The Rust `ZigStringSlice` enum frees on `Drop`, so the scopeguard
-            // is unnecessary.
-            let tag_name_slice: strings::ZigStringSlice;
+            // PORT NOTE: `UTF8Slice` frees on `Drop`, so no
+            // scopeguard is necessary.
+            let tag_name_slice: strings::UTF8Slice;
             let mut is_tag_kind_primitive = false;
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
@@ -5293,21 +5279,21 @@ pub mod formatter {
                 if _tag.cell == jsc::JSType::Symbol {
                     // nothing
                 } else if _tag.cell.is_string_like() {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    type_value.to_unsafe_string_view(&mut tag_name_str, self.global_this)?;
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
                     type_value.get_name_property(self.global_this, &mut tag_name_str)?;
                     if tag_name_str.len == 0 {
-                        tag_name_str = ZigString::init(b"NoName");
+                        tag_name_str = UnsafeStringView::init(b"NoName");
                     }
                 } else {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    type_value.to_unsafe_string_view(&mut tag_name_str, self.global_this)?;
                 }
 
                 tag_name_slice = tag_name_str.to_slice();
                 needs_space = true;
             } else {
-                tag_name_slice = ZigString::init(b"unknown").to_slice();
+                tag_name_slice = UnsafeStringView::init(b"unknown").to_slice();
                 needs_space = true;
             }
 
@@ -5461,7 +5447,7 @@ pub mod formatter {
                                 match tag.tag.tag() {
                                     Tag::String => {
                                         let children_string =
-                                            children.get_zig_string(self.global_this)?;
+                                            children.get_unsafe_string_view(self.global_this)?;
                                         if children_string.len == 0 {
                                             break 'print_children;
                                         }
@@ -6069,7 +6055,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
-    // Zig `fetchPut(id, null)` — replace with `None`, returning the previous.
+    // Replace the slot with `None`, returning the previous value.
     let Some(prev) = PENDING_TIME_LOGS
         .with_borrow_mut(|m| m.get_mut(&id).map(|slot| core::mem::replace(slot, None)))
     else {
@@ -6146,12 +6132,11 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's
-/// `ConsoleClient` vtable requires but Bun leaves unimplemented
-/// (zig:ConsoleObject.zig:3728-3793 hand-writes six identical
-/// `callconv(jsc.conv) void {}` stubs and `@export`s each). Two arms cover
-/// the two trailing-arg shapes the C++ side declares in
-/// `bindings/headers.h:686-694`: `(…, *const u8, usize)` for the title-string
-/// hooks and `(…, *mut ScriptArguments)` for the inspector-args hooks.
+/// `ConsoleClient` vtable requires but Bun leaves unimplemented (six identical
+/// no-op exported stubs). Two arms cover the two trailing-arg shapes the C++
+/// side declares in `bindings/headers.h:686-694`: `(…, *const u8, usize)` for
+/// the title-string hooks and `(…, *mut ScriptArguments)` for the
+/// inspector-args hooks.
 ///
 /// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
 /// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
@@ -6196,7 +6181,7 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
     unsafe {
         message_with_type_and_level(
-            core::ptr::null_mut(), // Zig passes `undefined` here
+            core::ptr::null_mut(), // unused console pointer
             MessageType::Log,
             MessageLevel::Debug,
             global_this,
@@ -6218,10 +6203,10 @@ console_noop_hooks!(
 #[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     ctype: *mut ConsoleObject,
-    // Zig spec types both as non-exhaustive `enum(u32) { ..., _ }`. Taking the
-    // exhaustive Rust enums by value at the C ABI would be UB on an
-    // out-of-range discriminant, so accept the raw `u32` (matching the C++
-    // header in `bindings/headers.h`) and clamp via `from_raw`.
+    // The C++ side treats both as non-exhaustive `u32`s. Taking the exhaustive
+    // Rust enums by value at the C ABI would be UB on an out-of-range
+    // discriminant, so accept the raw `u32` (matching the C++ header in
+    // `bindings/headers.h`) and clamp via `from_raw`.
     message_type: u32,
     level: u32,
     global: &JSGlobalObject,
@@ -6240,5 +6225,3 @@ pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
         )
     };
 }
-
-// ported from: src/jsc/ConsoleObject.zig

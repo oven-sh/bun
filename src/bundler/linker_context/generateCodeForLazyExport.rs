@@ -103,7 +103,7 @@ pub fn generate_code_for_lazy_export(
 
             struct Visitor<'a> {
                 inner_visited: &'a mut BitSet,
-                // Zig: `std.AutoArrayHashMap(Ref, void)` → `ArrayHashMap` per collections map.
+                // Insertion-ordered set of `Ref` — `ArrayHashMap` per collections map.
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
                 all_import_records: &'a [Vec<ImportRecord>],
@@ -312,9 +312,9 @@ pub fn generate_code_for_lazy_export(
                 }
             }
 
-            // PORT NOTE: Zig left `parts: undefined` and rebound per-iteration; Rust
-            // forbids uninit refs, so the Visitor is constructed inside the loop with
-            // a fresh `parts` borrow each time (reshaped for borrowck).
+            // PORT NOTE: original left `parts` uninitialized and rebound per-iteration;
+            // Rust forbids uninit refs, so the Visitor is constructed inside the loop
+            // with a fresh `parts` borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
@@ -361,7 +361,7 @@ pub fn generate_code_for_lazy_export(
                         tail_loc: stmt.loc,
                         tail: E::TemplateContents::Cooked(E::String::init(b"")),
                     });
-                    // PORT NOTE: Zig used an arena-backed ArrayList and moved `.items`
+                    // PORT NOTE: original used an arena-backed list and moved `.items`
                     // into `E.Template`; mirror that by moving into the linker arena
                     // (freed when the linker arena drops).
                     let parts_slice = bun_ast::StoreSlice::new_mut(
@@ -440,7 +440,7 @@ pub fn generate_code_for_lazy_export(
         _ => {
             // Otherwise, generate ES6 export statements. These are added as additional
             // parts so they can be tree shaken individually.
-            // PORT NOTE: Zig `part.stmts.len = 0` truncates the slice.
+            // PORT NOTE: original truncated the slice in place (`part.stmts.len = 0`).
             part.stmts = bun_ast::StoreSlice::EMPTY;
 
             if let ExprData::EObject(e_object) = &expr.data {
@@ -448,8 +448,8 @@ pub fn generate_code_for_lazy_export(
                     let _: &G::Property = property;
                     // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
                     // `key_str: StoreRef<E::EString>` is a mutable local — `slice()` resolves
-                    // the rope in-place via `DerefMut` into the arena slot (matches Zig's
-                    // `property.key.?.data.e_string.slice(...)` which takes `*String`).
+                    // the rope in-place via `DerefMut` into the arena slot (the original
+                    // `property.key.?.data.e_string.slice(...)` took a mutable string ptr).
                     let Some(key) = property.key else { continue };
                     let ExprData::EString(mut key_str) = key.data else {
                         continue;
@@ -551,5 +551,3 @@ pub fn generate_code_for_lazy_export(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/generateCodeForLazyExport.zig

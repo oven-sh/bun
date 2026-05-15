@@ -18,7 +18,7 @@ pub use crate::posix_event_loop::{
 bun_core::declare_scope!(KeepAlive, visible);
 bun_core::declare_scope!(FilePoll, visible);
 
-// Zig `windows_event_loop.zig:1` — `pub const Loop = uv.Loop;` — the raw
+// `Loop` is `uv.Loop` — the raw
 // `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`
 // in its `.uv_loop` field; callers that hold a `WindowsLoop*` project that
 // field themselves. See `VirtualMachine::event_loop_handle` /
@@ -123,10 +123,9 @@ impl FilePoll {
         // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
-        // Zig does `@ptrFromInt(@as(u64, @bitCast(this.fd)))`; `Fd` is
-        // `#[repr(transparent)]` over `u64` on Windows, so the bitcast is just
-        // the public backing field.
-        // SAFETY: see TODO above — preserved verbatim from Zig.
+        // `Fd` is `#[repr(transparent)]` over `u64` on Windows, so the
+        // pointer-from-int bitcast is just the public backing field.
+        // SAFETY: see TODO above — preserved verbatim.
         unsafe {
             uv::uv_unref(self.fd.0 as *mut uv::uv_handle_t);
         }
@@ -206,7 +205,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    // PORT NOTE: Zig takes `*Loop = *uv.Loop` here (`vm.event_loop_handle.?`),
+    // PORT NOTE: this takes `*Loop = *uv.Loop` here (`vm.event_loop_handle`),
     // but the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
     // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
     // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
@@ -300,8 +299,8 @@ impl Store {
             // SAFETY: intrusive deferred-free list; nodes are valid HiveArray slots
             // until put(). Walk via raw-pointer reads/writes only — materializing a
             // `&mut FilePoll` here would alias the `&mut self.hive` borrow taken by
-            // `put()` below (the slot may live inside the inline hive buffer). Zig's
-            // `*FilePoll` freely aliases, so raw-ptr discipline is the faithful port.
+            // `put()` below (the slot may live inside the inline hive buffer).
+            // The original `*FilePoll` freely aliased, so raw-ptr discipline is the faithful port.
             unsafe {
                 next = (*current).next_to_free;
                 (*current).next_to_free = ptr::null_mut();
@@ -323,7 +322,7 @@ impl Store {
 
         // SAFETY: `poll` is a valid HiveArray slot pointer. It may live inside
         // `self.hive.buffer`, so we access it via raw pointer only (no `&mut FilePoll`
-        // materialized) to avoid aliasing `&mut self` — Zig's `*FilePoll` freely aliases.
+        // materialized) to avoid aliasing `&mut self` — `*FilePoll` freely aliases.
         debug_assert!(unsafe { (*poll).next_to_free }.is_null());
 
         let tail = self.pending_free_tail;
@@ -399,13 +398,13 @@ impl Waker {
         self.loop_.uv_loop
     }
 
-    // TODO(port): Zig used @compileError here; on Windows these must never be linked.
+    // TODO(port): on Windows these must never be linked (was a compile-time error).
     #[allow(unused)]
     pub fn get_fd(&self) -> Fd {
         unreachable!("Waker.getFd is unsupported on Windows");
     }
 
-    // TODO(port): Zig used @compileError here; on Windows these must never be linked.
+    // TODO(port): on Windows these must never be linked (was a compile-time error).
     #[allow(unused)]
     pub fn init_with_file_descriptor(_fd: Fd) -> Waker {
         unreachable!("Waker.initWithFileDescriptor is unsupported on Windows");
@@ -416,7 +415,7 @@ impl Waker {
         // materialize a `&mut WindowsLoop` over the process-global singleton
         // for the entire duration of `us_loop_run`/`uv_run`, and a concurrent
         // `wake()` from a worker thread would alias it (two live `&mut T` to
-        // one allocation = UB under Stacked/Tree Borrows). The Zig spec uses
+        // one allocation = UB under Stacked/Tree Borrows). The intent is
         // a bare `*WindowsLoop` with no exclusivity; mirror that by calling
         // the C entry point with the raw pointer directly.
         // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton.
@@ -448,5 +447,3 @@ mod waker_c {
 // `Closer` (struct + close/on_close) was duplicated here and in
 // `crate::closer` (lib.rs); the canonical one is re-exported as
 // `bun_io::Closer`. No callers referenced `windows_event_loop::Closer`.
-
-// ported from: src/aio/windows_event_loop.zig

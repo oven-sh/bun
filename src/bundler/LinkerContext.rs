@@ -1,4 +1,4 @@
-//! Port of src/bundler/LinkerContext.zig
+//! Linker context for the bundler — second half of the bundle pipeline.
 
 use crate::mal_prelude::*;
 use core::mem::offset_of;
@@ -49,7 +49,7 @@ use crate::{
     ThreadPool, WrapKind,
 };
 
-/// `bun.jsc.AnyEventLoop` (LinkerContext.zig:28). `bun_event_loop` is a
+/// `bun.jsc.AnyEventLoop` . `bun_event_loop` is a
 /// lower-tier crate, so the bundler can name the real enum (the `Js` arm
 /// holds an erased `*mut jsc::EventLoop` driven through a vtable). Stored as
 /// a pointer because the linker borrows the loop owned by the
@@ -63,7 +63,7 @@ bun_core::declare_scope!(TreeShake, hidden);
 // CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
 // (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
 // `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
-// the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
+// the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.
 // ══════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "show_crash_trace")]
 bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
@@ -127,7 +127,7 @@ pub fn bundle_generate_chunk_action(
     bun_crash_handler::Action::BundleGenerateChunk(())
 }
 
-// Scoped-log wrappers (LinkerContext.zig:2, :2705); re-exported so `linker_context/*` submodules import directly.
+// Scoped-log wrappers ; re-exported so `linker_context/*` submodules import directly.
 bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
@@ -171,7 +171,7 @@ pub use crate::linker_context::prepare_css_asts_for_chunk::{
 pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 
-// TODO(port): DeferredBatchTask, ParseTask re-exports — Zig re-exports from bundle_v2
+// TODO(port): DeferredBatchTask, ParseTask re-exports — historically re-exported from bundle_v2
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
@@ -234,7 +234,7 @@ pub struct LinkerContext<'a> {
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
 // `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
-// to disjoint SoA slots (see `compute_line_offsets`). This mirrors Zig's
+// to disjoint SoA slots (see `compute_line_offsets`). This mirrors the original's
 // freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for LinkerContext<'a> {}
 unsafe impl<'a> Sync for LinkerContext<'a> {}
@@ -267,7 +267,7 @@ impl<'a> Default for LinkerContext<'a> {
 
 impl<'a> LinkerContext<'a> {
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
-    /// field. Mirrors Zig `@fieldParentPtr("linker", c)`. Returns raw; caller
+    /// field. Mirrors the original `@fieldParentPtr("linker", c)`. Returns raw; caller
     /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
     /// on worker-pool threads and MUST NOT materialize `&mut BundleV2`).
     ///
@@ -416,7 +416,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn mark_pending_task_done(&self) {
-        // Zig: `.monotonic` → Rust `Relaxed` (LLVM `monotonic` == C11 `relaxed`).
+        // `.monotonic` → Rust `Relaxed` (LLVM `monotonic` == C11 `relaxed`).
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
@@ -429,9 +429,9 @@ impl<'a> LinkerContext<'a> {
             && record.source_index.get() != source_index
     }
 
-    /// Spec: `LinkerContext.zig:checkForMemoryCorruption`.
+    /// Spec: `LinkerContext::checkForMemoryCorruption`.
     ///
-    /// PORT NOTE: the Zig body calls `parse_graph.heap.helpCatchMemoryIssues()`
+    /// PORT NOTE: the original body calls `parse_graph.heap.helpCatchMemoryIssues()`
     /// (a `MimallocArena` debug hook). `Graph.heap` is currently
     /// `bun_alloc::Arena = bumpalo::Bump`, which has no such hook, so this is a
     /// no-op until the arena type is swapped to the real `MimallocArena`. The
@@ -447,7 +447,7 @@ impl<'a> LinkerContext<'a> {
 
 // Local re-exports for the un-gated tree-shaking impl below. `EntryPoint::Kind`
 // and `SideEffects` live in sibling modules; the Phase-A draft referenced them
-// via Zig-style nested paths. The real `EntryPoint` lives in
+// via legacy nested paths. The real `EntryPoint` lives in
 // `ungate_support::entry_point`; re-export so `EntryPoint::Kind` here is the
 // *same type* `items_entry_point_kind()` returns (was a duplicate enum before).
 #[allow(non_snake_case)]
@@ -503,7 +503,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// `bundle` is taken as a raw `*mut` because the caller invokes this as
-    /// `self.linker.load(self, …)` (Zig spec bundle_v2.zig:2574) — `self` *is*
+    /// `self.linker.load(self, …)` (the original bundle_v2) — `self` *is*
     /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
     /// under Stacked Borrows. This body only reaches into fields of `*bundle`
     /// that are disjoint from `linker` (`graph`, `transpiler`,
@@ -532,7 +532,7 @@ impl<'a> LinkerContext<'a> {
         // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
         let transpiler = unsafe { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
-        // Mirrors Zig's pointer assignment; `transpiler.log` is the canonical
+        // Mirrors the original's pointer assignment; `transpiler.log` is the canonical
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
         self.log = transpiler.log;
 
@@ -549,7 +549,7 @@ impl<'a> LinkerContext<'a> {
         self.cycle_detector = Vec::new();
 
         // PORT NOTE: `reachable_files` is `Vec<Index>`; clone the
-        // caller-owned slice into the linker arena. PERF(port): Zig pointed at
+        // caller-owned slice into the linker arena. PERF(port): the original pointed at
         // the slice in-place; revisit once Vec grows a borrowed-view ctor.
         self.graph.reachable_files = reachable.to_vec();
 
@@ -702,7 +702,7 @@ impl<'a> LinkerContext<'a> {
         // field of `BundleV2.linker` (= `*self`). The two are disjoint, and no
         // other `&`/`&mut` to `BundleV2.graph` is live for this scope —
         // `self.graph` below is `LinkerGraph`, a distinct allocation.
-        // PORT NOTE: reshaped for borrowck — Zig held overlapping `&`/`&mut`
+        // PORT NOTE: reshaped for borrowck — the original held overlapping `&`/`&mut`
         // into `parse_graph.html_imports` and `parse_graph.input_files`; here
         // we go through raw pointers and reborrow per use.
         let parse_graph: *mut Graph = self.parse_graph;
@@ -742,7 +742,7 @@ impl<'a> LinkerContext<'a> {
                 // S.LazyExport is a call to __jsonParse.
                 // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer;
                 // valid for the link step. Each accessor returns `Option`;
-                // `.unwrap()` mirrors Zig's untagged-union field reads (panic
+                // `.unwrap()` mirrors the original's untagged-union field reads (panic
                 // on shape mismatch).
                 let original_ref = unsafe {
                     (*self.graph.ast.items_parts()[html_import as usize]
@@ -919,7 +919,7 @@ impl<'a> LinkerContext<'a> {
         let _trace = bun::perf::trace("Bundler.treeShakingAndCodeSplitting");
 
         // PORT NOTE: reshaped for borrowck — these slices alias into self.graph;
-        // Zig held them simultaneously. The SoA columns are physically disjoint
+        // the original held them simultaneously. The SoA columns are physically disjoint
         // and the underlying slabs don't reallocate during tree-shaking, so we
         // cache raw column base pointers and reborrow at each recursive call.
         let parts: *mut [Vec<Part>] = self.graph.ast.items_parts_mut();
@@ -1094,7 +1094,7 @@ impl<'a> LinkerContext<'a> {
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
 
-        // PERF(port): Zig threaded `worker.arena` through StringJoiner /
+        // PERF(port): the original threaded `worker.arena` through StringJoiner /
         // MutableString; the Rust ports use the global mimalloc, so the joiner
         // is arena-free here. Revisit when arena threading lands.
         let mut j = StringJoiner::default();
@@ -1123,7 +1123,7 @@ impl<'a> LinkerContext<'a> {
                 let path = &sources[index as usize].path;
                 source_id_map.put_no_clobber(index, 0)?;
 
-                // PORT NOTE: Zig mutated a local copy's `path.pretty` from the
+                // PORT NOTE: the original mutated a local copy's `path.pretty` from the
                 // worker arena; we keep the relative path in a local owned
                 // buffer instead (drops at scope exit — same lifetime as the
                 // arena slice).
@@ -1288,7 +1288,7 @@ pub enum LinkError {
 bun_core::oom_from_alloc!(LinkError);
 impl From<BunError> for LinkError {
     fn from(_: BunError) -> Self {
-        // TODO(port): narrow error set — Zig's `try this.load()` is `!void` (anyerror)
+        // TODO(port): narrow error set — the original's `try this.load()` is `!void` (anyerror)
         LinkError::BuildFailed
     }
 }
@@ -1383,7 +1383,7 @@ impl Default for SourceMapDataTask {
         Self {
             ctx: None,
             source_index: 0,
-            // Spec `LinkerContext.zig:101`: default task callback is `&runLineOffset`.
+            // Spec `LinkerContext`: default task callback is `&runLineOffset`.
             thread_task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
                 callback: Self::run_line_offset,
@@ -1459,7 +1459,7 @@ impl SourceMapDataTask {
         // stack traces can show the source code, even after incremental
         // rebuilds occur.
         //
-        // PORT NOTE: Zig branched on `worker.ctx.transpiler.options.dev_server`
+        // PORT NOTE: the original branched on `worker.ctx.transpiler.options.dev_server`
         // to pick `dev.arena()` vs `worker.arena`, but
         // `computeQuotedSourceContents` discards the arena parameter
         // (`_: std.mem.Allocator`) — it always allocates via
@@ -1476,7 +1476,7 @@ impl SourceMapDataTask {
 impl SourceMapData {
     /// Runs concurrently across the worker pool (one task per `source_index`).
     /// Takes [`ParentRef<LinkerContext>`](bun_ptr::ParentRef) (not `&mut`)
-    /// because Zig's `*LinkerContext` freely aliases across threads —
+    /// because the original's `*LinkerContext` freely aliases across threads —
     /// materializing `&mut LinkerContext` here while peer tasks hold the same
     /// pointer would be aliased-mut UB. `ParentRef::Deref` yields
     /// `&LinkerContext` (SharedReadOnly) for all SoA-header reads; each task
@@ -1571,7 +1571,7 @@ impl SourceMapData {
 // other fields are POD.
 #[derive(Clone, Default)]
 pub struct MatchImport {
-    alias: bun_ast::StoreStr, // Zig string borrowed from AST arena
+    alias: bun_ast::StoreStr, // string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
     source_index: u32,
@@ -1611,7 +1611,7 @@ pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 /// PORT NOTE: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
 /// `Ctx: Sync + Copy` and the same context is observed from every worker
 /// thread. Each task only writes to its own `*mut Chunk` slot; reads of
-/// `c`/`chunks` are disjoint or read-only per the Zig spec.
+/// `c`/`chunks` are disjoint or read-only per the the original.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
     pub c: bun_ptr::ParentRef<LinkerContext<'a>>,
@@ -1628,7 +1628,7 @@ pub struct GenerateChunkCtx<'a> {
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
     pub chunk: bun_ptr::BackRef<Chunk>,
 }
-// SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
+// SAFETY: see PORT NOTE above — mirrors the original's freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
 
@@ -1674,11 +1674,11 @@ pub struct PendingPartRange<'a> {
 /// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
 /// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
 /// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop — Zig: `defer worker.unget()`).
+/// as a scopeguard that calls `unget()` on drop — `defer worker.unget()`).
 ///
 /// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
 /// through `&GenerateChunkCtx` preserves the mutable provenance they were
-/// constructed with in `generate_chunks_in_parallel`. This mirrors Zig's
+/// constructed with in `generate_chunks_in_parallel`. This mirrors the original's
 /// `*LinkerContext` / `*Chunk` semantics where many `PendingPartRange` tasks
 /// share one `chunk_ctx` across worker threads.
 ///
@@ -1744,7 +1744,7 @@ struct SubstituteChunkFinalPathResult {
 // TODO(b2-blocked): scan/tree-shake/link method bodies. These reach into
 // `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
 // gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
-// and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
+// and `css::css_modules`. The bodies are real ports of `LinkerContext`
 // and un-gate together with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
@@ -1878,7 +1878,7 @@ impl<'a> LinkerContext<'a> {
         meta_flags: &mut [crate::ungate_support::js_meta::Flags],
         ast_import_records: &[Vec<ImportRecord>],
     ) -> Result<TlaCheck, AllocError> {
-        // PORT NOTE: reshaped for borrowck — Zig held &mut tla_checks[source_index] across recursive
+        // PORT NOTE: reshaped for borrowck — the original held &mut tla_checks[source_index] across recursive
         // calls that also mutate tla_checks. We re-index after each recursion.
         if tla_checks[source_index as usize].depth == 0 {
             tla_checks[source_index as usize].depth = 1;
@@ -2258,7 +2258,7 @@ impl<'a> LinkerContext<'a> {
         };
 
         writer.buffer.reset();
-        // PORT NOTE: Zig moved `*writer` into the printer by value and wrote it
+        // PORT NOTE: the original moved `*writer` into the printer by value and wrote it
         // back via `defer writer.* = printer.ctx;`. `BufferWriter` isn't
         // `Clone`/`Default` in Rust; move it through `mem::replace` with a
         // freshly-initialized writer instead.
@@ -2267,9 +2267,9 @@ impl<'a> LinkerContext<'a> {
             js_printer::BufferWriter::init(),
         ));
 
-        // PORT NOTE: Zig's `ast.toAST()` bitwise-copies every field of
+        // PORT NOTE: the original's `ast.toAST()` bitwise-copies every field of
         // `*const BundledAst` into a stack `Ast` that is never deinit'd. The
-        // Rust collections aren't `Copy`, so mirror the Zig shallow copy via
+        // Rust collections aren't `Copy`, so mirror the original shallow copy via
         // `ptr::read` + `ManuallyDrop` (the resulting `Ast` aliases `ast`'s
         // storage; dropping it would double-free).
         // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
@@ -2280,7 +2280,7 @@ impl<'a> LinkerContext<'a> {
         // printer struct stores it with a single lifetime), but `Renamer`'s
         // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
         // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
-        // Zig threads it as a raw pointer (no lifetimes). Rebind via a
+        // The original threads it as a raw pointer (no lifetimes). Rebind via a
         // lifetime-only cast — sound because the renamer's borrowed data
         // (symbol map, source) strictly outlives this call.
         // SAFETY: lifetime-only erase; layout identical across instantiations.
@@ -2372,7 +2372,7 @@ impl<'a> LinkerContext<'a> {
                     let mut symbol = symbol_;
                     if symbol.kind == bun_ast::symbol::Kind::LocalCss {
                         let r#ref = 'follow: {
-                            // PORT NOTE: Zig set `.tag = .symbol` after `init`;
+                            // PORT NOTE: the original set `.tag = .symbol` after `init`;
                             // `Ref` is packed in Rust — construct via `new`.
                             let mut r#ref = Ref::new(
                                 u32::try_from(inner_index).expect("int cast"),
@@ -2533,7 +2533,7 @@ impl<'a> LinkerContext<'a> {
 
         // Mix in the hash for this chunk
         let chunk = &chunks[index as usize];
-        // PORT NOTE: Zig `std.mem.asBytes(&u64)` → native-endian byte view.
+        // PORT NOTE: the original `std.mem.asBytes(&u64)` → native-endian byte view.
         hash.write(&chunk.isolated_hash.to_ne_bytes());
     }
 
@@ -2545,7 +2545,7 @@ impl<'a> LinkerContext<'a> {
     ) {
         list.clear();
         list.reserve(export_refs.count());
-        // PORT NOTE: Zig set .items.len = count() then indexed; Rust pushes
+        // PORT NOTE: the original set .items.len = count() then indexed; Rust pushes
         for &export_ref in export_refs.keys() {
             #[cfg(debug_assertions)]
             {
@@ -2578,7 +2578,7 @@ impl<'a> LinkerContext<'a> {
             }
         });
     }
-} // end  — split: tree-shaking trio un-gated below (B-2 second pass)
+} // end — split: tree-shaking trio un-gated below (B-2 second pass)
 
 /// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
 /// can call back into `LinkerContext::require_or_import_meta_for_source`.
@@ -2607,7 +2607,7 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distances: &mut [u32],
         distance: u32,
-        // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
+        // The original passes `parts: []Vec(Part)` and only
         // reads it. `&mut` here forced an aliased reborrow against the
         // `parts_in_file` slice below — borrowck conflict in un-gated code.
         parts: &[Vec<Part>],
@@ -2732,7 +2732,7 @@ impl<'a> LinkerContext<'a> {
                         .path
                         .pretty
                 ),
-                // PORT NOTE: Zig printed `target.bakeGraph()` (a `bake.Graph` tag);
+                // PORT NOTE: the original printed `target.bakeGraph()` (a `bake.Graph` tag);
                 // `bake_graph()` lives in `bun_bake` (tier-6 — would back-edge).
                 // The debug log only needs a stable label, so print the `Target`
                 // tag directly via its `IntoStaticStr` derive.
@@ -2910,7 +2910,7 @@ impl<'a> LinkerContext<'a> {
                 } else {
                     Loc::EMPTY.start
                 },
-                // Zig used `@tagName(stmts[0].data)`. `StmtData::tag()` → `StmtTag` which
+                // the original used `@tagName(stmts[0].data)`. `StmtData::tag()` → `StmtTag` which
                 // derives `strum::IntoStaticStr`.
                 if !stmts.is_empty() {
                     <&'static str>::from(stmts[0].data.tag())
@@ -2974,8 +2974,8 @@ impl<'a> LinkerContext<'a> {
 // `scanImportsAndExports.rs` callees — un-gated (B-2 third pass).
 //
 // `linker_context/scanImportsAndExports.rs` calls these `LinkerContext`
-// methods inherently. Real ports of the `LinkerContext.zig` /
-// `linker_context/doStep5.zig` / `linker_context/generateCodeForLazyExport.zig`
+// methods inherently. Real ports of the `LinkerContext` /
+// `linker_context/doStep5` / `linker_context/generateCodeForLazyExport`
 // bodies. The `` impl block immediately below retains the
 // Phase-A drafts (now duplicated) until the next sweep removes them.
 // ══════════════════════════════════════════════════════════════════════════
@@ -2985,15 +2985,15 @@ impl<'a> LinkerContext<'a> {
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 
-// `bundle_v2.zig:ImportTracker.{Status,Iterator}` — canonical definition lives
-// in `bundle_v2.rs` (matches Zig spec location). Re-exported here so the 30+
+// `bundle_v2:ImportTracker.{Status,Iterator}` — canonical definition lives
+// in `bundle_v2.rs` (matches the original location). Re-exported here so the 30+
 // unqualified uses in `advance_import_tracker` / `match_import_with_export`
 // below resolve unchanged.
 pub use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 
 /// Field-wise eq for `ImportTracker` — `crate::ImportTracker` (the
 /// `ungate_support` flavour) intentionally does not derive `PartialEq` so the
-/// cycle-detector loop spells the comparison explicitly (matches Zig's
+/// cycle-detector loop spells the comparison explicitly (matches the original's
 /// `eql(ImportTracker)` shape).
 #[inline]
 fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
@@ -3003,32 +3003,32 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
 }
 
 impl<'a> LinkerContext<'a> {
-    /// Spec: `LinkerContext.zig:1298 runtimeFunction`.
+    /// Spec: `LinkerContext::runtimeFunction`.
     #[inline]
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
         self.graph.runtime_function(name)
     }
 
-    /// Spec: `LinkerContext.zig:2150 topLevelSymbolsToParts`.
+    /// Spec: `LinkerContext::topLevelSymbolsToParts`.
     #[inline]
     pub fn top_level_symbols_to_parts(&self, id: u32, r#ref: Ref) -> &[u32] {
         self.graph.top_level_symbol_to_parts(id, r#ref)
     }
 
-    /// Spec: `LinkerContext.zig:2154 topLevelSymbolsToPartsForRuntime`.
+    /// Spec: `LinkerContext::topLevelSymbolsToPartsForRuntime`.
     #[inline]
     pub fn top_level_symbols_to_parts_for_runtime(&self, r#ref: Ref) -> &[u32] {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
-    /// Spec: `LinkerContext.zig:489 source_`.
+    /// Spec: `LinkerContext::source_`.
     ///
     /// PORT NOTE: returns `'static` so callers can hold the source across a
     /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
     /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
     pub fn get_source<I: TryInto<usize>>(&self, index: I) -> &'static Source {
-        // PORT NOTE: Zig spec is `index: anytype`; callers pass both `u32` and
+        // PORT NOTE: the original spec is `index: anytype`; callers pass both `u32` and
         // `usize`. Route through `TryInto<usize>` so the SoA index works for
         // either width without forcing `as`-casts at every call site.
         let index: usize = match index.try_into() {
@@ -3042,7 +3042,7 @@ impl<'a> LinkerContext<'a> {
         unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
     }
 
-    /// Spec: `LinkerContext.zig:496 scanCSSImports`.
+    /// Spec: `LinkerContext::scanCSSImports`.
     ///
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
     /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
@@ -3107,7 +3107,7 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `LinkerContext.zig:2158 createWrapperForFile`.
+    /// Spec: `LinkerContext::createWrapperForFile`.
     pub fn create_wrapper_for_file(
         &mut self,
         wrap: WrapKind,
@@ -3137,7 +3137,7 @@ impl<'a> LinkerContext<'a> {
                 let common_js_parts =
                     self.top_level_symbols_to_parts_for_runtime(self.cjs_runtime_ref);
 
-                // PORT NOTE: reshaped for borrowck — Zig held `runtime_parts`
+                // PORT NOTE: reshaped for borrowck — the original held `runtime_parts`
                 // simultaneously with the mutable graph borrows below; the inner
                 // loop is empty (`if r#ref.eql(...) continue;` only) so it's a
                 // no-op kept for parity with the original.
@@ -3336,10 +3336,10 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `LinkerContext.zig:1710 advanceImportTracker`.
+    /// Spec: `LinkerContext::advanceImportTracker`.
     pub fn advance_import_tracker(&mut self, tracker: &ImportTracker) -> ImportTrackerIterator {
         let id = tracker.source_index.get();
-        // PORT NOTE: reshaped for borrowck — Zig held `&mut named_imports[id]`
+        // PORT NOTE: reshaped for borrowck — the original held `&mut named_imports[id]`
         // and `&import_records[id]` simultaneously; here we read `named_import`
         // out first, then borrow the rest.
         let named_import: &NamedImport =
@@ -3515,14 +3515,14 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `LinkerContext.zig:1443 matchImportWithExport`.
+    /// Spec: `LinkerContext::matchImportWithExport`.
     pub fn match_import_with_export(
         &mut self,
         init_tracker: ImportTracker,
         re_exports: &mut Vec<Dependency>,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
-        // PORT NOTE: Zig's `defer cycle_detector.shrinkRetainingCapacity` is
+        // PORT NOTE: the original's `defer cycle_detector.shrinkRetainingCapacity` is
         // lowered to an explicit `truncate` after the `'loop_` below — the only
         // exits are the three `return`s that follow it, so a single post-loop
         // truncate covers every path. A scopeguard holding a raw `*mut` into
@@ -3886,21 +3886,21 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    /// Spec: `LinkerContext.zig:2471 matchImportsWithExportsForFile`.
+    /// Spec: `LinkerContext::matchImportsWithExportsForFile`.
     pub fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
         imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
     ) {
-        // PORT NOTE: Zig clones into a local, sorts, iterates, then writes back.
+        // PORT NOTE: the original clones into a local, sorts, iterates, then writes back.
         // `ArrayHashMap` has no in-place key sort and `NamedImport` is non-Clone
         // (owns a `Vec`), so we sort an index vector over the live
         // keys/values instead — same observable iteration order (ascending
         // `inner_index`). The write-back is a no-op here since we never mutate
         // the map.
         //
-        // The Zig clone existed to break the alias between this parameter and
+        // The original clone existed to break the alias between this parameter and
         // `self.graph.ast.named_imports[source_index]`, which
         // `match_import_with_export` re-reads via the SoA column. Taking the
         // parameter as a raw `*const` (no uniqueness assertion) and reading
@@ -4054,10 +4054,10 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `linker_context/generateCodeForLazyExport.zig`.
+    /// Spec: `linker_context/generateCodeForLazyExport`.
     ///
     /// Thin inherent-method shim so callers can write
-    /// `this.generate_code_for_lazy_export(id)` (matches Zig's
+    /// `this.generate_code_for_lazy_export(id)` (matches the original's
     /// `pub const generateCodeForLazyExport = @import(...)`). The full body —
     /// including the CSS-modules `composes`/`local_scope` Visitor — lives in
     /// `linker_context/generateCodeForLazyExport.rs`.
@@ -4072,7 +4072,7 @@ impl<'a> LinkerContext<'a> {
         )
     }
 
-    /// Spec: `LinkerContext.zig:503 generateNamedExportInFile`.
+    /// Spec: `LinkerContext::generateNamedExportInFile`.
     pub fn generate_named_export_in_file(
         &mut self,
         source_index: crate::IndexInt,
@@ -4143,10 +4143,10 @@ impl<'a> LinkerContext<'a> {
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
-        // PORT NOTE: Zig had `errdefer j.deinit()` around the initCapacity — Drop handles it.
+        // PORT NOTE: the original had `errdefer j.deinit()` around the initCapacity — Drop handles it.
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
         // errdefer pieces.deinit() — Drop handles it
-        // PORT NOTE: Zig used `j.done(alloc)` (worker arena), so the joined
+        // PORT NOTE: the original used `j.done(alloc)` (worker arena), so the joined
         // buffer outlived this function. The Rust `StringJoiner::done()`
         // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
         // (each `OutputPiece` stores a raw `*const u8` into it). It is moved
@@ -4242,7 +4242,7 @@ impl<'a> LinkerContext<'a> {
 // PartialEq for MatchImport (needed for std.meta.eql in match_import_with_export)
 impl PartialEq for MatchImport {
     fn eq(&self, other: &Self) -> bool {
-        // PORT NOTE: Zig `std.meta.eql` on a slice compares ptr+len, not contents —
+        // PORT NOTE: the original `std.meta.eql` on a slice compares ptr+len, not contents —
         // compare the raw fat pointer (address + length metadata).
         std::ptr::eq(self.alias.as_raw(), other.alias.as_raw())
             && self.kind == other.kind
@@ -4343,7 +4343,7 @@ impl InsideWrapperPrefix {
         }
 
         // PORT NOTE: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
-        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` mirrors Zig's
+        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` mirrors the original's
         // untagged-union field reads (panic on shape mismatch).
         let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
             .data
@@ -4473,5 +4473,3 @@ pub enum StmtListWhich {
     InsideWrapperSuffix,
     AllStmts,
 }
-
-// ported from: src/bundler/LinkerContext.zig

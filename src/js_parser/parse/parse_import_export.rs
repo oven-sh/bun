@@ -8,8 +8,7 @@ use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef};
 use bun_core::Error;
 
-// Zig: `fn ParseImportExport(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -118,7 +117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // this variable should not exist if we're not in a typescript file
-        // PORT NOTE: in Zig this var was comptime-gated to only exist when TS is enabled;
+        // PORT NOTE: this var was originally compile-time-gated to only exist when TS is enabled;
         // in Rust we declare it unconditionally — dead-store elim removes it when !TS.
         let mut had_type_only_imports = false;
 
@@ -472,5 +471,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 }
-
-// ported from: src/js_parser/ast/parseImportExport.zig

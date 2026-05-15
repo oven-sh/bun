@@ -2,7 +2,7 @@ use core::ffi::c_int;
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSValue, VM};
-use bun_core::{self as bstr, ZigString};
+use bun_core::{self as bstr, UnsafeStringView};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for WebCore::DOMURL (C++ side).
@@ -11,15 +11,14 @@ bun_opaque::opaque_ffi! {
 
 // TODO(port): move to jsc_sys
 //
-// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `ZigString`/`c_int`
+// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `UnsafeStringView`/`c_int`
 // out-params are plain `#[repr(C)]` PODs whose `&mut` is exclusive for the
 // call → `safe fn`.
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
     safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
-    // These two are referenced via `bun.cpp.*` in the Zig source.
-    safe fn WebCore__DOMURL__href_(this: &DOMURL, out: &mut ZigString);
-    safe fn WebCore__DOMURL__pathname_(this: &DOMURL, out: &mut ZigString);
+    safe fn WebCore__DOMURL__href_(this: &DOMURL, out: &mut UnsafeStringView);
+    safe fn WebCore__DOMURL__pathname_(this: &DOMURL, out: &mut UnsafeStringView);
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
@@ -51,12 +50,12 @@ impl DOMURL {
         )
     }
 
-    pub fn href_(&mut self, out: &mut ZigString) {
+    pub fn href_(&mut self, out: &mut UnsafeStringView) {
         WebCore__DOMURL__href_(self, out)
     }
 
-    pub fn href(&mut self) -> ZigString {
-        let mut out = ZigString::EMPTY;
+    pub fn href(&mut self) -> UnsafeStringView {
+        let mut out = UnsafeStringView::EMPTY;
         self.href_(&mut out);
         out
     }
@@ -74,15 +73,13 @@ impl DOMURL {
         Ok(path)
     }
 
-    pub fn pathname_(&mut self, out: &mut ZigString) {
+    pub fn pathname_(&mut self, out: &mut UnsafeStringView) {
         WebCore__DOMURL__pathname_(self, out)
     }
 
-    pub fn pathname(&mut self) -> ZigString {
-        let mut out = ZigString::EMPTY;
+    pub fn pathname(&mut self) -> UnsafeStringView {
+        let mut out = UnsafeStringView::EMPTY;
         self.pathname_(&mut out);
         out
     }
 }
-
-// ported from: src/jsc/DOMURL.zig

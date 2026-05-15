@@ -1,5 +1,3 @@
-//! Port of `src/runtime/socket/socket.zig`.
-//!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 //!
 //! The full method-body port lives in `socket_body.rs`; this module wires the
@@ -8,8 +6,11 @@
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 
+// `pub` so `generated_js2native.rs` can reach `crate::socket::socket_body::js_*`
+// directly (the `$rust("runtime/socket/socket_body.rs", …)` call sites name this
+// file on disk).
 #[path = "socket_body.rs"]
-mod socket_body;
+pub mod socket_body;
 
 #[path = "SocketAddress.rs"]
 pub mod socket_address;
@@ -37,7 +38,6 @@ pub mod windows_named_pipe_context;
 pub mod ssl_wrapper {
     pub use bun_uws::ssl_wrapper::*;
 
-    /// Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
     pub fn init<T: Copy>(
@@ -93,7 +93,7 @@ pub type WindowsNamedPipeContext = ();
 /// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
 /// resolve against the real struct, not an opaque placeholder.
 pub mod udp_socket {
-    /// `generated_js2native.rs` lowers `$zig(udp_socket.zig, UDPSocket.jsConnect)`
+    /// `generated_js2native.rs` lowers `$rust(udp_socket.rs, UDPSocket.jsConnect)`
     /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
     /// `udp_socket` segment is the snake-cased struct name; aliasing the type
     /// lets the associated-fn path resolve directly.
@@ -101,20 +101,6 @@ pub mod udp_socket {
     pub use super::udp_socket_draft::*;
 }
 pub use udp_socket::UDPSocket;
-
-/// Codegen path alias.
-///
-/// `generated_js2native.rs` lowers `$zig(socket.zig, fnName)` to
-/// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
-/// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
-/// `mod.rs` as the wiring layer, so re-export the js2native entry points under
-/// the name the generator expects rather than special-casing the generator.
-pub mod socket {
-    pub use super::socket_body::{
-        js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls,
-    };
-}
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
@@ -187,5 +173,3 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         let _ = unsafe { NewSocket::on_handshake(this, s, ok, err) };
     }
 }
-
-// ported from: src/runtime/socket/socket.zig

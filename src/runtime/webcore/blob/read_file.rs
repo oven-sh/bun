@@ -42,10 +42,8 @@ macro_rules! log {
 // NewReadFileHandler
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `pub fn NewReadFileHandler(comptime Function: anytype) type`
-///
-/// `F` provides the comptime callback that converts the read bytes to a JSValue.
-/// Modelled as a trait so each instantiation monomorphizes like the Zig
+/// `F` provides the callback that converts the read bytes to a JSValue.
+/// Modelled as a trait so each instantiation monomorphizes like the original
 /// type-generator did.
 pub trait ReadFileToJs {
     /// `by` carries the caller's allocation provenance unchanged:
@@ -73,12 +71,11 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
     }
 }
 
-/// Models Zig's `comptime callback: fn(ctx: Context, bytes: ReadFileResultType) bun.JSTerminated!void`
-/// (and `comptime Handler: type` for `ReadFileUV.start`). Monomorphized per
+/// Models the `callback: fn(ctx: Context, bytes: ReadFileResultType) bun.JSTerminated!void`
+/// (and the `Handler` type for `ReadFileUV.start`). Monomorphized per
 /// call-site type so the erased shim calls `C::run` directly and
-/// `on_complete_ctx` carries the **raw** `*mut C` — no heap wrapper, matching
-/// the Zig spec where any code introspecting `onCompleteCtx` sees the original
-/// context pointer.
+/// `on_complete_ctx` carries the **raw** `*mut C` — no heap wrapper, so
+/// any code introspecting `onCompleteCtx` sees the original context pointer.
 pub trait ReadFileCompletion {
     fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
 }
@@ -104,7 +101,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                     blob.size
                         .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
-                // Zig defined a local `WrappedFn` struct to adapt the comptime
+                // The original used a local `WrappedFn` struct to adapt the
                 // `Function` into the `toJSHostCall` shape; Rust closures + the
                 // `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // give the same source-location/exception-scope behaviour.
@@ -135,7 +132,7 @@ pub struct ReadFileRead {
     /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
     /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
     /// consumer reclaims via `heap::take` — there is no borrow case left
-    /// (Zig's `is_temporary = false` arm is unreachable here; only the two
+    /// (The `is_temporary = false` arm is unreachable here; only the two
     /// finishers below construct this type and both hand off owned bytes).
     /// Stored as a raw pointer rather than `Box<[u8]>` because the
     /// `NewReadFileHandler` consumer forwards it straight into
@@ -145,7 +142,7 @@ pub struct ReadFileRead {
     pub total_size: SizeType,
 }
 
-/// Zig: `SystemError.Maybe(ReadFileRead)`
+/// `SystemError.Maybe(ReadFileRead)` — either a successful read or a system error.
 pub enum ReadFileResultType {
     Result(ReadFileRead),
     Err(SystemError),
@@ -196,8 +193,7 @@ pub struct ReadFile {
 
 bun_threading::intrusive_work_task!(ReadFile, task);
 
-// Zig: `pub const getFd = FileOpener(@This()).getFd;` / `doClose = FileCloser(@This()).doClose;`
-// — modeled as trait impls; the default methods on the traits provide the bodies.
+// `getFd` / `doClose` — modeled as trait impls; the default methods on the traits provide the bodies.
 impl FileOpener for ReadFile {
     fn opened_fd(&self) -> Fd {
         self.opened_fd
@@ -316,9 +312,9 @@ impl ReadFile {
         }
     }
 
-    // Zig: `if (Environment.isWindows) @compileError("…")` — Zig analyzes this
-    // lazily (only fires if a Windows caller reaches it). Rust's `compile_error!`
-    // is eager, so we gate the whole fn instead; Windows callers use ReadFileUV.
+    // The original guarded this with a lazy compile-time error (only fired if a
+    // Windows caller reached it). Rust's `compile_error!` is eager, so we gate
+    // the whole fn instead; Windows callers use ReadFileUV.
     #[cfg(not(windows))]
     pub fn create_with_ctx(
         store: StoreRef,
@@ -372,13 +368,13 @@ impl ReadFile {
         max_len: SizeType,
         context: *mut C,
     ) -> Result<Box<ReadFile>, Error> {
-        // Zig used a local `Handler` struct whose `run` calls the comptime
-        // `callback` and swallows the JSTerminated error. `ReadFileCompletion`
+        // The original used a local `Handler` struct whose `run` called the
+        // `callback` and swallowed the JSTerminated error. `ReadFileCompletion`
         // monomorphizes per `C`, so `handler_run::<C>` is that local struct's
-        // `run` and `on_complete_ctx` is the unwrapped `*mut C` — exactly the
-        // Zig layout (no extra heap box, nothing to leak on the `Err` path).
+        // `run` and `on_complete_ctx` is the unwrapped `*mut C` — same
+        // layout (no extra heap box, nothing to leak on the `Err` path).
         fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
-            // TODO(port): properly propagate exception upwards (matches Zig TODO).
+            // TODO(port): properly propagate exception upwards.
             let _ = C::run(ctx.cast::<C>(), bytes);
         }
         ReadFile::create_with_ctx(
@@ -419,7 +415,7 @@ impl ReadFile {
 
     pub fn on_io_error(&mut self, err: bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+        self.errno = Some(bun_core::errno_to_bun_raw_err(err.errno as i32));
         self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask {
             node: Default::default(),
@@ -465,7 +461,7 @@ impl ReadFile {
     pub fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
         self.close_after_io = true;
-        // Zig: @atomicStore on the callback fn-pointer field.
+        // Atomic store on the callback fn-pointer field.
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
         if !self.io_request.scheduled {
@@ -478,7 +474,7 @@ impl ReadFile {
     /// `do_read_loop` can carry it across the `&mut self` `do_read` call
     /// without two live `&mut` covering overlapping memory (Stacked-Borrows
     /// UB). The slice is materialised only at the syscall boundary.
-    // PORT NOTE: Zig indexed raw ptr range `items.ptr[items.len..capacity]`.
+    // PORT NOTE: the original indexed the raw ptr range `items.ptr[items.len..capacity]`.
     fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
         // `spare_capacity_mut()` is the safe spelling of
         // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately
@@ -537,7 +533,7 @@ impl ReadFile {
                             return true;
                         }
                         _ => {
-                            self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                            self.errno = Some(bun_core::errno_to_bun_raw_err(err.errno as i32));
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
@@ -602,7 +598,7 @@ impl ReadFile {
             return Ok(());
         }
 
-        // Zig hands `buffer.items` as a raw slice with `is_temporary = true`;
+        // The original handed `buffer.items` as a raw slice with `is_temporary = true`;
         // receiver takes ownership. Normalize to `Box<[u8]>` so every consumer
         // can reclaim via `heap::take` with a matching layout.
         cb(
@@ -660,7 +656,7 @@ impl ReadFile {
         let stat: Stat = match bun_sys::fstat(fd) {
             Ok(result) => result,
             Err(err) => {
-                self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                self.errno = Some(bun_core::errno_to_bun_raw_err(err.errno as i32));
                 self.system_error = Some(err.to_system_error().into());
                 return;
             }
@@ -723,7 +719,7 @@ impl ReadFile {
         // so we should check specifically that its a regular file before trusting the size.
         if self.size == 0 && bun_sys::is_regular_file(self.file_store.mode) {
             self.buffer = Vec::new();
-            // PORT NOTE: Zig wrote `byte_store = ByteStore.init(buffer.items, …)`
+            // PORT NOTE: the original wrote `byte_store = ByteStore.init(buffer.items, …)`
             // (a non-owning view); Rust `Bytes` owns its allocation, so leave it
             // default — `then()` reads `self.buffer` directly.
             self.byte_store = ByteStore::default();
@@ -894,7 +890,7 @@ impl ReadFile {
         if self.buffer.len() + 16_000 < self.buffer.capacity() {
             self.buffer.shrink_to_fit();
         }
-        // PORT NOTE: Zig also wrote `byte_store = ByteStore.init(buffer.items, …)` —
+        // PORT NOTE: the original also wrote `byte_store = ByteStore.init(buffer.items, …)` —
         // a non-owning alias of `buffer`. Rust `Bytes` is owning, and `then()`
         // delivers `self.buffer` directly, so skip the alias to avoid a double-free.
         self.on_finish();
@@ -929,12 +925,11 @@ pub struct ReadFileUV<'a> {
 
     pub req: libuv::fs_t,
     /// Stash for the open completion callback across the libuv async hop
-    /// (Zig captured it at comptime in `FileOpener.getFdByOpening`).
+    /// (originally captured at compile time in `FileOpener.getFdByOpening`).
     open_callback: fn(&mut Self, Fd),
 }
 
-// Zig: `pub const getFd = FileOpener(@This()).getFd;` /
-//      `pub const doClose = FileCloser(@This()).doClose;`
+// `getFd` / `doClose` — modeled as trait impls.
 #[cfg(windows)]
 impl<'a> FileOpener for ReadFileUV<'a> {
     fn opened_fd(&self) -> Fd {
@@ -979,8 +974,8 @@ impl<'a> FileCloser for ReadFileUV<'a> {
         self.loop_
     }
 
-    // Zig `FileCloser` gates the `close_after_io` / `io_request` / `io_poll` /
-    // `state` / `task` accesses on `@hasField(This, "io_request")`, which is
+    // The original `FileCloser` gates the `close_after_io` / `io_request` / `io_poll` /
+    // `state` / `task` accesses on whether the type has an `io_request` field, which is
     // **false** for `ReadFileUV` (its libuv request field is `req`, not
     // `io_request`). So `do_close` falls straight to the close-fd branch and
     // none of the methods below are ever reached — these mark genuinely dead
@@ -1016,8 +1011,8 @@ impl<'a> FileCloser for ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> ReadFileUV<'a> {
-    /// Typed entry — mirrors Zig `start(event_loop, store, off, max_len,
-    /// comptime Handler, handler: *anyopaque)`: caller passes the already-erased
+    /// Typed entry — mirrors `start(event_loop, store, off, max_len,
+    /// Handler, handler: *anyopaque)`: caller passes the already-erased
     /// `*anyopaque`; `H` (via turbofish) supplies `Handler.run` through the
     /// `ReadFileUvHandler` blanket impl.
     pub fn start<H>(
@@ -1034,14 +1029,14 @@ impl<'a> ReadFileUV<'a> {
             store,
             off,
             max_len,
-            // Zig: @ptrCast(&Handler.run) — erase the typed handler to the C ABI cb.
+            // Erase the typed handler to the C ABI cb.
             H::run as ReadFileOnReadFileCallback,
             handler,
         )
     }
 
     /// Raw entry — caller already has the type-erased `(fn, *anyopaque)` pair
-    /// (Zig `NewInternalReadFileHandler` path). Shares the body with `start`.
+    /// (`NewInternalReadFileHandler` path). Shares the body with `start`.
     pub fn start_with_ctx(
         event_loop: *mut EventLoop,
         store: StoreRef,
@@ -1057,7 +1052,7 @@ impl<'a> ReadFileUV<'a> {
         let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {
-            // Zig: `event_loop.virtual_machine.uvLoop()` — projected through the
+            // `event_loop.virtual_machine.uvLoop()` — projected through the
             // helper to avoid materializing a `&VirtualMachine`.
             loop_: event_loop.uv_loop().cast(),
             event_loop,
@@ -1114,11 +1109,11 @@ impl<'a> ReadFileUV<'a> {
             })
         };
 
-        // Zig order: cb() runs BEFORE the defer block (store.deref / req.deinit /
+        // Order: cb() runs BEFORE the cleanup (store.deref / req.deinit /
         // bun.destroy / event_loop.unref). Preserve that — cb may inspect store.
         cb(cb_ctx, result);
 
-        // Zig defer block — store.deref runs via StoreRef's Drop when the Box drops.
+        // Cleanup — store.deref runs via StoreRef's Drop when the Box drops.
         this_box.req.deinit();
         drop(this_box);
         // Release the event loop reference now that we're done
@@ -1171,7 +1166,7 @@ impl<'a> ReadFileUV<'a> {
             )
         };
         if let Some(errno) = rc.err_enum_e() {
-            self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            self.errno = Some(bun_core::errno_to_bun_raw_err(errno as i32));
             self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1192,7 +1187,7 @@ impl<'a> ReadFileUV<'a> {
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
         if let Some(errno) = this.req.result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            this.errno = Some(bun_core::errno_to_bun_raw_err(errno as i32));
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1255,7 +1250,7 @@ impl<'a> ReadFileUV<'a> {
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
         if this.size == 0 && this.is_regular_file {
-            // Zig: `ByteStore.init(this.buffer.items, ..)` — buffer is empty here,
+            // `ByteStore.init(this.buffer.items, ..)` — buffer is empty here,
             // so move it (Vec<u8>) into the owning ByteStore rather than borrow.
             this.byte_store = ByteStore::init(core::mem::take(&mut this.buffer));
             this.on_finish();
@@ -1263,7 +1258,7 @@ impl<'a> ReadFileUV<'a> {
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if this.size as usize > bun_sys::windows::ULONG::MAX as usize {
-            this.errno = Some(bun_core::errno_to_zig_err(bun_sys::E::NOMEM as i32));
+            this.errno = Some(bun_core::errno_to_bun_raw_err(bun_sys::E::NOMEM as i32));
             this.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
@@ -1360,7 +1355,7 @@ impl<'a> ReadFileUV<'a> {
             };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum_e() {
-                self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+                self.errno = Some(bun_core::errno_to_bun_raw_err(errno as i32));
                 self.system_error = Some(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                         .to_system_error()
@@ -1373,7 +1368,7 @@ impl<'a> ReadFileUV<'a> {
 
             // We are done reading.
             let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
-            // PORT NOTE: Vec::into_boxed_slice cannot fail; Zig caught OOM here.
+            // PORT NOTE: Vec::into_boxed_slice cannot fail; the original caught OOM here.
             self.byte_store = ByteStore::init_owned(owned);
             self.on_finish();
         }
@@ -1388,7 +1383,7 @@ impl<'a> ReadFileUV<'a> {
         let result = this.req.result;
 
         if let Some(errno) = result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            this.errno = Some(bun_core::errno_to_bun_raw_err(errno as i32));
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                     .to_system_error()
@@ -1401,7 +1396,7 @@ impl<'a> ReadFileUV<'a> {
         if result.int() == 0 {
             // We are done reading.
             let owned = core::mem::take(&mut this.buffer).into_boxed_slice();
-            // PORT NOTE: Vec::into_boxed_slice cannot fail; Zig caught OOM here.
+            // PORT NOTE: Vec::into_boxed_slice cannot fail; the original caught OOM here.
             this.byte_store = ByteStore::init_owned(owned);
             this.on_finish();
             return;
@@ -1420,7 +1415,7 @@ impl<'a> ReadFileUV<'a> {
 }
 
 /// Trait modeling the `comptime Handler: type` parameter of `ReadFileUV.start`.
-/// Zig `@ptrCast(&Handler.run)` erases the typed ctx to `*anyopaque`; here the
+/// `Handler.run` erases the typed ctx to `*anyopaque`; here the
 /// implementor supplies the already-erased thunk.
 pub trait ReadFileUvHandler {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType);
@@ -1428,12 +1423,10 @@ pub trait ReadFileUvHandler {
 
 /// Any `ReadFileCompletion` is usable as a `ReadFileUV` handler — the libuv
 /// path stores the same `(ctx, run)` pair, just without the JSTerminated
-/// return (Zig swallowed it via `catch {}` in the POSIX path; the UV path's
+/// return (the original swallowed it in the POSIX path; the UV path's
 /// `Handler.run` is `void`-returning by contract).
 impl<C: ReadFileCompletion> ReadFileUvHandler for C {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType) {
         let _ = <C as ReadFileCompletion>::run(ctx.cast::<C>(), bytes);
     }
 }
-
-// ported from: src/runtime/webcore/blob/read_file.zig

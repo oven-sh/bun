@@ -20,7 +20,7 @@ use bun_alloc::Arena;
 use bun_core::strings;
 
 // ───────────────────────── colorspace structs ────────────────────────────
-// Field layout matches `color.zig`; every space is 3 channels + alpha.
+// Every space is 3 channels + alpha.
 
 /// A color with red, green, blue, and alpha components, in a byte each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,20 +89,19 @@ impl RGBA {
         }
     }
 
-    /// Zig: `rgba.into(.HSL)` — routes RGBA → SRGB → HSL.
+    /// Routes RGBA → SRGB → HSL.
     #[inline]
     pub fn into_hsl(&self) -> HSL {
         HSL::from_rgba(self)
     }
 
-    /// Zig: `rgba.into(.LAB)` — routes RGBA → SRGB → LAB.
+    /// Routes RGBA → SRGB → LAB.
     #[inline]
     pub fn into_lab(&self) -> LAB {
         LAB::from_rgba(self)
     }
 
     /// Convert any `CssColor` into `RGBA` by routing through `SRGB`.
-    /// Zig: `ColorspaceConversions(@This()).tryFromCssColor`.
     #[inline]
     pub fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
         Some(SRGB::try_from_css_color(color)?.into_rgba())
@@ -125,8 +124,7 @@ impl RGBA {
 ///
 /// NaN → 0 (clamp passes NaN through; `NaN as u8` saturates to 0).
 ///
-/// NOTE: this *rounds*. Do **not** use for thumbhash, whose spec truncates
-/// (`thumbhash.zig:256` `@intFromFloat`).
+/// NOTE: this *rounds*. Do **not** use for thumbhash, whose spec truncates.
 #[inline]
 pub fn clamp_unit_f32(val: f32) -> u8 {
     (val * 255.0).round().clamp(0.0, 255.0) as u8
@@ -170,8 +168,8 @@ pub enum FloatColor {
 // driven from the three `impl_variant_dispatch!` invocations below; do NOT
 // hand-roll a new copy.
 //
-// Mirrors Zig's `switch (color.*) { inline else => |*v| v.into(T) }` shape
-// (color.zig:3213 `ColorspaceConversions`) which the original Rust port
+// Mirrors the original `ColorspaceConversions` per-variant dispatch shape,
+// which the original Rust port
 // regressed into 14 textual copies inside `define_colorspace!`.
 //
 // ROW ORDER IS LOAD-BEARING: ordinals feed `CssColor::hash` (Wyhash).
@@ -395,7 +393,7 @@ pub enum CssColor {
     System(SystemColor),
 }
 
-/// `Result(CssColor)` — Zig: `pub const ParseResult = Result(CssColor);`
+/// `Result(CssColor)`.
 pub type ParseResult = css::CssResult<CssColor>;
 
 impl Default for CssColor {
@@ -406,7 +404,7 @@ impl Default for CssColor {
 }
 
 impl CssColor {
-    // TODO(port): move to *_jsc — `pub const jsFunctionColor = @import("../../css_jsc/color_js.zig").jsFunctionColor;`
+    // TODO(port): move `jsFunctionColor` to the `*_jsc` crate.
 
     /// Parse a CSS `<color>` from the parser cursor.
     pub fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
@@ -635,7 +633,7 @@ impl CssColor {
                 return ColorFallbackKind::empty();
             }
             CssColor::Lab(lab) => 'brk: {
-                // PORT NOTE: Zig `or`/`and` precedence preserved verbatim:
+                // PORT NOTE: original `or`/`and` precedence preserved verbatim:
                 // `lab == .lab or (lab == .lch and shouldCompileSame(.lab_colors))`.
                 if matches!(**lab, LABColor::Lab(_))
                     || matches!(**lab, LABColor::Lch(_))
@@ -895,7 +893,7 @@ impl CssColor {
     }
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload fields.
+        // PORT NOTE: `css.implementHash` — variant-tag prefix + payload fields.
         // Hash the discriminant + the active variant's f32 components explicitly;
         // never reinterpret a `repr(Rust)` enum as raw bytes (unspecified layout /
         // padding → UB and non-deterministic hashes).
@@ -949,7 +947,7 @@ impl crate::generics::ToCss for CssColor {
     }
 }
 
-// `light_dark` payload helpers (Zig anonymous struct methods)
+// `light_dark` payload helpers
 // `takeLightFreeDark` / `takeDarkFreeLight` — in Rust, taking ownership of one
 // `Box` and dropping the other is just destructuring; provided as free fns.
 #[inline]
@@ -1014,13 +1012,13 @@ impl ColorFallbackKind {
 use super::color_generated::generated_color_conversions as _;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Colorspace traits (replaces Zig comptime mixins: DefineColorspace,
+// Colorspace traits (replaces the comptime mixins: DefineColorspace,
 // BoundedColorGamut, UnboundedColorGamut, HslHwbColorGamut, DeriveInterpolate,
 // RecangularPremultiply, PolarPremultiply, AdjustPowerlessLAB/LCH,
 // ColorspaceConversions, ColorIntoMixin, ImplementIntoCssColor)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Trait every colorspace implements. The Zig used `@field(this, "x")` over the
+/// Trait every colorspace implements. The original used field reflection over the
 /// first three struct fields plus `alpha`; here we expose them by index.
 /// `// TODO(port): Phase B may want to derive this with a proc-macro.`
 pub trait Colorspace: Copy + Sized + FromAnyColorspace {
@@ -1272,7 +1270,7 @@ pub fn parse_hslhwb_components<T>(
     parser: &mut ComponentParser,
     allows_legacy: bool,
 ) -> CssResult<(f32, f32, f32, bool)> {
-    // Zig name: parseHSLHWBComponents — acronym run collapses to one segment
+    // Original name: parseHSLHWBComponents — acronym run collapses to one segment
     let _ = core::marker::PhantomData::<T>; // autofix
     let h = parse_angle_or_number(input, parser)?;
     let is_legacy_syntax = allows_legacy
@@ -1539,18 +1537,18 @@ impl LABColor {
     }
 
     pub fn new_oklab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // PORT NOTE: Zig had `LABColor{ .lab = OKLAB.new(...) }` which looks like a bug;
+        // PORT NOTE: original had `LABColor{ .lab = OKLAB.new(...) }` which looks like a bug;
         // mirrored as Lab variant for behavioral parity.
         LABColor::Lab(LAB { l, a, b, alpha })
     }
 
     pub fn new_lch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // PORT NOTE: Zig had `LABColor{ .lab = LCH.new(...) }` (likely bug); mirrored.
+        // PORT NOTE: original had `LABColor{ .lab = LCH.new(...) }` (likely bug); mirrored.
         LABColor::Lab(LAB { l, a, b, alpha })
     }
 
     pub fn new_oklch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // PORT NOTE: Zig had `LABColor{ .lab = LCH.new(...) }` (likely bug); mirrored.
+        // PORT NOTE: original had `LABColor{ .lab = LCH.new(...) }` (likely bug); mirrored.
         LABColor::Lab(LAB { l, a, b, alpha })
     }
 
@@ -1590,7 +1588,7 @@ impl FloatColor {
 // Colorspace structs (LAB, SRGB, HSL, HWB, SRGBLinear, P3, A98, ProPhoto,
 // Rec2020, XYZd50, XYZd65, LCH, OKLAB, OKLCH)
 //
-// In Zig each struct manually wires `pub const X = mixin.X` for ~12 mixin
+// Originally each struct manually wired `pub const X = mixin.X` for ~12 mixin
 // items. In Rust the trait impls below cover that surface; the per-type
 // declarations collapse into a `define_colorspace!` macro invocation.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1844,7 +1842,7 @@ define_colorspace! {
 define_colorspace! {
     /// A color in the [`sRGB-linear`](https://www.w3.org/TR/css-color-4/#predefined-sRGB-linear) color space.
     SRGBLinear { r, g, b }
-    // PORT NOTE: Zig had `.r = ChannelType{ .angle = true }` for SRGBLinear which looks like a bug;
+    // PORT NOTE: original had `.r = ChannelType{ .angle = true }` for SRGBLinear which looks like a bug;
     // mirrored for parity.
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = bounded;
@@ -2104,7 +2102,7 @@ impl ComponentParser {
 }
 
 /// Helper trait so `parse_from` can build a light-dark wrapper for the result
-/// type `C`. (Zig used `C.lightDarkOwned`.)
+/// type `C` (`C.lightDarkOwned`).
 pub trait LightDarkOwned: Sized {
     fn light_dark_owned(light: Self, dark: Self) -> Self;
 }
@@ -2185,12 +2183,10 @@ impl RelativeComponentParser {
             return Ok(css::color::AngleOrNumber::Number { value });
         }
 
-        // TODO(port): Zig threads a stack `Angle` through `Calc(Angle).parseWith` via a closure
-        // that returns `Calc{ .value = &t.angle }` (raw stack pointer). Here we use a Cell-based
-        // closure; Phase B should verify Calc::parse_with API shape.
-        // PORT NOTE: Zig threads a stack `Angle` through `Calc(Angle).parseWith`
-        // via a closure that returns `Calc{ .value = &t.angle }` (raw stack
-        // pointer). Rust `Calc::Value` is `Box<V>`, so box the temporary.
+        // PORT NOTE: the original threaded a stack `Angle` through `Calc(Angle).parseWith`
+        // via a closure that returned a raw stack pointer.
+        // Rust `Calc::Value` is `Box<V>`, so box the temporary.
+        // TODO(port): Phase B should verify `Calc::parse_with` API shape.
         if let Ok(value) = input.try_parse(|i| {
             match Calc::<Angle>::parse_with(i, this, |ctx, ident| {
                 let value = ctx.get_ident(ident, allowed)?;
@@ -2446,7 +2442,7 @@ pub fn parse_predefined_relative(
         b"srgb" => PredefinedColor::Srgb(SRGB { r: a, g: b, b: c, alpha }),
         b"srgb-linear" => PredefinedColor::SrgbLinear(SRGBLinear { r: a, g: b, b: c, alpha }),
         b"display-p3" => PredefinedColor::DisplayP3(P3 { r: a, g: b, b: c, alpha }),
-        // PORT NOTE: Zig has "a99-rgb" here (typo?); mirrored for behavioral parity.
+        // PORT NOTE: original has "a99-rgb" here (typo?); mirrored for behavioral parity.
         b"a99-rgb" => PredefinedColor::A98(A98 { r: a, g: b, b: c, alpha }),
         b"prophoto-rgb" => PredefinedColor::Prophoto(ProPhoto { r: a, g: b, b: c, alpha }),
         b"rec2020" => PredefinedColor::Rec2020(Rec2020 { r: a, g: b, b: c, alpha }),
@@ -2553,7 +2549,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         ColorSpaceName::Xyz | ColorSpaceName::XyzD65 => {
             first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
         }
-        // PORT NOTE: Zig used XYZd65 for xyz-d50 too (likely bug); mirrored for parity.
+        // PORT NOTE: original used XYZd65 for xyz-d50 too (likely bug); mirrored for parity.
         ColorSpaceName::XyzD50 => {
             first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
         }
@@ -2635,7 +2631,6 @@ fn rectangular_to_polar(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
         h += 360.0;
     }
 
-    // PERF: Zig does not have Rust's f32::powi
     let c = (a.powi(2) + b.powi(2)).sqrt();
 
     h = h.rem_euclid(360.0);
@@ -2834,9 +2829,9 @@ const D50: [f32; 3] = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
-// Handwritten conversions (Zig `color_conversions` namespace).
+// Handwritten conversions (`color_conversions` namespace).
 //
-// In Zig, `ColorIntoMixin(T, .Space).into(target)` looked up `intoXXX` in
+// Originally, `ColorIntoMixin(T, .Space).into(target)` looked up `intoXXX` in
 // (a) handwritten `color_conversions.convert_<Space>`, then
 // (b) generated `generated_color_conversions.convert_<Space>`, then
 // (c) the type itself.
@@ -3722,5 +3717,3 @@ pub enum ConvertTo {
 // (the generated file fills the transitive gaps).
 
 crate::css_eql_partialeq!(CssColor);
-
-// ported from: src/css/values/color.zig

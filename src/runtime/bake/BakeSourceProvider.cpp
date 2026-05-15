@@ -49,7 +49,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
 
   JSC::MarkedArgumentBuffer args;
   args.append(JSC::jsBoolean(separateSSRGraph)); // separateSSRGraph
-  args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s)); // importMeta
+  args.append(Bun::ImportMetaObject::create(global, "bake://server-runtime.js"_s)); // importMeta
 
   RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
 }
@@ -132,7 +132,7 @@ extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(
   return JSC::JSValue::encode(uncheckedDowncast<JSC::JSModuleNamespaceObject>(JSC::JSValue::decode(BakeGetModuleNamespace(global, keyValue)))->get(global, vm.propertyNames->defaultKeyword));
 }
 
-// There were issues when trying to use JSValue.get from zig
+// There were issues when trying to use JSValue.get from native code
 extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   JSC::JSGlobalObject* global,
   JSC::JSModuleNamespaceObject* moduleNamespace,

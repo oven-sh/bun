@@ -264,7 +264,7 @@ for (const { dir, crate } of scanRoots) {
         abi ??= "jsc";
       } else if (params.length === 1 && /JSGlobalObject$/.test(params[0].ty) && isJsRet) {
         shape = "lazy";
-        // Lazy property creators are direct C++ calls (e.g. ZigGlobalObject.cpp
+        // Lazy property creators are direct C++ calls (e.g. BunGlobalObject.cpp
         // declares `extern "C" JSC::EncodedJSValue BunObject__createBunStd*`),
         // NOT JSC trampoline dispatch — default to `c`. A SYSV_ABI lazy getter
         // (e.g. `BunObject_lazyPropCb_*`) must opt in with `, jsc` explicitly.
@@ -377,7 +377,7 @@ function emitThunk(e: Export): string {
   const loc = `${path.relative(repoRoot, e.file)}:${e.line}`;
   // `JsResult<JSValue>` impls need `to_js_host_call` (exception-scope assert +
   // panic barrier + Err→empty mapping). Plain-`JSValue` impls are bare
-  // `callconv(jsc.conv)` bodies in the .zig spec — wrap them and you trip
+  // JSC-ABI host calls — wrap them and you trip
   // `assert_exception_presence_matches(false)` whenever the body legitimately
   // leaves an exception pending while returning non-empty (e.g.
   // `Bun__drainMicrotasksFromJS`). Match `#[bun_jsc::host_call]`: deref + call,
@@ -481,7 +481,7 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsResult};
 // (\`bun_jsc::…\` / \`crate::…\`) in the impl signature — the generator copies
 // the type token verbatim.
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSInternalPromise, JSObject, JSPromise, ZigStackFrame};
+use bun_jsc::{JSInternalPromise, JSObject, JSPromise, BunStackFrame};
 use bun_jsc::debugger::{
     InspectorBunFrontendDevServerAgentHandle, LifecycleHandle, TestReporterHandle,
 };

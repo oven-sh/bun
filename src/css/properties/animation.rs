@@ -140,9 +140,9 @@ impl Animation {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: reshaped `inline .ident, .string => |name|` — Zig's inline
-        // switch monomorphized over two payload types; Rust extracts the inner
-        // string slice up front instead.
+        // PORT NOTE: reshaped `inline .ident, .string => |name|` — the original
+        // inline switch monomorphized over two payload types; Rust extracts the
+        // inner string slice up front instead.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
             AnimationName::Ident(ident) => Some(ident.v()),
@@ -241,7 +241,7 @@ pub enum AnimationName {
 impl AnimationName {
     // PORT NOTE: hand-written (not `#[derive]`) because `CSSString` is a raw
     // `*const [u8]` arena pointer — generics blanket impls cover `&[u8]` but
-    // not raw slices. Mirrors Zig `css.implementEql/Hash/DeepClone`.
+    // not raw slices. Mirrors `implementEql/Hash/DeepClone`.
     pub fn eql(&self, other: &Self) -> bool {
         match (self, other) {
             (AnimationName::None, AnimationName::None) => true,
@@ -283,8 +283,7 @@ impl AnimationName {
     }
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        // PORT NOTE: ported from src/css/properties/animation.zig — `none` keyword,
-        // then `<string>`, else `<custom-ident>`.
+        // PORT NOTE: `none` keyword, then `<string>`, else `<custom-ident>`.
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -486,10 +485,10 @@ impl AnimationTimeline {
     // Port of `css.DeriveParse(@This()).parse` — void variants (`auto`, `none`)
     // declared first → tried first via ident match; payloads follow in
     // declaration order (`DashedIdent`, `ScrollTimeline`, `ViewTimeline`).
-    // Upstream `ScrollTimeline` / `ViewTimeline` carry no `parse`, so the Zig
+    // Upstream `ScrollTimeline` / `ViewTimeline` carry no `parse`, so the
     // `DeriveParse` instantiation is dead code (`generic.parseFor` would
-    // `@compileError` if compiled — `Animation` is unreferenced in
-    // properties_generated.zig). We stop at `DashedIdent` here; if scroll()/
+    // be a compile error if compiled — `Animation` is unreferenced in
+    // the generated properties). We stop at `DashedIdent` here; if scroll()/
     // view() ever become live they need real function-syntax parsing, not the
     // derived field-sequence fallback.
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
@@ -514,9 +513,9 @@ impl AnimationTimeline {
             AnimationTimeline::Auto => dest.write_str(b"auto"),
             AnimationTimeline::None => dest.write_str(b"none"),
             AnimationTimeline::DashedIdent(d) => d.to_css(dest),
-            // Upstream Zig `ScrollTimeline` / `ViewTimeline` have no `toCss`;
+            // Upstream `ScrollTimeline` / `ViewTimeline` have no `toCss`;
             // `DeriveToCss` would delegate to `generic.toCss` → `T.toCss` and
-            // `@compileError` if this arm were ever instantiated. Mirror that:
+            // fail to compile if this arm were ever instantiated. Mirror that:
             // these variants are currently unconstructible via `parse()`, and
             // emitting bare space-separated fields here would be wrong CSS
             // (spec syntax is `scroll(...)` / `view(...)`).
@@ -663,5 +662,3 @@ pub enum TimelineRangeName {
     /// Represents the range during which the principal box crosses the start border edge.
     ExitCrossing,
 }
-
-// ported from: src/css/properties/animation.zig

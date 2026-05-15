@@ -38,8 +38,8 @@ pub fn find_imported_css_files_in_js_order(
     let all_loaders = this.parse_graph().input_files.items_loader();
     let all_parts = this.graph.ast.items_parts();
 
-    // Zig uses a local `struct { fn visit }.visit` to get a recursive local fn.
-    // Rust nested `fn` items can recurse directly.
+    // The original used a local namespaced fn to get recursion; Rust nested
+    // `fn` items can recurse directly.
     #[allow(clippy::too_many_arguments)]
     fn visit(
         c: &LinkerContext,
@@ -104,5 +104,3 @@ pub fn find_imported_css_files_in_js_order(
 
     order
 }
-
-// ported from: src/bundler/linker_context/findImportedCSSFilesInJSOrder.zig

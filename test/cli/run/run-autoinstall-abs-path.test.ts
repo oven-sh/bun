@@ -17,9 +17,9 @@ import { join } from "path";
 // registry, which would otherwise mask this test's pass/fail signal.
 test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across resolutions", async () => {
   using dir = tempDir("autoinstall-abs-path", {
-    // No package.json / node_modules so global_cache defaults to .auto (resolver.zig canUse).
+    // No package.json / node_modules so global_cache defaults to .auto (resolver can_use).
     // nanoid has `exports` with a `./non-secure` subpath, enabling the self-reference
-    // branch at resolver.zig:1807. left-pad's cache folder name is longer than nanoid's,
+    // branch in src/resolver/lib.rs. left-pad's cache folder name is longer than nanoid's,
     // so nanoid's cached abs_path slice becomes a truncated prefix of left-pad's path
     // once left-pad is resolved. left-pad is archived so its version string is stable.
     "index.js": `

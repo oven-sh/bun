@@ -2,13 +2,11 @@ use bun_core::fmt as bun_fmt;
 use bun_core::strings;
 use bun_core::{Error, Global, err, pretty_errorln};
 
-// Zig: `pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type`
-//
-// The Zig type-generator takes (a) the value type and (b) a comptime resolver fn,
-// and also branches on `comptime t == bun.schema.api.Loader`. Rust cannot take a
-// fn value as a const generic, so both params collapse into one trait that the
-// value type implements. Each `T` declares its own resolver and whether it is the
-// schema Loader.
+// Originally a comptime type generator parameterized over (a) the value type and
+// (b) a resolver fn, with a special-case branch for the schema `Loader` type.
+// Rust cannot take a fn value as a const generic, so both params collapse into
+// one trait that the value type implements. Each `T` declares its own resolver
+// and whether it is the schema Loader.
 // TODO(port): if a single `T` ever needs two distinct resolvers, split this back
 // into `<T, R: ValueResolver<T>>` with a PhantomData marker.
 pub trait ColonListValue: Sized {
@@ -28,8 +26,8 @@ pub struct ColonListType<T: ColonListValue> {
 
 impl<T: ColonListValue> ColonListType<T> {
     pub fn init(count: usize) -> Result<Self, Error> {
-        // PORT NOTE: reshaped — Zig allocs two uninit slices of `count` and
-        // index-assigns in `load`; Rust uses `Vec::with_capacity` + `push`.
+        // PORT NOTE: reshaped — use `Vec::with_capacity` + `push` instead of
+        // allocating two uninit slices of `count` and index-assigning in `load`.
         let keys = Vec::with_capacity(count);
         let values = Vec::with_capacity(count);
 
@@ -92,5 +90,3 @@ impl<T: ColonListValue> ColonListType<T> {
         Ok(list)
     }
 }
-
-// ported from: src/cli/colon_list_type.zig

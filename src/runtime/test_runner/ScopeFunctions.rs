@@ -14,7 +14,7 @@ use crate::test_runner::jest;
 // so call sites read `let _g = group_log::begin();` and drop calls `end()`. The underlying
 // `group` module exposes `begin_msg`/`end`/`log` taking `fmt::Arguments`.
 //
-// Zig `groupLog.begin(@src())` (debug.zig) emits the call-site `file:line:col: fn_name` so
+// `groupLog.begin(@src())` (debug module) emits the call-site `file:line:col: fn_name` so
 // each scope is traceable in BUN_DEBUG output. `begin()` is `#[track_caller]` and forwards
 // `core::panic::Location::caller()` so each call site logs its own source location instead
 // of collapsing to a single static string.
@@ -25,8 +25,8 @@ mod group_log {
     #[track_caller]
     pub fn begin() -> group::GroupGuard {
         let loc = core::panic::Location::caller();
-        // Mirrors Zig `group.begin(@src())` → `"<file>:<line>:<col>: <fn_name>"` (ANSI-coloured
-        // in debug.zig). Rust's `Location` has no `fn_name`, so we emit `file:line:col` which
+        // Mirrors `group.begin(@src())` → `"<file>:<line>:<col>: <fn_name>"` (ANSI-coloured
+        // in the debug module). Rust's `Location` has no `fn_name`, so we emit `file:line:col` which
         // still gives per-call-site identity in the group-log trace.
         group::begin_msg(core::format_args!(
             "\x1b[36m{}\x1b[37m:\x1b[93m{}\x1b[37m:\x1b[33m{}\x1b[m",
@@ -209,10 +209,10 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
                 break;
             }
 
-            // PORT NOTE: Zig keeps a parallel `ArrayList(Strong)` to root each element across
+            // PORT NOTE: the original keeps a parallel `ArrayList(Strong)` to root each element across
             // the format_label/bind allocations below. `bun_jsc::MarkedArgumentBuffer` only
             // exposes a scoped-closure constructor (no `as_slice`/`len`), so for Phase D we
-            // use a plain `Vec<JSValue>` mirroring Zig's `args_list_raw`. The outer `iter`
+            // use a plain `Vec<JSValue>` mirroring the original `args_list_raw`. The outer `iter`
             // keeps `this.each` alive; per-element rooting is a TODO once Strong<JSValue>
             // lands in bun_jsc.
             // TODO(port): root args via Strong / MarkedArgumentBuffer once upstream surface exists.
@@ -271,7 +271,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     Ok(JSValue::UNDEFINED)
 }
 
-// `filterNames` in Zig is generic over a duck-typed `Rem` with `writeEnd`.
+// `filterNames` is generic over a duck-typed `Rem` with `writeEnd`.
 trait WriteEnd {
     fn write_end(&mut self, write: &[u8]);
 }
@@ -296,7 +296,7 @@ impl<'a> WriteEnd for Write<'a> {
         }
         let dst_start = self.buf.len() - write.len();
         self.buf[dst_start..].copy_from_slice(write);
-        // PORT NOTE: reshaped for borrowck — Zig reassigns the slice in place;
+        // PORT NOTE: reshaped for borrowck — the original reassigns the slice in place;
         // here we shrink via `take` + reslice.
         let buf = core::mem::take(&mut self.buf);
         self.buf = &mut buf[..dst_start];
@@ -358,9 +358,9 @@ impl ScopeFunctions {
         // Bun-owned global; single JS thread so no aliasing across this borrow.
         if let Some(debugger) = unsafe { (*vm).debugger.as_mut() } {
             if debugger.test_reporter_agent.is_enabled() {
-                // Zig: fn-local `struct { var max_test_id_for_debugger: i32 = 0; }` — process-global static.
+                // Originally a fn-local `struct { var max_test_id_for_debugger: i32 = 0; }` — process-global static.
                 static MAX_TEST_ID_FOR_DEBUGGER: AtomicI32 = AtomicI32::new(0);
-                // TODO(port): Zig used non-atomic `+= 1` (single JS thread). Relaxed fetch_add preserves semantics.
+                // TODO(port): the original used a non-atomic `+= 1` (single JS thread). Relaxed fetch_add preserves semantics.
                 let id = MAX_TEST_ID_FOR_DEBUGGER.fetch_add(1, Ordering::Relaxed) + 1;
                 let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
@@ -420,7 +420,7 @@ impl ScopeFunctions {
 
                         let mut len = Measure { len: 0 };
                         filter_names(&mut len, description, Some(active_scope));
-                        // PORT NOTE: Zig `addManyAsSlice` — extend by `len.len` zero bytes and
+                        // PORT NOTE: `addManyAsSlice` — extend by `len.len` zero bytes and
                         // hand back the freshly-appended tail as `&mut [u8]`.
                         let start = bun_test.collection.filter_buffer.len();
                         bun_test.collection.filter_buffer.resize(start + len.len, 0);
@@ -531,7 +531,7 @@ pub struct ParseArgumentsResult {
     pub callback: Option<JSValue>,
     pub options: ParseArgumentsOptions,
 }
-// PORT NOTE: Zig `deinit` only freed `description`; `Vec<u8>` drops automatically.
+// PORT NOTE: `deinit` only freed `description`; `Vec<u8>` drops automatically.
 
 #[derive(Default, Clone, Copy)]
 pub struct ParseArgumentsOptions {
@@ -574,9 +574,9 @@ fn get_description(
 
     if description.is_class(global) {
         // PORT NOTE: upstream `JSValue::get_class_name` writes into an out-param
-        // ZigString instead of returning one (unlike Zig's `className` which
+        // UnsafeStringView instead of returning one (unlike the original `className` which
         // returns by value). Adapt locally rather than touching bun_jsc.
-        let mut description_class_name = bun_core::ZigString::EMPTY;
+        let mut description_class_name = bun_core::UnsafeStringView::EMPTY;
         description.get_class_name(global, &mut description_class_name)?;
 
         if description_class_name.len > 0 {
@@ -763,7 +763,7 @@ pub fn parse_arguments(
 // (see jest.classes.ts `values: ["each"]`).
 //
 // Hand-expansion of what `src/codegen/generate-classes.ts` emits into
-// `ZigGeneratedClasses.zig` for `pub const JSScopeFunctions = struct { ... }`:
+// `BunGeneratedClasses` for `pub const JSScopeFunctions = struct { ... }`:
 // `eachSetCached` / `eachGetCached` thin-wrap the C++-side
 // `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
 // `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
@@ -828,12 +828,12 @@ pub fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResul
 }
 
 /// Local shim for `JSValue::setPrototypeDirect` (not yet on `bun_jsc::JSValue`).
-/// Mirrors Zig `bun.cpp.Bun__JSValue__setPrototypeDirect` — `[[ZIG_EXPORT(check_slow)]]`,
+/// Mirrors `bun.cpp.Bun__JSValue__setPrototypeDirect` — `[[RUST_EXPORT(check_slow)]]`,
 /// so we manually surface any pending exception as `JsError::Thrown`.
 // TODO(port): land as inherent `JSValue::set_prototype_direct` in bun_jsc.
 #[track_caller]
 fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-    // `[[ZIG_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so
+    // `[[RUST_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so
     // `value` must be an object (always a JSBoundFunction here).
     bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(value, prototype, global)
 }
@@ -852,8 +852,8 @@ pub fn create_bound(
 }
 
 // These enum types live on `bun_test::BaseScopeCfg` (`self_mode`, `self_concurrent`).
-// The Zig spec named them `SelfMode`/`SelfConcurrent`; bun_test.rs ported them as
-// `ScopeMode`/`ConcurrentMode`. Alias here so the bodies read like the spec.
+// They were originally named `SelfMode`/`SelfConcurrent`; bun_test.rs ported them as
+// `ScopeMode`/`ConcurrentMode`. Alias here so the bodies read consistently.
 use crate::test_runner::bun_test::{ScopeMode as SelfMode, ConcurrentMode as SelfConcurrent};
 // `TestReporterKind` in the spec is `bun_jsc::debugger::TestType` (Test/Describe).
 use bun_jsc::debugger::TestType as TestReporterKind;
@@ -869,5 +869,3 @@ fn scope_mode_str(m: SelfMode) -> &'static str {
         SelfMode::FilteredOut => "filtered_out",
     }
 }
-
-// ported from: src/test_runner/ScopeFunctions.zig

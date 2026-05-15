@@ -152,7 +152,7 @@ impl Url {
     }
 
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` is field-wise reflection; both
+        // PORT NOTE: `css.implementDeepClone` is field-wise reflection; both
         // fields (`u32`, `dependencies::Location`) are `Copy`, so identity copy.
         Url {
             import_record_idx: self.import_record_idx,
@@ -169,11 +169,9 @@ impl Url {
     // TODO: dedupe import records??
     // This might not fucking work
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` is field-wise reflection. Only
+        // PORT NOTE: `css.implementHash` is field-wise reflection. Only
         // `import_record_idx` participates in identity (matches `eql` above);
         // `loc` is presentation metadata.
         hasher.update(&self.import_record_idx.to_ne_bytes());
     }
 }
-
-// ported from: src/css/values/url.zig

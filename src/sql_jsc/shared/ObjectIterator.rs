@@ -50,9 +50,9 @@ impl<'a> ObjectIterator<'a> {
             }
         }
 
-        // PORT NOTE: Zig `defer { if (cell_i >= columns_count) { ... } }` is
-        // lowered to a labeled block whose result is computed first, then the
-        // deferred bookkeeping runs exactly once before returning.
+        // PORT NOTE: the row/cell-index bookkeeping must run exactly once
+        // before returning regardless of which branch produced the result, so
+        // it is hoisted out of a labeled block that computes the result first.
         let result: JsResult<Option<JSValue>> = 'out: {
             let property = match JSObject::get_index(self.columns, global_object, cell_i) {
                 Ok(v) => v,
@@ -68,8 +68,8 @@ impl<'a> ObjectIterator<'a> {
                 )));
             }
 
-            // TODO(port): verify `get_own_by_value` return type — Zig site treats it
-            // as `?JSValue` (compares against `.zero` and `null` separately).
+            // TODO(port): verify `get_own_by_value` return type — callers
+            // expect to distinguish "missing" (`None`) from a zero `JSValue`.
             let value: Option<JSValue> = self.current_row.get_own_by_value(global_object, property);
             if value == Some(JSValue::ZERO) || value.map_or(false, |v| v.is_undefined()) {
                 if !global_object.has_exception() {
@@ -93,5 +93,3 @@ impl<'a> ObjectIterator<'a> {
         result
     }
 }
-
-// ported from: src/sql_jsc/shared/ObjectIterator.zig

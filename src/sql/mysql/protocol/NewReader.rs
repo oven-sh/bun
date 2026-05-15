@@ -2,13 +2,10 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::decode_length_int;
 use crate::shared::data::Data;
 
-/// Trait capturing the structural interface that Zig's `NewReaderWrap` took as
-/// seven comptime fn params (`markMessageStartFn_`, `peekFn_`, `skipFn_`,
-/// `ensureCapacityFn_`, `readFunction_`, `readZ_`, `setOffsetFromStart_`).
-///
-/// In Zig, `NewReader(Context)` reflected `Context.markMessageStart` etc. via
-/// `@hasDecl`; in Rust the trait bound IS that check (see PORTING.md §Comptime
-/// reflection).
+/// Trait capturing the structural interface a reader context must provide
+/// (mark-message-start / peek / skip / ensure-capacity / read / read-z /
+/// set-offset-from-start). The trait bound is the only contract — there is no
+/// runtime reflection.
 pub trait ReaderContext: Copy {
     fn mark_message_start(self);
     // `&self` (not `self`) so the returned borrow can be tied to the context's
@@ -21,21 +18,16 @@ pub trait ReaderContext: Copy {
     fn set_offset_from_start(self, offset: usize);
 }
 
-// PORT NOTE: Zig's `NewReaderWrap(Context, fn, fn, fn, fn, fn, fn, fn) type`
-// returned an anonymous `struct { wrapped: Context, ... }`. In Rust the comptime
-// fn-pointer params collapse into the `ReaderContext` trait above, and the
-// returned struct becomes this generic wrapper. `NewReader(Context)` (which
-// checked `@hasDecl(Context, "is_wrapped")` to avoid double-wrapping) is
-// subsumed: callers name `NewReader<C>` directly and the type system prevents
-// accidental double-wrap.
+// Generic wrapper over a `ReaderContext`. Callers name `NewReader<C>` directly
+// and the type system prevents accidental double-wrap.
 #[derive(Clone, Copy)]
 pub struct NewReader<C: ReaderContext> {
     pub wrapped: C,
 }
 
 impl<C: ReaderContext> NewReader<C> {
-    // PORT NOTE: Zig `pub const Ctx = Context` — in Rust the generic param `C` IS
-    // the name; inherent associated types are unstable, so callers name `C` directly.
+    // The generic param `C` is the context type; inherent associated types are
+    // unstable, so callers name `C` directly.
 
     pub const IS_WRAPPED: bool = true;
 
@@ -52,7 +44,6 @@ impl<C: ReaderContext> NewReader<C> {
     }
 
     pub fn skip(self, count: impl TryInto<isize>) {
-        // Zig: skipFn(this.wrapped, @as(isize, @intCast(count)))
         self.wrapped
             .skip(count.try_into().ok().expect("skip count fits in isize"));
     }
@@ -79,23 +70,23 @@ impl<C: ReaderContext> NewReader<C> {
 
     pub fn int<I: ReadableInt>(self) -> Result<I, AnyMySQLError> {
         let data = self.read(I::SIZE)?;
-        // `defer data.deinit()` → Drop on scope exit
+        // `data` is dropped on scope exit.
         if I::SIZE == 1 {
-            // Zig: if (comptime Int == u8) return data.slice()[0]
+            // single-byte fast path
             return Ok(I::from_ne_slice(&data.slice()[..1]));
         }
-        // Zig: @bitCast(data.slice()[0..size].*) — native-endian byte reinterpretation
+        // native-endian byte reinterpretation
         Ok(I::from_ne_slice(&data.slice()[..I::SIZE]))
     }
 
-    /// Zig `reader.int(u24)` — read 3 little-endian bytes, zero-extend to u32.
+    /// Read 3 little-endian bytes, zero-extend to u32.
     pub fn int_u24(self) -> Result<u32, AnyMySQLError> {
         let data = self.read(3)?;
         let s = data.slice();
         Ok(u32::from_le_bytes([s[0], s[1], s[2], 0]))
     }
 
-    /// Zig `reader.int(i24)` — read 3 little-endian bytes, sign-extend to i32.
+    /// Read 3 little-endian bytes, sign-extend to i32.
     pub fn int_i24(self) -> Result<i32, AnyMySQLError> {
         let data = self.read(3)?;
         let s = data.slice();
@@ -131,31 +122,21 @@ impl<C: ReaderContext> NewReader<C> {
     }
 }
 
-/// Helper trait replacing Zig's `comptime Int: type` + `@typeInfo(Int).int.bits`
-/// reflection in `int()`. The canonical native-endian int codec lives in
+/// Helper trait used by `int()` to read a native-endian integer of a
+/// statically-known width. The canonical native-endian int codec lives in
 /// `bun_core`; re-exported here under the protocol-local name so callers
 /// (`int<I: ReadableInt>()` and `bun_sql::ReadableInt`) keep their paths.
 /// MySQL's u24/i24 are NOT routed through this trait — see `int_u24`/`int_i24`.
 pub use bun_core::NativeEndianInt as ReadableInt;
 
-/// Zig: `fn NewReader(comptime Context: type) type` — returned `Context` unchanged
-/// if it already had `is_wrapped`, else `NewReaderWrap(Context, Context.fn...)`.
-///
-/// In Rust this is just the `NewReader<C>` struct above; the `@hasDecl` early-return
-/// is unnecessary because Rust callers name the concrete type. Kept as a type alias
-/// for diff parity.
+/// Type alias kept for diff parity; just names the `NewReader<C>` struct above.
 pub type NewReaderOf<C> = NewReader<C>;
 
-// ─── decoderWrap ──────────────────────────────────────────────────────────────
+// ─── decode wrapper ──────────────────────────────────────────────────────────
 //
-// Zig: `fn decoderWrap(comptime Container, comptime decodeFn) type` returned a
-// struct with `decode` / `decodeAllocator` that auto-wrapped `context` into
-// `.{ .wrapped = context }` when `Context` lacked `is_wrapped`.
-//
-// PORT NOTE: the `@hasDecl(Context, "is_wrapped")` branch collapses — in Rust,
-// callers either already have a `NewReader<C>` or a bare `C: ReaderContext`, and
-// `Into<NewReader<C>>` covers both. The allocator-taking variant drops its
-// `std.mem.Allocator` param per PORTING.md §Allocators (non-AST crate).
+// Callers either already have a `NewReader<C>` or a bare `C: ReaderContext`,
+// and `Into<NewReader<C>>` covers both. The allocator-taking variant drops its
+// allocator param per PORTING.md §Allocators (non-AST crate).
 
 impl<C: ReaderContext> From<C> for NewReader<C> {
     fn from(wrapped: C) -> Self {
@@ -176,15 +157,14 @@ pub trait Decode: Sized {
         self.decode_internal(context.into())
     }
 
-    // Zig `decodeAllocator` — allocator param deleted (global mimalloc).
+    // Allocator param deleted (global mimalloc).
     fn decode_allocator<C: ReaderContext>(
         &mut self,
         context: impl Into<NewReader<C>>,
     ) -> Result<(), AnyMySQLError> {
-        // TODO(port): some Zig decodeFn callees took (this, allocator, Context, ctx);
-        // confirm none need a distinct arena before unifying with `decode`.
+        // TODO(port): some decode callees historically took an explicit
+        // allocator; confirm none need a distinct arena before unifying with
+        // `decode`.
         self.decode_internal(context.into())
     }
 }
-
-// ported from: src/sql/mysql/protocol/NewReader.zig

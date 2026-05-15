@@ -58,7 +58,7 @@
 
 use super::int_types::short as Short;
 
-// Zig: `enum(short) { ..., _ }` — non-exhaustive (any `short` value is a valid `Tag`).
+// Conceptually a non-exhaustive `short` enum (any `short` value is a valid `Tag`).
 // A `#[repr(i16)] enum` cannot hold arbitrary values, so model as a transparent newtype
 // with associated consts.
 #[repr(transparent)]
@@ -295,12 +295,12 @@ impl Tag {
         0
     }
 
-    // Zig: pub const toJSTypedArrayType / toJS / fromJS = @import("../../../sql_jsc/...").*;
-    // Deleted per PORTING.md — these become extension-trait methods in `bun_sql_jsc`.
+    // `toJSTypedArrayType` / `toJS` / `fromJS` re-exports deleted per
+    // PORTING.md — these become extension-trait methods in `bun_sql_jsc`.
 
     // PORT NOTE: `byteArrayType` / `pgArrayType` / `PostgresBinarySingleDimensionArray`
-    // are not ported. The Zig version overlaid an `extern struct` of i32 fields onto a
-    // `[]const u8` wire buffer via `@ptrCast(@alignCast(@constCast(...)))` and byte-swapped
+    // are not ported. An earlier implementation overlaid an `extern struct` of i32 fields
+    // onto a `[]const u8` wire buffer via raw pointer casts and byte-swapped
     // in place. In Rust that is UB on two axes: (1) the recv buffer carries no 4-byte
     // alignment guarantee, and (2) writing through a pointer derived from `&[u8]` violates
     // Stacked Borrows / lets LLVM elide the writes via the `readonly` parameter attribute
@@ -311,9 +311,9 @@ impl Tag {
     // element-type mapping.
 }
 
-// Zig: `fn PostgresBinarySingleDimensionArray(comptime T: type) type { return extern struct { ... } }`
-// Not ported — see PORT NOTE on `Tag` above. Kept here only as documentation of the
-// wire header shape the Zig code overlaid:
+// `PostgresBinarySingleDimensionArray<T>` is not ported — see PORT NOTE on `Tag`
+// above. Kept here only as documentation of the wire header shape that was
+// previously overlaid:
 //
 //   struct array_int4 {
 //     int4_t ndim;        /* Number of dimensions */
@@ -325,9 +325,8 @@ impl Tag {
 //     int4_t first_value; /* Beginning of integer data */
 //   };
 
-/// `@bitCast(@byteSwap(@as(Int, @bitCast(val))))` — wire-order byte swap for
-/// the element types the Zig `PostgresBinarySingleDimensionArray` was instantiated
-/// with (`i32` / `f32`; see Zig `byteArrayType`). Used by
+/// Wire-order byte swap for the element types `PostgresBinarySingleDimensionArray`
+/// was instantiated with (`i32` / `f32`). Used by
 /// `bun_sql_jsc::postgres::DataCell::from_bytes_typed_array`. Replaces the old
 /// generic `byte_swap_same_size` `transmute_copy` shim with safe
 /// `to_bits`/`from_bits`, and the per-element `ptr::{read,write}_unaligned`
@@ -383,5 +382,3 @@ impl WireByteSwap for f64 {
         out.copy_from_slice(&self.to_ne_bytes());
     }
 }
-
-// ported from: src/sql/postgres/types/Tag.zig

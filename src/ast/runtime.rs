@@ -1,7 +1,7 @@
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
-// REFACTOR_BUN_AST: this module holds only the data-shaped pieces of
-// `runtime.zig` that the AST crate (and `bun_js_printer::Options`) need:
+// REFACTOR_BUN_AST: this module holds only the data-shaped pieces of the
+// runtime helper module that the AST crate (and `bun_js_printer::Options`) need:
 // `Runtime::source_code`, `Imports`, `ReplaceableExport*`, `ServerComponentsMode`,
 // `Names`. The `Features` struct (carries `&mut RuntimeTranspilerCache`) and
 // `Fallback` HTML rendering (needs `bun_options_types::schema`, `bun_io`,
@@ -28,7 +28,7 @@ impl Runtime {
     }
 }
 
-/// Zig: `Runtime.Features.ReplaceableExport`
+/// `Runtime.Features.ReplaceableExport`.
 #[derive(Clone)]
 pub enum ReplaceableExport {
     Delete,
@@ -44,18 +44,16 @@ impl ReplaceableExport {
     }
 }
 
-/// Zig: `bun.StringArrayHashMapUnmanaged(ReplaceableExport)`.
+/// String-keyed map of `ReplaceableExport`.
 ///
-/// Newtype (not a bare alias) so we can hang `get_ptr` (Zig spelling for
-/// `getPtr`, which borrows immutably) and expose a `.entries` accessor that
-/// satisfies the `replace_exports.entries.len` shape `visitStmt` ported
-/// verbatim from Zig's `ArrayHashMap.entries`.
+/// Newtype (not a bare alias) so we can hang `get_ptr` (which borrows
+/// immutably) and expose a `.entries` accessor that satisfies the
+/// `replace_exports.entries.len` shape `visitStmt` reads.
 #[derive(Default)]
 pub struct ReplaceableExportMap {
-    /// Backing map. Named `entries` so `replace_exports.entries.len()` —
-    /// the literal Zig spelling — resolves (Zig's `ArrayHashMap.entries`
-    /// is a `MultiArrayList` with `.len`; here `StringArrayHashMap` derefs
-    /// to `ArrayHashMap` which has `.len()`).
+    /// Backing map. Named `entries` so `replace_exports.entries.len()`
+    /// resolves (`StringArrayHashMap` derefs to `ArrayHashMap` which has
+    /// `.len()`).
     pub entries: StringArrayHashMap<ReplaceableExport>,
 }
 
@@ -78,10 +76,9 @@ impl ReplaceableExportMap {
     pub fn count(&self) -> usize {
         self.entries.count()
     }
-    /// Zig `getPtr` returns `?*V` from a `*const Self` — i.e. immutable
-    /// lookup yielding a (logically-mutable) pointer. Rust splits this into
-    /// `get_ptr` (`&V`) and `get_ptr_mut` (`&mut V`); call sites in the
-    /// visitor only read through it.
+    /// `getPtr` is an immutable lookup yielding a (logically-mutable) pointer.
+    /// Rust splits this into `get_ptr` (`&V`) and `get_ptr_mut` (`&mut V`);
+    /// call sites in the visitor only read through it.
     #[inline]
     pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
         self.entries.get(key)
@@ -96,7 +93,7 @@ impl ReplaceableExportMap {
     }
 }
 
-/// Zig: `Runtime.Features.ServerComponentsMode`
+/// `Runtime.Features.ServerComponentsMode`.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServerComponentsMode {
     /// Server components is disabled, strings "use client" and "use server" mean nothing.
@@ -175,7 +172,7 @@ pub struct Imports {
     pub __decoratorMetadata: Option<Ref>,
     pub __runInitializers: Option<Ref>,
     pub __decorateElement: Option<Ref>,
-    /// Zig field name: `@"$$typeof"` (not a valid Rust identifier).
+    /// JS field name `$$typeof` (not a valid Rust identifier).
     pub dollar_dollar_typeof: Option<Ref>,
     pub __using: Option<Ref>,
     pub __callDispose: Option<Ref>,
@@ -212,8 +209,8 @@ impl Imports {
         b"__promiseAll",
     ];
 
-    /// Zig computed this at comptime via `std.sort.pdq`. Rust stable cannot sort in
-    /// `const`; precomputed here and verified by `tests::all_sorted_matches_zig_comptime`.
+    /// Rust stable cannot sort in `const`; precomputed here and verified by
+    /// `tests::all_sorted_matches_precomputed`.
     #[cfg_attr(not(test), allow(dead_code))]
     const ALL_SORTED: [&'static [u8]; 25] = [
         b"$$typeof",
@@ -276,7 +273,7 @@ impl Imports {
     pub const NAME: &'static [u8] = b"bun:wrap";
     pub const ALT_NAME: &'static [u8] = b"bun:wrap";
 
-    /// Index → field. Expansion of Zig `@field(this, all[i])`.
+    /// Index → field. Expansion of `@field(this, all[i])`.
     #[inline]
     fn field(&self, i: usize) -> Option<Ref> {
         match i {
@@ -348,7 +345,7 @@ impl Imports {
         }
     }
 
-    /// Zig: `contains(imports, comptime key: string)`.
+    /// Does `key` map to a populated import slot?
     // TODO(port): comptime-string key — Rust callers should access the field directly
     // (`imports.__foo.is_some()`). Runtime fallback provided for parity.
     pub fn contains(&self, key: &[u8]) -> bool {
@@ -368,7 +365,7 @@ impl Imports {
         false
     }
 
-    /// Zig: `put(imports, comptime key: string, ref: Ref)`.
+    /// Set the import slot for `key`.
     // TODO(port): comptime-string key — Rust callers should assign the field directly.
     pub fn put(&mut self, key: &[u8], ref_: Ref) {
         if let Some(i) = Self::ALL.iter().position(|&k| k == key) {
@@ -378,7 +375,7 @@ impl Imports {
         }
     }
 
-    /// Zig: `at(imports, comptime key: string) ?Ref`.
+    /// Look up the import slot for `key`.
     // TODO(port): comptime-string key — Rust callers should read the field directly.
     pub fn at(&self, key: &[u8]) -> Option<Ref> {
         Self::ALL
@@ -387,7 +384,7 @@ impl Imports {
             .and_then(|i| self.field(i))
     }
 
-    /// Zig: `get(imports, key: anytype) ?Ref` where `key` is a runtime index.
+    /// Look up the import slot by runtime index.
     pub fn get(&self, key: usize) -> Option<Ref> {
         if key < Self::ALL.len() {
             self.field(key)
@@ -407,7 +404,7 @@ impl Imports {
     }
 }
 
-/// Zig: `Runtime.Imports.Iterator`
+/// `Runtime.Imports.Iterator`.
 pub struct ImportsIterator<'a> {
     pub i: usize,
     pub runtime_imports: &'a Imports,
@@ -423,7 +420,7 @@ impl ImportsIterator<'_> {
     pub fn next(&mut self) -> Option<ImportsIteratorEntry> {
         while self.i < Imports::ALL.len() {
             let t = self.i;
-            self.i += 1; // Zig: `defer this.i += 1;`
+            self.i += 1;
             if let Some(val) = self.runtime_imports.field(t) {
                 return Some(ImportsIteratorEntry {
                     key: u16::try_from(t).expect("int cast"),
@@ -439,12 +436,11 @@ impl ImportsIterator<'_> {
 mod tests {
     use super::Imports;
 
-    /// Port of the Zig comptime block that derives `all_sorted` / `all_sorted_index`.
-    /// Rust stable cannot sort in `const`, so the tables above are hand-precomputed;
-    /// this test re-derives them at runtime and asserts they match.
+    /// Rust stable cannot sort in `const`, so the `ALL_SORTED` /
+    /// `ALL_SORTED_INDEX` tables above are hand-precomputed; this test
+    /// re-derives them at runtime and asserts they match.
     #[test]
-    fn all_sorted_matches_zig_comptime() {
-        // const all_sorted = brk: { var list = all; std.sort.pdq(...); break :brk list; };
+    fn all_sorted_matches_precomputed() {
         let mut list = Imports::ALL;
         list.sort_unstable();
         assert_eq!(
@@ -453,7 +449,6 @@ mod tests {
             "ALL_SORTED drifted from sorted(ALL)"
         );
 
-        // pub const all_sorted_index = brk: { for (all) |name, i| for (all_sorted) |cmp, j| ... };
         let mut out = [0usize; Imports::ALL.len()];
         for (i, name) in Imports::ALL.iter().enumerate() {
             for (j, cmp) in list.iter().enumerate() {
@@ -470,5 +465,3 @@ mod tests {
         );
     }
 }
-
-// ported from: src/js_parser/runtime.zig

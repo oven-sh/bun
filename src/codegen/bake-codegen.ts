@@ -14,17 +14,48 @@ if (!codegenRoot) {
 const base_dir = join(import.meta.dirname, "../runtime/bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
-function convertZigEnum(zig: string, names: string[]) {
-  let output = "/** Generated from DevServer.zig */\n";
+/** Rust `PascalCase` variant → snake_case member name the HMR runtime keys on. */
+function rustVariantToSnakeCase(s: string) {
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
+}
+
+/**
+ * Reads `pub enum <name> { Variant = b'c', ... }` declarations out of
+ * `dev_server/mod.rs` and emits a matching `export const enum` block.
+ * Variant doc comments (`///`) are carried through verbatim. Member names
+ * are converted to snake_case so existing consumers
+ * (`hmr-runtime-client.ts`, `client/overlay.ts`, etc.) keep working.
+ *
+ * Enums marked `#[non_exhaustive]` get a trailing `_` member so unknown wire
+ * bytes map to an `_` sentinel.
+ */
+function convertRustEnum(rust: string, names: string[]) {
+  let output = "/** Generated from dev_server/mod.rs */\n";
   for (const name of names) {
-    const startTrigger = `\npub const ${name} = enum(u8) {`;
-    const start = zig.indexOf(startTrigger) + startTrigger.length;
-    const endTrigger = /\n    pub (inline )?fn |\n};/g;
-    const end = zig.slice(start).search(endTrigger) + start;
-    const enumText = zig.slice(start, end);
-    const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
-      return `\n  ${name} = ${value.charCodeAt(0)},`;
-    });
+    const startTrigger = `\npub enum ${name} {`;
+    const startIdx = rust.indexOf(startTrigger);
+    if (startIdx === -1) throw new Error(`Could not find \`pub enum ${name}\` in dev_server/mod.rs`);
+    const start = startIdx + startTrigger.length;
+    const end = rust.indexOf("\n}", start);
+    const enumText = rust.slice(start, end);
+    let values = enumText
+      .replaceAll("\n    ", "\n  ")
+      .replace(
+        /\n\s*([A-Z]\w*)\s*=\s*b'(.)',/g,
+        (_, variant, value) => `\n  ${rustVariantToSnakeCase(variant)} = ${value.charCodeAt(0)},`,
+      );
+    // Look at the attribute block immediately preceding `pub enum <name>` for
+    // `#[non_exhaustive]`. Only match standalone attribute lines so that
+    // `///` doc-comment prose mentioning the literal string doesn't trip it.
+    const attrs = rust.slice(rust.lastIndexOf("\n\n", startIdx) + 1, startIdx);
+    if (/^\s*#\[non_exhaustive\]\s*$/m.test(attrs)) {
+      values += "\n\n  /// Invalid data\n  _,";
+    } else {
+      values += "\n";
+    }
     output += `export const enum ${name} {${values}}\n`;
   }
   return output;
@@ -41,8 +72,8 @@ function css(file: string, is_development: boolean): string {
 }
 
 async function run() {
-  const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
-  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
+  const devServerRust = readFileSync(join(base_dir, "dev_server/mod.rs"), "utf-8");
+  writeIfNotChanged(join(base_dir, "generated.ts"), convertRustEnum(devServerRust, ["IncomingMessageId", "MessageId"]));
 
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {

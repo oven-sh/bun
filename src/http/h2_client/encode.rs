@@ -65,7 +65,7 @@ enum RequestHeader {
     Sensitive,
 }
 
-// PORT NOTE: Zig used a comptime case-insensitive map. The first pass below
+// PORT NOTE: was a compile-time case-insensitive map. The first pass below
 // pre-lowercases the probe so a case-sensitive match suffices.
 fn classify_request_header(name: &[u8]) -> Option<RequestHeader> {
     Some(match name {
@@ -370,9 +370,9 @@ pub fn drain_send_bodies(session: &mut ClientSession) {
     let slice: usize = session.remote_max_frame_size as usize;
     while session.conn_send_window > 0 && session.write_buffer.size() < WRITE_BUFFER_HIGH_WATER {
         let mut progressed = false;
-        // PORT NOTE: reshaped for borrowck — Zig iterates `session.streams.values()`
-        // while passing `session` mutably to `drain_send_body`. Iterate by index
-        // and re-borrow each pass.
+        // PORT NOTE: reshaped for borrowck — iterating `session.streams.values()`
+        // while passing `session` mutably to `drain_send_body` would alias.
+        // Iterate by index and re-borrow each pass.
         let mut i = 0usize;
         while i < session.streams.count() {
             let stream = session.streams.values()[i];
@@ -402,8 +402,8 @@ pub fn encode_header(
 ) -> Result<(), bun_core::Error> {
     let required = encoded.len() + name.len() + value.len() + 32;
     encoded.reserve(required.saturating_sub(encoded.len()));
-    // Zig passed `encoded.allocatedSlice()` (ptr[0..capacity]) + current len as
-    // offset; mirror with the raw buffer and set_len after.
+    // Pass the full allocated buffer (ptr[0..capacity]) + current len as
+    // offset; use the raw buffer and set_len after.
     // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
     // within the just-reserved capacity; bytes in `[0..len]` are initialized.
     let len = encoded.len();
@@ -437,5 +437,3 @@ pub fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
     // PERF(port): was assume_capacity
     encoded.push(rest as u8);
 }
-
-// ported from: src/http/h2_client/encode.zig

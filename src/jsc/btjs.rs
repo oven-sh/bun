@@ -7,13 +7,13 @@ use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
 #[cfg(debug_assertions)]
 use bun_core::{self, Error, err};
 
-// Port of the subset of Zig `std.debug.*` used by btjs.zig: `SelfInfo`, `StackIterator`,
-// `ThreadContext`, `MemoryAccessor`, plus the symbol-lookup helpers. The frame-pointer
-// unwinder is ported verbatim from `vendor/zig/lib/std/debug.zig`; the DWARF-backed
-// unwind path is omitted (`supports_unwinding = false` here) so `StackIterator` falls
-// through to fp-walking exactly as Zig does on targets without DWARF support.
+// Standard-library-style debug helpers used by `dumpBtjsTrace`: `SelfInfo`,
+// `StackIterator`, `ThreadContext`, `MemoryAccessor`, plus the symbol-lookup
+// helpers. The frame-pointer unwinder walks saved fp/pc slots directly; the
+// DWARF-backed unwind path is omitted (`supports_unwinding = false` here) so
+// `StackIterator` always falls through to fp-walking.
 #[cfg(debug_assertions)]
-mod zig_std_debug {
+mod std_debug {
     #[allow(unused_imports)]
     use core::ffi::{c_int, c_void};
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -22,15 +22,15 @@ mod zig_std_debug {
     use bun_core::{Error, err};
 
     // ── ThreadContext / have_ucontext ────────────────────────────────────
-    // Zig: `pub const ThreadContext = if (windows) windows.CONTEXT else if (have_ucontext) posix.ucontext_t else void;`
+    // Per-platform register snapshot type: Windows `CONTEXT`, otherwise POSIX `ucontext_t`.
     #[cfg(not(windows))]
     pub type ThreadContext = libc::ucontext_t;
     #[cfg(windows)]
     pub type ThreadContext = bun_sys::windows::CONTEXT;
 
-    // Zig: `pub const have_ucontext = posix.ucontext_t != void;`
+    // Whether a POSIX `ucontext_t` is available on this target.
     pub const HAVE_UCONTEXT: bool = cfg!(not(windows));
-    // Zig: `pub const have_getcontext = @TypeOf(posix.system.getcontext) != void;`
+    // Whether libc provides `getcontext(3)`.
     // Android / OpenBSD / Haiku lack getcontext; everywhere else we link libc's.
     const HAVE_GETCONTEXT: bool = cfg!(all(
         not(windows),
@@ -38,12 +38,13 @@ mod zig_std_debug {
         not(target_os = "openbsd")
     ));
 
-    // DWARF unwinding requires the full `Dwarf` parser (not ported). Zig falls back to
-    // fp-walking when `SelfInfo.supports_unwinding == false`; we hard-code that here.
+    // DWARF unwinding requires a full `Dwarf` parser, which we do not have.
+    // When `SelfInfo.supports_unwinding == false`, the iterator falls back to
+    // fp-walking; we hard-code that here.
     const SUPPORTS_UNWINDING: bool = false;
 
-    // ── std.debug.getContext ─────────────────────────────────────────────
-    /// Port of `std.debug.getContext`. Captures the current register state.
+    // ── get_context ──────────────────────────────────────────────────────
+    /// Captures the current register state for stack walking.
     /// Returns `false` if the platform has no `getcontext`.
     #[inline(always)]
     pub fn get_context(context: *mut ThreadContext) -> bool {
@@ -96,8 +97,8 @@ mod zig_std_debug {
         }
     }
 
-    // ── @frameAddress() ──────────────────────────────────────────────────
-    /// Port of Zig `@frameAddress()`. Reads the frame-pointer register directly.
+    // ── frame_address ────────────────────────────────────────────────────
+    /// Reads the frame-pointer register directly.
     #[inline(always)]
     fn frame_address() -> usize {
         #[cfg(target_arch = "x86_64")]
@@ -120,7 +121,7 @@ mod zig_std_debug {
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
-            // PORT NOTE: @frameAddress() — approximate with a stack local's addr on
+            // PORT NOTE: approximate the frame address with a stack local's addr on
             // arches without an asm! mapping yet. fp-walk will fail its alignment
             // sanity check and terminate cleanly.
             let probe = 0u8;
@@ -128,7 +129,7 @@ mod zig_std_debug {
         }
     }
 
-    // ── MemoryAccessor (vendor/zig/lib/std/debug/MemoryAccessor.zig) ─────
+    // ── MemoryAccessor ───────────────────────────────────────────────────
     /// Reads memory from any address of the current process using OS-specific
     /// syscalls, bypassing memory page protection. Used by `StackIterator` to
     /// safely walk frame pointers without segfaulting on a corrupt stack.
@@ -260,7 +261,6 @@ mod zig_std_debug {
         }
         #[cfg(windows)]
         {
-            // Port of vendor/zig/lib/std/debug/MemoryAccessor.zig:101-120.
             // The fp-walker IS used on Windows (see `!cfg!(windows)` gate on
             // `init_with_context` below), so we must validate the page via
             // `VirtualQuery` before `copy_nonoverlapping` dereferences it —
@@ -315,7 +315,7 @@ mod zig_std_debug {
         }
     }
 
-    // ── StackIterator (vendor/zig/lib/std/debug.zig:771) ─────────────────
+    // ── StackIterator ────────────────────────────────────────────────────
     pub struct StackIterator {
         // Skip every frame before this address is found.
         first_address: Option<usize>,
@@ -377,8 +377,8 @@ mod zig_std_debug {
             }
             #[allow(unreachable_code)]
             if SUPPORTS_UNWINDING {
-                // PORT NOTE: DWARF `UnwindContext::init` not ported — `SUPPORTS_UNWINDING`
-                // is `false`, so this branch is dead. Kept to mirror Zig structure.
+                // DWARF `UnwindContext::init` is not implemented — `SUPPORTS_UNWINDING`
+                // is `false`, so this branch is dead. Kept to mirror the fp-walk fallback shape.
                 return Err(err!("UnsupportedCpuArchitecture"));
             }
             Ok(Self::init(first_address, None))
@@ -411,10 +411,10 @@ mod zig_std_debug {
         }
 
         fn next_internal(&mut self) -> Option<usize> {
-            // PORT NOTE: the `unwind_state` DWARF path (`next_unwind`) is not ported
-            // (`SUPPORTS_UNWINDING == false`); Zig falls through to fp-walking here too.
+            // The `unwind_state` DWARF path (`next_unwind`) is not implemented
+            // (`SUPPORTS_UNWINDING == false`); fall straight through to fp-walking.
 
-            // `builtin.omit_frame_pointer` — Bun debug builds always keep frame pointers.
+            // Bun debug builds always keep frame pointers, so fp-walking is safe.
 
             let fp = self.fp.checked_sub(Self::FP_OFFSET)?;
 
@@ -445,7 +445,7 @@ mod zig_std_debug {
         pub err: UnwindError,
     }
 
-    // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
+    // ── SelfInfo ─────────────────────────────────────────────────────────
     // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
@@ -454,30 +454,30 @@ mod zig_std_debug {
     };
 }
 #[cfg(debug_assertions)]
-use zig_std_debug::{
+use std_debug::{
     Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError,
 };
 
-// Port of the subset of `std.io.tty.{Config,Color,detectConfig}` used by btjs.zig
-// (vendor/zig/lib/std/Io/tty.zig). The `windows_api` variant is omitted because
-// btjs writes to an in-memory `Vec<u8>` returned to lldb, not to the live console
-// handle, so `SetConsoleTextAttribute` would colour the wrong stream.
+// Minimal TTY color configuration used by `dumpBtjsTrace`.
+// The `windows_api` variant is omitted because btjs writes to an in-memory
+// `Vec<u8>` returned to lldb, not to the live console handle, so
+// `SetConsoleTextAttribute` would colour the wrong stream.
 #[cfg(debug_assertions)]
 mod tty {
-    // D089: `Config`/`Color`/`set_color` deduped to the canonical port in
+    // D089: `Config`/`Color`/`set_color` deduped to the canonical impl in
     // `bun_crash_handler::debug` (lower-tier crate; `Vec<u8>` already impls
     // `bun_io::Write` so the generic `set_color` covers btjs's in-memory sink).
-    // `detect_config_stdout` stays LOCAL — it ports a *different* Zig call
-    // site (`detectConfig(stdout())` with NO_COLOR/CLICOLOR_FORCE/isatty) than
+    // `detect_config_stdout` stays LOCAL — it covers a *different* call
+    // site (stdout detection via NO_COLOR/CLICOLOR_FORCE/isatty) than
     // crash_handler's `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
     pub use bun_crash_handler::debug::{Color, TtyConfig as Config};
 
-    /// Port of `process.hasNonEmptyEnvVarConstant`.
+    /// Returns true if the named environment variable exists and is non-empty.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
         #[cfg(windows)]
         {
-            // Zig spec (vendor/zig/lib/std/process.zig:435-446) reads the Win32
-            // environment via `getenvW`, NOT MSVCRT `getenv`. The CRT keeps its
+            // On Windows, read the Win32 environment via the wide API, NOT
+            // MSVCRT `getenv`. The CRT keeps its
             // own narrow-string env cache that is not updated by
             // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
             // runtime — so `libc::getenv` would silently miss those.
@@ -518,7 +518,7 @@ mod tty {
         }
     }
 
-    /// Port of `std.io.tty.detectConfig(std.fs.File.stdout())`.
+    /// Detects whether stdout supports ANSI escape codes (NO_COLOR / CLICOLOR_FORCE / isatty).
     pub fn detect_config_stdout() -> Config {
         let force_color: Option<bool> = if has_non_empty_env_var(c"NO_COLOR") {
             Some(false)
@@ -532,11 +532,10 @@ mod tty {
             return Config::NoColor;
         }
 
-        // `file.getOrEnableAnsiEscapeSupport()` — on POSIX this is `isatty(fd)`;
-        // on Windows it tries to enable VT processing on the console handle.
-        // PORT NOTE: btjs writes into a `Vec<u8>` returned to lldb, so the
-        // `.windows_api` variant (which calls `SetConsoleTextAttribute` mid-write)
-        // cannot apply; fall through to escape_codes / no_color.
+        // On POSIX this is just `isatty(fd)`; on Windows the moral equivalent
+        // would be enabling VT processing on the console handle. btjs writes
+        // into a `Vec<u8>` returned to lldb, so the Windows console-attribute
+        // path cannot apply; fall through to escape_codes / no_color.
         if bun_sys::isatty(bun_sys::Fd::stdout()) {
             return Config::EscapeCodes;
         }
@@ -562,8 +561,8 @@ unsafe extern "C" {
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
 #[unsafe(no_mangle)]
 pub extern "C" fn dumpBtjsTrace() -> *const c_char {
-    // Zig: `if (comptime bun.Environment.isDebug)` — must use #[cfg], not cfg!(), so the
-    // entire debug impl is DCE'd from release builds.
+    // Must use #[cfg], not cfg!(), so the entire debug impl is DCE'd from
+    // release builds.
     #[cfg(debug_assertions)]
     {
         return dump_btjs_trace_debug_impl();
@@ -606,7 +605,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
 
     let tty_config = tty::detect_config_stdout();
 
-    // SAFETY: Zig used `= undefined`; getcontext fully initializes.
+    // SAFETY: `get_context` fully initializes `context` before any read.
     let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed_unchecked() };
     let has_context = get_context(&mut context);
 
@@ -630,7 +629,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
         let address = return_address.saturating_sub(1);
         let _ = print_source_at_address(debug_info, w, address, &tty_config, it.fp);
     }
-    // Zig `while ... else` runs after normal loop exit (no `break` in body), so this is unconditional:
+    // Runs unconditionally after the loop drains (the body never `break`s):
     print_last_unwind_error(&mut it, debug_info, w, &tty_config);
 
     // remove nulls
@@ -759,8 +758,7 @@ fn print_line_info(
     symbol_name: &[u8],
     compile_unit_name: &[u8],
     tty_config: &tty::Config,
-    // Zig: `comptime printLineFromFile: anytype` — anytype maps to generic/impl-Trait so it
-    // monomorphizes (PORTING.md type map), not a runtime fn pointer.
+    // Generic so the call monomorphizes (no runtime fn-pointer indirection).
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
     do_llint: bool,
 ) -> Result<(), Error> {
@@ -838,9 +836,8 @@ fn print_line_from_file_any_os(
 
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-    // TODO(port): Zig used std.fs.cwd().openFile directly (bypassing bun.sys). PORTING.md
-    // forbids std::fs; using bun_sys here. Phase B: confirm bun_sys::File is safe to call
-    // from inside a crash handler / lldb (must not re-enter event loop).
+    // TODO(port): confirm bun_sys::File is safe to call from inside a crash
+    // handler / lldb (must not re-enter event loop). PORTING.md forbids std::fs.
     let f = bun_sys::File::open_at(
         bun_sys::Fd::cwd(),
         &source_location.file_name,
@@ -914,7 +911,7 @@ fn print_last_unwind_error(
     if !cfg!(debug_assertions) {
         unreachable!();
     }
-    if !zig_std_debug::HAVE_UCONTEXT {
+    if !std_debug::HAVE_UCONTEXT {
         return;
     }
     if let Some(unwind_error) = stack_iterator_get_last_error(it) {
@@ -975,18 +972,18 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Thin forwarders to the `zig_std_debug` port — keep the call-site shape
-// matching the Zig (`std.debug.getSelfDebugInfo()`, `it.getLastError()`, …).
+// Thin forwarders to the `std_debug` helpers — keep call-site naming
+// (`get_self_debug_info()`, `it.get_last_error()`, …) consistent.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(debug_assertions)]
 #[inline]
 fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
-    zig_std_debug::get_self_debug_info()
+    std_debug::get_self_debug_info()
 }
 #[cfg(debug_assertions)]
 #[inline(always)]
 fn get_context(ctx: &mut ThreadContext) -> bool {
-    zig_std_debug::get_context(ctx)
+    std_debug::get_context(ctx)
 }
 #[cfg(debug_assertions)]
 #[inline(always)]
@@ -1004,7 +1001,7 @@ fn stack_iterator_init(first: Option<usize>, fp: Option<usize>) -> StackIterator
 }
 #[cfg(debug_assertions)]
 #[inline]
-fn stack_iterator_get_last_error(it: &mut StackIterator) -> Option<zig_std_debug::LastUnwindError> {
+fn stack_iterator_get_last_error(it: &mut StackIterator) -> Option<std_debug::LastUnwindError> {
     it.get_last_error()
 }
 #[cfg(debug_assertions)]
@@ -1022,5 +1019,3 @@ fn get_symbol_at_address(module: &mut Module, addr: usize) -> Result<SymbolInfo,
 fn get_module_name_for_address(di: &mut SelfInfo, addr: usize) -> Option<Box<[u8]>> {
     di.get_module_name_for_address(addr)
 }
-
-// ported from: src/jsc/btjs.zig

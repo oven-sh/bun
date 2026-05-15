@@ -138,9 +138,9 @@ pub unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
-/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot
-/// (`socket.ext(**T).*` in Zig). `None` covers the calloc'd-but-not-yet-
-/// stamped window during connect/accept.
+/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot.
+/// `None` covers the calloc'd-but-not-yet-stamped window during
+/// connect/accept.
 ///
 /// # Safety
 /// The pointee, when present, must be live and uniquely borrowed for `'a`

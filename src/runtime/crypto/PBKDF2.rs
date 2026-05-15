@@ -3,7 +3,7 @@ use core::ffi::c_uint;
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
     AnyTaskJob, AnyTaskJobCtx, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
-    ZigStringSlice,
+    UTF8Slice,
 };
 
 use crate::node::StringOrBuffer;
@@ -11,8 +11,7 @@ use crate::node::StringOrBuffer;
 use crate::crypto::create_crypto_error;
 use crate::crypto::evp::{self, Algorithm};
 
-// BoringSSL error code; not yet exported by `bun_boringssl_sys`
-// (Zig: src/boringssl_sys/boringssl.zig:6422).
+// BoringSSL error code; not yet exported by `bun_boringssl_sys`.
 const EVP_R_MEMORY_LIMIT_EXCEEDED: u32 = 132;
 
 pub struct PBKDF2 {
@@ -30,7 +29,7 @@ impl Default for PBKDF2 {
             salt: StringOrBuffer::default(),
             iteration_count: 1,
             length: 0,
-            // PORT NOTE: Zig had no default for `algorithm` (callers always set it).
+            // PORT NOTE: the original had no default for `algorithm` (callers always set it).
             // Sha256 is an arbitrary placeholder so `Default` compiles.
             algorithm: Algorithm::Sha256,
         }
@@ -74,7 +73,7 @@ impl PBKDF2 {
         true
     }
 
-    // Zig `deinit()` only freed `password`/`salt`; both are `StringOrBuffer`
+    // The original `deinit()` only freed `password`/`salt`; both are `StringOrBuffer`
     // whose `Drop` releases the slice/WTF ref, so the explicit hook is gone —
     // dropping `PBKDF2` is sufficient for the sync path. The async path holds
     // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
@@ -189,7 +188,7 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
-        // Zig: `defer { if (globalThis.hasException()) { if (is_async) out.deinitAndUnprotect() else out.deinit(); } }`
+        // `defer { if (globalThis.hasException()) { if (is_async) out.deinitAndUnprotect() else out.deinit(); } }`
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
             if global_this.has_exception() && is_async {
@@ -254,7 +253,7 @@ impl PBKDF2 {
 }
 
 impl bun_jsc::Unprotect for PBKDF2 {
-    /// Zig `PBKDF2.deinitAndUnprotect`, JS-side half — owned slices are
+    /// `PBKDF2.deinitAndUnprotect`, JS-side half — owned slices are
     /// released by `Drop for StringOrBuffer`.
     #[inline]
     fn unprotect(&mut self) {
@@ -276,7 +275,7 @@ pub struct Pbkdf2Ctx {
 impl AnyTaskJobCtx for Pbkdf2Ctx {
     fn run(&mut self, _global: *mut JSGlobalObject) {
         let len = usize::try_from(self.pbkdf2.length).expect("int cast");
-        // Zig: `bun.default_allocator.alloc(u8, len) catch { ... }`
+        // `bun.default_allocator.alloc(u8, len) catch { ... }`
         // Rust `Vec` allocation aborts on OOM; mirror the error path with try_reserve.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
@@ -306,7 +305,7 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
         debug_assert!(output_slice.len() == usize::try_from(self.pbkdf2.length).expect("int cast"));
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-        // Zig: `this.output = &[_]u8{};` — already done via `mem::take` above.
+        // `this.output = &[_]u8{};` — already done via `mem::take` above.
         promise.resolve(global_this, buffer_value)?;
         Ok(())
     }
@@ -314,7 +313,7 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
 
 pub type Job = AnyTaskJob<Pbkdf2Ctx>;
 
-/// Zig `Job.create` — heap-allocate, init the promise, ref the loop, and hand
+/// `Job.create` — heap-allocate, init the promise, ref the loop, and hand
 /// to the work pool. Returns the live job so the caller can read
 /// `(*job).ctx.promise.value()` before the JS-thread completion fires.
 /// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
@@ -343,11 +342,11 @@ pub fn pbkdf2<'a>(
     iteration_count: u32,
     algorithm: Algorithm,
 ) -> Option<&'a [u8]> {
-    // Return type borrows `output`; Zig returned `?[]const u8` aliasing the input.
+    // Return type borrows `output`; the original returned a slice aliasing the input.
     let mut pbk = PBKDF2 {
         algorithm,
-        password: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(password)),
-        salt: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(salt)),
+        password: StringOrBuffer::EncodedSlice(UTF8Slice::from_utf8_never_free(password)),
+        salt: StringOrBuffer::EncodedSlice(UTF8Slice::from_utf8_never_free(salt)),
         iteration_count,
         length: i32::try_from(output.len()).expect("int cast"),
     };
@@ -358,5 +357,3 @@ pub fn pbkdf2<'a>(
 
     Some(output)
 }
-
-// ported from: src/runtime/crypto/PBKDF2.zig

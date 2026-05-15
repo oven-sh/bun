@@ -3,7 +3,7 @@ use bun_core::Output;
 // here so existing `crate::cli::shell_completions::Shell` paths keep working.
 pub use bun_install::ShellCompletions::Shell;
 
-// PORT NOTE: Zig used `@embedFile("completions-bash")` etc. via build-system
+// PORT NOTE: the original embedded these via build-system
 // module aliases. The actual files live at `<repo>/completions/bun.{bash,zsh,fish}`.
 // The embedded script bodies must stay above the install tier (asset dependency),
 // so `completions()` is an extension trait on the re-exported enum rather than an
@@ -27,8 +27,7 @@ impl ShellCompletionsExt for Shell {
     }
 }
 
-// File-level `@This()` struct.
-// PORT NOTE: Zig fields are `[]const []const u8` (borrowed views into either a
+// PORT NOTE: the original fields were borrowed string-slice views (into either a
 // stack array or arena-allocated storage). `Cow` lets `RunCommand::completions`
 // hand back arena-backed `'static` borrows while `bun_getcompletes` supplies an
 // owned `Vec` for the `a` (add-completions) branch — no leaking.
@@ -100,5 +99,3 @@ impl ShellCompletions {
         }
     }
 }
-
-// ported from: src/cli/shell_completions.zig

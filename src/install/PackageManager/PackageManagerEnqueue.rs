@@ -40,7 +40,7 @@ use bun_install::{
     invalid_package_id,
 };
 
-// PORT NOTE: Zig accesses `PackageManager.verbose_install` (a `pub var`); the
+// PORT NOTE: the original accesses `PackageManager.verbose_install` (a `pub var`); the
 // Rust port stores it as a process-global. The associated fn lives on the real
 // `PackageManager` impl; pull it into scope as a free name so the comptime-ish
 // `verbose_install()` call sites read the same.
@@ -62,7 +62,7 @@ const assign_root_resolution: SuccessFn = PackageManager::assign_root_resolution
 #[allow(non_upper_case_globals)]
 const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
 
-// Zig: `const debug = PackageManager.debug;` — the `use package_manager_real::PackageManager`
+// original: `const debug = PackageManager.debug;` — the `use package_manager_real::PackageManager`
 // above already pulls the `declare_scope!`-generated `static PackageManager: ScopedLogger`
 // (value namespace) alongside the struct (type namespace), so re-declaring it here
 // would collide. `scoped_log!(PackageManager, ...)` below resolves to that import.
@@ -155,7 +155,7 @@ pub fn enqueue_dependency_list(
                     escape_backslashes: false,
                 },
             );
-            // TODO(port): logger note API — Zig passes (fmt, args) tuple separately
+            // TODO(port): logger note API — the original passes (fmt, args) tuple separately
             let log = this.log_mut();
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log.add_warning_with_note(
@@ -165,7 +165,7 @@ pub fn enqueue_dependency_list(
                     format_args!("error occurred while resolving {}", path_fmt),
                 );
             } else {
-                log.add_zig_error_with_note(
+                log.add_bun_raw_error_with_note(
                     err,
                     format_args!("error occurred while resolving {}", path_fmt),
                 );
@@ -239,7 +239,7 @@ pub fn enqueue_tarball_for_reading(
     // PORT NOTE: reshaped for borrowck — `path` borrows
     // `this.lockfile.buffers.string_bytes`; detach the slice lifetime so the
     // `&mut PackageManager` reborrow for `enqueue_local_tarball` below does
-    // not conflict (Zig passes the aliased `*PackageManager` freely).
+    // not conflict (originally passes the aliased `*PackageManager` freely).
     // SAFETY: caller passes `resolution.tag == LocalTarball`; the
     // `local_tarball` arm is the active union field. `string_bytes` is not
     // resized in this fn — `enqueue_local_tarball` copies `path` into the
@@ -287,7 +287,7 @@ pub fn enqueue_git_for_checkout(
     // PORT NOTE: reshaped for borrowck — `url`/`resolved` borrow
     // `this.lockfile.buffers.string_bytes`; detach the slice lifetimes so the
     // `&mut PackageManager` reborrows for the enqueue callees below do not
-    // conflict (Zig passes the aliased `*PackageManager` freely).
+    // conflict (originally passes the aliased `*PackageManager` freely).
     // SAFETY: the enqueue callees copy these slices into the filename store
     // and never resize `string_bytes` while they are live.
     let url = this.lockfile.str_detached(&repository.repo);
@@ -375,7 +375,7 @@ pub fn enqueue_parse_npm_package(
                 ),
             },
             id: task_id,
-            // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
+            // TODO(port): `data: undefined` — Task::data left uninitialized originally
             ..Task::uninit()
         });
         &raw mut (*task).threadpool_task
@@ -512,11 +512,11 @@ pub fn enqueue_dependency_to_root(
         id if id == invalid_package_id => 'brk: {
             this.drain_dependency_list();
 
-            // https://github.com/ziglang/zig/issues/19586 — Zig needed a workaround fn-returning-type;
+            // https://github.com/ziglang/zig/issues/19586 — the original needed a workaround fn-returning-type;
             // in Rust we just declare the closure struct directly.
             struct Closure {
                 err: Option<bun_core::Error>,
-                // PORT NOTE: raw `*mut` (Zig `*PackageManager`) — `sleep_until`
+                // PORT NOTE: raw `*mut` (originally`*PackageManager`) — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
             }
@@ -527,7 +527,7 @@ pub fn enqueue_dependency_to_root(
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
                     if manager.pending_task_count() > 0 {
-                        // Zig: `runTasks(void, {}, .{ .onExtract = {}, ... }, false, log_level)`
+                        // original: `runTasks(void, {}, .{ .onExtract = {}, ... }, false, log_level)`
                         // — all callbacks `void`. `VoidRunTasksCallbacks` (below)
                         // mirrors that with `Ctx = ()` and every `HAS_* = false`.
                         let log_level = manager.options.log_level;
@@ -595,7 +595,7 @@ pub fn enqueue_dependency_to_root(
     }
 }
 
-/// Mirrors Zig's `runTasks(void, {}, .{ all-void callbacks }, ...)` shape used
+/// Mirrors the original's `runTasks(void, {}, .{ all-void callbacks }, ...)` shape used
 /// by `enqueueDependencyToRoot` and `runAndWaitFn`: `Ctx = void`, every `on*`
 /// is `{}` so the `HAS_*` const-gates compile out the callback paths.
 pub struct VoidRunTasksCallbacks;
@@ -660,7 +660,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // PERF(port): was comptime monomorphization (successFn/failFn) — profile in Phase B
     success_fn: SuccessFn,
     fail_fn: Option<FailFn>,
-    // Zig: `comptime if (successFn == assignRootResolution)`. The Zig check is a
+    // original: `comptime if (successFn == assignRootResolution)`. The original check is a
     // compile-time identity comparison; in Rust the two `SuccessFn` candidates
     // (`assign_resolution` / `assign_root_resolution`) have byte-identical
     // bodies in release builds, so Apple ld64 (which ignores `.llvm_addrsig`)
@@ -995,8 +995,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // PORT NOTE: reshaped for borrowck — `name_str` borrows
                         // `this.lockfile.buffers.string_bytes`. Route the whole
                         // branch through a raw root so the slice and the
-                        // `&mut PackageManager` calls below can coexist (Zig
-                        // passes the aliased `*PackageManager` freely).
+                        // `&mut PackageManager` calls below can coexist (the
+                        // original passes the aliased `*PackageManager` freely).
                         // Snapshot the manifest disk-cache scalars while we
                         // still hold `&mut this` exclusively — taking it via
                         // `&mut *this_ptr` after `name_str`/`scope` exist
@@ -1160,7 +1160,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 // is free to reborrow `&mut`.
                                 let network_task = this.get_network_task();
                                 // SAFETY: `network_task` is the unique handle to a
-                                // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
+                                // freshly-vended pool slot. the original's `network_task.* = .{ ... }`
                                 // resets every defaulted field; `write_init` mirrors that
                                 // (callback is `= undefined` and overwritten by `for_manifest`).
                                 unsafe {
@@ -1325,7 +1325,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             let url = this.alloc_github_url(dep);
-            // url is Box<[u8]>; dropped at scope end (Zig had `defer allocator.free(url)`)
+            // url is Box<[u8]>; dropped at scope end (originally had `defer allocator.free(url)`)
             let task_id = Task::Id::for_tarball(&url);
 
             if cfg!(debug_assertions) {
@@ -1388,7 +1388,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             Ok(())
         }
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
-            // PORT NOTE: Zig used `inline .symlink, .workspace => |dependency_tag|` to capture
+            // PORT NOTE: the original used `inline .symlink, .workspace => |dependency_tag|` to capture
             // the comptime tag; we check `version.tag` at runtime instead.
             let dependency_tag = version.tag;
 
@@ -1426,7 +1426,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 "Tip: the package name is from package.json, which can differ from the folder name.\n",
                 "\n",
             );
-            // TODO(port): named-argument format strings — Zig used `{[name]s}` / `{[search_path]f}`;
+            // TODO(port): named-argument format strings — the original used `{[name]s}` / `{[search_path]f}`;
             // logger API in Rust may need positional args instead.
 
             if let Some(result) = _result {
@@ -1658,8 +1658,8 @@ fn init_extract_task(
 ) -> *mut Task::Task<'static> {
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
+    // pool; we own the write. `ptr::write` (no drop of prior value) matches the
+    // original `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
@@ -1802,8 +1802,8 @@ pub fn enqueue_git_checkout(
 ) -> *mut ThreadPool::Task {
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
+    // pool; we own the write. `ptr::write` (no drop of prior value) matches the
+    // original `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
@@ -2049,7 +2049,7 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // PORT NOTE (determinism): Zig passes `version` here unconditionally, so a
+    // PORT NOTE (determinism): the original passes `version` here unconditionally, so a
     // peer like `>= 1.0.2` can collapse onto whichever sibling-appended entry
     // (e.g. `1.0.9`) happens to be highest in the index *at this instant* — a
     // network-order artefact that the `^1.0.2` peer-hoisting test already
@@ -2091,10 +2091,10 @@ fn get_or_put_resolved_package_with_find_result(
     // appendPackage sets the PackageID on the package
     // PORT NOTE: reshaped for borrowck — `from_npm` takes both `&mut PackageManager`
     // and `&mut Lockfile`, which alias through `this.lockfile`. Split via raw root
-    // (Zig passes both freely).
+    // (originally passes both freely).
     let this_ptr: *mut PackageManager = this;
     // SAFETY: `from_npm` reads `pm` fields disjoint from `pm.lockfile` (options /
-    // updating_packages); the raw split mirrors Zig's aliased `*PackageManager`.
+    // updating_packages); the raw split mirrors the original's aliased `*PackageManager`.
     let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(Package::from_npm(
         unsafe { &mut *this_ptr },
         unsafe { &mut *(*this_ptr).lockfile },
@@ -2117,7 +2117,7 @@ fn get_or_put_resolved_package_with_find_result(
         // by-value above).
         unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
     }
-    // PORT NOTE: Zig used `defer successFn(...)`. Use scopeguard so success_fn runs on every
+    // PORT NOTE: the original used `defer successFn(...)`. Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
     // `this` reborrow below doesn't conflict with the closure capture.
     let mut guard = scopeguard::guard((this_ptr, package.meta.id), |(this_ptr, pkg_id)| {
@@ -2127,7 +2127,7 @@ fn get_or_put_resolved_package_with_find_result(
     });
     // SAFETY: see above — sole live `&mut PackageManager` until scope exit.
     let this: &mut PackageManager = unsafe { &mut *guard.0 };
-    // PORT NOTE: Zig `defer` (not errdefer) — scopeguard runs on ALL exits, never disarmed.
+    // PORT NOTE: the original `defer` (not errdefer) — scopeguard runs on ALL exits, never disarmed.
 
     // non-null if the package is in "patchedDependencies"
     let mut name_and_version_hash: Option<u64> = None;
@@ -2403,7 +2403,7 @@ fn get_or_put_resolved_package(
             // Resolve the version from the loaded NPM manifest
             // PORT NOTE: reshaped for borrowck — `name_str`/`manifest` borrow
             // `*this`; route through a raw root so the `&mut PackageManager`
-            // calls below can coexist (Zig passes the aliased `*PackageManager`).
+            // calls below can coexist (originally passes the aliased `*PackageManager`).
             // Snapshot the disk-fallback scalars *before* establishing
             // `this_ptr`: `manifest_disk_cache_ctx` takes `&mut self`, and
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
@@ -2807,7 +2807,7 @@ fn resolution_satisfies_dependency(
 // ──────────────────────────────────────────────────────────────────────────
 // `impl PackageManager` — inherent-method facade over the free fns above.
 //
-// Zig mounts this file via `usingnamespace`, so `pkg_manager.enqueueX(...)`
+// the original mounts this file via `usingnamespace`, so `pkg_manager.enqueueX(...)`
 // resolves to these free fns by first-arg-is-`*Self` UFCS. Rust has no
 // `usingnamespace`; sibling files (PackageManagerLifecycle, …Directories,
 // runTasks) all expose an `impl PackageManager` block instead. Match that
@@ -3011,5 +3011,3 @@ impl PackageManager {
         )
     }
 }
-
-// ported from: src/install/PackageManager/PackageManagerEnqueue.zig

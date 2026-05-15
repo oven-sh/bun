@@ -80,7 +80,7 @@ pub fn to_be_type_of(
     }
 
     let mut formatter = super::make_formatter(global);
-    // PORT NOTE: ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
+    // PORT NOTE: BunFormatter borrows &mut Formatter for its lifetime; need a second formatter
     // so `received` and `expected_str` can coexist in one format_args!.
     let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
@@ -121,5 +121,3 @@ pub fn to_be_type_of(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toBeTypeOf.zig

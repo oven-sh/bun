@@ -1,5 +1,5 @@
-//! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Extracted from
-//! `resolver/resolver.zig` so `resolver/` has no JSC references.
+//! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Kept separate
+//! from the resolver crate so `resolver/` has no JSC references.
 
 use bstr::BStr;
 
@@ -30,7 +30,7 @@ pub extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> 
 }
 
 // TODO(port): C++ callers pass `in_str` by value without transferring a ref; verify
-// `bun_core::String` Drop semantics match (Zig callee did not `deref`).
+// `bun_core::String` Drop semantics match (the original callee did not `deref`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 pub extern "C" fn node_module_paths_js_value(
     in_str: BunString,
@@ -65,9 +65,9 @@ pub extern "C" fn node_module_paths_js_value(
     };
     let mut root_path: &[u8] = &full_path[0..root_index];
     if full_path.len() > root_path.len() {
-        // PORT NOTE: reshaped for borrowck — `std.mem.splitBackwardsScalar` exposes
-        // `.buffer` and `.index`, which Rust's `rsplit` does not. Manual iteration
-        // mirrors the Zig SplitBackwardsIterator state machine exactly.
+        // Manual backwards-split iteration: Rust's `rsplit` does not expose the
+        // remaining-prefix index needed below, so iterate by hand and track the
+        // split position explicitly.
         let suffix: &[u8] = &full_path[root_index..];
         let mut index: Option<usize> = Some(suffix.len());
         while let Some(end) = index {
@@ -115,7 +115,7 @@ pub extern "C" fn node_module_paths_js_value(
 }
 
 /// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below
-/// (mirrors `bun_string_jsc.zig`'s `BunString__createArray`).
+/// (thin wrapper over the C++ `BunString__createArray` export).
 trait StringArrayJsc {
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
@@ -133,5 +133,3 @@ impl StringArrayJsc for [BunString] {
         })
     }
 }
-
-// ported from: src/jsc/resolver_jsc.zig

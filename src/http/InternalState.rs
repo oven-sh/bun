@@ -51,9 +51,9 @@ pub struct InternalState<'a> {
     pub certificate_info: Option<CertificateInfo>,
 }
 
-// PORT NOTE: was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
-// HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
-// = true`) directly; restore packing in Phase B if size matters.
+// PORT NOTE: kept as a struct-of-bools (not bitflags/packed) so the HTTPClient
+// state machine in lib.rs can use field syntax (`flags.allow_keepalive = true`)
+// directly; restore packing in Phase B if size matters.
 #[derive(Clone, Copy)]
 pub struct InternalStateFlags {
     pub allow_keepalive: bool,
@@ -65,7 +65,7 @@ pub struct InternalStateFlags {
 }
 
 impl InternalStateFlags {
-    /// Zig's field defaults: `allow_keepalive = true`, rest false.
+    /// `allow_keepalive` defaults to true, rest false.
     pub const fn new() -> Self {
         Self {
             allow_keepalive: true,
@@ -79,7 +79,7 @@ impl InternalStateFlags {
 }
 
 impl Default for InternalStateFlags {
-    /// Matches Zig `InternalStateFlags{}` (allow_keepalive defaults to true).
+    /// `allow_keepalive` defaults to true.
     fn default() -> Self {
         Self::new()
     }
@@ -141,10 +141,10 @@ impl<'a> InternalState<'a> {
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
         }
-        // PORT NOTE: Zig calls `this.decompressor.deinit()` here. The boxed
-        // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
-        // (see Decompressor.rs PORT NOTE), so the `*self = ...` assignment below
-        // frees the FFI handle via drop glue — no explicit reset needed.
+        // PORT NOTE: the boxed Zlib/Brotli/Zstd readers all impl Drop calling
+        // end()/destroy_instance (see Decompressor.rs PORT NOTE), so the
+        // `*self = ...` assignment below frees the FFI handle via drop glue —
+        // no explicit decompressor reset needed.
 
         // just in case we check and free to avoid leaks
         // (Option<HTTPResponseMetadata> drops on assignment; allocator param removed)
@@ -226,7 +226,7 @@ impl<'a> InternalState<'a> {
         body_out_str: &mut MutableString,
         is_final_chunk: bool,
     ) -> Result<(), Error> {
-        // PORT NOTE: Zig `defer this.compressed_body.reset()` runs on every exit. scopeguard would
+        // PORT NOTE: `compressed_body.reset()` must run on every exit. A scopeguard would
         // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
         // so each early-return below calls `self.compressed_body.reset()` explicitly.
         let mut gzip_timer: Option<std::time::Instant> = None;
@@ -363,8 +363,9 @@ impl<'a> InternalState<'a> {
         }
 
         if extremely_verbose {
-            // TODO(port): `gzip_elapsed` is not a field on InternalState in the Zig source either —
-            // this looks like dead code referencing a removed field. Preserved as a no-op read.
+            // TODO(port): `gzip_elapsed` is not a field on InternalState — this
+            // looks like dead code referencing a removed field. Preserved as a
+            // no-op read.
             let _ = gzip_timer.map(|t| t.elapsed());
         }
 
@@ -379,17 +380,16 @@ impl<'a> InternalState<'a> {
         body_out_str: &mut MutableString,
         is_final_chunk: bool,
     ) -> Result<(), Error> {
-        // PORT NOTE: reshaped for borrowck — Zig passed MutableString by value; we borrow the inner slice.
+        // PORT NOTE: reshaped for borrowck — borrow the inner slice rather than passing by value.
         self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
     }
 
     // TODO(port): narrow error set
-    // PORT NOTE: Zig takes `buffer: MutableString` BY VALUE (a shallow struct copy whose
-    // `.list.items` aliases the same allocation). Every caller passes `getBodyBuffer().*`,
-    // so `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
-    // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
-    // path materialises `&mut *body_out_str`), callers `mem::take` the body buffer's `list`
-    // and pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
+    // PORT NOTE: every caller passes the current body buffer's bytes. To avoid
+    // aliased &mut/& under Stacked Borrows (decompress_bytes mutates
+    // `self.compressed_body`; the uncompressed path materialises
+    // `&mut *body_out_str`), callers `mem::take` the body buffer's `list` and
+    // pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
     pub fn process_body_buffer(
         &mut self,
         mut buffer: Vec<u8>,
@@ -397,7 +397,7 @@ impl<'a> InternalState<'a> {
     ) -> Result<bool, Error> {
         if self.flags.is_redirect_pending {
             // Caller moved the bytes out of the body buffer; put them back so the
-            // take is a no-op (Zig's by-value copy left the original untouched).
+            // take is a no-op (the original buffer must remain intact).
             self.get_body_buffer().list = buffer;
             return Ok(false);
         }
@@ -411,16 +411,16 @@ impl<'a> InternalState<'a> {
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
                 self.decompress_bytes(&buffer, body_out_str, is_final_chunk)?;
-                // Zig's `defer compressed_body.reset()` retained capacity; mirror that by
-                // returning the (cleared) allocation to compressed_body instead of dropping it.
+                // Retain capacity by returning the (cleared) allocation to
+                // compressed_body instead of dropping it.
                 buffer.clear();
                 self.compressed_body.list = buffer;
             }
             _ => {
                 // Uncompressed: caller took `buffer` from `body_out_str.list`, leaving it
-                // empty — move the bytes back (Zig's `owns()` check skipped the append
-                // because the by-value copy aliased body_out_str). If body_out_str is
-                // somehow non-empty, fall back to append.
+                // empty — move the bytes back (no copy needed since the list and
+                // body_out_str share the allocation). If body_out_str is somehow
+                // non-empty, fall back to append.
                 if body_out_str.list.is_empty() {
                     body_out_str.list = buffer;
                 } else if !body_out_str.owns(&buffer) {
@@ -467,9 +467,7 @@ pub enum Stage {
     Fail,
 }
 
-// Aliases used by the HTTPClient state machine: the Zig side has separate
-// `request_stage` / `response_stage` fields but they share one HTTPStage enum.
+// Aliases used by the HTTPClient state machine: separate `request_stage` /
+// `response_stage` fields share one HTTPStage enum.
 pub type RequestStage = HTTPStage;
 pub type ResponseStage = HTTPStage;
-
-// ported from: src/http/InternalState.zig

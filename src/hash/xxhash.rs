@@ -1,10 +1,9 @@
 //! XxHash32 / XxHash64 / XxHash3.
 //!
 //! Thin wrappers over the `twox-hash` crate (the canonical Rust port of the
-//! reference xxHash). Output is bit-identical to `std.hash.XxHash{32,64,3}` in
-//! Zig — both follow Cyan4973's reference test vectors.
+//! reference xxHash). Output follows Cyan4973's reference test vectors.
 //!
-//! `HashObject.zig` exposes these via `hashWrap` with a `(seed, bytes)`
+//! `HashObject` exposes these via `hashWrap` with a `(seed, bytes)`
 //! signature (seed first, unlike Murmur/CityHash).
 
 pub struct XxHash32;
@@ -27,10 +26,10 @@ impl XxHash64 {
 
 use core::hash::Hasher;
 
-/// Streaming `std.hash.XxHash64` — used by `bundle_v2.zig:ContentHasher`
+/// Streaming XxHash64 — used by the bundler's `ContentHasher`
 /// (length-prefixed chunk hashing across many `update()` calls before a single
 /// `digest()`). Wraps `twox_hash::XxHash64` so the workspace has exactly one
-/// xxhash implementation; output is bit-identical to Zig's `std.hash.XxHash64`.
+/// xxhash implementation.
 pub struct XxHash64Streaming(twox_hash::XxHash64);
 
 impl XxHash64Streaming {
@@ -70,8 +69,7 @@ impl XxHash3 {
 mod tests {
     use super::*;
 
-    // Vectors copied verbatim from `vendor/zig/lib/std/hash/xxhash.zig` to
-    // prove twox-hash matches Zig std.hash output.
+    // Reference vectors proving twox-hash matches Cyan4973's reference output.
 
     #[test]
     fn xxhash3_vectors() {

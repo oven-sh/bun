@@ -4,14 +4,13 @@ use crate::SystemErrno;
 
 /// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.
 //
-// PORT NOTE: Zig builds this at comptime via a labeled block + `@hasField`/`@field` reflection
-// over `SystemErrno` (whose variant set differs per target OS). Rust has no comptime enum-variant
-// reflection, so the per-OS `@hasField` filter is expressed as `#[cfg]` guards on the few entries
-// whose variants are not present on every target. The `EAI_*` and `UNKNOWN` rows from uv.h are
-// dropped: no `SystemErrno` on any target carries them, so Zig's `@hasField` skipped them too.
+// PORT NOTE: `SystemErrno`'s variant set differs per target OS. The per-OS filter
+// is expressed as `#[cfg]` guards on the few entries whose variants are not present
+// on every target. The `EAI_*` and `UNKNOWN` rows from uv.h are dropped: no
+// `SystemErrno` on any target carries them.
 //
 // Built at const-eval time so the whole `[&str; N]` payload lives in `.rodata` with no `Once`
-// guard or init code on the startup path (matches Zig `std.EnumArray` comptime init).
+// guard or init code on the startup path.
 pub static LIBUV_ERROR_MAP: EnumMap<SystemErrno, &'static str> = build_libuv_error_map();
 
 const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
@@ -73,8 +72,7 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::ENOTDIR as usize] = "not a directory";
     arr[SystemErrno::ENOTEMPTY as usize] = "directory not empty";
     arr[SystemErrno::ENOTSOCK as usize] = "socket operation on non-socket";
-    // FreeBSD has no real `ENOTSUP` variant (it aliases `EOPNOTSUPP` via an associated const);
-    // Zig's `@hasField` skipped it there, so match that.
+    // FreeBSD has no real `ENOTSUP` variant (it aliases `EOPNOTSUPP` via an associated const).
     #[cfg(not(target_os = "freebsd"))]
     {
         arr[SystemErrno::ENOTSUP as usize] = "operation not supported on socket";
@@ -136,5 +134,3 @@ fn enoent_label() {
         "connection timed out"
     );
 }
-
-// ported from: src/sys/libuv_error_map.zig

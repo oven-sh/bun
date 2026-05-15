@@ -80,8 +80,8 @@ pub enum ConnectResult {
 impl Context {
     /// # Safety
     /// `loop_` must point to a live `us_loop_t`. Takes a raw pointer (not `&mut Loop`)
-    /// because the Loop is shared across every context/socket/timer on the thread —
-    /// Zig `*uws.Loop` freely aliases — so requiring `&mut` would force callers to
+    /// because the Loop is shared across every context/socket/timer on the thread,
+    /// so it freely aliases — requiring `&mut` would force callers to
     /// assert uniqueness that does not hold.
     #[inline]
     pub unsafe fn create_client(
@@ -98,7 +98,7 @@ impl Context {
     #[inline]
     pub fn r#loop(&mut self) -> *mut Loop {
         // Returns a raw pointer because the Loop is shared across every
-        // context/socket/timer on the thread (Zig `*uws.Loop` freely aliases) —
+        // context/socket/timer on the thread (it freely aliases) —
         // materializing `&mut Loop` here would assert uniqueness we cannot
         // guarantee.
         us_quic_socket_context_loop(self)
@@ -170,5 +170,3 @@ impl Context {
         us_quic_socket_context_on_stream_close(self, cb)
     }
 }
-
-// ported from: src/uws_sys/quic/Context.zig

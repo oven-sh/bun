@@ -8,7 +8,6 @@
 *.cc text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.yml text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.toml text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
-*.zig text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.rs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.h text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.json text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
@@ -30,10 +29,8 @@ src/api/schema.d.ts linguist-generated
 fixture.*.c linguist-generated
 src/api/schema.js linguist-generated
 *-fixture* linguist-generated
-src/jsc/bindings/ZigGeneratedCode.h linguist-generated
-src/jsc/bindings/ZigGeneratedCode.cpp linguist-generated
 src/jsc/bindings/headers.h linguist-generated
-src/jsc/bindings/headers.zig linguist-generated
+src/jsc/bindings/BunGeneratedCode.cpp linguist-generated
 
 packages/bun-uws/fuzzing/seed-corpus/**/* linguist-generated
 

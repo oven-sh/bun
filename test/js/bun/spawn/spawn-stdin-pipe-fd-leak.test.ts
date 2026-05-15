@@ -61,7 +61,7 @@ test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading 
 
 // Reading `proc.stdin` calls `Writable.toJS` (.pipe arm), which moves the
 // enum's owned `*FileSink` (+1) into the JS wrapper:
-//   src/runtime/api/bun/subprocess/Writable.zig:244-272
+//   src/runtime/api/bun/subprocess/Writable.rs
 //     this.* = .{ .ignore = {} };
 //     return pipe.toJS(globalThis);              // TRANSFER, no extra ref()
 //     return pipe.toJSWithDestructor(...);       // TRANSFER, no extra ref()

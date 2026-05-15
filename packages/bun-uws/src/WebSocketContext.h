@@ -50,8 +50,9 @@ private:
     }
 
 public:
-    /* Not constexpr — the ordinals are linked from Zig (`SocketKind.zig`
-     * @export) so a reorder there can't silently mis-route us. */
+    /* Not constexpr — the ordinals are linked from the Rust side
+     * (`src/uws_sys/SocketKind.rs` exports them) so a reorder there can't
+     * silently mis-route us. */
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_WS_TLS : US_SOCKET_KIND_UWS_WS; }
 
     us_socket_group_t *getSocketGroup() {

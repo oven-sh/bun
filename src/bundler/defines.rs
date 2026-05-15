@@ -28,13 +28,13 @@ pub use bun_js_parser::defines::{
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`
-/// (mirrors Zig's anonymous-struct init).
+/// (an anonymous-struct-init style helper).
 pub type DefineDataInit<'a> = Options<'a>;
 /// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
 pub(crate) use bun_ast::ExprData as DefineValue;
 
 // `Expr::Data` stores `Number`/`Undefined` inline (not via pointer), so the
-// `_PTR` indirection from Zig disappears.
+// legacy `_PTR` indirection disappears.
 pub struct Globals;
 impl Globals {
     pub const UNDEFINED: bun_ast::E::Undefined = bun_ast::E::Undefined;
@@ -65,14 +65,14 @@ fn defines_path() -> FsPath<'static> {
     p
 }
 
-// Zig: `pub const Data = DefineData;` inside `Define`
+// `pub const Data = DefineData;` inside `Define`
 // TODO(port): inherent associated type aliases are unstable; expose as module-level alias.
 pub type Data = DefineData;
 
 // ══════════════════════════════════════════════════════════════════════════
 // `bun_dotenv::DefineStore` impls. dotenv (T2) calls through the link-interface
 // handle; bundler (T5) owns the concrete `E::String` + `DefineData` construction.
-// Mirrors src/dotenv/env_loader.zig:399 `copyForDefine` — `to_string` is a
+// Mirrors `Loader::copyForDefine` (env_loader) — `to_string` is a
 // `StringHashMap<DefineData>` (= UserDefines), `to_json` is a
 // `StringHashMap<Box<[u8]>>` (= RawDefines / framework defaults).
 // ══════════════════════════════════════════════════════════════════════════
@@ -82,7 +82,7 @@ fn env_string_store_put(
     key: &[u8],
     value: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // Zig (env_loader.zig:461) allocates the `E.String` slab via the passed
+    // `env_loader` allocates the `E.String` slab via the passed
     // `allocator` (= `bun.default_allocator`), NOT the thread-local
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Mirror with `StoreRef::from_box`
@@ -100,7 +100,7 @@ fn env_string_store_put(
     Ok(())
 }
 
-/// Port of `Loader.copyForDefine` (env_loader.zig:399). Moved up from
+/// `Loader.copyForDefine` (env_loader). Moved up from
 /// `bun_dotenv` so it can name `DefineData` / `E::String` directly instead of
 /// dispatching through a vtable — it only reads `loader.map.map.{keys,values}()`,
 /// all of which are public.
@@ -129,7 +129,7 @@ pub fn copy_env_for_define(
         }
     }
 
-    // PORT NOTE: Zig pre-counted `key_buf_len`/`e_strings_to_allocate` to size two bump
+    // PORT NOTE: the original pre-counted `key_buf_len`/`e_strings_to_allocate` to size two bump
     // allocations, then `iter.reset()` and re-walked. With per-entry copies the pre-sizing
     // pass is dead — emit directly. PERF(port): was single-buffer key arena; now per-entry Vec reuse.
     if behavior != DotEnvBehavior::Disable && behavior != DotEnvBehavior::LoadAllWithoutInlining {
@@ -137,7 +137,7 @@ pub fn copy_env_for_define(
             debug_assert!(!prefix.is_empty());
         }
 
-        // PORT NOTE: Zig's `if (key_buf_len > 0)` gate (env_loader.zig:455) is behavioral,
+        // PORT NOTE: the `if (key_buf_len > 0)` gate is behavioral,
         // not just a sizing optimization — when `behavior == .prefix` and NO env key starts
         // with `prefix`, the entire second walk (including the framework-hash `else` arm)
         // is skipped. Mirror that by pre-scanning for a prefix match before emitting.
@@ -236,7 +236,7 @@ impl DefineExt for Define {
                 parts,
                 data: value_define.clone(),
             });
-            // Zig: define.arena.free(gpe.value_ptr.*); — handled by Vec drop on assign
+            // `define.arena.free(gpe.value_ptr.*)` — handled by Vec drop on assign
             *existing = list;
         } else {
             let mut list: Vec<DotDefine> = Vec::with_capacity(1);
@@ -463,7 +463,7 @@ impl DefineDataExt for DefineData {
                 value,
                 // PORT NOTE: upstream `DefineData` now owns `original_name:
                 // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of the
-                // borrowed `ptr`/`len` pair (Zig's 48→40-byte packing). Dupe
+                // borrowed `ptr`/`len` pair (the legacy 48→40-byte packing). Dupe
                 // the value bytes — these are tiny startup-time copies.
                 original_name: if !value_str.is_empty() {
                     Some(Box::<[u8]>::from(value_str))
@@ -508,7 +508,7 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // Zig parsed against a stack-local `Source` then `Expr.Data.deepClone`d
+        // The original parsed against a stack-local `Source` then deep-cloned
         // into the arena. We dupe `value_str` into `bump` first so every string
         // slice the JSON lexer hands back already points into the long-lived
         // arena (the `E::String.data` bytes survive without per-string dup).
@@ -601,8 +601,6 @@ impl DefineDataExt for DefineData {
 #[allow(dead_code)]
 const NAN_VAL: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
 
-// Zig `deinit` freed `dots` values, cleared maps, and destroyed `self`.
+// The original `deinit` freed `dots` values, cleared maps, and destroyed `self`.
 // In Rust: `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their
 // contents automatically; `Box<Define>` frees `self`. No explicit Drop needed.
-
-// ported from: src/bundler/defines.zig

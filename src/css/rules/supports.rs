@@ -6,7 +6,7 @@ use crate::{PrintErr, Printer};
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
-// PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
+// PORT NOTE: the original threaded the parser-input lifetime (slices borrow
 // the source). Phase A keeps `&'static [u8]` per PORTING.md §AST crates; Phase
 // B re-threads `'i` once `PropertyId<'i>` and the parser arena are real.
 pub enum SupportsCondition {
@@ -29,7 +29,7 @@ pub enum SupportsCondition {
     Unknown(&'static [u8]),
 }
 
-// PORT NOTE: Zig used an anonymous inline struct for the `.declaration` payload;
+// PORT NOTE: the `.declaration` payload was originally an anonymous inline struct;
 // hoisted to a named type because Rust enum variants cannot carry inherent methods.
 pub struct Declaration {
     /// The property id for the declaration.
@@ -45,7 +45,7 @@ impl Declaration {
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PropertyId` is `Copy`;
         // `value: &'static [u8]` is an arena-owned slice → identity copy
-        // (generics.zig "const strings" rule).
+        // (the generics "const strings" rule).
         Self {
             property_id: self.property_id,
             value: self.value,
@@ -55,7 +55,7 @@ impl Declaration {
 
 impl Declaration {
     pub fn eql(&self, other: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` field-walk, hand-expanded.
+        // PORT NOTE: `css.implementEql` field-walk, hand-expanded.
         // `PropertyId` carries its own tag+prefix `PartialEq` (see
         // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
         // byte-slice equality.
@@ -95,10 +95,10 @@ impl SupportsCondition {
     // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` variant-walk, hand-expanded because
+        // PORT NOTE: `css.implementHash` variant-walk, hand-expanded because
         // `#[derive(CssHash)]` would require `PropertyId: CssHash` (it only
-        // provides `core::hash::Hash`). Semantics match the Zig reflection:
-        // hash the discriminant, then field-wise structural hash.
+        // provides `core::hash::Hash`). Semantics match the reflection-based
+        // version: hash the discriminant, then field-wise structural hash.
         use core::hash::{Hash, Hasher};
         core::mem::discriminant(self).hash(hasher);
         match self {
@@ -118,10 +118,10 @@ impl SupportsCondition {
     }
 
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // PORT NOTE: Zig `css.implementEql` variant-walk, hand-expanded because
+        // PORT NOTE: `css.implementEql` variant-walk, hand-expanded because
         // `#[derive(CssEql)]` would require `PropertyId: CssEql` (it only
-        // provides the custom tag+prefix `PartialEq`). Semantics match the Zig
-        // reflection: tag mismatch → false, then field-wise structural eq.
+        // provides the custom tag+prefix `PartialEq`). Semantics match the
+        // reflection-based version: tag mismatch → false, then field-wise structural eq.
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
@@ -145,7 +145,7 @@ impl crate::generics::CssEql for SupportsCondition {
 impl SupportsCondition {
     // PORT NOTE: `pub fn deinit` dropped — body only freed Box/Vec payloads which Rust
     // drops automatically. Input-slice variants (`Declaration`/`Selector`/`Unknown`)
-    // were no-ops in Zig as well (arena/input-owned).
+    // were already no-ops (arena/input-owned).
 
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
@@ -224,8 +224,8 @@ impl SupportsCondition {
         // PORT NOTE: `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
         // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
         // bitflags!; iterate the ordered single-bit table directly (same pattern as
-        // rules/style.rs). The Zig also builds `var p = VendorPrefix{}; @field(p, field) = true;`
-        // but never reads it — dead store dropped.
+        // rules/style.rs). The original also built a per-field VendorPrefix
+        // but never read it — dead store dropped.
         dest.write_separated(
             css::VendorPrefix::FIELDS
                 .iter()
@@ -268,14 +268,14 @@ impl SupportsCondition {
         let mut expected_type: Option<i32> = None;
         // PERF(port): was arena-backed ArrayListUnmanaged — profile in Phase B
         let mut conditions: Vec<SupportsCondition> = Vec::new();
-        // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;
+        // PORT NOTE: an array-backed hash map with custom hash/eql;
         // SeenDeclKey below carries equivalent Hash/Eq impls.
         let mut seen_declarations: ArrayHashMap<SeenDeclKey, usize> = ArrayHashMap::new();
 
         loop {
-            // PORT NOTE: reshaped for borrowck — Zig threaded `*?i32` through a
-            // local `Closure` struct (LIFETIMES.tsv: BORROW_PARAM); a Rust closure
-            // capturing `&mut expected_type` is the direct equivalent.
+            // PORT NOTE: reshaped for borrowck — `expected_type` was originally
+            // threaded through a local `Closure` struct (LIFETIMES.tsv: BORROW_PARAM);
+            // a Rust closure capturing `&mut expected_type` is the direct equivalent.
             let _condition =
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
@@ -408,16 +408,16 @@ impl SupportsCondition {
     }
 }
 
-// PORT NOTE: Zig `SeenDeclKey` was a tuple struct with an inline hash-map context
+// PORT NOTE: `SeenDeclKey` was a tuple struct with an inline hash-map context
 // providing custom hash/eql. Ported as a tuple struct with manual Hash/PartialEq
-// matching the Zig context exactly (wrapping_add of string hash and enum int).
+// matching that context exactly (wrapping_add of string hash and enum int).
 struct SeenDeclKey(PropertyId, &'static [u8]);
 
 impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // TODO(port): Zig used std.array_hash_map.hashString (wyhash, 32-bit) +% @intFromEnum.
+        // TODO(port): originally a 32-bit wyhash string hash wrapping-added with the enum tag.
         // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity in Phase B.
-        // PORT NOTE: hash_string returns u32 directly (mirrors Zig hashString) — no narrowing cast.
+        // PORT NOTE: hash_string returns u32 directly — no narrowing cast.
         let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
         state.write_u32(h.wrapping_add(self.0.tag() as u32));
     }
@@ -425,7 +425,7 @@ impl core::hash::Hash for SeenDeclKey {
 
 impl PartialEq for SeenDeclKey {
     fn eq(&self, other: &Self) -> bool {
-        // Zig: tag-only equality + slice byte equality.
+        // Tag-only equality + slice byte equality.
         self.0.tag() as u16 == other.0.tag() as u16 && self.1 == other.1
     }
 }
@@ -482,5 +482,3 @@ impl<R> SupportsRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/supports.zig

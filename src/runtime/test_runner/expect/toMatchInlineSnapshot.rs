@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 
 use super::Expect;
 
@@ -33,14 +33,14 @@ pub fn to_match_inline_snapshot(
     }
 
     let mut has_expected = false;
-    let mut expected_string: ZigString = ZigString::EMPTY;
+    let mut expected_string: UnsafeStringView = UnsafeStringView::EMPTY;
     let mut property_matchers: Option<JSValue> = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
                 has_expected = true;
-                arguments[0].to_zig_string(&mut expected_string, global)?;
+                arguments[0].to_unsafe_string_view(&mut expected_string, global)?;
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
@@ -73,7 +73,7 @@ pub fn to_match_inline_snapshot(
 
             if arguments[1].is_string() {
                 has_expected = true;
-                arguments[1].to_zig_string(&mut expected_string, global)?;
+                arguments[1].to_unsafe_string_view(&mut expected_string, global)?;
             }
         }
     }
@@ -99,5 +99,3 @@ pub fn to_match_inline_snapshot(
         "toMatchInlineSnapshot",
     )
 }
-
-// ported from: src/test_runner/expect/toMatchInlineSnapshot.zig

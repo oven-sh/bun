@@ -18,7 +18,7 @@
  * step). The staticlib goes into the link's `$in` list between the C++
  * objects and the dependency archives;
  * crt1.o's undefined `main` plus the C++ side's hundreds of `extern "C"`
- * `Bun__*`/`Zig*` references pull every reachable member, and the release
+ * `Bun__*` references pull every reachable member, and the release
  * link's `--gc-sections` still DCEs per-function. `rustLinkFlags()` wraps
  * the archive in `--whole-archive` so members that are *only* referenced via
  * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
@@ -87,7 +87,7 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
  *   windows-msvc × {x64,aarch64}: NOT from linux without `cargo-xwin`
  *     (or wine + the MSVC SDK). CI runs these on a Windows agent.
  *
- * Unlike zig (which bundled its own libc/SDK for every target), cargo
+ * Unlike a bundled-toolchain build (which ships its own libc/SDK for every target), cargo
  * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
  * the cross-compile boundary is "does the host have a C cross-toolchain
  * for the target", not "does rustc support the triple".
@@ -372,7 +372,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // default `pic`, every Rust `&'static [T]` / `&'static str` / vtable is a
   // GOT-relative reference and the constant ends up in `.data.rel.ro` (RW
   // segment, eagerly faulted) instead of `.rodata`; libbun_rust.a alone
-  // contributes ~561 KiB of `.data.rel.ro` that the Zig binary placed in
+  // contributes ~561 KiB of `.data.rel.ro` that the previous binary placed in
   // shareable read-only pages. `static` lets rustc emit absolute references
   // and the constants land in `.rodata`. This is a *target* RUSTFLAG: with
   // `--target` set, cargo does NOT apply it to host artifacts (proc-macro
@@ -382,17 +382,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
     rustflags.push("-Crelocation-model=static");
   }
-  // Keep frame pointers — matches Zig's `omit_frame_pointer = false`
-  // (build.zig:319,841) and the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
+  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
   // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust
-  // frames the same as the Zig binary did.
+  // frames the same as before.
   rustflags.push("-Cforce-frame-pointers=yes");
   // rustc does not emit `.llvm_addrsig` by default on *any* target (verified
   // empirically — Linux-gnu, musl, darwin, msvc all missing it). lld's
   // `--icf=safe` (flags.ts:960) and lld-link's `/OPT:SAFEICF` (flags.ts:778)
   // need the table to know which functions are safe to fold; without it every
   // Rust monomorphization is treated as address-taken and *none* fold
-  // (#53159: 33,162 extra `.pdata` entries vs Zig main on Windows, all from
+  // (#53159: 33,162 extra `.pdata` entries vs main on Windows, all from
   // Rust functions). C++ already emits it via `-faddrsig` (flags.ts:350).
   // `-Cllvm-args=-addrsig` sets the same LLVM module flag clang's `-faddrsig`
   // does. Harmless on Apple ld64 (ignores the section).
@@ -424,7 +423,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("--cfg=bun_asan");
   }
   // `bun_codegen_embed`: embed codegen-output `.js` (`include_bytes!`) instead
-  // of reading them from `BUN_CODEGEN_DIR` at runtime. Mirrors Zig
+  // of reading them from `BUN_CODEGEN_DIR` at runtime. Mirrors the legacy
   // `BunBuildOptions.shouldEmbedCode() = optimize != .Debug or codegen_embed`.
   // Debug builds skip it for faster iteration (and the dir always exists
   // locally); anything else needs it for the binary to be portable across
@@ -597,10 +596,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   // ─── Windows .bin/ shim PE ───
-  // Replaces Zig's `mod.addAnonymousImport("bun_shim_impl.exe", ...)` (build.zig
-  // built `src/install/windows-shim/bun_shim_impl.zig` as a freestanding
+  // The legacy build built `src/install/windows-shim/bun_shim_impl` as a freestanding
   // ReleaseFast PE and wired the artifact into `@embedFile`). The Rust port
-  // dropped emitZig entirely, so without this step `include_bytes!` embeds the
+  // no longer emits a sub-binary, so without this step `include_bytes!` embeds the
   // 0-byte placeholder and `bun install` writes empty `.exe`s into
   // `node_modules/.bin/`.
   //
@@ -613,7 +611,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     const shimDest = windowsShimDestPath(cfg);
     // Always `--profile shim` (workspace `[profile.shim]`: panic=abort,
     // opt-level=z, lto, codegen-units=1, strip) regardless of bun's own
-    // profile — a debug bun should still write release shims (matches Zig's
+    // profile — a debug bun should still write release shims (matches the legacy
     // unconditional `.ReleaseFast`).
     //
     // `-Zbuild-std=core,compiler_builtins` rebuilds the sysroot for the

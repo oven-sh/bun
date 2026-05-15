@@ -34,9 +34,9 @@ pub struct Transition {
 }
 
 impl Transition {
-    // TODO(port): PropertyFieldMap was a Zig comptime anonymous struct mapping
-    // field names → PropertyIdTag, consumed by reflection-based shorthand helpers.
-    // Replace with a trait impl or const table once the shorthand machinery is ported.
+    // TODO(port): PropertyFieldMap maps field names → PropertyIdTag for
+    // reflection-based shorthand helpers. Replace with a trait impl or const
+    // table once the shorthand machinery is ported.
     pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
         ("property", PropertyIdTag::TransitionProperty),
         ("duration", PropertyIdTag::TransitionDuration),
@@ -45,13 +45,12 @@ impl Transition {
     ];
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        // Zig: css.implementEql(@This(), lhs, rhs) — field-by-field reflection.
+        // Field-by-field equality — covered by #[derive(PartialEq)].
         self == rhs
     }
 
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, arena) — field-by-field
-        // reflection. All four fields are POD/Copy or `Clone`-via-derive with no
+        // All four fields are POD/Copy or `Clone`-via-derive with no
         // arena indirections; #[derive(Clone)] is exact.
         self.clone()
     }
@@ -131,11 +130,10 @@ pub struct TransitionHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: Zig's `property`/`maybeFlush` took `comptime prop: []const u8` and used
-// `@field(this, prop)` + `val: anytype` for comptime field dispatch. Rust has no
-// `@field`, and passing both `&mut self` and `&mut self.<field>` to a generic fn
-// trips borrowck (because `flush` needs `&mut self`). Macros expand at the call
-// site exactly like the Zig comptime dispatch did.
+// PORT NOTE: `property`/`maybe_flush` dispatch on a per-field basis. Rust has no
+// runtime field reflection, and passing both `&mut self` and `&mut self.<field>` to
+// a generic fn trips borrowck (because `flush` needs `&mut self`). Macros expand at
+// the call site to keep the per-field bodies inlined.
 macro_rules! handler_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
         // If two vendor prefixes for the same property have different
@@ -361,8 +359,8 @@ mod transition_handler_body {
                 && _delays.is_some()
                 && _timing_functions.is_some()
             {
-                // PORT NOTE: reshaped for borrowck — Zig held simultaneous &mut to all four
-                // Option payloads via `.?`. Rust requires unwrapping each Option mutably.
+                // PORT NOTE: reshaped for borrowck — unwrap each Option mutably
+                // instead of holding simultaneous &mut to all four payloads.
                 let (properties, property_prefixes) = _properties.as_mut().unwrap();
                 let (durations, duration_prefixes) = _durations.as_mut().unwrap();
                 let (delays, delay_prefixes) = _delays.as_mut().unwrap();
@@ -497,16 +495,15 @@ mod transition_handler_body {
 
             let prefix_to_iter = property_id.prefix().or_none();
             // Expand vendor prefixes into multiple transitions.
-            // PORT NOTE: Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
-            // bool fields. With bitflags, iterate the individual flag bits.
-            // PERF(port): was comptime-unrolled inline-for — profile in Phase B.
+            // PORT NOTE: with bitflags, iterate the individual flag bits.
+            // PERF(port): profile in Phase B.
             for &prefix_flag in VendorPrefix::FIELDS {
                 if prefix_to_iter.contains(prefix_flag) {
                     let mut t = if cloned {
                         transition.deep_clone(arena)
                     } else {
-                        // TODO(port): Zig moved `transition` here on first iteration; Rust
-                        // can't move out of a value that may be reused next iteration.
+                        // TODO(port): the original moved `transition` here on first iteration;
+                        // Rust can't move out of a value that may be reused next iteration.
                         // Clone unconditionally for now.
                         transition.deep_clone(arena)
                     };
@@ -626,8 +623,8 @@ mod transition_handler_body {
     fn get_logical_properties(property_id: &PropertyId) -> LogicalPropertyId {
         use LogicalPropertyId::{Block, Inline};
         use compat::Feature as F;
-        // TODO(port): PropertyId variant names assumed PascalCase from Zig kebab-case
-        // (e.g. `.@"block-size"` → `BlockSize`). Adjust to actual generated names in Phase B.
+        // TODO(port): PropertyId variant names assumed PascalCase from kebab-case
+        // (e.g. `block-size` → `BlockSize`). Adjust to actual generated names in Phase B.
         match property_id {
             PropertyId::BlockSize => Block(F::LogicalSize, &[PropertyId::Height]),
             PropertyId::InlineSize => {
@@ -845,6 +842,4 @@ mod transition_handler_body {
                 | PropertyId::Transition(..)
         )
     }
-
-    // ported from: src/css/properties/transition.zig
 } // mod transition_handler_body

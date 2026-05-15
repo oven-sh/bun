@@ -4,15 +4,13 @@ use crate::AllocError;
 
 /// Allocates memory for a value of type `T` and initializes the memory with `value`.
 ///
-/// In Zig this routed through `bun.tryNew` for extra assertions when `allocator` was
-/// `bun.default_allocator`. In Rust the global allocator *is* mimalloc (via
-/// `#[global_allocator]`), so the default-vs-custom branch collapses and this is
-/// `Box::new`.
-// PORT NOTE: `std.mem.Allocator param` param deleted per §Allocators (non-AST
-// crate). The `Environment.allow_assert && isDefault(allocator)` branch is gone with it.
+/// The global allocator *is* mimalloc (via `#[global_allocator]`), so the
+/// default-vs-custom branch collapses and this is `Box::new`.
+// PORT NOTE: explicit allocator param deleted per §Allocators (non-AST crate).
+// The default-allocator assertion branch is gone with it.
 #[inline]
 pub fn create<T>(value: T) -> Result<Box<T>, AllocError> {
-    // PERF(port): Zig `allocator.create` is fallible; Rust `Box::new` aborts on OOM.
+    // PERF(port): the original `create` was fallible; Rust `Box::new` aborts on OOM.
     // If fallible allocation is required in Phase B, swap to `Box::try_new` (nightly
     // `allocator_api`) or a manual `alloc::alloc` + `ptr::write` pair.
     Ok(Box::new(value))
@@ -30,11 +28,10 @@ pub fn destroy<T>(ptr: Box<T>) {
 
 /// Default-initializes a value of type `T`.
 ///
-/// Zig tried, in order: `T.initDefault()`, then `T.init()`, then `.{}`. All three
-/// collapse into Rust's `Default` trait — types that had `initDefault`/`init` in Zig
-/// should `impl Default` in their Rust port.
-// PORT NOTE: `std.meta.hasFn` (≈ `@hasDecl`) fallback chain → single `Default` bound
-// per §Comptime reflection ("optional behavior → trait with default method").
+/// Types should `impl Default` to opt in.
+// PORT NOTE: a "try several constructor names" fallback chain collapses to a
+// single `Default` bound per §Comptime reflection ("optional behavior → trait
+// with default method").
 #[inline]
 pub fn init_default<T: Default>() -> T {
     T::default()
@@ -44,25 +41,25 @@ pub fn init_default<T: Default>() -> T {
 // PORT NOTE: `exemptedFromDeinit`, `deinitIsVoid`, and `deinit` are intentionally
 // NOT ported as functions.
 //
-// Zig's `bun.memory.deinit(ptr_or_slice)` walked `@typeInfo` to:
+// The original recursive `deinit` walked type info to:
 //   - recurse into slices/arrays/optionals/error-unions,
-//   - call `.deinit()` on struct / tagged-union pointees (unless the type set
-//     `pub const deinit = void;` or was in an exemption list), and
-//   - finally write `undefined` over the memory if the pointer was mutable.
+//   - call `.deinit()` on struct / tagged-union pointees (unless the type opted
+//     out or was in an exemption list), and
+//   - finally write a poison pattern over the memory if the pointer was mutable.
 //
 // Rust's `Drop` already does the recursive part automatically: dropping a value
 // drops every field, every `Vec`/`Box` element, every `Option`/`Result` payload.
-// The "write undefined" poisoning has no safe Rust equivalent (and is a debug aid,
-// not semantics).
+// The poison-on-free has no safe Rust equivalent (and is a debug aid, not
+// semantics).
 //
 // Call sites:
-//   - `bun.memory.deinit(&x)`       → delete (let `x` drop at scope exit).
-//   - `bun.memory.deinit(slice)`    → delete (slice elements drop with their owner).
+//   - explicit `deinit(&x)` calls   → delete (let `x` drop at scope exit).
+//   - explicit `deinit(slice)`      → delete (slice elements drop with their owner).
 //   - explicit early release        → `drop(x)` or a type-specific `close(self)`.
 //
-// `@typeInfo` has no Rust equivalent (§Comptime reflection), so a faithful generic
-// port is not possible — and per §Idiom map, `deinit` definitions become `impl Drop`
-// on the target type, not a free function here.
+// Type-info reflection has no Rust equivalent (§Comptime reflection), so a faithful
+// generic port is not possible — and per §Idiom map, `deinit` definitions become
+// `impl Drop` on the target type, not a free function here.
 //
 // TODO(port): if any caller relied on the `*x = undefined` poisoning to catch UAF in
 // debug, add `#[cfg(debug_assertions)] unsafe { ptr::write_bytes(p, 0xAA, 1) }` at
@@ -112,18 +109,15 @@ pub unsafe fn rebase_slice<'a>(slice: &[u8], old_base: *const u8, new_base: *con
 /// Most allocators perform this without allocating new memory, but unlike a raw cast
 /// this will not break allocators that need the exact allocation size to free.
 ///
-/// In Zig this was generic over `[:x]T` / `[*:x]T` via `@typeInfo`. Rust has no
-/// sentinel-carrying slice type in the type system, so this is specialized to the
-/// overwhelmingly common case: NUL-terminated bytes (`[:0]u8`).
-// TODO(port): add `drop_sentinel_u16` (for `[:0]u16` / WStr) if a caller needs it.
+/// Rust has no sentinel-carrying slice type in the type system, so this is
+/// specialized to the overwhelmingly common case: NUL-terminated bytes.
+// TODO(port): add `drop_sentinel_u16` (for NUL-terminated `u16` / WStr) if a
+// caller needs it.
 pub fn drop_sentinel(mut buf: Vec<u8>) -> Result<Box<[u8]>, AllocError> {
-    // Zig: try `allocator.remap(slice, slice.len)` (shrink by 1), else dupe+free.
-    // Rust: `Vec` already tracks capacity vs. len; popping the NUL and shrinking is
-    // the moral equivalent of `remap`. `into_boxed_slice` reallocates only if
-    // `cap != len`, matching the Zig fallback.
+    // `Vec` already tracks capacity vs. len; popping the NUL and shrinking is
+    // the moral equivalent of an in-place remap. `into_boxed_slice` reallocates
+    // only if `cap != len`.
     debug_assert_eq!(buf.last().copied(), Some(0), "buffer is not NUL-terminated");
     buf.pop();
     Ok(buf.into_boxed_slice())
 }
-
-// ported from: src/bun_alloc/memory.zig

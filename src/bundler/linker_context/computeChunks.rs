@@ -72,7 +72,7 @@ pub fn compute_chunks(
 
     // PORT NOTE: borrowck escape hatch — the SoA column slices below hold disjoint
     // immutable borrows into `this.graph` while several helpers (and the BundleV2
-    // back-pointer recovery) still want `&mut LinkerContext`. The Zig original
+    // back-pointer recovery) still want `&mut LinkerContext`. The original
     // freely aliases; Phase B should thread split borrows through `LinkerGraph`
     // instead of laundering through a raw pointer.
     let this_ptr: *mut LinkerContext = this;
@@ -117,7 +117,7 @@ pub fn compute_chunks(
                     .alloc_slice_copy(entry_point_chunk_bits.bytes(this.graph.entry_points.len()));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
-                // PORT NOTE: Zig used a Formatter struct; build the byte key directly since
+                // PORT NOTE: original used a Formatter struct; build the byte key directly since
                 // entry_bits is arbitrary bytes (not UTF-8) and cannot go through fmt::Display.
                 let mut v = bun_alloc::ArenaVec::new_in(temp);
                 v.push((!has_html_chunk) as u8);
@@ -351,7 +351,7 @@ pub fn compute_chunks(
                             *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
                         }
                     } else {
-                        // PORT NOTE: Zig used a local `Handler` struct passed to entry_bits.forEach;
+                        // PORT NOTE: original used a local `Handler` struct passed to entry_bits.forEach;
                         // in Rust we pass a context struct + fn pointer.
                         struct Handler<'a> {
                             chunks: &'a mut [Chunk],
@@ -450,7 +450,7 @@ pub fn compute_chunks(
             }
 
             // PERF(port): was assume_capacity
-            // PORT NOTE: `Chunk` is not `Clone` (Zig is move-by-value); take by index.
+            // PORT NOTE: `Chunk` is not `Clone` (original is move-by-value); take by index.
             let idx = js_chunks.get_index(&key).expect("unreachable");
             let owned = core::mem::take(&mut js_chunks.values_mut()[idx]);
             let has_html = owned.flags.contains(chunk::Flags::HAS_HTML_CHUNK);
@@ -504,7 +504,7 @@ pub fn compute_chunks(
         }
 
         break 'sort_chunks sorted_chunks;
-        // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
+        // TODO(port): return type — original returned `[]Chunk` allocated by `this.arena()`; here we return `Box<[Chunk]>`.
         // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
     };
     let chunks: &mut [Chunk] = sorted_chunks.slice_mut();
@@ -541,7 +541,7 @@ pub fn compute_chunks(
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
         bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
-    // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
+    // PORT NOTE: in the original `unique_key_buf` aliases the builder's backing buffer and
     // every `chunk.unique_key` is a slice into it. Mirror that: the builder never
     // reallocates after `init_capacity`, so each `fmt()` returns a stable subslice
     // that we detach to `&'static [u8]` (BACKREF) and transfer ownership of the
@@ -688,13 +688,13 @@ pub fn compute_chunks(
     }
 
     // Transfer ownership of the single backing buffer; every `chunk.unique_key`
-    // above borrows into it. (Zig's `errdefer` freed the builder and cleared
-    // `unique_key_buf`; in Rust the builder `Drop`s on error and `unique_key_buf`
+    // above borrows into it. (The original's error-path cleanup freed the builder and
+    // cleared `unique_key_buf`; in Rust the builder `Drop`s on error and `unique_key_buf`
     // is only assigned here on success, so no rollback guard is needed.)
     this.unique_key_buf = unique_key_builder.move_to_slice();
 
     Ok(sorted_chunks.to_owned_slice())
-    // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
+    // TODO(port): return type — original returned `[]Chunk` allocated by `this.arena()`; here we return `Box<[Chunk]>`.
     // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
 }
 
@@ -705,5 +705,3 @@ pub use crate::ThreadPool;
 // Local type aliases referenced above (Phase B: verify exact module paths)
 use crate::chunk;
 use crate::options::{Loader, Target};
-
-// ported from: src/bundler/linker_context/computeChunks.zig

@@ -99,5 +99,3 @@ pub fn generate(global: &JSGlobalObject) -> JSValue {
 
     exports
 }
-
-// ported from: src/runtime/node/node_assert_binding.zig

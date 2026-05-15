@@ -31,7 +31,7 @@ macro_rules! pfmt {
 // `bun_s3_signing::S3Credentials` exposes `guessRegion` / `guessBucket` as
 // FREE fns and the JS-options parser lives in
 // `runtime/webcore/s3/credentials_jsc.rs`. Surface them as associated fns via
-// an extension trait so call sites keep their Zig shape
+// an extension trait so call sites keep the associated-fn shape
 // (`S3Credentials.guessRegion(...)` / `.getCredentialsWithOptions(...)`).
 pub trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
@@ -105,8 +105,8 @@ where
     writer.write_str("\n")?;
 
     {
-        // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;`.
-        // `IndentScope` shadows the borrow and restores indent on `Drop`, so a
+        // `IndentScope` shadows the borrow, bumps `formatter.indent`, and
+        // restores it on `Drop`, so a
         // `?` early-return below still leaves the formatter at its original
         // depth (observable when `print_as` throws and the caller continues
         // formatting).
@@ -253,7 +253,7 @@ impl Drop for S3Client {
         // `IntrusiveRc<T>` is `bun_ptr::RefPtr<T>`, which has no `Drop` impl
         // of its own (only `ScopedRef<T>` does), so the +1 taken by
         // `aws_options.credentials.dupe()` in `constructor` must be released
-        // explicitly. Mirrors Zig `S3Client.deinit`: `this.credentials.deref()`.
+        // explicitly here.
         self.credentials.deref();
     }
 }
@@ -359,8 +359,8 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        // Zig: `Blob.new(try ...)` — heap-promote and mark `ref_count = 1` so
-        // the JSS3File wrapper's `finalize` knows to `bun.destroy(blob)`.
+        // Heap-promote and mark `ref_count = 1` so the JSS3File wrapper's
+        // `finalize` knows to free the blob.
         let blob = crate::webcore::blob::Blob::new(
             S3File::construct_s3_file_with_s3_credentials_and_options(
                 global,
@@ -373,7 +373,7 @@ impl S3Client {
                 ptr.request_payer,
             )?,
         );
-        // Zig: `blob.toJS(globalThis)` — runs `calculateEstimatedByteSize()`
+        // Run `calculateEstimatedByteSize()`
         // before wrapping the heap Blob in a JSS3File so JSC sees the correct
         // GC pressure. Route through `BlobExt::to_js` (the `&mut self` method
         // that owns the heap pointer), same as `S3File::construct_internal_js`.
@@ -573,9 +573,9 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        // PORT NOTE: reshaped for borrowck — Zig copied `blob` into `blob_internal`
-        // by value while `defer blob.detach()` was still armed on the original.
-        // Here we move into `PathOrBlob` directly; cleanup of the moved-out
+        // PORT NOTE: reshaped for borrowck — instead of copying `blob` by value
+        // while a deferred `blob.detach()` was still armed on the original,
+        // move into `PathOrBlob` directly; cleanup of the moved-out
         // value is handled by `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
         crate::webcore::blob::write_file_internal(
@@ -613,7 +613,6 @@ impl S3Client {
             ptr.request_payer,
         )?;
 
-        // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
         let store = blob.store.get().as_ref().unwrap();
         store
             .data
@@ -650,7 +649,6 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        // Zig: `blob.store.?.data.s3.unlink(blob.store.?, globalThis, options)`.
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)
     }
@@ -725,7 +723,6 @@ impl S3Client {
             existing_credentials,
         )?;
 
-        // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
         let store = blob.store.get().as_ref().unwrap();
         store
             .data
@@ -737,5 +734,3 @@ impl S3Client {
 // `FormatTag` / `JSType` are the ConsoleObject formatter enums
 // (`.Double`, `.NumberObject`), re-exported at the `bun_jsc` crate root.
 use bun_jsc::{FormatTag, JSType};
-
-// ported from: src/runtime/webcore/S3Client.zig

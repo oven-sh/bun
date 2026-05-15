@@ -65,8 +65,8 @@ macro_rules! bridge_allocator_api2 {
     };
 }
 
-// `crate::DefaultAlloc` is the existing ZST marker for `bun.default_allocator`
-// (Zig); here it gains `core::alloc::Allocator` (forwarding to
+// `crate::DefaultAlloc` is the existing ZST marker for the default allocator;
+// here it gains `core::alloc::Allocator` (forwarding to
 // `std::alloc::Global`, since `#[global_allocator] = Mimalloc` makes that the
 // process default) plus the api2 bridge, so a single `A` type can back both a
 // `hashbrown::HashMap<_, _, _, A>` table and its `Box<[u8], A>` keys.

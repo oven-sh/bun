@@ -138,7 +138,7 @@ test("(multi-file test) my feature", async () => {
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
 - **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
 
-You will see `.zig` files alongside many `.rs` files (e.g. `fetch.zig` next to `fetch.rs`). These are the **original Zig implementation, kept only as a porting reference** — they are **not compiled** and **not shipped**. New code goes in `.rs`. When fixing a bug or porting a behavior, the `.zig` sibling is the source of truth for *intended semantics*: read it, then make the `.rs` match. Never add new behavior to a `.zig` file.
+Bun was originally written in Zig and has been ported to Rust. The `.zig` sources have been removed from the tree; the `.rs` files are the implementation. If you need the original Zig for reference (e.g. to understand the intent behind a port), look it up in git history — do not add `.zig` files back.
 
 ### Core Source Organization
 
@@ -204,7 +204,6 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
 - `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
 - `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
-- `vendor/zig/` - Zig toolchain (legacy; not used by the Rust build)
 - `vendor/zlib/` - zlib-ng (compression, zlib-compat mode)
 - `vendor/zstd/` - Zstandard (compression)
 
@@ -221,7 +220,7 @@ When implementing JavaScript classes in C++:
 
 2. Define properties using HashTableValue arrays
 3. Add iso subspaces for classes with C++ fields
-4. Cache structures in `ZigGlobalObject`
+4. Cache structures in `BunGlobalObject`
 
 ### Code Generation
 
@@ -259,7 +258,7 @@ Built-in JavaScript modules use special syntax and are organized as:
 5. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
 6. **Use absolute paths** - Always use absolute paths in file operations
 7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
-8. **Memory management** - Prefer RAII (`Drop`) over manual cleanup. Watch the arena edge case: values allocated in an arena (`Arena<T>`/`bumpalo`) do **not** run `Drop` when the arena is reset — if a type owns a heap allocation or a refcount, it must be freed/deref'd explicitly before the arena resets, mirroring the original Zig `deinit()` order.
+8. **Memory management** - Prefer RAII (`Drop`) over manual cleanup. Watch the arena edge case: values allocated in an arena (`Arena<T>`/`bumpalo`) do **not** run `Drop` when the arena is reset — if a type owns a heap allocation or a refcount, it must be freed/deref'd explicitly before the arena resets, in the same order a `Drop` impl would run.
 9. **Cross-platform** - Run `bun run rust:check-all` to compile across all targets (linux/macos/windows × x64/aarch64) when making platform-specific changes. `#[cfg(...)]`-gated code is not type-checked unless the matching target is built.
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.

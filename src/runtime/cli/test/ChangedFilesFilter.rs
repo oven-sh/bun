@@ -33,7 +33,7 @@ use bun_which::which;
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
 
-// PORT NOTE: named `Result` in Zig; kept verbatim for side-by-side diffing.
+// PORT NOTE: named `Result` in the original; kept verbatim.
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
 pub struct Result<'a> {
@@ -123,7 +123,7 @@ pub fn filter<'a>(
     //
     // PORT NOTE: `BundleV2::scan_module_graph_from_cli` takes
     // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are process-lifetime. The Zig original does the same — see the comment
+    // are process-lifetime. The original does the same — see the comment
     // after the call about intentionally leaving the ThreadLocalArena and
     // worker pool alive. Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
@@ -152,14 +152,14 @@ pub fn filter<'a>(
     scan_transpiler.options.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
-    // Zig assigns `resolver.opts = options` by value; `Transpiler::init`
+    // The original assigned `resolver.opts = options` by value; `Transpiler::init`
     // already projected resolver.opts, so sync only the fields we changed above.
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
-    // Zig: `jsc.AnyEventLoop.init(allocator)` — Mini loop that
+    // `jsc.AnyEventLoop.init(allocator)` — Mini loop that
     // `wait_for_parse` ticks to drain parse tasks; `None` panics there.
     let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
 
@@ -262,7 +262,7 @@ pub fn filter<'a>(
     let mut queue: Vec<u32> = Vec::new();
 
     {
-        // TODO(port): StringSet iteration API — Zig accesses `.map.iterator()`
+        // TODO(port): StringSet iteration API — the original accesses `.map.iterator()`
         for changed_path in changed_files.keys() {
             if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
                 if !affected.is_set(idx as usize) {
@@ -345,7 +345,7 @@ pub fn init_watch_trigger() {
             let seed: u64 =
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
             let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
-            // TODO(port): Zig used DefaultPrng (xoshiro256++); wyhash-of-seed is a placeholder
+            // TODO(port): the original used DefaultPrng (xoshiro256++); wyhash-of-seed is a placeholder
             let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
             {
@@ -434,7 +434,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
             if !sys::exists(path) {
                 continue;
             }
-            let _ = set.insert(path); // OOM-only Result (Zig: catch unreachable)
+            let _ = set.insert(path); // OOM-only Result; aborts on failure
         }
         // If every triggering path was a deletion, fall back to git so the
         // user at least gets the same behaviour as the initial run rather
@@ -452,7 +452,7 @@ pub enum GitError {
     GitNotFound,
     #[error("GitFailed")]
     GitFailed,
-    // PORT NOTE: Zig union'd `std.mem.Allocator.Error` here; allocator params
+    // PORT NOTE: the original error set included an allocator error; allocator params
     // were dropped (global mimalloc aborts on OOM), so OutOfMemory is gone.
 }
 
@@ -633,7 +633,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            // PORT NOTE: Zig `EventLoopHandle.init(anytype)` accepted a
+            // PORT NOTE: the original `EventLoopHandle.init(anytype)` accepted a
             // `*VirtualMachine` and called `vm.eventLoop()` internally; the
             // Rust split keeps `init` taking the erased `*mut ()` event-loop
             // pointer directly, so unwrap it here.
@@ -696,11 +696,9 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
         // `StringSet.insert` dupes the key internally; abort on OOM rather
         // than propagating so the set can never be left holding a pointer
         // into our stack `buf` on the errdefer cleanup path.
-        let _ = set.insert(abs); // OOM-only Result (Zig: catch unreachable)
+        let _ = set.insert(abs); // OOM-only Result; aborts on failure
     }
 }
 
 // TODO(port): `HotReload` enum import — placeholder for `ctx.debug.hot_reload != .watch` check
 use crate::Command::HotReload;
-
-// ported from: src/cli/test/ChangedFilesFilter.zig

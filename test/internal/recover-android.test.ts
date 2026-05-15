@@ -26,13 +26,19 @@ function hasAndroidTarget(rustup: string): boolean {
 // CI test runners ship a stripped checkout without vendor/ path deps
 // (e.g. vendor/lolhtml/c-api). `cargo metadata` (without --no-deps) fails
 // fast when any workspace path dep is missing, so use it as the "is the
-// workspace buildable here" probe.
+// workspace buildable here" probe. A timeout bounds the module-scope
+// probe in case cargo blocks on the global package-cache lock or a slow
+// registry fetch — on timeout, exitCode is null and we skip. (--offline
+// would over-skip: it fails when any transitive registry crate isn't in
+// the local cache, even when `cargo build -p bun_runtime` has everything
+// it needs.)
 function workspaceResolvable(cargo: string): boolean {
   const r = Bun.spawnSync({
     cmd: [cargo, "metadata", "--format-version=1", "--locked"],
     cwd: repoRoot,
     stdout: "ignore",
     stderr: "ignore",
+    timeout: 30_000,
   });
   return r.exitCode === 0;
 }

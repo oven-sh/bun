@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+function stripAsanWarnings(s: string) {
+  return s
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
 test("FinalizationRegistry callback that throws does not crash the process", async () => {
   // A FinalizationRegistry cleanup callback runs from a JSC DeferredWorkTimer
   // task. If the callback throws, the exception must be reported as an
@@ -13,8 +20,10 @@ test("FinalizationRegistry callback that throws does not crash the process", asy
       `
         const fr = new FinalizationRegistry(ArrayBuffer);
         (() => { fr.register({}, "held"); })();
-        Bun.gc(true);
-        setImmediate(() => {});
+        for (let i = 0; i < 30; i++) {
+          Bun.gc(true);
+          await new Promise(r => setImmediate(r));
+        }
       `,
     ],
     env: bunEnv,
@@ -39,8 +48,10 @@ test("FinalizationRegistry callback that throws is catchable via uncaughtExcepti
         });
         const fr = new FinalizationRegistry(() => { throw new Error("boom"); });
         (() => { fr.register({}, 1); })();
-        Bun.gc(true);
-        setImmediate(() => {});
+        for (let i = 0; i < 30; i++) {
+          Bun.gc(true);
+          await new Promise(r => setImmediate(r));
+        }
       `,
     ],
     env: bunEnv,
@@ -49,7 +60,7 @@ test("FinalizationRegistry callback that throws is catchable via uncaughtExcepti
   });
 
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(err).toBe("");
+  expect(stripAsanWarnings(err)).toBe("");
   expect(out).toContain("caught:boom");
   expect(exitCode).toBe(0);
 });

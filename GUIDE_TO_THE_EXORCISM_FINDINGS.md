@@ -4,7 +4,7 @@
 > **Goal.** Maximally rapid orientation — what's where, what to trust, what to skip, in what order, with cross-references.
 > **Standard.** Codex-grade defensibility. High-priority claims have file:line citations; miri-backed findings include their `cargo +nightly miri run` traces; findings that need Loom, scheduling, integration, or call-graph evidence are labelled as such.
 
-This audit was produced by [`/rust-unsafe-code-exorcist`](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist) across **five passes**, each adding a different lens. The companion fix PR landing alongside this audit applies the highest-confidence remediations with isomorphism evidence.
+This audit was produced by [`/rust-unsafe-code-exorcist`](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist) across **five passes**, each adding a different lens. The companion fix PR landing alongside this audit applies the highest-confidence remediations with isomorphism / semantic-repair evidence.
 
 ---
 
@@ -170,7 +170,7 @@ These should land FIRST in any remediation PR sequence.
 | `PASS3-*` | Pass-3 deep-dives on specific large crates (bun_install, bun_jsc, bun_uws_sys+bun_libuv_sys, bun_http+bun_http_jsc, bun_bundler, bun_core, bun_sys, cross-cutting). |
 | `PASS4-*` | Pass-4 deep-dives on the unaudited surface (adversarial parsers, shell parser, CSS+JS parsers, config parsers, PipeWriter+threading, cryptography, dyn Trait, spawn+crash+sql). |
 | `PASS5-*` | Pass-5 closure work (async cancellation re-entry, etc.). |
-| `PR2-isomorphism-evidence.md` | Per-fix isomorphism + codegen + miri evidence for the fix PR. |
+| `PR2-isomorphism-evidence.md` | Per-fix evidence for the fix PR, including isomorphism where applicable and explicit semantic repair where the old behavior was UB. |
 
 Open the file that matches the finding you care about. Each plan ends with **recommended PR landing order** and **per-site tables** with file:line citations.
 
@@ -286,7 +286,7 @@ The audit's tone throughout is calibrated to that reality. Findings that overrea
 
 1. Read `AUDIT_SUMMARY.md` and `PASS4_FINDINGS_INDEX.md`.
 2. Decide on tier policy: which T1s to fix now, which T2s to file as beads, which T3s to ignore.
-3. Land the companion fix PR (PR #2 from this audit drop) which already implements the highest-confidence remediations with isomorphism evidence.
+3. Land the companion fix PR (PR #2 from this audit drop) which already implements the highest-confidence remediations with isomorphism / semantic-repair evidence.
 4. For findings NOT in the fix PR, see `beads-to-create.md` for the bead commands.
 5. Consider integrating the fixtures in `audit/tests/` into Bun's existing test suite. Each fixture has a wiring recipe in `audit/tests/README.md`.
 6. Consider wiring `verify.sh` into Bun's CI matrix (or adopting `ci-matrix.yml` as a starting point).

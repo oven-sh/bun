@@ -134,10 +134,10 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
     }
   });
 
-  // `fs.lchown` is stubbed on Windows (`Maybe::<ret::Lchown>::todo()` in
-  // `src/runtime/node/node_fs.rs`), so calling it produces `error: Unknown
-  // Error, TODO` rather than routing through the `Lchown` dispatch arm.
-  // POSIX-only; the Lchown arm of `for_each_fs_async_op!` is exercised here.
+  // `fs.lchown` is an unimplemented stub on Windows (see the `#[cfg(windows)]`
+  // arm in `src/runtime/node/node_fs.rs::lchown`), so calling it surfaces an
+  // `Unknown Error` rather than routing through the `Lchown` dispatch arm.
+  // POSIX-only; the `Lchown` arm of `for_each_fs_async_op!` is exercised here.
   test.skipIf(isWindows)("lchown", async () => {
     using dir = tempDir("fs-disp-lch", { "f.txt": "" });
     const p = join(String(dir), "f.txt");

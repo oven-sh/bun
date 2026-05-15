@@ -120,17 +120,19 @@ impl FilePoll {
     }
 
     pub fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
-        // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
-        // the wrong type (it should be a uv handle), at worst this code is a
-        // crash due to invalid memory access.
-        // Zig does `@ptrFromInt(@as(u64, @bitCast(this.fd)))`; `Fd` is
-        // `#[repr(transparent)]` over `u64` on Windows, so the bitcast is just
-        // the public backing field.
-        // SAFETY: see TODO above — preserved verbatim from Zig.
-        unsafe {
-            uv::uv_unref(self.fd.0 as *mut uv::uv_handle_t);
-        }
-        true
+        // Unreachable on Windows: the four flags that gate `is_registered()`
+        // (`PollReadable`/`PollWritable`/`PollProcess`/`PollMachport`) are only
+        // inserted in POSIX-only code paths (kqueue/epoll registration). A
+        // Windows `FilePoll` is never registered with libuv directly — libuv
+        // handles own themselves via their own `uv_handle_t` structs, which
+        // are not stored in `self.fd`.
+        //
+        // This dropped the Zig-ported `uv_unref(@ptrFromInt(fd))` body: that
+        // cast reinterpreted a raw Windows file-descriptor integer as a
+        // `uv_handle_t*`, which is UB if it ever fired. Matches the pattern
+        // used by sibling `Waker::get_fd` / `Waker::init_with_file_descriptor`
+        // for other POSIX-only entry points in this file.
+        unreachable!("FilePoll::unregister is unsupported on Windows");
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: &mut WindowsLoop) {

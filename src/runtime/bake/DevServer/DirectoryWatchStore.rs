@@ -66,13 +66,22 @@ impl From<InsertError> for bun_core::Error {
 }
 
 impl DirectoryWatchStore {
-    pub fn owner(&mut self) -> &mut DevServer {
-        // SAFETY: `self` is always the `directory_watchers` field of a `DevServer`.
-        // TODO(port): `container_of` aliasing — returning &mut DevServer while
-        // &mut self is live is unsound under stacked borrows; Phase B may need
-        // to return *mut DevServer or restructure access.
+    /// Recover `*mut DevServer` from `self` (the `directory_watchers` field).
+    ///
+    /// Returns a raw pointer, NOT `&mut DevServer`: materialising a
+    /// `&mut DevServer` while `&mut self` is live would alias (stacked-borrows
+    /// UB — the pointer derived from `&mut self` only has provenance for the
+    /// field, not the whole parent). Callers dereference under `unsafe` and
+    /// must only touch fields disjoint from `directory_watchers`.
+    ///
+    /// Matches the shape of `impl_field_parent! { ... fn mut owner; }` — see
+    /// `bun_core::impl_field_parent!` for the convention.
+    #[inline]
+    pub fn owner(&mut self) -> *mut DevServer {
+        // SAFETY: `self` is always the `directory_watchers` field of a live
+        // `DevServer`. Pointer arithmetic only; no reference is formed here.
         unsafe {
-            &mut *bun_core::from_field_ptr!(
+            bun_core::from_field_ptr!(
                 DevServer,
                 directory_watchers,
                 std::ptr::from_mut::<Self>(self)
@@ -137,17 +146,22 @@ impl DirectoryWatchStore {
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
         // great place to share memory.
-        let dev = self.owner();
+        // SAFETY: `owner()` returns `*mut DevServer` — `self` is the
+        // `directory_watchers` field of the heap-allocated DevServer;
+        // `graph_safety_lock`, `client_graph`, and `server_graph` are all
+        // disjoint from `directory_watchers`, so dereferencing through `dev`
+        // for those fields does not alias `self`.
+        let dev: *mut DevServer = self.owner();
         // TODO(port): graph_safety_lock — assuming RAII guard semantics in Rust port.
-        let _guard = dev.graph_safety_lock.lock();
+        let _guard = unsafe { (*dev).graph_safety_lock.lock() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             BakeGraph::Client => {
-                dev.client_graph
+                unsafe { &mut (*dev).client_graph }
                     .insert_empty(import_source, dev_server::FileKind::Unknown)?
                     .key
             }
             BakeGraph::Server | BakeGraph::Ssr => {
-                dev.server_graph
+                unsafe { &mut (*dev).server_graph }
                     .insert_empty(import_source, dev_server::FileKind::Unknown)?
                     .key
             }
@@ -171,8 +185,9 @@ impl DirectoryWatchStore {
     ) -> Result<(), InsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
-        // PORT NOTE: take a raw pointer so the &mut self borrow from owner() does
-        // not overlap subsequent self.* field accesses (Zig has no borrowck here).
+        // `owner()` returns `*mut DevServer` so no `&mut` reborrow is formed
+        // here — subsequent `self.*` field accesses can run without conflict;
+        // each deref `(*dev).field` is individually justified below.
         let dev: *mut DevServer = self.owner();
 
         let file_path_slice = file_path.slice();
@@ -381,7 +396,11 @@ impl DirectoryWatchStore {
             entry.dir,
         );
 
-        self.owner().bun_watcher.remove_at_index(
+        // SAFETY: `owner()` returns `*mut DevServer`; `bun_watcher` is
+        // disjoint from `directory_watchers` so the re-borrow through `dev`
+        // does not alias `self`.
+        let dev: *mut DevServer = self.owner();
+        unsafe { &mut (*dev).bun_watcher }.remove_at_index(
             bun_watcher::Kind::File,
             entry.watch_index,
             0,

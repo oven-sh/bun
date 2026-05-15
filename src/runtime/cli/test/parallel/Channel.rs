@@ -81,12 +81,24 @@ impl<Owner> Default for Channel<Owner> {
 }
 
 impl<Owner: ChannelOwner> Channel<Owner> {
+    /// Recover `*mut Owner` from `self` (a field of `Owner` at `Owner::OFFSET`).
+    ///
+    /// Returns a raw pointer, NOT `&mut Owner`: materialising a `&mut Owner`
+    /// while `&mut self` is live — `self` is an interior field of `Owner` —
+    /// would produce two overlapping `&mut` references (stacked-borrows UB).
+    /// Callers dereference under `unsafe` and must only touch fields of
+    /// `Owner` disjoint from the channel field.
+    ///
+    /// Mirrors Zig `@alignCast(@fieldParentPtr(owner_field, self))` and the
+    /// `fn mut owner;` form of [`bun_core::impl_field_parent!`] (not used here
+    /// because `impl_field_parent!` takes a literal field name and this
+    /// accessor is generic over `Owner`, with the offset coming from
+    /// `IntrusiveField::OFFSET` instead).
     #[inline]
-    fn owner(&mut self) -> &mut Owner {
-        // SAFETY: `self` is always embedded at `Owner::OFFSET` inside an
-        // `Owner` that outlives all callbacks (see module doc). Mirrors Zig
-        // `@alignCast(@fieldParentPtr(owner_field, self))`.
-        unsafe { &mut *Owner::from_field_ptr(std::ptr::from_mut(self)) }
+    fn owner(&mut self) -> *mut Owner {
+        // SAFETY: `self` is always the channel field of a live `Owner` (see
+        // module doc); pointer arithmetic only, no reference is formed here.
+        unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) }
     }
 }
 
@@ -482,21 +494,22 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 head += 5usize + len as usize;
                 continue;
             };
-            // PORT NOTE: borrowck split — `rd` borrows `self.r#in` while
-            // `owner()` would re-borrow `*self` mutably. Capture the owner raw
-            // pointer *before* forming `rd` (so the `&mut *self` reborrow ends
-            // immediately), then recover `&mut Owner` from it after. Same
-            // `container_of` arithmetic as `owner()`. The callback never
-            // touches `self.r#in` (it only reads `rd` and may write other
-            // channel fields / call `send()`), so the aliasing is sound.
-            let owner_ptr: *mut Owner = unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) };
+            // PORT NOTE: cannot form `&mut Owner` and hold it across `rd`
+            // (which borrows `self.r#in`) — the two would alias. Capture
+            // `*mut Owner` *before* forming `rd` so the reborrow ends
+            // immediately, then dispatch the callback through the raw
+            // pointer. The owner's `on_channel_frame` body may reach back
+            // into its `Channel` field (e.g. to call `send()`), but must not
+            // touch `self.r#in` for the lifetime of `rd` — the shared
+            // callers (Worker, WorkerCommands) only read `rd` or mutate
+            // other fields.
+            let owner_ptr: *mut Owner = self.owner();
             let mut rd = frame::Reader {
                 p: &self.r#in[head + 5..][..len as usize],
             };
-            // SAFETY: see `Channel::owner()` — `self` is embedded at
+            // SAFETY: see `Channel::owner` — `self` is embedded at
             // `Owner::OFFSET` inside an `Owner` that outlives all callbacks.
-            let owner: &mut Owner = unsafe { &mut *owner_ptr };
-            owner.on_channel_frame(kind, &mut rd);
+            unsafe { (*owner_ptr).on_channel_frame(kind, &mut rd) };
             head += 5usize + len as usize;
         }
         self.r#in.drain_front(head);
@@ -507,7 +520,14 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             return;
         }
         self.done = true;
-        self.owner().on_channel_done();
+        // `owner()` returns `*mut Owner`, not `&mut Owner`: materialising a
+        // `&mut Owner` while `&mut self` is live would alias (see `owner()`).
+        // Dispatch through the raw pointer so no long-lived `&mut Owner` is
+        // held across any further channel mutation in the callback body.
+        // SAFETY: see `Channel::owner` — `self` is embedded at `Owner::OFFSET`
+        // inside an `Owner` that outlives all callbacks.
+        let owner: *mut Owner = self.owner();
+        unsafe { (*owner).on_channel_done() };
     }
 }
 

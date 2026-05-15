@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -2563,7 +2563,14 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(exitCode).not.toBe(0);
     });
 
-    test("warm bunx cache does not bypass --minimum-release-age", async () => {
+    // The pre-seeded cache layout here is unix-specific: the cache key uses
+    // `process.getuid()` (undefined on Windows, where bunx keys on
+    // `user_unique_id()`), the bin path has no `.exe` suffix (bunx probes with
+    // `EXE_SUFFIX` on Windows), and the fake binary is a sh script. On
+    // Windows the fake cache is never matched; the test would pass
+    // vacuously via the cold-install path, providing no coverage of the
+    // `age_gate_forces_refresh` short-circuit.
+    test.skipIf(isWindows)("warm bunx cache does not bypass --minimum-release-age", async () => {
       // bunx caches successful installs under $TMPDIR/bunx-<uid>-<pkg>@latest
       // and re-runs the cached binary on the next invocation if it's less than
       // 24h old. Without the age-gate refresh, a fresh cache from an earlier
@@ -2602,7 +2609,8 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(exitCode).not.toBe(0);
     });
 
-    test("--no-install + --minimum-release-age refuses to run cached binary", async () => {
+    // Same unix-only fake-cache layout as the warm-cache test above.
+    test.skipIf(isWindows)("--no-install + --minimum-release-age refuses to run cached binary", async () => {
       // When both flags are set on a warm cache, the normal `--no-install`
       // fallback (warn and run the stale cached binary) would silently bypass
       // the age gate — `--no-install` opts out of the re-resolution where

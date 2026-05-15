@@ -261,11 +261,11 @@ Cite as: `[audit ID] (path/file.rs:N — see .unsafe-audit/audit/plans/PLANNAME.
 
 ## Maintainer-empathy stance
 
-`REVIEWER_RESPONSES.md` answers, per cluster, "would I land this as the Bun maintainer?" That doc deliberately steel-mans pushback on every claim. Read it before discounting any finding.
+`REVIEWER_RESPONSES.md` answers, per cluster, "would I land this as the Bun maintainer?" That doc deliberately steel-mans pushback on the major claims it covers. Read it before discounting a finding.
 
 Bun's maintainers have ALREADY removed **2,989** unsafe blocks in tagged commits (per `PASS4-soundness-archeology.md`). Most major Tier-1 finding classes map to maintainer commit classes; exceptions are called out in the archeology table instead of hidden. This audit isn't novel-bug-finding from outsiders — it's the NEXT BATCH of bugs in classes the project's own remediation campaign has already treated as real.
 
-The audit's tone throughout is calibrated to that reality. Findings that overreach are explicitly demoted. The Codex review docs (`CODEX_PASS2_SUMMARY.md`, `CODEX_PASS3_FINAL_REVIEW.md`) document every demotion with evidence.
+The audit's tone throughout is calibrated to that reality. Findings that overreach are explicitly demoted. The Codex review docs (`CODEX_PASS2_SUMMARY.md`, `CODEX_PASS3_FINAL_REVIEW.md`) document the important demotions with evidence.
 
 ---
 

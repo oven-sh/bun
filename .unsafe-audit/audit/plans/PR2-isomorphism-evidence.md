@@ -2,7 +2,7 @@
 
 This document records per-fix verification for the three changes that ship in the companion fix PR ([`claude/unsafe-exorcist-demo`](https://github.com/Dicklesworthstone/bun/tree/claude/unsafe-exorcist-demo)).
 
-**Scope discipline.** Of the 6 P0 + 40 T1/T1-equivalent entries in the current public dashboard, this PR lands the **3 lowest-risk fixes with focused local verification and miri-backed evidence where applicable**. The remaining fixes are deliberately staged as separate, more carefully reviewed PRs per the audit's PR-landing-order document ([`.unsafe-audit/PASS4_FINDINGS_INDEX.md` § "Pass-4 PR landing order"](../../PASS4_FINDINGS_INDEX.md)). Better three perfect than ten with risk.
+**Scope discipline.** Of the current 40 T1/T1-equivalent dashboard entries (including the 6 ceiling-score supply-chain entries), this PR lands the **3 lowest-risk fixes with focused local verification and miri-backed evidence where applicable**. The remaining fixes are deliberately staged as separate, more carefully reviewed PRs per the audit's PR-landing-order document ([`.unsafe-audit/PASS4_FINDINGS_INDEX.md` § "Pass-4 PR landing order"](../../PASS4_FINDINGS_INDEX.md)). Better three narrowly verified fixes than ten with mixed risk.
 
 ---
 
@@ -56,11 +56,11 @@ The unsafe `transmute<u16, E>(int as u16)` is replaced with the checked `SystemE
 
 For every input value `int ∈ [0, 4096)`:
 
-| `int` | Old behavior (transmute) | New behavior (init) | Equivalent? |
-|-------|--------------------------|---------------------|------------|
-| `0` (SUCCESS) | `SystemErrno::SUCCESS` | `SystemErrno::SUCCESS` | ✓ |
-| `1..=133` (dense kernel range) | `SystemErrno::EPERM..ENOTRECOVERABLE` | Same — `init` returns `Some(variant)` matching the transmute | ✓ |
-| `134..=4095` (sparse / future kernel) | **Undefined behavior** (niche violation) | `SystemErrno::SUCCESS` (documented fallback) | ✓ (UB → defined fallback; this is the intended semantic change) |
+| `int` | Old behavior (transmute) | New behavior (init) | Classification |
+|-------|--------------------------|---------------------|----------------|
+| `0` (SUCCESS) | `SystemErrno::SUCCESS` | `SystemErrno::SUCCESS` | Equivalent |
+| `1..=133` (dense kernel range) | `SystemErrno::EPERM..ENOTRECOVERABLE` | Same — `init` returns `Some(variant)` matching the transmute | Equivalent for valid discriminants |
+| `134..=4095` (sparse / future kernel) | **Undefined behavior** (niche violation) | `SystemErrno::SUCCESS` (documented fallback) | Intentional semantic repair: previously UB, now defined fallback |
 
 The new path is **strictly safer** for the same set of valid inputs and **defined** for the previously-UB-producing inputs. This patch does not rely on a disassembly/codegen claim; the conversion runs only on the syscall-error decoding path, and the soundness improvement is the reason for the change.
 
@@ -122,7 +122,7 @@ The new path is **strictly safer** for the same set of valid inputs and **define
 
 ## What is NOT in this PR
 
-The audit's current public dashboard catalogs 6 P0 + 40 T1/T1-equivalent entries, with strict memory-safety, non-UB security, and crash-reliability items labelled separately. This PR lands 3 tightly verified fixes. The remaining fixes are deliberately staged as separate PRs:
+The audit's current public dashboard catalogs 40 T1/T1-equivalent entries, including 6 ceiling-score supply-chain entries, with strict memory-safety, non-UB security, and crash-reliability items labelled separately. This PR lands 3 tightly verified fixes. The remaining fixes are deliberately staged as separate PRs:
 
 | Cluster | Audit ID(s) | Reason for separate PR |
 |---------|-------------|------------------------|

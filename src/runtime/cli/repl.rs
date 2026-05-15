@@ -1373,7 +1373,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm_mut(vm).tick();
+        unsafe { vm_mut(vm).tick() };
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1487,7 +1487,7 @@ impl<'a> Repl<'a> {
         let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm_mut(vm).tick();
+        unsafe { vm_mut(vm).tick() };
         while vm.is_event_loop_alive() {
             unsafe { vm_mut(vm).tick() };
             unsafe { vm_mut(vm).auto_tick_active() };
@@ -1648,7 +1648,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm_mut(vm).tick();
+        unsafe { vm_mut(vm).tick() };
     }
 
     /// Format a JS value as a string suitable for clipboard.

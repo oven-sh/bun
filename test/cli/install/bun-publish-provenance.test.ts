@@ -333,6 +333,7 @@ describe("--provenance", () => {
         "public",
         "--no-provenance",
       );
+      if (exitCode !== 0) expect(err).toBe("");
       expect(exitCode).toBe(0);
       expect(putBody).not.toBeNull();
       expect(putBody._attachments["prov-pkg-5-1.0.0.sigstore"]).toBeUndefined();
@@ -391,6 +392,7 @@ describe("--provenance", () => {
         "public",
         "--no-provenance",
       );
+      if (exitCode !== 0) expect(err).toBe("");
       expect(exitCode).toBe(0);
       expect(putBody).not.toBeNull();
       expect(putBody._attachments["prov-pkg-7-1.0.0.sigstore"]).toBeUndefined();
@@ -418,6 +420,7 @@ describe("--provenance", () => {
         "--access",
         "public",
       );
+      if (exitCode !== 0) expect(err).toBe("");
       expect(exitCode).toBe(0);
       expect(putBody).not.toBeNull();
       expect(putBody._attachments["prov-pkg-7-1.0.1.sigstore"]).toBeUndefined();

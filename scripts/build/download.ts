@@ -274,6 +274,35 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
 }
 
 /**
+ * Look up a prestaged tarball for `$BUN_DEP_TARBALLS` mode.
+ *
+ * Returns the absolute path when the env var is set and the file exists.
+ * Returns `null` when the env var is unset — callers fall through to their
+ * normal download path. Throws when the env var IS set but the expected
+ * file is missing: the whole point of the contract is to fail loudly
+ * rather than silently fall back to network.
+ *
+ * @param key Per-fetch identifier that goes into the filename — a commit
+ *   for github-archive fetches, an identity string for prebuilts. The
+ *   semantic difference doesn't matter here; this helper only cares that
+ *   it's a filename-safe token (callers assert that at configure time).
+ * @param sourceUrl The URL that would have been downloaded. Surfaced in
+ *   the error hint so a consumer can grep/curl it directly instead of
+ *   cross-referencing the dep definition.
+ */
+export function resolvePrestagedTarball(name: string, key: string, sourceUrl: string): string | null {
+  const dir = process.env.BUN_DEP_TARBALLS;
+  if (!dir) return null;
+  const path = resolve(dir, `${name}-${key}.tar.gz`);
+  if (!existsSync(path)) {
+    throw new BuildError(`BUN_DEP_TARBALLS='${dir}' but no prestaged tarball for ${name}`, {
+      hint: `Expected file: ${path}\n         Source URL: ${sourceUrl}`,
+    });
+  }
+  return path;
+}
+
+/**
  * Fetch a prebuilt tarball: download + extract + write identity stamp.
  *
  * Generic mechanism for the `{ kind: "prebuilt" }` Source variant. Download a
@@ -319,11 +348,22 @@ export async function fetchPrebuilt(
   // checkouts) can't stomp each other's download/extraction.
   const suffix = `.${process.pid}.${Date.now().toString(36)}`;
 
-  // ─── Download ───
+  // ─── Locate tarball ───
+  // Default: download to a process-unique temp path alongside dest.
+  // $BUN_DEP_TARBALLS: consume a prestaged tarball instead (see
+  // resolvePrestagedTarball above). Same contract as fetchDep.
   const destParent = resolve(dest, "..");
   await mkdir(destParent, { recursive: true });
-  const tarballPath = `${dest}${suffix}.tar.gz`;
-  await downloadWithRetry(url, tarballPath, name);
+
+  const staged = resolvePrestagedTarball(name, identity, url);
+  const isPrestaged = staged !== null;
+  let tarballPath: string;
+  if (staged !== null) {
+    tarballPath = staged;
+  } else {
+    tarballPath = `${dest}${suffix}.tar.gz`;
+    await downloadWithRetry(url, tarballPath, name);
+  }
 
   // ─── Extract ───
   // Extract to a private staging dir, then hoist. We don't extract directly
@@ -335,7 +375,9 @@ export async function fetchPrebuilt(
   try {
     // stripComponents=0: keep top-level dir for hoisting.
     await extractTarGz(tarballPath, stagingDir, 0);
-    await rm(tarballPath, { force: true });
+    // Don't delete a user-staged tarball — the env var is a "use this file"
+    // contract, not "consume it".
+    if (!isPrestaged) await rm(tarballPath, { force: true });
 
     // Hoist: if single top-level dir, promote its contents to dest.
     // If multiple entries (unusual), the staging dir becomes dest.
@@ -370,6 +412,6 @@ export async function fetchPrebuilt(
     console.log(`extracted to ${dest}`);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
-    await rm(tarballPath, { force: true });
+    if (!isPrestaged) await rm(tarballPath, { force: true });
   }
 }

@@ -13,10 +13,7 @@ import { isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const installSh = readFileSync(
-  join(import.meta.dir, "..", "..", "src", "runtime", "cli", "install.sh"),
-  "utf8",
-);
+const installSh = readFileSync(join(import.meta.dir, "..", "..", "src", "runtime", "cli", "install.sh"), "utf8");
 
 async function resolveZip(opts: { uname: string; termux?: boolean }): Promise<string> {
   using dir = tempDir("install-sh-30860", {

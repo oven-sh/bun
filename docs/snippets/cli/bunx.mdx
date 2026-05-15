@@ -29,6 +29,12 @@ Execute an npm package executable (CLI), automatically installing into a global 
   Suppress output during installation
 </ParamField>
 
+<ParamField path="--minimum-release-age" type="number">
+  Only install packages published at least N seconds ago. Supply-chain defense: skips versions that are newer than the
+  threshold. A warm `bunx` cache is treated as stale whenever this flag is present, so a previous cached install can
+  never bypass the gate.
+</ParamField>
+
 ### Examples
 
 ```bash terminal icon="terminal"

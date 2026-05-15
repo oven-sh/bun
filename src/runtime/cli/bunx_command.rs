@@ -1005,7 +1005,16 @@ impl BunxCommand {
                             do_cache_bust = true;
                             break 'try_run_existing;
                         }
+                        // `--minimum-release-age=<N>` is a supply-chain gate: the user is
+                        // asserting what versions they're willing to execute. A bunx-cache
+                        // hit from a previous run (which may have installed something the
+                        // gate now forbids) must not bypass that — force re-resolution so
+                        // the spawned `bun add` re-applies the filter.
+                        let age_gate_forces_refresh = opts.minimum_release_age.is_some();
                         let is_stale: bool = 'is_stale: {
+                            if age_gate_forces_refresh {
+                                break 'is_stale true;
+                            }
                             #[cfg(windows)]
                             {
                                 use bun_sys::windows as win;

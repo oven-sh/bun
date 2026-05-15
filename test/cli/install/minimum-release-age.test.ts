@@ -2560,5 +2560,50 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(stderr).toContain("--minimum-release-age requires a value");
       expect(exitCode).not.toBe(0);
     });
+
+    test("warm bunx cache does not bypass --minimum-release-age", async () => {
+      // bunx caches successful installs under $TMPDIR/bunx-<uid>-<pkg>@latest
+      // and re-runs the cached binary on the next invocation if it's less than
+      // 24h old. Without the age-gate refresh, a fresh cache from an earlier
+      // unrestricted run would let a later `--minimum-release-age=<big>`
+      // invocation silently execute the cached (possibly too-new) binary.
+      //
+      // Simulate a warm cache by pre-creating the expected cache path with a
+      // fake executable at <cache>/node_modules/.bin/<pkg>, then invoke bunx
+      // with a 100-year gate. The gate must force re-resolution via the
+      // spawned `bun add`, which errors out (no version satisfies 100 years).
+      using dir = tempDir("bunx-min-age-warm", {});
+      using cacheDir = tempDir("bunx-min-age-cache-warm", {});
+      using tmp = tempDir("bunx-min-age-tmp-warm", {});
+
+      const uid = process.getuid?.() ?? 0;
+      const { mkdirSync, writeFileSync, chmodSync } = require("node:fs");
+      const { join } = require("node:path");
+      const binDir = join(String(tmp), `bunx-${uid}-regular-package@latest`, "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      const binPath = join(binDir, "regular-package");
+      // If bunx wrongly short-circuits to the cache, this fake binary runs
+      // and prints a sentinel the test asserts *never* appears.
+      writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+      chmodSync(binPath, 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", "--minimum-release-age=3155760000", "regular-package"],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      // The sentinel must not appear — cached binary must not have run.
+      expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+      expect(stderr.toLowerCase()).toContain("minimum-release-age");
+      expect(exitCode).not.toBe(0);
+    });
   });
 });

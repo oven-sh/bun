@@ -568,3 +568,61 @@ test("Blob type from a consumed Response keeps the original content-type after c
   expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/30797
+test("Response.clone().bytes() returns a Uint8Array for multi-chunk binary bodies", async () => {
+  const chunks = [
+    new Uint8Array([1, 2, 3, 4]),
+    new Uint8Array([5, 6, 7, 8]),
+    new Uint8Array([9, 10, 11, 12]),
+  ];
+  const stream = new ReadableStream({
+    async pull(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(chunk);
+        await 1;
+      }
+      controller.close();
+    },
+  });
+
+  const response = new Response(stream);
+  const cloned = response.clone();
+
+  const originalBytes = await response.bytes();
+  const clonedBytes = await cloned.bytes();
+
+  expect(originalBytes).toBeInstanceOf(Uint8Array);
+  expect(clonedBytes).toBeInstanceOf(Uint8Array);
+  expect(clonedBytes).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+  expect(originalBytes).toEqual(clonedBytes);
+});
+
+// https://github.com/oven-sh/bun/issues/30797
+test("Response.clone().arrayBuffer() returns an ArrayBuffer for multi-chunk binary bodies", async () => {
+  const chunks = [
+    new Uint8Array([1, 2, 3, 4]),
+    new Uint8Array([5, 6, 7, 8]),
+    new Uint8Array([9, 10, 11, 12]),
+  ];
+  const stream = new ReadableStream({
+    async pull(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(chunk);
+        await 1;
+      }
+      controller.close();
+    },
+  });
+
+  const response = new Response(stream);
+  const cloned = response.clone();
+
+  const originalBuf = await response.arrayBuffer();
+  const clonedBuf = await cloned.arrayBuffer();
+
+  expect(originalBuf).toBeInstanceOf(ArrayBuffer);
+  expect(clonedBuf).toBeInstanceOf(ArrayBuffer);
+  expect(new Uint8Array(clonedBuf)).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]));
+  expect(new Uint8Array(originalBuf)).toEqual(new Uint8Array(clonedBuf));
+});

@@ -30,7 +30,7 @@ declare module "bun" {
      */
     type DefinedPostgresOrMySQLOptions = Define<
       Bun.SQL.PostgresOrMySQLOptions,
-      "max" | "prepare" | "max" | "foundRows"
+      "max" | "prepare" | "foundRows"
     > & {
       sslMode: import("internal/sql/shared").SSLMode;
       query: string;

@@ -806,6 +806,8 @@ pub fn cached_package_folder_name_buf() -> *mut PathBuffer {
 }
 
 mod holder {
+    use std::sync::atomic::AtomicPtr;
+
     use super::PackageManager;
     use bun_dotenv as dot_env;
     // OWNED — global singleton, leaked.
@@ -818,21 +820,6 @@ mod holder {
     // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
     pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-    // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
-    // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
-    // Mirrors Zig's `ctx.allocator.create(dot_env::Map)` / `create(dot_env::Loader)` — owned by
-    // the singleton, never freed. Avoids `Box::leak` per PORTING.md §Forbidden.
-    // TODO(port): retype `dot_env::Loader.map` to `Box<Map>` so this becomes an owned field
-    // (`Box<dot_env::Loader>`) on `PackageManager` and these statics disappear.
-    // Write-once during single-threaded init; never read afterwards (kept only
-    // to anchor the allocation). `AtomicCell<*mut T>` — payload is `Copy` and
-    // pointer-sized, so `.store()` is a safe Release write (no `RacyCell`
-    // raw-ptr deref needed).
-    pub static ENV_MAP: bun_core::AtomicCell<*mut dot_env::Map> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
-    pub static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader<'static>> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`
     /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per
@@ -1861,15 +1848,14 @@ pub fn init(
             bun_alloc::out_of_memory();
         }
         core::ptr::write(map_ptr, dot_env::Map::init());
-        holder::ENV_MAP.store(map_ptr);
 
         let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>())
             .cast::<dot_env::Loader<'static>>();
         if loader_ptr.is_null() {
             bun_alloc::out_of_memory();
         }
+
         core::ptr::write(loader_ptr, dot_env::Loader::init(&mut *map_ptr));
-        holder::ENV_LOADER.store(loader_ptr);
         &mut *loader_ptr
     };
 

@@ -62,8 +62,8 @@ pub struct AtomicCell<T: Copy> {
 // exist to carry across threads (matching `AtomicPtr<U>: Send + Sync`
 // unconditionally). What the receiving thread *does* with a loaded pointer is
 // on the caller, same as `AtomicPtr`.
-unsafe impl<T: Copy> Sync for AtomicCell<T> {}
-unsafe impl<T: Copy> Send for AtomicCell<T> {}
+unsafe impl<T: Copy + Sync> Sync for AtomicCell<T> {}
+unsafe impl<T: Copy + Send> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`

@@ -1137,13 +1137,23 @@ pub mod store {
         }
 
         /// Mutable access to `data` through the shared handle. Zig mutates
-        /// `store.data` freely through any holder; the caller must ensure no
-        /// other `&mut` to the same `Store` is live (single-threaded JS
-        /// event-loop discipline).
+        /// `store.data` freely through any holder; this is the Rust spelling
+        /// of that interior-mutation pattern.
+        ///
+        /// # Safety
+        /// The caller asserts that no other reference (`&Store`, `&mut Store`,
+        /// `&Data`, `&mut Data`) to the same pointee is live for the duration
+        /// of the returned borrow — on this thread **or any other**. Overlapping
+        /// `&mut`s, including one minted through this function and one through
+        /// [`core::ops::Deref`], are immediate UB. A handle sent to a worker
+        /// thread must be solely owned by that thread for the window of the
+        /// borrow; `StoreRef` is intentionally `!Sync` to prevent the "two
+        /// threads sharing `&StoreRef`" shape at the type level.
         #[inline]
         #[allow(clippy::mut_from_ref)]
-        pub fn data_mut(&self) -> &mut Data {
-            // SAFETY: Zig-semantics shared-mutable interior; see doc comment.
+        pub unsafe fn data_mut(&self) -> &mut Data {
+            // SAFETY: precondition — no aliasing `&`/`&mut` to the pointee is
+            // live for the returned borrow's duration (see fn doc).
             unsafe { &mut (*self.as_ptr()).data }
         }
     }
@@ -1194,10 +1204,35 @@ pub mod store {
     }
     impl Eq for StoreRef {}
 
-    // SAFETY: `Store`'s refcount is atomic and its payload is either
-    // immutable-after-init or guarded by callers; matches Zig's cross-thread
-    // `*Store` usage.
+    // SAFETY: `Store`'s refcount is atomic, so moving the handle between
+    // threads (including `clone()` → send → drop on the other side) is sound;
+    // the `Data` payload is either immutable-after-init or mutated only by
+    // the thread that currently owns the handle. Matches Zig's cross-thread
+    // `*Store` usage: move, don't share.
     unsafe impl Send for StoreRef {}
-    unsafe impl Sync for StoreRef {}
+    // Intentionally NOT `Sync`: the only way to mutate `Store::data` through
+    // an existing `StoreRef` is `unsafe fn data_mut`, whose precondition is
+    // exclusivity. Allowing `&StoreRef` to cross threads would let two threads
+    // each call `data_mut` (even correctly through `unsafe`) while neither
+    // could discharge that precondition — the compiler-level `!Sync` is
+    // what makes the single-owner contract enforceable. If a future use case
+    // genuinely needs shared cross-thread access, add synchronization inside
+    // `Store` first.
+
+    // Compile-time trip-wire: if `StoreRef` ever gains `Sync`, both blanket
+    // impls of `NotSyncCheck` apply and `_NOT_SYNC` fails to compile with
+    // "conflicting impls". Guards against a future `unsafe impl Sync for
+    // StoreRef` being added without revisiting `data_mut`'s contract (same
+    // pattern as `src/runtime/shell/subproc.rs` `__pipe_reader_thread_confined`).
+    mod __store_ref_not_sync {
+        use super::StoreRef;
+        trait NotSyncCheck<A> {
+            const OK: () = ();
+        }
+        impl<T: ?Sized> NotSyncCheck<()> for T {}
+        impl<T: ?Sized + Sync> NotSyncCheck<u8> for T {}
+        #[allow(dead_code)]
+        const _NOT_SYNC: () = <StoreRef as NotSyncCheck<_>>::OK;
+    }
 }
 pub use store::{Store, StoreRef};

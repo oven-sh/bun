@@ -988,7 +988,11 @@ impl BlobExt for Blob {
             let content_type = self.content_type_slice();
             let offset = self.offset.get();
             let store = self.store().expect("infallible: store present");
-            match store.data_mut() {
+            // SAFETY: formatter runs on the JS thread (sync path); no other
+            // `&Store`/`&mut Store` is reachable here — `self.store` is held
+            // via `JsCell` on this `&self` and the inner `Data` is not
+            // projected elsewhere across this statement.
+            match unsafe { store.data_mut() } {
                 store::Data::S3(s3) => {
                     S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
                         s3,
@@ -2201,13 +2205,22 @@ impl BlobExt for Blob {
                 // Re-read via `StoreRef::data_mut` (raw-ptr-backed accessor) after
                 // the mutating call. Mirrors Zig, which re-loads
                 // `store.data.file.*` each time.
-                let last_modified = store.data_mut().as_file().last_modified;
+                // SAFETY: JS-thread getter; `store` is held via `JsCell` and
+                // each `data_mut` borrow is released (via `.as_file()` copy)
+                // before the next sequence point. `resolve_file_stat` itself
+                // takes `&StoreRef` and re-borrows through `data_mut` (no
+                // reference from the outer scope is live across the call).
+                let last_modified = unsafe { store.data_mut() }.as_file().last_modified;
                 // last_modified can be already set during read.
                 if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
                     resolve_file_stat(store);
                 }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(store.data_mut().as_file().last_modified as f64);
+                // SAFETY: see above — exclusive on the JS thread, prior borrow
+                // dropped before this call.
+                return JSValue::js_number(
+                    unsafe { store.data_mut() }.as_file().last_modified as f64,
+                );
             }
         }
 
@@ -2338,7 +2351,10 @@ impl BlobExt for Blob {
         // optimizer may legally cache the pre-call `seekable: None` and fall
         // through to `self.size.get() = 0`. `StoreRef::data_mut` centralises
         // the raw-ptr deref so each read here is a fresh, safe borrow.
-        match store.data_mut().tag() {
+        // SAFETY: JS-thread getter; each `data_mut` call is used only to
+        // copy a `DataTag` or `File` field out before the next call, so no
+        // two `&mut Data` from this function overlap.
+        match unsafe { store.data_mut() }.tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
                 let store_size = store.size();
@@ -2348,11 +2364,13 @@ impl BlobExt for Blob {
                 }
             }
             store::DataTag::File => {
-                if store.data_mut().as_file().seekable.is_none() {
+                // SAFETY: see outer `match` — single-thread, no overlap.
+                if unsafe { store.data_mut() }.as_file().seekable.is_none() {
                     resolve_file_stat(store);
                 }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = store.data_mut().as_file();
+                // SAFETY: see outer `match` — single-thread, no overlap.
+                let file = unsafe { store.data_mut() }.as_file();
 
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
@@ -2385,7 +2403,10 @@ impl BlobExt for Blob {
         // PORT NOTE: see `resolve_size` — dispatch on the copied tag and re-read
         // via `StoreRef::data_mut` after `resolve_file_stat` so no
         // `Deref`-produced `&Data`/`&File` is live across the mutating call.
-        match store.data_mut().tag() {
+        // SAFETY: JS-thread getter; each `data_mut` call is used only to
+        // copy a `DataTag` or `File` field out before the next call, so no
+        // two `&mut Data` from this function overlap.
+        match unsafe { store.data_mut() }.tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
                 let store_size = store.size();
@@ -2395,11 +2416,13 @@ impl BlobExt for Blob {
                 (self.offset.get(), self.size.get())
             }
             store::DataTag::File => {
-                if store.data_mut().as_file().seekable.is_none() {
+                // SAFETY: see outer `match` — single-thread, no overlap.
+                if unsafe { store.data_mut() }.as_file().seekable.is_none() {
                     resolve_file_stat(store);
                 }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = store.data_mut().as_file();
+                // SAFETY: see outer `match` — single-thread, no overlap.
+                let file = unsafe { store.data_mut() }.as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
@@ -2614,7 +2637,10 @@ impl BlobExt for Blob {
         // not alias any outstanding borrow (other `StoreRef`s only hold raw
         // `NonNull<Store>`, never a long-lived `&Store`; JS execution is
         // single-threaded).
-        match store_ref.data_mut() {
+        // SAFETY: single-threaded JS path; no other borrow of the pointee is
+        // live — the function takes `&self` and releases the borrow at match
+        // exit (the returned raw pointer is not a reference).
+        match unsafe { store_ref.data_mut() } {
             store::Data::Bytes(bytes) => {
                 let v: &mut [u8] = bytes.as_array_list_leak();
                 let len = v.len();
@@ -3983,7 +4009,11 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
                 // ScopeGuard derefs to its inner Blob.
                 if let Some(store) = (*guard).store() {
-                    if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
+                    // SAFETY: deserialization runs on the JS thread; `store`
+                    // was just freshly constructed inside the guarded `blob`
+                    // and the match borrow is released before any other
+                    // access to the pointee.
+                    if let store::Data::Bytes(bytes_store) = &mut unsafe { store.data_mut() } {
                         // `PathString::init` only borrows ptr+len; the local
                         // `name: Vec<u8>` would drop at the end of this block
                         // and leave `stored_name` dangling. Transfer ownership
@@ -4143,7 +4173,9 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
 
     // This is not 100% correct...
     if let Some(store) = this.store() {
-        if let store::Data::Bytes(bytes) = &mut store.data_mut() {
+        // SAFETY: JS-thread entrypoint (C-ABI `Blob__setAsFile`); `this` is
+        // `&mut Blob` so no concurrent access to the inner store exists.
+        if let store::Data::Bytes(bytes) = &mut unsafe { store.data_mut() } {
             if bytes.stored_name.is_empty() {
                 // Zig: `path_str.toUTF8Bytes(allocator)` → owned heap slice
                 // adopted by PathString and freed by `Bytes.deinit`.
@@ -4836,7 +4868,10 @@ pub fn write_file_internal(
         debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
-        if let store::Data::File(ref mut file) = *blob_store.data_mut() {
+        // SAFETY: JS-thread write host-fn; `blob` was projected from
+        // `path_or_blob_: &mut PathOrBlob`, and the match releases the
+        // borrow before the caller's next use.
+        if let store::Data::File(ref mut file) = *unsafe { blob_store.data_mut() } {
             file.last_modified = jsc::INIT_TIMESTAMP;
         }
     }
@@ -5422,7 +5457,10 @@ pub fn jsdom_file_construct_(
 
         blob = Blob::get::<false, true>(global_this, args[0])?;
         if let Some(store_) = blob.store.get() {
-            match store_.data_mut() {
+            // SAFETY: JS-thread `File` constructor; `blob` is a freshly-
+            // constructed local and `store_` is its sole holder. The match
+            // borrow is released before the next statement.
+            match unsafe { store_.data_mut() } {
                 store::Data::Bytes(bytes) => {
                     // Zig: `toUTF8Bytes(allocator)` → owned heap slice adopted by
                     // PathString. `to_utf8().slice()` would dangle as soon as the
@@ -5661,7 +5699,10 @@ impl S3BlobDownloadTask {
                 // Move the downloaded body into a Blob store so its lifetime is
                 // tied to the Blob/JS view and freed via the store's finalizer.
                 let store = Store::init(response.body.list);
-                let bytes: *mut [u8] = match store.data_mut() {
+                // SAFETY: `store` is a freshly-constructed local and is the
+                // sole holder of the underlying allocation; the match borrow
+                // is released before the next statement.
+                let bytes: *mut [u8] = match unsafe { store.data_mut() } {
                     store::Data::Bytes(b) => std::ptr::from_mut(b.as_array_list()),
                     _ => unreachable!(),
                 };
@@ -6014,7 +6055,10 @@ fn resolve_file_stat(store: &StoreRef) {
     // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
     // `StoreRef` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
-    let file = store.data_mut().as_file_mut();
+    // SAFETY: callers (`get_last_modified`, `resolve_size`, `resolved_size`)
+    // only pass `store` from the JS thread and drop any prior `Data` borrow
+    // before calling; no other `&`/`&mut Data` is live for the `file` borrow.
+    let file = unsafe { store.data_mut() }.as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::PathBuffer::uninit();
@@ -6294,7 +6338,10 @@ impl Any {
             if let Some(s) = blob.store.get() {
                 if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
-                    let internal = s.data_mut().as_bytes_mut().to_internal_blob();
+                    // SAFETY: `has_one_ref()` confirms this is the sole holder;
+                    // `Any` is JS-thread-only, so no concurrent access exists.
+                    let internal =
+                        unsafe { s.data_mut() }.as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
                     *self = Any::InternalBlob(internal);
                     return;

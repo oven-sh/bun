@@ -667,7 +667,11 @@ impl ReadFile {
         };
 
         if let Some(store) = &self.store {
-            if let Data::File(file) = store.data_mut() {
+            // SAFETY: `ReadFile` owns the `StoreRef` (moved in at construction);
+            // this worker thread is the sole holder for the duration of `run`.
+            // No other borrow of the `Store` is live at this point — the JS
+            // thread is blocked on the backing promise until `then` fires.
+            if let Data::File(file) = unsafe { store.data_mut() } {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
                 file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
             }
@@ -1205,7 +1209,9 @@ impl<'a> ReadFileUV<'a> {
         let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        if let Data::File(file) = this.store.data_mut() {
+        // SAFETY: `this` (a `ReadFileUV`) exclusively owns `store` for the
+        // duration of the libuv fs callback; no other borrow is live.
+        if let Data::File(file) = unsafe { this.store.data_mut() } {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.
             file.last_modified =

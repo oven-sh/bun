@@ -1373,10 +1373,11 @@ impl<'a> CopyFileWindows<'a> {
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
+        // SAFETY: `CopyFile` exclusively owns both `StoreRef`s on this worker
+        // thread for the lifetime of the copy operation; the JS thread is
+        // blocked on the promise. No other borrow of either `Store` is live.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self
-                .destination_file_store
-                .data_mut()
+            &mut unsafe { self.destination_file_store.data_mut() }
                 .as_file_mut()
                 .pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
@@ -1394,8 +1395,11 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
+        // SAFETY: see `destination_file_store.data_mut()` above.
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut self.source_file_store.data_mut().as_file_mut().pathlike,
+            &mut unsafe { self.source_file_store.data_mut() }
+                .as_file_mut()
+                .pathlike,
             &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {

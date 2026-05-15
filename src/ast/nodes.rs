@@ -336,8 +336,14 @@ impl<T> Clone for StoreSlice<T> {
 // SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
 // arena. Asserted Send/Sync so payload types can sit in `static` Prefill
 // tables; callers must not actually share a Store across threads.
-unsafe impl<T> Send for StoreSlice<T> {}
-unsafe impl<T> Sync for StoreSlice<T> {}
+//
+// Bounded on `T` so `StoreSlice` cannot launder a `!Send`/`!Sync` payload
+// (e.g. `StoreSlice<Cell<_>>`) past auto-trait inference: `Deref` yields
+// `&[T]` (needs `T: Sync` to share), and a `Send`-moved `StoreSlice` yields
+// `&mut [T]` via `slice_mut` (needs `T: Send`). Matches `StoreRef`'s
+// bounds above.
+unsafe impl<T: Send> Send for StoreSlice<T> {}
+unsafe impl<T: Sync> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
     pub const EMPTY: StoreSlice<T> = StoreSlice {
@@ -479,6 +485,19 @@ impl<T: core::fmt::Debug> core::fmt::Debug for StoreSlice<T> {
         self.slice().fmt(f)
     }
 }
+
+// Compile-time soundness assertions for `StoreRef` / `StoreSlice` auto-trait
+// bounds. Positive side — the real arena payload wrappers (`Stmt` / `Binding`)
+// must remain `Send + Sync`, so the new `T: Send` / `T: Sync` bounds don't
+// over-restrict callers.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<StoreRef<Stmt>>();
+    assert_send_sync::<StoreRef<Binding>>();
+    assert_send_sync::<StoreSlice<Stmt>>();
+    assert_send_sync::<StoreSlice<Binding>>();
+    assert_send_sync::<StoreStr>();
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1395,3 +1414,87 @@ pub mod math {
 // LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
 // (arena-owned, no `'bump` cascade).
 pub type MangledProps = ArrayHashMap<Ref, StoreStr>;
+
+#[cfg(test)]
+mod store_auto_trait_tests {
+    //! Soundness guards for the `StoreRef<T>` / `StoreSlice<T>` unsafe impls.
+    //!
+    //! Positive assertions live in the `const _: fn() = || { ... }` block
+    //! near the `StoreSlice` impls above (they'd fail to compile if the
+    //! bounds regressed on the real payload wrappers).
+    //!
+    //! These tests cover the *negative* side: for a `!Sync` / `!Send` payload
+    //! type like `Cell<u32>`, the wrappers must NOT inherit `Sync` / `Send`.
+    //! Rust has no stable way to write `static_assert!(!T: Sync)`, so we use
+    //! the **autoref-specialization** pattern: method resolution prefers an
+    //! inherent `T: Sync`-bounded method over a blanket trait method on `&T`,
+    //! so `.is_sync_tag()` returns `"sync"` iff `T: Sync` holds.
+
+    use super::*;
+    use core::cell::Cell;
+    use core::marker::PhantomData;
+
+    struct Probe<T: ?Sized>(PhantomData<T>);
+
+    // Blanket — always applies (via autoref to `&Probe<T>`).
+    trait NotSyncTag {
+        fn tag(&self) -> &'static str {
+            "not_sync"
+        }
+    }
+    impl<T: ?Sized> NotSyncTag for Probe<T> {}
+
+    // Inherent — only applies when `T: Sync`. Takes precedence in method
+    // resolution when it does, because inherent impls outrank trait impls.
+    impl<T: ?Sized + Sync> Probe<T> {
+        #[allow(dead_code)]
+        fn tag(&self) -> &'static str {
+            "sync"
+        }
+    }
+
+    // Same idea for `Send`.
+    trait NotSendTag {
+        fn send_tag(&self) -> &'static str {
+            "not_send"
+        }
+    }
+    impl<T: ?Sized> NotSendTag for Probe<T> {}
+    impl<T: ?Sized + Send> Probe<T> {
+        #[allow(dead_code)]
+        fn send_tag(&self) -> &'static str {
+            "send"
+        }
+    }
+
+    #[test]
+    fn storeslice_cell_is_not_sync() {
+        // `Cell<u32>: !Sync`. If `unsafe impl<T> Sync for StoreSlice<T>` were
+        // unconditional (pre-fix), `StoreSlice<Cell<u32>>: Sync` would hold
+        // and method-resolution would pick the inherent "sync" arm.
+        let p: Probe<StoreSlice<Cell<u32>>> = Probe(PhantomData);
+        assert_eq!(p.tag(), "not_sync");
+    }
+
+    #[test]
+    fn storeref_cell_is_not_sync() {
+        let p: Probe<StoreRef<Cell<u32>>> = Probe(PhantomData);
+        assert_eq!(p.tag(), "not_sync");
+    }
+
+    #[test]
+    fn storeslice_of_raw_ptr_is_not_send_or_sync() {
+        // `*mut u32: !Send + !Sync` — ensures the bound truly propagates.
+        let p: Probe<StoreSlice<*mut u32>> = Probe(PhantomData);
+        assert_eq!(p.tag(), "not_sync");
+        assert_eq!(p.send_tag(), "not_send");
+    }
+
+    #[test]
+    fn storeslice_of_u32_is_send_and_sync() {
+        // Positive sanity: a plain `Send + Sync` payload must stay both.
+        let p: Probe<StoreSlice<u32>> = Probe(PhantomData);
+        assert_eq!(p.tag(), "sync");
+        assert_eq!(p.send_tag(), "send");
+    }
+}

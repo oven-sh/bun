@@ -105,7 +105,6 @@ pub mod udp_socket {
 }
 pub use udp_socket::UDPSocket;
 
-
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
 // vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,

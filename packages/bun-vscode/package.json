@@ -224,6 +224,21 @@
                 "description": "The environment variables to pass to Bun.",
                 "default": {}
               },
+              "console": {
+                "type": "string",
+                "description": "The console to use.",
+                "enum": [
+                  "internalConsole",
+                  "integratedTerminal",
+                  "externalTerminal"
+                ],
+                "enumDescriptions": [
+                  "VS Code Debug Console (which doesn't support to read input from a program)",
+                  "VS Code's integrated terminal",
+                  "External terminal that can be configured via user settings"
+                ],
+                "default": "internalConsole"
+              },
               "strictEnv": {
                 "type": "boolean",
                 "description": "If environment variables should not be inherited from the parent process.",

@@ -103,6 +103,7 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   rootError: () => void;
   outOfMemory: () => void;
   raiseIgnoringPanicHandler: () => void;
+  getFaultSignalHandlers: () => { SIGSEGV: string; SIGBUS: string; SIGILL: string; SIGFPE: string } | undefined;
 };
 
 export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bindings.generate") as {

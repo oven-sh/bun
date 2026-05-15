@@ -785,13 +785,33 @@ unsafe fn load_preloads(
                 unsafe { (*(*vm).event_loop()).perform_gc() };
                 // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
                 // live protected JSC heap cell.
-                unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+                unsafe { (*vm).wait_for_module_promise(promise) };
             }
         }
 
+        // Propagate both rejection and still-pending (unsettled TLA on an
+        // idle loop) so callers report it instead of silently continuing to
+        // later preloads / the entry point. For `Pending`, name the preload
+        // here — downstream reporting only knows the entry path.
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
-        if unsafe { &*promise }.status() == PromiseStatus::Rejected {
-            return Ok(promise);
+        match unsafe { &*promise }.status() {
+            PromiseStatus::Fulfilled => {}
+            PromiseStatus::Rejected => return Ok(promise),
+            PromiseStatus::Pending => {
+                // SAFETY: `vm.log` is the unique per-VM `Box<Log>`; `preload`
+                // points at a live boxed slice for this iteration.
+                if let Some(log) = unsafe { &*vm }.log {
+                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Top-level await in preload {} never resolved",
+                            bun_core::fmt::format_json_string_latin1(unsafe { &*preload }),
+                        ),
+                    );
+                }
+                return Ok(promise);
+            }
         }
         // `_protected` drops here → unprotect.
     }

@@ -1577,9 +1577,34 @@ impl Run {
                 vm.event_loop_ref().tick_possibly_forever();
             }
         } else {
-            while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.auto_tick_active();
+            // Main loop + beforeExit, with handling for a still-pending entry
+            // module promise (top-level await that `wait_for_module_promise`
+            // bailed on because the loop was idle). A `beforeExit` handler
+            // may resolve the stuck await, and the resumed body may schedule
+            // more work and then suspend again — `continue` re-enters the
+            // whole cycle so Node's "beforeExit fires every time the loop
+            // drains" semantics hold for any number of rounds.
+            loop {
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.auto_tick_active();
+                }
+
+                vm.on_before_exit();
+
+                if let Some(p) = vm.pending_internal_promise {
+                    // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+                    if bun_jsc::JSPromise::status_ptr(p) == PromiseStatus::Pending {
+                        // A bare `resolve()` inside the handler queues a JSC
+                        // microtask that `is_event_loop_alive()` doesn't
+                        // count. Drain it so the module body resumes.
+                        vm.tick();
+                        if vm.is_event_loop_alive() {
+                            continue;
+                        }
+                    }
+                }
+                break;
             }
 
             if ctx.runtime_options.eval.eval_and_print {
@@ -1629,7 +1654,40 @@ impl Run {
                 }
             }
 
-            vm.on_before_exit();
+            // The entry module's top-level await never settled and nothing
+            // is keeping the event loop alive. Match Node.js: warn + exit 13.
+            // Late `.rejected` (the resumed body threw) is reported here
+            // because the module-loader pipeline promise is pre-marked
+            // handled and never reaches `handle_rejected_promises()`; gate
+            // on `pending_internal_promise_reported_at` so an initial-load
+            // rejection already handled above isn't double-reported.
+            if let Some(p) = vm.pending_internal_promise {
+                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+                match bun_jsc::JSPromise::status_ptr(p) {
+                    PromiseStatus::Pending => {
+                        vm.report_unsettled_top_level_await();
+                        if vm.exit_handler.exit_code == 0 {
+                            vm.exit_handler.exit_code = 13;
+                        }
+                    }
+                    PromiseStatus::Rejected
+                        if vm.pending_internal_promise_reported_at != vm.hot_reload_counter =>
+                    {
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        // SAFETY: `p` is a live JSC heap cell; `vm.jsc_vm` set in `init`.
+                        let result = unsafe { &mut *p }.result(unsafe { &mut *vm.jsc_vm });
+                        let global = vm.global;
+                        // SAFETY: `global` valid for VM lifetime.
+                        let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                        // SAFETY: `p` is a live JSC heap cell.
+                        unsafe { &mut *p }.set_handled();
+                        if !handled && vm.exit_handler.exit_code == 0 {
+                            vm.exit_handler.exit_code = 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
 
         if log_has_msgs(vm) {

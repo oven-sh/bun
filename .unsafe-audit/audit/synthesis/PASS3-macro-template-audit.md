@@ -1,6 +1,6 @@
 # Pass 3 — Macro Template Audit
 
-Rather than trying to fully expand bun_runtime (blocked by codegen-required cpp.rs symbols and would produce ~300,000 lines of expansion), this audit reviews the macro SOURCE templates that emit the largest macro-generated unsafe surface in Bun. **One template ↔ many emission sites — auditing the template covers all of them.**
+Rather than trying to fully expand bun_runtime (blocked by codegen-required cpp.rs symbols and would produce ~300,000 lines of expansion), this audit reviews the macro SOURCE templates that emit the largest macro-generated unsafe surface in Bun. **One template ↔ many emission sites: auditing the template verifies the shared unsafe mechanism, while callsite-specific invariants still need spot-checks where the macro arguments change the contract.**
 
 ## Audited macros
 

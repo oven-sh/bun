@@ -162,7 +162,7 @@ impl Options {
                     // Spaced form: `--minimum-release-age <N>`.
                     // Stored verbatim; `bun add` re-parses and validates.
                     i += 1;
-                    if i >= argv.len() {
+                    if i >= argv.len() || argv[i].as_bytes().is_empty() {
                         Output::err_generic(
                             "--minimum-release-age requires a value",
                             format_args!(""),
@@ -172,6 +172,13 @@ impl Options {
                     opts.minimum_release_age = Some(argv[i].as_bytes());
                 } else if positional.starts_with(b"--minimum-release-age=") {
                     let value = &positional[b"--minimum-release-age=".len()..];
+                    if value.is_empty() {
+                        Output::err_generic(
+                            "--minimum-release-age requires a value",
+                            format_args!(""),
+                        );
+                        Global::exit(1);
+                    }
                     opts.minimum_release_age = Some(value);
                 }
             } else {

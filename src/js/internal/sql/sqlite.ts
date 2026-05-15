@@ -199,7 +199,15 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             // in source order; peek forward past any further whitespace
             // for an `INTO` token to disambiguate.
             let peek = i + "REPLACE".length + 1;
-            while (peek < text_len && (text[peek] === " " || text[peek] === "\t" || text[peek] === "\n" || text[peek] === "\r" || text[peek] === "\f" || text[peek] === "\v")) {
+            while (
+              peek < text_len &&
+              (text[peek] === " " ||
+                text[peek] === "\t" ||
+                text[peek] === "\n" ||
+                text[peek] === "\r" ||
+                text[peek] === "\f" ||
+                text[peek] === "\v")
+            ) {
               peek++;
             }
             if (

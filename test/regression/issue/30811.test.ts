@@ -128,9 +128,7 @@ describe("#30811: SQLite row-count classifier", () => {
     // `replace` as an unquoted column alias inside a WITH ... SELECT.
     // SQLite allows this (REPLACE isn't actually reserved for grammar
     // purposes outside `REPLACE INTO`).
-    const aliased = await sql.unsafe(
-      `WITH cte AS (SELECT name AS replace FROM t ORDER BY name) SELECT * FROM cte`,
-    );
+    const aliased = await sql.unsafe(`WITH cte AS (SELECT name AS replace FROM t ORDER BY name) SELECT * FROM cte`);
     expect(aliased.count).toBe(2);
     expect(Array.from(aliased)).toEqual([{ replace: "apple" }, { replace: "banana" }]);
   });

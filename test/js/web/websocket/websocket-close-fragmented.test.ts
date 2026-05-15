@@ -140,6 +140,10 @@ describe("WebSocket", () => {
   // itself and leave no JUnit output. Spawning a child isolates the
   // expected crash so the parent test can assert on the child's exit
   // code.
+  // The 30s timeout (vs the 5s default) covers the pre-fix failure arm:
+  // the Rust panic in `WebSocket::close` fires SIGILL, which the debug
+  // crash handler catches and runs `llvm-symbolizer` on — ~6s in ASAN
+  // builds. The happy path is ~1s.
   test("close() with reason that transcodes beyond 123 UTF-8 bytes does not crash", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", CLOSE_LONG_REASON_FIXTURE],
@@ -156,8 +160,7 @@ describe("WebSocket", () => {
       stdout: "close:1000",
       exitCode: 0,
     });
-  }, // gives CI headroom; the happy path is ~1s. // (SIGILL → llvm-symbolizer), which takes ~6s in ASAN builds. 30s // The pre-fix failure mode routes through the debug crash handler
-  30_000);
+  }, 30_000);
 });
 
 // Raw-socket WebSocket handshake + close(1000, reason-transcoding-to-126-UTF-8-bytes).

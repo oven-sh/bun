@@ -148,6 +148,11 @@ const SocketHandlers: SocketHandler = {
     if (!self || self[kclosed]) return;
     self[kclosed] = true;
     //socket cannot be used after close
+    const callback = self[kwriteCallback];
+    if (callback) {
+      self[kwriteCallback] = null;
+      callback(err || $ERR_SOCKET_CLOSED());
+    }
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
@@ -319,6 +324,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (!data[kclosed]) {
         data[kclosed] = true;
         //socket cannot be used after close
+        const callback = data[kwriteCallback];
+        if (callback) {
+          data[kwriteCallback] = null;
+          callback(err || $ERR_SOCKET_CLOSED());
+        }
         detachSocket(data);
         SocketEmitEndNT(data, err);
         data.data = null;
@@ -546,7 +556,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
-    // TODO: should we be doing something with err?
+    const callback = self[kwriteCallback];
+    if (callback) {
+      self[kwriteCallback] = null;
+      callback(err || $ERR_SOCKET_CLOSED());
+    }
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);

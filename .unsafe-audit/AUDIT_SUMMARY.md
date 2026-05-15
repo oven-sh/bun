@@ -29,8 +29,11 @@ Classification (first-pass; Codex pass 2/3 corrections are linked below):
   pre-existing-ub / soundness-design findings:
        Tier 1 baseline from Codex pass 2: 14 confirmed/high-confidence
                patchable soundness bugs or bug groups (several groups
-               contain multiple source sites). Pass 3/4 raises the corrected
-               current T1 dashboard to 37 after demotions:
+               contain multiple source sites). Pass 3/4 produced a corrected
+               strict/near-strict memory-safety T1 set around 37 after
+               demotions; Pass 4/5's public dashboard reports 40
+               T1/T1-equivalent entries after adding non-UB security and
+               crash-reliability items with their labels preserved:
        1. src/errno/linux_errno.rs:175-188 (S-001781) — `usize → SystemErrno`
           transmute with kernel range claim wider than enum discriminants
        2. src/ast/nodes.rs `unsafe impl<T> Send/Sync for StoreSlice<T>` —
@@ -61,9 +64,9 @@ Safety-comment coverage (Codex pass-2 heuristic): 9,450 / 11,044 sites have
 
 Headline finding: Bun's port to Rust ships with structured unsafe-discipline,
 but the second pass found many more real defects than pass 1. The audit now
-identifies 110+ likely safe refactors, 37 corrected current T1 soundness
-findings after Pass 3/4 demotions, a larger Tier 2 unsafe-contract backlog,
-one Windows placeholder remediation, and a clear PR sequence. Intentional `bun:ffi` raw-pointer
+identifies 110+ likely safe refactors, 40 T1/T1-equivalent findings in the
+current public dashboard, a larger Tier 2 unsafe-contract backlog, one Windows
+placeholder remediation, and a clear PR sequence. Intentional `bun:ffi` raw-pointer
 capabilities are tracked separately so they do not inflate the confirmed-bug
 count.
 ```

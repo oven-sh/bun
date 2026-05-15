@@ -23,9 +23,9 @@ test("FinalizationRegistry callback that throws does not crash the process", asy
   });
 
   const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(err).not.toContain("ASSERTION");
   expect(err).toContain("calling ArrayBuffer constructor without new is invalid");
   expect(exitCode).toBeLessThan(128);
+  expect(proc.signalCode).toBeNull();
 });
 
 test("FinalizationRegistry callback that throws is catchable via uncaughtException", async () => {

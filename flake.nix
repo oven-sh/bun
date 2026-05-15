@@ -118,12 +118,13 @@
           pkgs.libdrm
           pkgs.xorg.libxshmfence
           pkgs.gdk-pixbuf
-        ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          # macOS specific dependencies
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.darwin.apple_sdk.frameworks.CoreServices
-          pkgs.darwin.apple_sdk.frameworks.Security
         ];
+        # macOS: CoreFoundation, CoreServices, Security, and the rest of
+        # `pkgs.darwin.apple_sdk.frameworks.*` were removed from nixpkgs-unstable
+        # as legacy compatibility stubs. On current Darwin stdenvs these
+        # frameworks are provided automatically by stdenv and don't need to be
+        # listed as buildInputs — listing them broke `nix develop` on macOS.
+        # See: https://nixos.org/manual/nixpkgs/unstable/#sec-darwin-legacy-frameworks
 
       in
       {

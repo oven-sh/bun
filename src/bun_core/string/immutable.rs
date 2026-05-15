@@ -893,7 +893,7 @@ pub fn last_index_before_char(in_: &[u8], char: u8, before: u8) -> Option<usize>
 
 #[inline]
 pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: memrchr scans within [self_.ptr, self_.ptr + self_.len).
         let start = unsafe { libc::memrchr(self_.as_ptr().cast(), char as c_int, self_.len()) };
@@ -902,7 +902,7 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
         }
         return Some(start as usize - self_.as_ptr() as usize);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         last_index_of_char_t(self_, char)
     }

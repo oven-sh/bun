@@ -912,7 +912,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 },
                 vm.main(),
                 // Open with the minimum permissions necessary for resolving the file path.
-                if cfg!(target_os = "linux") {
+                if cfg!(any(target_os = "linux", target_os = "android")) {
                     sys::O::PATH
                 } else {
                     sys::O::RDONLY

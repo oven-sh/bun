@@ -718,7 +718,7 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
 
         let sym_z = cstr_as_zstr(symbol);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // use LD_PRELOAD on linux (RTLD_DEFAULT lookup)
             if let Some(p) = bun_sys::dlsym_impl(None, sym_z) {
@@ -741,7 +741,7 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
                     c"libTracyClient.dylib",
                     c"libTracyClient.so",
                 ];
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 const PATHS_TO_TRY: &[&core::ffi::CStr] = &[
                     c"/usr/local/lib/libtracy.so",
                     c"/usr/local/opt/tracy/lib/libtracy.so",
@@ -756,7 +756,7 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
                 ];
                 #[cfg(windows)]
                 const PATHS_TO_TRY: &[&core::ffi::CStr] = &[c"tracy.dll"];
-                #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
                 const PATHS_TO_TRY: &[&core::ffi::CStr] = &[];
 
                 // TODO(port): RTLD flags — Zig used `@bitCast(@as(i32, -2))` on

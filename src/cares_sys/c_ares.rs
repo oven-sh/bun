@@ -1930,7 +1930,7 @@ impl Error {
                 return Some(Error::ENOTFOUND);
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if eai == EAI::SOCKTYPE {
                 return Some(Error::ECONNREFUSED);
             }

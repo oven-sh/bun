@@ -118,10 +118,24 @@ mod TCC {
         pub struct State;
     }
     // Raw extern so the handle can be freed even while the method-ful
-    // `bun_tcc_sys::State` API stays gated.
+    // `bun_tcc_sys::State` API stays gated. Keep this predicate in sync with
+    // `bun_tcc_sys::tcc_externs!` / `cfg.tinycc` in `scripts/build/config.ts`.
     // TODO(port): move to <area>_sys
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "freebsd",
+        all(windows, target_arch = "aarch64")
+    )))]
     unsafe extern "C" {
         pub fn tcc_delete(s: *mut State);
+    }
+    #[cfg(any(
+        target_os = "android",
+        target_os = "freebsd",
+        all(windows, target_arch = "aarch64")
+    ))]
+    pub unsafe fn tcc_delete(_s: *mut State) {
+        unreachable!("tcc_delete: TinyCC not built on this target (cfg.tinycc = false)");
     }
 }
 

@@ -121,18 +121,28 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
     expect((await fs.readdir(String(dir))).length).toBe(0);
   });
 
-  test("chown / fchown / lchown", async () => {
+  test("chown / fchown", async () => {
     using dir = tempDir("fs-disp-ch", { "f.txt": "" });
     const p = join(String(dir), "f.txt");
     const s = await fs.stat(p);
     await fs.chown(p, s.uid, s.gid);
-    await fs.lchown(p, s.uid, s.gid);
     const fh = await fs.open(p, "r");
     try {
       await fh.chown(s.uid, s.gid); // fchown
     } finally {
       await fh.close();
     }
+  });
+
+  // `fs.lchown` is stubbed on Windows (`Maybe::<ret::Lchown>::todo()` in
+  // `src/runtime/node/node_fs.rs`), so calling it produces `error: Unknown
+  // Error, TODO` rather than routing through the `Lchown` dispatch arm.
+  // POSIX-only; the Lchown arm of `for_each_fs_async_op!` is exercised here.
+  test.skipIf(isWindows)("lchown", async () => {
+    using dir = tempDir("fs-disp-lch", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    const s = await fs.stat(p);
+    await fs.lchown(p, s.uid, s.gid);
   });
 
   test("utimes / lutimes / futimes", async () => {

@@ -27,10 +27,10 @@ This dashboard summarises Bun's Rust soundness debt after Pass 4 risk-scoring. I
 
 The T1 count is the corrected post-Codex total (see [`CODEX_PASS3_FINAL_REVIEW.md`](CODEX_PASS3_FINAL_REVIEW.md)) plus the Pass 4 semver/threading additions. The pre-Codex raw count was ~63 T1; the follow-up Codex correction pass moved H3, the libuv transmute, JSC contract hazards, WeakPtrData, JsCell/RacyCell, and several atomic-ordering claims out of T1. H5 is kept as an explicitly marked T1-equivalent security P0, not as Rust memory-UB.
 
-### Risk distribution (T1 only)
+### Risk distribution (T1/T1-equivalent dashboard only)
 
-| Risk band | Sites | Risk-pts | Cumulative coverage |
-|-----------|------:|---------:|--------------------:|
+| Risk band | Entries | Risk-pts | Cumulative coverage |
+|-----------|--------:|---------:|--------------------:|
 | 60-125 (P0 critical) | 24 | 2,019 | 81% |
 | 25-59 (P1 high) | 8 | 336 | 94% |
 | 10-24 (P2 medium) | 8 | 152 | 100% |
@@ -39,10 +39,10 @@ The T1 count is the corrected post-Codex total (see [`CODEX_PASS3_FINAL_REVIEW.m
 
 ---
 
-## Heat map: top 15 crates by T1 risk-points
+## Heat map: top 15 owners by T1 risk-points
 
-| Rank | Crate | T1 sites | Risk-pts | Trend (single snapshot) |
-|-----:|-------|---------:|---------:|-------------------------|
+| Rank | Owner | T1 entries/sites | Risk-pts | Trend (single snapshot) |
+|-----:|-------|----------------:|---------:|-------------------------|
 | 1 | `bun_install` | 8 | 756 | ▶ baseline |
 | 2 | `bun_core` (string, fmt, BoundedArray, MutableString, Unaligned) | 6 | 388 | ▶ baseline |
 | 3 | `bun_bundler` | 5 | 285 | ▶ baseline |

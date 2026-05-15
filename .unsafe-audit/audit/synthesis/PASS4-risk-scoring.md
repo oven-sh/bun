@@ -106,21 +106,21 @@ Pre-Codex Pass-3 raw total was 39 T1 + 4 P0 (43) on top of Pass-2's 18, i.e., ~6
 
 Thirteen entries sit at risk ≥ 80, dominated by the lockfile/install P0s, the semver packed-string P0s, and the HTTP NUL-write. Every entry at 125 is an attacker-input → UB chain with no fuzz target and no constrained-type filter — i.e., the worst quadrant of the rubric.
 
-### P0/P1/P2 distribution (current T1 only)
+### P0/P1/P2 distribution (current T1 dashboard only)
 
-| Risk band | Sites | Cumulative coverage of T1 risk-points |
-|-----------|------:|--------------------------------------:|
+| Risk band | Entries | Cumulative coverage of T1 risk-points |
+|-----------|--------:|--------------------------------------:|
 | 60-125 (P0) | 24 | 2,019 of 2,507 = **81%** |
 | 25-59 (P1) | 8 | 336 of 2,507 = **13%** |
 | 10-24 (P2) | 8 | 152 of 2,507 = 6% |
 | Total | 40 | 2,507 |
 
-The top 24 sites carry roughly four-fifths of the audit's quantified soundness/security debt. This matches the canonical RISK-SCORING.md guidance: "highest-risk sites: maximum-leverage refactor batch; spend most of the audit's refactor budget on them."
+The top 24 dashboard entries carry roughly four-fifths of the audit's quantified soundness/security debt. This matches the canonical RISK-SCORING.md guidance: "highest-risk sites: maximum-leverage refactor batch; spend most of the audit's refactor budget on them."
 
 ### Sum of risk-points per crate
 
-| Crate | T1 sites | Risk-points |
-|-------|---------:|------------:|
+| Crate / owner | T1 entries/sites | Risk-points |
+|---------------|----------------:|------------:|
 | `bun_install` | 8 | **756** |
 | `bun_semver` (packed lockfile strings) | 2 | **250** |
 | `bun_http` (incl. picohttp shim) | 2 | **205** |
@@ -394,10 +394,10 @@ PR set 4 cleans up the residual ~413 risk-points across U2.×8, UB-RT-001 encodi
 
 ## Cluster-level risk decomposition
 
-The 40 T1/T1-equivalent entries cluster into 18 remediation groups (one PR per group is the model):
+The 40 T1/T1-equivalent entries decompose into 32 fine-grained remediation groups. Adjacent groups with the same owner or invariant can be batched into the PR sets above.
 
-| Cluster | Sites | Risk-pts | Cluster lead PR |
-|---------|------:|---------:|-----------------|
+| Cluster | Entry count | Risk-pts | Cluster lead PR |
+|---------|------------:|---------:|-----------------|
 | install-niche-enum (PUB-INSTALL-1, -2) | 2 | 250 | `transmute<u8, Enum>` → `match`/`TryFrom`; uniform across Meta::has_install_script and Meta::origin |
 | install-uninit-slice (PUB-INSTALL-3) | 1 | 125 | yarn.rs Dependency uninit; replace with push loop |
 | install-bounds (PUB-INSTALL-4) | 1 | 125 | Tree.rs `get_unchecked` → checked indexing |
@@ -439,9 +439,9 @@ Per-cluster risk-points sum: `250 + 125 + 125 + 250 + 160 + 60 + 125 + 80 + 60 +
 
 Per RISK-SCORING.md § "Risk-Score-Aware orchestration":
 
-- **Top-24 cluster** (~81% of risk-points) gets ~60% of the audit's refactor budget.
-- **Top-32 cluster** (94% of risk-points) gets ~85% of the budget.
-- **Top-40 cluster** (100% of risk-points) gets the remaining budget but is not a release-gate.
+- **Top 24 entries** (~81% of risk-points) get ~60% of the audit's refactor budget.
+- **Top 32 entries** (94% of risk-points) get ~85% of the budget.
+- **Top 40 entries** (100% of risk-points) get the remaining budget but are not a release gate.
 
 **Same-day execution groups:**
 
@@ -535,7 +535,7 @@ EXPLOITABILITY (1-5):
 - 1: requires specific environment; not practically exploitable.
 - 5: trivially exploitable (memory corruption → RCE pathway exists).
 
-For Bun, the top T1 sites with EXPLOITABILITY scored:
+For Bun, the top T1 entries with EXPLOITABILITY scored:
 
 | ID | Risk-3 | EXPL | Risk-4 | Notes |
 |----|-------:|-----:|-------:|-------|

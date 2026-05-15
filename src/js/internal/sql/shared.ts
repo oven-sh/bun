@@ -825,7 +825,8 @@ function closeNT(onClose: (err: Error) => void, err: Error | null) {
  * Resolves the password (which may be a function and/or a promise) and calls
  * the driver's native createConnection with the normalized pool options.
  * Extra trailing arguments past `useUnnamedPreparedStatements` (MySQL's
- * `allowPublicKeyRetrieval`) are ignored by drivers that don't take them.
+ * `allowPublicKeyRetrieval` and `foundRows`) are ignored by drivers that
+ * don't take them.
  */
 async function createPooledConnectionHandle<ConnectionHandle>(
   nativeCreateConnection: (...args: any[]) => ConnectionHandle,
@@ -847,6 +848,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     prepare = true,
     path,
     allowPublicKeyRetrieval = false,
+    foundRows = true,
   } = options;
 
   let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
@@ -881,6 +883,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       maxLifetime,
       !prepare,
       !!allowPublicKeyRetrieval,
+      !!foundRows,
     );
   } catch (e) {
     // defer so the callback never runs while the adapter is still filling
@@ -1750,6 +1753,10 @@ function parseOptions(
   let bigint: boolean | undefined;
   let path: string;
   let prepare: boolean = true;
+  // MySQL-only. Defaults to `true` to match the `mysql2` and `mariadb` drivers
+  // (both enable CLIENT_FOUND_ROWS by default). Read from the options object
+  // and the URL query string below; ignored for non-MySQL adapters.
+  let foundRows: boolean = true;
 
   if (url !== null) {
     url = url instanceof URL ? url : new URL(url);
@@ -1767,10 +1774,17 @@ function parseOptions(
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
-      if (key.toLowerCase() === "sslmode") {
+      const lowered = key.toLowerCase();
+      if (lowered === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
+      } else if (lowered === "path") {
         path = queryObject[key];
+      } else if (lowered === "foundrows") {
+        // Accept "false"/"0" (case-insensitive) to disable; anything else
+        // (including "true"/"1" or empty) leaves the default enabled. Only
+        // consumed by the MySQL adapter.
+        const value = queryObject[key].toLowerCase();
+        foundRows = !(value === "false" || value === "0");
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -1934,6 +1948,13 @@ function parseOptions(
     prepare = false;
   }
 
+  // The options-object form wins over the URL query string. `foundRows` is
+  // only meaningful for the MySQL wire protocol (maps to CLIENT_FOUND_ROWS);
+  // for Postgres/SQLite it's a no-op.
+  if (options.foundRows !== undefined) {
+    foundRows = !!options.foundRows;
+  }
+
   onconnect ??= options.onconnect;
   onclose ??= options.onclose;
 
@@ -2034,6 +2055,7 @@ function parseOptions(
     sslMode,
     query,
     max: max || 10,
+    foundRows,
   };
 
   if (idleTimeout != null) {

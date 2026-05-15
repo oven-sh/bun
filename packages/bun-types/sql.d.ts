@@ -389,6 +389,23 @@ declare module "bun" {
        * @default false
        */
       allowPublicKeyRetrieval?: boolean | undefined;
+
+      /**
+       * MySQL / MariaDB. When enabled, the server reports the number of rows
+       * matched by the `WHERE` clause in `affectedRows`, rather than the
+       * number of rows actually changed. This is the default behavior of the
+       * `mysql2` and `mariadb` drivers and matches what most Node.js MySQL
+       * code expects. Applies to both `adapter: "mysql"` and
+       * `adapter: "mariadb"`; no effect on `adapter: "postgres"`.
+       *
+       * Set to `false` to use the server's changed-rows semantics: an
+       * `UPDATE` that matches a row but does not change any column value
+       * will return `affectedRows: 0`.
+       *
+       * @see [CLIENT_FOUND_ROWS](https://dev.mysql.com/doc/c-api/en/mysql-affected-rows.html)
+       * @default true
+       */
+      foundRows?: boolean | undefined;
     }
 
     /**

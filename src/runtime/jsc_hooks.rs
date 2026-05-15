@@ -4499,13 +4499,14 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Spec ModuleLoader.zig:43-45 — `tmpname(extname, buf, bun.hash(file.name))`.
     let mut tmpname_buf = bun_paths::path_buffer_pool::get();
     let tmpfilename =
-        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name))
-            .ok()?;
+        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name)).ok()?;
 
     // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
     // SAFETY: `FileSystem::instance()` returns the process-global singleton
     // pointer (initialized at startup).
-    let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() }).tmpdir().ok()?;
+    let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() })
+        .tmpdir()
+        .ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
 
     // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.

@@ -515,7 +515,12 @@ impl UpgradeCommand {
         {
             "powershell -c 'irm bun.sh/install.ps1|iex'"
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "windows"
+        )))]
         {
             // TODO(port): Environment.os.displayString() at comptime
             "(TODO: Install script for this platform)"

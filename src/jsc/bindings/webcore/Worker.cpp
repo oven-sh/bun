@@ -749,19 +749,30 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         auto& options = worker->options();
         auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTF::move(options.dataMessagePorts));
         RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
-        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
-        RETURN_IF_EXCEPTION(scope, {});
-        // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
-        auto* pair = uncheckedDowncast<JSArray>(deserialized);
-        ASSERT(pair->length() == 2);
-        ASSERT(pair->canGetIndexQuickly(0u));
-        ASSERT(pair->canGetIndexQuickly(1u));
-        workerData = pair->getIndexQuickly(0);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto environmentDataValue = pair->getIndexQuickly(1);
-        // it might not be a Map if the parent had not set up environmentData yet
-        environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
-        RETURN_IF_EXCEPTION(scope, {});
+        // `workerDataAndEnvironmentData` is moved-from on the first call. If
+        // this binding is created twice (lazy-init re-entry), `serialized` is
+        // null and `->deserialize` would UB → garbage → SIGTRAP at the
+        // uncheckedDowncast below (#53748 darwin). Guard both: skip the
+        // deserialize on second call (workerData stays jsUndefined), and use a
+        // checked cast so a non-Array deserialize result doesn't trap.
+        if (serialized) {
+            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
+            RETURN_IF_EXCEPTION(scope, {});
+            // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
+            if (auto* pair = dynamicDowncast<JSArray>(deserialized)) {
+                ASSERT(pair->length() == 2);
+                ASSERT(pair->canGetIndexQuickly(0u));
+                ASSERT(pair->canGetIndexQuickly(1u));
+                workerData = pair->getIndexQuickly(0);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto environmentDataValue = pair->getIndexQuickly(1);
+                // it might not be a Map if the parent had not set up environmentData yet
+                environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
+                RETURN_IF_EXCEPTION(scope, {});
+            } else {
+                ASSERT_NOT_REACHED_WITH_MESSAGE("createNodeWorkerThreadsBinding: deserialized is not JSArray");
+            }
+        }
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);

@@ -67,10 +67,22 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) P
     var text_start: usize = 0;
     var delim_cursor: usize = 0;
 
-    while (i < content.len) {
-        const c = content[i];
+    const common_mark_set = self.mark_chars_are_common;
 
-        // Fast path: character has no special meaning, skip it
+    while (i < content.len) {
+        // Fast path: jump past characters with no special meaning. With the
+        // common flag configuration the mark set is a subset of a fixed
+        // 14-char list, so we can SIMD-scan for the next candidate; the bitset
+        // check below then filters out any of the 14 that aren't actually
+        // enabled (e.g. '<' when no_html_spans is set). For short remaining
+        // spans the per-byte bitset probe is cheaper than the 14-way scalar
+        // tail of indexOfAnyInline, so only take the SIMD path when at least
+        // one full vector is available.
+        if (common_mark_set and content.len - i >= 16) {
+            i += helpers.indexOfAnyInline(content[i..], parser_mod.Parser.common_mark_chars);
+            if (i >= content.len) break;
+        }
+        const c = content[i];
         if (!self.mark_char_map.isSet(c)) {
             i += 1;
             continue;
@@ -417,6 +429,8 @@ pub fn collectEmphasisDelimiters(self: *Parser, content: []const u8) void {
     self.emph_delims.clearRetainingCapacity();
     var i: usize = 0;
     while (i < content.len) {
+        i += helpers.indexOfAnyInline(content[i..], "\\`<[!*_~");
+        if (i >= content.len) break;
         const c = content[i];
         // Skip backslash escapes
         if (c == '\\' and i + 1 < content.len and helpers.isAsciiPunctuation(content[i + 1])) {

@@ -496,8 +496,9 @@ pub fn analyzeLine(self: *Parser, off_start: OFF, p_end: *OFF, pivot_line: *cons
     }
 
     // Scan for end of line
-    while (off < self.size and !helpers.isNewline(self.text[off]))
-        off += 1;
+    if (off < self.size) {
+        off += @intCast(helpers.indexOfAnyInline(self.text[off..self.size], "\r\n"));
+    }
 
     line.end = off;
 

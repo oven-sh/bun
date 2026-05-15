@@ -526,4 +526,52 @@ code
     );
     expect(ids).toEqual(["a", "a-1", "a-2"]);
   });
+
+  // ---- SIMD scan boundary cases (16-byte vector width) ----
+  // Hot byte-scans process input in 16-byte chunks with a scalar tail.
+  // Place special characters at and around the chunk boundary to catch
+  // off-by-one errors between the vector path and the scalar tail.
+
+  describe.each([0, 1, 14, 15, 16, 17, 31, 32, 33])("SIMD boundary: %d-byte prefix", pad => {
+    const prefix = Buffer.alloc(pad, "a").toString();
+
+    test("HTML-escape needle after prefix", () => {
+      const html = Markdown.html(prefix + "<b\n");
+      expect(html).toContain(prefix + "&lt;b");
+      expect(html).not.toContain(prefix + "<b");
+    });
+
+    test("inline mark after prefix", () => {
+      const html = Markdown.html(prefix + " *x*\n");
+      expect(html).toContain("<em>x</em>");
+    });
+
+    test("link destination close-paren after prefix", () => {
+      const url = Buffer.alloc(pad, "u").toString();
+      const html = Markdown.html("[t](h" + url + ")\n");
+      expect(html).toContain('<a href="h' + url + '">t</a>');
+    });
+
+    test("table cell pipe after prefix", () => {
+      const cell = Buffer.alloc(pad, "c").toString() || "c";
+      const input = "| " + cell + " | h |\n| - | - |\n| d | e |\n";
+      expect(Markdown.html(input, { tables: true })).toContain("<th>" + cell + "</th>");
+    });
+  });
+
+  test("reentrant html() from options getter does not corrupt the outer render", () => {
+    // Non-ASCII forces the input string to be allocated into the scratch arena.
+    const outerSrc = "# héllo\n\n" + Buffer.alloc(64, "a").toString();
+    const expected = Markdown.html(outerSrc);
+    let inner = "";
+    const opts = {
+      get tables() {
+        inner = Markdown.html("**inner**");
+        return true;
+      },
+    };
+    const outer = Markdown.html(outerSrc, opts);
+    expect(inner).toContain("<strong>inner</strong>");
+    expect(outer).toBe(expected);
+  });
 });

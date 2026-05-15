@@ -11,17 +11,22 @@
 // `FORCE_COLOR=1` and asserts the arrow line renders as valid UTF-8.
 
 import { file, spawn } from "bun";
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+
+// `bun install` + `bun update --latest` back-to-back is tight under the ASAN
+// debug build's default per-test budget. Other regression tests that drive a
+// real install (e.g. 26225, 29264) bump it the same way.
+setDefaultTimeout(30_000);
 
 const FIXTURES = join(import.meta.dir, "..", "..", "cli", "install");
 const PKG = "baz";
 const OLD = "0.0.3";
 const NEW = "0.0.5";
 
-test("`update --latest` renders unicode arrows (not mojibake)", { timeout: 60_000 }, async () => {
+test("`update --latest` renders unicode arrows (not mojibake)", async () => {
   // Tiny in-memory npm registry. Serves the package manifest for `baz` with
   // two versions (OLD, NEW; latest = NEW) and streams the two matching
   // tarballs from the install test fixtures.

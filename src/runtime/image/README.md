@@ -8,7 +8,7 @@ off the JS thread.
 | file                                  | owns                                                                                                            | touch when                               |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
-| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                  | new options, new chainable, new terminal |
+| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                 | new options, new chainable, new terminal |
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |

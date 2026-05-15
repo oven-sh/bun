@@ -4979,6 +4979,111 @@ describe("update", () => {
       },
     });
   });
+  test("update --latest without packages records resolved versions in lockfile", async () => {
+    // Override bunfig to enable text lockfile for easy inspection
+    await registry.writeBunfig(packageDir, { saveTextLockfile: true, linker: "hoisted" });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "latest",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+
+    // bun update --latest without specifying packages should update the lockfile
+    // version literal from "latest" to the actual resolved version (e.g. "^2.0.0")
+    await runBunUpdate(env, packageDir, ["--latest"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^2.0.0",
+      },
+    });
+
+    // Verify the text lockfile also has the resolved version, not "latest"
+    const lockfileText = await Bun.file(join(packageDir, "bun.lock")).text();
+    const lockfileJson = JSON.parse(lockfileText);
+    expect(lockfileJson.workspaces[""].dependencies["no-deps"]).toBe("^2.0.0");
+  });
+  test("update --latest without packages preserves version pinning in lockfile", async () => {
+    await registry.writeBunfig(packageDir, { saveTextLockfile: true, linker: "hoisted" });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "~1.0.1",
+          "no-deps": "^1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    await runBunUpdate(env, packageDir, ["--latest"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // package.json should preserve the pinning style
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a-dep": "~1.0.10",
+        "no-deps": "^2.0.0",
+      },
+    });
+
+    // Verify the lockfile also has the actual resolved versions, not "latest"
+    const lockfileText = await Bun.file(join(packageDir, "bun.lock")).text();
+    const lockfileJson = JSON.parse(lockfileText);
+    const deps = lockfileJson.workspaces[""].dependencies;
+    expect(deps["a-dep"]).toBe("~1.0.10");
+    expect(deps["no-deps"]).toBe("^2.0.0");
+  });
+  test("update --latest without packages handles aliases in lockfile", async () => {
+    await registry.writeBunfig(packageDir, { saveTextLockfile: true, linker: "hoisted" });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "aliased": "npm:no-deps@latest",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    await runBunUpdate(env, packageDir, ["--latest"]);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "aliased": "npm:no-deps@^2.0.0",
+      },
+    });
+
+    const lockfileText = await Bun.file(join(packageDir, "bun.lock")).text();
+    const lockfileJson = JSON.parse(lockfileText);
+    expect(lockfileJson.workspaces[""].dependencies["aliased"]).toBe("npm:no-deps@^2.0.0");
+  });
   test("exact versions stay exact", async () => {
     const runs = [
       { version: "1.0.1", dependency: "a-dep" },

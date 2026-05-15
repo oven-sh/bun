@@ -79,13 +79,31 @@ case $platform in
 'Linux riscv64')
     error 'Not supported on riscv64'
     ;;
+'FreeBSD amd64')
+    target=freebsd-x64
+    ;;
+'FreeBSD arm64')
+    target=freebsd-aarch64
+    ;;
 'Linux x86_64' | *)
     target=linux-x64
     ;;
 esac
 
+# Termux/Android: uname -ms reports 'Linux <arch>' identically to a regular
+# Linux host, so detect via the Termux-set TERMUX_VERSION or the Termux
+# $PREFIX path (/data/data/com.termux/files/usr).
 case "$target" in
-'linux'*)
+'linux-x64' | 'linux-aarch64')
+    if [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == */com.termux/* ]]; then
+        target="$target-android"
+    fi
+    ;;
+esac
+
+case "$target" in
+'linux-x64' | 'linux-aarch64')
+    # Android uses bionic; only the plain linux- targets can be -musl.
     if [ -f /etc/alpine-release ]; then
         target="$target-musl"
     fi
@@ -115,6 +133,13 @@ case "$target" in
 'linux-x64'*)
     # If AVX2 isn't supported, use the -baseline build
     if [[ $(cat /proc/cpuinfo | grep avx2) = '' ]]; then
+        target="$target-baseline"
+    fi
+    ;;
+'freebsd-x64'*)
+    # FreeBSD's identcpu prints AVX2 in /var/run/dmesg.boot at boot; no
+    # userland CPUID sysctl without root. Fall back to baseline on miss.
+    if [[ $({ cat /var/run/dmesg.boot 2>/dev/null; dmesg 2>/dev/null; } | grep AVX2) = '' ]]; then
         target="$target-baseline"
     fi
     ;;

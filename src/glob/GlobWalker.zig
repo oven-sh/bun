@@ -1308,7 +1308,7 @@ pub fn GlobWalker_(
             is_last: bool,
             add: *bool,
         ) ?u32 {
-            if (!this.dot and GlobWalker.startsWithDot(entry_name)) return null;
+            if (!this.dot and GlobWalker.startsWithDot(entry_name) and !GlobWalker.patternStartsWithExplicitDot(pattern, this.pattern)) return null;
             if (is_ignored(entry_name)) return null;
 
             // Handle double wildcard `**`, this could possibly
@@ -1391,7 +1391,7 @@ pub fn GlobWalker_(
             filepath: []const u8,
         ) bool {
             log("matchPatternImpl: {s}", .{filepath});
-            if (!this.dot and GlobWalker.startsWithDot(filepath)) return false;
+            if (!this.dot and GlobWalker.startsWithDot(filepath) and !GlobWalker.patternStartsWithExplicitDot(pattern_component, this.pattern)) return false;
             if (is_ignored(filepath)) return false;
 
             return switch (pattern_component.syntax_hint) {
@@ -1561,6 +1561,14 @@ pub fn GlobWalker_(
 
         inline fn startsWithDot(filepath: []const u8) bool {
             return filepath.len > 0 and filepath[0] == '.';
+        }
+
+        /// Returns true if the pattern component starts with an explicit dot literal.
+        /// When a pattern explicitly starts with '.', it should match dot files
+        /// even when dot mode is disabled, matching standard glob behavior (e.g. minimatch).
+        inline fn patternStartsWithExplicitDot(component: *Component, pattern: []const u8) bool {
+            const slice = component.patternSlice(pattern);
+            return slice.len > 1 and slice[0] == '.' and slice[1] != '.' and slice[1] != '/';
         }
 
         const syntax_tokens = "*[{?!";

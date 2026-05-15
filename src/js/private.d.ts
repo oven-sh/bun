@@ -28,7 +28,10 @@ declare module "bun" {
     /**
      * Represents the result of the `parseOptions()` function in the postgres, mysql or mariadb path
      */
-    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare" | "max"> & {
+    type DefinedPostgresOrMySQLOptions = Define<
+      Bun.SQL.PostgresOrMySQLOptions,
+      "max" | "prepare" | "max" | "foundRows"
+    > & {
       sslMode: import("internal/sql/shared").SSLMode;
       query: string;
     };

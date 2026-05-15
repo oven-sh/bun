@@ -92,6 +92,15 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub struct PublishCommand;
 
+/// Sigstore bundle to embed under `_attachments` in the publish PUT body.
+/// Kept local (not `bun_sigstore::Attestation` directly) so the body
+/// builder stays independent of whether the bundle was freshly generated
+/// or loaded from `--provenance-file`.
+struct ProvenanceAttachment {
+    media_type: String,
+    bundle_json: Vec<u8>,
+}
+
 // TODO(port): Zig used `if (directory_publish) ?[]const u8 else void` for the script fields
 // and `if (directory_publish) *DotEnv.Loader else void` for script_env. Rust const generics
 // cannot vary field types; we keep them as Option<> in both instantiations and rely on
@@ -364,6 +373,12 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                                 Global::crash();
                             }
                         };
+                    }
+                }
+
+                if manager.options.publish_config.provenance.is_none() {
+                    if let Some(prov) = config.get(b"provenance").and_then(|e| e.as_bool()) {
+                        manager.options.publish_config.provenance = Some(prov);
                     }
                 }
 
@@ -875,6 +890,142 @@ impl PublishCommand {
         false
     }
 
+    /// Was provenance requested? Precedence (highest first):
+    ///   1. `--provenance-file` (always yes)
+    ///   2. `--provenance` / `--no-provenance` / `publishConfig.provenance`
+    ///      (CLI wins; publishConfig is merged into the same field earlier
+    ///      only when the CLI flag was absent)
+    ///   3. `NPM_CONFIG_PROVENANCE` / `npm_config_provenance` env — what
+    ///      `actions/setup-node` sets when `provenance: true`
+    fn provenance_requested<const DIRECTORY_PUBLISH: bool>(
+        ctx: &Context<'_, DIRECTORY_PUBLISH>,
+    ) -> bool {
+        let cfg = &ctx.manager.options.publish_config;
+        if !cfg.provenance_file.is_empty() {
+            return true;
+        }
+        if let Some(p) = cfg.provenance {
+            return p;
+        }
+        // npm reads `npm_config_*` case-insensitively and itself sets the
+        // lowercase form in lifecycle-script environments — check both,
+        // mirroring the `NPM_CONFIG_REGISTRY` / `npm_config_registry` pair in
+        // `PackageManagerOptions::load`.
+        let env = bun_core::getenv_z(bun_core::zstr!("NPM_CONFIG_PROVENANCE"))
+            .or_else(|| bun_core::getenv_z(bun_core::zstr!("npm_config_provenance")));
+        match env {
+            Some(v) => strings::eql_case_insensitive_ascii(v, b"true", true) || v == b"1",
+            None => false,
+        }
+    }
+
+    /// Generate (or load from `--provenance-file`) a Sigstore bundle for the
+    /// tarball currently in `ctx`. On any precondition/usage error we print
+    /// and crash — matching npm's `EUSAGE` behavior — since a user who
+    /// passed `--provenance` does not want a silent unattested publish.
+    fn maybe_generate_provenance<const DIRECTORY_PUBLISH: bool>(
+        ctx: &Context<'_, DIRECTORY_PUBLISH>,
+    ) -> Option<ProvenanceAttachment> {
+        if !Self::provenance_requested(ctx) {
+            return None;
+        }
+        let cfg = &ctx.manager.options.publish_config;
+
+        // libnpmpublish: `if (opts.provenance === true && opts.provenanceFile)`.
+        // We check `== Some(true)`, not `.is_some()`: `cfg.provenance` is also
+        // populated from `publishConfig.provenance` in package.json, so
+        // `Some(false)` ("don't generate") + `--provenance-file` is a valid
+        // "attach this pre-built bundle" combination, not a conflict.
+        if cfg.provenance == Some(true) && !cfg.provenance_file.is_empty() {
+            Output::err_generic(
+                "--provenance and --provenance-file are mutually exclusive",
+                (),
+            );
+            Global::crash();
+        }
+
+        // npm: "Can't generate provenance for new or private package, you
+        // must set `access` to public." We don't hit the registry's
+        // `/-/package/.../visibility` endpoint here (the full npm check);
+        // we match its effective outcome for the common case by requiring
+        // explicit `--access public`.
+        if cfg.access != Some(Access::Public) && cfg.provenance_file.is_empty() {
+            Output::err_generic(
+                "--provenance requires <cyan>--access public<r> (provenance cannot be \
+                 generated for private packages)",
+                (),
+            );
+            Global::crash();
+        }
+
+        // Tarball's SHA-512 as lowercase hex — the in-toto subject digest.
+        let mut sha512_hex = String::with_capacity(128);
+        for b in &ctx.integrity {
+            use std::fmt::Write as _;
+            let _ = write!(&mut sha512_hex, "{b:02x}");
+        }
+        let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
+        let subject = bun_sigstore::provenance::subject(
+            &ctx.package_name,
+            version_without_build_tag,
+            &sha512_hex,
+        );
+
+        // `--provenance-file`: verify subject matches, skip generation.
+        if !cfg.provenance_file.is_empty() {
+            return match bun_sigstore::load_and_verify_bundle(cfg.provenance_file, &subject) {
+                Ok(att) => {
+                    Output::prettyln(format_args!(
+                        "<green>✓<r> Attached provenance bundle from <b>{}<r>",
+                        bstr::BStr::new(cfg.provenance_file),
+                    ));
+                    Some(ProvenanceAttachment {
+                        media_type: att.media_type.to_owned(),
+                        bundle_json: att.bundle_json,
+                    })
+                }
+                Err(e) => {
+                    e.print();
+                    Global::crash();
+                }
+            };
+        }
+
+        // Preflight: supported CI + OIDC token available.
+        let provider = match bun_sigstore::ensure_provenance_generation() {
+            Ok(p) => p,
+            Err(e) => {
+                e.print();
+                Global::crash();
+            }
+        };
+
+        let payload = bun_sigstore::provenance::generate(provider, subject);
+        let endpoints = bun_sigstore::Endpoints::from_env();
+
+        let att = match bun_sigstore::attest(&payload, &endpoints) {
+            Ok(a) => a,
+            Err(e) => {
+                e.print();
+                Global::crash();
+            }
+        };
+
+        Output::prettyln(format_args!(
+            "<green>✓<r> Signed provenance statement with source and build information from \
+             <b>{}<r>",
+            provider.display_name(),
+        ));
+        if let Some(url) = &att.transparency_log_url {
+            Output::prettyln(format_args!("<d>  Transparency log: {}<r>", url,));
+        }
+
+        Some(ProvenanceAttachment {
+            media_type: att.media_type.to_owned(),
+            bundle_json: att.bundle_json,
+        })
+    }
+
     pub fn publish<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<(), PublishError> {
@@ -926,12 +1077,18 @@ impl PublishCommand {
             return Ok(());
         }
 
+        // ── provenance ──────────────────────────────────────────────────
+        // Generate (or load) a Sigstore bundle *before* building the body so
+        // it can be embedded in `_attachments`. The target registry URL is
+        // already printed in the summary block above.
+        let provenance = Self::maybe_generate_provenance(ctx);
+
         // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
         // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
         let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
-            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
+            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx, provenance.as_ref())?,
         );
 
         let mut print_buf: Vec<u8> = Vec::new();
@@ -2043,6 +2200,7 @@ impl PublishCommand {
 
     fn construct_publish_request_body<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
+        provenance: Option<&ProvenanceAttachment>,
     ) -> Result<Box<[u8]>, AllocError> {
         let tag: &[u8] = if !ctx.manager.options.publish_config.tag.is_empty() {
             ctx.manager.options.publish_config.tag
@@ -2121,7 +2279,30 @@ impl PublishCommand {
             };
             debug_assert!(count == encoded_tarball_len);
 
-            write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len(),).ok();
+            write!(&mut buf, "\",\"length\":{}}}", ctx.tarball_bytes.len(),).ok();
+
+            // Second `_attachments` entry: the Sigstore bundle. Mirrors
+            // libnpmpublish — key `{name}-{version}.sigstore`; `data` is the
+            // bundle JSON *as a string* (not base64), `length` = byte length
+            // of that string. See npm/cli `workspaces/libnpmpublish/lib/publish.js`.
+            if let Some(prov) = provenance {
+                // Use the full `package_version` (including any `+build`
+                // metadata) so the stem matches the `.tgz` key above — npm's
+                // `${manifest.name}-${manifest.version}` template uses the
+                // same version string for both.
+                write!(
+                    &mut buf,
+                    ",\"{}-{}.sigstore\":{{\"content_type\":{},\"data\":{},\"length\":{}}}",
+                    bstr::BStr::new(&ctx.package_name),
+                    bstr::BStr::new(&ctx.package_version),
+                    bun_fmt::format_json_string_latin1(prov.media_type.as_bytes()),
+                    bun_fmt::format_json_string_latin1(&prov.bundle_json),
+                    prov.bundle_json.len(),
+                )
+                .ok();
+            }
+
+            buf.extend_from_slice(b"}}");
         }
 
         Ok(buf.into_boxed_slice())

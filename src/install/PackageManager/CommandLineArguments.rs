@@ -333,6 +333,15 @@ static PUBLISH_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number"
         ),
+        clap::param!(
+            "--provenance                           Generate a signed provenance statement (GitHub Actions / GitLab CI only)"
+        ),
+        clap::param!(
+            "--no-provenance                        Do not generate a provenance statement"
+        ),
+        clap::param!(
+            "--provenance-file <STR>                Path to an externally-generated Sigstore provenance bundle to attach"
+        ),
     ]
 ];
 
@@ -1209,6 +1218,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             }
 
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
+
+            // `--provenance` / `--no-provenance` — tri-state so the
+            // `publishConfig.provenance` / `NPM_CONFIG_PROVENANCE` default can
+            // be overridden from the CLI in either direction.
+            if args.flag(b"--no-provenance") {
+                cli.publish_config.provenance = Some(false);
+            }
+            if args.flag(b"--provenance") {
+                cli.publish_config.provenance = Some(true);
+            }
+            if let Some(path) = args.option(b"--provenance-file") {
+                cli.publish_config.provenance_file = path;
+            }
         }
 
         // link and unlink default to not saving, all others default to

@@ -751,6 +751,7 @@ _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw9find_avx2         
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw9find_avx2              [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw9find_avx2              [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memrchr_raw9find_avx2              [AVX, AVX2]
+_RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr9count_raw9find_avx2                 [AVX, AVX2]
 # packedpair::Finder — only constructed when Finder::with_pair() sees avx2 in
 # is_x86_feature_detected!(); the *_impl fns are #[target_feature(enable="avx2")]
 # and only reached via that constructed Finder.
@@ -765,6 +766,15 @@ _RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx210packedpairNtB2_6Finder19find_p
 # (1 symbol)
 # ----------------------------------------------------------------------------
 _RNvNt<rust-hash>12blake2b_simd4avx214compress1_loop  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Rust sha2 SHA-NI (via p256 → bun_sigstore, publish --provenance). Gate:
+# cpufeatures::new!(shani_cpuid, "sha", "sse2", "ssse3", "sse4.1") in
+# sha2::sha256::x86::compress — falls back to soft::compress.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+_RNvNtNt<rust-hash>4sha26sha2563x8613digest_blocks  [SHA]
 
 
 # ----------------------------------------------------------------------------

@@ -1328,8 +1328,7 @@ describe("SQLite-specific features", () => {
     // RETURNING reports affected row count.
     await sql`DELETE FROM dst`;
     await sql`INSERT INTO dst VALUES (1, 'x'), (2, 'y')`;
-    const repResult =
-      await sql`WITH cte AS (SELECT id, name FROM src) REPLACE INTO dst SELECT id, name FROM cte`;
+    const repResult = await sql`WITH cte AS (SELECT id, name FROM src) REPLACE INTO dst SELECT id, name FROM cte`;
     expect(repResult.count).toBe(3);
 
     // WITH ... INSERT ... RETURNING still returns the inserted rows.

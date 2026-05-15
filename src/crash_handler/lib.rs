@@ -1766,12 +1766,7 @@ mod draft {
                     .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
             }
         }
-        #[cfg(any(
-            target_os = "macos",
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             reset_on_posix();
         }
@@ -2912,12 +2907,7 @@ mod draft {
             let _ = spawn_result;
             let _ = url;
         }
-        #[cfg(any(
-            target_os = "macos",
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             let mut buf = bun_core::PathBuffer::default();
             let mut buf2 = bun_core::PathBuffer::default();

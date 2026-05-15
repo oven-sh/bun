@@ -41,6 +41,12 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 const kFromNode = Symbol("kFromNode");
+// Marker applied to a readable stream whose pipe fd has been handed off to
+// another subprocess's stdio. Used by `#handleOnExit`'s drain logic to skip
+// auto-resuming such streams — mirrors Node's `kIsUsedAsStdio` (see
+// lib/internal/child_process.js). Without this, our own `PipeReader` would
+// race the child for the pipe's bytes and the child would usually lose.
+const kIsUsedAsStdio = Symbol("kIsUsedAsStdio");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -1114,13 +1120,15 @@ class ChildProcess extends EventEmitter {
 
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
-      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
+      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed && !stdout[kIsUsedAsStdio]) {
+        // `kIsUsedAsStdio` marks a stream whose fd was handed off to another
+        // subprocess — resuming it here would drain bytes the child needs.
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
         this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
-      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
+      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed && !stderr[kIsUsedAsStdio]) {
         stderr.resume?.();
       }
     }
@@ -1638,13 +1646,19 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
     return item;
   }
   if (isNodeStreamReadable(item)) {
-    if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
-    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
+    const fd = extractStreamFd(item);
+    if (fd !== undefined) {
+      markStreamAsStdio(item);
+      return fd;
+    }
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
   if (isNodeStreamWritable(item)) {
-    if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
-    if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
+    const fd = extractStreamFd(item);
+    if (fd !== undefined) {
+      markStreamAsStdio(item);
+      return fd;
+    }
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }
   const result = nodeToBunLookup[item];
@@ -1652,6 +1666,62 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
     throw new Error(`Invalid stdio option[${index}] "${item}"`);
   }
   return result;
+}
+
+/**
+ * Extract the underlying pipe/file fd from a Node-ish stream suitable for
+ * forwarding to `Bun.spawn` as `stdio`. Handles three shapes:
+ *   - `item.fd` is already a number (our own `WriteStream` / `NativeReadable`
+ *     set `.fd` from the FileSink / ReadableStreamSource; Node's own
+ *     `fs.ReadStream` / `fs.WriteStream` set it after open)
+ *   - `item._handle.fd` is a number (Node's `net.Socket`-backed subprocess
+ *     streams expose the pipe fd here — we don't emit this but accept it)
+ * Returns `undefined` when no fd is available so the caller can raise the
+ * `TODO: stream.Readable/Writable stdio` error.
+ */
+function extractStreamFd(item: any): number | undefined {
+  if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
+  if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
+  return undefined;
+}
+
+/**
+ * Quiesce a source stream whose fd is being inherited by a child. Mirrors
+ * Node's `getValidStdio` post-spawn hook: tell the libuv-equivalent reader
+ * to stop polling + pause the JS Readable + tag with `kIsUsedAsStdio` so
+ * nothing in the parent drains the pipe that the child is now the sole
+ * reader of.
+ *
+ *   - `$bunNativePtr?.setFlowing(false)` / `.updateRef(false)` stop Bun's
+ *     internal `FileReader` / `BufferedReader` from issuing further
+ *     `read(2)`s on the pipe fd — the equivalent of libuv's `readStop()`.
+ *   - `.pause()` clears the consumer-side flowing flag so `_read` won't
+ *     call `pull` again.
+ *   - The `kIsUsedAsStdio` tag tells `#handleOnExit` to skip the
+ *     `stdout.resume?.()` that would otherwise resurrect reading right as
+ *     the child starts.
+ */
+function markStreamAsStdio(item: any) {
+  item[kIsUsedAsStdio] = true;
+  const ptr = item.$bunNativePtr;
+  if (ptr) {
+    try {
+      ptr.setFlowing?.(false);
+    } catch {}
+    try {
+      ptr.updateRef?.(false);
+    } catch {}
+  }
+  if (typeof item.pause === "function") {
+    try {
+      item.pause();
+    } catch {}
+  }
+  const rs = item._readableState;
+  if (rs) {
+    rs.reading = false;
+    rs.flowing = false;
+  }
 }
 
 /**

@@ -656,6 +656,16 @@ pub trait SourceContext: Sized {
 
     /// `@hasDecl(Context, "setFlowing")` — default no-op.
     fn set_flowing(&mut self, _flag: bool) {}
+
+    /// Returns the underlying native file descriptor (POSIX) / HANDLE-as-int
+    /// (Windows) for this source, or a negative value if not available. Used
+    /// by `node:child_process` to pipe subprocess stdout/stderr between
+    /// processes: the stream wraps a pipe fd that must be forwarded to the
+    /// child's `dup2` list, matching Node.js where `subprocess.stdout._handle.fd`
+    /// exposes the same fd.
+    fn get_fd(&self) -> i64 {
+        -1
+    }
 }
 
 // TODO(port): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
@@ -1194,6 +1204,19 @@ impl<C: SourceContext> NewSource<C> {
         let ref_or_unref = call_frame.argument(0).to_boolean();
         self.set_ref(ref_or_unref);
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `getFd()` host-fn: returns the underlying pipe/file descriptor as a JS
+    /// number (uv handle on Windows), or `-1` if not available. Consumed by
+    /// `node:child_process` to detect Bun's native readables wrapping
+    /// `subprocess.stdout`/`stderr`, so they can be forwarded to another
+    /// spawn's `dup2` as an fd.
+    pub fn get_fd_from_js(
+        &mut self,
+        _global_object: &JSGlobalObject,
+        _call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::js_number(self.context.get_fd() as f64))
     }
 
     pub fn finalize(self: Box<Self>) {

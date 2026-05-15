@@ -1134,6 +1134,22 @@ impl readable_stream::SourceContext for FileReader {
     fn set_flowing(&mut self, flag: bool) {
         Self::set_flowing(self, flag)
     }
+    fn get_fd(&self) -> i64 {
+        // The `fd` field is only populated after `on_start` resolves the lazy
+        // blob/path; before that (and for pipe-backed streams constructed via
+        // `ReadableStream::from_pipe`) the real fd lives in the buffered
+        // reader's pipe handle instead. Prefer the pipe handle first so the
+        // subprocess stdout/stderr path yields the pipe fd immediately.
+        let reader_fd = self.reader().get_fd();
+        if reader_fd != Fd::INVALID {
+            return reader_fd.uv() as i64;
+        }
+        let field_fd = self.fd.get();
+        if field_fd != Fd::INVALID {
+            return field_fd.uv() as i64;
+        }
+        -1
+    }
     // toBufferedValue: null
 }
 

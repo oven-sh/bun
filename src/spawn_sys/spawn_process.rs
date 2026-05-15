@@ -882,6 +882,17 @@ pub unsafe fn spawn_process_posix(
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
+                // User-supplied fd (number in the stdio array, including
+                // another subprocess's `stdin`/`stdout`/`stderr` whose fd we
+                // extracted in `nodeToBun`). `dup2` shares the open file
+                // description — so if the parent set this fd non-blocking for
+                // its own async reads, the child inherits `O_NONBLOCK` and its
+                // first `read(2)` returns `EAGAIN` (e.g. `cat` exits 1 with
+                // "Resource temporarily unavailable"). Clear non-blocking now,
+                // before spawn; the parent's own reader has been paused by the
+                // time we get here (see `markStreamAsStdio` in
+                // `node:child_process`).
+                let _ = bun_sys::update_nonblocking(*fd, false);
                 actions.dup2(*fd, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }

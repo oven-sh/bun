@@ -2,6 +2,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
+#include <JavaScriptCore/DeferredWorkTimerInlines.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 

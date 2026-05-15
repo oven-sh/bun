@@ -1165,7 +1165,8 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
 
 const proxyCompatSocketHandler = {
   has(stream, prop) {
-    const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
+    const session = stream.session;
+    const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
     return prop in stream || prop in ref;
   },
 
@@ -1187,7 +1188,7 @@ const proxyCompatSocketHandler = {
       }
       case "setTimeout": {
         const session = stream.session;
-        if (session !== undefined) return session.setTimeout.bind(session);
+        if (session != null) return session.setTimeout.bind(session);
         return stream.setTimeout.bind(stream);
       }
       case "write":
@@ -1196,15 +1197,17 @@ const proxyCompatSocketHandler = {
       case "resume":
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
-        const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
+        const session = stream.session;
+        const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
         const value = ref[prop];
         return typeof value === "function" ? value.bind(ref) : value;
       }
     }
   },
   getPrototypeOf(stream) {
-    if (stream.session !== undefined) return ReflectGetPrototypeOf(stream.session[bunHTTP2Socket]);
-    return ReflectGetPrototypeOf(stream);
+    const session = stream.session;
+    const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
+    return ReflectGetPrototypeOf(ref);
   },
   set(stream, prop, value) {
     switch (prop) {
@@ -1220,7 +1223,7 @@ const proxyCompatSocketHandler = {
         return true;
       case "setTimeout": {
         const session = stream.session;
-        if (session !== undefined) session.setTimeout = value;
+        if (session != null) session.setTimeout = value;
         else stream.setTimeout = value;
         return true;
       }
@@ -1230,7 +1233,8 @@ const proxyCompatSocketHandler = {
       case "resume":
         throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
-        const ref = stream.session !== undefined ? stream.session[bunHTTP2Socket] : stream;
+        const session = stream.session;
+        const ref = (session != null ? session[bunHTTP2Socket] : undefined) ?? stream;
         ref[prop] = value;
         return true;
       }

@@ -462,8 +462,8 @@ impl Expect {
 
     /// If `.resolves`/`.rejects` is set and `value` is a still-pending
     /// promise, sets up a `.then()` callback to re-invoke the current matcher
-    /// once the promise settles, stores the returned-to-caller promise in the
-    /// `resultValue` slot, and returns it. Returns `None` otherwise.
+    /// once the promise settles, and returns the deferred-result promise for
+    /// the caller to await. Returns `None` otherwise.
     ///
     /// This replaces the old synchronous `wait_for_promise()` which would
     /// hang forever if the promise could only be resolved by JavaScript

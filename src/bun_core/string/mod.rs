@@ -1808,12 +1808,13 @@ impl ZigString {
         ZigString::init(&buf[ptr.offset as usize..][..ptr.length as usize])
     }
 
-    /// `ZigString.sortAsc` / `sortDesc` — in-place stable sort by 8-bit bytes.
+    /// `ZigString.sortAsc` / `sortDesc` — in-place sort by 8-bit bytes.
+    /// Not stable; mirrors the Zig side's `std.sort.pdq`.
     pub fn sort_asc(slice_: &mut [ZigString]) {
-        slice_.sort_by(|a, b| a.slice().cmp(b.slice()));
+        slice_.sort_unstable_by(|a, b| a.slice().cmp(b.slice()));
     }
     pub fn sort_desc(slice_: &mut [ZigString]) {
-        slice_.sort_by(|a, b| b.slice().cmp(a.slice()));
+        slice_.sort_unstable_by(|a, b| b.slice().cmp(a.slice()));
     }
     #[inline]
     pub fn cmp_asc(a: &ZigString, b: &ZigString) -> bool {

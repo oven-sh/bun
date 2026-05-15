@@ -128,11 +128,10 @@ describeSkipOnWindows(
       }),
     ]);
     // `'close'` should also fire — otherwise libraries like `execa` that
-    // await close (not exit) hang indefinitely.
-    await Promise.race([
-      sourceClose,
-      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("pSource 'close' never fired")), 5000)),
-    ]);
+    // await close (not exit) hang indefinitely. If this promise never
+    // resolves (pre-fix behavior), the test times out rather than
+    // racing its own setTimeout.
+    await sourceClose;
     expect(filterErr).toBe("");
     expect(sourceErr).toBe("");
     expect(out).toBe("HELLO WORLD");

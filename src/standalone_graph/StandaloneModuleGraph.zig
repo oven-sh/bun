@@ -320,6 +320,7 @@ pub const StandaloneModuleGraph = struct {
                 File{
                     .name = sliceToZ(raw_bytes, module.name),
                     .loader = module.loader,
+                    .encoding = module.encoding,
                     .contents = sliceToZ(raw_bytes, module.contents),
                     .sourcemap = if (module.sourcemap.length > 0)
                         .{ .serialized = .{
@@ -525,7 +526,11 @@ pub const StandaloneModuleGraph = struct {
                 .loader = output_file.loader,
                 .contents = string_builder.appendCountZ(output_file.value.buffer.bytes),
                 .encoding = switch (output_file.loader) {
-                    .js, .jsx, .ts, .tsx => .latin1,
+                    // Server-side chunks are printed with target=.bun → ascii_only=true,
+                    // so their bytes are guaranteed Latin-1 safe and can back a static
+                    // ExternalStringImpl without copying. Client-side chunks use
+                    // target=.browser and may contain raw UTF-8.
+                    .js, .jsx, .ts, .tsx => if ((output_file.side orelse .server) == .server) .latin1 else .binary,
                     else => .binary,
                 },
                 .module_format = if (output_file.loader.isJavaScriptLike()) switch (output_format) {

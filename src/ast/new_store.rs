@@ -381,8 +381,9 @@ macro_rules! thread_local_ast_store {
             /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
             /// always restores the previous value before its frame returns.
             #[thread_local]
-            pub static MEMORY_ALLOCATOR: Cell<Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>> =
-                Cell::new(None);
+            pub static MEMORY_ALLOCATOR: Cell<
+                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
+            > = Cell::new(None);
             #[thread_local]
             pub static DISABLE_RESET: Cell<bool> = Cell::new(false);
 

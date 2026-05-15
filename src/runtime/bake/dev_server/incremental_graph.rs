@@ -1786,7 +1786,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 end_list.extend_from_slice(b"\"");
                 end_list.extend_from_slice(b",\n  generation: \"");
                 let generation: u32 = (options.script_id.get() >> 32) as u32;
-                let _ = write!(end_list, "{}", bun_core::fmt::hex_lower(&generation.to_ne_bytes()));
+                let _ = write!(
+                    end_list,
+                    "{}",
+                    bun_core::fmt::hex_lower(&generation.to_ne_bytes())
+                );
                 end_list.extend_from_slice(b"\",\n  version: \"");
                 // SAFETY: sibling-field read.
                 end_list.extend_from_slice(unsafe { &(*dev).configuration_hash_key });

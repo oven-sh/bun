@@ -100,11 +100,7 @@ where
         write!(
             writer,
             "{}",
-            output::pretty_fmt_args(
-                "offset<d>:<r> <yellow>{}<r>",
-                ENABLE_ANSI_COLORS,
-                (offset,)
-            ),
+            output::pretty_fmt_args("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS, (offset,)),
         )?;
 
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;

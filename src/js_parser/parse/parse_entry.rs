@@ -16,8 +16,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
-    ScanPassResult, SideEffects, WrapMode,
+    Jest, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports, ScanPassResult,
+    SideEffects, WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::g::Decl;

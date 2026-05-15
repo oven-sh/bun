@@ -461,7 +461,12 @@ impl S3Credentials {
             } else {
                 break 'brk buf_print(
                     &mut normalized_path_buffer,
-                    format_args!("{}/{}/{}", BStr::new(extra_path), BStr::new(bucket), BStr::new(path)),
+                    format_args!(
+                        "{}/{}/{}",
+                        BStr::new(extra_path),
+                        BStr::new(bucket),
+                        BStr::new(path)
+                    ),
                 )
                 .map_err(|_| SignError::InvalidPath)?;
             }
@@ -502,7 +507,12 @@ impl S3Credentials {
             let sig_date_region_service_req: [u8; DIGESTED_HMAC_256_LEN] = 'brk_sign: {
                 let key = buf_print(
                     &mut tmp_buffer,
-                    format_args!("{}{}{}", BStr::new(region), service_name, BStr::new(&self.secret_access_key)),
+                    format_args!(
+                        "{}{}{}",
+                        BStr::new(region),
+                        service_name,
+                        BStr::new(&self.secret_access_key)
+                    ),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 // PORT NOTE: was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
@@ -556,7 +566,12 @@ impl S3Credentials {
                 // TODO(port): fix the overwritten-key bug in credentials.zig as well.
                 let key = buf_print(
                     &mut tmp_buffer,
-                    format_args!("{}{}{}", BStr::new(region), service_name, BStr::new(&self.secret_access_key)),
+                    format_args!(
+                        "{}{}{}",
+                        BStr::new(region),
+                        service_name,
+                        BStr::new(&self.secret_access_key)
+                    ),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 aws_cache_set(date_result.numeric_day, key, digest);

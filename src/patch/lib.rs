@@ -1484,7 +1484,8 @@ fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, P
 
     Ok(HunkHeaderLineImpl {
         line_nr: 1.max(bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?),
-        line_count: bun_core::parse_decimal::<u32>(line_nr_count).ok_or(ParseErr::bad_header_line)?,
+        line_count: bun_core::parse_decimal::<u32>(line_nr_count)
+            .ok_or(ParseErr::bad_header_line)?,
         rest: text,
     })
 }

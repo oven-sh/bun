@@ -975,7 +975,13 @@ mod draft {
                         b'\\' => esc = !esc,
                         b'$' => {
                             if !esc {
-                                return self.parse_env_substitution(val, start, j, depth + 1, unesc);
+                                return self.parse_env_substitution(
+                                    val,
+                                    start,
+                                    j,
+                                    depth + 1,
+                                    unesc,
+                                );
                             }
                         }
                         b'{' => {

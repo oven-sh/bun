@@ -344,7 +344,9 @@ impl SyntaxComponentKind {
                 // Spec uses utf8ByteSequenceLengthUnsafe (unreachable for invalid lead bytes);
                 // clamp to >=1 so a stray 0x80..=0xBF / 0xF8..=0xFF byte advances instead of
                 // returning 0 and spinning forever.
-                end_idx = (end_idx + strings::utf8_byte_sequence_length(input[end_idx]).max(1) as usize).min(input.len());
+                end_idx = (end_idx
+                    + strings::utf8_byte_sequence_length(input[end_idx]).max(1) as usize)
+                    .min(input.len());
             }
             let literal: Box<[u8]> = Box::from(&input[0..end_idx]);
             *input = &input[end_idx..];

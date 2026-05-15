@@ -876,7 +876,8 @@ impl PostgresSQLConnection {
                                     .get_native_handle()
                                     .map_or(core::ptr::null_mut(), |p| p.cast());
                                 // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
+                                let hostname =
+                                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                                 // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                                 !ssl_ptr.is_null()
                                     && BoringSSL::check_server_identity(

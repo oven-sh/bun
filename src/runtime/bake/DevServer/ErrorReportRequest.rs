@@ -33,9 +33,9 @@ use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
-use bun_core::fmt::parse_hex_to_int;
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
+use bun_core::fmt::parse_hex_to_int;
 
 pub struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and

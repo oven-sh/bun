@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
 use bun_install_types::DependencyGroup;
 

@@ -10,9 +10,9 @@ pub mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
-    PrependTempRefsOpts, Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, StmtsKind,
-    StrictModeFeature, StringVoidMap, TempRef, VisitArgsOpts, is_eval_or_arguments,
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
+    Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, StmtsKind, StrictModeFeature,
+    StringVoidMap, TempRef, VisitArgsOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;

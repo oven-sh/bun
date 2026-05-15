@@ -335,14 +335,18 @@ concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
 # installation strategy: "hoisted" or "isolated"
 # default depends on lockfile configVersion and workspaces:
-# - configVersion = 1: "isolated" if using workspaces, otherwise "hoisted"
+# - configVersion >= 1: "isolated" if using workspaces, otherwise "hoisted"
 # - configVersion = 0: "hoisted"
 linker = "hoisted"
 
 
-# minimum age config
-minimumReleaseAge = "2d" # or a number of seconds; 0 disables
-minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+# skip package versions published within this period (security feature)
+# accepts ms-style duration strings ("2d", "48h", "1 week") or a number of seconds
+# default depends on lockfile configVersion:
+# - configVersion >= 2: "2d" (Bun 1.4+)
+# - configVersion <= 1: disabled
+minimumReleaseAge = 0 # 0 disables
+minimumReleaseAgeExcludes = []
 ```
 
 ### Configuring with environment variables

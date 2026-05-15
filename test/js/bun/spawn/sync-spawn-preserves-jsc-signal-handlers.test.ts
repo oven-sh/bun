@@ -43,7 +43,7 @@
 
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -68,31 +68,36 @@ function parseHandlers(text: string): Record<string, string> {
   return out;
 }
 
-// git isn't a syscall; keep its environment hermetic so the inner
-// `bun test --changed` process's own git invocations don't pick up a
-// developer's global excludes/hooks/signing config. GIT_CONFIG_GLOBAL must
-// point at a real (empty) file — see test-changed.test.ts for the Windows
-// `NUL` caveat.
-const emptyGitConfig = join(tmpdirSync(), "empty.gitconfig");
-writeFileSync(emptyGitConfig, "");
-const env = {
-  ...bunEnv,
-  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_GLOBAL: emptyGitConfig,
-  GIT_AUTHOR_NAME: "Test",
-  GIT_AUTHOR_EMAIL: "test@example.com",
-  GIT_COMMITTER_NAME: "Test",
-  GIT_COMMITTER_EMAIL: "test@example.com",
-};
-
-function git(cwd: string, ...args: string[]) {
-  const res = spawnSync({ cmd: ["git", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
-  if (!res.success) throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stderr.toString()}`);
-}
-
 describe.skipIf(!isPosix)("CLI sync-spawn preserves JSC's fault-signal handlers", () => {
   test("SIGSEGV/SIGBUS dispositions are identical with and without a preceding sync spawn", async () => {
+    // git isn't a syscall; keep its environment hermetic so the inner
+    // `bun test --changed` process's own git invocations don't pick up a
+    // developer's global excludes/hooks/signing config. GIT_CONFIG_GLOBAL
+    // must point at a real (empty) file — see test-changed.test.ts for the
+    // Windows `NUL` caveat. Colocated with the test repo so the harness
+    // tempDir disposer cleans both up together.
+    using dir = tempDir("sync-spawn-fault-handlers", {
+      "empty.gitconfig": "",
+      "package.json": JSON.stringify({ name: "p", type: "module" }),
+      // Wrap the probe in a trivially-passing test so `bun test` exits 0;
+      // the outer test reads the HANDLER lines from stdout.
+      "probe.test.ts": `import { test } from "bun:test";\n${probe}\ntest("noop", () => {});\n`,
+    });
+    const cwd = String(dir);
+    const env = {
+      ...bunEnv,
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: join(cwd, "empty.gitconfig"),
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    };
+    const git = (...args: string[]) => {
+      const res = spawnSync({ cmd: ["git", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+      if (!res.success) throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${res.stderr.toString()}`);
+    };
     // Baseline: a fresh bun process that has initialised JSC but done no
     // CLI-level sync spawn. Whatever handlers it reports are exactly what
     // JSC's SignalHandlers::finalize() installed for SIGSEGV/SIGBUS — i.e.,
@@ -124,17 +129,10 @@ describe.skipIf(!isPosix)("CLI sync-spawn preserves JSC's fault-signal handlers"
     // `git ls-files` (each one a full SignalForwarding register/drop cycle)
     // to compute the changed-files set, *then* loads and runs the test file.
     // The handlers it observes are therefore post-sync-spawn.
-    using dir = tempDir("sync-spawn-fault-handlers", {
-      "package.json": JSON.stringify({ name: "p", type: "module" }),
-      // Wrap the probe in a trivially-passing test so `bun test` exits 0;
-      // the outer test reads the HANDLER lines from stdout.
-      "probe.test.ts": `import { test } from "bun:test";\n${probe}\ntest("noop", () => {});\n`,
-    });
-    const cwd = String(dir);
-    git(cwd, "init", "-q");
-    git(cwd, "config", "commit.gpgsign", "false");
-    git(cwd, "add", "-A");
-    git(cwd, "commit", "-q", "-m", "initial");
+    git("init", "-q");
+    git("config", "commit.gpgsign", "false");
+    git("add", "-A");
+    git("commit", "-q", "-m", "initial");
     // One tracked change so --changed actually selects the probe and, more
     // importantly, actually runs the git subprocesses it needs to compute
     // the diff — those are the sync spawns under test.

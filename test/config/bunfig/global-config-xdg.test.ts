@@ -14,17 +14,27 @@ import { dirname, join } from "node:path";
 // cache` qualifies, and it exits 0 without touching the network.
 
 async function runPmCache(appDir: string, env: Record<string, string | undefined>) {
-  // Strip any inherited HOME / XDG_CONFIG_HOME from bunEnv, then layer
-  // per-test values. An `undefined` value means "explicitly absent".
+  // Strip any inherited env that could mask the bunfig under test, then
+  // layer per-test values. An `undefined` value means "explicitly absent".
   //
-  // `env_var::HOME` reads `USERPROFILE` on Windows (env_var.rs:138), so when a
-  // test passes `HOME`, mirror it into `USERPROFILE` so the spawned bun sees
-  // the same value on both platforms. `XDG_CONFIG_HOME` is honoured on
-  // Windows too (env_var.rs:177–180), so no special-casing is needed there.
+  // - `BUN_INSTALL_CACHE_DIR` is set by the Buildkite runner
+  //   (scripts/runner.node.mjs) and takes precedence over bunfig's
+  //   `[install.cache].dir` in `fetch_cache_directory_path()`; drop it so
+  //   our sentinel wins.
+  // - `BUN_INSTALL` / `XDG_CACHE_HOME` are checked after the bunfig option
+  //   but we strip them defensively so the test signal is unambiguous.
+  // - `env_var::HOME` reads `USERPROFILE` on Windows (env_var.rs:138), so
+  //   when a test passes `HOME`, mirror it into `USERPROFILE` so the
+  //   spawned bun sees the same value on both platforms. `XDG_CONFIG_HOME`
+  //   is honoured on Windows too (env_var.rs:177–180), so no special-casing
+  //   is needed there.
   const spawnEnv: Record<string, string> = { ...bunEnv };
   delete spawnEnv.HOME;
   delete spawnEnv.XDG_CONFIG_HOME;
   delete spawnEnv.USERPROFILE;
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+  delete spawnEnv.BUN_INSTALL;
+  delete spawnEnv.XDG_CACHE_HOME;
   for (const [k, v] of Object.entries(env)) {
     if (v !== undefined) spawnEnv[k] = v;
   }
@@ -48,7 +58,7 @@ function writeBunfigCacheDir(path: string, cacheDir: string) {
   writeFileSync(path, `[install.cache]\ndir = ${JSON.stringify(cacheDir)}\n`);
 }
 
-describe("global bunfig.toml XDG path lookup", () => {
+describe.concurrent("global bunfig.toml XDG path lookup", () => {
   test("loads $XDG_CONFIG_HOME/bun/bunfig.toml (XDG-conventional)", async () => {
     using home = tempDir("bunfig-xdg-conventional", { "app/package.json": "{}" });
     const homeStr = String(home);

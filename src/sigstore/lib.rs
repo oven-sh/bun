@@ -652,24 +652,37 @@ fn rekor_entry_to_tlog(e: &serde_json::Value) -> Result<SerializedTlogEntry, Sig
             signed_entry_timestamp: s.to_owned(),
         });
 
-    let inclusion_proof = verification
-        .and_then(|v| v.get("inclusionProof"))
-        .and_then(|p| {
-            Some(SerializedInclusionProof {
-                log_index: p.get("logIndex")?.as_i64()?.to_string(),
-                root_hash: b64_std(&hex_decode(p.get("rootHash")?.as_str()?)?),
-                tree_size: p.get("treeSize")?.as_i64()?.to_string(),
-                hashes: p
-                    .get("hashes")?
-                    .as_array()?
-                    .iter()
-                    .filter_map(|h| Some(b64_std(&hex_decode(h.as_str()?)?)))
-                    .collect(),
-                checkpoint: SerializedCheckpoint {
-                    envelope: p.get("checkpoint")?.as_str()?.to_owned(),
-                },
-            })
-        });
+    // `inclusionProof` is optional in the bundle format (older Rekor
+    // deployments omit it), but when Rekor *does* send one it must be
+    // well-formed: a partial hash chain or a dropped `rootHash` would
+    // produce a corrupt proof that fails verification. So: absent → None;
+    // present-but-malformed → hard error.
+    let inclusion_proof = match verification.and_then(|v| v.get("inclusionProof")) {
+        None => None,
+        Some(p) => {
+            let parsed = (|| -> Option<SerializedInclusionProof> {
+                Some(SerializedInclusionProof {
+                    log_index: p.get("logIndex")?.as_i64()?.to_string(),
+                    root_hash: b64_std(&hex_decode(p.get("rootHash")?.as_str()?)?),
+                    tree_size: p.get("treeSize")?.as_i64()?.to_string(),
+                    // `Option<Vec<_>>` collect — any bad element fails the
+                    // whole proof rather than silently shrinking the chain.
+                    hashes: p
+                        .get("hashes")?
+                        .as_array()?
+                        .iter()
+                        .map(|h| Some(b64_std(&hex_decode(h.as_str()?)?)))
+                        .collect::<Option<Vec<_>>>()?,
+                    checkpoint: SerializedCheckpoint {
+                        envelope: p.get("checkpoint")?.as_str()?.to_owned(),
+                    },
+                })
+            })();
+            Some(parsed.ok_or_else(|| {
+                SigstoreError::Rekor("malformed `inclusionProof` in response".into())
+            })?)
+        }
+    };
 
     Ok(SerializedTlogEntry {
         log_index: get_i64("logIndex")?.to_string(),

@@ -36,13 +36,14 @@ const DUMMY_CERT_PEM =
   "-----BEGIN CERTIFICATE-----\n" + "TUlJQkZ1bGNpb01vY2tDZXJ0aWZpY2F0ZQ==\n" + "-----END CERTIFICATE-----\n";
 
 // Minimal JWT with `{"sub":"repo:oven-sh/bun:ref:refs/heads/main","aud":"sigstore"}`
-// for the proof-of-possession subject extraction.
+// for the proof-of-possession subject extraction. Segments are unpadded
+// base64url, same as real OIDC issuers — exercises the url-safe decode path.
 function fakeJwt(): string {
-  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64").replace(/=+$/, "");
+  const b64url = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
   return (
-    b64({ alg: "none", typ: "JWT" }) +
+    b64url({ alg: "none", typ: "JWT" }) +
     "." +
-    b64({ sub: "repo:oven-sh/bun:ref:refs/heads/main", aud: "sigstore" }) +
+    b64url({ sub: "repo:oven-sh/bun:ref:refs/heads/main", aud: "sigstore" }) +
     ".sig"
   );
 }

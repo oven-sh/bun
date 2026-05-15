@@ -1473,7 +1473,7 @@ impl FFI {
 
         let mut filepath_buf = bun_paths::path_buffer_pool::get();
         let name: &[u8] = 'brk: {
-            let _ext: &[u8] = match () {
+            let ext: &[u8] = match () {
                 // Android shared libraries are `.so` (ELF, same as Linux/FreeBSD).
                 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
                 () => b"so",
@@ -1483,14 +1483,25 @@ impl FFI {
                 () => b"dll",
                 // TODO(port): wasm @compileError("TODO")
             };
-            // TODO(b2-blocked): `ModuleLoader::resolve_embedded_file` lives in
-            // `crate::jsc_hooks` (private hook with a different signature) —
-            // wire the standalone-graph extraction once that surface is public.
-            let _ = (vm, &mut *filepath_buf);
-            #[allow(unreachable_code)]
-            if let Some(resolved) = None::<&[u8]> {
-                filepath_buf[resolved.len()] = 0;
-                break 'brk &filepath_buf[0..resolved.len()];
+            // Spec `ffi.zig:1030` — `ModuleLoader.resolveEmbeddedFile(vm, buf,
+            // name_slice.slice(), ext)` extracts a bunfs-embedded shared
+            // library (added via `import lib from "./lib.so" with { type:
+            // "file" }` and shipped through `bun build --compile`) to a real
+            // on-disk temp file, returning the tmpfile path; libc `dlopen(2)`
+            // can't see the bunfs virtual FS. The helper lives in
+            // `crate::jsc_hooks` — same crate, so a direct call.
+            let _ = vm;
+            if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
+                name_slice.slice(),
+                ext,
+                &mut filepath_buf[..],
+            ) {
+                // Spec `ffi.zig:1041` — NUL-terminate in place so `DynLib::open`
+                // can pass the slice to libc without copying. `resolve_*_to_buf`
+                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
+                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
+                filepath_buf[len] = 0;
+                break 'brk &filepath_buf[0..len];
             }
 
             break 'brk name_slice.slice();

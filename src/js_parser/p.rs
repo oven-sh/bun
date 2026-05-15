@@ -26,11 +26,11 @@ use crate::{
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind,
     IdentifierOpts, ImportItemForNamespaceMap, ImportNamespaceCallOrConstruct, InvalidLoc,
-    JSXImport, JSXTransformType, Jest, LOC_MODULE_SCOPE as loc_module_scope, LocList,
-    MacroState, ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap,
-    RefRefMap, RuntimeImports, ScopeOrder, ScopeOrderList, SideEffects, StrictModeFeature,
-    StringBoolMap, Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, fs,
-    is_eval_or_arguments, options, statement_cares_about_scope,
+    JSXImport, JSXTransformType, Jest, LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState,
+    ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap,
+    RuntimeImports, ScopeOrder, ScopeOrderList, SideEffects, StrictModeFeature, StringBoolMap,
+    Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments,
+    options, statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -736,7 +736,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     pub fn parser_features(&self) -> ParserFeatures {
-        ParserFeatures { typescript: TYPESCRIPT, jsx: self.jsx_transform, scan_only: SCAN_ONLY }
+        ParserFeatures {
+            typescript: TYPESCRIPT,
+            jsx: self.jsx_transform,
+            scan_only: SCAN_ONLY,
+        }
     }
 
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
@@ -9077,7 +9081,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parent: None,
             ..Default::default()
         });
-        let _ = scope_obj.members.ensure_total_capacity(estimated_symbol_count);
+        let _ = scope_obj
+            .members
+            .ensure_total_capacity(estimated_symbol_count);
         let scope = js_ast::StoreRef::from_bump(scope_obj);
 
         scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope.as_ptr())));

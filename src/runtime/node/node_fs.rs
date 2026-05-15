@@ -7778,9 +7778,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory) {
                 let mut errno: E = map_anyerror_to_errno(err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
@@ -7816,9 +7814,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File) {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force {
                         return Ok(());

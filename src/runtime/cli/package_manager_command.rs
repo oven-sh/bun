@@ -5,11 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{
-    LoadResult, Lockfile,
-    package::{PackageColumns as _},
-    tree,
-};
+use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, get_cache_directory, package_manager_options::LogLevel,

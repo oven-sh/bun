@@ -519,7 +519,10 @@ mod tests {
     }
     impl Counting {
         const fn new() -> Self {
-            Self { allocs: Cell::new(0), deallocs: Cell::new(0) }
+            Self {
+                allocs: Cell::new(0),
+                deallocs: Cell::new(0),
+            }
         }
     }
     // SAFETY: thin forwarder to `Global`.

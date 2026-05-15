@@ -15,9 +15,9 @@ pub mod Global;
 pub mod atomic_cell;
 pub mod hint;
 pub mod result;
+pub mod thread_id;
 pub mod tty;
 pub mod util;
-pub mod thread_id;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
@@ -316,7 +316,11 @@ pub mod path_sep {
 
     #[inline(always)]
     pub fn is_sep_native_t<T: PathByte>(c: T) -> bool {
-        if cfg!(windows) { is_sep_any_t(c) } else { is_sep_posix_t(c) }
+        if cfg!(windows) {
+            is_sep_any_t(c)
+        } else {
+            is_sep_posix_t(c)
+        }
     }
 
     /// Host-OS-native absolute-path predicate (Zig: `std.fs.path.isAbsolute`).
@@ -1381,10 +1385,10 @@ pub use crate::fmt::{
     digit_count_i64, digit_count_u64, double, fast_digit_count, fmt_os_path, fmt_path, fmt_path_u8,
     fmt_path_u16, format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper,
     hex_char_lower, hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u8, hex_u16,
-    hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii, parse_f32,
-    parse_f64, parse_hex4, parse_hex_prefix, parse_hex_to_int, parse_int as parse_int_radix,
-    parse_num, print_int, quote, raw, s, size, size_f64, size_i64, truncated_hash32,
-    truncated_hash32_bytes, utf16,
+    hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii,
+    parse_f32, parse_f64, parse_hex_prefix, parse_hex_to_int, parse_hex4,
+    parse_int as parse_int_radix, parse_num, print_int, quote, raw, s, size, size_f64, size_i64,
+    truncated_hash32, truncated_hash32_bytes, utf16,
 };
 
 /// Surrogate/transcode primitives + scalar-fallback string helpers that
@@ -2665,8 +2669,8 @@ pub(crate) mod strings_impl {
         &s[..e]
     }
 }
-pub use strings_impl::*;
 pub use crate::string::immutable::convert_utf8_to_utf16_in_buffer;
+pub use strings_impl::*;
 
 /// Back-compat alias: `bun_core::strings::X` → `bun_core::X`. The full
 /// `bun.strings` namespace is `bun_core::immutable` (formerly

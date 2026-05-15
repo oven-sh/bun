@@ -10,7 +10,6 @@ use bun_jsc::{
 use crate::api::bun_x509 as X509;
 use crate::webcore::blob::ZigStringBlobExt as _;
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Local BoringSSL FFI surface not yet in bun_boringssl_sys.
 // Declared here per port rules (call the linked C symbol directly); migrate

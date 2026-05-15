@@ -782,7 +782,10 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// tight and out of the boot-path `.text` working set.
     #[cold]
     fn rebuild_index(&mut self) {
-        self.index = Some(rebuild_index_from_hashes(&self.hashes, self.keys.capacity()));
+        self.index = Some(rebuild_index_from_hashes(
+            &self.hashes,
+            self.keys.capacity(),
+        ));
     }
 
     /// Invalidate the accelerator. Called by operations that permute entry
@@ -1861,7 +1864,11 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         value: V,
     ) -> Result<(), AllocError> {
         use hashbrown::hash_map::RawEntryMut;
-        match self.inner.raw_entry_mut().from_key_hashed_nocheck(hash, key) {
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
             RawEntryMut::Occupied(mut e) => {
                 e.insert(value);
             }

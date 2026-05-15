@@ -1123,8 +1123,7 @@ fn print_summary(
         bundle_until_now
     };
 
-    let minified_digit_count: usize =
-        4usize.saturating_sub(bun_fmt::digit_count(minify_duration));
+    let minified_digit_count: usize = 4usize.saturating_sub(bun_fmt::digit_count(minify_duration));
     if minified {
         Output::pretty(format_args!(
             "{}",

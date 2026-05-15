@@ -9,7 +9,7 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
 use bun_semver as semver;

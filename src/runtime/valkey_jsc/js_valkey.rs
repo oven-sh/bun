@@ -1629,8 +1629,7 @@ impl JSValkeyClient {
         // Balance the ref above if connect() throws — the caller (e.g. send())
         // only knows to clean up its own state, not the keep-alive ref.
         let self_ptr = self.as_ctx_ptr();
-        let errdefer_deref =
-            scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p) });
+        let errdefer_deref = scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p) });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
         let errdefer_status = scopeguard::guard(self_ptr, |p| unsafe {

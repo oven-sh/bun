@@ -10,8 +10,8 @@
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind, null_expr_data};
 use crate::parser::{
-    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars, RelocateVarsMode, SideEffects,
-    StmtsKind, statement_cares_about_scope,
+    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars, RelocateVarsMode, SideEffects, StmtsKind,
+    statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::G::Decl;

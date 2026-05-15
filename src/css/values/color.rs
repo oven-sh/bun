@@ -184,17 +184,37 @@ pub enum FloatColor {
 /// + generated `From` impls). Lets `convert_to::<T>()` dispatch `v.into()`
 /// uniformly without re-stamping the match per `T`.
 pub trait FromAnyColorspace:
-    From<LAB> + From<LCH> + From<OKLAB> + From<OKLCH>
-    + From<SRGB> + From<SRGBLinear> + From<P3> + From<A98>
-    + From<ProPhoto> + From<Rec2020> + From<XYZd50> + From<XYZd65>
-    + From<HSL> + From<HWB>
+    From<LAB>
+    + From<LCH>
+    + From<OKLAB>
+    + From<OKLCH>
+    + From<SRGB>
+    + From<SRGBLinear>
+    + From<P3>
+    + From<A98>
+    + From<ProPhoto>
+    + From<Rec2020>
+    + From<XYZd50>
+    + From<XYZd65>
+    + From<HSL>
+    + From<HWB>
 {
 }
 impl<T> FromAnyColorspace for T where
-    T: From<LAB> + From<LCH> + From<OKLAB> + From<OKLCH>
-        + From<SRGB> + From<SRGBLinear> + From<P3> + From<A98>
-        + From<ProPhoto> + From<Rec2020> + From<XYZd50> + From<XYZd65>
-        + From<HSL> + From<HWB>
+    T: From<LAB>
+        + From<LCH>
+        + From<OKLAB>
+        + From<OKLCH>
+        + From<SRGB>
+        + From<SRGBLinear>
+        + From<P3>
+        + From<A98>
+        + From<ProPhoto>
+        + From<Rec2020>
+        + From<XYZd50>
+        + From<XYZd65>
+        + From<HSL>
+        + From<HWB>
 {
 }
 

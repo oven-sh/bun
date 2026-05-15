@@ -103,6 +103,7 @@ export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") a
   rootError: () => void;
   outOfMemory: () => void;
   raiseIgnoringPanicHandler: () => void;
+  getFaultSignalHandlers: () => { SIGSEGV: string; SIGBUS: string; SIGILL: string; SIGFPE: string } | undefined;
 };
 
 export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bindings.generate") as {

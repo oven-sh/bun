@@ -302,10 +302,11 @@ extern "C" void windows_enable_stdio_inheritance()
 // loop. See https://github.com/oven-sh/bun/issues/30766.
 //
 // To detect this we run a one-time probe with a temporary SIGSYS handler
-// that siglongjmps out. The probe uses (~0U, ~0U, 0) so the kernel sees a
-// syntactically valid call and is guaranteed to either return (with EINVAL
-// on kernels that implement close_range, since start > end) or trap — it
-// never actually touches any descriptors.
+// that siglongjmps out. The probe uses (~0U, 0U, 0) — i.e. first=UINT_MAX,
+// last=0 — so fs/file.c's `if (fd > max_fd) return -EINVAL` rejects it
+// before the kernel touches any descriptors. On old kernels without the
+// syscall we get -1/ENOSYS; under seccomp we trap. Both non-SIGSYS outcomes
+// prove the syscall isn't being trapped.
 //
 // Seccomp filter state is inherited across fork/vfork, so caching the probe
 // result in the parent is safe for the spawn-child callers in bun-spawn.cpp
@@ -340,10 +341,11 @@ void run_close_range_probe()
 
     bool supported;
     if (sigsetjmp(g_close_range_probe_jmp, 1) == 0) {
-        // (~0U, ~0U, 0) returns EINVAL on kernels that implement the
-        // syscall (first > last), ENOSYS on kernels without it, or traps
-        // under seccomp. Anything other than ENOSYS means "not blocked".
-        long r = syscall(__NR_close_range, ~0U, ~0U, 0U);
+        // (~0U, 0U, 0) hits the `fd > max_fd` EINVAL guard in fs/file.c's
+        // __close_range() before any fdtable traversal — cheap and safe.
+        // Old kernels without the syscall return ENOSYS; seccomp traps
+        // with SIGSYS. Anything other than ENOSYS means "not blocked".
+        long r = syscall(__NR_close_range, ~0U, 0U, 0U);
         supported = (r == 0) || (errno != ENOSYS);
     } else {
         // SIGSYS trapped via siglongjmp — seccomp is blocking the syscall.

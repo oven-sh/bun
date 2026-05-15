@@ -615,8 +615,9 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
 }
 
-/// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-/// preload promise if any, else null.
+/// `loadPreloads()` — runs `--preload` scripts. Returns the first
+/// non-fulfilled preload promise (rejected, or still pending with an idle
+/// event loop — unsettled TLA) if any, else null.
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,

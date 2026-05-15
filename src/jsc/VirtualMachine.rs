@@ -1665,8 +1665,9 @@ pub struct RuntimeHooks {
     /// `bun:main` module body for `entry_path`. Returns `false` on error
     /// (error already logged into `vm.log`).
     pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
-    /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-    /// preload promise if any, else null. Errors propagate
+    /// `loadPreloads()` — runs `--preload` scripts. Returns the first
+    /// non-fulfilled preload promise (rejected, or still pending with an
+    /// idle event loop — unsettled TLA) if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> Result<*mut JSInternalPromise, bun_core::Error>,

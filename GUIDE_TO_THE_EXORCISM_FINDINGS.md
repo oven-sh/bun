@@ -2,7 +2,7 @@
 
 > **Audience.** Coding agents (and humans) digesting the `.unsafe-audit/` artifacts. Read this first.
 > **Goal.** Maximally rapid orientation — what's where, what to trust, what to skip, in what order, with cross-references.
-> **Standard.** Codex-grade defensibility. Every claim has a file:line citation; every miri-eligible bug has a `cargo +nightly miri run` trace.
+> **Standard.** Codex-grade defensibility. High-priority claims have file:line citations; miri-backed findings include their `cargo +nightly miri run` traces; findings that need Loom, scheduling, integration, or call-graph evidence are labelled as such.
 
 This audit was produced by [`/rust-unsafe-code-exorcist`](https://jeffreys-skills.md/skills/rust-unsafe-code-exorcist) across **five passes**, each adding a different lens. The companion fix PR landing alongside this audit applies the highest-confidence remediations with isomorphism evidence.
 
@@ -339,4 +339,4 @@ If you find a claim in this audit that seems wrong, the right move is:
 2. Read 20-30 lines of context at that file:line on current `HEAD`
 3. If the claim doesn't hold up — file an issue or PR against the audit dir. The audit is itself in a `git`-tracked subtree; corrections are welcome.
 
-The audit is intentionally over-documented because the standard is high-confidence, reviewer-defensible evidence rather than hand-waving. Every claim cites; every reproducer runs or is explicitly labeled as not yet standalone.
+The audit is intentionally over-documented because the standard is high-confidence, reviewer-defensible evidence rather than hand-waving. Priority findings cite source locations; reproducers either run or are explicitly labeled as not yet standalone.

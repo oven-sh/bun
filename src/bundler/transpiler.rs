@@ -566,6 +566,21 @@ impl<'a> Transpiler<'a> {
 
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
+        let is_explicit_development_env = env_loader
+            .get(b"BUN_ENV")
+            .or_else(|| env_loader.get(b"NODE_ENV"))
+            .map_or(false, |env| env == b"development");
+        let has_explicit_define_node_env =
+            self.options
+                .transform_options
+                .define
+                .as_ref()
+                .map_or(false, |define| {
+                    define
+                        .keys
+                        .iter()
+                        .any(|key| key.as_ref() == b"process.env.NODE_ENV")
+                });
 
         // `parse_env_json` needs a thread-local AST store to build
         // `E::String` nodes in. That work
@@ -588,7 +603,8 @@ impl<'a> Transpiler<'a> {
                     if s.eql_comptime(b"production") {
                         is_production = true;
                     } else if s.eql_comptime(b"development") {
-                        is_development = true;
+                        is_development =
+                            is_explicit_development_env || has_explicit_define_node_env;
                     }
                 }
             }
@@ -602,6 +618,8 @@ impl<'a> Transpiler<'a> {
         } else if is_production {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
+            self.options.force_node_env = options::ForceNodeEnv::Production;
+            self.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
         }
         Ok(())
     }

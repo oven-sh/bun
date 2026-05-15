@@ -607,17 +607,21 @@ const JSXRuntime = {
   "1": 1,
   "2": 2,
   "3": 3,
+  "4": 4,
   "automatic": 1,
   "classic": 2,
   "solid": 3,
+  "preserve": 4,
 };
 const JSXRuntimeKeys = {
   "1": "automatic",
   "2": "classic",
   "3": "solid",
+  "4": "preserve",
   "automatic": "automatic",
   "classic": "classic",
   "solid": "solid",
+  "preserve": "preserve",
 };
 
 function decodeJSX(bb) {

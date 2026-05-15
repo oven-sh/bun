@@ -129,6 +129,7 @@ smol JSXRuntime {
   automatic = 1;
   classic = 2;
   solid = 3;
+  preserve = 4;
 }
 
 struct JSX {

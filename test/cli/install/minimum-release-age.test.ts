@@ -2595,11 +2595,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // The sentinel must not appear — cached binary must not have run.
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       expect(stderr.toLowerCase()).toContain("minimum-release-age");

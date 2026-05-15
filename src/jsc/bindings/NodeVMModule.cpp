@@ -128,16 +128,20 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
     if (vm.hasPendingTerminationException()) {
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
         if (getSigintReceived()) {
+            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+            vm.clearHasTerminationRequest();
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else if (timeout != 0) {
+            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+            vm.clearHasTerminationRequest();
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
         }
+        // else: termination came from outside this module evaluation (the
+        // bun:test watchdog around the test body, Worker.terminate(), etc.).
+        // Leave the TerminationException pending so it propagates to
+        // whoever armed it; VM_RETURN_IF_EXCEPTION below bails out.
     } else {
         setSigintReceived(false);
     }

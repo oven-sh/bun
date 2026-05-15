@@ -1,6 +1,6 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, chownSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
@@ -586,6 +586,68 @@ describe("wildcard exports with @ in matched subpath", () => {
     expect(Bun.resolveSync("@my/pkg@1.0.0/sub/index.js", root)).toBe(
       join(root, "node_modules/@my/pkg/dist/sub/index.js"),
     );
+  });
+});
+
+// A package.json `imports` entry whose value is a bare package specifier
+// (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
+// for a second pass. Per the Node.js packages spec these are URL-like
+// specifiers and must always use forward slashes. On Windows, the join that
+// feeds the second pass was going through `platform::Auto` which normalizes
+// `/` to `\`, turning `@myproject/resolver` into `@myproject\resolver` —
+// the scoped-package match fails and Bun falls back to the legacy `main`
+// field instead of `exports`. Linux/macOS aren't affected because `Auto`
+// is already `Posix` there; this test is therefore Windows-only.
+// https://github.com/oven-sh/bun/issues/30839
+describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", () => {
+  it("resolves via the target's exports, not its main", async () => {
+    using dir = tempDir("resolver-imports-scoped-pkg", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/resolver/package.json": JSON.stringify({
+        name: "@myproject/resolver",
+        type: "module",
+        main: "./index.cjs",
+        exports: { ".": "./index.mjs" },
+      }),
+      "packages/resolver/index.mjs": "export const type = 'esm (from exports)';",
+      "packages/resolver/index.cjs": "module.exports = { type: 'cjs (from main)' };",
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        type: "module",
+        dependencies: { "@myproject/resolver": "workspace:*" },
+        imports: { "#res": "@myproject/resolver" },
+      }),
+      "packages/app/test.mjs": `import { type } from "#res";\nconsole.log(type);`,
+    });
+    const root = String(dir);
+
+    // Wire up @myproject/resolver into app/node_modules so the second pass
+    // through the resolver (the one this fix repairs) can find it — without
+    // invoking `bun install`. `"junction"` is the Windows-appropriate symlink
+    // kind for directories.
+    mkdirSync(join(root, "packages/app/node_modules/@myproject"), { recursive: true });
+    symlinkSync(
+      join(root, "packages/resolver"),
+      join(root, "packages/app/node_modules/@myproject/resolver"),
+      "junction",
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.mjs"],
+      env: bunEnv,
+      cwd: join(root, "packages/app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("esm (from exports)\n");
+    expect(exitCode).toBe(0);
   });
 });
 

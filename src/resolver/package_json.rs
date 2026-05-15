@@ -2758,9 +2758,17 @@ impl<'a> ESModule<'a> {
                                 },
                             };
                         } else {
+                            // PORT NOTE: Zig used `.auto` here, carried over as a
+                            // latent Windows bug (#30839): this branch runs when an
+                            // `imports` target is itself a package specifier
+                            // (e.g. `@myproject/resolver`) that we hand back to
+                            // package-resolve. Per the Node.js packages spec these
+                            // are URL-like specifiers and must keep forward slashes;
+                            // `Auto` normalizes them to `\` on Windows and the
+                            // scoped-name match fails, falling through to `main`.
                             let parts2 = [str, subpath];
                             let result = resolve_path::resolve_path::join_string_buf::<
-                                resolve_path::platform::Auto,
+                                resolve_path::platform::Posix,
                             >(
                                 &mut resolve_target_buf2.0, &parts2
                             );

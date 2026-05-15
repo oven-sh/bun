@@ -24,7 +24,11 @@ describe.concurrent("FinalizationRegistry", () => {
 
   test("throwing callback reports as uncaughtException instead of crashing", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", driver(`const reg = new FinalizationRegistry(() => { throw new Error("boom from finalizer"); });`)],
+      cmd: [
+        bunExe(),
+        "-e",
+        driver(`const reg = new FinalizationRegistry(() => { throw new Error("boom from finalizer"); });`),
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

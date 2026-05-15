@@ -952,18 +952,31 @@ impl FSEventsLoop {
     /// UB this refactor removes. The allocation is `&'static` (leaked in
     /// `init()`), so there is nothing to free; this only joins the CF thread
     /// and releases CF handles.
+    ///
+    /// `FSEVENTS_DEFAULT_LOOP` is a `OnceLock` and cannot be cleared, so a
+    /// `watch()` after shutdown would reach a dead loop — but
+    /// `close_and_wait` runs from `Bun__onExit` after the VM has stopped
+    /// scheduling JS, so no new `watch()` calls are possible. (Zig had the
+    /// same window; the old Rust port additionally handed out a *freed*
+    /// pointer there.) `close_and_wait` serializes calls under
+    /// `FSEVENTS_DEFAULT_LOOP_MUTEX`, and this is idempotent under that
+    /// lock: `thread.take()` returns `None` on a repeat call and we bail
+    /// before touching CF.
     fn shutdown(&'static self) {
+        // SAFETY: `thread` is JS-thread-only; `shutdown()` runs from
+        // `close_and_wait()` on the JS thread at exit under
+        // `FSEVENTS_DEFAULT_LOOP_MUTEX`. No other access exists after
+        // `init()` returns.
+        let Some(thread) = (unsafe { (*self.thread.get()).take() }) else {
+            return; // already shut down
+        };
         // signal close and wait
         self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_stop));
-        // SAFETY: `thread` is JS-thread-only; `shutdown()` runs once from
-        // `close_and_wait()` on the JS thread at exit. No other access exists
-        // after `init()` returns.
-        if let Some(thread) = unsafe { (*self.thread.get()).take() } {
-            let _ = thread.join();
-        }
+        let _ = thread.join();
 
         let cf = CoreFoundation::get();
         let signal_source = self.signal_source.swap(ptr::null_mut(), Ordering::Relaxed);
+        debug_assert!(!signal_source.is_null());
         // SAFETY: signal_source is a valid CF object until released here
         unsafe { (cf.release)(signal_source) };
 

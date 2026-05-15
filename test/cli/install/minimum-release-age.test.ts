@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -2801,6 +2801,70 @@ minimumReleaseAgeExcludes = ["regular-package"]
         ]);
         expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
         expect(exitCode).not.toBe(0);
+      },
+    );
+
+    // Same unix-only fake-cache layout as the other warm-cache tests.
+    test.skipIf(isWindows)(
+      "--no-install + --minimum-release-age + mismatched bin name: specific error, cache preserved",
+      async () => {
+        // UX regression guard: when the bin name differs from the initial
+        // guess, bunx falls into `get_bin_name_from_temp_directory` with
+        // `force_stale=true`. Earlier, that path unconditionally wiped the
+        // cache (`delete_tree`) and surfaced the generic "Could not find an
+        // existing '<initial-bin-name>' binary" error — even though
+        // `--no-install` semantically means "don't touch anything". The
+        // matched-bin path got the specific "Cannot use --no-install with
+        // --minimum-release-age…" error; the mismatched-bin path should too,
+        // and the cache should survive.
+        using dir = tempDir("bunx-min-age-noinstall-mismatched", {});
+        using cacheDir = tempDir("bunx-min-age-cache-noinstall-mismatched", {});
+        using tmp = tempDir("bunx-min-age-tmp-noinstall-mismatched", {});
+
+        const pkgName = "@fake-scope/no-install-mismatch";
+        const realBin = "mytool";
+        const uid = process.getuid?.() ?? 0;
+
+        const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@latest`);
+        const pkgDir = join(cacheRoot, "node_modules", pkgName);
+        const binDir = join(cacheRoot, "node_modules", ".bin");
+        mkdirSync(pkgDir, { recursive: true });
+        mkdirSync(binDir, { recursive: true });
+
+        // Root package.json drives the 24h mtime staleness check.
+        writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
+        // Target package's package.json advertises a bin named `mytool`;
+        // the initial-guess bin name is `no-install-mismatch`.
+        writeFileSync(
+          join(pkgDir, "package.json"),
+          JSON.stringify({ name: pkgName, version: "1.0.0", bin: { [realBin]: `./bin/${realBin}.js` } }),
+        );
+        const binPath = join(binDir, realBin);
+        writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+        chmodSync(binPath, 0o755);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "x", "--no-install", "--minimum-release-age=3155760000", pkgName],
+          cwd: String(dir),
+          env: bunxEnv(String(cacheDir), String(tmp)),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
+        expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+        expect(stderr).toContain("--no-install");
+        expect(stderr).toContain("--minimum-release-age");
+        expect(exitCode).not.toBe(0);
+
+        // Cache must not have been wiped — the specific error should fire
+        // BEFORE `delete_tree` could run.
+        expect(existsSync(binPath)).toBe(true);
+        expect(existsSync(join(pkgDir, "package.json"))).toBe(true);
       },
     );
   });

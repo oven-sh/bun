@@ -520,9 +520,22 @@ impl BunxCommand {
 
             if is_stale {
                 let _ = target_package_json.close();
-                // If delete fails, oh well. Hope installation takes care of it.
-                // TODO(port): Zig used std.fs.cwd().deleteTree; map to bun_sys recursive rm.
-                let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
+                // Only wipe the cache when it's stale by the 24h mtime rule —
+                // that's an expiry decision the rest of the code has always
+                // made on its own. When `force_stale` is true we're refusing
+                // to honor the cache for `--minimum-release-age` purposes, but
+                // the install path that follows will already pass
+                // `--no-cache --force` to `bun add` (which overwrites the
+                // tree), so a pre-emptive delete adds nothing. Skipping it
+                // also means `--no-install` with an active age gate on a
+                // mismatched-bin package doesn't gratuitously destroy a
+                // fresh cache just to surface a "Could not find binary"
+                // error from the caller.
+                if !force_stale {
+                    // If delete fails, oh well. Hope installation takes care of it.
+                    // TODO(port): Zig used std.fs.cwd().deleteTree; map to bun_sys recursive rm.
+                    let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
+                }
                 return Err(bun_core::err!("NeedToInstall"));
             }
             let _ = target_package_json.close();
@@ -1326,6 +1339,19 @@ impl BunxCommand {
         // Which is not very helpful.
 
         if opts.no_install {
+            // When an active age gate forced cache re-resolution (via
+            // `force_stale` in `get_bin_name_from_temp_directory`), the
+            // "could not find" message is misleading — there may well be a
+            // cached binary, it's just being treated as stale. Surface the
+            // same specific error as the matched-bin path so the user knows
+            // to drop one of the flags.
+            if opts.has_active_age_gate() {
+                Output::err_generic(
+                    "Cannot use <b>--no-install<r> with <b>--minimum-release-age<r>: the cached binary for <b>{}<r> cannot be re-verified under the age gate without resolving a new version. Drop <b>--no-install<r> to allow re-resolution.",
+                    (BStr::new(&update_request.name),),
+                );
+                Global::exit(1);
+            }
             Output::err_generic(
                 "Could not find an existing '{}' binary to run. Stopping because --no-install was passed.",
                 format_args!("{}", BStr::new(initial_bin_name)),

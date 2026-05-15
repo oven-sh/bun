@@ -41,11 +41,7 @@ test.skipIf(!canRunCargo)(
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Surface cargo output when anything goes wrong — makes failure messages
     // actionable (missing module vs failing assertion vs toolchain error).

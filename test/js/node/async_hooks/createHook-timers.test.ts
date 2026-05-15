@@ -46,7 +46,6 @@ test.concurrent("createHook fires init+destroy for setImmediate cancelled with c
       }, 20);
     `);
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   // The setImmediate was cleared before it could run, so we never see
   // ran for it — but we do see init + destroy.
   const parsed = JSON.parse(stdout.trim());
@@ -59,6 +58,7 @@ test.concurrent("createHook fires init+destroy for setImmediate cancelled with c
   const destroyIdx = parsed.findIndex(e => e[0] === "destroy");
   const beforeIdx = parsed.findIndex(e => e[0] === "before");
   expect(destroyIdx).toBeLessThan(beforeIdx);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("createHook fires init+before+after+destroy for setTimeout that fires", async () => {
@@ -85,7 +85,6 @@ test.concurrent("createHook fires init+before+after+destroy for setTimeout that 
       }, 10);
     `);
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   const parsed = JSON.parse(stdout.trim());
   const cbEvent = parsed.find(e => e[0] === "cb");
   expect(cbEvent).toBeDefined();
@@ -101,6 +100,7 @@ test.concurrent("createHook fires init+before+after+destroy for setTimeout that 
   expect(cbIdx).toBeGreaterThan(beforeIdx);
   expect(afterIdx).toBeGreaterThan(cbIdx);
   expect(destroyIdx).toBeGreaterThan(afterIdx);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("createHook matches the issue #30827 expected output for Immediate+Timeout", async () => {
@@ -131,7 +131,6 @@ test.concurrent("createHook matches the issue #30827 expected output for Immedia
       }, 20);
     `);
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   const lines = stdout.trim().split("\n");
   // The cleared setImmediate never runs.
   expect(lines).not.toContain("setImmediate-cb");
@@ -151,6 +150,7 @@ test.concurrent("createHook matches the issue #30827 expected output for Immedia
   expect(initTim).toBeLessThan(firstDestroy);
   expect(firstDestroy).toBeLessThan(firstBefore);
   expect(firstBefore).toBeLessThan(firstAfter);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("createHook fires init+before+after per tick for setInterval", async () => {
@@ -186,7 +186,6 @@ test.concurrent("createHook fires init+before+after per tick for setInterval", a
     }, 5);
   `);
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   const { events, intervalId } = JSON.parse(stdout.trim());
   // Each interval tick has a matching before/after pair scoped to the
   // interval's own async id.
@@ -207,6 +206,7 @@ test.concurrent("createHook fires init+before+after per tick for setInterval", a
   expect(intervalInits).toHaveLength(1);
   // After clearInterval, destroy must fire for the interval.
   expect(events).toContainEqual(["destroy", intervalId]);
+  expect(exitCode).toBe(0);
 });
 
 // Array.prototype.findLastIndex polyfill for clarity in the interval test.
@@ -233,13 +233,110 @@ test.concurrent("createHook can be disabled to stop emitting events", async () =
     }, 30);
   `);
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   const parsed = JSON.parse(stdout.trim());
   // Exactly one init: the first setTimeout. The one after .disable() plus
   // the tail setTimeout (which fires the log) are both while the hook is
   // disabled.
   const inits = parsed.filter(e => e[0] === "init");
   expect(inits).toEqual([["init", "Timeout"]]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent(
+  "createHook: mismatched clear APIs are no-ops (clearTimeout(Immediate) / clearImmediate(Timeout))",
+  async () => {
+    // Node pairs clearTimeout/clearInterval ↔ Timeout and clearImmediate ↔
+    // Immediate strictly — mismatched clears do NOT cancel the timer and
+    // therefore must not emit a `destroy` event. The `kTimerKind` guard
+    // inside `installTimerHooks` pins this behavior.
+    const { stdout, stderr, exitCode } = await runScript(`
+      const async_hooks = require('async_hooks');
+      const events = [];
+      async_hooks.createHook({
+        init: (id, type) => events.push(['init', id, type]),
+        before: (id) => events.push(['before', id]),
+        after: (id) => events.push(['after', id]),
+        destroy: (id) => events.push(['destroy', id]),
+      }).enable();
+
+      const imm = setImmediate(() => { events.push(['imm ran']); });
+      clearTimeout(imm);   // wrong API — must be a no-op, imm still fires
+
+      const tim = setTimeout(() => { events.push(['tim ran']); }, 10);
+      clearImmediate(tim); // wrong API — must be a no-op, tim still fires
+
+      setTimeout(() => {
+        setImmediate(() => setImmediate(() => {
+          console.log(JSON.stringify(events));
+        }));
+      }, 50);
+    `);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout.trim());
+    // Both timers STILL FIRE because the clears used the wrong API.
+    expect(parsed).toContainEqual(["imm ran"]);
+    expect(parsed).toContainEqual(["tim ran"]);
+    // Crucially: for each timer there must be exactly ONE destroy (fired
+    // after the timer ran), not two (one spurious from the wrong-API clear
+    // plus one after firing). Find the async ids from init events and count.
+    const immEvent = parsed.find(e => e[0] === "init" && e[2] === "Immediate");
+    const timEvent = parsed.find(e => e[0] === "init" && e[2] === "Timeout");
+    expect(immEvent).toBeDefined();
+    expect(timEvent).toBeDefined();
+    const immId = immEvent![1];
+    const timId = timEvent![1];
+    const destroysForImm = parsed.filter(e => e[0] === "destroy" && e[1] === immId);
+    const destroysForTim = parsed.filter(e => e[0] === "destroy" && e[1] === timId);
+    expect(destroysForImm).toHaveLength(1);
+    expect(destroysForTim).toHaveLength(1);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("createHook: references captured before .enable() bypass the hook layer", async () => {
+  // Known limitation, documented in `installTimerHooks`: wrapping is
+  // installed on `globalThis` lazily on the first `.enable()`. A caller
+  // that captured the original reference earlier keeps the unwrapped
+  // function. Pinning this here so a future opt-in to lower-level
+  // interception is a conscious choice, not an accidental regression.
+  const { stdout, stderr, exitCode } = await runScript(`
+    const async_hooks = require('async_hooks');
+    // Capture BEFORE enabling the hook.
+    const capturedSetTimeout = setTimeout;
+
+    const events = [];
+    async_hooks.createHook({
+      init: (id, type) => events.push(['init', type]),
+      before: (id) => events.push(['before']),
+      after: (id) => events.push(['after']),
+      destroy: (id) => events.push(['destroy']),
+    }).enable();
+
+    // Called via the captured reference — bypasses the hook wrapper.
+    capturedSetTimeout(() => { events.push(['captured-cb']); }, 10);
+
+    // Also call via the global so we can confirm the wrapper is active.
+    setTimeout(() => {
+      setImmediate(() => setImmediate(() => {
+        console.log(JSON.stringify(events));
+      }));
+    }, 40);
+  `);
+  expect(stderr).toBe("");
+  const parsed = JSON.parse(stdout.trim());
+  // The captured-reference callback ran…
+  expect(parsed).toContainEqual(["captured-cb"]);
+  // …but no lifecycle events were emitted for it. The only inits we see
+  // are for the timers created after .enable() via the wrapped global
+  // (the outer setTimeout(…, 40) and the two nested setImmediates).
+  const inits = parsed.filter(e => e[0] === "init");
+  // Nothing should be "Immediate" pre-.enable() capture; we only created
+  // a setTimeout via the captured reference. If the wrapper had run for
+  // that call, inits would contain TWO "Timeout" entries (captured + tail)
+  // instead of one.
+  const timeoutInits = inits.filter(e => e[1] === "Timeout");
+  expect(timeoutInits).toHaveLength(1);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("createHook validates hook shape (preserved pre-existing behavior)", async () => {

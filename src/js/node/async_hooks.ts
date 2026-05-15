@@ -388,6 +388,11 @@ let timerGlobalsPatched = false;
 let nextAsyncId = 2; // 1 is reserved for the root execution context (matches Node).
 const kAsyncId = Symbol("bun.asyncId");
 const kDestroyed = Symbol("bun.asyncHooksDestroyed");
+// Distinguishes Timeout handles from Immediate handles so mismatched
+// cancellation (clearTimeout on an Immediate, clearImmediate on a
+// Timeout/Interval) is a no-op — matches Node, which keeps the two APIs
+// strictly paired even though both return opaque objects.
+const kTimerKind = Symbol("bun.asyncHooksTimerKind");
 
 // Tracks the current `executionAsyncId()` while inside a before/after pair so
 // observers can correlate resources. Trigger IDs fall back to the outer scope
@@ -482,6 +487,17 @@ function reportHookError(err: unknown) {
   });
 }
 
+// Known limitation: wrapping is installed on `globalThis` lazily, on the
+// first `.enable()`. A caller that captures a reference *before* enabling
+// — e.g. `const st = setTimeout; hook.enable(); st(cb, 1);` — keeps a
+// pointer to the original native function and bypasses the hook layer.
+// Node has the same property because their hooks live in a JS prologue
+// around the native call; in practice it matters only for tooling that
+// cached references pre-boot. The regression test
+// `test/js/node/async_hooks/createHook-timers.test.ts` ("cached timer
+// reference captured before .enable()…") pins this behavior so a future
+// lower-level interception (e.g. intercepting inside `Bun__Timer__setTimeout`)
+// is a conscious opt-in.
 function installTimerHooks() {
   if (timerGlobalsPatched) return;
   timerGlobalsPatched = true;
@@ -530,15 +546,28 @@ function installTimerHooks() {
       if (timer && typeof timer === "object") {
         timer[kAsyncId] = asyncId;
         timer[kDestroyed] = false;
+        timer[kTimerKind] = type;
         emitInit(asyncId, type, triggerAsyncId, timer);
       }
       return timer;
     };
   }
 
-  function wrapClearTimer(orig: Function) {
+  // `expectedKind` mirrors Node's strict pairing: `clearTimeout`/
+  // `clearInterval` operate on `Timeout` handles, `clearImmediate` on
+  // `Immediate` handles. Passing a mismatched handle is a no-op in Node
+  // (the native clear can't find the handle in its heap), so we must also
+  // skip the async-hooks destroy to avoid a spurious event for a timer
+  // that's still going to fire.
+  function wrapClearTimer(orig: Function, expectedKind: "Timeout" | "Immediate") {
     return function wrappedClear(this: any, timer: any) {
-      if (timer && typeof timer === "object" && timer[kAsyncId] != null && !timer[kDestroyed]) {
+      if (
+        timer &&
+        typeof timer === "object" &&
+        timer[kAsyncId] != null &&
+        timer[kTimerKind] === expectedKind &&
+        !timer[kDestroyed]
+      ) {
         timer[kDestroyed] = true;
         scheduleDestroy(timer[kAsyncId]);
       }
@@ -549,9 +578,9 @@ function installTimerHooks() {
   g.setTimeout = wrapTimer("Timeout", origSetTimeout, false);
   g.setInterval = wrapTimer("Timeout", origSetInterval, true);
   g.setImmediate = wrapTimer("Immediate", origSetImmediate, false);
-  g.clearTimeout = wrapClearTimer(origClearTimeout);
-  g.clearInterval = wrapClearTimer(origClearInterval);
-  g.clearImmediate = wrapClearTimer(origClearImmediate);
+  g.clearTimeout = wrapClearTimer(origClearTimeout, "Timeout");
+  g.clearInterval = wrapClearTimer(origClearInterval, "Timeout");
+  g.clearImmediate = wrapClearTimer(origClearImmediate, "Immediate");
 }
 
 function createHook(hook) {

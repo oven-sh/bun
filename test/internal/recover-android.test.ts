@@ -23,8 +23,22 @@ function hasAndroidTarget(): boolean {
   return r.exitCode === 0 && r.stdout.toString().includes("aarch64-linux-android");
 }
 
+// CI test runners ship a stripped checkout without vendor/ path deps
+// (e.g. vendor/lolhtml/c-api). `cargo metadata` (without --no-deps) fails
+// fast when any workspace path dep is missing, so use it as the "is the
+// workspace buildable here" probe.
+function workspaceResolvable(cargo: string): boolean {
+  const r = Bun.spawnSync({
+    cmd: [cargo, "metadata", "--format-version=1", "--locked"],
+    cwd: repoRoot,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  return r.exitCode === 0;
+}
+
 const cargo = Bun.which("cargo");
-const skip = !isLinux || cargo == null || !hasAndroidTarget();
+const skip = !isLinux || cargo == null || !hasAndroidTarget() || !workspaceResolvable(cargo);
 
 describe.skipIf(skip)("recover.rs on Android", () => {
   // Building bun_runtime for aarch64-linux-android can be slow on a cold

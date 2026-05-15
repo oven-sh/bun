@@ -39,11 +39,12 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     // Resolve the effective XDG base. When `$XDG_CONFIG_HOME` is unset **or
     // empty** (per the XDG spec), apply the default `$HOME/.config`; own that
     // in a small stack array so we can borrow it past the XDG-candidate loop.
-    // Cap at MAX_PATH_BYTES / 2 to leave room for `/bun/bunfig.toml`; longer
-    // homes fall through to `$HOME`. `get_not_empty()` mirrors the spec's
-    // "not set or empty" language — a bare `XDG_CONFIG_HOME=""` must be
-    // treated as unset, not as an empty-string base.
-    let mut xdg_scratch = [0u8; bun_paths::MAX_PATH_BYTES / 2];
+    // `$HOME` on every supported platform is well under a few hundred bytes,
+    // so 512 is ample — longer homes fall through to `$HOME/.bunfig.toml`.
+    // `get_not_empty()` mirrors the spec's "not set or empty" language — a
+    // bare `XDG_CONFIG_HOME=""` must be treated as unset, not as an
+    // empty-string base.
+    let mut xdg_scratch = [0u8; 512];
     let xdg_base: Option<&[u8]> = match (
         env_var::XDG_CONFIG_HOME.get_not_empty(),
         env_var::HOME.get_not_empty(),

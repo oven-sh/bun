@@ -501,6 +501,23 @@ pub const Bin = extern struct {
         return name;
     }
 
+    /// A Windows shim bin path is stored in the `.bunx` file and appended onto
+    /// the parent of `.bin` at runtime. To be usable it must be a relative
+    /// subpath — it cannot escape the walk-back position with `..`, and it
+    /// cannot be absolute (drive letter, UNC share, or leading separator).
+    fn isValidShimBinPath(rel: []const u8) bool {
+        if (rel.len == 0) return false;
+        // Escape outside the walk-back position.
+        if (strings.hasPrefixComptime(rel, "..\\")) return false;
+        if (strings.hasPrefixComptime(rel, "../")) return false;
+        if (strings.eqlComptime(rel, "..")) return false;
+        // Absolute path (drive letter, e.g. "D:\...").
+        if (rel.len >= 2 and rel[1] == ':') return false;
+        // Rooted or UNC path.
+        if (rel[0] == '\\' or rel[0] == '/') return false;
+        return true;
+    }
+
     pub const Linker = struct {
         bin: Bin,
 
@@ -589,6 +606,18 @@ pub const Bin = extern struct {
             }
 
             bun.analytics.Features.binlinks += 1;
+
+            // `this.err` is a sticky field on the Linker that persists across
+            // all bins of the current package (a `bin` map with several
+            // entries reuses the same Linker). A stale error from a prior
+            // iteration must not cause us to unlink the shim we create for a
+            // later entry, so clear it here and restore it on the success
+            // path so the enclosing install still surfaces the failure.
+            const prev_err = this.err;
+            this.err = null;
+            defer if (this.err == null and prev_err != null) {
+                this.err = prev_err;
+            };
 
             if (comptime !Environment.isWindows)
                 this.createSymlink(abs_target, abs_dest, global)
@@ -734,10 +763,73 @@ pub const Bin = extern struct {
             };
             defer bunx_file.close();
 
-            const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
+            // At runtime the shim walks back two directory levels from its own
+            // image path (`.bin\foo.exe` → parent of `.bin`) and then appends
+            // the bin path stored in the `.bunx` file. So we need a path that
+            // resolves to `abs_target` when joined onto the parent of `.bin`.
+            // See `src/install/windows-shim/bun_shim_impl.zig` for the
+            // walk-back loop.
+            //
+            // A target that lives inside `.bin` itself (e.g. a package whose
+            // `bin` field resolves to `../.bin/foo.js`) yields `.bin\foo.js`
+            // here, which is a valid shim bin path — not something to reject.
+            //
+            // `abs_dest` and `abs_target` can also come from different
+            // canonicalisation sources: `abs_dest` from `global_bin_path`
+            // (which `setupGlobalDir` canonicalises via
+            // `GetFinalPathNameByHandle`), and `abs_target` from `top_level_dir`
+            // (`GetCurrentDirectoryW`). When the user profile sits behind a
+            // junction, OneDrive reparse point, `subst`'d drive, or
+            // `\\?\Volume{GUID}\` mount, the two views can disagree and
+            // produce an absolute or `..`-prefixed result that the shim can't
+            // represent. Retry with the target canonicalised through its open
+            // handle, then with the destination parent canonicalised via an
+            // opened directory handle, before failing gracefully.
+            const abs_dest_parent = path.dirname(path.dirname(abs_dest, .auto), .auto);
+            const rel_target_for_shim = relTargetForShim: {
+                const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_parent, abs_target);
+                if (isValidShimBinPath(rel_target)) break :relTargetForShim rel_target;
 
-            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
+                // Retry with the target canonicalised via its open fd.
+                const canon_target_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(canon_target_buf);
+                const canon_target = switch (bun.sys.getFdPath(target, canon_target_buf)) {
+                    .result => |slice| slice,
+                    .err => {
+                        this.err = error.CouldNotCreateShim;
+                        return;
+                    },
+                };
+                const canon_rel_target = path.relativeBufZ(this.rel_buf, abs_dest_parent, canon_target);
+                if (isValidShimBinPath(canon_rel_target)) break :relTargetForShim canon_rel_target;
+
+                // Retry with the destination parent canonicalised too. Open
+                // it, call GetFinalPathNameByHandle, and recompute.
+                const dest_parent_fd = bun.sys.openatWindowsA(bun.invalid_fd, abs_dest_parent, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch {
+                    this.err = error.CouldNotCreateShim;
+                    return;
+                };
+                defer dest_parent_fd.close();
+                const canon_dest_parent_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(canon_dest_parent_buf);
+                const canon_dest_parent = switch (bun.sys.getFdPath(dest_parent_fd, canon_dest_parent_buf)) {
+                    .result => |slice| slice,
+                    .err => {
+                        this.err = error.CouldNotCreateShim;
+                        return;
+                    },
+                };
+                const canon_rel_target_2 = path.relativeBufZ(this.rel_buf, canon_dest_parent, canon_target);
+                if (isValidShimBinPath(canon_rel_target_2)) break :relTargetForShim canon_rel_target_2;
+
+                // Truly cross-volume or otherwise unrepresentable in the
+                // shim's walk-back scheme. Surface an error rather than
+                // writing a broken shim or panicking.
+                this.err = error.CouldNotCreateShim;
+                return;
+            };
+
+            const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target_for_shim);
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
@@ -803,8 +895,6 @@ pub const Bin = extern struct {
 
             const abs_dest_dir = path.dirname(abs_dest, .auto);
             const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_dir, abs_target);
-
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
 
             switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                 .err => |err| {

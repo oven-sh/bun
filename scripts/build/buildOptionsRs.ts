@@ -28,8 +28,13 @@ import { writeIfChanged } from "./fs.ts";
 
 /** Rust string literal for `s`. JSON escaping is a strict subset of Rust's. */
 const rstr = (s: string): string => JSON.stringify(s);
-/** Rust byte-string literal for `s` (the `&[u8]` constants). */
-const rbstr = (s: string): string => `b${JSON.stringify(s)}`;
+/**
+ * Rust `&[u8]` literal for `s`. Goes via a UTF-8 string literal +
+ * `.as_bytes()` rather than `b"..."` so non-ASCII paths (e.g. a Windows
+ * checkout under `C:\Users\Müller\`) survive — Rust byte-string literals are
+ * ASCII-only and `JSON.stringify` would pass the `ü` through verbatim.
+ */
+const rbstr = (s: string): string => `${JSON.stringify(s)}.as_bytes()`;
 
 export function generateBuildOptionsRs(cfg: Config): string {
   const outPath = resolve(cfg.codegenDir, "build_options.rs");

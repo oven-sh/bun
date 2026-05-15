@@ -2237,20 +2237,6 @@ impl Version {
     }
 }
 
-/// `const`-context decimal `u32` parse of an ASCII byte slice. No sign, no
-/// whitespace, wrapping on overflow; non-digits are accumulated as garbage so
-/// only feed it digit-only build-time literals (e.g. `env!` version components).
-/// `str::parse` isn't `const`, hence this.
-pub const fn const_parse_u32(bytes: &[u8]) -> u32 {
-    let mut i = 0usize;
-    let mut n: u32 = 0;
-    while i < bytes.len() {
-        n = n.wrapping_mul(10).wrapping_add((bytes[i] - b'0') as u32);
-        i += 1;
-    }
-    n
-}
-
 // ─── RacyCell ─────────────────────────────────────────────────────────────
 /// Stable equivalent of `core::cell::SyncUnsafeCell<T>` (nightly-only as of
 /// 1.79). A `static`-safe interior-mutability cell with **no** synchronization.

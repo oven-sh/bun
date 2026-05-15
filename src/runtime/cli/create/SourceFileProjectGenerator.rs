@@ -147,11 +147,8 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
         bun_sys::Result::Ok(fd) => fd,
         bun_sys::Result::Err(err) => return bun_sys::Result::Err(err),
     };
-    // TODO(port): RAII fd guard — `defer fd.close()` semantics
-    let close_guard = scopeguard::guard(fd, |fd| fd.close());
-
-    // Write contents
-    match bun_sys::File::from_fd(*close_guard).write_all(contents) {
+    // Write contents — `File` owns `fd` and closes on scope exit.
+    match bun_sys::File::from_fd(fd).write_all(contents) {
         bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
         bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
     }

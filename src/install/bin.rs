@@ -871,7 +871,6 @@ impl<'a> Linker<'a> {
                     return;
                 }
             };
-            let _close = sys::CloseOnDrop::file(&target);
             self.create_windows_shim(&target, abs_target, abs_dest, global);
         }
 
@@ -1117,7 +1116,6 @@ impl<'a> Linker<'a> {
                 }
             }
         };
-        let _close = sys::CloseOnDrop::file(&bunx_file);
 
         let rel_target = resolve_path::relative_buf_z(
             self.rel_buf,

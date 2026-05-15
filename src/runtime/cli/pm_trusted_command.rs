@@ -542,11 +542,14 @@ impl TrustCommand {
             }
         }
 
-        // SAFETY: `pm_raw` singleton; `root_package_json_file` owned by `pm`.
-        // `File` is `#[repr(transparent)]` over `Fd` (Copy) but not itself
-        // `Copy`; rebuild a local handle so `close()` (which takes `self`) can
-        // consume it after the final write — matches Zig's by-value `File`.
-        let root_file = unsafe { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
+        // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
+        // (the original `pm.root_package_json_file` is replaced with INVALID so
+        // its eventual drop is a no-op). Matches Zig's by-value `File` move.
+        let root_file = unsafe {
+            let fd = (*pm_raw).root_package_json_file.handle;
+            (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
+            bun_sys::File::from_fd(fd)
+        };
         let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`

@@ -2776,7 +2776,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     Global::crash();
                 }
             };
-            let _close_file = CloseOnDrop::file(&file);
             let stat = match file.stat() {
                 Ok(s) => s,
                 Err(err) => {
@@ -2855,7 +2854,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Global::crash();
             }
         };
-        let _close_tarball = CloseOnDrop::file(&tarball_file);
 
         let mut sha1 = sha::SHA1::init();
         let mut sha512 = sha::SHA512::init();
@@ -2884,7 +2882,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             break 'tarball_bytes Some(bytes);
         }
 
-        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.handle));
+        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.into_raw()));
 
         let mut size: usize = 0;
         let mut read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {

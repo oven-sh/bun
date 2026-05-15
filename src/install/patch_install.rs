@@ -712,7 +712,6 @@ impl PatchTask {
             }
             sys::Result::Ok(f) => f,
         };
-        let _close_guard = sys::CloseOnDrop::file(&file);
 
         let mut hasher = Wyhash11::init(0);
 

@@ -1814,10 +1814,10 @@ impl RealFS {
     pub fn mod_key(&mut self, path: &[u8]) -> Result<ModKey, bun_core::Error> {
         // TODO(port): std.fs.cwd().openFile — bun_sys::open_file
         let file = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
-        let need_close = self.need_to_close_files();
         let result = self.mod_key_with_file(path, &file);
-        if need_close {
-            let _ = bun_sys::close(file.handle());
+        if !self.need_to_close_files() {
+            // Hand the descriptor off — this fs caches open fds.
+            let _ = file.into_raw();
         }
         result
     }
@@ -1873,8 +1873,8 @@ impl TmpfilePosix {
     }
 
     #[inline]
-    pub(crate) fn file(&self) -> bun_sys::File {
-        bun_sys::File::from_fd(self.fd)
+    pub(crate) fn file(&self) -> &bun_sys::File {
+        bun_sys::File::borrow(&self.fd)
     }
 
     pub(crate) fn close(&mut self) {
@@ -1948,8 +1948,8 @@ impl TmpfileWindows {
     }
 
     #[inline]
-    pub(crate) fn file(&self) -> bun_sys::File {
-        bun_sys::File::from_fd(self.fd)
+    pub(crate) fn file(&self) -> &bun_sys::File {
+        bun_sys::File::borrow(&self.fd)
     }
 
     pub(crate) fn close(&mut self) {

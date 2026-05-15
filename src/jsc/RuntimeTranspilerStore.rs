@@ -164,9 +164,6 @@ pub fn dump_source_string_failiable(
                     read: false,
                 },
             )?;
-            let _close_file = scopeguard::guard(file.handle, |fd| {
-                let _ = bun_sys::close(fd);
-            });
 
             // `parent.readFileAlloc(allocator, specifier, maxInt) catch ""`
             let source_file = File::read_from(parent.fd, specifier).unwrap_or_default();

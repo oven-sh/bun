@@ -754,8 +754,8 @@ pub mod fs {
     }
     impl RealFsTmpfile {
         #[inline]
-        pub fn file(&self) -> bun_sys::File {
-            bun_sys::File::from_fd(self.fd)
+        pub fn file(&self) -> &bun_sys::File {
+            bun_sys::File::borrow(&self.fd)
         }
 
         pub fn close(&mut self) {

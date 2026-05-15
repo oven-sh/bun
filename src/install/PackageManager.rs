@@ -1282,7 +1282,6 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let _close_node_gyp_file = bun_sys::CloseOnDrop::file(&node_gyp_file);
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";

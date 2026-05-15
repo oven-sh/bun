@@ -1335,6 +1335,21 @@ impl Fd {
         Fd::from_system(fd::windows_current_directory_handle())
     }
 
+    /// Whether this descriptor is the process's stdin/stdout/stderr.
+    /// Used to gate auto-close in [`bun_sys::File`]'s `Drop` — those handles
+    /// are process-shared and dropping a `File::stdout()` wrapper must not
+    /// tear down the program's output.
+    #[cfg(not(windows))]
+    #[inline]
+    pub const fn is_stdio(self) -> bool {
+        matches!(self.0, 0 | 1 | 2)
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub fn is_stdio(self) -> bool {
+        self == Self::stdin() || self == Self::stdout() || self == Self::stderr()
+    }
+
     // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
     #[cfg(not(windows))]
     #[inline]

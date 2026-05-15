@@ -952,7 +952,6 @@ impl<'a> PackageInstall<'a> {
             .open_file(root_node_modules_dir, package_json_path)
             .ok()?;
         // defer package_json_file.close()
-        let _close_pkg_json = sys::CloseOnDrop::file(&package_json_file);
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         read = package_json_file.read(&mut mutable.list[total..]).ok()?;
@@ -2153,7 +2152,6 @@ impl<'a> PackageInstall<'a> {
             else {
                 return true;
             };
-            let _close = sys::CloseOnDrop::file(&file);
             let Ok(size) = file.read_all(temp_buffer) else {
                 return true;
             };

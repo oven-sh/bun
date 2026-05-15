@@ -1,0 +1,286 @@
+// Issue #30827: `async_hooks.createHook({...}).enable()` was a no-op in Bun.
+// This file covers the partial implementation that now fires init/before/
+// after/destroy for timers (setTimeout / setInterval / setImmediate).
+//
+// The hook registration permanently wraps the global timer functions, so
+// every test spawns a fresh subprocess via `bunExe() -e '…'` to keep them
+// isolated — a hook registered by one test would otherwise leak into the
+// next one.
+
+import { test, expect } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+
+async function runScript(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent(
+  "createHook fires init+destroy for setImmediate cancelled with clearImmediate",
+  async () => {
+    // Log from a DIFFERENT callback than the timer whose after/destroy we
+    // want to observe — otherwise the log runs inside that timer's
+    // before/after window and misses its own trailing events.
+    const { stdout, stderr, exitCode } = await runScript(`
+      const async_hooks = require('async_hooks');
+      const events = [];
+      async_hooks.createHook({
+        init: (id, type) => events.push(['init', type]),
+        before: (id) => events.push(['before']),
+        after: (id) => events.push(['after']),
+        destroy: (id) => events.push(['destroy']),
+      }).enable();
+
+      const t = setImmediate(() => { events.push(['ran']); });
+      clearImmediate(t);
+
+      setTimeout(() => {
+        // Schedule the print outside the setTimeout's before/after scope.
+        setImmediate(() => setImmediate(() => {
+          console.log(JSON.stringify(events));
+        }));
+      }, 20);
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    // The setImmediate was cleared before it could run, so we never see
+    // ran for it — but we do see init + destroy.
+    const parsed = JSON.parse(stdout.trim());
+    expect(parsed).toContainEqual(["init", "Immediate"]);
+    expect(parsed).toContainEqual(["destroy"]);
+    expect(parsed).not.toContainEqual(["ran"]);
+    // The Immediate's destroy appears before the setTimeout's before
+    // (destroy is queued on nextTick after clearImmediate, which runs
+    // before the event loop reaches the 20ms timeout).
+    const destroyIdx = parsed.findIndex(e => e[0] === "destroy");
+    const beforeIdx = parsed.findIndex(e => e[0] === "before");
+    expect(destroyIdx).toBeLessThan(beforeIdx);
+  },
+);
+
+test.concurrent(
+  "createHook fires init+before+after+destroy for setTimeout that fires",
+  async () => {
+    const { stdout, stderr, exitCode } = await runScript(`
+      const async_hooks = require('async_hooks');
+      const events = [];
+      let timeoutId = null;
+      async_hooks.createHook({
+        init: (id, type) => {
+          if (type === 'Timeout' && timeoutId == null) timeoutId = id;
+          events.push(['init', id, type]);
+        },
+        before: (id) => events.push(['before', id]),
+        after: (id) => events.push(['after', id]),
+        destroy: (id) => events.push(['destroy', id]),
+      }).enable();
+
+      setTimeout(() => {
+        events.push(['cb', timeoutId]);
+        // Let after + destroy flush before printing.
+        setImmediate(() => setImmediate(() => {
+          console.log(JSON.stringify(events));
+        }));
+      }, 10);
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const parsed = JSON.parse(stdout.trim());
+    const cbEvent = parsed.find(e => e[0] === "cb");
+    expect(cbEvent).toBeDefined();
+    const timeoutId = cbEvent[1];
+    // Init for the outer setTimeout precedes before+cb+after for the same id.
+    const initIdx = parsed.findIndex(e => e[0] === "init" && e[1] === timeoutId);
+    const beforeIdx = parsed.findIndex(e => e[0] === "before" && e[1] === timeoutId);
+    const cbIdx = parsed.findIndex(e => e[0] === "cb");
+    const afterIdx = parsed.findIndex(e => e[0] === "after" && e[1] === timeoutId);
+    const destroyIdx = parsed.findIndex(e => e[0] === "destroy" && e[1] === timeoutId);
+    expect(initIdx).toBeGreaterThanOrEqual(0);
+    expect(beforeIdx).toBeGreaterThan(initIdx);
+    expect(cbIdx).toBeGreaterThan(beforeIdx);
+    expect(afterIdx).toBeGreaterThan(cbIdx);
+    expect(destroyIdx).toBeGreaterThan(afterIdx);
+  },
+);
+
+test.concurrent(
+  "createHook matches the issue #30827 expected output for Immediate+Timeout",
+  async () => {
+    // Reproduces the issue body verbatim (modulo `process._rawDebug` — Bun
+    // doesn't implement it, so we use `console.log`). Expected Node output
+    // was: init 2 Immediate / init 3 Timeout / destroy 2 / before 3 /
+    // after 3 / destroy 3. We print from a nested setImmediate so the
+    // setTimeout's own after/destroy can be observed first.
+    const { stdout, stderr, exitCode } = await runScript(`
+      const async_hooks = require('async_hooks');
+      const out = [];
+      async_hooks.createHook({
+        init:    (id, provider) => out.push('init ' + provider),
+        before:  (id) => out.push('before'),
+        after:   (id) => out.push('after'),
+        destroy: (id) => out.push('destroy'),
+      }).enable();
+
+      const timerId1 = setImmediate(() => {
+        out.push('setImmediate-cb');
+      });
+      clearImmediate(timerId1);
+
+      setTimeout(() => {
+        setImmediate(() => setImmediate(() => {
+          console.log(out.join('\\n'));
+        }));
+      }, 20);
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const lines = stdout.trim().split("\n");
+    // The cleared setImmediate never runs.
+    expect(lines).not.toContain("setImmediate-cb");
+    // The sequence must contain: init Immediate, init Timeout, destroy
+    // (of the Immediate), before, after (of the Timeout) — in that order.
+    const initImm = lines.indexOf("init Immediate");
+    const initTim = lines.indexOf("init Timeout");
+    const firstDestroy = lines.indexOf("destroy");
+    const firstBefore = lines.indexOf("before");
+    const firstAfter = lines.indexOf("after");
+    expect(initImm).toBeGreaterThanOrEqual(0);
+    expect(initTim).toBeGreaterThanOrEqual(0);
+    expect(firstDestroy).toBeGreaterThanOrEqual(0);
+    expect(firstBefore).toBeGreaterThanOrEqual(0);
+    expect(firstAfter).toBeGreaterThanOrEqual(0);
+    expect(initImm).toBeLessThan(firstDestroy);
+    expect(initTim).toBeLessThan(firstDestroy);
+    expect(firstDestroy).toBeLessThan(firstBefore);
+    expect(firstBefore).toBeLessThan(firstAfter);
+  },
+);
+
+test.concurrent("createHook fires init+before+after per tick for setInterval", async () => {
+  // Log from two nested setImmediates so every before/after pair is
+  // observed before the print — including after/destroy of the interval.
+  const { stdout, stderr, exitCode } = await runScript(`
+    const async_hooks = require('async_hooks');
+    const events = [];
+    const intervalAsyncId = { value: null };
+    async_hooks.createHook({
+      init: (id, type) => {
+        if (type === 'Timeout' && intervalAsyncId.value == null) {
+          intervalAsyncId.value = id;
+        }
+        events.push(['init', id, type]);
+      },
+      before: (id) => events.push(['before', id]),
+      after: (id) => events.push(['after', id]),
+      destroy: (id) => events.push(['destroy', id]),
+    }).enable();
+
+    let ticks = 0;
+    const id = setInterval(() => {
+      events.push(['tick', ++ticks]);
+      if (ticks === 3) {
+        clearInterval(id);
+        setTimeout(() => {
+          setImmediate(() => setImmediate(() => {
+            console.log(JSON.stringify({ events, intervalId: intervalAsyncId.value }));
+          }));
+        }, 10);
+      }
+    }, 5);
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const { events, intervalId } = JSON.parse(stdout.trim());
+  // Each interval tick has a matching before/after pair scoped to the
+  // interval's own async id.
+  const tickIndices = events
+    .map((e, i) => (e[0] === "tick" ? i : -1))
+    .filter(i => i !== -1);
+  expect(tickIndices).toHaveLength(3);
+  for (const tickIdx of tickIndices) {
+    // The tick must be bracketed by a before/after pair for the interval
+    // — but the body of the tick may itself spawn other timers (before
+    // `after` fires) so we scan outward rather than expecting immediate
+    // neighbours.
+    const beforeIdx = findLastIndex(
+      events.slice(0, tickIdx),
+      e => e[0] === "before" && e[1] === intervalId,
+    );
+    const afterIdx = events.findIndex(
+      (e, i) => i > tickIdx && e[0] === "after" && e[1] === intervalId,
+    );
+    expect(beforeIdx).toBeGreaterThanOrEqual(0);
+    expect(afterIdx).toBeGreaterThan(tickIdx);
+  }
+  // The interval had exactly one init (it's not re-initialized per tick).
+  const intervalInits = events.filter(e => e[0] === "init" && e[1] === intervalId);
+  expect(intervalInits).toHaveLength(1);
+  // After clearInterval, destroy must fire for the interval.
+  expect(events).toContainEqual(["destroy", intervalId]);
+});
+
+// Array.prototype.findLastIndex polyfill for clarity in the interval test.
+function findLastIndex<T>(arr: T[], pred: (e: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (pred(arr[i])) return i;
+  }
+  return -1;
+}
+
+test.concurrent("createHook can be disabled to stop emitting events", async () => {
+  const { stdout, stderr, exitCode } = await runScript(`
+    const async_hooks = require('async_hooks');
+    const events = [];
+    const h = async_hooks.createHook({
+      init: (id, type) => events.push(['init', type]),
+    });
+    h.enable();
+    setTimeout(() => {}, 5);     // should emit init
+    h.disable();
+    setTimeout(() => {}, 10);    // should NOT emit init
+    setTimeout(() => {
+      console.log(JSON.stringify(events));
+    }, 30);
+  `);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const parsed = JSON.parse(stdout.trim());
+  // Exactly one init: the first setTimeout. The one after .disable() plus
+  // the tail setTimeout (which fires the log) are both while the hook is
+  // disabled.
+  const inits = parsed.filter(e => e[0] === "init");
+  expect(inits).toEqual([["init", "Timeout"]]);
+});
+
+test.concurrent("createHook validates hook shape (preserved pre-existing behavior)", async () => {
+  // This is the only async_hooks.createHook test that existed before
+  // #30827 — keep it green. `ERR_ASYNC_CALLBACK` must be thrown for any
+  // non-function hook property.
+  const { stdout, stderr, exitCode } = await runScript(`
+    const async_hooks = require('async_hooks');
+    const assert = require('assert');
+    const bad = [null, -1, 1, {}, []];
+    for (const name of ['init', 'before', 'after', 'destroy', 'promiseResolve']) {
+      for (const value of bad) {
+        assert.throws(
+          () => async_hooks.createHook({ [name]: value }),
+          { code: 'ERR_ASYNC_CALLBACK', name: 'TypeError' },
+        );
+      }
+    }
+    console.log('ok');
+  `);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});

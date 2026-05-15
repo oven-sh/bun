@@ -358,7 +358,10 @@ fn find_playwright_shell() -> Option<ZBox> {
     }
 
     // Fall back to the non-cft linux arm64 layout.
-    #[cfg(all(any(target_os = "linux", target_os = "android"), target_arch = "aarch64"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        target_arch = "aarch64"
+    ))]
     {
         let bin_parts2: [&[u8]; 3] = [
             cache_dir,
@@ -633,7 +636,12 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
         b"BraveSoftware\\Brave-Browser\\User Data\\DevToolsActivePort",
         b"Microsoft\\Edge\\User Data\\DevToolsActivePort",
     ];
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
     let candidates: &[&[u8]] = &[];
 
     let mut path_buf = path_buffer_pool::get();

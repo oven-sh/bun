@@ -770,7 +770,10 @@ pub fn spawn_process_posix(
     let mut dup_stdout_to_stderr: bool = false;
 
     // The label is only referenced from the Linux memfd fast-path below.
-    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(unused_labels))]
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android")),
+        allow(unused_labels)
+    )]
     'stdio: for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
         let flag: u32 = (if i == 0 {

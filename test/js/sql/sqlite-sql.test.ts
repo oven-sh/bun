@@ -1362,14 +1362,12 @@ SELECT id, name FROM t ORDER BY id`;
 
     // Leading comment on an INSERT ... SELECT should still report
     // the mutation's affected row count (not go through stmt.all()).
-    const ins =
-      await sql`/* tag=me */ INSERT INTO t (id, name) SELECT id + 10, name || ${"!"} FROM t WHERE id <= 2`;
+    const ins = await sql`/* tag=me */ INSERT INTO t (id, name) SELECT id + 10, name || ${"!"} FROM t WHERE id <= 2`;
     expect(ins.command).toBe("INSERT");
     expect(ins.count).toBe(2);
 
     // String literal containing `--` must not be mistaken for a comment.
-    const lit =
-      await sql<{ quoted: string }[]>`SELECT ${"hello -- world"} AS quoted`;
+    const lit = await sql<{ quoted: string }[]>`SELECT ${"hello -- world"} AS quoted`;
     expect(lit[0].quoted).toBe("hello -- world");
   });
   test("order by and limit in update statements", async () => {

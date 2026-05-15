@@ -27,6 +27,53 @@ Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
 
+    // Override _read to handle EAGAIN errors gracefully.
+    // tty.ReadStream inherits from fs.ReadStream, but TTY/PTY master fds
+    // are non-blocking and can return EAGAIN when no data is available.
+    // fs.ReadStream._read() treats all errors as fatal via errorOrDestroy(),
+    // which auto-destroys the stream and closes the fd. For TTYs, EAGAIN
+    // is expected and should not close the fd. (Node.js avoids this by
+    // extending net.Socket with poll-based I/O instead of fs.ReadStream.)
+    Prototype._read = function (n) {
+      n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);
+
+      if (n <= 0) {
+        this.push(null);
+        return;
+      }
+
+      const buf = Buffer.allocUnsafeSlow(n);
+
+      require("node:fs").read(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
+        if (er) {
+          if (er.code === "EAGAIN" || er.code === "EWOULDBLOCK") {
+            // Non-blocking fd has no data available yet - just emit the
+            // error so user-space handlers (e.g. node-pty) can handle it,
+            // but do NOT destroy the stream or close the fd.
+            this.emit("error", er);
+            return;
+          }
+          require("internal/streams/destroy").errorOrDestroy(this, er);
+        } else if (bytesRead > 0) {
+          if (this.pos !== undefined) {
+            this.pos += bytesRead;
+          }
+
+          this.bytesRead += bytesRead;
+
+          if (bytesRead !== buf.length) {
+            const dst = Buffer.allocUnsafeSlow(bytesRead);
+            buf.copy(dst, 0, 0, bytesRead);
+            buf = dst;
+          }
+
+          this.push(buf);
+        } else {
+          this.push(null);
+        }
+      });
+    };
+
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
     Prototype.ref = function () {

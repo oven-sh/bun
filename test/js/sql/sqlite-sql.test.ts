@@ -1366,9 +1366,42 @@ SELECT id, name FROM t ORDER BY id`;
     expect(ins.command).toBe("INSERT");
     expect(ins.count).toBe(2);
 
-    // String literal containing `--` must not be mistaken for a comment.
-    const lit = await sql<{ quoted: string }[]>`SELECT ${"hello -- world"} AS quoted`;
+    // Inline string literal containing `--` must not be mistaken for a
+    // line comment (bound parameters would be sent as `?` and bypass the
+    // parser entirely, so use an unsafe literal).
+    const lit = await sql.unsafe(`SELECT 'hello -- world' AS quoted`);
     expect(lit[0].quoted).toBe("hello -- world");
+
+    // Same for `/* ... */` inside a string literal.
+    const blk = await sql.unsafe(`SELECT 'x /* not a comment */ y' AS quoted`);
+    expect(blk[0].quoted).toBe("x /* not a comment */ y");
+  });
+  test("quoted identifiers (`...`, [...], \"...\") containing comment characters preserve RETURNING", async () => {
+    // SQLite accepts four identifier-quoting styles (see
+    // https://sqlite.org/lang_keywords.html). If stripSQLComments only
+    // knew about single/double quotes, a `--` inside a `[...]` or
+    // `` `...` `` identifier would be treated as a line comment, eating
+    // the rest of the query (including a trailing RETURNING clause) and
+    // routing the statement through `db.run()` instead of `stmt.all()`.
+    await using sql = new SQL("sqlite://:memory:");
+    await sql.unsafe(`CREATE TABLE t1 ("a--b" INTEGER)`);
+    await sql.unsafe(`CREATE TABLE t2 ("a--b" INTEGER)`);
+    await sql.unsafe(`CREATE TABLE t3 ("a--b" INTEGER)`);
+
+    const bracket = await sql.unsafe(`INSERT INTO t1 ([a--b]) VALUES (1) RETURNING *`);
+    expect(bracket.command).toBe("INSERT");
+    expect(bracket.count).toBe(1);
+    expect(Array.from(bracket)).toEqual([{ "a--b": 1 }]);
+
+    const backtick = await sql.unsafe("INSERT INTO t2 (`a--b`) VALUES (1) RETURNING *");
+    expect(backtick.command).toBe("INSERT");
+    expect(backtick.count).toBe(1);
+    expect(Array.from(backtick)).toEqual([{ "a--b": 1 }]);
+
+    const dquoted = await sql.unsafe(`INSERT INTO t3 ("a--b") VALUES (1) RETURNING *`);
+    expect(dquoted.command).toBe("INSERT");
+    expect(dquoted.count).toBe(1);
+    expect(Array.from(dquoted)).toEqual([{ "a--b": 1 }]);
   });
   test("order by and limit in update statements", async () => {
     await using sql = new SQL("sqlite://:memory:");

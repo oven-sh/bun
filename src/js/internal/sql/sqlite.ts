@@ -52,9 +52,11 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
 
 /**
  * Strip SQL comments (`/* ... *\/` and `-- ... \n`) from a query so that
- * `parseSQLQuery` can locate the leading statement keyword. Quoted strings
- * (single or double quotes) are preserved verbatim — a `--` or `/*` inside
- * a string literal is data, not a comment.
+ * `parseSQLQuery` can locate the leading statement keyword. Quoted regions
+ * — string literals in `'...'`, identifiers in `"..."` or `` `...` `` /
+ * `[...]` (SQLite accepts all four; see https://sqlite.org/lang_keywords.html)
+ * — are preserved verbatim, so a `--` or `/*` inside them is data, not a
+ * comment.
  *
  * Only called once per query from `parseSQLQuery`; operates on the
  * upper-cased input.
@@ -62,16 +64,20 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
 function stripSQLComments(text: string): string {
   const len = text.length;
   let out = "";
-  let quoted: false | "'" | '"' = false;
+  // `quoted` holds the OPENING delimiter. `[` closes on `]`; the rest close
+  // on themselves.
+  let quoted: false | "'" | '"' | "`" | "[" = false;
   let i = 0;
   while (i < len) {
     const c = text[i];
     if (quoted) {
       out += c;
-      // SQL strings use doubled-quote as an escape (`''` / `""`). Toggle
-      // the quote state only when we see a single closing quote.
-      if (c === quoted) {
-        if (i + 1 < len && text[i + 1] === quoted) {
+      const closing = quoted === "[" ? "]" : quoted;
+      if (c === closing) {
+        // `'`, `"`, and `` ` `` use a doubled delimiter as an escape (`''`
+        // / `""` / ` `` `). `[...]` has no escape mechanism — the first `]`
+        // always terminates it. See https://sqlite.org/lang_keywords.html.
+        if (quoted !== "[" && i + 1 < len && text[i + 1] === closing) {
           out += text[i + 1];
           i += 2;
           continue;
@@ -81,7 +87,7 @@ function stripSQLComments(text: string): string {
       i++;
       continue;
     }
-    if (c === "'" || c === '"') {
+    if (c === "'" || c === '"' || c === "`" || c === "[") {
       quoted = c;
       out += c;
       i++;

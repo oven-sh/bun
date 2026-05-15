@@ -94,6 +94,21 @@ export const cssInternals = {
   prefixTest: $newZigFunction("css_internals.zig", "prefixTest", 3),
   _test: $newZigFunction("css_internals.zig", "_test", 3),
   attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
+  /**
+   * For two refs `a = Ref::init(aInner, aSource, false)` and
+   * `b = Ref::init(bInner, bSource, false)`, returns four hashes — two for
+   * `a` and two for `b`, each pair constructed with a different debug-ident
+   * slice so the debug-build `ptrbits` lane differs. A correct hash satisfies
+   * `[0] == [1]`, `[2] == [3]`, and `[0] != [2]`. Used by the regression test
+   * for issue #30772 (the ref-tagged branch only mixed 2 of the 16 bytes of
+   * the packed `u128`).
+   */
+  identOrRefHashRefs: $newZigFunction("css_internals.zig", "identOrRefHashRefs", 4) as (
+    aInner: number,
+    aSource: number,
+    bInner: number,
+    bSource: number,
+  ) => [number, number, number, number],
 };
 
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {

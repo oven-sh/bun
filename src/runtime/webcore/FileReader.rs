@@ -355,20 +355,25 @@ impl FileReader {
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // SAFETY: synchronous JS-thread `on_start` call; no JS re-entry
-            // occurs inside the match, so no other `&Data`/`&mut Data`
-            // borrow of this `Store` is live for its duration. The `Store`
-            // itself is likely aliased by the originating JS `Blob`
-            // (`Lazy::Blob` was populated via `store.clone()`), but its
-            // own `data_mut` callers are also JS-thread-synchronous. This
-            // mirrors Zig's `*Blob.Store` direct field access.
-            match unsafe { store.data_mut() } {
+            // Shared borrow of the backing `Store` is always sound; clone
+            // the `File` out so `open_file_blob` can take `&mut File` on
+            // its own copy rather than needing `data_mut()` to materialize
+            // `&mut Data` on the shared `Store` (multiple `StoreRef` clones
+            // to the same allocation exist, e.g. the originating JS `Blob`
+            // — see the `Lazy::Blob(store.clone())` source in
+            // `ReadableStream::from_blob_copy_ref`). The clone is cheap:
+            // `PathLike` bumps its intrusive refcount, `last_modified` is
+            // an `AtomicU64` snapshot, the rest is `Copy`.
+            match &store.data {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
-                    let open_result = Lazy::open_file_blob(file);
-                    // drop the StoreRef; `lazy` was already cleared above
+                    let mut file_local = file.clone();
+                    // PORT NOTE: reshaped for borrowck — Zig `defer { deref; lazy = none }`
+                    // is hoisted after the match below since both arms fall through.
+                    let open_result = Lazy::open_file_blob(&mut file_local);
+                    // drop the StoreRef (Zig: this.lazy.blob.deref()); `lazy` was already cleared above
                     drop(store);
                     match open_result {
                         Err(err) => {

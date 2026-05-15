@@ -191,12 +191,19 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
     await fs.unlink(sym);
   });
 
-  test("realpath / realpath native-fallback", async () => {
+  test("realpath / realpath.native", async () => {
     using dir = tempDir("fs-disp-rp", { "f.txt": "" });
     const p = join(String(dir), "f.txt");
-    // Default realpath; hits Realpath. The internal native-fallback path
-    // (RealpathNonNative) is exercised on symlink chains with `..` segments.
+    // `fs.promises.realpath` routes through `node_fs_binding::realpath`
+    // (`src/runtime/node/node_fs_binding.rs:396`) which picks the
+    // `RealpathNonNative` dispatch arm.
     expect(await fs.realpath(p)).toBeTruthy();
+    // `fs.realpath.native` routes through `realpath_native`
+    // (`node_fs_binding.rs:397`) which picks the `Realpath` dispatch arm.
+    const r = await new Promise<string | Buffer>((resolve, reject) =>
+      fscb.realpath.native(p, (err, res) => (err ? reject(err) : resolve(res))),
+    );
+    expect(r).toBeTruthy();
   });
 
   test("mkdir / mkdtemp", async () => {

@@ -211,10 +211,12 @@ impl InternalSourceMap {
     pub unsafe fn free_owned(self) {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
-        drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
-            self.data.cast_mut(),
-            self.total_len(),
-        )));
+        unsafe {
+            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
+                self.data.cast_mut(),
+                self.total_len(),
+            )));
+        }
     }
 
     pub fn memory_cost(self) -> usize {

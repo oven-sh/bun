@@ -1507,7 +1507,7 @@ impl<'a> Parser<'a> {
                     // consistency with the unquoted form and the CLI flag.
                     // Trim first so `"259200 "` doesn't fall through to
                     // `parse_ms` (which would treat it as milliseconds).
-                    let text = s.string(self.bump).expect("OOM").trim_ascii();
+                    let text = s.string(self.bump)?.trim_ascii();
                     let ms = if let Some(secs) = bun_core::parse_f64(text) {
                         secs * MS_PER_S
                     } else if let Some(ms) = bun_core::parse_ms(text) {

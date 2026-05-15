@@ -42,8 +42,7 @@ const cargo = Bun.which("cargo");
 // without it, and Bun.spawnSync throws ENOENT (it does not return a
 // non-zero exitCode) when the executable is missing.
 const rustup = Bun.which("rustup");
-const skip =
-  !isLinux || cargo == null || rustup == null || !hasAndroidTarget(rustup) || !workspaceResolvable(cargo);
+const skip = !isLinux || cargo == null || rustup == null || !hasAndroidTarget(rustup) || !workspaceResolvable(cargo);
 
 describe.skipIf(skip)("recover.rs on Android", () => {
   // Building bun_runtime for aarch64-linux-android can be slow on a cold

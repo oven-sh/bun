@@ -3927,38 +3927,43 @@ class ClientHttp2Session extends Http2Session {
       }
       const url = this.#url;
 
-      let authority = headers[":authority"];
-      if (!authority) {
-        // Use precomputed authority (like Node.js's session[kAuthority])
-        authority = this.#authority;
-        if (!headers["host"]) {
-          headers[":authority"] = authority;
-        }
-      }
       let method = headers[":method"];
       if (!method) {
         method = "GET";
         headers[":method"] = method;
       }
 
-      let scheme = headers[":scheme"];
-      if (!scheme) {
-        let protocol: string = url.protocol || options?.protocol || "https:";
-        switch (protocol) {
-          case "https:":
-            scheme = "https";
-            break;
-          case "http:":
-            scheme = "http";
-            break;
-          default:
-            scheme = protocol;
-        }
-        headers[":scheme"] = scheme;
-      }
+      const isConnect = method === HTTP2_METHOD_CONNECT;
+      let authority = headers[":authority"];
 
-      if (headers[":path"] == undefined) {
-        headers[":path"] = "/";
+      if (!isConnect || headers[":protocol"] !== undefined) {
+        if (!authority) {
+          // Use precomputed authority (like Node.js's session[kAuthority])
+          authority = this.#authority;
+          if (!headers["host"]) {
+            headers[":authority"] = authority;
+          }
+        }
+        if (!headers[":scheme"]) {
+          let protocol: string = url.protocol || options?.protocol || "https:";
+          switch (protocol) {
+            case "https:":
+              headers[":scheme"] = "https";
+              break;
+            case "http:":
+              headers[":scheme"] = "http";
+              break;
+            default:
+              headers[":scheme"] = protocol;
+          }
+        }
+        if (headers[":path"] == undefined) {
+          headers[":path"] = "/";
+        }
+      } else {
+        if (!authority) throw $ERR_HTTP2_CONNECT_AUTHORITY();
+        if (headers[":scheme"] !== undefined) throw $ERR_HTTP2_CONNECT_SCHEME();
+        if (headers[":path"] !== undefined) throw $ERR_HTTP2_CONNECT_PATH();
       }
 
       if (NoPayloadMethods.has(method.toUpperCase())) {

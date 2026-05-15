@@ -2,7 +2,6 @@ use std::io::Write as _;
 
 use bstr::{BStr, ByteSlice};
 
-use crate::api::bun::process::Status as ProcStatus;
 use crate::api::bun::process::sync::{
     Options as SpawnSyncOptions, SyncStdio as Stdio, spawn as spawn_sync,
 };
@@ -1055,13 +1054,9 @@ impl PmVersionCommand {
                     // Match the commit_proc / tag_proc handlers below:
                     // `result.status` is a tagged union and `is_ok()` returns
                     // false for signaled / errored cases as well as non-zero
-                    // exits, so formatting the exit code here would be
-                    // misleading in those cases. Just report the failure.
-                    let exit_code: i32 = match &result.status {
-                        ProcStatus::Exited(e) => i32::from(e.code),
-                        _ => -1,
-                    };
-                    Output::err_generic("Git add failed with exit code {}", (exit_code,));
+                    // exits, so formatting the exit code would be misleading
+                    // in those cases. Just report the failure.
+                    Output::err_generic("Git add failed", ());
                     Global::exit(1);
                 }
             }

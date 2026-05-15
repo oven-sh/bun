@@ -26,7 +26,7 @@ import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
@@ -1169,6 +1169,90 @@ describe("node https server", async () => {
       await fetch(url, { tls: { rejectUnauthorized: false } });
     } catch (e) {
       throw e;
+    } finally {
+      done();
+    }
+  });
+
+  // Regression for #26638: the ClientRequest streaming body async generator
+  // could lose chunks when multiple write() calls arrived between generator
+  // iterations. Only the first write resolved the pending Promise (clearing
+  // resolveNextChunk); the rest pushed to the buffer with no notification and
+  // were never yielded, truncating the request body. On localhost this shows
+  // up on the SECOND request (connection reused, generator starts immediately
+  // and races the pipe); over a real network it shows up on the first.
+  it("does not lose piped stream chunks on a reused HTTPS connection (#26638)", async () => {
+    const { url, done } = await createServer((req, res) => {
+      let bytes = 0;
+      req.on("data", chunk => {
+        bytes += chunk.length;
+      });
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ bytesReceived: bytes }));
+      });
+    });
+
+    const CHUNK_SIZE = 1024;
+    const TOTAL_CHUNKS = 200;
+    const BATCH_SIZE = 50;
+    const EXPECTED_BYTES = CHUNK_SIZE * TOTAL_CHUNKS;
+
+    function pipeChunksToRequest(): Promise<{ bytesReceived: number }> {
+      return new Promise((resolve, reject) => {
+        const req = https.request(url, { method: "POST", rejectUnauthorized: false }, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("error", reject);
+          res.on("data", c => (data += c));
+          res.on("end", () => {
+            try {
+              resolve(JSON.parse(data));
+            } catch {
+              reject(new Error(`Failed to parse response: ${data}`));
+            }
+          });
+        });
+
+        req.on("error", reject);
+
+        // Deliver chunks in batches separated by setImmediate. Each batch
+        // writes multiple chunks synchronously; the batches straddle event
+        // loop ticks so a batch can land while the async generator is parked
+        // at its `await`. setImmediate here is the interleaving mechanism
+        // that reproduces the race, not an arbitrary delay.
+        let pushed = 0;
+        const readable = new Readable({
+          read() {
+            if (pushed >= TOTAL_CHUNKS) return;
+            setImmediate(() => {
+              const batch = Math.min(BATCH_SIZE, TOTAL_CHUNKS - pushed);
+              for (let i = 0; i < batch; i++) {
+                this.push(Buffer.alloc(CHUNK_SIZE, 0x41));
+                pushed++;
+              }
+              if (pushed >= TOTAL_CHUNKS) {
+                this.push(null);
+              }
+            });
+          },
+        });
+
+        readable.pipe(req);
+      });
+    }
+
+    try {
+      // First request establishes the TLS connection: the handshake delays
+      // the generator so all chunks queue before it runs (passes regardless).
+      const first = await pipeChunksToRequest();
+      expect(first.bytesReceived).toBe(EXPECTED_BYTES);
+
+      // Second request reuses the keep-alive connection: no handshake, the
+      // generator starts immediately and races the piped data, dropping
+      // buffered chunks without the fix.
+      const second = await pipeChunksToRequest();
+      expect(second.bytesReceived).toBe(EXPECTED_BYTES);
     } finally {
       done();
     }

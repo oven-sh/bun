@@ -71,7 +71,10 @@ impl<Value> GuardedBy<Value, Mutex> {
     #[inline]
     pub fn try_lock(&self) -> Option<GuardedLock<'_, Value, Mutex>> {
         if self.mutex.try_lock() {
-            Some(GuardedLock { guarded: self, _not_send: core::marker::PhantomData })
+            Some(GuardedLock {
+                guarded: self,
+                _not_send: core::marker::PhantomData,
+            })
         } else {
             None
         }
@@ -100,7 +103,10 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     /// releases the lock on drop.
     pub fn lock(&self) -> GuardedLock<'_, Value, M> {
         self.mutex.lock();
-        GuardedLock { guarded: self, _not_send: core::marker::PhantomData }
+        GuardedLock {
+            guarded: self,
+            _not_send: core::marker::PhantomData,
+        }
     }
 
     /// Lock-free mutable access when the caller already has `&mut self`
@@ -132,12 +138,9 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
 pub struct GuardedLock<'a, Value, M: RawMutex> {
     guarded: &'a GuardedBy<Value, M>,
     // Preserve the same `!Send`/`!Sync` auto-trait surface that sibling
-    // `MutexGuard` (Mutex.rs:114-120) already has: the Darwin
-    // `os_unfair_lock` / Windows `SRWLOCK` backends require unlock on the
-    // locking thread. Sending a guard across threads UBs on Darwin and
-    // aborts on Windows (SRWLOCK_NOT_ACQUIRED). Without this marker, a
-    // future caller could `std::thread::spawn(move || drop(guard))` and
-    // hit the platform check.
+    // `MutexGuard` already has: the OS mutex backends require unlock on the
+    // locking thread. Without this marker, safe code could move a guard to
+    // another thread and run `Drop` there.
     _not_send: core::marker::PhantomData<*const ()>,
 }
 

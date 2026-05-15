@@ -182,18 +182,14 @@ impl GetErrno for usize {
         } else {
             0
         };
-        // Use the checked `SystemErrno::init` path. The previous implementation
-        // transmute<u16, E>(int as u16) was UB for any int outside the dense
-        // discriminant set of E (verified via miri:
-        // `.unsafe-audit/verification/miri-confirmed-linux-errno-transmute.md`).
-        // The kernel's errno range is documented as [0, 4096) in the original
-        // SAFETY comment but E's discriminants are only dense up to ~133;
-        // bytes in [134, 4095) produced niche-violating UB.
-        // `init` returns None for unmapped values; SUCCESS is the documented
-        // fallback (mirrors the existing `e_from_negated` policy at lib.rs:289).
-        // `int` is `isize`, narrowed to `i64`. The range is [0, 4096) per the
-        // arithmetic above, so the cast is lossless on all supported targets
-        // (32- and 64-bit). `init` itself takes `i64` per its POSIX signature.
+        // Use the checked `SystemErrno::init` path. The previous
+        // transmute<u16, E> was only sound for declared enum discriminants,
+        // while the raw-syscall errno range is wider than Linux's dense
+        // `SystemErrno` set. Unknown values fall back to SUCCESS, matching the
+        // existing `e_from_negated` policy in lib.rs.
+        //
+        // `int` is in [0, 4096), so this cast is lossless on supported
+        // 32- and 64-bit targets. `init` takes `i64` for POSIX errno parity.
         SystemErrno::init(int as i64).unwrap_or(SystemErrno::SUCCESS)
     }
 }

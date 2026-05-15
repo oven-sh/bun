@@ -595,20 +595,25 @@ impl FSEventsLoop {
         let signal_source =
             unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
-            // `this` leaks — once-per-process error path, a few hundred bytes.
+            // `this` leaks — CFRunLoopSourceCreate only fails under OOM, at
+            // which point one struct is noise. (`FSEVENTS_DEFAULT_LOOP` stays
+            // `None`, so `watch()` retries and leaks again on the next call;
+            // not bounded, but not reachable outside allocator failure.)
             return Err(bun_core::err!("FailedToCreateCoreFoudationSourceLoop"));
         }
         this.signal_source.store(signal_source, Ordering::Relaxed);
 
         // `FSEventsLoop: Sync` ⇒ `&'static FSEventsLoop: Send`, so the
         // spawn closure captures `this` directly — no raw-pointer smuggling.
-        // Zig: `try std.Thread.spawn` — propagate via Builder so a
-        // once-per-process pthread_create failure surfaces to JS instead of
-        // panicking (matches `Linux::init`/`Kqueue::init`).
+        // Zig: `try std.Thread.spawn` — propagate via Builder so
+        // pthread_create failure surfaces to JS instead of panicking
+        // (matches `Linux::init`/`Kqueue::init`).
         let handle = std::thread::Builder::new()
             .spawn(move || this.cf_thread_loop())
             .map_err(|_| {
-                // `this` and `signal_source` leak — once-per-process error path.
+                // `this` and `signal_source` leak — thread-spawn failure
+                // means the process is OOM; one struct is noise. Same
+                // retry-leak shape as the CF-source failure above.
                 bun_core::err!("FailedToSpawnFSEventsThread")
             })?;
         // SAFETY: `thread` is JS-thread-only; the CF thread captured `this`

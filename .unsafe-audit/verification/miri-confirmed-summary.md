@@ -21,7 +21,7 @@ For each bug:
 
 ## What this verification does NOT prove
 
-- That all of these bugs trigger in production today. PUB-INSTALL-1, PUB-INSTALL-3, and UB-RT-001 have JS/supply-chain reachability evidence; exploitability beyond reaching UB is not claimed here. Linear_fifo and linux_errno have no known live callers today — they're latent bugs that will trigger as soon as a caller does the obvious thing the source has documented as the calling convention.
+- That all of these bugs trigger in production today. PUB-INSTALL-1, PUB-INSTALL-3, and UB-RT-001 have JS/supply-chain reachability evidence; exploitability beyond reaching UB is not claimed here. Linear_fifo and linux_errno have no known live callers today — they're latent bugs that would trigger if a caller follows the source's documented calling convention with the reproduced inputs.
 - That mimalloc's permissiveness wouldn't paper over UB-RT-001 in production. miri's `incorrect layout on deallocation` is the abstract `GlobalAlloc` contract; mimalloc-specific behavior is more permissive in practice. The bug is still UB by Rust's abstract machine.
 - That the bundler B-1..B-5 cluster (parallel `&mut LinkerContext` aliasing) reproduces under miri — that requires actual multi-thread reasoning and the right scheduling, both of which miri can model but the reproducer would need a Loom-style integration. Pass-5 work.
 

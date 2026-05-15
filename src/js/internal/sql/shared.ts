@@ -617,7 +617,14 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || url.pathname;
+    // Only use url.pathname as the Unix socket path for unix:// URLs.
+    // For postgres://, mysql://, etc., the pathname is the database name (e.g. "/mydb"),
+    // not a socket path. Using it as the socket path causes FailedToOpenSocket (#27713).
+    if (url.protocol === "unix:") {
+      path ||= options.path || url.pathname;
+    } else {
+      path ||= options.path;
+    }
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {

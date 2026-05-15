@@ -49,7 +49,7 @@ Twelve of the 122 sites required reading a transitive caller (one or two steps u
 
 The cluster has a documented source of truth: `impl_streaming_writer_parent!` in `src/io/PipeWriter.rs`. This macro stamps the parent-vtable shims that wire uWS / libuv I/O callbacks into a parent type (`FileSink`, `IOWriter`, `WindowsNamedPipe`, `StaticPipeWriter`). The macro's `borrow` parameter encodes the three discipline modes, and the module-level comment is the explicit specification of when each is required (`src/io/PipeWriter.rs:2562–2596`):
 
-```
+```text
 // `borrow = mut`    → bodies form `&mut *this` (unique access for the
 //                     callback's duration; the writer never holds
 //                     `&mut Parent` itself).

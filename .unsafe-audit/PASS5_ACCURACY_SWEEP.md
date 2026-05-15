@@ -1,7 +1,7 @@
 # Pass 5 — Final Accuracy Sweep
 
 **Date:** 2026-05-15
-**Scope:** Re-verify every defensible T1 finding (post-Codex P3 final review + P4 corrections) against current `git HEAD` on branch `claude/unsafe-exorcist-audit` (HEAD = `3e71554346`).
+**Scope:** Re-verify every defensible T1 finding (post-Codex P3 final review + P4 corrections) against the current `claude/unsafe-exorcist-audit` branch.
 **Method:** For each finding, read the cited file:line in the current tree (not the audit-time snapshot), confirm: (a) file still exists, (b) the cited line still contains the bug shape described, (c) the SAFETY comment hasn't been changed to mitigate, (d) no fix has been merged on this branch.
 **Editorial discipline:** evidence cited per finding is the current-source line content, not hearsay.
 
@@ -66,14 +66,15 @@
 
 | Class | Count |
 |-------|------:|
-| VERIFIED (still real, line still accurate) | 26 |
+| VERIFIED (still real, line still accurate) | 31 |
+| VERIFIED (minor non-substantive line drift, bug shape unchanged) | 1 |
 | VERIFIED-STILL-LIVE-ON-AUDIT-BRANCH (fix exists on a different branch only) | 3 |
 | VERIFIED-WITH-CAVEAT (verified but with weakened claim / severity) | 2 |
 | DRIFTED (bug intact, line shifted) | 1 |
 | FIXED-UPSTREAM | 0 |
 | FALSE-POSITIVE | 0 |
 
-**Total findings re-verified: 31 individual entries** covering the 21-numbered group from PASS4_FINDINGS_INDEX.md (PUB-INSTALL-1..4, F-NEW-1/2, H9, H5, bundler-B1..B5, U2.x8, U1, the three "PR #30765 series" findings, UB-RT-001, F-1, P3-BC-001..005, CRASH-T1-1/2, sys-T1 family of 4).
+**Total findings re-verified: 38 individual entries** covering the 21-numbered group from PASS4_FINDINGS_INDEX.md (PUB-INSTALL-1..4, F-NEW-1/2, H9, H5, bundler-B1..B5, U2.x8, U1, the three "PR #30765 series" findings, UB-RT-001, F-1, P3-BC-001..005, CRASH-T1-1/2, sys-T1 family of 4).
 
 **Net adjustment:** the audit's core finding list holds up, but two entries need presentation discipline: H5 is security/request-smuggling rather than Rust memory UB, and U2 #7 is weaker contract-reliance hardening rather than the same-strength in-frame `&T` provenance bug as the other U2 entries.
 
@@ -161,7 +162,7 @@ findings, plus the presentation/severity corrections above.
 
 ## Final verified priority count
 
-**31 distinct entries verified as real findings or real hardening/security items.** Breakdown by category:
+**38 distinct entries verified as real findings or real hardening/security items.** Breakdown by category:
 
 - 6 P0 supply-chain (PUB-INSTALL-1..4, F-NEW-1, F-NEW-2)
 - 1 HTTP request-smuggling primitive (H5) — non-UB
@@ -176,6 +177,8 @@ findings, plus the presentation/severity corrections above.
 - 4 sys-T1 family (Linux reclen, macOS namlen=0, Windows ×2)
 - 2 crash-signal-safety (CRASH-T1-1, CRASH-T1-2) — not memory UB, but on the consolidated T1-equivalent list
 
-**Zero false-positives. Zero fixed-upstream. One drifted line (U2 #6 → jsc/lib.rs:2022). Three "still live on audit branch" entries (fixes exist on demo branch only). Two presentation/severity corrections required before using this as a headline count: H5 is non-memory-UB security, and U2 #7 is weaker hardening.**
+**Zero fully-invalidated entries in this sweep. Zero fixed-upstream. One drifted line (U2 #6 → jsc/lib.rs:2022). Three "still live on audit branch" entries (fixes exist on demo branch only). Two presentation/severity corrections required before using this as a headline count: H5 is non-memory-UB security, and U2 #7 is weaker hardening.**
 
-The audit is publishable after applying the presentation/severity corrections above. The list survives a fourth independent re-verification against current source.
+The audit is publishable only if downstream summaries carry the presentation
+and severity caveats above. The list survives a fourth independent
+re-verification against current source.

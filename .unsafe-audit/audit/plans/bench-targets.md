@@ -18,8 +18,10 @@ cargo build --release -p bun_bin
 hyperfine --warmup 3 --runs 10 -N \
     'BUN=./build/release/bun-debug bun bench/snippets/<target>.mjs'
 
-# safe-only build
-cargo build --release --features safe-only -p bun_bin
+# safe-only build. The feature is package-scoped; the root crate must either
+# declare a passthrough `safe-only` feature or pass package-qualified features
+# for every touched crate.
+cargo build --release -p bun_bin --features bun_bin/safe-only
 hyperfine --warmup 3 --runs 10 -N \
     'BUN=./build/release/bun-debug bun bench/snippets/<target>.mjs'
 ```

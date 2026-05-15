@@ -162,12 +162,17 @@ declared in every crate that gates a (B) site. The crates needing it are
 - `bun_sourcemap`
 - `bun_base64`
 
-A passthrough at `bun_bin` (the staticlib root) propagates the flag to every
-member crate via `[dependencies] bun_install = { path = "../install", default-features = false, features = ["safe-only"] }` — but the simpler form is the
-workspace-level `--features safe-only` invocation: each crate that declares the
-feature opts in independently. The downside is verbosity; the upside is that a
-crate with no (B) sites does not have to participate. We choose the verbose form
-because it documents which crates have unsafe-for-perf.
+A passthrough at `bun_bin` (the staticlib root) may propagate the flag to
+dependency crates explicitly, for example
+`bun_install = { path = "../install", default-features = false, features = ["safe-only"] }`.
+Do **not** rely on a bare workspace-level `--features safe-only` as if it
+enabled that feature in every member crate. Cargo features are package-scoped:
+the command-line feature applies to selected packages, and workspace-wide
+coverage needs either package-qualified flags such as
+`bun_install/safe-only`, explicit `-p <crate> --features safe-only` runs, or
+dependency-feature propagation through the root crates. We choose the verbose
+form because it documents exactly which crates have unsafe-for-perf and avoids
+silently missing a member crate that declares no local `safe-only` feature.
 
 ### CI matrix
 
@@ -177,8 +182,9 @@ matrix:
   - name: default
     cmd: bun bd
   - name: safe-only
-    cmd: cargo build --release --features safe-only -p bun_bin
-                     && cargo test --release --features safe-only --workspace
+    cmd: cargo build --release -p bun_bin --features bun_bin/safe-only
+                     && cargo test --release -p bun_install --features safe-only
+                     && cargo test --release -p bun_semver --features safe-only
 ```
 
 The `safe-only` lane is allowed to regress benchmarks; what it must not do is
@@ -691,11 +697,12 @@ cluster's hot path. All run via `bun bench/runner.mjs <snippet>`:
 | `slice_from_raw` semver Pool internals | `bench/install/`, `bench/snippets/semver.mjs`                        |
 | `slice_from_raw` MimallocArena         | `bench/bundle/index.ts`                                              |
 
-The harness pattern is identical for every entry: build twice
-(`cargo build --release` vs. `cargo build --release --features safe-only`),
-run each benchmark with each binary under `hyperfine --warmup 3 --runs 10`,
-and record p50 / p95 / variance. Differences within ±2% are noise on the
-Linux CI fleet; differences outside ±5% are load-bearing.
+The harness pattern is identical for every entry: build twice (`cargo build
+--release` vs. the package-scoped safe-only build for the touched crate/root
+passthrough, e.g. `cargo build --release -p bun_bin --features
+bun_bin/safe-only`), run each benchmark with each binary under `hyperfine
+--warmup 3 --runs 10`, and record p50 / p95 / variance. Differences within
+±2% are noise on the Linux CI fleet; differences outside ±5% are load-bearing.
 
 ## Expected perf-delta hypothesis
 

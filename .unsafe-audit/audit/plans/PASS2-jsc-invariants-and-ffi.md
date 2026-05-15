@@ -139,6 +139,7 @@ explicit (`unsafe trait`) or split JS-thread state from worker-thread state with
 1. The HTTP thread holds a refcount on `FetchTasklet`.
 2. When work completes (`run_response_complete` line ~2080), the HTTP thread calls `FetchTasklet::deref_from_thread(task)`.
 3. `deref_from_thread`:
+
    ```rust
    pub fn deref_from_thread(this: *mut FetchTasklet) {
        if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
@@ -153,6 +154,7 @@ explicit (`unsafe trait`) or split JS-thread state from worker-thread state with
        // ... else enqueue to main thread
    }
    ```
+
 4. `deinit` calls `boxed.clear_data()` (line 489), which drops:
    - `self.abort_reason: StrongOptional` (line 472, `deinit()` releases the JSC handle)
    - `self.check_server_identity: StrongOptional` (line 473)
@@ -341,7 +343,11 @@ Filed as audit gap `pre-existing-ub-8` (audit-level: not a current bug, but a ma
 
 1. **Newtype wrap.** Introduce `pub struct ThreadSafeString(String)` and make `Send + Sync` only on `ThreadSafeString`, not `String`. Force the conversion at construction. `src/bun_core/string/mod.rs:1262-1263` already mentions this:
    > A `ThreadSafeString` newtype split would make this static, but is deferred until the FFI surface can be reshaped.
-2. **Compile-time field assertion.** Add a `static_assert!(is_send::<MyType>())` adjacent to each `Send` struct that carries a `String`, with a `// SAFETY: every String field is constructed via clone_utf8/static_/borrow_utf8 or to_thread_safe'd at the boundary.` SAFETY comment.
+2. **Compile-time field assertion.** Add a repo-backed compile-time assertion
+   such as `static_assertions::assert_impl_all!(MyType: Send)` adjacent to
+   each `Send` struct that carries a `String`, with a `// SAFETY: every String
+   field is constructed via clone_utf8/static_/borrow_utf8 or to_thread_safe'd
+   at the boundary.` SAFETY comment.
 
 ### 3.8 I-004 verdict
 
@@ -501,12 +507,14 @@ The `bun:ffi` contract documents this as user-responsibility (`read_unaligned_at
 **Remediation.** This is the documented `bun:ffi` contract, so a full fix means breaking the API. The audit's contribution:
 
 1. **Sharpen the SAFETY comment** at `FFIObject.rs:844,899,927`:
+
    ```rust
    // SAFETY: ptr/len are user-supplied via bun:ffi; the caller is responsible
    // (per the `bun:ffi` contract documented in ffi.d.ts) for ensuring
    // the range is mapped, not concurrently mutated, and not aliased with
    // Rust-managed memory. A bad value here is UB at the JSC ArrayBuffer level.
    ```
+
 2. **Document the contract in `packages/bun-types/ffi.d.ts`** with prominent warning text.
 3. **Optional debug-build guard:** in debug builds, check `addr..addr+len` against the mimalloc-known heap range and `RELEASE_ASSERT` if overlap is detected.
 
@@ -879,6 +887,9 @@ This pass was performed by direct `rg` + read of every cited site; no `cargo exp
 
 Two things would meaningfully improve a future pass:
 
-1. **A per-`Send` struct compile-time assertion** (`static_assert!(is_send::<T>())` style) would let the audit replace per-site spot-checks with a compile-time guarantee for I-002. Effort to introduce: medium.
+1. **A per-`Send` struct compile-time assertion** (for example,
+   `static_assertions::assert_impl_all!(T: Send)`) would let the audit replace
+   per-site spot-checks with a compile-time guarantee for I-002. Effort to
+   introduce: medium.
 
 2. **A `bun:ffi` fuzzing harness** (afl++ / cargo-fuzz on the `to_buffer` / `closeCallback` / `read.u8` host fns) would mechanically exercise `pre-existing-ub-10` through `-12`'s remediations. Most of the bug surface is "bad number passed in" — straightforward fuzz target.

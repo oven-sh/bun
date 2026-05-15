@@ -38,7 +38,7 @@ once and reclaimed by the GC finalizer (which dispatches to a centralized
 
 Crate distribution of the focused `bun_heap_lifecycle ∪ smart_ptr_raw` slice:
 
-```
+```text
 133  bun_runtime          22  bun_jsc            13  bun_install
   8  bun_bundler           7  bun_io              7  bun_spawn
   6  bun_libuv_sys         6  bun_ptr             4  bun_collections
@@ -603,6 +603,7 @@ Per the existing skill's `safety-comment-template`, the audit recommends:
 ### Template 1 — libuv handle (alloc + close-cb pair)
 
 At the allocation site:
+
 ```rust
 // SAFETY: `handle` is freshly Box-allocated (refcount/ownership 1); we
 // transfer ownership to libuv by passing `handle` to `uv_pipe_init`. The
@@ -612,6 +613,7 @@ let handle: *mut uv::Pipe = bun_core::heap::into_raw(Box::new(...));
 ```
 
 At the close cb:
+
 ```rust
 extern "C" fn on_close_destroy(handle: *mut Pipe) {
     // SAFETY: `handle` was Box-allocated at <site>; libuv guarantees the
@@ -644,6 +646,7 @@ pub fn finalize(self: Box<Self>) {
 
 Migrate to `JSValue::create_buffer_from_owned_box(box)` if the call shape
 fits; otherwise:
+
 ```rust
 // SAFETY: `leaked` is freshly Box::leak'd; ownership transfers to the JS
 // MarkedArrayBuffer which frees via `MarkedArrayBuffer_deallocator` (mi_free)
@@ -737,7 +740,7 @@ allocator-vtable interactions (I-007, I-014).
 
 The following 110 sites were read in full context (≥20 lines surrounding):
 
-```
+```text
 src/bun_core/heap.rs:34,44,51,79,90,101,109,119
 src/bun_alloc/lib.rs:2352,2441,2354
 src/ast/lib.rs:3313

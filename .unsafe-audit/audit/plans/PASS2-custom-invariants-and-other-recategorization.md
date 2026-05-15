@@ -346,7 +346,7 @@ documented atomic load/store backing of `inner: UnsafeCell<T>`
 
 **Sites:** `WatchChangedPaths` (#36), `DotenvSingleton` (#52), `Instance`
 (BundleThread, #4), `Instance` (graph, #67), `Instance` (WaiterThreadPosix,
-#65).
+\#65).
 
 **Discharge.** A `OnceLock` (or `OnceCell`) publish before any reader
 exists; the writer-thread spawn is the happens-before edge.
@@ -640,9 +640,11 @@ prior pass's `P2-F1` etc.
 * **Site:** `src/jsc/JSCell.rs:128`
 * **Inventory ID:** S-003568
 * **Current code:**
+
   ```rust
   unsafe impl<T> Send for JsCell<T> {}
   ```
+
 * **Concern:** `JsCell<Rc<U>>` (or any `T: !Send`) compiles, even though
   the underlying `UnsafeCell<T>` is `Send iff T: Send`. Cross-thread move
   of a `JsCell<Rc<U>>` followed by `.with_mut(|x| x.clone())` on the
@@ -655,14 +657,17 @@ prior pass's `P2-F1` etc.
 * **Severity:** Latent. Audit-quality. The type system permits a future
   caller to introduce the bug; no current path triggers it.
 * **Recommended fix:**
+
   ```rust
   unsafe impl<T: Send> Send for JsCell<T> {}
   ```
+
   This preserves every current callsite (every embedded payload type is
   already `Send`) and refuses the next-bug-shape. The `Sync` impl
   intentionally stays unbounded — that's the documented load-bearing lie
   the type is built around.
 * **Verification path:**
+
   ```rust
   const _: fn() = || {
       fn assert_not_send<T: ?Sized>() where T: ?Sized {}
@@ -672,15 +677,18 @@ prior pass's `P2-F1` etc.
   };
   ```
 
+
 ### PUB-N-B — `RacyCell<T>: Sync` unbounded in `T`
 
 * **Site:** `src/bun_core/util.rs:2282`
 * **Inventory ID:** S-001532
 * **Current code:**
+
   ```rust
   unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
   unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
   ```
+
 * **Concern:** The doc explicitly says "Do not wrap *payloads* whose
   `!Sync` is load-bearing (`Cell<U>`, `Rc<U>`, `RefCell<U>`); use
   `thread_local!` or a real lock for those." This is a *caller* rule, not
@@ -694,9 +702,11 @@ prior pass's `P2-F1` etc.
 * **Severity:** Latent. Same audit-quality level as PUB-N-A.
 * **Recommended fix.** Two viable shapes:
   1. **Tighten the bound (preferred):**
+
      ```rust
      unsafe impl<T: ?Sized + Send> Sync for RacyCell<T> {}
      ```
+
      Mirrors nightly's `SyncUnsafeCell<T>`. Refuses `RacyCell<Cell<u32>>`
      (`Cell<u32>: !Send`).
   2. **Split into two newtypes:** `RacyCell<T>` keeps the bound;
@@ -712,10 +722,12 @@ prior pass's `P2-F1` etc.
 * **Site:** `src/jsc/webcore_types.rs:96`
 * **Inventory ID:** S-003919
 * **Current code:**
+
   ```rust
   unsafe impl Send for Blob {}
   unsafe impl Sync for Blob {}
   ```
+
 * **Concern.** The comment says the *pointee* is JS-thread-affine. But the
   fields that make `Blob` `!Sync` are `Cell<*const u8>` and
   `Cell<*const JSGlobalObject>` — and the cell-itself access is what `Sync`
@@ -826,7 +838,7 @@ The Phase-1 inventory should adopt these category names so the next pass
 doesn't re-rediscover them. Suggested additions to the inventory matcher
 (in priority order):
 
-```
+```text
 raw_method_call_residual     // (*ptr).method() / (*ptr).field — fold into existing raw_method_call
 detach_lifetime              // bun_ptr::detach_lifetime{,_ref}, bun_collections::detach_lifetime
 callback_ctx_trampoline      // bun_ptr::callback_ctx, ScopedRef, ThisPtr

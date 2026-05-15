@@ -150,12 +150,14 @@ Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
 pub enum Error { ... }
 
 // in get():
-Error::from_repr(n as i32)
-    .map(Some)
-    .unwrap_or_else(|_| panic!("c-ares status {rc} out of range"))
+Some(
+    Error::from_repr(n as i32)
+        .unwrap_or_else(|| panic!("c-ares status {rc} out of range")),
+)
 ```
 
-The `unwrap_or_else` keeps the diagnostic; the conversion table is generated
+The `unwrap_or_else` keeps the diagnostic while preserving the existing
+`Option<Error>` return shape. The conversion table is generated
 from the enum variants once instead of being maintained as the
 `(1..=ARES_ENOSERVER)` literal range, which would silently drift the day a
 new c-ares errno is added without updating the assert.

@@ -66,7 +66,7 @@ index/offset, (c) alignment guarantee, (d) Drop ordering. Inventory at
 3. `pre-existing-ub-ptr-3` — `bun_io::Request::store_callback_seq_cst` uses `write_volatile` + SeqCst fence to publish a `fn` pointer cross-thread. Volatile is not atomic per the Rust memory model; should be `AtomicPtr` with `Release`/`Acquire`.
 4. `pre-existing-ub-ptr-4` — `sys::SysQuietWriterAdapter::adapter_write_all` computes `this.pos + bytes.len() > this.cap` with no overflow guard; an oversized `bytes` makes the comparison wrap, bypassing the drain branch, then `copy_nonoverlapping` writes past `buf.add(pos)`.
 5. `pre-existing-ub-ptr-5` — `bun_install::windows-shim::bun_shim_impl::*` final `ptr::copy(src, dst, len + 1)` bounds the destination by a `debug_assert!(len + 1 <= BUF2_U16_LEN)` only; release builds with malformed shim metadata can overrun `out_buf`.
-6. `pre-existing-ub-ptr-6` — `SerializedSourceMap::header()` (in both `sourcemap/lib.rs` and `standalone_graph/StandaloneModuleGraph.rs`) documents *"caller checked"* the length, but `source_files_count` / `source_file_name` / `compressed_source_file` / `source_file_names` are public accessors that call `header()` with no precondition check of their own.
+1. `pre-existing-ub-ptr-6` — `SerializedSourceMap::header()` (in both `sourcemap/lib.rs` and `standalone_graph/StandaloneModuleGraph.rs`) documents *"caller checked"* the length, but `source_files_count` / `source_file_name` / `compressed_source_file` / `source_file_names` are public accessors that call `header()` with no precondition check of their own.
 
 Severities range medium → low; threat-model context (e.g., #1, #5 require a
 tampered standalone executable, where RCE is already implied) is noted per
@@ -328,51 +328,51 @@ Below: 32 specific cases used to ground the analysis above.
 
 ### Read_unaligned
 
-6. **`src/io/write.rs:194`** — `read_unaligned(buf[pos..end].as_ptr().cast::<T>())` after `end > buf.len()` rejected. Idiomatic, safe-bound at the slice site. **Class (A).**
-7. **`src/exe_format/lib.rs:35`** — Helper `read_struct<T: Copy>(bytes: &[u8]) -> T` with a doc-cited length precondition and `debug_assert!`. The pattern is for *callers* to pass `&buf[off..][..size_of::<T>()]`; class **(A)** *if* every caller in the cluster honours it (verified by grep — they do).
-8. **`src/runtime/node/dir_iterator.rs:672-690`** — Three `read_unaligned` of `FILE_DIRECTORY_INFORMATION` fields via `p.add(entry_offset + offset_of!(.., NextEntryOffset))`. Bounds check is `entry_offset < end_index` (kernel-set). Trust-boundary on `NtQueryDirectoryFile`. **Class (A).**
-9. **`src/runtime/node/node_fs.rs:6196`** — `read_unaligned(req.ptr_as::<RawStatFS>())` after libuv `rc >= 0`. Libuv's `req.ptr` contract. **Class (A).**
-10. **`src/standalone_graph/StandaloneModuleGraph.rs:292,345,357,580,2153,2183,2213,…`** — `read_unaligned::<Offsets>` and `read_unaligned::<CompiledModuleGraphFile>` from the embedded section. Each preceded by a trailer/length sanity check, but the per-`StringPointer.offset` access goes through `slice_to` whose bounds check is `debug_assert!`. **UB-RISK** under tampered binary — see §3.1.
-11. **`src/sourcemap/InternalSourceMap.rs:175,183,194`** — Header reads after `is_valid_blob`. Mostly safe. `sync_entry(i)` documents `i < sync_count` precondition; verified by binary-search bound (`hi: usize = n_sync as usize`). **Class (A).**
+1. **`src/io/write.rs:194`** — `read_unaligned(buf[pos..end].as_ptr().cast::<T>())` after `end > buf.len()` rejected. Idiomatic, safe-bound at the slice site. **Class (A).**
+2. **`src/exe_format/lib.rs:35`** — Helper `read_struct<T: Copy>(bytes: &[u8]) -> T` with a doc-cited length precondition and `debug_assert!`. The pattern is for *callers* to pass `&buf[off..][..size_of::<T>()]`; class **(A)** *if* every caller in the cluster honours it (verified by grep — they do).
+3. **`src/runtime/node/dir_iterator.rs:672-690`** — Three `read_unaligned` of `FILE_DIRECTORY_INFORMATION` fields via `p.add(entry_offset + offset_of!(.., NextEntryOffset))`. Bounds check is `entry_offset < end_index` (kernel-set). Trust-boundary on `NtQueryDirectoryFile`. **Class (A).**
+4. **`src/runtime/node/node_fs.rs:6196`** — `read_unaligned(req.ptr_as::<RawStatFS>())` after libuv `rc >= 0`. Libuv's `req.ptr` contract. **Class (A).**
+5. **`src/standalone_graph/StandaloneModuleGraph.rs:292,345,357,580,2153,2183,2213,…`** — `read_unaligned::<Offsets>` and `read_unaligned::<CompiledModuleGraphFile>` from the embedded section. Each preceded by a trailer/length sanity check, but the per-`StringPointer.offset` access goes through `slice_to` whose bounds check is `debug_assert!`. **UB-RISK** under tampered binary — see §3.1.
+6. **`src/sourcemap/InternalSourceMap.rs:175,183,194`** — Header reads after `is_valid_blob`. Mostly safe. `sync_entry(i)` documents `i < sync_count` precondition; verified by binary-search bound (`hi: usize = n_sync as usize`). **Class (A).**
 
 ### Write
 
-12. **`src/bun_alloc/lib.rs:2210`** — `BSSListOverflowBlock::zero(this: *mut Self)` with `addr_of_mut!((*this).used/prev).write(...)`. Initialises uninit storage; assignment-with-drop would UAF on `prev: Option<Box<…>>` garbage. **Class (A).**
-13. **`src/runtime/socket/socket_body.rs:2607-2613`** — `drop_in_place(p) → ptr::write(p, new_handlers) → (*p).mode = prev_mode → (*p).active_connections.set(...)`. Active-connection counter copied OUT before drop; mode reasserted AFTER write. **Class (A).**
-14. **`src/install/migration.rs:1007-1023`** — workspace path: `ptr::write(dependencies_base.add(deps_cursor), Dependency { … workspace path/name … })` then `deps_cursor += 1`. SAFETY says "deps_cursor < num_deps; capacity reserved above". `num_deps` accumulated up-front from JSON property counts; see §3.2.
-15. **`src/runtime/socket/WindowsNamedPipeContext.rs:345`** — `ptr::write(this, WindowsNamedPipeContext { … })` over freshly allocated uninit storage. **Class (A).**
-16. **`src/runtime/webcore/Request.rs:1612`** — `ptr::write(req, Request { … })` over a sentinel `Box<Request>` whose fields hold dangling but valid sentinels; documented in `clone()`. **Class (A).**
+1. **`src/bun_alloc/lib.rs:2210`** — `BSSListOverflowBlock::zero(this: *mut Self)` with `addr_of_mut!((*this).used/prev).write(...)`. Initialises uninit storage; assignment-with-drop would UAF on `prev: Option<Box<…>>` garbage. **Class (A).**
+2. **`src/runtime/socket/socket_body.rs:2607-2613`** — `drop_in_place(p) → ptr::write(p, new_handlers) → (*p).mode = prev_mode → (*p).active_connections.set(...)`. Active-connection counter copied OUT before drop; mode reasserted AFTER write. **Class (A).**
+3. **`src/install/migration.rs:1007-1023`** — workspace path: `ptr::write(dependencies_base.add(deps_cursor), Dependency { … workspace path/name … })` then `deps_cursor += 1`. SAFETY says "deps_cursor < num_deps; capacity reserved above". `num_deps` accumulated up-front from JSON property counts; see §3.2.
+4. **`src/runtime/socket/WindowsNamedPipeContext.rs:345`** — `ptr::write(this, WindowsNamedPipeContext { … })` over freshly allocated uninit storage. **Class (A).**
+5. **`src/runtime/webcore/Request.rs:1612`** — `ptr::write(req, Request { … })` over a sentinel `Box<Request>` whose fields hold dangling but valid sentinels; documented in `clone()`. **Class (A).**
 
 ### Write_unaligned
 
-17. **`src/bun_core/util.rs:237`** — `Unaligned<T>::set` writes through `addr_of_mut!(self.0).write_unaligned(value)` on a `repr(packed)` field. **Class (A).**
-18. **`src/exe_format/lib.rs:45`** — `write_struct<T: Copy>(bytes: &mut [u8], value: &T)`. Mirror of `read_struct`. **Class (A).**
+1. **`src/bun_core/util.rs:237`** — `Unaligned<T>::set` writes through `addr_of_mut!(self.0).write_unaligned(value)` on a `repr(packed)` field. **Class (A).**
+2. **`src/exe_format/lib.rs:45`** — `write_struct<T: Copy>(bytes: &mut [u8], value: &T)`. Mirror of `read_struct`. **Class (A).**
 
 ### Copy_nonoverlapping
 
-19. **`src/bun_alloc/ast_alloc.rs:364`** — grow-spill: copy `old.size()` bytes from `ptr` to fresh `p`. Non-overlap via fresh allocation. **Class (A).**
-20. **`src/bun_alloc/stack_fallback.rs:255`** — grow-spill for stack-fallback allocator. Source/dest disjoint by allocation. **Class (A).**
-21. **`src/runtime/api/bun/h2_frame_parser.rs:378`** — `StreamPriority::from`. Caller obligations verified through `handle_priority_frame` → `handle_incomming_payload`. **Class (A).**
-22. **`src/runtime/webview/ChromeProcess.rs:697`** — `Bun__Chrome__autoDetect(out_buf, out_cap)` checks `buf.len() > out_cap` first, then copies. **Class (A).**
-23. **`src/jsc/bindgen.rs:302,316`** — in-place reinterpret ExternType→ZigType. Gated `size_of::<ZigType>() <= size_of::<ExternType>()`. **Class (A).**
-24. **`src/standalone_graph/StandaloneModuleGraph.rs:* (via slice_to)`** — see §3.1.
-25. **`src/sys/lib.rs:9142`** — `copy_nonoverlapping(bytes.as_ptr(), this.buf.add(this.pos), bytes.len())` inside `adapter_write_all`. **UB-RISK** — see §3.4.
-26. **`src/install/windows-shim/bun_shim_impl.rs:611`** — copy image-path bytes into `buf1_u8 + nt_prefix`. Pre-checked by ends_with + arithmetic; bounded. **Class (A).**
+1. **`src/bun_alloc/ast_alloc.rs:364`** — grow-spill: copy `old.size()` bytes from `ptr` to fresh `p`. Non-overlap via fresh allocation. **Class (A).**
+2. **`src/bun_alloc/stack_fallback.rs:255`** — grow-spill for stack-fallback allocator. Source/dest disjoint by allocation. **Class (A).**
+3. **`src/runtime/api/bun/h2_frame_parser.rs:378`** — `StreamPriority::from`. Caller obligations verified through `handle_priority_frame` → `handle_incomming_payload`. **Class (A).**
+4. **`src/runtime/webview/ChromeProcess.rs:697`** — `Bun__Chrome__autoDetect(out_buf, out_cap)` checks `buf.len() > out_cap` first, then copies. **Class (A).**
+5. **`src/jsc/bindgen.rs:302,316`** — in-place reinterpret ExternType→ZigType. Gated `size_of::<ZigType>() <= size_of::<ExternType>()`. **Class (A).**
+6. **`src/standalone_graph/StandaloneModuleGraph.rs:* (via slice_to)`** — see §3.1.
+7. **`src/sys/lib.rs:9142`** — `copy_nonoverlapping(bytes.as_ptr(), this.buf.add(this.pos), bytes.len())` inside `adapter_write_all`. **UB-RISK** — see §3.4.
+8. **`src/install/windows-shim/bun_shim_impl.rs:611`** — copy image-path bytes into `buf1_u8 + nt_prefix`. Pre-checked by ends_with + arithmetic; bounded. **Class (A).**
 
 ### Copy (memmove)
 
-27. **`src/bun_core/bounded_array.rs:230`** — shift-right by one in `BoundedArray::insert`. `i < self.len <= CAPACITY`. **Class (A).**
-28. **`src/runtime/api/bun/h2_frame_parser.rs:1735,1792,5685`** — Prepend padding byte for HTTP/2 DATA frame. `slice.len() ≤ MAX_PAYLOAD_SIZE_WITHOUT_FRAME`. **Class (A).**
-29. **`src/runtime/webcore/encoding.rs:635,647`** — JS string encode hot path; `to_len`-bounded. **Class (A).**
+1. **`src/bun_core/bounded_array.rs:230`** — shift-right by one in `BoundedArray::insert`. `i < self.len <= CAPACITY`. **Class (A).**
+2. **`src/runtime/api/bun/h2_frame_parser.rs:1735,1792,5685`** — Prepend padding byte for HTTP/2 DATA frame. `slice.len() ≤ MAX_PAYLOAD_SIZE_WITHOUT_FRAME`. **Class (A).**
+3. **`src/runtime/webcore/encoding.rs:635,647`** — JS string encode hot path; `to_len`-bounded. **Class (A).**
 
 ### Drop_in_place / Replace
 
-30. **`src/collections/hive_array.rs:324`** — `drop_in_place(value)` then ASAN poison; `value` is a hive slot; bitset `used` then unset. **Class (A).**
-31. **`src/runtime/shell/subproc.rs:2422`** — `ptr::replace(addr_of_mut!((*this).state), Done(Box::default()))`. Raw-field swap without `&mut Self`. **Class (A).**
+1. **`src/collections/hive_array.rs:324`** — `drop_in_place(value)` then ASAN poison; `value` is a hive slot; bitset `used` then unset. **Class (A).**
+2. **`src/runtime/shell/subproc.rs:2422`** — `ptr::replace(addr_of_mut!((*this).state), Done(Box::default()))`. Raw-field swap without `&mut Self`. **Class (A).**
 
 ### Ptr arithmetic
 
-32. **`src/runtime/cli/upgrade_command.rs:1108-1127`** — `buf_ptr.add(destination_executable.len() - target_filename_.len())` and friends. Carefully reasoned, NUL written at separator. **Class (A).**
+1. **`src/runtime/cli/upgrade_command.rs:1108-1127`** — `buf_ptr.add(destination_executable.len() - target_filename_.len())` and friends. Carefully reasoned, NUL written at separator. **Class (A).**
 
 ---
 

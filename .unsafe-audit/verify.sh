@@ -164,21 +164,28 @@ done
 # ---------------------------------------------------------------------------
 log_stage "Stage 5: safe-only feature build (B-001, B-002 verification)"
 
-if ! grep -q '^safe-only = ' "$PROJECT_ROOT/Cargo.toml" 2>/dev/null; then
-  mark_skip "safe-only" "feature not yet added to workspace Cargo.toml (Phase 11 deliverable)"
+if ! grep -Rqs '^safe-only[[:space:]]*=' "$PROJECT_ROOT/Cargo.toml" "$PROJECT_ROOT/src" 2>/dev/null; then
+  mark_skip "safe-only" "package-scoped safe-only features not yet added (Phase 11 deliverable)"
 else
-  # Build with safe-only ON
-  if (cd "$PROJECT_ROOT" && cargo check --workspace --features safe-only 2>&1 | tee -a "$LOG"); then
-    mark_pass "safe-only check"
-  else
-    mark_fail "safe-only check"
-  fi
-  # Test with safe-only ON for the perf-touched crates
+  # Cargo features are package-scoped. A bare workspace-level
+  # `--features safe-only` would silently miss crates that are not selected or
+  # do not receive the feature through dependency propagation, so verify the
+  # perf-touched packages explicitly.
   for crate in bun_base64 bun_install bun_jsc bun_bundler; do
-    if (cd "$PROJECT_ROOT" && cargo test -p "$crate" --features safe-only 2>&1 | tee -a "$LOG"); then
-      mark_pass "safe-only:$crate"
+    manifest="$(cd "$PROJECT_ROOT" && cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .manifest_path' | head -1)"
+    if [ -z "$manifest" ] || ! grep -q '^safe-only[[:space:]]*=' "$manifest" 2>/dev/null; then
+      mark_skip "safe-only:$crate" "crate does not declare a local safe-only feature"
+      continue
+    fi
+    if (cd "$PROJECT_ROOT" && cargo check -p "$crate" --features safe-only 2>&1 | tee -a "$LOG"); then
+      mark_pass "safe-only-check:$crate"
     else
-      mark_fail "safe-only:$crate"
+      mark_fail "safe-only-check:$crate"
+    fi
+    if (cd "$PROJECT_ROOT" && cargo test -p "$crate" --features safe-only 2>&1 | tee -a "$LOG"); then
+      mark_pass "safe-only-test:$crate"
+    else
+      mark_fail "safe-only-test:$crate"
     fi
   done
 fi

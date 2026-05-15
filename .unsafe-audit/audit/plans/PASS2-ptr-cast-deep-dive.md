@@ -513,6 +513,7 @@ UB once `-Zmiri-strict-provenance` is enabled / the lint promotes to a hard
 error (no timeline announced as of toolchain 1.85).
 
 **Recommended fix:**
+
 ```rust
 // Encode:
 let new_stack = list.head.as_ptr().expose_provenance();

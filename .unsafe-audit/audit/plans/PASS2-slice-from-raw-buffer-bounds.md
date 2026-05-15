@@ -23,7 +23,7 @@ Sample extract: `/tmp/slice_real.jsonl` (270 rows).
 |---|---|---|
 | Total sites in cluster | **298** | inventory rows |
 | Real `slice::from_raw_parts*` | **270** | `Vec::from_raw_parts` + comment mentions filtered |
-| Sites read with full context | **62** | stratified across priority crates |
+| Sites read with full context | **82** | evidence-table rows, stratified across priority crates |
 | **UB-RISK-UNTRUSTED (CVE-class, reachable from JS)** | **0** | none found |
 | UB-RISK-ALIGNMENT (pre-existing TODO) | **2** | `src/runtime/webcore/encoding.rs:305`, `src/exe_format/pe.rs:289,301` |
 | UB-RISK-RELEASE-FRAGILE (debug_assert only) | **1** | `src/standalone_graph/StandaloneModuleGraph.rs:655` — gated by self-binary trust model |
@@ -55,7 +55,7 @@ The single release-fragile site is a `debug_assert!` inside
 
 ## Per-crate distribution (filtered to real `slice::from_raw_parts*`)
 
-```
+```text
    66 bun_runtime          (66 read; major: TextEncoder.rs, ffi/FFIObject.rs,
                                             api/BunObject.rs, node_crypto_binding.rs,
                                             webcore/Crypto.rs, image/codec_*.rs)
@@ -889,13 +889,15 @@ Currently they only operate on the **running Bun binary**
 
 ---
 
-## Section 10: Sites read with full context (62 representative)
+## Section 10: Sites read with full context (82 representative rows)
 
 This is the audit's evidence base. Each row was read with ±25 lines of
-context to trace the length-source. Sites marked **read** were
-classified above; the remaining 208 sites were not individually inspected
-but their crate-level patterns match the audited ones (foundation
-allocator decompositions or FFI-contract length pairs).
+context to trace the length-source. Most rows are real
+`slice::from_raw_parts*` sites; a few co-cluster rows are retained to show why
+they were filtered into the neighboring `Vec::from_raw_parts` audit. The
+remaining ~188 filtered real slice sites were not individually inspected, but
+their crate-level patterns match the audited ones (foundation allocator
+decompositions or FFI-contract length pairs).
 
 | ID | File:line | Classification |
 |---|---|---|

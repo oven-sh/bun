@@ -399,6 +399,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         v.into_bump_slice()
     }
 
+    /// Bump-format `_{key}_{n}` for auto-accessor storage bindings. The `_`
+    /// between key and counter is load-bearing: without it `accessor x1` at
+    /// counter=0 and `accessor x` at counter=10 both yield `_x10`, which
+    /// recreates the #29837 double-__privateAdd collision.
+    fn bump_accessor_name(&self, key: &[u8], n: usize) -> &'a [u8] {
+        let mut v = BumpVec::<u8>::new_in(self.arena);
+        v.push(b'_');
+        v.extend_from_slice(key);
+        v.push(b'_');
+        let s = bun_alloc::arena_format!(in self.arena, "{}", n);
+        v.extend_from_slice(s.as_bytes());
+        v.into_bump_slice()
+    }
+
+    /// Same as `bump_accessor_name` but with a trailing literal between key
+    /// and counter — used for the decorated private auto-accessor descriptor
+    /// ref (`_{key}_acc_{n}`).
+    fn bump_accessor_name_with_suffix(&self, key: &[u8], suffix: &[u8], n: usize) -> &'a [u8] {
+        let mut v = BumpVec::<u8>::new_in(self.arena);
+        v.push(b'_');
+        v.extend_from_slice(key);
+        v.extend_from_slice(suffix);
+        v.push(b'_');
+        let s = bun_alloc::arena_format!(in self.arena, "{}", n);
+        v.extend_from_slice(s.as_bytes());
+        v.into_bump_slice()
+    }
+
     // ── Generic tree rewriter ────────────────────────────
 
     fn rewrite_expr(&mut self, expr: &mut Expr, kind: RewriteKind) {
@@ -1286,7 +1314,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
-        let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
 
@@ -1441,16 +1468,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // Undecorated auto-accessor → WeakMap + getter/setter
                 if prop.kind == PropertyKind::AutoAccessor {
+                    // Bump the module-scoped counter once per accessor so
+                    // the generated WeakMap binding doesn't collide with
+                    // another `accessor <same-name>` elsewhere in the file
+                    // (most visibly, a subclass overriding a base-class
+                    // accessor — see note on `P.accessor_storage_counter`).
+                    let storage_id = p.accessor_storage_counter;
+                    p.accessor_storage_counter += 1;
                     let accessor_name: &'a [u8] = 'brk: {
                         if let Some(k) = prop.key {
-                            if let js_ast::ExprData::EString(s) = &k.data {
-                                break 'brk p.bump_name2(b"_", &s.data);
+                            // `accessor "foo"` → `_foo_0`, but only when the key
+                            // is UTF-8 bytes and a valid identifier.
+                            // `accessor "foo-bar"` would produce `_foo-bar_0`
+                            // (unparseable); a UTF-16 `EString` (any non-ASCII
+                            // quoted key) would splice raw UTF-16 bytes into
+                            // the name with embedded NULs. Fall back to the
+                            // synthetic name in both cases. The `_` between
+                            // key and counter is load-bearing: without it,
+                            // `accessor x1` at counter=0 and `accessor x` at
+                            // counter=10 both produce `_x10`, recreating #29837.
+                            if let Some(mut s) = k.data.e_string() {
+                                if s.is_utf8() && s.is_identifier(p.arena) {
+                                    break 'brk p.bump_accessor_name(&s.data, storage_id);
+                                }
                             }
                         }
-                        let name =
-                            p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                        accessor_storage_counter += 1;
-                        name
+                        p.bump_name(b"_accessor_storage_", Some(storage_id))
                     };
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
                     let wme = p.new_weak_map_expr(loc);
@@ -1661,16 +1704,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
                     dec_arg_count = 5;
                 } else if k == 4 {
-                    let nm = p.bump_name2(b"_", &private_orig[1..]);
+                    // Decorated private auto-accessor → WeakMap + descriptor.
+                    // Private accessors hit the same module-scope collision as
+                    // public accessors (two classes both declaring `accessor #x`
+                    // would emit two `var _x = new WeakMap` bound to the same
+                    // symbol under `NoOpRenamer`), so share the same counter.
+                    let storage_id = p.accessor_storage_counter;
+                    p.accessor_storage_counter += 1;
+                    let nm = p.bump_accessor_name(&private_orig[1..], storage_id);
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, nm);
                     private_storage_ref = Some(wm_ref);
-                    let acc_nm = {
-                        let mut v = BumpVec::<u8>::new_in(bump);
-                        v.push(b'_');
-                        v.extend_from_slice(&private_orig[1..]);
-                        v.extend_from_slice(b"_acc");
-                        v.into_bump_slice()
-                    };
+                    let acc_nm =
+                        p.bump_accessor_name_with_suffix(&private_orig[1..], b"_acc", storage_id);
                     let acc_ref = p.new_sym(js_ast::symbol::Kind::Other, acc_nm);
                     private_method_fn_ref = Some(acc_ref);
                     private_lowered_map.insert(
@@ -1689,13 +1734,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             } else if k == 4 {
                 // Decorated public auto-accessor → WeakMap
+                let storage_id = p.accessor_storage_counter;
+                p.accessor_storage_counter += 1;
                 let accessor_name: &'a [u8] = 'brk: {
-                    if let js_ast::ExprData::EString(s) = &key_expr.data {
-                        break 'brk p.bump_name2(b"_", &s.data);
+                    // See the note on the undecorated path: reject non-UTF-8
+                    // keys (otherwise raw UTF-16 bytes would be spliced into
+                    // the name with embedded NULs) and keys that aren't valid
+                    // identifiers.
+                    if let Some(mut s) = key_expr.data.e_string() {
+                        if s.is_utf8() && s.is_identifier(p.arena) {
+                            break 'brk p.bump_accessor_name(&s.data, storage_id);
+                        }
                     }
-                    let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                    accessor_storage_counter += 1;
-                    name
+                    p.bump_name(b"_accessor_storage_", Some(storage_id))
                 };
                 let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
                 private_extra_ref = Some(wm_ref);

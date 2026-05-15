@@ -284,13 +284,14 @@ impl PmVersionCommand {
             // so the nested repo just gets `package.json` (same as before
             // this PR).
             let mut root_buf = PathBuffer::uninit();
-            let stage_lockfile_path: Option<&[u8]> = saved_lockfile_path.as_deref().and_then(|lp| {
-                let git_root = Self::find_git_root(&package_json_dir, &mut root_buf.0)?;
-                match path::is_parent_or_equal(git_root, lp) {
-                    path::ParentEqual::Parent | path::ParentEqual::Equal => Some(lp),
-                    path::ParentEqual::Unrelated => None,
-                }
-            });
+            let stage_lockfile_path: Option<&[u8]> =
+                saved_lockfile_path.as_deref().and_then(|lp| {
+                    let git_root = Self::find_git_root(&package_json_dir, &mut root_buf.0)?;
+                    match path::is_parent_or_equal(git_root, lp) {
+                        path::ParentEqual::Parent | path::ParentEqual::Equal => Some(lp),
+                        path::ParentEqual::Unrelated => None,
+                    }
+                });
             Self::git_commit_and_tag(
                 &new_version_str,
                 pm.options.message,
@@ -390,7 +391,10 @@ impl PmVersionCommand {
             // that caused `bun pm version` to exit non-zero for plain
             // no-git directories on Windows CI.
             let exists = bun_sys::exists_at(Fd::cwd(), git_path_z)
-                || matches!(bun_sys::directory_exists_at(Fd::cwd(), git_path_z), Ok(true));
+                || matches!(
+                    bun_sys::directory_exists_at(Fd::cwd(), git_path_z),
+                    Ok(true)
+                );
             if exists {
                 let len = current_dir.len();
                 out_buf[..len].copy_from_slice(current_dir);
@@ -465,10 +469,8 @@ impl PmVersionCommand {
             }
         };
 
-        let parsed = Semver::Version::parse(Semver::SlicedString::init(
-            new_version_str,
-            new_version_str,
-        ));
+        let parsed =
+            Semver::Version::parse(Semver::SlicedString::init(new_version_str, new_version_str));
         if !parsed.valid {
             return None;
         }

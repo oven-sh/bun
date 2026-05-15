@@ -363,7 +363,11 @@ fn fetch_identity_token(audience: &str) -> Result<String, SigstoreError> {
     let sep = if url.contains('?') { '&' } else { '?' };
     url.push(sep);
     url.push_str("audience=");
-    url.push_str(audience);
+    // `@actions/core` does `encodeURIComponent(audience)`; the value is
+    // user-settable via `BUN_SIGSTORE_OIDC_AUDIENCE`, so percent-encode it.
+    let mut enc = Vec::with_capacity(audience.len());
+    let _ = bun_core::strings::percent_encode_write(audience.as_bytes(), &mut enc);
+    url.push_str(std::str::from_utf8(&enc).unwrap_or(audience));
 
     let mut auth = Vec::with_capacity(7 + req_tok.len());
     auth.extend_from_slice(b"Bearer ");

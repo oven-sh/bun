@@ -1214,12 +1214,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
             // `--provenance` / `--no-provenance` — tri-state so the
             // `publishConfig.provenance` / `NPM_CONFIG_PROVENANCE` default can
-            // be overridden from the CLI in either direction.
-            if args.flag(b"--no-provenance") {
-                cli.publish_config.provenance = Some(false);
-            }
-            if args.flag(b"--provenance") {
-                cli.publish_config.provenance = Some(true);
+            // be overridden from the CLI in either direction. `bun_clap::flag()`
+            // is presence-only (no position tracking), so we can't do npm's
+            // last-flag-wins when both appear — error instead rather than
+            // silently pick one.
+            match (args.flag(b"--provenance"), args.flag(b"--no-provenance")) {
+                (true, true) => {
+                    Output::err_generic(
+                        "--provenance and --no-provenance cannot be used together",
+                        (),
+                    );
+                    Global::crash();
+                }
+                (true, false) => cli.publish_config.provenance = Some(true),
+                (false, true) => cli.publish_config.provenance = Some(false),
+                (false, false) => {}
             }
             if let Some(path) = args.option(b"--provenance-file") {
                 cli.publish_config.provenance_file = path;

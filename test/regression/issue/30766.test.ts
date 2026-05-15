@@ -117,11 +117,7 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     if (exitCode === 77) {
       console.warn("SKIP: kernel refused to install seccomp filter");
@@ -151,11 +147,7 @@ describe.skipIf(!isLinux)("issue #30766 — bun startup survives seccomp blockin
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     if (exitCode === 77) {
       console.warn("SKIP: kernel refused to install seccomp filter");

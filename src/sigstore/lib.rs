@@ -415,16 +415,24 @@ fn extract_jwt_subject(jwt: &str) -> Result<String, SigstoreError> {
         sub: Option<String>,
         #[serde(default)]
         email: Option<String>,
+        // `Value`, not `bool`: Dex (the reference self-hosted Sigstore OIDC
+        // backend), Azure AD v1, and some Auth0 configs emit this as the
+        // *string* `"true"`. `Option<bool>` would fail the whole struct
+        // deserialize on that — sigstore-rs / sigstore-python both carry a
+        // string-or-bool shim for this field; sigstore-js (untyped
+        // `JSON.parse`) just sees `"true" === true` → false and falls
+        // through to `sub`. We match that behavior.
         #[serde(default)]
-        email_verified: Option<bool>,
+        email_verified: Option<serde_json::Value>,
     }
     let c: Claims = serde_json::from_slice(&decoded)
         .map_err(|e| SigstoreError::Identity(format!("malformed JWT claims: {e}")))?;
 
     // sigstore-js: `claims.email_verified === true ? claims.email : claims.sub`
-    // — fall through to `sub` when email is present but unverified.
+    // — fall through to `sub` when email is present but unverified (or the
+    // claim is a non-`true` boolean / string / anything else).
     if let Some(email) = c.email.filter(|e| !e.is_empty()) {
-        if c.email_verified == Some(true) {
+        if c.email_verified == Some(serde_json::Value::Bool(true)) {
             return Ok(email);
         }
     }

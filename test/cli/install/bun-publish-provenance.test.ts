@@ -48,6 +48,10 @@ function fakeJwt(): string {
 }
 
 // Rekor /api/v1/log/entries response — `{ "<uuid>": <entry> }`.
+// Includes an `inclusionProof.checkpoint` with a U+2014 EM DASH (as real
+// Rekor does per the sumdb/note signed-note format) so the UTF-8 → JSON
+// encoding path in the publish body is exercised.
+const FAKE_CHECKPOINT = "rekor.sigstore.dev - 12345678\n424242\nabcd\n\n\u2014 rekor.sigstore.dev wNI9aj==\n";
 function fakeRekorResponse() {
   const body = {
     apiVersion: "0.0.2",
@@ -63,6 +67,13 @@ function fakeRekorResponse() {
       logIndex: 424242,
       verification: {
         signedEntryTimestamp: Buffer.from("set").toString("base64"),
+        inclusionProof: {
+          logIndex: 424242,
+          rootHash: "aa".repeat(32),
+          treeSize: 500000,
+          hashes: ["bb".repeat(32)],
+          checkpoint: FAKE_CHECKPOINT,
+        },
       },
     },
   };
@@ -208,6 +219,11 @@ describe("--provenance", () => {
     expect(tlog.kindVersion).toEqual({ kind: "intoto", version: "0.0.2" });
     expect(tlog.integratedTime).toBe("1700000000");
     expect(tlog.inclusionPromise.signedEntryTimestamp).toBe(Buffer.from("set").toString("base64"));
+    // Non-ASCII round-trip: U+2014 in the checkpoint must survive the JSON
+    // string encoding of `_attachments[*].data` intact (no Latin-1 mojibake).
+    expect(tlog.inclusionProof.checkpoint.envelope).toBe(FAKE_CHECKPOINT);
+    expect(tlog.inclusionProof.checkpoint.envelope).toContain("\u2014");
+    expect(att.data).not.toContain("\u00e2"); // â — first byte of mojibake'd em-dash
   });
 
   test("errors outside of supported CI", async () => {

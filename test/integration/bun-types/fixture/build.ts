@@ -5,6 +5,21 @@ Bun.build({
   splitting: false,
 });
 
+Bun.build({
+  entrypoints: ["hey"],
+  jsx: { runtime: "preserve" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  jsx: { runtime: "solid" },
+});
+
+new Bun.Transpiler({
+  loader: "tsx",
+  tsconfig: { compilerOptions: { jsx: "solid" } },
+});
+
 // Build.CompileTarget should accept SIMD variants (issue #26247)
 expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-modern");
 expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-baseline");

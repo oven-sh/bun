@@ -952,20 +952,25 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
-                if value == b"react" {
+                let mut lower_buf = [0u8; 128];
+                let len = value.len().min(lower_buf.len());
+                let _ = bun_core::copy_lowercase(&value[..len], &mut lower_buf[..len]);
+                let value = &lower_buf[..len];
+
+                if value == b"fallback" {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"solid" {
-                    jsx_runtime = api::JsxRuntime::Solid;
-                } else if value == b"react-jsx" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = false;
-                } else if value == b"react-jsxDEV" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = true;
+                } else if let Some(runtime) = bun_options_types::jsx::RUNTIME_MAP.get(value) {
+                    jsx_runtime = runtime.runtime.into();
+                    if let Some(dev) = runtime.development {
+                        jsx_dev = dev;
+                    }
                 } else {
-                    self.add_error(
+                    self.add_error_format(
                         expr.loc,
-                        b"Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported",
+                        format_args!(
+                            "Invalid jsx runtime, expected one of: {}",
+                            bun_options_types::jsx::RUNTIME_LIST_FOR_DISPLAY
+                        ),
                     )?;
                 }
             }

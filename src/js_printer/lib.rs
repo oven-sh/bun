@@ -2423,6 +2423,232 @@ pub(crate) mod __gated_printer {
             self.print_identifier(name);
         }
 
+        fn next_utf16_code_point(text: &[u16], i: &mut usize) -> u32 {
+            const FIRST_LOW_SURROGATE: u32 = 0xDC00;
+
+            let mut c = text[*i] as u32;
+            *i += 1;
+
+            if c >= FIRST_HIGH_SURROGATE as u32 && c < FIRST_LOW_SURROGATE && *i < text.len() {
+                let next = text[*i] as u32;
+                if next >= FIRST_LOW_SURROGATE && next <= LAST_LOW_SURROGATE as u32 {
+                    c = 0x10000 + (((c & 0x03ff) << 10) | (next & 0x03ff));
+                    *i += 1;
+                }
+            }
+
+            c
+        }
+
+        fn print_utf16_as_utf8(&mut self, text: &[u16]) {
+            let mut i = 0usize;
+            while i < text.len() {
+                let c = Self::next_utf16_code_point(text, &mut i);
+                let mut buf = [0u8; 4];
+                let len = encode_wtf8_rune_t(&mut buf, c);
+                self.print(&buf[..len]);
+            }
+        }
+
+        fn jsx_attribute_quote_for_utf8(&self, text: &[u8]) -> Option<u8> {
+            let mut single = true;
+            let mut double = true;
+            let iter = CodepointIterator::init(text);
+            let mut cursor = strings::Cursor::default();
+
+            while iter.next(&mut cursor) {
+                let c = cursor.c as u32;
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return None;
+                }
+
+                match c as u8 {
+                    b'&' => return None,
+                    b'"' => double = false,
+                    b'\'' => single = false,
+                    _ => {}
+                }
+            }
+
+            if double {
+                Some(b'"')
+            } else if single {
+                Some(b'\'')
+            } else {
+                None
+            }
+        }
+
+        fn jsx_attribute_quote_for_utf16(&self, text: &[u16]) -> Option<u8> {
+            let mut single = true;
+            let mut double = true;
+            let mut i = 0usize;
+
+            while i < text.len() {
+                let c = Self::next_utf16_code_point(text, &mut i);
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return None;
+                }
+
+                match c as u8 {
+                    b'&' => return None,
+                    b'"' => double = false,
+                    b'\'' => single = false,
+                    _ => {}
+                }
+            }
+
+            if double {
+                Some(b'"')
+            } else if single {
+                Some(b'\'')
+            } else {
+                None
+            }
+        }
+
+        fn can_print_text_as_jsx_child_utf8(&self, text: &[u8]) -> bool {
+            let iter = CodepointIterator::init(text);
+            let mut cursor = strings::Cursor::default();
+
+            while iter.next(&mut cursor) {
+                let c = cursor.c as u32;
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return false;
+                }
+
+                match c as u8 {
+                    b'&' | b'<' | b'>' | b'{' | b'}' => return false,
+                    _ => {}
+                }
+            }
+
+            true
+        }
+
+        fn can_print_text_as_jsx_child_utf16(&self, text: &[u16]) -> bool {
+            let mut i = 0usize;
+
+            while i < text.len() {
+                let c = Self::next_utf16_code_point(text, &mut i);
+                if !Self::can_print_code_point_raw_in_jsx(c) {
+                    return false;
+                }
+
+                match c as u8 {
+                    b'&' | b'<' | b'>' | b'{' | b'}' => return false,
+                    _ => {}
+                }
+            }
+
+            true
+        }
+
+        fn can_print_code_point_raw_in_jsx(c: u32) -> bool {
+            c >= FIRST_ASCII as u32
+                && (!ASCII_ONLY || c <= LAST_ASCII as u32)
+                && !(FIRST_HIGH_SURROGATE as u32..=LAST_LOW_SURROGATE as u32).contains(&c)
+                && !matches!(c, 0x2028 | 0x2029)
+        }
+
+        fn print_jsx_string_expression(&mut self, mut str_: js_ast::StoreRef<E::String>) {
+            str_.resolve_rope_if_needed(self.bump);
+            self.print(b"{");
+            self.print_string_literal_e_string(&*str_, false);
+            self.print(b"}");
+        }
+
+        fn print_jsx_attribute_value_string(&mut self, mut str_: js_ast::StoreRef<E::String>) {
+            str_.resolve_rope_if_needed(self.bump);
+            if str_.is_utf8() {
+                if let Some(quote) = self.jsx_attribute_quote_for_utf8(str_.slice8()) {
+                    self.print(quote);
+                    self.print(str_.slice8());
+                    self.print(quote);
+                    return;
+                }
+            } else if let Some(quote) = self.jsx_attribute_quote_for_utf16(str_.slice16()) {
+                self.print(quote);
+                self.print_utf16_as_utf8(str_.slice16());
+                self.print(quote);
+                return;
+            }
+
+            self.print_jsx_string_expression(str_);
+        }
+
+        fn print_jsx_child_text(&mut self, mut str_: js_ast::StoreRef<E::String>) {
+            str_.resolve_rope_if_needed(self.bump);
+            if str_.is_utf8() {
+                if !str_.slice8().is_empty() && self.can_print_text_as_jsx_child_utf8(str_.slice8())
+                {
+                    self.print(str_.slice8());
+                    return;
+                }
+            } else if !str_.slice16().is_empty()
+                && self.can_print_text_as_jsx_child_utf16(str_.slice16())
+            {
+                self.print_utf16_as_utf8(str_.slice16());
+                return;
+            }
+
+            self.print_jsx_string_expression(str_);
+        }
+
+        fn print_jsx_name_string(&mut self, mut str_: js_ast::StoreRef<E::String>) {
+            str_.resolve_rope_if_needed(self.bump);
+            if str_.is_utf8() {
+                self.print(str_.slice8());
+            } else {
+                self.print_utf16_as_utf8(str_.slice16());
+            }
+        }
+
+        fn print_jsx_tag(&mut self, tag: Expr) {
+            match &tag.data {
+                ExprData::EIdentifier(id) => {
+                    let name = self.name_for_symbol(id.ref_);
+                    self.add_source_mapping_for_name(tag.loc, name, id.ref_);
+                    self.print(name);
+                }
+                ExprData::EString(str_) => {
+                    self.add_source_mapping(tag.loc);
+                    self.print_jsx_name_string(*str_);
+                }
+                ExprData::EDot(dot) => {
+                    self.print_jsx_tag(dot.target);
+                    self.print(b".");
+                    self.add_source_mapping(dot.name_loc);
+                    self.print(dot.name.slice());
+                }
+                _ => {
+                    self.print_expr(tag, Level::Member, ExprFlag::none());
+                }
+            }
+        }
+
+        fn print_jsx_property_key(&mut self, key: Expr) {
+            match &key.data {
+                ExprData::EString(str_) => {
+                    self.add_source_mapping(key.loc);
+                    self.print_jsx_name_string(*str_);
+                }
+                ExprData::EIdentifier(id) => {
+                    self.add_source_mapping(key.loc);
+                    let ref_ = self.symbols().follow(id.ref_);
+                    if let Some(symbol) = self.symbols().get_const(ref_) {
+                        self.print(symbol.original_name.slice());
+                    } else {
+                        let name = self.name_for_symbol(id.ref_);
+                        self.print(name);
+                    }
+                }
+                _ => {
+                    self.print_expr(key, Level::Lowest, ExprFlag::none());
+                }
+            }
+        }
+
         pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
@@ -4473,7 +4699,105 @@ pub(crate) mod __gated_printer {
                     self.print_string_characters_utf8(name, b'"');
                     self.print(b'"');
                 }
-                ExprData::EJsxElement(_) | ExprData::EPrivateIdentifier(_) => {
+                ExprData::EJsxElement(e_) => {
+                    self.add_source_mapping(expr.loc);
+                    self.print(b"<");
+                    if let Some(tag) = e_.tag {
+                        self.print_jsx_tag(tag);
+                    }
+
+                    if e_.tag.is_some() {
+                        for prop in e_.properties.slice() {
+                            if prop.kind == G::PropertyKind::Spread {
+                                self.print(b" {...");
+                                self.print_expr(
+                                    prop.value.expect("infallible: spread prop has value"),
+                                    Level::Comma,
+                                    ExprFlag::none(),
+                                );
+                                self.print(b"}");
+                                continue;
+                            }
+
+                            self.print(b" ");
+                            self.print_jsx_property_key(
+                                prop.key.expect("infallible: prop has key"),
+                            );
+                            if prop.flags.contains(js_ast::flags::Property::WasShorthand) {
+                                continue;
+                            }
+                            if let Some(value) = prop.value {
+                                self.print(b"=");
+                                match &value.data {
+                                    ExprData::EString(str_) => {
+                                        self.add_source_mapping(value.loc);
+                                        self.print_jsx_attribute_value_string(*str_);
+                                    }
+                                    _ => {
+                                        self.print(b"{");
+                                        self.print_expr(value, Level::Comma, ExprFlag::none());
+                                        self.print(b"}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let children = e_.children.slice();
+                    if e_.flags.contains(js_ast::flags::JSXElement::IsSelfClosing) {
+                        self.add_source_mapping(e_.close_tag_loc);
+                        self.print(b"/>");
+                    } else {
+                        self.print(b">");
+                        let is_single_line = self.options.minify_whitespace || children.len() < 2;
+                        // Bracing strings in multi-child elements because EString does not retain
+                        // whether it came from raw JSX text or a JavaScript expression.
+                        let print_string_children_as_expressions = children.len() >= 2;
+                        if !is_single_line {
+                            self.indent();
+                        }
+
+                        for child in children {
+                            if !is_single_line {
+                                self.print_newline();
+                                self.print_indent();
+                            }
+
+                            match &child.data {
+                                ExprData::EString(str_) => {
+                                    self.add_source_mapping(child.loc);
+                                    if print_string_children_as_expressions {
+                                        self.print_jsx_string_expression(*str_);
+                                    } else {
+                                        self.print_jsx_child_text(*str_);
+                                    }
+                                }
+                                ExprData::EJsxElement(_) => {
+                                    self.print_expr(*child, Level::Lowest, ExprFlag::none());
+                                }
+                                _ => {
+                                    self.print(b"{");
+                                    self.print_expr(*child, Level::Comma, ExprFlag::none());
+                                    self.print(b"}");
+                                }
+                            }
+                        }
+
+                        if !is_single_line {
+                            self.unindent();
+                            self.print_newline();
+                            self.print_indent();
+                        }
+
+                        self.add_source_mapping(e_.close_tag_loc);
+                        self.print(b"</");
+                        if let Some(tag) = e_.tag {
+                            self.print_jsx_tag(tag);
+                        }
+                        self.print(b">");
+                    }
+                }
+                ExprData::EPrivateIdentifier(_) => {
                     if cfg!(debug_assertions) {
                         Output::panic(format_args!(
                             "Unexpected expression of type .{}",

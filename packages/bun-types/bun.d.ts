@@ -2919,8 +2919,7 @@ declare module "bun" {
     compilerOptions?: {
       paths?: Record<string, string[]>;
       baseUrl?: string;
-      /** "preserve" is not supported yet */
-      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev";
+      jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev" | "solid";
       jsxFactory?: string;
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
@@ -3354,8 +3353,10 @@ declare module "bun" {
     // jsx?:
     //   | "automatic"
     //   | "classic"
-    //   | /* later: "preserve" */ {
-    //       runtime?: "automatic" | "classic"; // later: "preserve"
+    //   | "solid"
+    //   | "preserve"
+    //   | {
+    //       runtime?: "automatic" | "classic" | "solid" | "preserve";
     //       /** Only works when runtime=classic */
     //       factory?: string; // default: "React.createElement"
     //       /** Only works when runtime=classic */
@@ -3469,7 +3470,7 @@ declare module "bun" {
      * JSX configuration options
      */
     jsx?: {
-      runtime?: "automatic" | "classic";
+      runtime?: "automatic" | "classic" | "solid" | "preserve";
       importSource?: string;
       factory?: string;
       fragment?: string;

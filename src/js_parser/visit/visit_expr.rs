@@ -336,6 +336,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_was_originally_identifier(true),
         );
     }
+    #[inline]
+    fn jsx_property_is_key(property: &G::Property) -> bool {
+        property.key.is_some_and(|key| {
+            key.data
+                .e_string()
+                .is_some_and(|key| key.eql_comptime(b"key"))
+        })
+    }
+
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
     // `visit_expr_in_out` dispatcher frame. Without `inline(never)` LLVM folds the
     // big match arms into the recursive dispatcher, inflating its stack frame to
@@ -350,14 +359,78 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .data
             .e_jsx_element()
             .expect("infallible: variant checked");
+        let runtime = p.options.jsx.runtime;
+        if matches!(
+            runtime,
+            options::JSX::Runtime::Automatic | options::JSX::Runtime::Classic
+        ) && e_.flags.contains(Flags::JSXElement::HasBareKey)
+        {
+            let mut i = 0;
+            while i < e_.properties.len() {
+                let property = &e_.properties.slice()[i];
+                if !property.flags.contains(Flags::Property::WasShorthand)
+                    || !Self::jsx_property_is_key(property)
+                {
+                    i += 1;
+                    continue;
+                }
+
+                let key = property.key.expect("infallible: key prop has key");
+                p.log().add_warning(
+                    Some(p.source),
+                    key.loc,
+                    b"\"key\" prop ignored. Must be a string, number or symbol.",
+                );
+                e_.properties.ordered_remove(i);
+            }
+
+            let mut first_spread_prop_index = -1;
+            let mut key_prop_index = -1;
+            for (i, property) in e_.properties.iter().enumerate() {
+                if property.kind == G::PropertyKind::Spread {
+                    if first_spread_prop_index == -1 {
+                        first_spread_prop_index = i as i32;
+                    }
+                } else if Self::jsx_property_is_key(property) {
+                    key_prop_index = i as i32;
+                }
+            }
+            e_.key_prop_index = key_prop_index;
+            let is_key_after_spread =
+                key_prop_index > first_spread_prop_index && first_spread_prop_index >= 0;
+            if is_key_after_spread {
+                e_.flags.insert(Flags::JSXElement::IsKeyAfterSpread);
+            } else {
+                e_.flags.remove(Flags::JSXElement::IsKeyAfterSpread);
+            }
+            e_.flags.remove(Flags::JSXElement::HasBareKey);
+        }
         // JSX is not a type parameter — dispatch on the runtime
         // `P::jsx_transform` field.
         match p.jsx_transform {
             JSXTransformType::React => {
                 let tag: Expr = 'tagger: {
-                    if let Some(mut _tag) = e_.tag {
-                        p.visit_expr(&mut _tag);
-                        break 'tagger _tag;
+                    if let Some(mut tag) = e_.tag {
+                        p.visit_expr(&mut tag);
+                        if p.options.jsx.runtime == options::JSX::Runtime::Preserve
+                            || p.options.jsx.runtime == options::JSX::Runtime::Solid
+                        {
+                            let ref_ = match tag.data {
+                                Data::EIdentifier(identifier) => Some(identifier.ref_),
+                                Data::EImportIdentifier(identifier) => Some(identifier.ref_),
+                                _ => None,
+                            };
+                            if let Some(ref_) = ref_ {
+                                p.symbols[ref_.inner_index() as usize]
+                                    .set_must_start_with_capital_letter_for_jsx(true);
+                            }
+                        }
+                        break 'tagger tag;
+                    }
+                    if p.options.jsx.runtime == options::JSX::Runtime::Preserve
+                        || p.options.jsx.runtime == options::JSX::Runtime::Solid
+                    {
+                        break 'tagger p.new_expr(E::Missing {}, expr.loc);
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
                         // `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
@@ -397,17 +470,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
-                    options::JSX::Runtime::Automatic
-                } else {
-                    options::JSX::Runtime::Classic
-                };
                 let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes
                 // That would reduce the amount of allocations a little
-                if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
+                if runtime == options::JSX::Runtime::Classic
+                    || (runtime == options::JSX::Runtime::Automatic && is_key_after_spread)
+                {
                     // Arguments to createElement()
                     let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
                     VecExt::append(&mut args, tag);
@@ -673,6 +743,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                         expr.loc,
                     );
+                    return;
+                } else if runtime == options::JSX::Runtime::Preserve
+                    || runtime == options::JSX::Runtime::Solid
+                {
+                    // Preserve the JSX AST but still visit nested expressions so symbol
+                    // binding, minification, DCE, and source maps see the same tree.
+                    if e_.tag.is_some() {
+                        e_.tag = Some(tag);
+                    }
+
+                    let mut last_child: u32 = 0;
+                    for i in 0..children_count {
+                        let mut visited = e_.children.slice()[i as usize];
+                        p.visit_expr(&mut visited);
+                        if !matches!(visited.data, Data::EMissing(..)) {
+                            e_.children.slice_mut()[last_child as usize] = visited;
+                            last_child += 1;
+                        }
+                    }
+                    e_.children.truncate(last_child as usize);
+
+                    *e = expr;
                     return;
                 } else {
                     unreachable!();

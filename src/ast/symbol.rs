@@ -360,8 +360,9 @@ impl Symbol {
             self.original_name = old.original_name;
             self.set_must_not_be_renamed(true);
         }
-
-        // TODO: MustStartWithCapitalLetterForJSX
+        if old.must_start_with_capital_letter_for_jsx() {
+            self.set_must_start_with_capital_letter_for_jsx(true);
+        }
     }
 }
 

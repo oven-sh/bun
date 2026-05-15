@@ -632,6 +632,8 @@ impl<'a> Transpiler<'a> {
         } else if is_production {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
+            self.options.force_node_env = options::ForceNodeEnv::Production;
+            self.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
         }
         Ok(())
     }

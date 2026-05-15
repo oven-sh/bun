@@ -40,16 +40,24 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
-    if s == b"automatic" {
-        Ok(api::JsxRuntime::Automatic)
-    } else if s == b"fallback" || s == b"classic" {
-        Ok(api::JsxRuntime::Classic)
-    } else if s == b"solid" {
-        Ok(api::JsxRuntime::Solid)
-    } else {
-        Err(crate::Error::InvalidJSXRuntime)
+fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<options::JSX::RuntimeDevelopmentPair> {
+    let mut lower_buf = [0u8; 128];
+    let len = s.len().min(lower_buf.len());
+    let _ = bun_core::copy_lowercase(&s[..len], &mut lower_buf[..len]);
+    let lower = &lower_buf[..len];
+
+    if lower == b"fallback" {
+        return Ok(options::JSX::RuntimeDevelopmentPair {
+            runtime: options::JSX::Runtime::Classic,
+            development: None,
+        });
     }
+
+    if let Some(runtime) = options::JSX::RUNTIME_MAP.get(lower) {
+        return Ok(*runtime);
+    }
+
+    Err(crate::Error::InvalidJSXRuntime)
 }
 
 pub(crate) type ParamType = clap::Param<clap::Help>;
@@ -132,7 +140,11 @@ const TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\""
     ),
-    parse_param!("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\""),
+    // `parse_param!` only accepts a literal, so keep this synchronized with
+    // `options::JSX::RUNTIME_LIST_FOR_DISPLAY`.
+    parse_param!(
+        "--jsx-runtime <STR>               One of: \"automatic\" (default), \"classic\", \"solid\", \"preserve\", \"react\", \"react-jsx\", \"react-jsxdev\""
+    ),
     parse_param!(
         "--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)"
     ),
@@ -1592,21 +1604,27 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         || jsx_fragment.is_some()
         || jsx_import_source.is_some()
         || jsx_runtime.is_some()
+        || jsx_side_effects
     {
         let default_factory: &[u8] = b"";
         let default_fragment: &[u8] = b"";
         let default_import_source: &[u8] = b"";
+        let runtime_pair = if let Some(runtime) = jsx_runtime {
+            Some(resolve_jsx_runtime(runtime)?)
+        } else {
+            None
+        };
         if opts.jsx.is_none() {
             opts.jsx = Some(api::Jsx {
                 factory: jsx_factory.unwrap_or(default_factory).into(),
                 fragment: jsx_fragment.unwrap_or(default_fragment).into(),
                 import_source: jsx_import_source.unwrap_or(default_import_source).into(),
-                runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
-                } else {
-                    api::JsxRuntime::Automatic
-                },
-                development: false,
+                runtime: runtime_pair
+                    .map(|runtime| runtime.runtime.into())
+                    .unwrap_or(api::JsxRuntime::Automatic),
+                development: runtime_pair
+                    .and_then(|runtime| runtime.development)
+                    .unwrap_or(false),
                 side_effects: jsx_side_effects,
             });
         } else {
@@ -1617,13 +1635,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 import_source: jsx_import_source
                     .map(Box::<[u8]>::from)
                     .unwrap_or(prev.import_source),
-                runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
-                } else {
-                    prev.runtime
-                },
-                development: false,
-                side_effects: jsx_side_effects,
+                runtime: runtime_pair
+                    .map(|runtime| runtime.runtime.into())
+                    .unwrap_or(prev.runtime),
+                development: runtime_pair
+                    .and_then(|runtime| runtime.development)
+                    .unwrap_or(prev.development),
+                side_effects: jsx_side_effects || prev.side_effects,
             });
         }
     }

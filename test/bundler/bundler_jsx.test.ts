@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { SourceMapConsumer } from "source-map";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -145,6 +146,360 @@ function itBundledDevAndProd(
 }
 
 describe("bundler", () => {
+  describe("jsx preserve", () => {
+    test("Bun.Transpiler scanImports uses the effective JSX runtime", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: JSON.stringify({ compilerOptions: { jsx: "preserve" } }),
+      });
+
+      expect(transpiler.scanImports("export default <></>;")).toEqual([]);
+      expect(transpiler.scanImports("/* @jsxRuntime automatic */ export default <></>;")).toEqual([
+        { kind: "require-call", path: "react/jsx-dev-runtime" },
+        { kind: "require-call", path: "react" },
+      ]);
+      expect(transpiler.scanImports("/* @jsxRuntime react-jsx */ export default <></>;")).toEqual([
+        { kind: "require-call", path: "react/jsx-runtime" },
+        { kind: "require-call", path: "react" },
+      ]);
+
+      const automaticTranspiler = new Bun.Transpiler({ loader: "tsx" });
+      expect(automaticTranspiler.scanImports("/* @jsxRuntime preserve */ export default <></>;")).toEqual([]);
+
+      const solidTranspiler = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: JSON.stringify({ compilerOptions: { jsx: "solid" } }),
+      });
+      expect(solidTranspiler.scanImports("export default <></>;")).toEqual([]);
+    });
+
+    itBundled("jsx/PreserveCliRuntimeFlag", {
+      files: {
+        "/in.tsx": `console.log(<span>Hello</span>);`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      jsx: {
+        runtime: "preserve",
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("<span>Hello</span>");
+        expect(out).not.toContain("React.createElement");
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+
+    itBundled("jsx/PreserveApiRuntimeOption", {
+      files: {
+        "/in.tsx": `export const element = <section data-kind="api">API</section>;`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "api",
+      jsx: {
+        runtime: "preserve",
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<section data-kind="api">API</section>');
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+
+    itBundled("jsx/PreserveTsconfigBeatsImportSource", {
+      files: {
+        "/in.tsx": `export const element = <><SolidLike /></>;`,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","jsxImportSource":"solid-js","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("<><SolidLike/></>");
+        expect(out).not.toContain("solid-js");
+        expect(out).not.toContain("jsx-runtime");
+        expect(out).not.toContain("Fragment");
+      },
+    });
+
+    itBundled("jsx/PreserveBunfigRuntime", {
+      files: {
+        "/in.tsx": `export const element = <article data-source="bunfig">Bunfig</article>;`,
+        "/bunfig.toml": `jsx = "preserve"`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('<article data-source="bunfig">Bunfig</article>');
+        expect(out).not.toContain("React.createElement");
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+
+    itBundled("jsx/PreserveAttributeQuotingEdgeCases", {
+      files: {
+        "/in.tsx": `
+          export const a = <div title='"' />;
+          export const b = <div title="'" />;
+          export const c = <div title={"'"} />;
+          export const d = <div title={'"'} />;
+          export const e = <div title="\`" />;
+          export const f = <div title={"'\\""} />;
+          export const g = <div title="&amp;" />;
+          export const h = <div title="&#55296;">&#55296;</div>;
+          export const i = <div title="&#x2028;">&#x2028;</div>;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`title='"'`);
+        expect(out).toContain(`title="'"`);
+        expect(out).toContain('title="`"');
+        expect(out).toContain(`title={"'\\""}`);
+        expect(out).toContain(`title={"&"}`);
+        expect(out).toContain(`title={"\\uD800"}>{"\\uD800"}</div>`);
+        expect(out).toContain(`title={"\\u2028"}>{"\\u2028"}</div>`);
+      },
+    });
+
+    itBundled("jsx/PreserveCommaExpressions", {
+      files: {
+        "/in.tsx": `
+          declare function first(): Record<string, unknown>;
+          declare function second(): Record<string, unknown>;
+          export const element = <Component {...(first(), second())} value={(first(), second())}>{(first(), second())}</Component>;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("{...(first(), second())}");
+        expect(out).toContain("value={(first(), second())}");
+        expect(out).toContain(">{(first(), second())}</Component>");
+      },
+    });
+
+    itBundled("jsx/PreserveMultilineChildren", {
+      files: {
+        "/in.tsx": `
+          export const a = <div>&amp;</div>;
+          export const b = <div>&lt;</div>;
+          export const c = <div>&gt;</div>;
+          export const d = <div>&#123;</div>;
+          export const e = <div>&#125;</div>;
+          export const f =
+            <div>
+              Line 1
+              Line "2"
+              Line '3'
+              Line \`4\`
+            </div>;
+          export const adjacent = <div>{"a"}{"b"}</div>;
+          export const mixed = <div>b<span />d</div>;
+          export const fragment = <>x<span />z</>;
+          export const emptyExpression = <div>{""}</div>;
+          export const explicitClose = <div></div>;
+          export const selfClosing = <div />;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`<div>{"&"}</div>`);
+        expect(out).toContain(`<div>{"<"}</div>`);
+        expect(out).toContain(`<div>{">"}</div>`);
+        expect(out).toContain(`<div>{"{"}</div>`);
+        expect(out).toContain(`<div>{"}"}</div>`);
+        expect(out).toContain("Line 1");
+        expect(out).toContain('Line "2"');
+        expect(out).toContain("Line '3'");
+        expect(out).toContain("Line `4`");
+        expect(out).toContain(`<div>\n  {"a"}\n  {"b"}\n</div>`);
+        expect(out).toContain(`<div>\n  {"b"}\n  <span/>\n  {"d"}\n</div>`);
+        expect(out).toContain(`<>\n  {"x"}\n  <span/>\n  {"z"}\n</>`);
+        expect(out).toContain(`<div>{""}</div>`);
+        expect(out).toContain(`<div></div>`);
+        expect(out).toContain(`<div/>`);
+      },
+    });
+
+    itBundled("jsx/PreserveMinifiedChildBoundaries", {
+      files: {
+        "/in.tsx": `
+          export const adjacent = <div>{"a"}{"b"}</div>;
+          export const mixed = <div>b<span />d</div>;
+          export const empty = <div>{""}</div>;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`<div>{"a"}{"b"}</div>`);
+        expect(out).toContain(`<div>{"b"}<span/>{"d"}</div>`);
+        expect(out).toContain(`<div>{""}</div>`);
+      },
+    });
+
+    itBundled("jsx/PreserveSourcemapSimple", {
+      files: {
+        "/in.tsx": `export const A = <section id="x">hello</section>;
+          export const B = <>{...items}</>;`,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+      },
+      outdir: "/out",
+      sourceMap: "external",
+      target: "bun",
+      backend: "cli",
+      async onAfterBundle(api) {
+        const source = api.readFile("/in.tsx");
+        const generated = api.readFile("/out/in.js");
+        expect(generated).toContain(`<section id="x">hello</section>`);
+
+        api.assertFileExists("/out/in.js.map");
+        const map = JSON.parse(api.readFile("/out/in.js.map"));
+
+        const lineColumn = (text: string, index: number) => {
+          expect(index).not.toBe(-1);
+          const before = text.slice(0, index);
+          return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+        };
+        const tokens = [
+          {
+            token: "opening tag",
+            generatedIndex: generated.indexOf("<section") + 1,
+            sourceIndex: source.indexOf("<section") + 1,
+          },
+          {
+            token: "attribute key",
+            generatedIndex: generated.indexOf("id="),
+            sourceIndex: source.indexOf("id="),
+          },
+          {
+            token: "attribute value",
+            generatedIndex: generated.indexOf('"x"'),
+            sourceIndex: source.indexOf('"x"'),
+          },
+          {
+            token: "child text",
+            generatedIndex: generated.indexOf("hello"),
+            sourceIndex: source.indexOf("hello"),
+          },
+          {
+            token: "spread child",
+            generatedIndex: generated.indexOf("...items"),
+            sourceIndex: source.indexOf("...items"),
+          },
+          {
+            token: "closing tag",
+            generatedIndex: generated.indexOf("</section>"),
+            sourceIndex: source.indexOf("</section>"),
+          },
+        ];
+
+        await SourceMapConsumer.with(map, null, consumer => {
+          const positions = tokens.map(({ token, generatedIndex }) => {
+            const mapped = consumer.originalPositionFor(lineColumn(generated, generatedIndex));
+            return {
+              token,
+              source: mapped.source?.split(/[\\/]/).pop(),
+              line: mapped.line,
+              column: mapped.column,
+            };
+          });
+          expect(positions).toEqual(
+            tokens.map(({ token, sourceIndex }) => ({
+              token,
+              source: "in.tsx",
+              ...lineColumn(source, sourceIndex),
+            })),
+          );
+        });
+      },
+    });
+
+    itBundled("jsx/PreserveMinifyIdentifiers", {
+      files: {
+        "/in.tsx": `
+          import { ImportedComponent } from "./component";
+          let greeting = "Hello";
+          let spreadProps = { title: greeting };
+          function VeryLongComponent() { return null; }
+          console.log(<>
+            <VeryLongComponent {...spreadProps} key="id" longAttributeName={greeting} data-long-name={greeting} />
+            <ImportedComponent />
+            <h3>{greeting}</h3>
+          </>);
+        `,
+        "/component.tsx": `export function ImportedComponent() { return null; }`,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      minifyIdentifiers: true,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("<>");
+        expect(out).toContain("{...");
+        expect(out).toContain("<h3>{");
+        expect(out).toContain("longAttributeName={");
+        expect(out).toContain("data-long-name={");
+        expect(out).toContain("</>");
+        expect(out).toMatch(/<[A-Z][\w$]* \{\.\.\./);
+        expect(out).toMatch(/<[A-Z][\w$]*\/>/);
+        expect(out).not.toContain("VeryLongComponent");
+        expect(out).not.toContain("ImportedComponent");
+        expect(out).not.toContain("spreadProps");
+        expect(out).not.toContain("jsx-runtime");
+        expect(out).not.toContain("greeting");
+        expect(out).not.toContain("createElement");
+      },
+    });
+
+    itBundled("jsx/PreserveKeyAfterSpreadDoesNotLower", {
+      files: {
+        "/in.tsx": `
+          /* @jsxRuntime preserve */
+          const props = { title: "ok" };
+          function Component() { return null; }
+          export const element = <Component {...props} key="id" />;
+          export const bareKey = <Component key />;
+        `,
+        "/tsconfig.json": `{"compilerOptions":{"jsx":"automatic","target":"ESNext"}}`,
+      },
+      outfile: "/out.js",
+      target: "bun",
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`<Component {...props} key="id"/>`);
+        expect(out).toContain(`<Component key/>`);
+        expect(out).not.toContain("createElement");
+        expect(out).not.toContain("jsxDEV");
+        expect(out).not.toContain("jsx-runtime");
+      },
+    });
+  });
+
   itBundledDevAndProd("jsx/Automatic", {
     files: {
       "index.jsx": /* js*/ `

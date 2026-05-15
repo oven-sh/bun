@@ -229,7 +229,7 @@ export interface BundlerTestInput {
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
-    runtime?: "automatic" | "classic";
+    runtime?: "automatic" | "classic" | "solid" | "preserve";
     importSource?: string; // for automatic
     factory?: string; // for classic
     fragment?: string; // for classic
@@ -613,7 +613,9 @@ function expectBundled(
           : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
-    throw new UnsupportedOptionError("bundling:false with more than one entry point is not implemented in this harness");
+    throw new UnsupportedOptionError(
+      "bundling:false with more than one entry point is not implemented in this harness",
+    );
   }
 
   if (!ESBUILD && legalComments) {
@@ -717,8 +719,7 @@ function expectBundled(
 
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
     // The file `bun build --compile` writes: on Windows it appends `.exe` unless the name already ends with it.
-    const outfileOnDisk =
-      outfile && compile && isWindows && !outfile.endsWith(".exe") ? outfile + ".exe" : outfile;
+    const outfileOnDisk = outfile && compile && isWindows && !outfile.endsWith(".exe") ? outfile + ".exe" : outfile;
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (
@@ -878,7 +879,6 @@ function expectBundled(
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
-              // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
               keepNames && `--keep-names`,
@@ -904,8 +904,7 @@ function expectBundled(
               conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
-              `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
-              // jsx.preserve && "--jsx=preserve",
+              `--jsx=${jsx.runtime === "preserve" ? "preserve" : jsx.runtime === "classic" ? "transform" : "automatic"}`,
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
               jsx.sideEffects && `--jsx-side-effects`,
@@ -1720,7 +1719,10 @@ for (const [key, blob] of build.outputs) {
               for (let i = 0; i < parsed.sources.length; i++) {
                 const source = parsed.sources[i];
                 const sourcemap_content = parsed.sourcesContent[i];
-                const actual_content = readFileSync(path.resolve(path.dirname(path.join(outdir!, file)), source), "utf-8");
+                const actual_content = readFileSync(
+                  path.resolve(path.dirname(path.join(outdir!, file)), source),
+                  "utf-8",
+                );
                 expect(sourcemap_content).toBe(actual_content);
               }
 

@@ -74,6 +74,26 @@ macro_rules! for_each_fs_async_op {
 macro_rules! __fs_pat {
     ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
 }
+/// Expand the fs-op table to its row count (usize const expr).
+///
+/// Paired with a `const _: () = assert!` so a drift between this table and the
+/// expected count (42) fails the build instead of silently rebalancing the
+/// wildcard arm in [`run_task`]. See §Dispatch safety comment there.
+macro_rules! __fs_count {
+    ($($tag:ident $ty:ident;)*) => { { [$(__fs_count!(@unit $tag)),*].len() } };
+    (@unit $tag:ident) => { () };
+}
+
+/// Compile-time guard: the `for_each_fs_async_op!` table must stay at 42 rows.
+/// The wildcard arm in [`run_task`] relies on the outer or-pattern proving
+/// exhaustiveness; drift here would make the wildcard reachable (UB in
+/// release). Bump the expected count when you add a row, and update the
+/// `task_tag::COUNT` assert further down if the new tag is new to
+/// `bun_event_loop::task_tag` too.
+const _: () = assert!(
+    for_each_fs_async_op!(__fs_count) == 42,
+    "for_each_fs_async_op! row count drifted — see dispatch::run_task wildcard safety",
+);
 
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
@@ -384,13 +404,31 @@ pub fn run_task(
         // ── node:fs async ops (`runFromJSThread`) ────────────────────────
         // 42 arms stamped from `for_each_fs_async_op!` (module scope). The
         // outer or-pattern proves the inner re-match is exhaustive over the
-        // table, so the trailing wildcard is genuinely unreachable.
+        // table, so the trailing wildcard is genuinely unreachable. The
+        // `__fs_count` compile-time assert above guards the row count; any
+        // drift between the outer guard and the inner dispatch fails the
+        // build before it can expose the wildcard.
         for_each_fs_async_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
-                    // SAFETY: outer arm guard proves one of the 42 tags matched.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
+                    // SAFETY: outer arm guard proves one of the 42 tags matched;
+                    // the `__fs_count` assert pins the table at 42 rows. In
+                    // debug/ASAN builds we still panic instead of invoking UB
+                    // so a regression surfaces as a controlled crash before
+                    // release. Mirrors the `WindowsNamedPipe` non-Windows arm
+                    // below (line ~1006).
+                    _ => {
+                        if cfg!(debug_assertions) {
+                            unreachable!(
+                                "fs-async dispatch: tag {} passed outer or-pattern \
+                                 but missed inner match — table desync?",
+                                task.tag.0,
+                            );
+                        }
+                        // SAFETY: see arm comment.
+                        unsafe { core::hint::unreachable_unchecked() }
+                    }
                 }};
             }
             for_each_fs_async_op!(__fs_run);

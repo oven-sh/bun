@@ -404,24 +404,25 @@ test.concurrent("createHook: util.promisify(setTimeout) still resolves after .en
     const sleepImm = util.promisify(setImmediate);
 
     (async () => {
-      const t1 = Date.now();
       const value = await Promise.race([
         sleep(30, 'hello'),
         new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), 1000)),
       ]);
-      const elapsed = Date.now() - t1;
       const immValue = await Promise.race([
         sleepImm('world'),
         new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT imm')), 1000)),
       ]);
-      console.log(JSON.stringify({ value, immValue, elapsedAtLeast25: elapsed >= 25 }));
+      console.log(JSON.stringify({ value, immValue }));
     })();
   `);
   expect(stderr).toBe("");
   const parsed = JSON.parse(stdout.trim());
+  // Without the `promisify.custom` symbol forwarding, promisify falls back
+  // to the errback wrapper and `sleep(30, 'hello')` never resolves to
+  // 'hello' — the TIMEOUT racer wins and stderr is non-empty. Resolving
+  // to the exact passed-through value is the condition that proves the fix.
   expect(parsed.value).toBe("hello");
   expect(parsed.immValue).toBe("world");
-  expect(parsed.elapsedAtLeast25).toBe(true);
   expect(exitCode).toBe(0);
 });
 

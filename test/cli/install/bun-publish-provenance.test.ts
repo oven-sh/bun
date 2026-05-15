@@ -485,8 +485,9 @@ describe("--provenance", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      await packProc.exited;
-      expect(packProc.exitCode).toBe(0);
+      const [packStderr, packExitCode] = await Promise.all([packProc.stderr.text(), packProc.exited]);
+      if (packExitCode !== 0) expect(packStderr).toBe("");
+      expect(packExitCode).toBe(0);
       const tarballPath = join(packageDir, "prov-pkg-6-2.0.0.tgz");
       const tarball = await Bun.file(tarballPath).arrayBuffer();
       const sha512 = Buffer.from(await crypto.subtle.digest("SHA-512", tarball)).toString("hex");

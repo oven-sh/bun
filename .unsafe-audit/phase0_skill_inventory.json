@@ -1,0 +1,31 @@
+{
+  "jsm_installed": false,
+  "jsm_authenticated": false,
+  "skill_search_dirs": [
+    "/home/ubuntu/.claude/skills",
+    "/home/ubuntu/.codex/skills",
+    "/data/projects/bun/.claude/skills"
+  ],
+  "skills": [
+    {"name": "operationalizing-expertise", "state": "installed", "location": "/home/ubuntu/.claude/skills/operationalizing-expertise"},
+    {"name": "codebase-archaeology", "state": "installed", "location": "/home/ubuntu/.claude/skills/codebase-archaeology"},
+    {"name": "codebase-report", "state": "installed", "location": "/home/ubuntu/.claude/skills/codebase-report"},
+    {"name": "extreme-software-optimization", "state": "installed", "location": "/home/ubuntu/.claude/skills/extreme-software-optimization"},
+    {"name": "multi-pass-bug-hunting", "state": "installed", "location": "/home/ubuntu/.claude/skills/multi-pass-bug-hunting"},
+    {"name": "multi-model-triangulation", "state": "installed", "location": "/home/ubuntu/.claude/skills/multi-model-triangulation"},
+    {"name": "idea-wizard", "state": "installed", "location": "/home/ubuntu/.claude/skills/idea-wizard"},
+    {"name": "beads-workflow", "state": "installed", "location": "/home/ubuntu/.claude/skills/beads-workflow"},
+    {"name": "beads-br", "state": "installed", "location": "/home/ubuntu/.claude/skills/beads-br"},
+    {"name": "beads-bv", "state": "installed", "location": "/home/ubuntu/.claude/skills/beads-bv"},
+    {"name": "ubs", "state": "installed", "location": "/home/ubuntu/.claude/skills/ubs"},
+    {"name": "agent-mail", "state": "installed", "location": "/home/ubuntu/.claude/skills/agent-mail"},
+    {"name": "cass", "state": "installed", "location": "/home/ubuntu/.claude/skills/cass"},
+    {"name": "testing-real-service-e2e-no-mocks", "state": "installed", "location": "/home/ubuntu/.claude/skills/testing-real-service-e2e-no-mocks"},
+    {"name": "testing-metamorphic", "state": "installed", "location": "/home/ubuntu/.claude/skills/testing-metamorphic"},
+    {"name": "testing-fuzzing", "state": "installed", "location": "/home/ubuntu/.claude/skills/testing-fuzzing"},
+    {"name": "testing-conformance-harnesses", "state": "installed", "location": "/home/ubuntu/.claude/skills/testing-conformance-harnesses"},
+    {"name": "deadlock-finder-and-fixer", "state": "installed", "location": "/home/ubuntu/.claude/skills/deadlock-finder-and-fixer"}
+  ],
+  "present_count": 18,
+  "missing_count": 0
+}

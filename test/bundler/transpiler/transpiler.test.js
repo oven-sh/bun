@@ -3957,4 +3957,36 @@ declare();`,
       'console.log("x")',
     );
   });
+
+  it("erases `declare\\nclass Foo {}` (no ASI between `declare` and a declaration keyword)", () => {
+    // TypeScript does NOT apply ASI between the `declare` modifier and its
+    // declaration when the next token is a declaration keyword (class /
+    // function / var / const / enum). Node's --experimental-strip-types and
+    // tsc both erase this to nothing. An earlier version of this fix used a
+    // blanket `has_newline_before` bailout that regressed it.
+    expect(transpiler.transformSync(`declare\nclass Foo {}\nconsole.log("ok");`).trim()).toBe(
+      'console.log("ok");',
+    );
+    expect(transpiler.transformSync(`declare\nfunction foo(): void;\nconsole.log("ok");`).trim()).toBe(
+      'console.log("ok");',
+    );
+    expect(transpiler.transformSync(`declare\nlet x: number;\nconsole.log("ok");`).trim()).toBe(
+      'console.log("ok");',
+    );
+  });
+
+  it("preserves decorator on `@dec declare\\nclass Foo {}` instead of silently dropping it", () => {
+    // The decorator carve-out fires on `@dec declare` expecting a class to
+    // follow. An earlier `has_newline_before` bailout sent this to the
+    // `SExpr` path, which silently discarded `opts.ts_decorators` — so
+    // the class was emitted *without* its decorator. With the
+    // declaration-keyword lookahead, this now correctly erases as ambient.
+    expect(
+      transpiler.transformSync(`@dec declare\nclass Foo {}\nconsole.log("ok");`).trim(),
+    ).toBe('console.log("ok");');
+    // And `@dec declare` followed by something that can't start an ambient
+    // declaration (like a call) must still error, not silently drop the
+    // decorator.
+    expect(() => transpiler.transformSync(`@dec declare\nfoo();`)).toThrow();
+  });
 });

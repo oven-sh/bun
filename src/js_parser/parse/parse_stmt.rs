@@ -1804,21 +1804,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Only treat this as an ambient "declare" modifier if we actually
                 // parsed just the bare identifier "declare" with no suffix (the
                 // caller gates on `expr.data == .e_identifier`), AND the next token
-                // is one that can legitimately start an ambient declaration:
-                //   var / let / const   →  TVar / TIdentifier("let") / TConst
-                //   function / class / enum → TFunction / TClass / TEnum
-                //   namespace / module / interface / type / global / abstract / async
-                //                        → TIdentifier
-                //   declare module "fs"  → TStringLiteral (inside an outer declare)
-                // Anything else (`declare;`, `declare\n`, `declare =`, `declare +`)
-                // is regular JS referencing the identifier and must fall through
-                // so that a TDZ / ReferenceError fires at runtime, matching tsc's
-                // and Node's `--experimental-strip-types` behavior.
-                let next_ok = matches!(
+                // is one that can legitimately start an ambient declaration. The
+                // rules mirror tsc / esbuild / `node --experimental-strip-types`:
+                //
+                // * Keyword tokens (`TVar` / `TConst` / `TFunction` / `TClass` /
+                //   `TEnum`) always start an ambient — newline doesn't matter,
+                //   there is no ASI between `declare` and a keyword-introduced
+                //   declaration (verified with `node --experimental-strip-types`:
+                //   `declare\nclass Foo {}` erases cleanly).
+                // * An identifier is only an ambient modifier if it's one of TS's
+                //   contextual declaration-introducer keywords (`let` / `namespace`
+                //   / `module` / `interface` / `type` / `global` / `abstract` /
+                //   `async`). Any other identifier (`declare\nfoo`, `declare\nbar`)
+                //   is regular JS — two statements under ASI, with the `declare`
+                //   read surfacing as `SExpr{declare}` so TDZ / ReferenceError
+                //   fires at runtime the way tsc and Node produce it.
+                // * `TStringLiteral` is only valid nested inside an outer
+                //   `declare module 'fs'` (`is_typescript_declare` already set).
+                //
+                // Anything else (`declare;`, `declare =`, `declare +`) falls
+                // through so the `SExpr` path preserves the identifier read.
+                let next_is_declaration_keyword = matches!(
                     p.lexer.token,
-                    T::TVar | T::TConst | T::TFunction | T::TClass | T::TEnum | T::TIdentifier,
-                ) || (p.lexer.token == T::TStringLiteral && opts.is_typescript_declare);
-                if p.lexer.has_newline_before || !next_ok {
+                    T::TVar | T::TConst | T::TFunction | T::TClass | T::TEnum
+                );
+                let next_is_ambient_modifier_ident = p.lexer.token == T::TIdentifier
+                    && matches!(
+                        p.lexer.identifier,
+                        b"let"
+                            | b"namespace"
+                            | b"module"
+                            | b"interface"
+                            | b"type"
+                            | b"global"
+                            | b"abstract"
+                            | b"async",
+                    );
+                let next_is_declare_module_string = p.lexer.token == T::TStringLiteral
+                    && opts.is_typescript_declare;
+                if !(next_is_declaration_keyword
+                    || next_is_ambient_modifier_ident
+                    || next_is_declare_module_string)
+                {
                     return Ok(None);
                 }
 

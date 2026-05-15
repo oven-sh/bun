@@ -545,7 +545,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// not share `.text` pages with the hot `bun run <script>` dispatch path.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
         this_transpiler.resolver.opts.load_tsconfig_json = true;
         this_transpiler.options.load_tsconfig_json = true;
@@ -863,7 +866,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// initializing JSC.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
@@ -1662,7 +1668,10 @@ fn log_clear_msgs(vm: &mut VirtualMachine) {
 
 #[cold]
 #[inline(never)]
-#[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
     if let Some(log) = vm.log {
@@ -1682,7 +1691,10 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 /// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
 #[cold]
 #[inline(never)]
-#[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
     vm.on_exit();
@@ -1696,7 +1708,10 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
 #[cold]
 #[inline(never)]
-#[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
@@ -1715,7 +1730,10 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! 
 /// exit: bump the exit code and print the sourcemap note + version string.
 #[cold]
 #[inline(never)]
-#[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn print_unhandled_version_note(vm: &mut VirtualMachine) {
     vm.exit_handler.exit_code = 1;
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -1755,7 +1773,10 @@ impl RunCommand {
     /// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &bun_core::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
@@ -3015,7 +3036,10 @@ impl RunCommand {
 
     #[cold]
     #[inline(never)]
-    #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
             "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
@@ -3026,7 +3050,10 @@ impl RunCommand {
 
     #[cold]
     #[inline(never)]
-    #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn exec_as_if_node_boot_failed(
         ctx: &mut ContextData,
         basename: &[u8],

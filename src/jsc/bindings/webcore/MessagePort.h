@@ -131,13 +131,15 @@ private:
 
     // Event-loop ref state machine. A port holds a single event-loop ref iff
     //   m_hasRef && (m_messageEventCount > 0 || m_wantsExplicitRef) && !m_isDetached
-    // updateEventLoopRef() reconciles m_isRefingEventLoop with that predicate. This gives
-    // Node's .unref() its documented semantics: even a transferred port with a 'message'
-    // listener stops holding the process open once .unref() is called.
+    // updateEventLoopRef() reconciles m_isRefingEventLoop with that predicate.
     //
-    // m_hasRef: has .unref() NOT been called (default true; .unref() clears, .ref() sets).
-    // m_wantsExplicitRef: has .ref() or onmessage=fn been called (so .ref() on a fresh port
-    //   refs even without a listener).
+    // m_hasRef: default true. .unref() clears, .ref() sets; on transferred ports the
+    //   first/last 'message' listener also sets/clears it (mirroring Node's
+    //   setupPortReferencing newListener/removeListener → this.ref()/this.unref()). So
+    //   on(); unref() stays unref'd, while unref(); on() re-refs — both matching Node.
+    // m_wantsExplicitRef: set by .ref() or onmessage=fn (so .ref() on a fresh port refs
+    //   even without a listener); cleared by .unref(), onmessage=null, or removing the
+    //   last 'message' listener on a transferred port.
     // m_messageEventCount: only tracked for transferred ports (onDidChangeListener wired in
     //   entangle()); fresh ports don't hold the process open via listeners alone.
     bool m_hasRef { true };

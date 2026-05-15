@@ -227,8 +227,11 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
     expect(exists).toBe(true);
   });
 
-  // statfs: POSIX-only at runtime; Windows threads through a different path.
-  test.skipIf(isWindows)("statfs", async () => {
+  // `fs.statfs` on Windows dispatches through the same `StatFS` arm of
+  // `for_each_fs_async_op!` — `fs_async::Statfs` is a `UVFSRequest` alias
+  // that runs everywhere via libuv (`node_fs.rs:622`). Keep it unguarded so
+  // this smoke test actually covers the dispatch arm on Windows too.
+  test("statfs", async () => {
     using dir = tempDir("fs-disp-sfs", {});
     const s = await fs.statfs(String(dir));
     expect(typeof s.type).toBe("number");

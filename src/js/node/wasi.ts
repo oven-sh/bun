@@ -7,6 +7,7 @@
 // Eventually we will implement this in native code, but this is just a quick hack to get WASI working.
 
 const nodeFsConstants = $processBindingConstants.fs;
+const { validateOneOf } = require("internal/validators");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -608,10 +609,10 @@ var require_wasi = __commonJS({
       function (mod) {
         return mod && mod.__esModule ? mod : { default: mod };
       };
-    let fs;
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.SOCKET_DEFAULT_RIGHTS = void 0;
-    var log = () => {};
+    var log: any = (..._args: any[]) => {};
+    log.enabled = false;
     var logOpen = () => {};
     var SC_OPEN_MAX = 32768;
     var types_1 = require_types();
@@ -659,7 +660,7 @@ var require_wasi = __commonJS({
       (...args) => {
         try {
           return f(...args);
-        } catch (err) {
+        } catch (err: any) {
           let e = err;
           while (e.prev != null) {
             e = e.prev;
@@ -784,7 +785,19 @@ var require_wasi = __commonJS({
     }
 
     var WASI = class WASI {
-      constructor(wasiConfig = {}) {
+      view: any;
+      memory: any;
+      version: string;
+      bindings: any;
+      FD_MAP: Map<number, any>;
+      wasiImport: any;
+      env: any;
+      lastStdin: number = 0;
+      sleep: any;
+      getStdin: any;
+      sendStdout: any;
+      sendStderr: any;
+      constructor(wasiConfig = {} as any) {
         const defaultConfig = getDefaults();
         this.lastStdin = 0;
         this.sleep = wasiConfig.sleep || defaultConfig.sleep;
@@ -798,8 +811,17 @@ var require_wasi = __commonJS({
         this.memory = void 0;
         this.view = void 0;
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
+        let version = wasiConfig.version || "preview1";
+        validateOneOf(version, "version", ["preview1", "unstable"]);
+        if (version === "preview1") {
+          version = "wasi_snapshot_preview1";
+        } else if (version === "unstable") {
+          version = "wasi_unstable";
+        }
+        this.version = version;
+        const fs = this.bindings.fs;
+        const path = this.bindings.path;
         const bindings = this.bindings;
-        fs = bindings.fs;
         this.FD_MAP = /* @__PURE__ */ new Map([
           [
             constants_1.WASI_STDIN_FILENO,
@@ -838,7 +860,6 @@ var require_wasi = __commonJS({
             },
           ],
         ]);
-        const path = bindings.path;
         for (const [k, v] of Object.entries(preopens)) {
           const real = fs.openSync(v, nodeFsConstants.O_RDONLY);
           const newfd = this.getUnusedFileDescriptor();
@@ -1785,17 +1806,17 @@ var require_wasi = __commonJS({
         }
       }
       getState() {
-        return { env: this.env, FD_MAP: this.FD_MAP, bindings: bindings };
+        return { env: this.env, FD_MAP: this.FD_MAP, bindings: this.bindings };
       }
       setState(state) {
         this.env = state.env;
         this.FD_MAP = state.FD_MAP;
-        bindings = state.bindings;
+        this.bindings = state.bindings;
       }
       fstatSync(real_fd) {
         if (real_fd <= 2) {
           try {
-            return fs.fstatSync(real_fd);
+            return this.bindings.fs.fstatSync(real_fd);
           } catch {
             const now = new Date();
             return {
@@ -1820,7 +1841,7 @@ var require_wasi = __commonJS({
             };
           }
         }
-        return fs.fstatSync(real_fd);
+        return this.bindings.fs.fstatSync(real_fd);
       }
       shortPause() {
         if (this.sleep == null) return;
@@ -1855,13 +1876,38 @@ var require_wasi = __commonJS({
         if (memory == null) {
           memory = exports2.memory;
           if (!(memory instanceof WebAssembly.Memory)) {
-            throw new Error(`instance.exports.memory must be a WebAssembly.Memory. Recceived ${memory}.`);
+            throw new Error(`instance.exports.memory must be a WebAssembly.Memory. Received ${memory}.`);
           }
         }
         this.setMemory(memory);
+        if (exports2._initialize) {
+          throw new Error("instance.exports._initialize exists. Use initialize() for WASI reactors.");
+        }
         if (exports2._start) {
           exports2._start();
         }
+      }
+      initialize(instance) {
+        const exports2 = instance.exports;
+        if (exports2 === null || typeof exports2 !== "object") {
+          throw new Error(`instance.exports must be an Object. Received ${exports2}.`);
+        }
+        const memory = exports2.memory;
+        if (!(memory instanceof WebAssembly.Memory)) {
+          throw new Error(`instance.exports.memory must be a WebAssembly.Memory. Received ${memory}.`);
+        }
+        this.setMemory(memory);
+        if (exports2._start) {
+          throw new Error("instance.exports._start exists. Use start() for WASI commands.");
+        }
+        if (exports2._initialize) {
+          exports2._initialize();
+        }
+      }
+      getImportObject() {
+        return {
+          [this.version]: this.wasiImport,
+        };
       }
       getImports(module2) {
         let namespace: string | null = null;

@@ -335,9 +335,7 @@ test.concurrent(
     expect(beforeTimersIdx).toBeGreaterThanOrEqual(0);
     const timerAsyncId = parsed[beforeTimersIdx][1];
     // And the matching after must be just past the callback.
-    const afterIdx = parsed.findIndex(
-      (e, i) => i > timersCbIdx && e[0] === "after" && e[1] === timerAsyncId,
-    );
+    const afterIdx = parsed.findIndex((e, i) => i > timersCbIdx && e[0] === "after" && e[1] === timerAsyncId);
     expect(afterIdx).toBeGreaterThan(timersCbIdx);
     expect(exitCode).toBe(0);
   },

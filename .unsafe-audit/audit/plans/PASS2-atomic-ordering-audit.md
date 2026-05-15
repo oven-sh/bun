@@ -265,7 +265,7 @@ audit findings so clean.
 
 ## TOO-STRONG sites: representative table
 
-35 representative TOO-STRONG sites with file:line + current ordering +
+40 representative TOO-STRONG sites with file:line + current ordering +
 recommended ordering. All are perf-only (B-class) — no correctness change.
 
 | # | File:Line                                              | Op                          | Current  | Should be             |

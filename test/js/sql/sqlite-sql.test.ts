@@ -1376,7 +1376,7 @@ SELECT id, name FROM t ORDER BY id`;
     const blk = await sql.unsafe(`SELECT 'x /* not a comment */ y' AS quoted`);
     expect(blk[0].quoted).toBe("x /* not a comment */ y");
   });
-  test("quoted identifiers (`...`, [...], \"...\") containing comment characters preserve RETURNING", async () => {
+  test('quoted identifiers (`...`, [...], "...") containing comment characters preserve RETURNING', async () => {
     // SQLite accepts four identifier-quoting styles (see
     // https://sqlite.org/lang_keywords.html). If stripSQLComments only
     // knew about single/double quotes, a `--` inside a `[...]` or

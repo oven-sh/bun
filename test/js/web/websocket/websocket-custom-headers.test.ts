@@ -379,3 +379,60 @@ describe("WebSocket custom headers", () => {
     ws.close();
   });
 });
+
+// Regression for #30777: the connect() path was refactored to take
+// `&[BunString]` slices (with the `(ptr, len)` → slice conversion lifted
+// into the extern-C shim). Cover both ends of that slice parameter:
+// the empty-headers case (`(ptr, 0)`) and the many-headers case
+// (drives the `Headers8Bit::init` iteration).
+describe("WebSocket connect() header slice boundaries (#30777)", () => {
+  async function openAndEchoHeaders(opts: { headers?: Record<string, string> }): Promise<Record<string, string>> {
+    const { promise: headersSeen, resolve: resolveHeaders } = Promise.withResolvers<Record<string, string>>();
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      websocket: {
+        open(_ws) {},
+        message(_ws, _msg) {},
+      },
+      fetch(req, server) {
+        const headers: Record<string, string> = {};
+        for (const [k, v] of req.headers.entries()) headers[k.toLowerCase()] = v;
+        resolveHeaders(headers);
+        if (server.upgrade(req)) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+    });
+    const { promise: opened, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`, opts);
+    ws.onopen = () => resolveOpen();
+    ws.onerror = e => rejectOpen((e as any).error ?? new Error((e as any).message ?? "ws error"));
+    const [, headers] = await Promise.all([opened, headersSeen]);
+    ws.close();
+    return headers;
+  }
+
+  it("connects with zero user headers (ffi::slice(ptr, 0) path)", async () => {
+    const seen = await openAndEchoHeaders({});
+    // Core upgrade headers still arrive — the connect path must not skip
+    // them when the user-headers slice is empty.
+    expect(seen["connection"]?.toLowerCase()).toContain("upgrade");
+    expect(seen["upgrade"]?.toLowerCase()).toBe("websocket");
+    expect(seen["sec-websocket-key"]).toBeString();
+    expect(seen["sec-websocket-version"]).toBe("13");
+  });
+
+  it("connects with many user headers (Headers8Bit slice iteration)", async () => {
+    const custom: Record<string, string> = {};
+    for (let i = 0; i < 12; i++) custom[`X-Custom-${i}`] = `value-${i}`;
+    const seen = await openAndEchoHeaders({ headers: custom });
+    // Every custom header must round-trip: the refactor interleaves
+    // names/values via `chunks_exact(2)`, so a drop-one or pair-off-by-one
+    // bug would show up as a missing or swapped value here.
+    for (let i = 0; i < 12; i++) {
+      expect(seen[`x-custom-${i}`]).toBe(`value-${i}`);
+    }
+    expect(seen["connection"]?.toLowerCase()).toContain("upgrade");
+    expect(seen["upgrade"]?.toLowerCase()).toBe("websocket");
+  });
+});

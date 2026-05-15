@@ -90,21 +90,16 @@ case $platform in
     ;;
 esac
 
-# Termux/Android: uname -ms reports 'Linux <arch>' identically to a regular
-# Linux host, so detect via the Termux-set TERMUX_VERSION or the Termux
-# $PREFIX path (/data/data/com.termux/files/usr).
 case "$target" in
 'linux-x64' | 'linux-aarch64')
+    # Termux/Android — uname -ms reports 'Linux <arch>' identically to a
+    # regular Linux host, so detect via the Termux-set TERMUX_VERSION or
+    # the Termux $PREFIX path (/data/data/com.termux/files/usr). Android
+    # uses bionic, not musl — if either check matches, only one suffix
+    # is appended.
     if [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == */com.termux/* ]]; then
         target="$target-android"
-    fi
-    ;;
-esac
-
-case "$target" in
-'linux-x64' | 'linux-aarch64')
-    # Android uses bionic; only the plain linux- targets can be -musl.
-    if [ -f /etc/alpine-release ]; then
+    elif [ -f /etc/alpine-release ]; then
         target="$target-musl"
     fi
     ;;

@@ -21,7 +21,7 @@
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1"
         // "BUN_JSC_validateExceptionChecks": "1",
         // "BUN_JSC_dumpSimulatedThrows": "1",
         // "BUN_JSC_unexpectedExceptionStackTraceLimit": "20",
@@ -36,8 +36,8 @@
         "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF"
+      }
     },
     {
       "type": "lldb",
@@ -50,8 +50,8 @@
         "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF"
+      }
     },
     // bun run [file]
     {
@@ -64,7 +64,7 @@
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
         // "BUN_JSC_validateExceptionChecks": "1",
         // "BUN_JSC_dumpSimulatedThrows": "1",
         // "BUN_JSC_unexpectedExceptionStackTraceLimit": "20",
@@ -79,8 +79,8 @@
         "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF"
+      }
     },
     // bun test [...]
     {
@@ -93,7 +93,7 @@
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_jest": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole",
       "sourceMap": {
@@ -102,8 +102,8 @@
         "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF"
+      }
     },
     // bun exec [...]
     {
@@ -115,7 +115,7 @@
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole",
       "sourceMap": {
@@ -124,8 +124,8 @@
         "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF"
+      }
     },
     // bun test [*]
     {
@@ -137,7 +137,7 @@
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole",
       "sourceMap": {
@@ -146,8 +146,8 @@
         "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF"
+      }
     },
     {
       "type": "lldb",
@@ -158,7 +158,7 @@
       "cwd": "${fileDirname}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole",
       "sourceMap": {
@@ -167,14 +167,14 @@
         "/Users/runner/work/_temp/webkit-release/WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
         // linux
         "/webkitbuild/vendor/WebKit": "${workspaceFolder}/vendor/WebKit",
-        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF",
-      },
+        "/webkitbuild/.WTF/Headers": "${workspaceFolder}/vendor/WebKit/Source/WTF"
+      }
     },
     // Windows: bun test [file]
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source"
       },
       "request": "launch",
       "name": "Windows: bun test [file]",
@@ -184,23 +184,23 @@
       "environment": [
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_DEBUG_jest",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "1",
-        },
-      ],
+          "value": "1"
+        }
+      ]
     },
     // Windows: bun run [file]
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source"
       },
       "request": "launch",
       "name": "Windows: bun run [file]",
@@ -210,22 +210,22 @@
       "environment": [
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_DEBUG_jest",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
+          "value": "2"
+        }
+      ]
     },
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source"
       },
       "request": "launch",
       "name": "Windows: bun install",
@@ -235,19 +235,19 @@
       "environment": [
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "0",
-        },
-      ],
+          "value": "0"
+        }
+      ]
     },
     // Windows: bun test [...]
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source"
       },
       "request": "launch",
       "name": "Windows: bun test [...]",
@@ -257,23 +257,23 @@
       "environment": [
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_DEBUG_jest",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
+          "value": "2"
+        }
+      ]
     },
     // Windows: bun exec [...]
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source"
       },
       "request": "launch",
       "name": "Windows: bun exec [...]",
@@ -283,19 +283,19 @@
       "environment": [
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
+          "value": "2"
+        }
+      ]
     },
     // Windows: bun test [*]
     {
       "type": "cppvsdbg",
       "sourceFileMap": {
-        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source",
+        "D:\\a\\WebKit\\WebKit\\Source": "${workspaceFolder}\\src\\bun.js\\WebKit\\Source"
       },
       "request": "launch",
       "name": "Windows: bun test [*]",
@@ -305,13 +305,13 @@
       "environment": [
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "1",
+          "value": "1"
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2",
-        },
-      ],
+          "value": "2"
+        }
+      ]
     },
     {
       "type": "bun",
@@ -321,8 +321,8 @@
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      }
     },
     {
       "type": "bun",
@@ -332,8 +332,8 @@
       "cwd": "${workspaceFolder}",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-      },
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      }
     },
     {
       "type": "midas-rr",
@@ -342,26 +342,24 @@
       "trace": "Off",
       "setupCommands": [
         "handle SIGPWR nostop noprint pass",
-        "source ${workspaceFolder}/misctools/gdb/std_gdb_pretty_printers.py",
-        "source ${workspaceFolder}/misctools/gdb/zig_gdb_pretty_printers.py",
         "set substitute-path /webkitbuild/vendor/WebKit ${workspaceFolder}/vendor/WebKit",
         "set substitute-path /webkitbuild/.WTF/Headers ${workspaceFolder}/vendor/WebKit/Source/WTF",
         // uncomment if you like
         // "set disassembly-flavor intel",
-        "set print asm-demangle",
-      ],
-    },
+        "set print asm-demangle"
+      ]
+    }
   ],
   "inputs": [
     {
       "id": "commandLine",
       "type": "promptString",
-      "description": "Usage: bun [...]",
+      "description": "Usage: bun [...]"
     },
     {
       "id": "testName",
       "type": "promptString",
-      "description": "Usage: bun test [...]",
-    },
-  ],
+      "description": "Usage: bun test [...]"
+    }
+  ]
 }

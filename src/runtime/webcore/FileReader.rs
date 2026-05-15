@@ -355,10 +355,11 @@ impl FileReader {
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
-            // `StoreRef` liveness invariant (single-threaded JS event loop; we
-            // hold the only mutating handle).
-            match store.data_mut() {
+            // SAFETY: `store` was just moved out of `self.lazy`, so this
+            // `StoreRef` is the sole live handle on this thread (JS event
+            // loop); no other borrow of the pointee is outstanding. Matches
+            // Zig's `*Blob.Store` direct field access.
+            match unsafe { store.data_mut() } {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }

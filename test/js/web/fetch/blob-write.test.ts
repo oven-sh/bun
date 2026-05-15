@@ -84,3 +84,36 @@ test("Bun.file(path).stat() returns stats", async () => {
   expect(stat).toBeDefined();
   expect(stat.size).toBe(13); // "Hello, world!" is 13 bytes
 });
+
+// Stress the threadpool `ReadFile` path that calls `StoreRef::data_mut` off
+// the JS thread (`resolve_size_and_last_modified` on each worker). Every
+// `Bun.file(p).bytes()` clones the backing `StoreRef` into a fresh
+// `ReadFile` task that the worker pool runs concurrently; the test asserts
+// each task sees its own `Store` payload (no interleaved `last_modified`
+// writes) and runs cleanly under ASAN (`bun bd`). Regression guard for
+// oven-sh/bun#30800 — `StoreRef` soundness (dropped `Sync`, `data_mut` is
+// now `unsafe fn`).
+test("Bun.file().bytes() is safe under high concurrency", async () => {
+  const dir = tempDirWithFiles(
+    "bun-blob-concurrent",
+    Object.fromEntries(
+      Array.from({ length: 16 }, (_, i) => [`f${i}.txt`, `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`]),
+    ),
+  );
+  // Many overlapping reads per file; each goes through a distinct `ReadFile`
+  // task on the threadpool, all derived from a `Blob` whose `StoreRef` is
+  // cloned into the task. If `data_mut` were wired to share state across
+  // tasks, ASAN would flag the racing writes to `file.last_modified`.
+  const results = await Promise.all(
+    Array.from({ length: 16 }, (_, i) => {
+      const file = Bun.file(path.join(dir, `f${i}.txt`));
+      return Promise.all(Array.from({ length: 8 }, () => file.bytes()));
+    }),
+  );
+  for (let i = 0; i < results.length; i++) {
+    const expected = `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`;
+    for (const bytes of results[i]) {
+      expect(new TextDecoder().decode(bytes)).toBe(expected);
+    }
+  }
+});

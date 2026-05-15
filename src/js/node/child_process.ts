@@ -1123,16 +1123,29 @@ class ChildProcess extends EventEmitter {
 
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
-      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed && !stdout[kIsUsedAsStdio]) {
-        // `kIsUsedAsStdio` marks a stream whose fd was handed off to another
-        // subprocess — resuming it here would drain bytes the child needs.
-        stdout.resume?.();
+      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
+        if (stdout[kIsUsedAsStdio]) {
+          // The fd was handed to another child; we marked this stream paused +
+          // `updateRef(false)` in `markStreamsAsStdio`, which unregisters the
+          // native FilePoll — so the stream will never see EOF on its own and
+          // never emit `'close'`. Without `'close'` the `#closesNeeded` tally
+          // stalls one short and we'd never emit `this`'s `'close'` either.
+          // `destroy()` fires `'close'` synchronously-ish and releases the
+          // now-useless parent-side read fd.
+          stdout.destroy?.();
+        } else {
+          stdout.resume?.();
+        }
       }
 
       if (stderr === undefined) {
         this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
-      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed && !stderr[kIsUsedAsStdio]) {
-        stderr.resume?.();
+      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
+        if (stderr[kIsUsedAsStdio]) {
+          stderr.destroy?.();
+        } else {
+          stderr.resume?.();
+        }
       }
     }
 

@@ -555,8 +555,10 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
 }
 
-/// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-/// preload promise if any, else null. Spec VirtualMachine.zig:2204-2280.
+/// `loadPreloads()` — runs `--preload` scripts. Returns the first
+/// non-fulfilled preload promise (rejected, or still pending with an idle
+/// event loop — unsettled TLA) if any, else null. Spec
+/// VirtualMachine.zig:2204-2280.
 ///
 /// Errors bubble exactly like Zig's `try this.loadPreloads()` in
 /// `reloadEntryPoint`: resolver `Failure` returns the resolver error,

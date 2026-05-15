@@ -1,6 +1,6 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
-use bun_core::{Output, env_var};
+use bun_core::{Output, env_var, fmt as bun_fmt};
 use bun_paths::PathBuffer;
 
 use super::Subcommand;
@@ -671,6 +671,14 @@ impl Options {
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
+        // Captured before `maybe_cli` is moved — the forced-registry notice
+        // below needs to know whether `--registry` was passed, but the
+        // `--registry` handler mutates `self.scope.url` without recomputing
+        // `url_hash`, so it can't be detected from `prev_scope` alone.
+        let had_cli_registry = maybe_cli
+            .as_ref()
+            .is_some_and(|cli| !cli.registry.is_empty());
+
         if let Some(cli) = maybe_cli {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
@@ -889,6 +897,90 @@ impl Options {
             };
             // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(false);
+        }
+
+        // Forced registry: pins every package (scoped and unscoped) to a
+        // single registry regardless of per-project configuration. Applied
+        // last so it wins over bunfig/npmrc `registry`, `install.scopes`,
+        // `--registry`, and `NPM_CONFIG_REGISTRY`. Set via
+        // `install.forceRegistry` in the global bunfig or the
+        // `BUN_CONFIG_FORCE_REGISTRY` environment variable. Intended for
+        // IT-managed devices that must always use a corporate registry.
+        {
+            let mut forced: Option<Api::NpmRegistry> = None;
+
+            // Read from the real process environment, not the DotEnv loader
+            // — a project-checked-in `.env` file must not be able to inject
+            // `BUN_CONFIG_FORCE_REGISTRY` and override the admin's global
+            // bunfig.
+            if let Some(registry_) = env_var::BUN_CONFIG_FORCE_REGISTRY.get() {
+                if !registry_.is_empty()
+                    && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
+                {
+                    let mut api_registry = Api::NpmRegistry::default();
+                    api_registry.url = registry_.into();
+                    forced = Some(api_registry);
+                }
+            }
+
+            if forced.is_none() {
+                if let Some(config) = bun_install_ref {
+                    if let Some(force_registry) = &config.force_registry {
+                        if !force_registry.url.is_empty() {
+                            forced = Some(force_registry.clone());
+                        }
+                    }
+                }
+            }
+
+            if let Some(mut force_registry) = forced {
+                // If the forced registry did not supply its own credentials
+                // (env var, or URL-only string in bunfig), inherit the token
+                // already resolved from `BUN_CONFIG_TOKEN`/`NPM_CONFIG_TOKEN`/
+                // `--token` — same behaviour as `BUN_CONFIG_REGISTRY`. Skip
+                // this when the forced registry carries basic-auth
+                // (username/password), since `Scope::from_api` gates
+                // basic-auth computation on token being empty and we'd
+                // otherwise clobber it.
+                if force_registry.token.is_empty()
+                    && force_registry.username.is_empty()
+                    && force_registry.password.is_empty()
+                {
+                    force_registry.token = self.scope.token.clone();
+                }
+                let prev_url_hash = self.scope.url_hash;
+                let had_scoped_registries = self.registries.count() > 0;
+                self.scope = Npm::registry::Scope::from_api(b"", force_registry, env)?;
+                // Discard scoped registries so `scope_for_package_name`
+                // always falls back to `self.scope` — every package
+                // resolves through the forced registry.
+                self.registries.clear();
+
+                // Surface that the device-level override is active whenever
+                // the project configured a custom registry of any kind, so
+                // the developer isn't confused why their `install.registry`/
+                // `.npmrc`/`--registry`/`install.scopes` isn't taking effect.
+                // No notice when the project was on the default registry
+                // with no scopes and no `--registry` (nothing to be confused
+                // about).
+                if self.log_level != LogLevel::Silent
+                    && (prev_url_hash != *Npm::registry::DEFAULT_URL_HASH
+                        || had_scoped_registries
+                        || had_cli_registry)
+                {
+                    // Rebuild without userinfo so credentials embedded in
+                    // the env-var URL (e.g. `https://user:pass@host/`) don't
+                    // end up in terminal/CI logs.
+                    let url = self.scope.url.url();
+                    bun_core::note!(
+                        "using forced registry <b>{}://{}{}<r> <d>(install.forceRegistry is set on this machine, ignoring project registry configuration)<r>",
+                        bun_fmt::s(url.display_protocol()),
+                        url.display_host(),
+                        bun_fmt::s(url.pathname),
+                    );
+                    Output::flush();
+                }
+            }
         }
 
         // If the lockfile is frozen, don't save it to disk.

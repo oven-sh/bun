@@ -1094,34 +1094,70 @@ pub fn populate_linked_names_cache(this: &mut PackageManager) {
 /// yields WTF-16 names we can't key into the UTF-8 map, but
 /// `linked_names_any_on_windows` preserves the zero-syscall fast
 /// path for the "no links on this machine" case.
+/// Cache-only lookup against the already-populated `linked_names` set.
+/// Shared `&PackageManager` so it's safe to call from any install-worker
+/// thread: `populate_linked_names_cache` ran once on the main thread
+/// before workers started, and the map is read-only thereafter.
+///
+/// Returns `None` without syscalls when the cache isn't populated, when
+/// the package isn't registered, or when we're on Windows (the readdir
+/// yields WTF-16 and can't be keyed into the UTF-8 map — use the
+/// `&mut` fallback below for the GetFileAttributesW path).
 pub fn linked_package_path<'a>(
-    this: &'a mut PackageManager,
+    this: &'a PackageManager,
     pkg_name: &[u8],
     buf: &'a mut PathBuffer,
 ) -> Option<&'a bun_core::ZStr> {
     if pkg_name.is_empty() {
         return None;
     }
+    // Cache must be populated before any worker calls this (asserted
+    // at the top of install_isolated_packages). On Windows the cache
+    // stores no names — fall through to the &mut path below.
+    if !this.linked_names_populated || cfg!(windows) {
+        return None;
+    }
+    if this.linked_names.is_empty() {
+        return None;
+    }
+    if !this.linked_names.contains_key(pkg_name) {
+        return None;
+    }
+    // Populate guarantees global_link_dir_path is set whenever at least
+    // one link was registered (we recorded names from its readdir);
+    // if we got here via a populated map with entries, the path is
+    // non-empty.
+    if this.global_link_dir_path.is_empty() {
+        return None;
+    }
+    let dir_path_ref: &[u8] = &this.global_link_dir_path;
+    let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+        dir_path_ref,
+        buf,
+        &[pkg_name],
+    );
+    Some(joined)
+}
 
-    let use_cache = this.linked_names_populated && !cfg!(windows);
-    if use_cache {
-        if this.linked_names.is_empty() {
-            return None;
-        }
-        if !this.linked_names.contains_key(pkg_name) {
-            return None;
-        }
-        let dir_path: Vec<u8> = this.global_link_dir_path.to_vec();
-        if dir_path.is_empty() {
-            let _ = global_link_dir(this);
-        }
-        let dir_path_ref: &[u8] = &this.global_link_dir_path;
-        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-            dir_path_ref,
-            buf,
-            &[pkg_name],
-        );
-        return Some(joined);
+/// Non-cached fallback: main-thread-only. Must hold `&mut PackageManager`
+/// because `global_link_dir(this)` lazy-initializes
+/// `global_link_dir` / `global_link_dir_path` on first call. Callers on
+/// worker threads must use [`linked_package_path`] (read-only) instead.
+///
+/// Used by:
+/// - Windows, where the readdir in `populate_linked_names_cache` can't
+///   key WTF-16 names into the UTF-8 hashmap — every call falls through
+///   to `GetFileAttributesW` against the joined path.
+/// - Any caller outside the isolated-install flow that hasn't run
+///   `populate_linked_names_cache` (`bun link` / `bun unlink` themselves,
+///   resolver probes) — main thread only by construction.
+pub fn linked_package_path_mut<'a>(
+    this: &'a mut PackageManager,
+    pkg_name: &[u8],
+    buf: &'a mut PathBuffer,
+) -> Option<&'a bun_core::ZStr> {
+    if pkg_name.is_empty() {
+        return None;
     }
 
     // If populate ran and left the cache empty because the global link

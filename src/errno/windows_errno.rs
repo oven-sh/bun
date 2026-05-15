@@ -845,7 +845,11 @@ impl SystemErrno {
 pub fn translate_uv_error_to_e(code: c_int) -> E {
     uv::uv_err_to_e_discriminant(code)
         .and_then(E::try_from_raw)
-        .or_else(|| u16::try_from(code.wrapping_neg()).ok().and_then(E::try_from_raw))
+        .or_else(|| {
+            u16::try_from(code.wrapping_neg())
+                .ok()
+                .and_then(E::try_from_raw)
+        })
         .unwrap_or(E::UNKNOWN)
 }
 
@@ -869,7 +873,9 @@ pub mod uv_e {
     // Windows has no native errno for any of these — every value is the
     // libuv-synthetic `-UV_E*` constant.
     macro_rules! __v {
-        ($i:tt, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
+        ($i:tt, $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
     }
     crate::__uv_e_rows!(__v);
 }

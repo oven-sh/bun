@@ -1904,24 +1904,18 @@ fn parse_data_loader(
                 Err(_) => return None,
             }
         }
-        options::Loader::Json => {
-            match bun_parsers::json::parse::<false>(source, log, arena) {
-                Ok(e) => e,
-                Err(_) => return None,
-            }
-        }
-        options::Loader::Toml => {
-            match bun_parsers::toml::TOML::parse(source, log, arena, false) {
-                Ok(e) => e,
-                Err(_) => return None,
-            }
-        }
-        options::Loader::Yaml => {
-            match bun_parsers::yaml::YAML::parse(source, log, arena) {
-                Ok(e) => e,
-                Err(_) => return None,
-            }
-        }
+        options::Loader::Json => match bun_parsers::json::parse::<false>(source, log, arena) {
+            Ok(e) => e,
+            Err(_) => return None,
+        },
+        options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
+            Ok(e) => e,
+            Err(_) => return None,
+        },
+        options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(source, log, arena) {
+            Ok(e) => e,
+            Err(_) => return None,
+        },
         options::Loader::Json5 => {
             match bun_parsers::json5::JSON5Parser::parse(source, log, arena) {
                 Ok(e) => e,
@@ -1970,15 +1964,13 @@ fn parse_data_loader(
                 // observed (truncate/into_boxed_slice/index-assign),
                 // so pre-fill every slot with `Default` instead of
                 // `set_len`. PERF(port): was `expandToCapacity()`.
-                let mut decls: Vec<bun_ast::G::Decl> =
-                    vec![bun_ast::G::Decl::default(); n];
+                let mut decls: Vec<bun_ast::G::Decl> = vec![bun_ast::G::Decl::default(); n];
 
                 symbols.resize_with(n, Default::default);
                 // PORT NOTE: `S::ExportClause.items: *mut [ClauseItem]`
                 // is arena-owned; `ClauseItem: Default` so
                 // `alloc_slice_fill_default` is fine.
-                let export_clauses =
-                    arena.alloc_slice_fill_default::<bun_ast::ClauseItem>(n);
+                let export_clauses = arena.alloc_slice_fill_default::<bun_ast::ClauseItem>(n);
                 let mut duplicate_key_checker: bun_collections::StringHashMap<u32> =
                     bun_collections::StringHashMap::default();
                 // duplicate_key_checker drops at end of scope (defer .deinit())
@@ -2021,24 +2013,21 @@ fn parse_data_loader(
                     *visited.value_ptr = count as u32;
 
                     symbols[count] = bun_ast::Symbol {
-                        original_name:
-                            match bun_core::MutableString::ensure_valid_identifier(name)
-                            {
-                                // Spec transpiler.zig:1049 calls
-                                // `MutableString.ensureValidIdentifier(name, arena)`
-                                // — the identifier lives in the
-                                // per-parse arena. Arena-copy the
-                                // owned `Box<[u8]>` so it is freed
-                                // with the arena instead of leaking
-                                // (PORTING.md §Forbidden patterns
-                                // bars `heap::alloc` for `&'static`).
-                                // SAFETY: ARENA — `arena` outlives
-                                // the returned `ParseResult.ast`.
-                                Ok(boxed) => bun_ast::StoreStr::new(
-                                    arena.alloc_slice_copy(&boxed),
-                                ),
-                                Err(_) => return None,
-                            },
+                        original_name: match bun_core::MutableString::ensure_valid_identifier(name)
+                        {
+                            // Spec transpiler.zig:1049 calls
+                            // `MutableString.ensureValidIdentifier(name, arena)`
+                            // — the identifier lives in the
+                            // per-parse arena. Arena-copy the
+                            // owned `Box<[u8]>` so it is freed
+                            // with the arena instead of leaking
+                            // (PORTING.md §Forbidden patterns
+                            // bars `heap::alloc` for `&'static`).
+                            // SAFETY: ARENA — `arena` outlives
+                            // the returned `ParseResult.ast`.
+                            Ok(boxed) => bun_ast::StoreStr::new(arena.alloc_slice_copy(&boxed)),
+                            Err(_) => return None,
+                        },
                         ..Default::default()
                     };
 
@@ -2076,9 +2065,7 @@ fn parse_data_loader(
                 );
                 let stmt1 = bun_ast::Stmt::alloc(
                     bun_ast::S::ExportClause {
-                        items: bun_ast::StoreSlice::new_mut(
-                            &mut export_clauses[..count],
-                        ),
+                        items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
                         is_single_line: false,
                     },
                     bun_ast::Loc { start: 0 },
@@ -2094,9 +2081,8 @@ fn parse_data_loader(
                     bun_ast::Loc { start: 0 },
                 );
 
-                let stmts = bun_ast::StoreSlice::new_mut(
-                    arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]),
-                );
+                let stmts =
+                    bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
                 break 'parts Box::new([bun_ast::Part {
                     stmts,
                     ..Default::default()
@@ -2210,8 +2196,7 @@ fn parse_md_loader(
             return None;
         }
     };
-    let expr =
-        bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
+    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
     let stmt = bun_ast::Stmt::alloc(
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
@@ -2291,7 +2276,6 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
         bstr::BStr::new(path.text),
     ));
 }
-
 
 // ══════════════════════════════════════════════════════════════════════════
 // B-2 un-gated: `Transpiler::print` / `print_with_source_map` — final step of
@@ -3149,29 +3133,26 @@ impl<'a> Transpiler<'a> {
         // global-heap). `'static` matches the crate-wide erasure
         // on `StyleSheet`/`ParserOptions` (see css_parser.rs
         // TODO(port): 'bump threading).
-        let alloc: &'static Arena =
-            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
+        let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
-        let (mut sheet, extra) =
-            match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
-                alloc,
-                entry.contents(),
-                opts,
-                None,
-                bun_ast::Index::INVALID,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    let _ = self.log_mut().add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("{} parsing", e),
-                    );
-                    return None;
-                }
-            };
-        if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra)
-        {
+        let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
+            alloc,
+            entry.contents(),
+            opts,
+            None,
+            bun_ast::Index::INVALID,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("{} parsing", e),
+                );
+                return None;
+            }
+        };
+        if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra) {
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -3234,7 +3215,6 @@ impl<'a> Transpiler<'a> {
             },
         ))
     }
-
 }
 
 /// Port of the `comptime Outstream: type` parameter to

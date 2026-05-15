@@ -328,9 +328,13 @@ fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
     static TEST: bun_ast::E::EString = bun_ast::E::EString::from_static(b"test");
     if value_str == b"\"development\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(&DEVELOPMENT)))
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(
+            &DEVELOPMENT,
+        )))
     } else if value_str == b"\"production\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(&PRODUCTION)))
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(
+            &PRODUCTION,
+        )))
     } else if value_str == b"\"test\"" {
         Some(ExprData::EString(bun_ast::StoreRef::from_static(&TEST)))
     } else if value_str == b"true" {

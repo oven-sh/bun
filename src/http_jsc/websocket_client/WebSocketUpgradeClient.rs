@@ -1272,14 +1272,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
             match header.name().len() {
                 len if len == b"Connection".len() => {
                     if connection_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii_ignore_length(header.name(), b"Connection")
+                        && strings::eql_case_insensitive_ascii_ignore_length(
+                            header.name(),
+                            b"Connection",
+                        )
                     {
                         connection_header = *header;
                     }
                 }
                 len if len == b"Upgrade".len() => {
                     if upgrade_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii_ignore_length(header.name(), b"Upgrade")
+                        && strings::eql_case_insensitive_ascii_ignore_length(
+                            header.name(),
+                            b"Upgrade",
+                        )
                     {
                         upgrade_header = *header;
                     }

@@ -277,7 +277,8 @@ pub struct SettingsPayloadUnit {
 unsafe impl bytemuck::Zeroable for SettingsPayloadUnit {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
 unsafe impl bytemuck::Pod for SettingsPayloadUnit {}
-const _: () = assert!(core::mem::size_of::<SettingsPayloadUnit>() == SettingsPayloadUnit::BYTE_SIZE);
+const _: () =
+    assert!(core::mem::size_of::<SettingsPayloadUnit>() == SettingsPayloadUnit::BYTE_SIZE);
 
 impl SettingsPayloadUnit {
     pub const BYTE_SIZE: usize = 6;

@@ -382,14 +382,7 @@ impl<'a> AnsiRenderer<'a> {
                         } else {
                             if checked { b"[x] " } else { b"[ ] " }
                         };
-                        break 'blk (
-                            g,
-                            if checked {
-                                ansi_b::GREEN
-                            } else {
-                                ansi_b::DIM
-                            },
-                        );
+                        break 'blk (g, if checked { ansi_b::GREEN } else { ansi_b::DIM });
                     }
                     if let Some(idx) = parent_list {
                         if self.block_stack[idx].kind == BlockKind::Ol {

@@ -555,13 +555,13 @@ function installTimerHooks() {
       }
       return timer;
     };
-    // Forward `util.promisify.custom` (and `customPromisifyArgs`, `.name`,
-    // `.length`) from the native so `util.promisify(setTimeout)` keeps
-    // returning `timers/promises.setTimeout` after hooks are enabled. Without
-    // this, promisify's custom-symbol lookup misses and it falls back to the
-    // generic errback wrapper, which calls `setTimeout(delay, nodeCallback)`
-    // — argument order is wrong and the promise never resolves. See
-    // `src/js/internal/promisify.ts` for how the custom symbols are wired.
+    // Forward `util.promisify.custom` from the native so
+    // `util.promisify(setTimeout)` keeps returning `timers/promises.setTimeout`
+    // after hooks are enabled. Without this, promisify's custom-symbol lookup
+    // misses and it falls back to the generic errback wrapper, which calls
+    // `setTimeout(delay, nodeCallback)` — argument order is wrong and the
+    // promise never resolves. See `src/js/internal/promisify.ts` for how the
+    // custom symbol is wired.
     const kCustomPromisify = Symbol.for("nodejs.util.promisify.custom");
     const customPromisify = (orig as any)[kCustomPromisify];
     if (customPromisify !== undefined) {

@@ -1373,9 +1373,14 @@ impl<'a> CopyFileWindows<'a> {
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
-        // SAFETY: `CopyFile` exclusively owns both `StoreRef`s on this worker
-        // thread for the lifetime of the copy operation; the JS thread is
-        // blocked on the promise. No other borrow of either `Store` is live.
+        // SAFETY: `CopyFileWindows` runs synchronously on the JS thread —
+        // either directly from `init()`/`copyfile()` or from a libuv fs
+        // callback (`on_copy_file`/`on_mkdirp_complete`) posted onto the
+        // JS event loop. No JS re-entry occurs between the `data_mut`
+        // borrow and its release (no host-fn calls, no promise ticks),
+        // and the file stores are uniquely held by this `CopyFileWindows`
+        // — other holders live in a sibling `StoreRef` but never call
+        // `data_mut` on these handles.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
             &mut unsafe { self.destination_file_store.data_mut() }
                 .as_file_mut()

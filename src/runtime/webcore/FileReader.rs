@@ -357,10 +357,13 @@ impl FileReader {
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // SAFETY: `store` was just moved out of `self.lazy`, so this
-            // `StoreRef` is the sole live handle on this thread (JS event
-            // loop); no other borrow of the pointee is outstanding. Matches
-            // Zig's `*Blob.Store` direct field access.
+            // SAFETY: synchronous JS-thread `on_start` call; no JS re-entry
+            // occurs inside the match, so no other `&Data`/`&mut Data`
+            // borrow of this `Store` is live for its duration. The `Store`
+            // itself is likely aliased by the originating JS `Blob`
+            // (`Lazy::Blob` was populated via `store.clone()`), but its
+            // own `data_mut` callers are also JS-thread-synchronous. This
+            // mirrors Zig's `*Blob.Store` direct field access.
             match unsafe { store.data_mut() } {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")

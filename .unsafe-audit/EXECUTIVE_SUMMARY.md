@@ -35,7 +35,8 @@ A malicious `bun.lockb` or `yarn.lock` planted in a repo reaches parser paths th
 - **PUB-INSTALL-2**: `Meta::origin` — same shape, different enum
 - **PUB-INSTALL-3**: yarn.rs forms `&mut [Dependency]` over uninitialized `Vec` capacity. **Miri-confirmed:** `reading uninitialized memory`
 - **PUB-INSTALL-4**: `Tree.rs` `get_unchecked` over attacker-controlled dependency ID
-- **F-NEW-1 / F-NEW-2**: `bun_semver::String::slice` / `eql` packed `(off, len)` from disk bytes → `get_unchecked` OOB up to ~6 GiB
+- **F-NEW-1**: `bun_semver::String::slice` packed `(off, len)` from disk bytes → `get_unchecked` OOB up to ~6 GiB
+- **F-NEW-2**: `bun_semver::String::eql` packed `(off, len)` from disk bytes → `get_unchecked` OOB up to ~6 GiB
 
 #### Five miri-backed UB witnesses
 

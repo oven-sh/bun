@@ -30,7 +30,7 @@ Findings are classified into tiers with explicit per-tier evidentiary bars. The 
 
 | Tier | Bar | Evidence required |
 |------|-----|-------------------|
-| **P0** (CVE-class) | Untrusted input reachable through ordinary user commands → UB. The attack model survives review. | File:line + adversarial-input proof + (where applicable) miri trace |
+| **P0** / security-triage candidate | Untrusted input reachable through ordinary user commands → UB or concrete security impact. Use "CVE-class" only when the impact story survives source review. | File:line + adversarial-input proof + (where applicable) miri trace |
 | **T1** | Confirmed/high-confidence patchable memory-safety bug. A live caller exists today, OR a `pub` API admits the violation without an additional `unsafe` block. | File:line + source-verified mechanism + (miri trace where reproducible) |
 | **T2** | Unsafe public-contract / architecture defect. Safe Rust admits an invalid state through the API, but no live call path was proved today. | File:line + the missing contract / over-strong signature |
 | **T3** | Latent / threat-model-dependent / fragile-invariant watchlist. Future-proofing. | File:line + the fragility |

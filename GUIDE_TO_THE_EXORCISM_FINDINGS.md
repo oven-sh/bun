@@ -306,7 +306,7 @@ The audit's tone throughout is calibrated to that reality. Findings that overrea
 
 ## Skill capabilities exercised in this audit
 
-For the curious: the audit exercises every major capability the skill ships. This is the most complete application to date.
+For the curious: the audit exercises many of the skill's major capabilities across one large, hostile-to-tooling Rust workspace.
 
 - 10-phase loop ✓ (enumerate → per-site write-up → synthesize → classify → plan → adversarial reclassify → fresh-eyes review → bead conversion → harness → maintainer review)
 - Operating modes ✓ (`audit-only` → `audit-and-refactor` for the demo PR)
@@ -317,14 +317,14 @@ For the curious: the audit exercises every major capability the skill ships. Thi
 - Source-corpus mining ✓ (archeology)
 - Macro-expanded inventory ✓ (8 crates expanded)
 - Reachability + test-coverage analysis ✓
-- Risk scoring ✓ (40 T1 / 1,929 risk-pts quantified)
+- Risk scoring ✓ (40 T1 / 2,507 risk-points quantified)
 - Soundness debt dashboard ✓
 - SECURITY.md generation ✓
 - Audit-driven test generation ✓ (8 fixtures + lint)
 - Clippy lint authoring ✓ (ast-grep + dylint)
 - Cross-crate Send/Sync contract analysis ✓
 - Multi-pass adversarial reclassification ✓ (Codex P2 + P3 + Pass 4 closure)
-- 5 passes total — 38+ git commits — 34,912+ lines — 1,721 files
+- 5 passes total, with artifact history preserved in the contributor branch and the current reviewable artifacts in this PR
 
 The skill is designed to be the ENTIRE audit workflow, not a checklist. This audit shows what that looks like at scale on a 108-crate workspace with ~11,044 unsafe sites.
 

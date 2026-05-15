@@ -24,7 +24,7 @@ Sample extract: `/tmp/slice_real.jsonl` (270 rows).
 | Total sites in cluster | **298** | inventory rows |
 | Real `slice::from_raw_parts*` | **270** | `Vec::from_raw_parts` + comment mentions filtered |
 | Sites read with full context | **82** | evidence-table rows, stratified across priority crates |
-| **UB-RISK-UNTRUSTED (CVE-class, reachable from JS)** | **0** | none found |
+| **UB-RISK-UNTRUSTED (security-triage candidate, reachable from JS)** | **0** | none found |
 | UB-RISK-ALIGNMENT (pre-existing TODO) | **2** | `src/runtime/webcore/encoding.rs:305`, `src/exe_format/pe.rs:289,301` |
 | UB-RISK-RELEASE-FRAGILE (debug_assert only) | **1** | `src/standalone_graph/StandaloneModuleGraph.rs:655` — gated by self-binary trust model |
 | A-PROVED-BOUND (own len/cap invariant) | ~150 | foundation crates, internal data flow |
@@ -653,7 +653,7 @@ compiled out.
 
 This is consistent with the rest of the standalone-graph path
 (`is_valid_blob`, `SerializedSourceMap::mapping_blob`, header trailer
-match). **Not a CVE-class issue**, but the `debug_assert`-only check
+match). **Not a security-triage issue**, but the `debug_assert`-only check
 is fragile. Filing as **C-REFACTOR**:
 
 ```rust
@@ -826,7 +826,7 @@ unsafe { core::slice::from_raw_parts*(ptr, len) }
 
 ## Section 9: Recommended follow-up plan
 
-### Priority 0 (none) — no CVE-class findings.
+### Priority 0 (none) — no security-triage findings.
 
 ### Priority 1 — hard-assert the debug-only invariants
 

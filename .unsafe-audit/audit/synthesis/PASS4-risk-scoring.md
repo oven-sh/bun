@@ -153,7 +153,7 @@ The lockfile/install pipeline (`bun_install` + `bun_semver`) now carries **1,006
 | Pre-Codex over-claim | — | 18 entries demoted to T2/T3 or repo hygiene |
 | Risk-points (T1/T1-equivalent dashboard only) | ~3,100 (estimate including the demoted entries scored at their original tier) | 2,507 |
 | P0 (>=60) count | 31 estimated | 24 |
-| Marketable "CVE-class" entries | The Pass 3 plan text said "4 P0 CVE-class"; Codex constrains "CVE-class" to require an exploit story that survives maintainer review | PUB-INSTALL-1..4 are confirmed in the Pass-3 supply-chain set; H9 is network-input-reachable and is the strongest non-install P0; F-NEW-1/F-NEW-2 are the Pass-4 supply-chain additions |
+| Marketable security-triage entries | The early Pass 3 plan text used "CVE-class"; Codex constrains that phrase to cases whose exploit story survives maintainer review | PUB-INSTALL-1..4 are confirmed in the Pass-3 supply-chain set; H9 is network-input-reachable and is the strongest non-install P0; F-NEW-1/F-NEW-2 are the Pass-4 supply-chain additions |
 
 What changed mechanically:
 

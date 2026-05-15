@@ -265,7 +265,7 @@ This dashboard intentionally avoids:
 - **Inflating the count by mixing safe-API contract defects (T2) into T1.** The pre-Codex Pass-3 raw "63 T1" framing did this; the post-Codex + Pass 4 corrected 40-entry dashboard is the defensible number.
 - **Counting `bun:ffi` raw-pointer capability contracts (FFI-CONTRACT-ADDR-LEN, FFI-CONTRACT-FINALIZER) as Bun bugs.** These are documented as out-of-contract by design.
 - **Counting stale-crate hygiene (`bun_libarchive_sys` orphan) as a soundness finding.** Codex demoted this to repo hygiene; we follow.
-- **Calling findings "CVE-class" without an exploit story.** Per Codex's editorial rules, "CVE-class" requires untrusted-input reachability AND concrete impact that survives maintainer review. PUB-INSTALL-1..4 and H9 meet that bar in the Pass-3 set; Pass 4 adds F-NEW-1/F-NEW-2 to the supply-chain P0 set. Other P0-risk items are urgent, but not automatically CVE-class.
+- **Calling findings "CVE-class" without an exploit story.** Per Codex's editorial rules, avoid "CVE-class" unless untrusted-input reachability and concrete impact survive maintainer review. PUB-INSTALL-1..4, F-NEW-1/F-NEW-2, and H9 are the strongest security-triage candidates in this audit, but the report should let maintainers decide advisory handling.
 - **Vanity metrics.** Site count alone is gameable. This dashboard tracks risk-points-per-site to make trivial-fix concentrations visible.
 
 ---
@@ -333,7 +333,7 @@ Codex's adversarial pass-3 review demoted 11 distinct entries with specific sour
 - 5 install-pipeline atomic-ordering items mirror Zig's monotonic pattern and queue state is mutex-protected.
 - `bun_libarchive_sys` orphan is stale-crate hygiene, not a soundness bug.
 
-Demoting these (plus the additional pass-3 final demotions of `WeakPtrData`, `JsCell<T>`, and `RacyCell<T>` to T2 contract-defect status) and then adding the Pass 4 semver/threading findings leaves the dashboard at 40 T1/T1-equivalent entries. The discipline matters because **a dashboard with 63 entries that includes over-tiered items is a less useful tool than a dashboard with 40 entries that are all defensible**. The point of the audit is to be acted on; over-counting wastes engineer attention.
+Demoting these (plus the additional pass-3 final demotions of `WeakPtrData`, `JsCell<T>`, and `RacyCell<T>` to T2 contract-defect status) and then adding the Pass 4 semver/threading findings leaves the dashboard at 40 T1/T1-equivalent entries. The discipline matters because **a dashboard with 63 entries that includes over-tiered items is a less useful tool than a dashboard with 40 entries that have a defensible evidence bar**. The point of the audit is to be acted on; over-counting wastes engineer attention.
 
 ### Why no fuzz targets yet
 
@@ -358,7 +358,7 @@ These targets are recommended in the audit's PR landing order but not yet author
 | Tier 1 (T1) | Confirmed or high-confidence patchable memory-safety bug. |
 | Tier 2 (T2) | Unsafe-contract / architecture defect; safe Rust can express an invalid state. No current live UB call path proven. |
 | Tier 3 (T3) | Latent or threat-model-dependent watchlist. |
-| P0 / CVE-class | In the risk dashboard, P0 means risk score 60-125. Use "CVE-class" only for untrusted-input-triggered UB or concrete security impact reachable from an external attacker surface. The strongest CVE-class examples are PUB-INSTALL-1..4, F-NEW-1/F-NEW-2, and H9. H5 is a security P0 but not Rust memory-UB. |
+| P0 / security-triage candidate | In the risk dashboard, P0 means risk score 60-125. Use "CVE-class" only if maintainers agree the untrusted-input-triggered UB or concrete security impact warrants advisory treatment. The strongest security-triage examples are PUB-INSTALL-1..4, F-NEW-1/F-NEW-2, and H9. H5 is a security P0 but not Rust memory-UB. |
 | (A) STRICTLY_UNAVOIDABLE | Unsafe site whose obligation is genuinely load-bearing (FFI, JSC handle thread affinity, Stacked Borrows discipline, etc.). |
 | (B) PERF_ONLY | Unsafe site that exists for performance; can be gated behind a `safe-only` feature for downstream opt-in. |
 | (C) REFACTORABLE | Unsafe site that has a mechanical safe replacement (e.g., `NonNull::new_unchecked(&r)` → `NonNull::from(&r)`). |

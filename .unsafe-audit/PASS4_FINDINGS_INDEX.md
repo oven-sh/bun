@@ -54,7 +54,7 @@ Pass 4 produced **5 concrete `cargo +nightly miri run` traces** for the audit's 
 | 4 | UB-RT-001 (`encoding.rs` Vec<u8>→Vec<u16>) | `incorrect layout on deallocation: size 6 alignment 1, but gave size 6 alignment 2` |
 | 5 | PUB-INSTALL-3 (`yarn.rs` uninit Dependency slice) | `reading memory at alloc206[0x0..0x1], but memory is uninitialized` |
 
-See [verification/miri-confirmed-summary.md](verification/miri-confirmed-summary.md) for the index. Four traces have dedicated sibling detail files; the `PUB-INSTALL-3` yarn trace is currently summary-only and must be saved as its own detail file before public release.
+See [verification/miri-confirmed-summary.md](verification/miri-confirmed-summary.md) for the index. Four traces have dedicated sibling detail files; the `PUB-INSTALL-3` yarn trace is currently summary-only and should be split into its own detail file before relying on it as a standalone reproducer.
 
 ## Pass-4 NEGATIVE findings (clean audits)
 
@@ -94,7 +94,7 @@ The 5 miri-confirmed traces cover: 2 of the 6 ceiling-score supply-chain entries
 - **8 test fixtures + ast-grep lint + dylint scaffold** in `audit/tests/`
 - **`AUDIT_SUMMARY.md`, `PASS2_FINDINGS_INDEX.md`, `PASS3_FINDINGS_INDEX.md`, `PASS4_FINDINGS_INDEX.md`** (this file)
 - **`SECURITY-public-ready.md`, `soundness-debt-dashboard.md`, `beads-to-create.md`**
-- **17+ git commits** in the nested `.unsafe-audit/.git` repo
+- Local audit history was maintained while producing the artifacts; this PR contains the current reviewable artifact set, not the nested audit repo's internal `.git` history.
 
 ## Pass-4 PR landing order recommendation
 

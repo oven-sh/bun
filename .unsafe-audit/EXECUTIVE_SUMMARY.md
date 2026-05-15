@@ -14,7 +14,7 @@ Two pull requests opened: [#30763](https://github.com/oven-sh/bun/pull/30763) (a
 
 A blanket "Bun has too much unsafe" critique doesn't survive the audit. The work documents in painstaking detail that **most of Bun's unsafe is load-bearing**:
 
-- **The `*mut Self` callback pattern** (~1,610 sites) is required by Rust's Stacked Borrows aliasing model when a C callback may free `self`. Bun's own `src/CLAUDE.md` documents it explicitly. The `impl_streaming_writer_parent!` macro encodes three legitimate modes (`mut`/`shared`/`ptr`). **The audit found zero anti-pattern violations** in this cluster.
+- **The `*mut Self` callback pattern** (~1,610 sites) is required by Rust's Stacked Borrows aliasing model when a C callback may free `self`. Bun's own `src/CLAUDE.md` documents it explicitly. The `impl_streaming_writer_parent!` macro encodes three legitimate modes (`mut`/`shared`/`ptr`). The stratified A-001 sample found no anti-pattern violation; two watchlist sites remain called out for targeted harnessing.
 - **The core `bun_jsc::Strong/Weak` JS handle discipline** is thread-affinity-aware and audited as `!Send + !Sync` where the core handle contract requires it. Related JSC task / weak-reference wrapper findings remain tracked separately as unsafe-contract hazards; this is not a blanket clean bill for all JSC-adjacent types.
 - **The `bun_core::atomic_cell.rs` discipline** (default to AcqRel, name-explicit opt-in to Relaxed) audited clean across 101 atomic sites — **zero too-weak orderings.**
 - **The `bun_core::heap` lifecycle helpers** (`into_raw`/`take`/`destroy`) audited across the raw-pointer-lifecycle cluster without finding direct use-after-free, double-free, or mismatched-allocator bugs in that helper discipline. Separate dealloc-through-shared-provenance findings remain tracked outside this helper cluster.
@@ -40,7 +40,7 @@ A malicious `bun.lockb` or `yarn.lock` planted in a repo reaches parser paths th
 
 #### Five miri-backed UB witnesses
 
-Every one captured verbatim:
+The current index captures five distinct miri-backed error classes; four have dedicated detail files and one is summary-only:
 
 | Bug | Miri output |
 |-----|-------------|
@@ -70,7 +70,7 @@ reviewed and found clean under this pass:
 | `dyn Trait` + cross-crate Send/Sync | 0 | 162 dyn sites + 164 unsafe impls audited clean |
 | PipeWriter parent-vtable discipline | 0 | All 5 callsite-modes match parent lifecycle |
 | 537 raw_ptr_lifecycle sites | 0 UAFs / 0 double-frees / 0 mismatched-allocators | Discipline holds |
-| 298 `slice::from_raw_parts` sites | 0 CVE-class buffer overruns found in this pass | Defense-in-depth holds |
+| 298 `slice::from_raw_parts` sites | 0 high-priority external buffer-overrun primitives found in this pass | Defense-in-depth holds |
 | 101 atomic sites | 0 happens-before bugs | Discipline holds |
 | `bun_jsc::Strong/Weak` thread affinity | confirmed `!Send + !Sync` | Architectural property holds |
 

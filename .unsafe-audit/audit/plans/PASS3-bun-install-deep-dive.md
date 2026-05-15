@@ -3,7 +3,7 @@
 **Crate:** `bun_install` (`src/install/`)
 **Inventory total:** 525 `unsafe` sites across 36 files
 **Pass-3 sample size:** ~95 sites read in ≥30-line context, 12 critical sites traced end-to-end across attacker-input boundaries
-**Headline:** **9 new pre-existing-UB candidates** + 4 latent-fragile patterns + 2 information-disclosure leaks. Several are CVE-class supply-chain attack vectors.
+**Headline:** **9 new pre-existing-UB candidates** + 4 latent-fragile patterns + 2 information-disclosure leaks. Several are P0 supply-chain security-triage candidates.
 
 Pass 2 sampled this crate only at the surface. Pass 3 specifically targeted attacker-input parsing paths:
 
@@ -15,7 +15,7 @@ Pass 2 sampled this crate only at the surface. Pass 3 specifically targeted atta
 | **Tarball entries** (gzipped tar from registry) | `TarballStream.rs`, `extract_tarball.rs` | 1 (TOCTOU latent) |
 | **`PackageVersion` serialization** (cache file written) | `npm.rs` | 1 (info-disclosure) |
 
-These are **CVE-class** because the threat model for an npm-compatible package manager includes:
+These are **P0 security-triage candidates** because the threat model for an npm-compatible package manager includes:
 1. A malicious package on the public registry shipping a crafted tarball.
 2. A typosquatted package's manifest containing crafted JSON.
 3. A repository checked out from a malicious source containing a tampered `bun.lockb` / `yarn.lock` / `package-lock.json`.
@@ -99,7 +99,7 @@ A P0 here corresponds to an exploit primitive — invalid enum value, OOB read, 
  91  fd_syscall             ← `unsafe fn` carrying fd contracts
  81  ptr_cast               ← `cast::<T>()` — the alignment hazards live here
  77  ptr_intrinsic          ← `addr_of!`, `core::ptr::{read,write}`
- 33  ptr_arith              ← `ptr.add(n)` — the dominant CVE-class shape
+ 33  ptr_arith              ← `ptr.add(n)` — the dominant high-risk attacker-input shape
  20  other_unsafe_impl
  18  raw_ptr_lifecycle
  15  maybe_uninit           ← `assume_init`/`uninit().assume_init()` sites
@@ -182,7 +182,7 @@ I read 95 unique sites in full surrounding context. Each was classified as:
 
 ### 4.1 PUB-INSTALL-1 — `Meta::has_install_script` enum UB on tampered `bun.lockb`
 
-**Severity:** P0 (CVE-class)
+**Severity:** P0 (security-triage candidate)
 **File:** `src/install/lockfile/Package.rs:3320-3478`; struct definition `src/install/lockfile/Package/Meta.rs:34, 39-46`
 
 #### The code
@@ -307,7 +307,7 @@ for meta in metas {
 
 ### 4.2 PUB-INSTALL-2 — `Meta::origin` enum UB on tampered `bun.lockb`
 
-**Severity:** P0 (CVE-class)
+**Severity:** P0 (security-triage candidate)
 **File:** `src/install/lib.rs:1128-1135` (`Origin` enum); read site is the same Meta column at `lockfile/Package.rs:3432`.
 
 #### The code
@@ -1148,7 +1148,7 @@ These were specifically checked AND ruled clean:
 
 **4 latent-fragile patterns:** L-INSTALL-1, L-INSTALL-2, L-INSTALL-3, L-INSTALL-4.
 
-**Of the P0s:** PUB-INSTALL-1, -2, -3, -4 are CVE-class on the threat model defined in §1.2.
+**Of the P0s:** PUB-INSTALL-1, -2, -3, -4 are security-triage candidates on the threat model defined in §1.2. Maintainers should decide advisory treatment.
 
 **Of the P1s:** PUB-INSTALL-5, -6, -7 are real soundness gaps with rarer triggers (alignment depends on mimalloc; partial-init depends on truncated end-cap from disk).
 

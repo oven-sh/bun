@@ -117,7 +117,7 @@ Plus ~32+ T2 (architecture defects) and ~58+ T3 (latent watchlist) from pass 3 a
 - Pin / panic-in-Drop / async-cancel — empty surface
 - atomic ordering — 0 happens-before bugs
 - 537 raw_ptr_lifecycle sites — 0 UAFs, 0 double-frees
-- 298 slice_from_raw sites — 0 CVE-class buffer overruns (the new H9 is a different writes-through-SharedReadOnly shape)
+- 298 slice_from_raw sites — 0 high-priority external buffer-overrun primitives (the new H9 is a different writes-through-SharedReadOnly shape)
 - Macros — host_fn + generate-classes.ts template audit found 0 macro-level UB; both have R-2 Stacked Borrows discriminators
 
 ## Concrete reproductions

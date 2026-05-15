@@ -123,7 +123,7 @@ Audit value includes ruled-out classes:
 | Audit | Result |
 |-------|--------|
 | 537 raw_ptr_lifecycle sites | No confirmed ordinary heap-roundtrip UAFs, double-frees, or mismatched allocators in the sampled/clustered `bun_core::heap` discipline. The exceptions are the separate provenance-dealloc findings in Tier 1. |
-| 298 slice_from_raw sites | No CVE-class JS-reachable buffer-overrun primitive found in ordinary `slice_from_raw` use. Defense-in-depth from JSC C++ bounds, JS-side asserts, and vendored-C contracts largely holds. |
+| 298 slice_from_raw sites | No high-priority JS-reachable buffer-overrun primitive found in ordinary `slice_from_raw` use. Defense-in-depth from JSC C++ bounds, JS-side asserts, and vendored-C contracts largely holds. |
 | 101 atomic sites | No confirmed too-weak happens-before bugs; the audit found too-strong ordering candidates instead. |
 | 1,610 Zig-port `*mut Self` sites (sampled 122) | No broad anti-pattern collapse. The `*mut Self` design is mostly load-bearing; the real issues are narrow exceptions and safe-contract leaks. |
 | Pin projection | No Pin-projection UB surface in production Rust. Bun mostly uses raw heap-stability idioms, not `Pin` projection. |

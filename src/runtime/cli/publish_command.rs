@@ -966,11 +966,8 @@ impl PublishCommand {
         // `npa.toPurl(`${manifest.name}@${manifest.version}`)` uses the raw
         // manifest version, and the `.sigstore` `_attachments` key below
         // does the same.
-        let subject = bun_sigstore::provenance::subject(
-            &ctx.package_name,
-            &ctx.package_version,
-            &sha512_hex,
-        );
+        let subject =
+            bun_sigstore::provenance::subject(&ctx.package_name, &ctx.package_version, &sha512_hex);
 
         // `--provenance-file`: verify subject matches, skip generation.
         if !cfg.provenance_file.is_empty() {

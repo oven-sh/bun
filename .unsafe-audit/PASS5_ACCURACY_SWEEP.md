@@ -167,7 +167,7 @@ findings, plus the presentation/severity corrections above.
 
 **38 distinct entries verified as real findings or real hardening/security items.** Breakdown by category:
 
-- 6 P0 supply-chain (PUB-INSTALL-1..4, F-NEW-1, F-NEW-2)
+- 6 ceiling-score supply-chain entries (PUB-INSTALL-1..4, F-NEW-1, F-NEW-2)
 - 1 HTTP request-smuggling primitive (H5) — non-UB
 - 1 picohttp shared-slice NUL-write (H9)
 - 5 bundler aliased-&mut sites (B-1..B-5)

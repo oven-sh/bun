@@ -4,7 +4,7 @@
 
 ## The headline
 
-**6 supply-chain attack primitives** + **40 T1/T1-equivalent findings** (memory-safety, security, and crash-reliability items kept explicitly separated) + **5 miri-backed UB witnesses**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with major public-facing claims adversarially reviewed by Claude and Codex for maintainer-grade defensibility.
+**6 ceiling-score supply-chain attack primitives** + **40 T1/T1-equivalent findings** (memory-safety, security, and crash-reliability items kept explicitly separated) + **5 miri-backed UB witnesses**, distilled from **11,044 unsafe sites** across **108 workspace crates**, with major public-facing claims adversarially reviewed by Claude and Codex for maintainer-grade defensibility.
 
 Two pull requests opened: [#30763](https://github.com/oven-sh/bun/pull/30763) (audit artifacts + agent-ergonomic guide) and [#30765](https://github.com/oven-sh/bun/pull/30765) (3 highest-confidence fixes, isomorphism-verified).
 
@@ -27,7 +27,7 @@ A smoking-gun maintainer commit message: *"Zig has UB here; one SIMD scan is che
 
 ### 3. The audit found genuine bugs at every severity tier
 
-#### Six P0 supply-chain attack primitives
+#### Six ceiling-score supply-chain attack primitives
 
 A malicious `bun.lockb` or `yarn.lock` planted in a repo reaches parser paths that the audit classifies as UB on `bun install`. The high-level attack shapes are reproducible from crafted lockfile inputs; the miri-backed witnesses are noted explicitly below.
 
@@ -95,7 +95,7 @@ The remaining ~40 fixes are documented in the audit's per-cluster plans for imme
 
 ## Why this matters
 
-Bun is a JavaScript runtime in production use by thousands of teams. Its supply-chain attack surface is non-trivial: every developer who clones a Bun project and runs `bun install` is implicitly trusting the lockfile bytes. The 6 P0s the audit identified mean a malicious package author can plant crafted lockfile bytes that reach UB-class parser paths on `bun install`; exploit development is not claimed here, but the bug class merits coordinated security triage.
+Bun is a JavaScript runtime in production use by thousands of teams. Its supply-chain attack surface is non-trivial: every developer who clones a Bun project and runs `bun install` is implicitly trusting the lockfile bytes. The six ceiling-score P0s mean a malicious package author can plant crafted lockfile bytes that reach UB-class parser paths on `bun install`; additional lower-score install findings are tracked in the dashboard. Exploit development is not claimed here, but the bug class merits coordinated security triage.
 
 The audit is the kind of work that's been historically only possible from a security firm engagement. This was produced by a coding agent applying a structured methodology — the audit is itself a demonstration of what skilled agentic work can do, where the skill is the IP and the audit is the case study.
 

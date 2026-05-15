@@ -137,9 +137,9 @@ Detail files: `verification/miri-confirmed-*.md`.
 
 ---
 
-## The 6 P0 supply-chain primitives
+## The 6 ceiling-score supply-chain primitives
 
-All 6 are reachable via a malicious `bun.lockb` (or `yarn.lock`) planted in a repo a developer then clones and runs `bun install` against.
+All 6 are reachable via a malicious `bun.lockb` (or `yarn.lock`) planted in a repo a developer then clones and runs `bun install` against. These are the highest-risk install/lockfile findings (risk 125). Additional install findings such as PUB-INSTALL-5/6/7 are tracked in the dashboard with lower risk scores.
 
 | ID | Location | Mechanism | Fix |
 |----|----------|-----------|-----|

@@ -6,7 +6,7 @@
 
 | Agent | Topic | T1 | T2 | T3 | Outcome | Plan |
 |-------|-------|---:|---:|---:|---------|------|
-| P4-A | Adversarial parsers (resolver/url/picohttp/glob/semver/watcher) | **2 P0** (semver) | 3 | 20 | 6 P0 supply-chain entry points TOTAL with pass-3 PUB-INSTALL-1..4 | [plan](audit/plans/PASS4-adversarial-parsers.md) |
+| P4-A | Adversarial parsers (resolver/url/picohttp/glob/semver/watcher) | **2 P0** (semver) | 3 | 20 | 6 ceiling-score supply-chain entry points with pass-3 PUB-INSTALL-1..4; additional lower-score install findings remain in the dashboard | [plan](audit/plans/PASS4-adversarial-parsers.md) |
 | P4-B | bun_shell_parser | **0** | (audit-quality) | (audit-quality) | Security model verified holding; 15 adversarial template literals traced; 12 blocked by design | [plan](audit/plans/PASS4-bun-shell-parser.md) |
 | P4-C | bun_css + bun_js_parser | **0** | 4 | 8 | Both surfaces exceptionally clean; arena-lifetime erasure + `Vec<_, AstAlloc>` POD reads + `NonNull<Log>` patterns all justified | [plan](audit/plans/PASS4-css-and-js-parsers.md) |
 | P4-D | Config parsers (yaml/toml/json5/ini/dotenv/bunfig) | **0** | 1 | 31 | TOML lexer + JSON5 parser have ZERO unsafe; JS-exposed YAML/TOML/JSON5/JSONC routes through bounds-checked tokenizers | [plan](audit/plans/PASS4-config-parsers.md) |
@@ -27,7 +27,7 @@ These are new beyond Pass 3's PUB-INSTALL-1..4:
 | **F-NEW-1** | `bun_semver/lib.rs:613` `String::slice` | `(off, len)` decoded from `[u8; 8]` String repr loaded from `bun.lockb` → `buf.get_unchecked(off..off+len)`. OOB read up to ~6 GiB. Reachable: every `Dependency::name`, `Dependency::version`, `Package::name`, `Package::resolution` field in a malicious lockfile. |
 | **F-NEW-2** | `bun_semver/lib.rs:536-537` `String::eql` | Same shape, two simultaneous OOB reads (a_off/a_len + b_off/b_len). |
 
-**Total P0 supply-chain primitives:** 6 (PUB-INSTALL-1, 2, 3, 4 from Pass 3 + F-NEW-1, 2 from Pass 4).
+**Ceiling-score supply-chain primitives:** 6 (PUB-INSTALL-1, 2, 3, 4 from Pass 3 + F-NEW-1, 2 from Pass 4). Additional install findings such as PUB-INSTALL-5/6/7 are tracked separately with lower risk scores.
 
 ## NEW Pass-4 T1 findings (non-P0)
 
@@ -100,7 +100,7 @@ The 5 miri-confirmed traces cover: 2 of the 6 P0s (PUB-INSTALL-1, PUB-INSTALL-3)
 
 After the user's "I want defensible artifacts" critique + Codex's tight tier discipline, the landing order is:
 
-1. **The 6 P0 supply-chain fixes** (PUB-INSTALL-1..4 + F-NEW-1, F-NEW-2). One unified PR: replace `transmute<u8, Enum>` with `match`/`TryFrom`; fix yarn.rs uninit-Vec; fix Tree.rs `get_unchecked`; add bounds-check in semver `String::slice` / `String::eql`.
+1. **The 6 ceiling-score supply-chain fixes** (PUB-INSTALL-1..4 + F-NEW-1, F-NEW-2). One unified PR: replace `transmute<u8, Enum>` with `match`/`TryFrom`; fix yarn.rs uninit-Vec; fix Tree.rs `get_unchecked`; add bounds-check in semver `String::slice` / `String::eql`.
 2. **CRASH-SIGNAL-1 + CRASH-SIGNAL-2** — already author-TODO'd; replace `Mutex` with an `AtomicBool` flag and avoid RefCell in signal handlers. Track outside the memory-safety T1 dashboard but keep near the front of the landing order because crash telemetry is production-critical.
 3. **H9 picohttp NUL-write** — owning-mutable-buffer rewrite.
 4. **TH-1 GuardedLock !Send marker** — 3-line PhantomData addition.

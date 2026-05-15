@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 bun_opaque.workspace = true
-bstr.workspace = true
 libc.workspace = true
 scopeguard.workspace = true
 bun_analytics.workspace = true

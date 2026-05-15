@@ -27,7 +27,6 @@ bun_alloc.workspace = true
 bun_core.workspace = true
 bun_sys.workspace = true
 bun_crash_handler.workspace = true
-bun_mimalloc_sys.workspace = true
 bun_platform.workspace = true
 
 # Phase-C: bun_runtime now compiles green; pulled in for `Cli::start()`.

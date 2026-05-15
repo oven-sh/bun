@@ -11,14 +11,8 @@ workspace = true
 
 [dependencies]
 bun_opaque.workspace = true
-thiserror.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_boringssl_sys.workspace = true

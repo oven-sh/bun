@@ -11,14 +11,7 @@ workspace = true
 
 [dependencies]
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
 bun_alloc.workspace = true
 bun_base64.workspace = true
 bun_core.workspace = true
@@ -26,11 +19,9 @@ bun_bundler.workspace = true
 bun_parsers.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
-bun_http.workspace = true
 bun_js_parser.workspace = true
 bun_jsc.workspace = true
 bun_ast.workspace = true
-bun_options_types.workspace = true
 bun_ptr.workspace = true
 bun_resolver.workspace = true
 thiserror.workspace = true

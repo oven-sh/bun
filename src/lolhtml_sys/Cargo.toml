@@ -20,14 +20,6 @@ bun_opaque.workspace = true
 # `scripts/build/deps/lolhtml.ts` before the workspace cargo build runs.
 lolhtml = { package = "lol_html_c_api", path = "../../vendor/lolhtml/c-api" }
 strum.workspace = true
-phf.workspace = true
-bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
 bun_core.workspace = true
 
 thiserror.workspace = true

@@ -1291,6 +1291,87 @@ describe("SQLite-specific features", () => {
     const rows = await sql<{ id: number }[]>`SELECT id FROM t ORDER BY id`;
     expect(rows).toEqual([{ id: 1 }, { id: 4 }]);
   });
+  test("WITH ... INSERT/UPDATE/DELETE without RETURNING reports affected row count", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE src (id INTEGER PRIMARY KEY, name TEXT)`;
+    await sql`CREATE TABLE dst (id INTEGER PRIMARY KEY, name TEXT)`;
+    await sql`INSERT INTO src VALUES (1, 'a'), (2, 'b'), (3, 'c')`;
+    await sql`INSERT INTO dst VALUES (1, 'x'), (2, 'y'), (3, 'z')`;
+
+    // WITH ... SELECT still returns rows.
+    const selResult = await sql<
+      { id: number; name: string }[]
+    >`WITH cte AS (SELECT id, name FROM src WHERE id > 1) SELECT * FROM cte ORDER BY id`;
+    expect(selResult.count).toBe(2);
+    expect(Array.from(selResult)).toEqual([
+      { id: 2, name: "b" },
+      { id: 3, name: "c" },
+    ]);
+
+    // WITH ... INSERT without RETURNING reports affected row count.
+    const insResult =
+      await sql`WITH cte AS (SELECT id + 10 AS id, name FROM src) INSERT INTO dst SELECT id, name FROM cte`;
+    expect(insResult.count).toBe(3);
+    expect(insResult.lastInsertRowid).toBe(13);
+
+    // WITH ... UPDATE without RETURNING reports affected row count.
+    const updResult =
+      await sql`WITH cte AS (SELECT id FROM src WHERE id > 1) UPDATE dst SET name = ${"updated"} WHERE id IN (SELECT id FROM cte)`;
+    expect(updResult.count).toBe(2);
+
+    // WITH ... DELETE without RETURNING reports affected row count.
+    const delResult =
+      await sql`WITH cte AS (SELECT id FROM src WHERE id > 1) DELETE FROM dst WHERE id IN (SELECT id FROM cte)`;
+    expect(delResult.count).toBe(2);
+
+    // WITH ... INSERT ... RETURNING still returns the inserted rows.
+    await sql`DELETE FROM dst`;
+    const retResult = await sql<
+      { id: number; name: string }[]
+    >`WITH cte AS (SELECT id + 100 AS id, name FROM src) INSERT INTO dst SELECT id, name FROM cte RETURNING id, name`;
+    expect(retResult.count).toBe(3);
+    expect(Array.from(retResult)).toEqual([
+      { id: 101, name: "a" },
+      { id: 102, name: "b" },
+      { id: 103, name: "c" },
+    ]);
+  });
+  test("leading SQL comments do not hide the statement keyword", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)`;
+    await sql`INSERT INTO t VALUES (1, 'Alice'), (2, 'Bob')`;
+
+    // Block comment in front of a SELECT
+    const block = await sql<{ id: number; name: string }[]>`/* note */ SELECT id, name FROM t ORDER BY id`;
+    expect(block.command).toBe("SELECT");
+    expect(block.count).toBe(2);
+    expect(Array.from(block)).toEqual([
+      { id: 1, name: "Alice" },
+      { id: 2, name: "Bob" },
+    ]);
+
+    // Line comment in front of a SELECT
+    const line = await sql<{ id: number; name: string }[]>`-- note
+SELECT id, name FROM t ORDER BY id`;
+    expect(line.command).toBe("SELECT");
+    expect(line.count).toBe(2);
+    expect(Array.from(line)).toEqual([
+      { id: 1, name: "Alice" },
+      { id: 2, name: "Bob" },
+    ]);
+
+    // Leading comment on an INSERT ... SELECT should still report
+    // the mutation's affected row count (not go through stmt.all()).
+    const ins =
+      await sql`/* tag=me */ INSERT INTO t (id, name) SELECT id + 10, name || ${"!"} FROM t WHERE id <= 2`;
+    expect(ins.command).toBe("INSERT");
+    expect(ins.count).toBe(2);
+
+    // String literal containing `--` must not be mistaken for a comment.
+    const lit =
+      await sql<{ quoted: string }[]>`SELECT ${"hello -- world"} AS quoted`;
+    expect(lit[0].quoted).toBe("hello -- world");
+  });
   test("order by and limit in update statements", async () => {
     await using sql = new SQL("sqlite://:memory:");
     await sql`CREATE TABLE users (id INTEGER, name TEXT)`;

@@ -185,7 +185,7 @@ for (const { name, connect } of tests) {
       expect(await res.text()).toBe("<h1>HELLO</h1>");
     });
 
-    it("should have peer certificate when using self asign certificate", async () => {
+    it("should have peer certificate when using self-signed certificate", async () => {
       using server = Bun.serve({
         tls: {
           cert: COMMON_CERT.cert,

@@ -1667,7 +1667,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                     cursor.set_position((pos + result.written as usize) as u64);
                 }
                 let wrote_len = cursor.position() as usize;
-                // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
+                // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array.
+                // WebSocket close frame reason phrase max is 123 bytes per RFC 6455.
+                // Clamp wrote_len to prevent panic in send_close_with_body (slices body[..body_len]).
+                let wrote_len = wrote_len.min(125);
                 let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
                 this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
                 return;

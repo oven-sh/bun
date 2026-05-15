@@ -144,15 +144,24 @@ test("discovers from filesystem paths", () => {
 // it, entries left behind by a dynamic pattern that matched partway and then
 // returned `false` would leak into the next pattern that succeeds.
 describe("match() param collection", () => {
-  test("catch-all collects each segment as a separate param", () => {
-    const dir = tempDirWithFiles("fsr-match-catchall", {
-      "[...slug].tsx": "1",
+  describe("catch-all binds the last segment", () => {
+    // Internally the catch-all `[...slug]` pattern pushes one `{slug: seg}`
+    // entry per path segment into the `MatchedParams` BoundedArray; the JS
+    // binding then iterates them into an object, so duplicate `slug` keys
+    // collapse to whichever entry was pushed last. That's the only
+    // externally-observable outcome, but each push still flows through the
+    // `append` code path we're exercising here.
+    test.each([
+      ["/a", "a"],
+      ["/one/two/three", "three"],
+      ["/a/b/c/d/e/f", "f"],
+    ])("%s → slug=%j", (path, expected) => {
+      const dir = tempDirWithFiles("fsr-match-catchall", {
+        "[...slug].tsx": "1",
+      });
+      const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+      expect(router.match(path).params).toEqual({ slug: expected });
     });
-    const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
-
-    expect(router.match("/one/two/three").params).toEqual({ slug: "three" });
-    expect(router.match("/a").params).toEqual({ slug: "a" });
-    expect(router.match("/a/b/c/d/e/f").params).toEqual({ slug: "f" });
   });
 
   test("single-param route still matches", () => {

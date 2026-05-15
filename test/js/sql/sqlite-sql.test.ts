@@ -1222,6 +1222,75 @@ describe("SQLite-specific features", () => {
     expect(result.count).toBe(1);
     expect(result.command).toBe("DELETE");
   });
+  test("INSERT ... SELECT without RETURNING reports affected row count (#30811)", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE company (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)`;
+    await sql`INSERT INTO company (name) VALUES (${"ACME"})`;
+    await sql`INSERT INTO company (name) VALUES (${"FOO"})`;
+
+    const result = await sql`
+      INSERT INTO company (name)
+      SELECT name || ${" 2"} FROM company
+    `;
+
+    expect(result.command).toBe("INSERT");
+    expect(result.count).toBe(2);
+    expect(result.lastInsertRowid).toBe(4);
+
+    const rows = await sql<{ id: number; name: string }[]>`SELECT id, name FROM company ORDER BY id`;
+    expect(rows).toEqual([
+      { id: 1, name: "ACME" },
+      { id: 2, name: "FOO" },
+      { id: 3, name: "ACME 2" },
+      { id: 4, name: "FOO 2" },
+    ]);
+  });
+  test("INSERT ... SELECT ... RETURNING returns the inserted rows", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE company (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)`;
+    await sql`INSERT INTO company (name) VALUES (${"ACME"})`;
+    await sql`INSERT INTO company (name) VALUES (${"FOO"})`;
+
+    const result = await sql<
+      { id: number; name: string }[]
+    >`INSERT INTO company (name) SELECT name || ${" 2"} FROM company RETURNING id, name`;
+
+    expect(result.command).toBe("INSERT");
+    expect(result.count).toBe(2);
+    expect(Array.from(result)).toEqual([
+      { id: 3, name: "ACME 2" },
+      { id: 4, name: "FOO 2" },
+    ]);
+  });
+  test("UPDATE ... WHERE id IN (SELECT ...) without RETURNING reports affected row count", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, flag INTEGER)`;
+    await sql`INSERT INTO t VALUES (1, 'a', 0), (2, 'b', 1), (3, 'c', 1), (4, 'd', 0)`;
+
+    const result = await sql`UPDATE t SET name = ${"x"} WHERE id IN (SELECT id FROM t WHERE flag = ${1})`;
+    expect(result.command).toBe("UPDATE");
+    expect(result.count).toBe(2);
+
+    const rows = await sql<{ id: number; name: string }[]>`SELECT id, name FROM t ORDER BY id`;
+    expect(rows).toEqual([
+      { id: 1, name: "a" },
+      { id: 2, name: "x" },
+      { id: 3, name: "x" },
+      { id: 4, name: "d" },
+    ]);
+  });
+  test("DELETE ... WHERE id IN (SELECT ...) without RETURNING reports affected row count", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (id INTEGER PRIMARY KEY, flag INTEGER)`;
+    await sql`INSERT INTO t VALUES (1, 0), (2, 1), (3, 1), (4, 0)`;
+
+    const result = await sql`DELETE FROM t WHERE id IN (SELECT id FROM t WHERE flag = ${1})`;
+    expect(result.command).toBe("DELETE");
+    expect(result.count).toBe(2);
+
+    const rows = await sql<{ id: number }[]>`SELECT id FROM t ORDER BY id`;
+    expect(rows).toEqual([{ id: 1 }, { id: 4 }]);
+  });
   test("order by and limit in update statements", async () => {
     await using sql = new SQL("sqlite://:memory:");
     await sql`CREATE TABLE users (id INTEGER, name TEXT)`;

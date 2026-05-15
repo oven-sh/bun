@@ -131,16 +131,21 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             }
             continue;
           }
-          case "SELECT":
-          case "PRAGMA":
-          case "WITH":
-          case "EXPLAIN":
           case "RETURNING": {
+            // RETURNING always produces rows regardless of the leading
+            // statement keyword (INSERT/UPDATE/DELETE ... RETURNING ...).
             lastToken = token;
             canReturnRows = true;
             token = "";
             continue;
           }
+          // NOTE: `SELECT`, `PRAGMA`, `WITH`, and `EXPLAIN` deliberately do
+          // NOT flip `canReturnRows` here. Seeing them mid-query means they
+          // occur inside a subquery (e.g. `INSERT ... SELECT ...`,
+          // `UPDATE ... WHERE id IN (SELECT ...)`), which does not return
+          // rows unless there's a `RETURNING` clause. They only flip
+          // `canReturnRows` when they appear as the leading statement
+          // keyword, handled in the post-loop block below.
           default: {
             lastToken = token;
             token = "";

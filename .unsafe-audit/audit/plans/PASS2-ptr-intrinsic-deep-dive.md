@@ -66,10 +66,11 @@ index/offset, (c) alignment guarantee, (d) Drop ordering. Inventory at
 3. `pre-existing-ub-ptr-3` — `bun_io::Request::store_callback_seq_cst` uses `write_volatile` + SeqCst fence to publish a `fn` pointer cross-thread. Volatile is not atomic per the Rust memory model; should be `AtomicPtr` with `Release`/`Acquire`.
 4. `pre-existing-ub-ptr-4` — `sys::SysQuietWriterAdapter::adapter_write_all` computes `this.pos + bytes.len() > this.cap` with no overflow guard; an oversized `bytes` makes the comparison wrap, bypassing the drain branch, then `copy_nonoverlapping` writes past `buf.add(pos)`.
 5. `pre-existing-ub-ptr-5` — `bun_install::windows-shim::bun_shim_impl::*` final `ptr::copy(src, dst, len + 1)` bounds the destination by a `debug_assert!(len + 1 <= BUF2_U16_LEN)` only; release builds with malformed shim metadata can overrun `out_buf`.
-1. `pre-existing-ub-ptr-6` — `SerializedSourceMap::header()` (in both `sourcemap/lib.rs` and `standalone_graph/StandaloneModuleGraph.rs`) documents *"caller checked"* the length, but `source_files_count` / `source_file_name` / `compressed_source_file` / `source_file_names` are public accessors that call `header()` with no precondition check of their own.
+6. `pre-existing-ub-ptr-6` — `SerializedSourceMap::header()` (in both `sourcemap/lib.rs` and `standalone_graph/StandaloneModuleGraph.rs`) documents *"caller checked"* the length, but `source_files_count` / `source_file_name` / `compressed_source_file` / `source_file_names` are public accessors that call `header()` with no precondition check of their own.
 
 Severities range medium → low; threat-model context (e.g., #1, #5 require a
-tampered standalone executable, where RCE is already implied) is noted per
+tampered standalone executable, where the attacker already controls a generated
+binary artifact) is noted per
 finding.
 
 ---

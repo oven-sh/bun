@@ -533,23 +533,23 @@ RISK_SCORE_4 = BLAST × LIKELIHOOD × DISCOVERABILITY × EXPLOITABILITY
 
 EXPLOITABILITY (1-5):
 - 1: requires specific environment; not practically exploitable.
-- 5: trivially exploitable (memory corruption → RCE pathway exists).
+- 5: direct memory-corruption primitive with a plausible exploit path. This optional axis is triage-only; it does **not** claim exploit development has been demonstrated.
 
 For Bun, the top T1 entries with EXPLOITABILITY scored:
 
 | ID | Risk-3 | EXPL | Risk-4 | Notes |
 |----|-------:|-----:|-------:|-------|
-| PUB-INSTALL-1 | 125 | 4 | 500 | Niche-violating enum read is OOB-read primitive; reach to RCE through subsequent memory corruption is plausible but not demonstrated. |
-| PUB-INSTALL-2 | 125 | 4 | 500 | Same primitive as -1. |
-| PUB-INSTALL-3 | 125 | 3 | 375 | Uninit Vec slice; read-only exposure is information-disclosure; write exposure requires further analysis. |
-| PUB-INSTALL-4 | 125 | 4 | 500 | OOB read with attacker-controlled index; classic information-disclosure primitive. |
+| PUB-INSTALL-1 | 125 | 3 | 375 | Niche-violating enum construction from attacker-controlled lockfile byte. This is direct language-level UB; downstream exploitability is plausible but not demonstrated. |
+| PUB-INSTALL-2 | 125 | 3 | 375 | Same invalid-enum UB shape as -1. |
+| PUB-INSTALL-3 | 125 | 3 | 375 | Uninit Vec slice over attacker-controlled lockfile structure; data exposure/corruption impact requires further analysis. |
+| PUB-INSTALL-4 | 125 | 4 | 500 | OOB read with attacker-controlled dependency index; classic information-disclosure primitive, but exploit development is not claimed. |
 | H9 | 125 | 2 | 250 | SB-UB on every HTTP request, but the practical-exploit path through the Stacked Borrows violation is not demonstrated. Likely a latent miscompile primitive if the optimiser ever changes assumption. |
-| pre-existing-ub-10 (FFI closeCallback) | 80 | 5 | 400 | Arbitrary-free / double-free via JS-supplied address; classic RCE primitive if a heap groomed appropriately. |
-| pre-existing-ub-002 (StoreSlice<T>) | 80 | 1 | 80 | Send/Sync laundering is a soundness defect but not directly weaponisable. |
-| pre-existing-ub-9 (FFI close UAF) | 60 | 5 | 300 | UAF on freed JIT'd code is a classic code-execution primitive. |
-| P3-BC-001 fmt::Raw UTF-8 | 80 | 1 | 80 | Library UB on `&str` validity; subsequent compiler optimisations might break, but no demonstrated weaponised path. |
+| pre-existing-ub-10 (FFI closeCallback) | 80 | 5 | 400 | Arbitrary-free / double-free via JS-supplied address; severe heap-corruption primitive, exploitability unproven. |
+| pre-existing-ub-002 (StoreSlice<T>) | 80 | 1 | 80 | Send/Sync laundering is a soundness defect but not directly exploitable. |
+| pre-existing-ub-9 (FFI close UAF) | 60 | 5 | 300 | UAF on freed JIT'd code is a severe use-after-free primitive; code-execution risk is plausible but not demonstrated. |
+| P3-BC-001 fmt::Raw UTF-8 | 80 | 1 | 80 | Library UB on `&str` validity; subsequent compiler optimisations might break, but no demonstrated exploit path. |
 
-The 4-dimensional ranking puts the **FFI closeCallback** and **FFI close UAF** at higher exploitability than the install P0s because the FFI sites have *direct* free/UAF primitives, while the install sites are *indirect* (OOB read first, then maybe RCE).
+The 4-dimensional ranking separates **reach** from **primitive shape**. The install findings remain release-gate priorities because their reach is universal; the FFI findings have more direct heap-corruption shapes but narrower, explicitly dangerous `bun:ffi` reach. This optional axis is for security-team triage, not a public exploitability claim.
 
 For Bun's release-gate prioritisation, we keep the 3-dimensional score as the canonical ordering — the install P0s are still highest because their reach is universal — but security-team review may want the 4-dimensional ordering for incident-response triage.
 

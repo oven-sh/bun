@@ -42,6 +42,23 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 const MAX_BUFFER = 1024 * 1024;
 const kFromNode = Symbol("kFromNode");
 
+// Lazily-initialized diagnostics_channel handles for child_process events.
+// Mirrors Node.js: https://github.com/nodejs/node/blob/main/lib/internal/child_process.js
+let childProcessChannel;
+let childProcessSpawnTracingChannel;
+function getChildProcessChannel() {
+  if (!childProcessChannel) {
+    childProcessChannel = require("node:diagnostics_channel").channel("child_process");
+  }
+  return childProcessChannel;
+}
+function getChildProcessSpawnTracingChannel() {
+  if (!childProcessSpawnTracingChannel) {
+    childProcessSpawnTracingChannel = require("node:diagnostics_channel").tracingChannel("child_process.spawn");
+  }
+  return childProcessSpawnTracingChannel;
+}
+
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
   $debug("child_process: debug mode on");
@@ -1329,6 +1346,21 @@ class ChildProcess extends EventEmitter {
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
 
+    // Publish to the 'child_process' diagnostics channel. Node fires this in
+    // the ChildProcess constructor, before the native spawn call — Bun's
+    // equivalent is at the top of .spawn(), before Bun.spawn().
+    const cpChannel = getChildProcessChannel();
+    if (cpChannel.hasSubscribers) {
+      cpChannel.publish({ process: this });
+    }
+
+    // 'child_process.spawn' tracing channel: publish start before Bun.spawn(),
+    // and either end (on success) or error (on failure).
+    const cpSpawn = getChildProcessSpawnTracingChannel();
+    if (cpSpawn.start.hasSubscribers) {
+      cpSpawn.start.publish({ process: this, options });
+    }
+
     try {
       this.#handle = Bun.spawn({
         cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
@@ -1391,6 +1423,10 @@ class ChildProcess extends EventEmitter {
           item?.ref?.();
         }
       }
+
+      if (cpSpawn.end.hasSubscribers) {
+        cpSpawn.end.publish({ process: this });
+      }
     } catch (ex) {
       if (
         ex != null &&
@@ -1416,7 +1452,13 @@ class ChildProcess extends EventEmitter {
           this.#stdioOptions[1] = "undefined";
           this.#stdioOptions[2] = "undefined";
         }
+        if (cpSpawn.error.hasSubscribers) {
+          cpSpawn.error.publish({ process: this, error: ex });
+        }
       } else {
+        if (cpSpawn.error.hasSubscribers) {
+          cpSpawn.error.publish({ process: this, error: ex });
+        }
         throw ex;
       }
     }

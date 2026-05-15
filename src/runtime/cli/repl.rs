@@ -1138,9 +1138,7 @@ impl<'a> Repl<'a> {
             // stranded callbacks.
             // SAFETY: `event_loop` is the live per-thread event loop.
             unsafe { (*core::ptr::from_mut(event_loop)).tick_immediate_tasks(vm_ptr) };
-            if event_loop.tasks.readable_length() > 0
-                || !event_loop.concurrent_tasks.is_empty()
-            {
+            if event_loop.tasks.readable_length() > 0 || !event_loop.concurrent_tasks.is_empty() {
                 vm_mut(vm).tick();
             }
             vm_mut(vm).on_after_event_loop();
@@ -1252,8 +1250,7 @@ impl<'a> Repl<'a> {
                         None
                     } else {
                         let mut ts = bun_core::Timespec { sec: 0, nsec: 0 };
-                        let has_pending_immediate =
-                            !event_loop.immediate_tasks.is_empty();
+                        let has_pending_immediate = !event_loop.immediate_tasks.is_empty();
                         let have = unsafe {
                             timer::All::get_timeout(
                                 &mut (*state).timer,

@@ -2025,12 +2025,7 @@ fn substitute_template(
     // Flush [run_start, end) as a UTF-8 string. Invalid bytes (which should
     // not occur given our inputs) are replaced with U+FFFD rather than
     // producing Latin-1 mojibake as the previous implementation did.
-    fn flush(
-        t: &[u8],
-        run_start: usize,
-        end: usize,
-        f: &mut dyn fmt::Write,
-    ) -> fmt::Result {
+    fn flush(t: &[u8], run_start: usize, end: usize, f: &mut dyn fmt::Write) -> fmt::Result {
         if end <= run_start {
             return Ok(());
         }

@@ -2176,12 +2176,10 @@ macro_rules! export_http_client {
                 // safe. `ffi::slice` tolerates `(null, 0)`.
                 let header_names = unsafe { bun_core::ffi::slice(header_names, header_count) };
                 let header_values = unsafe { bun_core::ffi::slice(header_values, header_count) };
-                let proxy_header_names = unsafe {
-                    bun_core::ffi::slice(proxy_header_names, proxy_header_count)
-                };
-                let proxy_header_values = unsafe {
-                    bun_core::ffi::slice(proxy_header_values, proxy_header_count)
-                };
+                let proxy_header_names =
+                    unsafe { bun_core::ffi::slice(proxy_header_names, proxy_header_count) };
+                let proxy_header_values =
+                    unsafe { bun_core::ffi::slice(proxy_header_values, proxy_header_count) };
                 // `websocket` is an opaque back-reference; `connect` only
                 // stores it on the client and never derefs it here.
                 match HTTPClient::<$ssl>::connect(

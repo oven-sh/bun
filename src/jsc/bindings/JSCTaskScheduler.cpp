@@ -1,5 +1,6 @@
 #include "config.h"
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/DeferredWorkTimerInlines.h>
 #include "JSCTaskScheduler.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"

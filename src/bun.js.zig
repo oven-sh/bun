@@ -640,7 +640,7 @@ const CPUProfiler = @import("./jsc/BunCPUProfiler.zig");
 const HeapProfiler = @import("./jsc/BunHeapProfiler.zig");
 const options = @import("./bundler/options.zig");
 const std = @import("std");
-const Command = @import("./cli/cli.zig").Command;
+const Command = @import("./runtime/cli/cli.zig").Command;
 const which = @import("./which/which.zig").which;
 
 const bun = @import("bun");

@@ -1,8 +1,20 @@
 import { define } from "../../codegen/class-definitions";
 
+const rustPaths = {
+  Blob: "crate::webcore::byte_blob_loader::Source",
+  File: "crate::webcore::file_reader::Source",
+  Bytes: "crate::webcore::byte_stream::Source",
+};
+
 function source(name) {
   return define({
     name: name + "InternalReadableStreamSource",
+    rustPath: rustPaths[name],
+    // R-2 Phase 3 opt-out: the codegen-facing wrapper `NewSource<C>` impl in
+    // ReadableStream.rs still has `&mut self` host-fns (the embedded context
+    // types — ByteStream/FileReader/ByteBlobLoader — are Cell-migrated, but
+    // the generic wrapper is not yet). Remove once `NewSource<C>` is migrated.
+    sharedThis: false,
     construct: false,
     noConstructor: true,
     finalize: true,

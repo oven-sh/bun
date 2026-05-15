@@ -58,6 +58,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ref(WTF::StringImpl*
 {
     impl->ref();
 }
+// Cold path for the Rust-side inlined `deref()`: caller has already brought
+// the refcount to zero via `fetch_sub`, so this is destroy-only.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl)
+{
+    WTF::StringImpl::destroy(impl);
+}
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {

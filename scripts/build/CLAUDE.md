@@ -89,7 +89,7 @@ bunx tsc --noEmit -p scripts/build/tsconfig.json   # typecheck
 grep "yourtarget\|yourrule" build/debug/build.ninja  # inspect generated output
 ninja -C build/debug -t query <target>      # why does <target> rebuild?
 ninja -C build/debug -t deps <target>       # what headers does foo.o depend on?
-ninja -C build/debug <target>               # build a specific target (e.g. tinycc, bun-zig.o)
+ninja -C build/debug <target>               # build a specific target (e.g. tinycc, bun-rust)
 ```
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
@@ -109,7 +109,7 @@ The generated `build.ninja` is the ground truth. If an edge isn't doing what you
 
 Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `bun bd test --asan=off foo.ts` sends `--asan=off` to bun-debug. Use `--` when a runtime flag collides with a build flag: `bun bd -- --target=browser script.ts`.
 
-**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-zig.o`. List all: `ninja -C build/debug -t targets`.
+**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `ninja -C build/debug -t targets`.
 
 ## Common tasks
 
@@ -123,7 +123,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
 
-**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`zigInputs` if zig reads it, `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
+**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
 
 **Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
 
@@ -139,9 +139,10 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 ### Phase 1 — Configure (`configure.ts::configure`)
 
-1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/zig/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
+1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
+   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.cxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.zig`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
 6. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.
@@ -155,7 +156,7 @@ For `mode: "full"` (the normal case):
 
 1. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
 2. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
-3. **Zig** — `emitZig(n, cfg, {...})` emits zig download + `zig build obj` → `bun-zig.o`.
+3. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_bin` → `libbun_rust.a`.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
@@ -163,46 +164,47 @@ For `mode: "full"` (the normal case):
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Smoke test** — `<exe> --revision` catches load-time failures.
 
-Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link).
+Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link).
 
 ### Phase 3 — Execute
 
 - **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
-- **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/zig progress streams live. If positionals given, exec the built binary with them.
+- **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/cargo build progress streams live. If positionals given, exec the built binary with them.
 
 ## Module inventory
 
-| File                           | Owns                                                                               |
-| ------------------------------ | ---------------------------------------------------------------------------------- |
-| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec               |
-| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                 |
-| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`               |
-| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                     |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing            |
-| `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()` |
-| `ninja.ts`                     | `Ninja` class — the build-file writer                                              |
-| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                    |
-| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                            |
-| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                   |
-| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                 |
-| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                           |
-| `zig.ts`                       | Zig download + `zig build`, `emitZig()`                                            |
-| `bun.ts`                       | `emitBun()` — assembles deps+codegen+zig+compile+link                              |
-| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                |
-| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                          |
-| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                       |
-| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, zig progress decoding                   |
-| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                            |
-| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                   |
-| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                      |
-| `download.ts`                  | `downloadWithRetry()`, archive extraction                                          |
-| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                         |
-| `ci.ts`                        | CI integration — annotations, artifacts, log groups                                |
-| `clean.ts`                     | `bun run clean` preset-based cleanup                                               |
-| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                           |
-| `deps/*.ts`                    | One `Dependency` object per vendored dep                                           |
-| `deps/index.ts`                | `allDeps` array — fetch order + link order                                         |
-| `shims/*.c`                    | Platform workaround sources                                                        |
+| File                           | Owns                                                                                |
+| ------------------------------ | ----------------------------------------------------------------------------------- |
+| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec                |
+| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                  |
+| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                |
+| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                      |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing             |
+| `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`  |
+| `ninja.ts`                     | `Ninja` class — the build-file writer                                               |
+| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                     |
+| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                             |
+| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                    |
+| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                  |
+| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                            |
+| `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix             |
+| `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.cxx`) |
+| `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                              |
+| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                 |
+| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                           |
+| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                        |
+| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                  |
+| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                             |
+| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                    |
+| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                       |
+| `download.ts`                  | `downloadWithRetry()`, archive extraction                                           |
+| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                          |
+| `ci.ts`                        | CI integration — annotations, artifacts, log groups                                 |
+| `clean.ts`                     | `bun run clean` preset-based cleanup                                                |
+| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                            |
+| `deps/*.ts`                    | One `Dependency` object per vendored dep                                            |
+| `deps/index.ts`                | `allDeps` array — fetch order + link order                                          |
+| `shims/*.c`                    | Platform workaround sources                                                         |
 
 ## Key types
 
@@ -227,13 +229,11 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 **PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
 
-**Windows `ReleaseFast` → `ReleaseSafe`** in `zig.ts`. Load-bearing since Bun 1.1; caught more crashes. Don't "fix" it.
-
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
 
-**`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, zig, tarballs, prebuilt WebKit). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
+**`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, tarballs, prebuilt WebKit). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
 
 ## Node compatibility
 

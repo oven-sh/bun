@@ -155,6 +155,74 @@ extern "C" void dump_zone_malloc_stats()
 
 #endif
 
+// Accurate per-process memory footprint, in bytes. Unlike RSS this excludes
+// pages already returned to the OS that the kernel keeps mapped lazily
+// (Darwin's MADV_FREE_REUSABLE), so leak tests get the same answer on every
+// platform. Returns 0 when no platform-specific accessor is available; the
+// JS caller falls back to process.memoryUsage.rss().
+//
+// Darwin:  task_info(TASK_VM_INFO).phys_footprint — Activity Monitor's number;
+//          counts dirty + compressed, NOT reusable.
+// Linux:   /proc/self/smaps_rollup Pss: — proportional set size, attributes
+//          shared pages by share count instead of fully to every mapper.
+// Windows: GetProcessMemoryInfo PrivateUsage — commit charge for this process.
+#if OS(DARWIN)
+#include <mach/mach.h>
+extern "C" size_t Bun__memoryFootprint()
+{
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO,
+        reinterpret_cast<task_info_t>(&info), &count);
+    if (kr != KERN_SUCCESS) return 0;
+    return static_cast<size_t>(info.phys_footprint);
+}
+#elif OS(LINUX)
+extern "C" size_t Bun__memoryFootprint()
+{
+    // smaps_rollup (Linux ≥4.14) is one read instead of walking every VMA.
+    int fd;
+    do {
+        fd = open("/proc/self/smaps_rollup", O_RDONLY | O_CLOEXEC);
+    } while (fd == -1 && errno == EINTR);
+    if (fd == -1) return 0;
+
+    char buf[2048];
+    ssize_t n;
+    do {
+        n = read(fd, buf, sizeof(buf) - 1);
+    } while (n == -1 && errno == EINTR);
+    close(fd);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+
+    // Look for "\nPss: <n> kB". Anchor on the newline so "Pss_Anon:" /
+    // "Pss_File:" / "SwapPss:" don't match.
+    const char* p = strstr(buf, "\nPss:");
+    if (!p) return 0;
+    p += sizeof("\nPss:") - 1;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    size_t kb = static_cast<size_t>(strtoull(p, nullptr, 10));
+    return kb * 1024;
+}
+#elif OS(WINDOWS)
+#include <psapi.h>
+extern "C" size_t Bun__memoryFootprint()
+{
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    if (!GetProcessMemoryInfo(GetCurrentProcess(),
+            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc)))
+        return 0;
+    return static_cast<size_t>(pmc.PrivateUsage);
+}
+#else
+extern "C" size_t Bun__memoryFootprint()
+{
+    return 0;
+}
+#endif
+
 #if OS(WINDOWS)
 #define MS_PER_SEC 1000ULL // MS = milliseconds
 #define US_PER_MS 1000ULL // US = microseconds

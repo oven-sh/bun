@@ -22,7 +22,7 @@ pub const BunObject = struct {
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
-    pub const jest = toJSCallback(@import("../../test_runner/jest.zig").Jest.call);
+    pub const jest = toJSCallback(@import("../test_runner/jest.zig").Jest.call);
     pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
@@ -2135,7 +2135,7 @@ const Which = @import("../../which/which.zig");
 const options = @import("../../bundler/options.zig");
 const std = @import("std");
 const zlib = @import("../../zlib/zlib.zig");
-const Editor = @import("../../cli/open.zig").Editor;
+const Editor = @import("../cli/open.zig").Editor;
 const URL = @import("../../url/url.zig").URL;
 const conv = std.builtin.CallingConvention.Unspecified;
 

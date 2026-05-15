@@ -1,305 +1,339 @@
-## Zig
+## Rust
 
-Syntax reminders:
+`src/` is a Cargo workspace (rooted at the repo's top-level `Cargo.toml`, ~200
+member crates). The runtime is built as `libbun_rust.a` via `cargo build -p
+bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 
-- Private fields are fully supported in Zig with the `#` prefix. `struct { #foo: u32 };` makes a struct with a private field named `#foo`.
-- Decl literals in Zig are recommended. `const decl: Decl = .{ .binding = 0, .value = 0 };`
+- `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
+- `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
+- `bun_paths` (`src/paths/`) — path joining/normalization, the path-buffer pool
+- `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports, `URL`
+- `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
+- `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
+- `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
+
+You will see `.zig` siblings next to many `.rs` files — those are the original
+implementation kept as a porting reference for _behavior_; they are not
+compiled and are not where new code goes.
 
 Conventions:
 
-- Prefer `@import` at the **bottom** of the file, but the auto formatter will move them so you don't need to worry about it.
-- **Never** use `@import()` inline inside of functions. **Always** put them at the bottom of the file or containing struct. Imports in Zig are free of side-effects, so there's no such thing as a "dynamic" import.
-- You must be patient with the build.
+- `cargo check -p <crate>` for fast iteration; `bun bd` builds and links everything.
+- Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
+- The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
+- `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
 
-## Prefer Bun APIs over `std`
+## Prefer `bun_core` / `bun_sys` over `std`
 
-**Always use `bun.*` APIs instead of `std.*`.** The `bun` namespace (`@import("bun")`) provides cross-platform wrappers that preserve OS error info and never use `unreachable`. Using `std.fs`, `std.posix`, or `std.os` directly is wrong in this codebase.
+The `std` equivalents either lose OS error info, allocate where we have pools,
+or don't match the cross-platform behavior the runtime needs.
 
-| Instead of                                                   | Use                                  |
-| ------------------------------------------------------------ | ------------------------------------ |
-| `std.base64`                                                 | `bun.base64`                         |
-| `std.crypto.sha{...}`                                        | `bun.sha.Hashers.{...}`              |
-| `std.fs.cwd()`                                               | `bun.FD.cwd()`                       |
-| `std.fs.File`                                                | `bun.sys.File`                       |
-| `std.fs.path.join/dirname/basename`                          | `bun.path.join/dirname/basename`     |
-| `std.mem.eql/indexOf/startsWith` (for strings)               | `bun.strings.eql/indexOf/startsWith` |
-| `std.posix.O` / `std.posix.mode_t` / `std.posix.fd_t`        | `bun.O` / `bun.Mode` / `bun.FD`      |
-| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
-| `std.process.Child`                                          | `bun.spawnSync`                      |
+| Instead of                              | Use                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------ |
+| `std::fs::File`                         | `bun_sys::File` (Copy, no `Drop`-close)                                              |
+| `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all`                            |
+| `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
+| `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
+| `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
+| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `borrow_utf8`                                       |
+| `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops)                                     |
+| `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |
+| `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
+| `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`                                          |
 
-## `bun.sys` — System Calls (`src/sys/sys.zig`)
+## `bun_sys` — System Calls (`src/sys/`)
 
-All return `Maybe(T)` — a tagged union of `.result: T` or `.err: bun.sys.Error`:
+Syscall wrappers preserve errno via `Maybe<T> = Result<T, bun_sys::Error>`.
 
-```zig
-const fd = switch (bun.sys.open(path, bun.O.RDONLY, 0)) {
-    .result => |fd| fd,
-    .err => |err| return .{ .err = err },
-};
-// Or: const fd = try bun.sys.open(path, bun.O.RDONLY, 0).unwrap();
+```rust
+use bun_sys::{File, Fd, O};
+
+let file = File::openat(Fd::cwd(), b"path/to/file", O::RDONLY, 0)?;
+let mut buf = vec![0u8; 4096];
+let n = file.read_all(&mut buf)?;     // loops until EOF or full
+file.close();                          // File is Copy — no Drop close
 ```
 
-Key functions (all take `bun.FD`, not `std.posix.fd_t`):
+Key types and functions:
 
-- `open`, `openat`, `openA` (non-sentinel) → `Maybe(bun.FD)`
-- `read`, `readAll`, `pread` → `Maybe(usize)`
-- `write`, `pwrite`, `writev` → `Maybe(usize)`
-- `stat`, `fstat`, `lstat` → `Maybe(bun.Stat)`
-- `mkdir`, `unlink`, `rename`, `symlink`, `chmod`, `fchmod`, `fchown` → `Maybe(void)`
-- `readlink`, `getFdPath`, `getcwd` → `Maybe` of path slice
-- `getFileSize`, `dup`, `sendfile`, `mmap`
+- `Fd` (`bun_core::Fd`, re-exported) — cross-platform file descriptor. `Fd::cwd()`, `Fd::stdin()/stdout()/stderr()`, `fd.close()`.
+- `File::open(path: &ZStr, flags, mode)` / `File::openat(dir: Fd, path: &[u8], flags, mode)` / `File::make_open(...)` (creates parent dirs) / `File::create(dir, path, truncate)`
+- `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write(buf)` / `write_all(buf)`
+- `bun_sys::open`, `read`, `write`, `pread`, `pwrite`, `stat`, `fstat`, `lstat`, `mkdir`, `unlink`, `rename`, `symlink`, `chmod` — free fns over `Fd`
+- Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
-Use `bun.O.RDONLY`, `bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC`, etc. for open flags.
+`bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Box<[u8]>`. Convert
+to a JS exception via `bun_jsc::ErrorJsc::to_js`:
 
-### `bun.sys.File` (`src/sys/File.zig`)
-
-Higher-level file handle wrapping `bun.FD`:
-
-```zig
-// One-shot read: open + read + close
-const bytes = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, allocator)) {
-    .result => |b| b,
-    .err => |err| return .{ .err = err },
-};
-
-// One-shot write: open + write + close
-switch (bun.sys.File.writeFile(bun.FD.cwd(), path, data)) {
-    .result => {},
-    .err => |err| return .{ .err = err },
+```rust
+use bun_jsc::ErrorJsc;
+match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
+    Ok(f) => f,
+    Err(err) => return Ok(err.to_js(global)?),
 }
+// Internally: err.to_system_error().to_error_instance(global)
 ```
 
-Key methods:
+## Strings (`bun_core::String` and `bun_core::strings`)
 
-- `File.open/openat/makeOpen` → `Maybe(File)` (`makeOpen` creates parent dirs)
-- `file.read/readAll/write/writeAll` — single or looped I/O
-- `file.readToEnd(allocator)` — read entire file into allocated buffer
-- `File.readFrom(dir_fd, path, allocator)` — open + read + close
-- `File.writeFile(dir_fd, path, data)` — open + write + close
-- `file.stat()`, `file.close()`, `file.writer()`, `file.reader()`
+`bun_core::String` is the FFI-compatible 5-variant tagged union shared with C++
+(`BunString` in `BunString.cpp`). It bridges Rust and JSC and can hold a
+`WTFStringImpl` (Latin-1 or UTF-16). **Latin-1 is NOT UTF-8** — bytes 128–255
+are single chars in Latin-1 but invalid UTF-8 — so converting either direction
+requires a real encoder, not a cast.
 
-### `bun.FD` (`src/sys/fd.zig`)
+```rust
+use bun_core::String;
 
-Cross-platform file descriptor. Use `bun.FD.cwd()` for cwd, `bun.invalid_fd` for sentinel, `fd.close()` to close.
+let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
+let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
+let s = String::static_(b"literal");       // 'static slice, never freed
 
-### `bun.sys.Error` (`src/sys/Error.zig`)
-
-Preserves errno, syscall tag, and file path. Convert to JS: `err.toSystemError().toErrorInstance(globalObject)`.
-
-## `bun.strings` — String Utilities (`src/string/immutable.zig`)
-
-SIMD-accelerated string operations. Use instead of `std.mem` for strings.
-
-```zig
-// Searching
-strings.indexOf(haystack, needle)         // ?usize
-strings.contains(haystack, needle)        // bool
-strings.containsChar(haystack, char)      // bool
-strings.indexOfChar(haystack, char)       // ?u32
-strings.indexOfAny(str, comptime chars)   // ?OptionalUsize (SIMD-accelerated)
-
-// Comparison
-strings.eql(a, b)                                    // bool
-strings.eqlComptime(str, comptime literal)            // bool — optimized
-strings.eqlCaseInsensitiveASCII(a, b, comptime true)  // 3rd arg = check_len
-
-// Prefix/Suffix
-strings.startsWith(str, prefix)                    // bool
-strings.endsWith(str, suffix)                      // bool
-strings.hasPrefixComptime(str, comptime prefix)    // bool — optimized
-strings.hasSuffixComptime(str, comptime suffix)    // bool — optimized
-
-// Trimming
-strings.trim(str, comptime chars)    // strip from both ends
-strings.trimSpaces(str)              // strip whitespace
-
-// Encoding conversions
-strings.toUTF8Alloc(allocator, utf16)          // ![]u8
-strings.toUTF16Alloc(allocator, utf8)          // !?[]u16
-strings.toUTF8FromLatin1(allocator, latin1)    // !?Managed(u8)
-strings.firstNonASCII(slice)                   // ?u32
+let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
+let owned: Vec<u8>       = s.to_utf8_bytes();
 ```
 
-Bun handles UTF-8, Latin-1, and UTF-16/WTF-16 because JSC uses Latin-1 and UTF-16 internally. Latin-1 is NOT UTF-8 — bytes 128-255 are single chars in Latin-1 but invalid UTF-8.
+To/from JS values, use the `bun_jsc::StringJsc` extension trait:
 
-### `bun.String` (`src/string/string.zig`)
-
-Bridges Zig and JavaScriptCore. Prefer over `ZigString` in new code.
-
-```zig
-const s = bun.String.cloneUTF8(utf8_slice);    // copies into WTFStringImpl
-const s = bun.String.borrowUTF8(utf8_slice);   // no copy, caller keeps alive
-const utf8 = s.toUTF8(allocator);              // ZigString.Slice
-defer utf8.deinit();
-const js_value = s.toJS(globalObject);
-
-// Create a JS string value directly from UTF-8 bytes:
-const js_str = try bun.String.createUTF8ForJS(globalObject, utf8_slice);
+```rust
+use bun_jsc::StringJsc;
+let js: JSValue = s.to_js(global)?;
+let s = bun_core::String::from_js(value, global)?;
+let err = s.to_error_instance(global);
 ```
 
-## `bun.path` — Path Manipulation (`src/paths/resolve_path.zig`)
+`bun_core::strings` is the SIMD-backed `&[u8]` toolkit. Use it instead of
+`std::str` / `std::iter` for searching and comparing byte slices:
 
-Use instead of `std.fs.path`. Platform param: `.auto` (current platform), `.posix`, `.windows`, `.loose` (both separators).
+```rust
+use bun_core::strings;
 
-```zig
-// Join paths — uses threadlocal buffer, result must be copied if it needs to persist
-bun.path.join(&.{ dir, filename }, .auto)
-bun.path.joinZ(&.{ dir, filename }, .auto)  // null-terminated
-
-// Join into a caller-provided buffer
-bun.path.joinStringBuf(&buf, &.{ a, b }, .auto)
-bun.path.joinStringBufZ(&buf, &.{ a, b }, .auto)  // null-terminated
-
-// Resolve against an absolute base (like Node.js path.resolve)
-bun.path.joinAbsString(cwd, &.{ relative_path }, .auto)
-bun.path.joinAbsStringBufZ(cwd, &buf, &.{ relative_path }, .auto)
-
-// Path components
-bun.path.dirname(path, .auto)
-bun.path.basename(path)
-
-// Relative path between two absolute paths
-bun.path.relative(from, to)
-bun.path.relativeAlloc(allocator, from, to)
-
-// Normalize (resolve `.` and `..`)
-bun.path.normalizeBuf(path, &buf, .auto)
-
-// Null-terminate a path into a buffer
-bun.path.z(path, &buf)  // returns [:0]const u8
+strings::index_of(haystack, needle)      // Option<usize>
+strings::contains(haystack, needle)      // bool
+strings::eql(a, b)                       // bool
+strings::starts_with(s, prefix)          // bool
+strings::ends_with(s, suffix)            // bool
+strings::has_prefix_comptime(s, b"x")    // 'static comparand
+strings::has_suffix_comptime(s, b"x")
+strings::first_non_ascii(s)              // Option<u32>
+strings::to_utf16_alloc(...)             // encoding conversions
 ```
 
-Use `bun.PathBuffer` for path buffers: `var buf: bun.PathBuffer = undefined;`
+## Paths (`bun_paths`)
 
-For pooled path buffers (avoids 64KB stack allocations on Windows):
+Path helpers operate on `&[u8]` and are platform-parameterized via the
+`Platform` const-generic (`Posix`, `Windows`, `Loose`, `Nt`; `platform::Auto`
+picks the host). Never use `std::path` for runtime path logic.
 
-```zig
-const buf = bun.path_buffer_pool.get();
-defer bun.path_buffer_pool.put(buf);
+```rust
+use bun_paths::{dirname, basename};
+use bun_paths::resolve_path::{self, platform};
+
+let dir  = dirname(path);                               // Option<&[u8]>
+let name = basename(path);                              // &[u8]
+let joined = resolve_path::join::<platform::Auto>(&[a, b]);   // &'static [u8] (threadlocal buf)
+let joined = resolve_path::join_string_buf::<platform::Auto>(&mut buf, &[a, b]);  // caller buf
+let rel    = resolve_path::relative(from, to);
 ```
 
-## URL Parsing
+Use the path-buffer pool to avoid 64 KB stack allocations on Windows
+(`PathBuffer` is `[u8; PATH_MAX_BYTES]`, ~64 KB on Windows):
 
-Prefer `bun.jsc.URL` (WHATWG-compliant, backed by WebKit C++) over `bun.URL.parse` (internal, doesn't properly handle errors or invalid URLs).
+```rust
+use bun_paths::path_buffer_pool;
 
-```zig
-// Parse a URL string (returns null if invalid)
-const url = bun.jsc.URL.fromUTF8(href_string) orelse return error.InvalidURL;
-defer url.deinit();
-
-url.protocol()   // bun.String
-url.pathname()   // bun.String
-url.search()     // bun.String
-url.hash()       // bun.String (includes leading '#')
-url.port()       // u32 (maxInt(u32) if not set, otherwise u16 range)
-
-// NOTE: host/hostname are SWAPPED vs JS:
-url.host()       // hostname WITHOUT port (opposite of JS!)
-url.hostname()   // hostname WITH port (opposite of JS!)
-
-// Normalize a URL string (percent-encode, punycode, etc.)
-const normalized = bun.jsc.URL.hrefFromString(bun.String.borrowUTF8(input));
-if (normalized.tag == .Dead) return error.InvalidURL;
-defer normalized.deref();
-
-// Join base + relative URLs
-const joined = bun.jsc.URL.join(base_str, relative_str);
-defer joined.deref();
-
-// Convert between file paths and file:// URLs
-const file_url = bun.jsc.URL.fileURLFromString(path_str);     // path → file://
-const file_path = bun.jsc.URL.pathFromFileURL(url_str);       // file:// → path
+let mut buf = path_buffer_pool::get();        // PoolGuard<PathBuffer>, returns to pool on Drop
+let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]);
 ```
 
-## MIME Types (`src/http/MimeType.zig`)
+`bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
+and the narrow (`u8`) variant on POSIX.
 
-```zig
-const MimeType = bun.http.MimeType;
+## URL Parsing (`bun_jsc::URL`)
 
-// Look up by file extension (without leading dot)
-const mime = MimeType.byExtension("html");          // MimeType{ .value = "text/html", .category = .html }
-const mime = MimeType.byExtensionNoDefault("xyz");  // ?MimeType (null if unknown)
+WHATWG-compliant, backed by WebKit's URL parser. Returns `None` for invalid input.
 
-// Category checks
-mime.category  // .javascript, .css, .html, .json, .image, .text, .wasm, .font, .video, .audio, ...
-mime.category.isCode()
+```rust
+use bun_jsc::URL;
+
+let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
+// caller owns the C++ object — destroy it when done:
+// unsafe { URL::destroy(url.as_ptr()) }
+
+url.protocol()   // bun_core::String
+url.pathname()   // bun_core::String
+url.search()     // bun_core::String
+url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
+
+// NOTE: host()/hostname() are SWAPPED relative to JS:
+url.host()       // hostname WITHOUT port  (opposite of JS!)
+url.hostname()   // hostname WITH port     (opposite of JS!)
 ```
 
-Common constants: `MimeType.javascript`, `MimeType.json`, `MimeType.html`, `MimeType.css`, `MimeType.text`, `MimeType.wasm`, `MimeType.ico`, `MimeType.other`.
+`URL::href_from_string`, `URL::file_url_from_string`, `URL::path_from_file_url`
+do whole-string conversions.
+
+## MIME Types (`bun_http_types::MimeType`)
+
+```rust
+use bun_http_types::{MimeType, mime_type};
+
+let mime = mime_type::by_extension(b"html");            // MimeType
+let mime = mime_type::by_extension_no_default(b"xyz");  // Option<MimeType>
+
+mime.category   // Category::Javascript | Css | Html | Json | Image | Text | Wasm | ...
+mime.category.is_code()
+```
+
+Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `OTHER`.
 
 ## Memory & Allocators
 
-**Use `bun.default_allocator` for almost everything.** It's backed by mimalloc.
+The `#[global_allocator]` is mimalloc, so plain `Box`/`Vec`/`String`
+already use it.
 
-`bun.handleOom(expr)` converts `error.OutOfMemory` into a crash without swallowing other errors:
+OOM handling: do not let a runtime OOM unwind into FFI. Use
+`bun_core::handle_oom` (or the `.unwrap_or_oom()` extension) to convert
+`Result<T, AllocError>` into a controlled crash:
 
-```zig
-const buf = bun.handleOom(allocator.alloc(u8, size));  // correct
-// NOT: allocator.alloc(u8, size) catch bun.outOfMemory()  — could swallow non-OOM errors
+```rust
+use bun_core::{handle_oom, UnwrapOrOom};
+let buf = handle_oom(allocator.alloc(size));
+let v   = vec.try_reserve(n).unwrap_or_oom();
 ```
 
-## Environment Variables (`src/bun_core/env_var.zig`)
+Heap round-trips that need to cross FFI use `bun_core::heap`:
 
-Type-safe, cached environment variable accessors via `bun.env_var`:
-
-```zig
-bun.env_var.HOME.get()                              // ?[]const u8
-bun.env_var.CI.get()                                // ?bool
-bun.env_var.BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get() // u64 (has default: 30)
+```rust
+use bun_core::heap;
+let raw: *mut T = heap::into_raw(Box::new(value));    // hand ownership to C
+let boxed: Box<T> = unsafe { heap::take(raw) };       // reclaim ownership
+unsafe { heap::destroy(raw) };                        // reclaim + drop in one step
 ```
 
-## Logging (`src/bun_core/output.zig`)
+**Arena gotcha:** values allocated in `bun_alloc::MimallocArena` (the AST
+allocator and similar) do **not** run `Drop` when the arena resets — the
+backing pages are bulk-freed. If a type owns a heap allocation, refcount, or
+fd, free it explicitly before the arena resets. Don't rely on `Drop` for
+correctness in arena-backed code.
 
-```zig
-const log = bun.Output.scoped(.MY_FEATURE, .visible);  // .hidden = opt-in via BUN_DEBUG_MY_FEATURE=1
-log("processing {d} items", .{count});
+## Environment Variables (`bun_core::env_var`)
 
-// Color output (convenience wrappers auto-detect TTY):
-bun.Output.pretty("<green>success<r>: {s}\n", .{msg});
-bun.Output.prettyErrorln("<red>error<r>: {s}", .{msg});
+Typed, cached accessors. Each known env var is a module with a `get()`
+returning the right type (`Option<...>` if no default).
+
+```rust
+use bun_core::env_var;
+
+env_var::HOME::get()                                 // Option<&[u8]>
+env_var::CI::get()                                   // bool (has default)
+env_var::BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS::get()  // u64 (has default)
 ```
 
-## Spawning Subprocesses (`src/runtime/api/bun/process.zig`)
+## Logging (`bun_core::output`)
 
-Use `bun.spawnSync` instead of `std.process.Child`:
+Scoped debug logging. Declare a scope once per module; gate with
+`BUN_DEBUG_<SCOPE>=1` at runtime; the body dead-strips in release builds.
 
-```zig
-switch (bun.spawnSync(&.{
-    .argv = argv,
-    .envp = null, // inherit parent env
-    .cwd = cwd,
-    .stdout = .buffer,   // capture
-    .stderr = .inherit,  // pass through
-    .stdin = .ignore,
+```rust
+bun_core::declare_scope!(my_feature, hidden);   // hidden: opt-in via BUN_DEBUG_my_feature=1
+// or `visible` to log by default in debug builds
 
-    .windows = if (bun.Environment.isWindows) .{
-        .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(env, null)),
-    },
-}) catch return) {
-    .err => |err| { /* bun.sys.Error */ },
-    .result => |result| {
-        defer result.deinit();
-        const stdout = result.stdout.items;
-        if (result.status.isOK()) { ... }
-    },
-}
+bun_core::scoped_log!(my_feature, "processing {} items", count);
 ```
 
-Options: `argv: []const []const u8`, `envp: ?[*:null]?[*:0]const u8` (null = inherit), `argv0: ?[*:0]const u8`. Stdio: `.inherit`, `.ignore`, `.buffer`.
+User-facing colored output (auto-detects TTY, strips ANSI when piped):
+
+```rust
+bun_core::pretty!("<green>success<r>: {}\n", msg);
+bun_core::prettyln!("done");
+bun_core::pretty_errorln!("<red>error<r>: {}", msg);
+```
+
+## Spawning Subprocesses
+
+For simple inherit-stdio CLI helpers:
+
+```rust
+use bun_core::util::spawn_sync_inherit;
+let status = spawn_sync_inherit(&[b"git", b"status"])?;
+```
+
+For full control (pipes, custom env, posix_spawn flags) use `bun_spawn_sys`
+(`src/spawn_sys/`). The runtime `Bun.spawn` implementation lives in
+`src/runtime/api/bun/{spawn.rs, process.rs, subprocess.rs}` — look there for
+the JS-facing path.
+
+## JSC Interop & FFI Safety
+
+These are the patterns that trip people up. Get them wrong and you get
+crashes that only reproduce under load or in CI.
+
+### Pointer provenance at FFI boundaries
+
+If a callback may free `self` (close, error, GC finalize), do **not**
+materialize `&self`/`&mut self` at the boundary — a `&self`-derived raw
+pointer carries `SharedReadOnly` provenance, and `Box::from_raw`/dealloc
+through it is UB. Pass and dispatch off `*mut Self` until the body proves
+ownership. `src/io/PipeWriter.rs`'s `impl_streaming_writer_parent!` macro
+encodes the three modes:
+
+- `borrow = mut` — body forms `&mut *this`; safe when nothing re-enters
+- `borrow = shared` — body forms `&*this`; safe when re-entrant code only needs `&Self`
+- `borrow = ptr` — body calls `Self::method(this, ..)` with `this: *mut Self`; required when the callback may free `self`
+
+### `Strong` / `Weak` JS handles
+
+`bun_jsc::Strong` keeps a JS value alive; it is `!Send`/`!Sync` and must be
+created and dropped on the JS thread.
+
+```rust
+use bun_jsc::Strong;
+let strong = Strong::create(value, global);
+let v: JSValue = strong.get();
+// drop(strong) releases the GC handle
+```
+
+`bun_jsc::Weak<T>` is the GC-cleared variant. For raw values without a `Strong`
+wrapper, `JSValue::protect()` / `unprotect()` and `ensure_still_alive()` are
+available, but `Strong` is preferred — it can't be forgotten or unbalanced.
+
+### Refcount transfer on `to_js()` / `create()`
+
+A `to_js()` / `create()` that returns a wrapped pointer **transfers** the
+caller's `+1` to the JS wrapper. Do not `ref()` again before the return; the
+finalizer derefs once. The leak-or-UAF symptoms of getting this wrong are
+distinctive: an extra `ref()` leaks until process exit; a missing `ref()` on a
+non-transferring path UAFs at GC.
+
+### Cross-thread string hazards
+
+`AtomString`s live in a per-thread table. Never deref one from another thread —
+it trips `wasRemoved` in `AtomStringImpl::remove()`. If a `bun_core::String`
+may be dropped from a non-JS thread (HTTP worker, threadpool, dying VM), build
+it via `String::clone_utf8` (a plain `WTFStringImpl` with an atomic refcount),
+not from an interned/atomized JS string. See the comment in
+`src/runtime/webcore/fetch/FetchTasklet.rs` near `Response::init` for the
+canonical example of this bug class and its fix.
 
 ## Common Patterns
 
-```zig
-// Read a file
-const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, allocator)) {
-    .result => |bytes| bytes,
-    .err => |err| { globalObject.throwValue(err.toSystemError().toErrorInstance(globalObject)); return .zero; },
+```rust
+// Read a file, return JS error on failure
+let contents = match bun_sys::File::openat(Fd::cwd(), path, O::RDONLY, 0)
+    .and_then(|f| { let r = f.read_to_end(); f.close(); r })
+{
+    Ok(bytes) => bytes,
+    Err(err) => return Ok(err.to_js(global)?),
 };
 
-// Create directories recursively
-bun.makePath(dir.stdDir(), sub_path) catch |err| { ... };
+// Heap-allocated FFI handle with explicit lifecycle
+let raw = bun_core::heap::into_raw(Box::new(MyHandle::new()));
+register_with_c(raw);
+// ... later, in the matching teardown callback:
+unsafe { bun_core::heap::destroy(raw) };
 
 // Hashing
-bun.hash(bytes)    // u64 — wyhash
-bun.hash32(bytes)  // u32
+bun_wyhash::hash(bytes)            // u64
+bun_wyhash::hash_with_seed(seed, bytes)
 ```

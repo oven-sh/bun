@@ -1563,9 +1563,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return this.activeSocketsCount() > 0;
         }
 
-        /// True while either the TCP listen socket or (h1: false) the QUIC
+        /// True while either the TCP listen socket or (http1: false) the QUIC
         /// listen socket is bound. The lifecycle code uses this rather than
-        /// `this.listener != null` so an h3-only server is still treated as
+        /// `this.listener != null` so an HTTP/3-only server is still treated as
         /// running.
         pub fn hasListener(this: *const ThisServer) bool {
             if (this.listener != null) return true;
@@ -3061,7 +3061,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.app = app;
 
                 if (comptime has_h3) {
-                    if (this.config.h3) {
+                    if (this.config.http3) {
                         this.h3_app = uws.H3.App.create(ssl_options, this.config.idleTimeout) orelse {
                             if (!globalThis.hasException()) {
                                 globalThis.throw("Failed to create HTTP/3 server", .{}) catch {};
@@ -3173,7 +3173,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
                     }
 
-                    if (this.config.h1) {
+                    if (this.config.http1) {
                         app.listenWithConfig(*ThisServer, this, onListen, .{
                             .port = tcp.port,
                             .host = host,
@@ -3197,7 +3197,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 this.deinit();
                                 return .zero;
                             }
-                            if (!this.config.h1) this.vm.event_loop_handle = Async.Loop.get();
+                            if (!this.config.http1) this.vm.event_loop_handle = Async.Loop.get();
                         }
                     }
                 },
@@ -3207,7 +3207,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
                         // advertise it. Drop the H3 listener rather than wire
                         // an exotic transport nobody can reach.
-                        bun.Output.warn("h3: true with a unix socket — HTTP/3 listener skipped", .{});
+                        bun.Output.warn("http3: true with a unix socket — HTTP/3 listener skipped", .{});
                         h3a.destroy();
                         this.h3_app = null;
                     };

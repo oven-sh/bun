@@ -738,7 +738,7 @@ pub const BUN_COMPILED_SECTION_NAME = ".bun";
 /// External C interface declarations - these are implemented in C++ bindings
 /// The C++ code uses Windows PE APIs to directly access the .bun section
 /// from the current process memory without loading the entire executable
-extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
+extern "C" fn Bun__getStandaloneModuleGraphPELength() u64;
 extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
 
 const bun = @import("bun");

@@ -521,6 +521,39 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                         _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
+                        // The watched entrypoint has a per-file inotify watch on its inode.
+                        // An atomic rename (e.g. `rename(tmp, entrypoint)`) or a rm+recreate
+                        // over the entrypoint deletes that inode, so the kernel drops the
+                        // per-file watch (IN_DELETE_SELF + IN_IGNORED). When the file event
+                        // and this directory event land in separate processINotifyEventBatch
+                        // batches, flushEvictions runs in between and the entry is gone from
+                        // `hashes` before the re-created file is seen below — so the reload
+                        // for the recreated entrypoint is dropped and `--hot` deadlocks.
+                        //
+                        // Recover the same way kqueue does (see is_waiting_for_dir_change
+                        // above): if this directory event names the entrypoint and the file
+                        // now exists, re-trigger a reload. The per-file watch itself is
+                        // re-armed on the main thread by addMainToWatcherIfNeeded after the
+                        // reload completes.
+                        if (comptime !Environment.isKqueue) {
+                            if (this.main.hash != 0 and this.main.dir_hash == current_hash) {
+                                const main_basename = std.fs.path.basename(this.main.file);
+                                for (affected) |changed_name_| {
+                                    const changed_name = changed_name_ orelse continue;
+                                    if (!std.mem.eql(u8, changed_name, main_basename)) continue;
+                                    const main_exists = exists: {
+                                        std.posix.access(this.main.file, std.posix.F_OK) catch break :exists false;
+                                        break :exists true;
+                                    };
+                                    if (main_exists) {
+                                        recordChangedPath(this.main.file);
+                                        current_task.append(this.main.hash);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+
                         if (entries_option) |dir_ent| {
                             var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
 

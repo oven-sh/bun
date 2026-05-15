@@ -15,23 +15,23 @@ import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
-import { ZIG_COMMIT } from "./zig.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "cpp-only" | "zig-only" | "link-only";
+export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only";
 export type WebKitMode = "prebuilt" | "local";
 
 /**
  * Host platform — what's running the build. Distinguish from target
  * (Config.os/arch/windows) which is what we're building FOR.
  *
- * Host vs target matters for zig-only cross-compile: a linux CI box
- * can cross-compile bun-zig.o for darwin/windows. Target determines
- * zig's triple and compile flags; host determines shell syntax (cmd
- * vs sh), quoting, and tool executable suffixes.
+ * Host vs target matters for rust-only cross-compile: a linux CI box
+ * can cross-compile libbun_rust.a for any linux abi/arch and (with the
+ * right SDK) darwin. Target determines cargo's `--target` triple and
+ * rustflags; host determines shell syntax (cmd vs sh), quoting, and
+ * tool executable suffixes.
  *
  * For all other modes (full, cpp-only, link-only), host == target
  * unless cfg.crossTarget is set (currently: Android), in which case
@@ -42,17 +42,24 @@ export interface Host {
   arch: Arch;
   /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
   exeSuffix: string;
+  /**
+   * Host's Rust target triple — `host:` line from `rustc -vV`. Also the
+   * `${sysroot}/lib/rustlib/<triple>/` directory name. Stamped at
+   * `resolveConfig()` from `Toolchain.rustHostTriple` (so the toolchain
+   * probe is the single source of truth); `undefined` only when no rustc
+   * is installed.
+   */
+  rustTriple: string | undefined;
 }
 
 /**
  * Pinned version defaults. Each lives at the top of its own file
- * (deps/webkit.ts, zig.ts, deps/nodejs-headers.ts) — look there to bump.
+ * (deps/webkit.ts, deps/nodejs-headers.ts) — look there to bump.
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  */
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
-  zigCommit: ZIG_COMMIT,
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -82,7 +89,7 @@ export interface Config {
 
   /**
    * What's running the build. Differs from os/arch/windows (target) in
-   * zig-only cross-compile. Use for: shell syntax in rule commands,
+   * rust-only cross-compile. Use for: shell syntax in rule commands,
    * quoteArgs(), tool executable suffixes. See Host type docs.
    */
   host: Host;
@@ -106,12 +113,23 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  /**
+   * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
+   * `libbun_rust.a` so the final lld `-flto=full` link sees through Rust↔C++
+   * call edges. When false but `lto` is true, both halves still LTO
+   * independently (C++ via `-flto=full`, Rust via `[profile.release] lto =
+   * "fat"`); only the cross-language inlining is lost.
+   *
+   * Normally tracks `lto`. Exists as a separate field so per-target toolchain
+   * bugs can disable just the cross-language part without giving up LTO
+   * entirely — see workarounds.ts "globalopt-crash-aarch64-musl".
+   */
+  crossLangLto: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
   pgoUse: string | undefined;
   asan: boolean;
-  zigAsan: boolean;
   assertions: boolean;
   logs: boolean;
   /** x64-only: target nehalem (no AVX) instead of haswell. */
@@ -165,10 +183,26 @@ export interface Config {
   ranlib: string | undefined;
   /** ld.lld on linux, lld-link on windows. May be empty on darwin (clang invokes ld). */
   ld: string;
+  /**
+   * rustc's bundled lld (see `Toolchain.rustLld`). When set and rustc's LLVM
+   * is newer than clang's under LTO, `resolveConfig()` selects it as `cfg.ld`.
+   * Forwarded so `validateBunConfig()` can fail loudly when LTO requires it
+   * but it wasn't found (mismatched LLVM versions → "Invalid record" at link).
+   */
+  rustLld: string | undefined;
+  /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
+  rustLlvmVersion: string | undefined;
+  /**
+   * `rustc --print sysroot`. Used to locate rustc's bundled `llvm-nm` for
+   * reading LTO bitcode in `libbun_rust.a` — clang's `llvm-nm` may lag
+   * rustc's LLVM major and reject the bitcode (#53609, #53656). Unlike
+   * `rustLld`, this is needed regardless of whether cross-language LTO is
+   * actually using rust-lld as the linker.
+   */
+  rustSysroot: string | undefined;
   strip: string;
   /** darwin-only. */
   dsymutil: string | undefined;
-  zig: string;
   /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
   /**
@@ -189,6 +223,14 @@ export interface Config {
   cargoHome: string | undefined;
   /** RUSTUP_HOME — passed to cargo invocations for reproducibility. */
   rustupHome: string | undefined;
+  /**
+   * RUSTUP_TOOLCHAIN — the `channel` from this repo's `rust-toolchain.toml`.
+   * Passed explicitly to every cargo invocation so the dep build and the
+   * workspace build agree on libstd even when `vendor/` is a symlink into a
+   * sibling worktree (rustup's directory walk follows the resolved path and
+   * would otherwise pick up that worktree's pin).
+   */
+  rustToolchain: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
@@ -223,14 +265,12 @@ export interface Config {
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
   version: string;
-  /** Git commit of the bun checkout — feeds into zig's -Dsha. */
+  /** Git commit of the bun checkout — feeds into the build's -Dsha equivalent. */
   revision: string;
   canaryRevision: string;
   /** Node.js compat version. Default in versions.ts; override to test a bump. */
   nodejsVersion: string;
   nodejsAbiVersion: string;
-  /** Zig compiler commit. Default in versions.ts; override to test a new compiler. */
-  zigCommit: string;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
 }
@@ -249,7 +289,6 @@ export interface PartialConfig {
   pgoGenerate?: string;
   pgoUse?: string;
   asan?: boolean;
-  zigAsan?: boolean;
   assertions?: boolean;
   logs?: boolean;
   baseline?: boolean;
@@ -278,7 +317,6 @@ export interface PartialConfig {
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
-  zigCommit?: string;
   webkitVersion?: string;
 }
 
@@ -298,9 +336,23 @@ export interface Toolchain {
   ar: string;
   ranlib: string | undefined;
   ld: string;
+  /**
+   * rustc's bundled lld (`<sysroot>/lib/rustlib/<host>/bin/gcc-ld/ld.lld` on
+   * unix, `.../bin/rust-lld.exe` on Windows). Used as `ld` for cross-language
+   * LTO when rustc's LLVM is newer than clang's — LLVM bitcode is only
+   * forward-compatible, so clang's lld can't read newer rust bitcode but
+   * rust-lld can read clang's older bitcode. undefined when rustc isn't
+   * installed or doesn't ship the rust-lld component.
+   */
+  rustLld: string | undefined;
+  /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
+  rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` — see `Config.rustSysroot`. */
+  rustSysroot: string | undefined;
+  /** `host:` line from `rustc -vV` — stamped onto `Host.rustTriple` at resolveConfig. */
+  rustHostTriple: string | undefined;
   strip: string;
   dsymutil: string | undefined;
-  zig: string;
   bun: string;
   jsRuntime: string;
   esbuild: string;
@@ -369,7 +421,9 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
+  // rustTriple is stamped later from Toolchain.rustHostTriple in resolveConfig
+  // (the rustc probe is authoritative — distinguishes glibc/musl host etc.).
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "", rustTriple: undefined };
 }
 
 /**
@@ -502,7 +556,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — zig-only mode doesn't need these, and on CI bootstrap.sh
+    // Don't throw — rust-only mode doesn't need these, and on CI bootstrap.sh
     // creates them as root during image build. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
@@ -523,6 +577,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  */
 export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
   const host = detectHost();
+  host.rustTriple = toolchain.rustHostTriple;
 
   // ─── Target platform ───
   const os = partial.os ?? host.os;
@@ -575,9 +630,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
   const asan = abi === "android" || freebsd ? false : (partial.asan ?? asanDefault);
 
-  // Zig ASAN follows ASAN unless explicitly overridden
-  const zigAsan = partial.zigAsan ?? asan;
-
   // Assertions: default on in debug OR asan. ASAN coupling is ABI-critical:
   // the -asan WebKit prebuilt is built with ASSERT_ENABLED=1, which gates
   // struct fields (RefCountDebugger etc). If bun's C++ isn't also compiled
@@ -592,6 +644,38 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
   if ((asan && lto) || abi === "android") {
     lto = false;
+  }
+
+  // Cross-language LTO normally tracks `lto`. Gated off for aarch64-musl
+  // where LLVM's `globalopt` pass segfaults on the `bun_runtime` bitcode
+  // module during the merged link (CI build #53109). Both halves still LTO
+  // independently when this is false — only the Rust↔C++ inlining is lost.
+  // Tracked in workarounds.ts ("globalopt-crash-aarch64-musl").
+  const crossLangLto = lto && !(arm64 && abi === "musl");
+
+  // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
+  // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
+  // forward-compatible only (newer reader, older writer), so when rustc's
+  // bundled LLVM is ahead of clang's, clang's ld.lld rejects the rust .o
+  // files ("Unknown attribute kind"). rust-lld is built against rustc's
+  // LLVM, so it reads both rustc's bitcode (same version) and clang's
+  // (older, hence readable). Swap it in as `ld` for the whole build —
+  // it's a stock lld, just newer, so non-LTO objects and nested cmake
+  // deps link the same as before.
+  //
+  // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
+  // branch self-obsoletes once clang's LLVM catches up to rustc's.
+  let ld = toolchain.ld;
+  const clangMajor = majorOf(toolchain.clangVersion);
+  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
+  if (
+    crossLangLto &&
+    toolchain.rustLld !== undefined &&
+    clangMajor !== undefined &&
+    rustLlvmMajor !== undefined &&
+    rustLlvmMajor > clangMajor
+  ) {
+    ld = toolchain.rustLld;
   }
 
   // PGO: paths resolved to absolute. generate/use are mutually exclusive.
@@ -635,7 +719,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
   // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
-  // so ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
+  // so ccache/tarballs/webkit reuse one another's work. CI stays per-build
   // so runners remain hermetic and `rm -rf build/` is a full reset.
   // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
   // ninja regen rule — which runs from buildDir — resolves the same path.
@@ -736,14 +820,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
-  const zigCommit = partial.zigCommit ?? versionDefaults.zigCommit;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Requires BOTH host and target to be darwin — xcode only exists on
-  // macOS, and cross-compiling C++/deps to darwin isn't supported (only
-  // zig cross-compiles, and zig brings its own SDKs).
+  // macOS, and cross-compiling C++/deps to darwin isn't supported.
   let osxDeploymentTarget: string | undefined;
   let osxSysroot: string | undefined;
   if (darwin && host.os === "darwin") {
@@ -772,10 +854,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: partial.mode ?? "full",
     lto,
+    crossLangLto,
     pgoGenerate,
     pgoUse,
     asan,
-    zigAsan,
     assertions,
     logs,
     baseline,
@@ -802,10 +884,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangVersion: toolchain.clangVersion,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
-    ld: toolchain.ld,
+    ld,
+    rustLld: toolchain.rustLld,
+    rustLlvmVersion: toolchain.rustLlvmVersion,
+    rustSysroot: toolchain.rustSysroot,
     strip: toolchain.strip,
     dsymutil: toolchain.dsymutil,
-    zig: toolchain.zig,
     bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,
     esbuild: toolchain.esbuild,
@@ -814,6 +898,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargo: toolchain.cargo,
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
+    rustToolchain: readRustToolchainChannel(cwd),
     msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
     mt: toolchain.mt,
@@ -831,7 +916,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     nodejsVersion,
     nodejsAbiVersion,
     canaryRevision,
-    zigCommit,
     webkitVersion,
   };
 }
@@ -982,6 +1066,34 @@ export function findRepoRoot(): string {
  * matters more than the ~20ms spawn. Git's plumbing has edge cases
  * (packed-refs, worktrees, symbolic refs) that rev-parse handles for free.
  */
+/**
+ * Parse the major component out of an X.Y.Z version string.
+ * Returns undefined for undefined/unparseable input so callers can
+ * compare without `!` assertions.
+ */
+function majorOf(version: string | undefined): number | undefined {
+  if (version === undefined) return undefined;
+  const m = version.match(/^(\d+)\./);
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * Read `channel` from `rust-toolchain.toml`. Passed as `RUSTUP_TOOLCHAIN` to
+ * cargo invocations so vendored Rust deps and the workspace staticlib are
+ * built with the same nightly — see `Config.rustToolchain` for why rustup's
+ * own directory walk isn't sufficient when `vendor/` is a worktree-shared
+ * symlink.
+ *
+ * Returns undefined if the file is missing (rustup then falls back to its
+ * normal lookup, which is correct for the workspace build's cwd).
+ */
+function readRustToolchainChannel(cwd: string): string | undefined {
+  const path = resolve(cwd, "rust-toolchain.toml");
+  if (!existsSync(path)) return undefined;
+  const m = /^\s*channel\s*=\s*"([^"]+)"/m.exec(readFileSync(path, "utf8"));
+  return m?.[1];
+}
+
 function getGitRevision(cwd: string): string {
   // CI env first — authoritative and zero-cost.
   const envSha = process.env.BUILDKITE_COMMIT ?? process.env.GITHUB_SHA ?? process.env.GIT_SHA;
@@ -1053,7 +1165,7 @@ export function formatConfig(cfg: Config, exe: string): string {
     `  ${label("build type")} ${cfg.buildType}`,
     `  ${label("build dir")} ${relBuildDir}`,
     // Revision makes it obvious why configure re-ran after a commit
-    // (the sha changes → zig's -Dsha arg changes → build.ninja differs).
+    // (the sha changes → the build's -Dsha equivalent changes → build.ninja differs).
     `  ${label("revision")} ${cfg.revision === "unknown" ? "unknown" : cfg.revision.slice(0, 10)}`,
   ];
   const features: string[] = [];
@@ -1074,7 +1186,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   // revert my WebKit test branch" before the build goes weird.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion)
     features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
-  if (cfg.zigCommit !== versionDefaults.zigCommit) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");
@@ -1082,7 +1193,7 @@ export function formatConfig(cfg: Config, exe: string): string {
 
 /**
  * One-line "nothing changed" configure message. Bracketed to match the
- * [name] prefix style used by deps/zig.
+ * [name] prefix style used by deps.
  */
 export function formatConfigUnchanged(exe: string, elapsed: number): string {
   return `[configured] ${c.green(exe)} in ${elapsed}ms ${c.dim("(unchanged)")}`;

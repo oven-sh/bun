@@ -21,8 +21,8 @@ use bun_core::{Fd, ZStr};
 use crate::WindowsNamedPipe;
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex, us_bun_verify_error_t,
-    us_socket_t,
+    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
+    us_bun_verify_error_t, us_socket_t,
 };
 
 bun_core::declare_scope!(uws, visible);
@@ -222,12 +222,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub const fn assume_ssl(self) -> NewSocketHandler<true> {
         debug_assert!(IS_SSL);
-        NewSocketHandler { socket: self.socket }
+        NewSocketHandler {
+            socket: self.socket,
+        }
     }
     #[inline]
     pub const fn assume_tcp(self) -> NewSocketHandler<false> {
         debug_assert!(!IS_SSL);
-        NewSocketHandler { socket: self.socket }
+        NewSocketHandler {
+            socket: self.socket,
+        }
     }
     /// Generic counterpart of [`Self::assume_ssl`]/[`Self::assume_tcp`] for
     /// callers inside an `if IS_SSL { ... }` arm widening a concrete handle
@@ -235,7 +239,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub const fn cast_ssl<const NEW_SSL: bool>(self) -> NewSocketHandler<NEW_SSL> {
         debug_assert!(IS_SSL == NEW_SSL);
-        NewSocketHandler { socket: self.socket }
+        NewSocketHandler {
+            socket: self.socket,
+        }
     }
 
     #[inline]
@@ -358,7 +364,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[cfg(not(windows))]
     pub fn write_fd(&self, data: &[u8], file_descriptor: c_int) -> i32 {
         match self.socket {
-            InternalSocket::Connected(s) => sock(s).write_fd(data, Fd::from_native(file_descriptor)),
+            InternalSocket::Connected(s) => {
+                sock(s).write_fd(data, Fd::from_native(file_descriptor))
+            }
             // Mirror Zig `socket.writeFd`: duplex/pipe fall back to a plain
             // write (the fd is silently dropped).
             InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe => self.write(data),
@@ -519,9 +527,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             // Raw `*mut T` only — do NOT route through `ext::<T>()` (which
             // materializes `&mut T` and would assert validity invariants).
             InternalSocket::Connected(s) => Some(sock(s).ext_ptr().cast::<T>()),
-            InternalSocket::Connecting(s) => Some(
-                crate::connecting_socket::us_connecting_socket_ext(conn(s)).cast::<T>(),
-            ),
+            InternalSocket::Connecting(s) => {
+                Some(crate::connecting_socket::us_connecting_socket_ext(conn(s)).cast::<T>())
+            }
             _ => None,
         }
     }
@@ -596,11 +604,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     #[inline]
     pub fn from(socket: *mut us_socket_t) -> Self {
-        Self { socket: InternalSocket::Connected(socket) }
+        Self {
+            socket: InternalSocket::Connected(socket),
+        }
     }
     #[inline]
     pub fn from_connecting(connecting: *mut ConnectingSocket) -> Self {
-        Self { socket: InternalSocket::Connecting(connecting) }
+        Self {
+            socket: InternalSocket::Connecting(connecting),
+        }
     }
     #[inline]
     pub fn from_any(socket: InternalSocket) -> Self {
@@ -608,12 +620,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
     #[inline]
     pub fn from_duplex(d: *mut UpgradedDuplex) -> Self {
-        Self { socket: InternalSocket::UpgradedDuplex(d) }
+        Self {
+            socket: InternalSocket::UpgradedDuplex(d),
+        }
     }
     #[cfg(windows)]
     #[inline]
     pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
-        Self { socket: InternalSocket::Pipe(p) }
+        Self {
+            socket: InternalSocket::Pipe(p),
+        }
     }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
@@ -629,7 +645,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
         // write must match that layout — NOT `Option<*mut This>` (16 bytes).
         let ext_size = size_of::<Option<NonNull<This>>>() as c_int;
-        let raw = g.from_fd(k, None, ext_size, handle.native() as LIBUS_SOCKET_DESCRIPTOR, is_ipc);
+        let raw = g.from_fd(
+            k,
+            None,
+            ext_size,
+            handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            is_ipc,
+        );
         if raw.is_null() {
             return None;
         }
@@ -637,7 +659,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // live socket. `ext::<T>()` is sound here because we immediately
         // overwrite the slot, never reading the prior (zeroed) bit pattern.
         *sock(raw).ext::<Option<NonNull<This>>>() = NonNull::new(this);
-        Some(Self { socket: InternalSocket::Connected(raw) })
+        Some(Self {
+            socket: InternalSocket::Connected(raw),
+        })
     }
 
     /// Connect via a `SocketGroup` and stash `owner` in the socket ext.
@@ -651,7 +675,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         owner: *mut Owner,
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
+        let opts: c_int = if allow_half_open {
+            LIBUS_SOCKET_ALLOW_HALF_OPEN
+        } else {
+            0
+        };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
         // leaves them in (`[::1]`), so strip here like the old connectAnon did.
         let host =
@@ -687,11 +715,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
                 *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
-                Ok(Self { socket: InternalSocket::Connected(s) })
+                Ok(Self {
+                    socket: InternalSocket::Connected(s),
+                })
             }
             ConnectResult::Connecting(cs) => {
                 *conn(cs).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
-                Ok(Self { socket: InternalSocket::Connecting(cs) })
+                Ok(Self {
+                    socket: InternalSocket::Connecting(cs),
+                })
             }
         }
     }
@@ -704,7 +736,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         owner: *mut Owner,
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
+        let opts: c_int = if allow_half_open {
+            LIBUS_SOCKET_ALLOW_HALF_OPEN
+        } else {
+            0
+        };
         // Zig `?*Owner` — see connect_group above for layout rationale.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
         let s = g.connect_unix(kind, ssl_ctx, path, opts, ext_size);
@@ -712,7 +748,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             return Err(ConnectError::FailedToOpenSocket);
         }
         *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
-        Ok(Self { socket: InternalSocket::Connected(s) })
+        Ok(Self {
+            socket: InternalSocket::Connected(s),
+        })
     }
 
     /// Move an open socket into a new group/kind, stashing `owner` in the ext.
@@ -747,7 +785,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // callers (e.g. websocket_client) hold a live `&mut Owner` across this
         // call, so creating a second one would be aliased UB. The closure
         // performs the field write through the raw pointer itself.
-        set_socket_field(owner, Self { socket: InternalSocket::Connected(new_s) });
+        set_socket_field(
+            owner,
+            Self {
+                socket: InternalSocket::Connected(new_s),
+            },
+        );
         true
     }
 }

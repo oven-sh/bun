@@ -127,14 +127,18 @@ impl S3HttpDownloadStreamingTask {
 
                             if let Some(start) = strings::index_of(bytes, b"<Code>") {
                                 let value_start = start + b"<Code>".len();
-                                if let Some(end) = strings::index_of(&bytes[value_start..], b"</Code>") {
+                                if let Some(end) =
+                                    strings::index_of(&bytes[value_start..], b"</Code>")
+                                {
                                     code = &bytes[value_start..value_start + end];
                                     _has_body_code = true;
                                 }
                             }
                             if let Some(start) = strings::index_of(bytes, b"<Message>") {
                                 let value_start = start + b"<Message>".len();
-                                if let Some(end) = strings::index_of(&bytes[value_start..], b"</Message>") {
+                                if let Some(end) =
+                                    strings::index_of(&bytes[value_start..], b"</Message>")
+                                {
                                     message = &bytes[value_start..value_start + end];
                                     _has_body_message = true;
                                 }

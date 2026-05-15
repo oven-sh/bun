@@ -601,7 +601,15 @@ pub fn initialize(eval_mode: bool) {
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
-    unsafe { JSCInitialize(env.as_ptr(), env.len(), on_jsc_invalid_env_var, eval_mode, one_shot) };
+    unsafe {
+        JSCInitialize(
+            env.as_ptr(),
+            env.len(),
+            on_jsc_invalid_env_var,
+            eval_mode,
+            one_shot,
+        )
+    };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /

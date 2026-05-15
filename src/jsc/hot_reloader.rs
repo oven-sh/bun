@@ -1161,8 +1161,7 @@ where
                         // of whether the per-file watchlist entry survived. The per-file
                         // watch itself is re-armed on the JS thread by
                         // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
-                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash
-                        {
+                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
                             let main_basename = bun_paths::basename(self.main.file);
                             for changed_name_ in affected_inotify {
                                 let changed_name: &[u8] = match changed_name_ {

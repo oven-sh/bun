@@ -15,8 +15,8 @@ pub mod FetchRedirect;
 pub mod FetchRequestMode;
 pub mod Method;
 pub mod URLPath;
-pub mod mime_type_list_enum;
 pub mod h2;
+pub mod mime_type_list_enum;
 pub use ETag::wtf;
 
 // B-2: module un-gated. `mime_type_list_enum::MimeTypeList` is now a

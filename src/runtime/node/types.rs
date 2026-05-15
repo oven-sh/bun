@@ -532,7 +532,13 @@ impl StringOrBuffer {
         }
 
         if encoding == Encoding::Utf8 {
-            return Self::from_js_maybe_async_into(out, global, value, is_async, allow_string_object);
+            return Self::from_js_maybe_async_into(
+                out,
+                global,
+                value,
+                is_async,
+                allow_string_object,
+            );
         }
 
         if value.is_string() {

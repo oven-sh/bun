@@ -210,8 +210,8 @@ pub mod ssl_wrapper {
         };
     }
 
-    use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
     use crate::{create_bun_socket_error_t, us_bun_verify_error_t};
+    use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
 

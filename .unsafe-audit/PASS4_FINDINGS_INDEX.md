@@ -14,7 +14,7 @@
 | P4-F | Cryptography | **0** | 6 | 7 | BoringSSL constant-time used; OS CSPRNG only; no userspace PRNG; password buffers zeroed via secure_zero | [plan](audit/plans/PASS4-cryptography-audit.md) |
 | P4-G | dyn Trait + cross-crate Send/Sync | **0 new** | — | — | 162 dyn sites + 164 unsafe impl Send/Sync across 76 files audited; no new dyn-trait T1. Re-confirms the already-counted `StoreSlice<T>` T1 rather than demoting it. | [plan](audit/plans/PASS4-dyn-trait-cross-crate.md) |
 | P4-H | Soundness archeology | (synthesis) | — | — | **2,989 unsafe blocks already removed by maintainers**; most major Tier-1 finding classes map to maintainer commit classes, with exceptions called out in the archeology table | [synthesis](audit/synthesis/PASS4-soundness-archeology.md) |
-| P4-I | Audit-driven tests + clippy lints | (deliverables) | — | — | 8 test fixtures (rustfmt-clean, dirent 14/14 pass); ast-grep rule (fires on 2 real Bun U2 sites, 0 false positives); dylint scaffold | `audit/tests/` |
+| P4-I | Audit-driven tests + clippy lints | (deliverables) | — | — | 9 Rust test/proof fixtures (rustfmt-clean, dirent 14/14 pass); ast-grep rule (fires on 2 real Bun U2 sites, 0 false positives); dylint scaffold | `audit/tests/` |
 | P4-J | Risk scoring + SECURITY.md + soundness debt | (synthesis) | — | — | 40 current T1/T1-equivalent entries / 2,507 risk-pts / 24 risk-band P0 (81% of risk); top-6 remediation owners = 83% of risk; scrubbed SECURITY.md proposal | [risk-scoring](audit/synthesis/PASS4-risk-scoring.md), [dashboard](soundness-debt-dashboard.md), [SECURITY](SECURITY-public-ready.md) |
 | P4-K | spawn + crash_handler + sql | **0 memory-safety T1** | 7 | 10 | Author's TODO identifies real crash-path async-signal-safety defects, but mutex/RefCell re-entry is tracked as critical crash-reliability debt, not counted in the memory-safety T1 risk table. `report()` fork/execve/_exit path verified async-signal-safe. | [plan](audit/plans/PASS4-spawn-crash-sql.md) |
 
@@ -88,10 +88,10 @@ The 5 miri-confirmed traces cover: 2 of the 6 ceiling-score supply-chain entries
 
 ## Total audit content
 
-- **44+ plan documents** across `audit/plans/` (`PASS2-*`, `PASS3-*`, `PASS4-*`, plus the original `C-001`, `C-002`, `C-003`, `A-001`, `A-003`, `B-001-and-B-002`, `bench-targets`, `CODEX-P2-*`, `CODEX-P3-*`)
-- **15+ synthesis documents** across `audit/synthesis/`
+- **40 plan documents** across `audit/plans/` (`PASS2-*`, `PASS3-*`, `PASS4-*`, plus the original `C-001`, `C-002`, `C-003`, `A-001`, `A-003`, `B-001-and-B-002`, `bench-targets`, `CODEX-P2-*`, `CODEX-P3-*`)
+- **19 synthesis documents** across `audit/synthesis/`
 - **5 miri verification documents** in `verification/`
-- **8 test fixtures + ast-grep lint + dylint scaffold** in `audit/tests/`
+- **9 Rust test/proof fixtures + ast-grep lint + dylint scaffold** in `audit/tests/`
 - **`AUDIT_SUMMARY.md`, `PASS2_FINDINGS_INDEX.md`, `PASS3_FINDINGS_INDEX.md`, `PASS4_FINDINGS_INDEX.md`** (this file)
 - **`SECURITY-public-ready.md`, `soundness-debt-dashboard.md`, `beads-to-create.md`**
 - Local audit history was maintained while producing the artifacts; this PR contains the current reviewable artifact set, not the nested audit repo's internal `.git` history.

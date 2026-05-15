@@ -320,7 +320,7 @@ For the curious: the audit exercises many of the skill's major capabilities acro
 - Risk scoring ✓ (40 T1 / 2,507 risk-points quantified)
 - Soundness debt dashboard ✓
 - SECURITY.md generation ✓
-- Audit-driven test generation ✓ (8 fixtures + lint)
+- Audit-driven test generation ✓ (9 Rust test/proof fixtures + lint)
 - Clippy lint authoring ✓ (ast-grep + dylint)
 - Cross-crate Send/Sync contract analysis ✓
 - Multi-pass adversarial reclassification ✓ (Codex P2 + P3 + Pass 4 closure)

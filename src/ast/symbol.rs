@@ -557,13 +557,17 @@ impl Map {
             .must_not_be_renamed()
             .then_some(old_symbol.original_name);
 
+        let needs_capital_for_jsx = old_symbol.must_start_with_capital_letter_for_jsx();
+
         let new_symbol = self.get_mut(new).unwrap();
         new_symbol.use_count_estimate += use_count_estimate;
         if let Some(original_name) = pinned_name {
             new_symbol.original_name = original_name;
             new_symbol.set_must_not_be_renamed(true);
         }
-        // TODO: MustStartWithCapitalLetterForJSX
+        if needs_capital_for_jsx {
+            new_symbol.set_must_start_with_capital_letter_for_jsx(true);
+        }
         new
     }
 

@@ -1052,4 +1052,72 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor("99");
     });
   });
+
+  // Regression: #30559 — the REPL used to block on stdin.read() without
+  // pumping the JS event loop, so timers and IPC messages from a parent never
+  // fired inside a `bun repl` child. Now that readByte() polls stdin AND the
+  // uSockets event-loop fd while ticking the VM between polls, async events
+  // deliver normally.
+  test("setTimeout inside REPL fires while waiting for input", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // Build the marker from concatenation so it only appears verbatim in
+      // the timer's console.log output — not in the echoed keystrokes.
+      send("setTimeout(() => console.log('TIMER' + '_OK'), 100)\n");
+      await waitFor("TIMER_OK");
+    });
+  });
+});
+
+describe.todoIf(isWindows)("Bun REPL IPC", () => {
+  test("process.on('message') fires in a spawned `bun repl` (#30559)", async () => {
+    // The parent process sends a message on IPC. The REPL child sets up a
+    // process.on("message") handler and exits 0 when the message arrives.
+    // Before the fix, readByte() blocked on stdin so the IPC callback never
+    // ran, the test hangs and the child has to be force-killed.
+    const { promise: childReady, resolve: resolveChildReady } = Promise.withResolvers<void>();
+    const { promise: exited, resolve: resolveExited } = Promise.withResolvers<number | null>();
+    let fromChild: unknown = null;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+      ipc(message) {
+        fromChild = message;
+        resolveChildReady();
+      },
+      onExit(subprocess, exitCode) {
+        resolveExited(exitCode);
+      },
+    });
+
+    // Set up the child: tell parent we're ready, listen for a reply, exit 0
+    // when we get it. No in-child watchdog — the bun:test outer timeout and
+    // `await using proc` cleanup bound the hang case.
+    const iife = `(() => {
+      process.send("ready");
+      process.on("message", (data) => {
+        if (data === "hello-repl") process.exit(0);
+        process.exit(2);
+      });
+    })();\n`;
+    proc.stdin.write(iife);
+    proc.stdin.flush();
+
+    await childReady;
+    expect(fromChild).toBe("ready");
+
+    proc.send("hello-repl");
+
+    const code = await exited;
+    // Surface the child's stderr if anything goes wrong so the CI diff is
+    // diagnostic, per CLAUDE.md. On the happy path the child exits before
+    // writing anything to stderr.
+    if (code !== 0) {
+      expect(await new Response(proc.stderr).text()).toBe("");
+    }
+    expect(code).toBe(0);
+  });
 });

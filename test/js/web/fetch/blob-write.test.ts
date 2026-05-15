@@ -97,7 +97,10 @@ test("Bun.file().bytes() is safe under high concurrency", async () => {
   const dir = tempDirWithFiles(
     "bun-blob-concurrent",
     Object.fromEntries(
-      Array.from({ length: 16 }, (_, i) => [`f${i}.txt`, `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`]),
+      Array.from({ length: 16 }, (_, i) => [
+        `f${i}.txt`,
+        `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`,
+      ]),
     ),
   );
   // Many overlapping reads per file; each goes through a distinct `ReadFile`

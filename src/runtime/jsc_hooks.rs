@@ -39,8 +39,8 @@ use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
-    AnyPromise, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
-    JSModuleLoader, JSValue, JsResult, ResolvedSource,
+    ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise, JSModuleLoader,
+    JSValue, JsResult, ResolvedSource,
 };
 
 use bun_ast::ImportKind;

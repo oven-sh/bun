@@ -53,7 +53,13 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // JSON.stringify so the define: value is a proper JSON string.
+          // Raw CSS starts with `*{…}`, which the JSON lexer only tokenises
+          // as a recoverable SyntaxError in bun >= 1.3.14-canary (commit
+          // 314d044c0a); older bootstrap bins reject it before auto-quote
+          // can kick in. Quoting here keeps bake-codegen.ts forward- and
+          // backward-compatible with the lexer change.
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

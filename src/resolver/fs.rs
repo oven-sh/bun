@@ -906,9 +906,11 @@ impl DirEntry {
             if name_slice.len() <= MAX_PATH_BYTES {
                 None
             } else {
-                Some(bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
-                    name_slice,
-                ))
+                Some(
+                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
+                        name_slice,
+                    ),
+                )
             };
         let name_lc: &[u8] = match &name_lc_heap {
             Some(p) => &p.input[..],
@@ -1908,14 +1910,14 @@ impl TmpfilePosix {
     pub(crate) fn close_and_delete(&mut self, name: &ZStr) {
         self.close();
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             if self.dir_fd == Fd::INVALID {
                 return;
             }
             let _ = bun_sys::unlinkat(self.dir_fd, name);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = name;
         }
@@ -2086,9 +2088,8 @@ impl RealFS {
         // `while (try iter.next()) |*e| dir.addEntry(e)`. Floor at 64 even when
         // a `prev_map` exists but is tiny/empty — a directory that just grew
         // would otherwise rebuild `data` from a zero-capacity table.
-        dir.data.ensure_unused_capacity(
-            prev_map.as_deref().map(|m| m.count()).unwrap_or(0).max(64),
-        )?;
+        dir.data
+            .ensure_unused_capacity(prev_map.as_deref().map(|m| m.count()).unwrap_or(0).max(64))?;
 
         // Hoist the `FilenameStore` singleton resolution (Once + LazyLock atomic
         // checks) out of the per-entry loop.
@@ -2802,9 +2803,9 @@ impl RealFS {
             } else {
                 // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                 // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                 bun_sys::open(absolute_path, flags, 0)?
             };
@@ -2979,9 +2980,9 @@ impl RealFS {
                 } else {
                     // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                     // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                    #[cfg(not(target_os = "linux"))]
+                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                     bun_sys::open(absolute_path_c, flags, 0)?
                 };

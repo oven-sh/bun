@@ -156,9 +156,9 @@ impl LinuxMemFdAllocator {
             // `std.posix.MAP`, so this *replaces* it (not OR). Mask out the
             // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
             // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             const MAP_TYPE: i32 = libc::MAP_TYPE;
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             const MAP_TYPE: i32 = 0x0f; // `std.posix.MAP.TYPE` is `u4` on every POSIX target
             let flags_mut = (flags & !MAP_TYPE) | libc::MAP_SHARED;
 
@@ -196,13 +196,13 @@ impl LinuxMemFdAllocator {
     }
 
     pub fn should_use(bytes: &[u8]) -> bool {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = bytes;
             return false;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             if !sys::can_use_memfd() {
                 return false;
@@ -219,13 +219,13 @@ impl LinuxMemFdAllocator {
     }
 
     pub fn create(bytes: &[u8]) -> sys::Result<BlobStoreBytes> {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = bytes;
             unreachable!();
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let mut label_buf = [0u8; 128];
             // Zig: `std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{n}) catch ""`

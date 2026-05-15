@@ -494,7 +494,7 @@ impl WriteFile {
             return;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // If it's a potentially large file, lets attempt to
             // preallocate the saved filesystem size.

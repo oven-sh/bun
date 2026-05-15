@@ -688,7 +688,8 @@ pub fn parse(
                             err: err!("InvalidNameIndexDelta"),
                             value: i32::from(c),
                             loc: Loc {
-                                start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
+                                start: i32::try_from(bytes.len() - remain.len())
+                                    .unwrap_or(i32::MAX),
                             },
                         });
                     }

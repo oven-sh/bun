@@ -976,7 +976,14 @@ impl Scale {
     }
 }
 
-crate::css_eql_partialeq!(TransformList, Transform, Perspective, Translate, Rotate, Scale);
+crate::css_eql_partialeq!(
+    TransformList,
+    Transform,
+    Perspective,
+    Translate,
+    Rotate,
+    Scale
+);
 
 // PORT NOTE: was `TransformHandler<'bump>` holding `TransformList<'bump>`; the
 // `Property` enum is lifetime-free (see TransformList above), so the handler

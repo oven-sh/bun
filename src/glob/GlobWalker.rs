@@ -26,10 +26,10 @@ use core::ffi::c_int;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::Error;
+use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings::{self, UnsignedCodepointIterator as CodepointIterator};
 use bun_core::{String as BunString, ZStr};
-use bun_core::define_scoped_log;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};
@@ -2238,15 +2238,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             if !saw_special {
                 *basename_excluding_special_syntax_component_idx =
                     u32::try_from(pattern_components.len()).expect("int cast");
-                *end_byte_of_basename_excluding_special_syntax =
-                    (i + width).min(pattern_len);
+                *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
             }
             pattern_components.push(component);
         } else if !saw_special {
             *basename_excluding_special_syntax_component_idx =
                 u32::try_from(pattern_components.len()).expect("int cast");
-            *end_byte_of_basename_excluding_special_syntax =
-                (i + width).min(pattern_len);
+            *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
         }
 
         Ok(())

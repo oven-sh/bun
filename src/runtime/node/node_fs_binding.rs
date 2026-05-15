@@ -438,7 +438,7 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
         return Ok(JSValue::UNDEFINED);
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = arguments;
         return Err(global.throw(format_args!(
@@ -446,7 +446,7 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
         )));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let size = arguments.ptr[0].to_int64();
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {

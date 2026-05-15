@@ -460,6 +460,26 @@ describe("Bun.serve HTTP/3", () => {
     expect(stderr.toLowerCase()).toContain("http1");
     expect(exitCode).not.toBe(0);
   });
+
+  test("validation: http3 with unix socket warns and skips H3 listener", async () => {
+    using dir = tempDir("serve-http3-unix", {});
+    const sock = join(String(dir), "h3.sock");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `using s = Bun.serve({ unix: ${JSON.stringify(sock)}, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") }); console.log("listening");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("http3: true with a unix socket — HTTP/3 listener skipped");
+    expect(stderr).not.toContain("h3: true");
+    expect(stdout).toContain("listening");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own

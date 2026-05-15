@@ -2,7 +2,7 @@
 //! `bun_spawn::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
 use core::ffi::c_char;
 #[cfg(target_os = "macos")]
@@ -37,9 +37,9 @@ pub type FdT = libc::c_int;
 #[cfg(not(unix))]
 pub type FdT = i32;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub type PidFdType = (); // u0 in Zig
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -499,7 +499,7 @@ impl PosixSpawnResult {
         self.extra_pipes.shrink_to_fit();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
         // pidfd_nonblock only supported in 5.10+. The Zig path consults
         // `analytics.kernel_version()` (semver compare); until that helper is
@@ -509,7 +509,7 @@ impl PosixSpawnResult {
         bun_sys::O::NONBLOCK as u32
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
@@ -574,7 +574,7 @@ impl PosixSpawnResult {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         Err(bun_sys::Error::from_code(
             bun_sys::E::ENOSYS,
@@ -712,9 +712,11 @@ pub fn spawn_process_posix(
 
     if options.detached {
         // TODO(port): @hasDecl check — assume present on platforms that define it.
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            flags |= libc::POSIX_SPAWN_SETSID as i32;
+            // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
+            // the libc crate only exposes it for `target_os = "linux"`.
+            flags |= 0x80;
         }
         #[cfg(target_os = "macos")]
         {
@@ -728,7 +730,7 @@ pub fn spawn_process_posix(
     attr.pty_slave_fd = options.pty_slave_fd;
     attr.new_process_group = options.new_process_group;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Explicit per-spawn value wins; otherwise no-orphans mode defaults
         // every child to SIGKILL-on-parent-death so non-Bun descendants are
@@ -773,7 +775,7 @@ pub fn spawn_process_posix(
     let mut dup_stdout_to_stderr: bool = false;
 
     // The label is only referenced from the Linux memfd fast-path below.
-    #[cfg_attr(not(target_os = "linux"), allow(unused_labels))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(unused_labels))]
     'stdio: for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
         let flag: u32 = (if i == 0 {
@@ -807,7 +809,7 @@ pub fn spawn_process_posix(
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Buffer => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 'use_memfd: {
                     if !options.stream && i > 0 && bun_sys::can_use_memfd() {
                         // use memfd if we can
@@ -996,7 +998,7 @@ pub fn spawn_process_posix(
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // If it's spawnSync and we want to block the entire thread
                 // don't even bother with pidfd. It's not necessary.

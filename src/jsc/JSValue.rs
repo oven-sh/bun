@@ -571,7 +571,10 @@ impl JSValue {
     /// [`create_array_from_iter`](Self::create_array_from_iter) specialised
     /// for an already-materialised `&[JSValue]` (no per-element map).
     #[track_caller]
-    pub fn create_array_from_slice(global: &JSGlobalObject, items: &[JSValue]) -> JsResult<JSValue> {
+    pub fn create_array_from_slice(
+        global: &JSGlobalObject,
+        items: &[JSValue],
+    ) -> JsResult<JSValue> {
         Self::create_array_from_iter(global, items.iter().copied(), Ok)
     }
     /// `JSValue.createBufferFromLength` (JSValue.zig:557) — allocates a Node.js

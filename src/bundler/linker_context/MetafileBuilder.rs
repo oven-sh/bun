@@ -642,8 +642,8 @@ impl<'a> JsonParser<'a> {
                                 && self.input[self.pos..].starts_with(b"\\u")
                                 && self.pos + 6 <= self.input.len()
                             {
-                                let lo =
-                                    bun_core::fmt::parse_hex4(&self.input[self.pos + 2..]).ok_or(())?;
+                                let lo = bun_core::fmt::parse_hex4(&self.input[self.pos + 2..])
+                                    .ok_or(())?;
                                 if let Some(full) =
                                     bun_core::strings::decode_surrogate_pair(cp as u16, lo)
                                 {

@@ -422,7 +422,7 @@ export interface LinkOpts {
    */
   implicitInputs?: string[];
   /** Output linker map to this path (for debugging symbol bloat). */
-  linkerMapOutput?: string;
+  linkerMapOutput?: string | undefined;
 }
 
 /**

@@ -925,7 +925,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
                 | libc::BRKINT; // Signal interrupt on break
             // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
             // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             {
                 t.c_iflag |= libc::IUTF8;
             }

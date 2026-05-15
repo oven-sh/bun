@@ -944,7 +944,7 @@ impl StatWatcher {
 // PORT NOTE: hoisted from inline `if (isLinux and supports_statx) ... else brk: { ... }`
 // at two call sites (InitialStatTask::work_pool_callback and StatWatcher::restat) — identical logic.
 fn restat_impl(path: &ZStr) -> bun_sys::Maybe<PosixStat> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if bun_sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return bun_sys::statx(path, bun_sys::STATX_MASK_FOR_STATS);

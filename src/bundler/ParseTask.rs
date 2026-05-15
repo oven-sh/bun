@@ -2862,12 +2862,7 @@ pub mod parse_worker {
         // dealloc the box without running Drop.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe {
-            std::alloc::dealloc(
-                result.cast::<u8>(),
-                std::alloc::Layout::new::<Result>(),
-            )
-        };
+        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
     }
 
     pub fn on_complete(result: *mut Result) {
@@ -2882,12 +2877,7 @@ pub mod parse_worker {
         // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe {
-            std::alloc::dealloc(
-                result.cast::<u8>(),
-                std::alloc::Layout::new::<Result>(),
-            )
-        };
+        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
     }
 } // end mod parse_worker
 

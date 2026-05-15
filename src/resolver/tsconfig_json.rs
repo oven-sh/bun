@@ -369,7 +369,8 @@ impl TSConfigJSON {
         let mut compiler_opts: Option<bun_ast::Expr> = None;
         if let bun_ast::ExprData::EObject(obj) = &json.data {
             for property in obj.properties.slice() {
-                let (Some(key_expr), Some(value)) = (property.key.as_ref(), property.value.as_ref())
+                let (Some(key_expr), Some(value)) =
+                    (property.key.as_ref(), property.value.as_ref())
                 else {
                     continue;
                 };

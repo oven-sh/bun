@@ -1782,8 +1782,12 @@ function parseOptions(
       } else if (lowered === "foundrows") {
         // Accept "false"/"0" (case-insensitive) to disable; anything else
         // (including "true"/"1" or empty) leaves the default enabled. Only
-        // consumed by the MySQL adapter.
-        const value = queryObject[key].toLowerCase();
+        // consumed by the MySQL adapter. `toJSON()` returns an array when a
+        // key appears more than once (`?foundRows=a&foundRows=b`) — `String()`
+        // coerces that to `"a,b"` so we never call `.toLowerCase` on a non-
+        // string. Matches the `sslmode` branch's coercion via
+        // `normalizeSSLMode`.
+        const value = String(queryObject[key]).toLowerCase();
         foundRows = !(value === "false" || value === "0");
       } else {
         // this is valid for postgres for other databases it might not be valid

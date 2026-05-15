@@ -235,6 +235,29 @@ describe("Bun.SQL MySQL foundRows (CLIENT_FOUND_ROWS)", () => {
     }
   });
 
+  test("URL with duplicate foundRows keys doesn't throw", async () => {
+    // `URLSearchParams.toJSON()` returns an Array when the same key appears
+    // more than once. The option parser coerces through `String()` before
+    // normalizing, so a malformed URL like `?foundRows=true&foundRows=false`
+    // must not throw "toLowerCase is not a function". Using `false` as the
+    // last value turns the coerced "true,false" into a string that is neither
+    // "false" nor "0", so the default (enabled) wins.
+    const mock = await startMockMysql(1);
+    try {
+      await using db = new SQL({
+        url: `mysql://root:@127.0.0.1:${mock.port}/test?foundRows=true&foundRows=false`,
+        max: 1,
+        idleTimeout: 1,
+      });
+      await db.unsafe("UPDATE t SET v = 1");
+      const { capabilityFlags } = await mock.captured;
+      // "true,false" matches neither "false" nor "0" — stays at the default.
+      expect((capabilityFlags & CLIENT_FOUND_ROWS) !== 0).toBe(true);
+    } finally {
+      mock.close();
+    }
+  });
+
   test("options object wins over URL query string", async () => {
     const mock = await startMockMysql(1);
     try {

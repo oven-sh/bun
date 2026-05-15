@@ -2227,7 +2227,9 @@ pub fn install_isolated_packages(
                     // store dir already exists. Only fires when the user
                     // didn't opt into the symlink-only backend.
                     let has_active_link = {
-                        if PackageInstall::supported_method() == crate::package_install::Method::Symlink {
+                        if PackageInstall::supported_method()
+                            == crate::package_install::Method::Symlink
+                        {
                             false
                         } else {
                             let mut link_buf = paths::PathBuffer::uninit();

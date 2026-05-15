@@ -94,6 +94,10 @@ test("spawn({ stdio: [otherProc.stdout, ...] }) pipes A's stdout into B's stdin 
     env: bunEnv,
   });
   const sourceStderr = collect(pSource.stderr!);
+  // `markStreamsAsStdio` unregisters the FilePoll on `pSource.stdout`, so
+  // without the close-accounting fix in `#handleOnExit` this `'close'`
+  // promise never resolves even after `pSource` exits — guard that path.
+  const sourceClose = new Promise<void>(r => pSource.once("close", () => r()));
 
   using pFilter = spawn(bunExe(), ["-e", UPPER], {
     stdio: [pSource.stdout!, "pipe", "pipe"],
@@ -102,18 +106,29 @@ test("spawn({ stdio: [otherProc.stdout, ...] }) pipes A's stdout into B's stdin 
   const filterStdout = collect(pFilter.stdout!);
   const filterStderr = collect(pFilter.stderr!);
 
-  const [out, filterErr, sourceErr, filterExit] = await Promise.all([
+  const [out, filterErr, sourceErr, sourceExit, filterExit] = await Promise.all([
     filterStdout,
     filterStderr,
     sourceStderr,
+    new Promise<number | null>(r => {
+      if (pSource.exitCode != null) return r(pSource.exitCode);
+      pSource.once("exit", code => r(code));
+    }),
     new Promise<number | null>(r => {
       if (pFilter.exitCode != null) return r(pFilter.exitCode);
       pFilter.once("exit", code => r(code));
     }),
   ]);
+  // `'close'` should also fire — otherwise libraries like `execa` that
+  // await close (not exit) hang indefinitely.
+  await Promise.race([
+    sourceClose,
+    new Promise<void>((_, reject) => setTimeout(() => reject(new Error("pSource 'close' never fired")), 5000)),
+  ]);
   expect(filterErr).toBe("");
   expect(sourceErr).toBe("");
   expect(out).toBe("HELLO WORLD");
+  expect(sourceExit).toBe(0);
   expect(filterExit).toBe(0);
 });
 
@@ -173,9 +188,17 @@ test("spawn failure (ENOENT) does not leave a passed-in source stream stuck", as
   expect(spawnErr.code).toBe("ENOENT");
 
   // pSource.stdout should still flow normally after the failed spawn.
-  const [data, stderr] = await Promise.all([collect(pSource.stdout!), sourceStderr]);
+  const [data, stderr, sourceExit] = await Promise.all([
+    collect(pSource.stdout!),
+    sourceStderr,
+    new Promise<number | null>(r => {
+      if (pSource.exitCode != null) return r(pSource.exitCode);
+      pSource.once("exit", code => r(code));
+    }),
+  ]);
   expect(stderr).toBe("");
   expect(data).toBe("hello world");
+  expect(sourceExit).toBe(0);
 });
 
 function collect(stream: NodeJS.ReadableStream): Promise<string> {

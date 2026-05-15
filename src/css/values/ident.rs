@@ -426,13 +426,17 @@ impl IdentOrRef {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
-            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
-            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
-            // behavioral compatibility; PR #30784 hashes the full identity.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
-            };
-            hasher.update(bytes);
+            // Hash the `Ref`'s identity bits. Matches `eql`, which compares via
+            // `Ref::eql` (user-bit lane masked out) and — in debug builds —
+            // ignores the `ptrbits` heap pointer that differs between
+            // logically-equal refs constructed via separate `from_ref` calls.
+            //
+            // The Zig original (`slice_u8[0..2]`) hashed only 2 of the 16 bytes
+            // of the packed `u128`: in release builds `ptrbits` is 0 and those
+            // two bytes are always `[0x00, 0x00]`, so every ref-tagged value
+            // collided to the same hash regardless of which `Ref` it encoded.
+            let r = self.as_ref().unwrap();
+            hasher.update(&r.as_u64().to_ne_bytes());
         }
     }
 

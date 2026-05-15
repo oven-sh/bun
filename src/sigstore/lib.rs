@@ -190,7 +190,7 @@ pub fn attest(payload: &[u8], endpoints: &Endpoints) -> Result<Attestation, Sigs
     })
 }
 
-/// Result of [`load_and_verify_bundle`] — a pre-built bundle ready to be
+/// Result of [`verify_bundle`] — a pre-built bundle ready to be
 /// attached to the publish body.
 pub struct LoadedBundle {
     pub media_type: String,
@@ -365,9 +365,19 @@ fn fetch_identity_token(audience: &str) -> Result<String, SigstoreError> {
     url.push_str("audience=");
     // `@actions/core` does `encodeURIComponent(audience)`; the value is
     // user-settable via `BUN_SIGSTORE_OIDC_AUDIENCE`, so percent-encode it.
-    let mut enc = Vec::with_capacity(audience.len());
-    let _ = bun_core::strings::percent_encode_write(audience.as_bytes(), &mut enc);
-    url.push_str(std::str::from_utf8(&enc).unwrap_or(audience));
+    // `bun_core::strings::percent_encode_write` is a path-segment encoder
+    // (doesn't escape `& = + space`), so match `encodeURIComponent` directly.
+    for b in audience.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                url.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(url, "%{b:02X}");
+            }
+        }
+    }
 
     let mut auth = Vec::with_capacity(7 + req_tok.len());
     auth.extend_from_slice(b"Bearer ");
@@ -411,13 +421,12 @@ fn extract_jwt_subject(jwt: &str) -> Result<String, SigstoreError> {
     let c: Claims = serde_json::from_slice(&decoded)
         .map_err(|e| SigstoreError::Identity(format!("malformed JWT claims: {e}")))?;
 
+    // sigstore-js: `claims.email_verified === true ? claims.email : claims.sub`
+    // — fall through to `sub` when email is present but unverified.
     if let Some(email) = c.email.filter(|e| !e.is_empty()) {
-        if c.email_verified != Some(true) {
-            return Err(SigstoreError::Identity(
-                "JWT email not verified by issuer".into(),
-            ));
+        if c.email_verified == Some(true) {
+            return Ok(email);
         }
-        return Ok(email);
     }
     c.sub
         .filter(|s| !s.is_empty())

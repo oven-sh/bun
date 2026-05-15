@@ -621,7 +621,7 @@ deflate_decompress_bmi2            [BMI2]
 # memchr::arch::x86_64::memchr::*_raw::detect / avx2::packedpair::Finder::new.
 # PDB DBI records carry demangled Rust names for the directly-linked crate;
 # the older v0-mangled detect entries are kept for toolchain drift.
-# (14 symbols)
+# (15 symbols)
 # ----------------------------------------------------------------------------
 memchr::arch::x86_64::avx2::memchr::One::find_raw_avx2             [AVX, AVX2]
 memchr::arch::x86_64::avx2::memchr::One::rfind_raw_avx2            [AVX, AVX2]

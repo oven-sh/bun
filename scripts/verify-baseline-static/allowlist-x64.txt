@@ -741,7 +741,7 @@ _RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma13fma_wi
 
 # ----------------------------------------------------------------------------
 # Rust memchr AVX2 (via lolhtml deps). Gate: is_x86_feature_detected!.
-# (11 symbols)
+# (12 symbols)
 # ----------------------------------------------------------------------------
 _RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB2_3One13find_raw_avx2       [AVX, AVX2]
 _RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB2_3One14rfind_raw_avx2      [AVX, AVX2]

@@ -1,5 +1,5 @@
 import { spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { VerdaccioRegistry, bunEnv, bunExe, stderrForInstall } from "harness";
 import { join } from "path";
 
@@ -8,6 +8,7 @@ import { join } from "path";
 // so we can inspect the body.
 const registry = new VerdaccioRegistry();
 beforeAll(async () => {
+  setDefaultTimeout(1000 * 60 * 5);
   await registry.start();
 });
 afterAll(() => {

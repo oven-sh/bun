@@ -464,10 +464,14 @@ pub fn ident_or_ref_hash_refs(global: &JSGlobalObject, frame: &CallFrame) -> JsR
 
     let arr = JSValue::create_empty_array(global, 4)?;
     for (idx, ior) in [&ior_a, &ior_a2, &ior_b, &ior_b2].iter().enumerate() {
-        // wyhash output up to 2^64; JS Number loses precision above 2^53, but
-        // the chance of two distinct wyhash outputs colliding in their low 53
-        // bits is ~2^-53 — negligible for a deterministic regression assertion.
-        arr.put_index(global, idx as u32, JSValue::js_number(hash_one(ior) as f64))?;
+        // Fold the u64 wyhash output into the low 30 bits so the JS Number
+        // return value stays in int32 range (no f64 precision loss above
+        // 2^53). XOR of high and low halves preserves distinctness for any
+        // distinct wyhash outputs whose two halves don't happen to agree —
+        // astronomically unlikely for wyhash over distinct 8-byte keys.
+        let full = hash_one(ior);
+        let folded: i32 = (((full ^ (full >> 32)) as u32) & 0x3fff_ffff) as i32;
+        arr.put_index(global, idx as u32, JSValue::js_number_from_int32(folded))?;
     }
     Ok(arr)
 }

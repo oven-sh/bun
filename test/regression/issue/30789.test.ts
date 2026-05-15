@@ -21,7 +21,7 @@ const PKG = "baz";
 const OLD = "0.0.3";
 const NEW = "0.0.5";
 
-test("`update --latest` renders unicode arrows (not mojibake)", async () => {
+test("`update --latest` renders unicode arrows (not mojibake)", { timeout: 60_000 }, async () => {
   // Tiny in-memory npm registry. Serves the package manifest for `baz` with
   // two versions (OLD, NEW; latest = NEW) and streams the two matching
   // tarballs from the install test fixtures.

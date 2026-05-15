@@ -98,8 +98,18 @@ impl<'a> Row<'a> {
                     ..SQLDataCell::default()
                 };
             }
-            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
-                if column.flags.contains(ColumnFlags::UNSIGNED) {
+            // YEAR joins TINY/SHORT in the text path for the same reason it
+            // shares the SHORT wire shape on the binary path: the server
+            // returns it as a bare ASCII integer (1901–2155 or 0000),
+            // mysql2's `text_parser.js` treats it as an integer, and the
+            // binary path now returns a JS number too. Without this arm
+            // YEAR falls through to the string catch-all, so
+            // `typeof row.year` silently flips between `.simple()` (string)
+            // and prepared (number). YEAR is always unsigned.
+            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_YEAR => {
+                if column.column_type == MYSQL_TYPE_YEAR
+                    || column.flags.contains(ColumnFlags::UNSIGNED)
+                {
                     let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {
                         tag: Tag::Uint4,

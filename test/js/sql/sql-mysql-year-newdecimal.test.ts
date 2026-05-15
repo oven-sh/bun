@@ -68,6 +68,7 @@ const MYSQL_TYPE_YEAR = 0x0d;
 const MYSQL_TYPE_NEWDECIMAL = 0xf6;
 const MYSQL_TYPE_DATETIME = 0x0c;
 const MYSQL_TYPE_VAR_STRING = 0xfd;
+const MYSQL_TYPE_INT24 = 0x09;
 
 // --- Packet builders -------------------------------------------------------
 
@@ -179,11 +180,23 @@ function encodeDatetime7(year: number, month: number, day: number, h: number, m:
   return Buffer.concat([Buffer.from([7]), u16le(year), Buffer.from([month, day, h, m, s])]);
 }
 
+// MYSQL_TYPE_INT24 (MEDIUMINT) is sent as a 4-byte little-endian integer on
+// the wire — the server zero-extends the high byte. Reading only 3 bytes
+// misaligns the cursor the same way YEAR did pre-fix.
+function encodeInt24(value: number): Buffer {
+  return u32le(value);
+}
+
 // --- Test ------------------------------------------------------------------
 
 interface MockOptions {
   // How to lay out the columns of the binary result row.
-  layout: "year-then-newdecimal" | "newdecimal-then-year" | "year-alone" | "year-then-datetime";
+  layout:
+    | "year-then-newdecimal"
+    | "newdecimal-then-year"
+    | "year-alone"
+    | "year-then-datetime"
+    | "int24-then-newdecimal";
   // Number of `?` placeholders in the prepared statement.
   numParams: number;
 }
@@ -236,6 +249,12 @@ function startMockServer(opts: MockOptions) {
                 { name: "ts", type: MYSQL_TYPE_DATETIME, columnLength: 19 },
               ];
               break;
+            case "int24-then-newdecimal":
+              preparedColumns = [
+                { name: "mi", type: MYSQL_TYPE_INT24, columnLength: 8 },
+                { name: "dec", type: MYSQL_TYPE_NEWDECIMAL, columnLength: 10 },
+              ];
+              break;
           }
           const paramDefs = Array.from({ length: opts.numParams }, (_, i) =>
             columnDefinition(`p${i}`, MYSQL_TYPE_VAR_STRING, 255),
@@ -258,6 +277,9 @@ function startMockServer(opts: MockOptions) {
               break;
             case "year-then-datetime":
               rowColumns = [encodeYear(2013), encodeDatetime7(2024, 5, 1, 12, 0, 0)];
+              break;
+            case "int24-then-newdecimal":
+              rowColumns = [encodeInt24(1_234_567), encodeNewdecimal("42.0")];
               break;
           }
           const packets: Buffer[] = [];
@@ -329,7 +351,26 @@ test("YEAR followed by DATETIME — DATETIME is not corrupted by a YEAR over-rea
   // A 2-byte YEAR over-read used to eat the DATETIME's length byte + a
   // pair of date bytes, driving the datetime decoder at absurd dates
   // (3588-06-02, 7435-05-31 in the reports) or an InvalidBinaryValue.
+  //
+  // MySQL's DATETIME wire format has no timezone: the decoder feeds the
+  // wall-clock components through `gregorianDateTimeToMS(..., localTime=
+  // true)`, so compare against a local-time Date constructor rather than
+  // `Date.UTC(...)` — test/preload.ts deliberately preserves the host's
+  // TZ in-process, so hard-coding a UTC offset would be flaky off-CI.
   const rows = await runQuery("year-then-datetime", "select y, ts from t where y = ?", [2013]);
   expect(rows[0].y).toBe(2013);
-  expect(rows[0].ts).toEqual(new Date(Date.UTC(2024, 4, 1, 12, 0, 0)));
+  expect(rows[0].ts).toEqual(new Date(2024, 4, 1, 12, 0, 0));
+});
+
+test("INT24/MEDIUMINT consumes 4 wire bytes, not 3", async () => {
+  // MYSQL_TYPE_INT24 is encoded on the binary wire as a 4-byte little-endian
+  // integer (server sign/zero-extends the high byte — mysql2 reads this with
+  // readInt32). The port originally advanced the cursor by only 3 bytes,
+  // leaving the extension byte in the stream. With NEWDECIMAL following,
+  // that orphaned byte becomes the next column's length prefix → garbage
+  // decimal or hang, identical failure mode to #30854 for YEAR. Single-
+  // column tests masked this because the extra byte ended the row cleanly.
+  const rows = await runQuery("int24-then-newdecimal", "select mi, dec from t where mi = ?", [1_234_567]);
+  expect(rows[0].mi).toBe(1_234_567);
+  expect(rows[0].dec).toBe("42.0");
 });

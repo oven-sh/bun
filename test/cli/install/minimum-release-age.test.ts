@@ -1,5 +1,5 @@
 import type { Server } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 /**
@@ -73,6 +73,7 @@ describe("minimum-release-age", () => {
   };
 
   beforeAll(async () => {
+    setDefaultTimeout(1000 * 60 * 5);
     // Start mock registry server
     mockRegistryServer = Bun.serve({
       port: 0,

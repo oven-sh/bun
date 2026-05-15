@@ -6,6 +6,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
@@ -51,8 +52,8 @@ bun_output::declare_scope!(fs_watch, visible);
 // remains a per-VM resource — `watch()` debug-asserts the caller's `vm`
 // matches the stored one. Promoting this to per-VM storage (e.g. `RareData`)
 // is the longer-term fix; the mutex closes the UB window meanwhile.
-static DEFAULT_MANAGER: bun_core::AtomicCell<*mut PathWatcherManager> =
-    bun_core::AtomicCell::new(ptr::null_mut());
+static DEFAULT_MANAGER: AtomicPtr<PathWatcherManager> =
+    AtomicPtr::new(ptr::null_mut());
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher
@@ -108,8 +109,8 @@ impl PathWatcherManager {
         // enable to create a new manager
         {
             let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-            if DEFAULT_MANAGER.load() == this {
-                DEFAULT_MANAGER.store(ptr::null_mut());
+            if DEFAULT_MANAGER.load(Ordering::Acquire) == this {
+                DEFAULT_MANAGER.store(ptr::null_mut(), Ordering::Release);
             }
         }
 
@@ -496,10 +497,10 @@ pub fn watch(
         // DEFAULT_MANAGER_MUTEX (see static decl). `fs.watch()` is reachable
         // from Worker threads, so an unguarded read+write here would be a data
         // race — the prior "JS main thread only" claim was false.
-        let m = DEFAULT_MANAGER.load();
+        let m = DEFAULT_MANAGER.load(Ordering::Acquire);
         if m.is_null() {
             let m = PathWatcherManager::init(vm);
-            DEFAULT_MANAGER.store(m);
+            DEFAULT_MANAGER.store(m, Ordering::Release);
             m
         } else {
             // The manager is bound to one VM's uv_loop; reusing it from a

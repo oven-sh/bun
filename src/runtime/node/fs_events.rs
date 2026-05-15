@@ -369,10 +369,11 @@ pub struct FSEventsLoop {
     /// Created in `init()` *before* the CF thread spawns; read by both
     /// threads; released (and nulled) in `shutdown()` *after* `thread.join()`.
     signal_source: AtomicPtr<c_void>,
-    /// Set by the CF thread once it enters `cf_thread_loop` (Release), read by
-    /// the JS thread in `enqueue_task_concurrent` (Acquire); nulled by the CF
-    /// thread when `CFRunLoopRun()` returns. The `sem` handshake in `init()`
-    /// orders the first store before any JS-thread read.
+    /// Set (and `CFRetain`ed) by the CF thread once it enters `cf_thread_loop`
+    /// (Release), read by the JS thread in `enqueue_task_concurrent` (Acquire);
+    /// released (and nulled) in `shutdown()` *after* `thread.join()` so it
+    /// outlives the CF thread's pthread-TSD destructor. The `sem` handshake in
+    /// `init()` orders the first store before any JS-thread read.
     loop_: AtomicPtr<c_void>,
     /// Guards `state`.
     mutex: Mutex,

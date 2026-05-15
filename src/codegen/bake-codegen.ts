@@ -53,7 +53,11 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // Wrap raw CSS in JSON.stringify so it parses as a string literal
+          // under older/stale bun releases that haven't picked up the JSON
+          // lexer auto-quote recovery from 314d044c0a (#30679). Matches the
+          // `side`/`IS_ERROR_RUNTIME` handling above.
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

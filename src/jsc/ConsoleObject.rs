@@ -6193,6 +6193,9 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
     let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
+    if snapshot[0].is_empty() || global_this.has_exception() {
+        return;
+    }
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
     unsafe {
         message_with_type_and_level(

@@ -971,6 +971,15 @@ fn HandlerCallback(
                     if (fail) {
                         this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
                     }
+                    if (scope.exception()) |exc| {
+                        const exc_value = JSValue.fromCell(exc);
+                        if (this.global.bunVM().unhandled_pending_rejection_to_capture) |err_ptr| {
+                            err_ptr.* = exc_value;
+                            exc_value.protect();
+                        }
+                        scope.clearException();
+                        return true;
+                    }
                     return fail;
                 }
             }

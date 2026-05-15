@@ -1477,6 +1477,16 @@ where
             if fail {
                 vm().unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
             }
+            if let Some(exc) = scope.exception() {
+                let exc_value = JSValue::from_cell(exc.as_ptr());
+                if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
+                    // SAFETY: VM-owned pointer set by BufferOutputSink::init.
+                    unsafe { *err_ptr = exc_value };
+                    exc_value.protect();
+                }
+                scope.clear_exception();
+                return true;
+            }
             return fail;
         }
     }

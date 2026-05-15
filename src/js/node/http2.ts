@@ -1959,6 +1959,25 @@ function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
+
+// In Node.js, Http2Stream.prototype._write/_writev call writeGeneric/writevGeneric which write
+// through a native WriteWrap; the onwrite callback fires from libuv and is therefore always
+// asynchronous. See:
+// https://github.com/nodejs/node/blob/v22.14.0/lib/internal/http2/core.js#L2143-L2222
+// https://github.com/nodejs/node/blob/v22.14.0/lib/internal/stream_base_commons.js#L146-L163
+// Bun's native.writeStream may invoke the callback synchronously when the socket buffer accepts
+// the data immediately. If onwrite runs synchronously, Writable's writeOrBuffer decrements
+// state.length before computing its return value, so write() never returns false at highWaterMark
+// and 'drain' never fires. Defer to nextTick to match Node.js timing semantics.
+function deferWriteCallback(callback) {
+  let invoked = false;
+  return function (err) {
+    if (invoked) return;
+    invoked = true;
+    process.nextTick(callback, err);
+  };
+}
+
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
@@ -2299,7 +2318,7 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(this.#id, chunk, undefined, false, callback);
+        native.writeStream(this.#id, chunk, undefined, false, deferWriteCallback(callback));
         return;
       }
     }
@@ -2312,7 +2331,7 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        native.writeStream(this.#id, chunk, encoding, false, callback);
+        native.writeStream(this.#id, chunk, encoding, false, deferWriteCallback(callback));
         return;
       }
     }

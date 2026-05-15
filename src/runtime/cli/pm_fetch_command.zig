@@ -117,10 +117,9 @@ pub const PmFetchCommand = struct {
                         name_and_version_hash,
                     ) catch |err| switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
-                        error.InvalidURL => {
-                            reportInvalidURL(pm, dep, pkg_name);
-                            continue;
-                        },
+                        // `NetworkTask.forTarball` has already logged a
+                        // specific error to `pm.log` for `InvalidURL`.
+                        error.InvalidURL => continue,
                     };
                 },
                 .git => {
@@ -146,10 +145,9 @@ pub const PmFetchCommand = struct {
                         name_and_version_hash,
                     ) catch |err| switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
-                        error.InvalidURL => {
-                            reportInvalidURL(pm, dep, pkg_name);
-                            continue;
-                        },
+                        // `NetworkTask.forTarball` has already logged a
+                        // specific error to `pm.log` for `InvalidURL`.
+                        error.InvalidURL => continue,
                     };
                 },
                 .local_tarball => {
@@ -170,10 +168,9 @@ pub const PmFetchCommand = struct {
                         name_and_version_hash,
                     ) catch |err| switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
-                        error.InvalidURL => {
-                            reportInvalidURL(pm, dep, pkg_name);
-                            continue;
-                        },
+                        // `NetworkTask.forTarball` has already logged a
+                        // specific error to `pm.log` for `InvalidURL`.
+                        error.InvalidURL => continue,
                     };
                 },
                 else => continue,
@@ -270,26 +267,6 @@ pub const PmFetchCommand = struct {
             return this.pendingTaskCount() == 0;
         }
     };
-
-    fn reportInvalidURL(pm: *PackageManager, dep: Dependency, pkg_name: []const u8) void {
-        if (dep.behavior.isRequired()) {
-            bun.handleOom(pm.log.addErrorFmt(
-                null,
-                bun.logger.Loc.Empty,
-                pm.allocator,
-                "invalid tarball url for <b>{s}<r>",
-                .{pkg_name},
-            ));
-        } else {
-            bun.handleOom(pm.log.addWarningFmt(
-                null,
-                bun.logger.Loc.Empty,
-                pm.allocator,
-                "invalid tarball url for <b>{s}<r>",
-                .{pkg_name},
-            ));
-        }
-    }
 };
 
 const std = @import("std");
@@ -300,7 +277,6 @@ const Output = bun.Output;
 const Command = bun.cli.Command;
 
 const install = bun.install;
-const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageManager = install.PackageManager;

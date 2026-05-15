@@ -146,16 +146,14 @@ impl PmFetchCommand {
                 continue;
             }
 
-            let is_required =
-                pm.lockfile.buffers.dependencies[dep_id as usize].behavior.is_required();
             let task_ctx = TaskCallbackContext::Dependency(dep_id);
             let string_buf = pm.lockfile.buffers.string_bytes.as_slice();
-            let pkg_name = pm.lockfile.packages.slice().items_name()[i]
-                .slice(string_buf)
-                .to_vec();
 
             match resolution.tag {
                 ResolutionTag::Npm => {
+                    let pkg_name = pm.lockfile.packages.slice().items_name()[i]
+                        .slice(string_buf)
+                        .to_vec();
                     let version = resolution.npm().version;
                     let url = resolution.npm().url.slice(string_buf).to_vec();
                     match pm.enqueue_package_for_download(
@@ -169,10 +167,9 @@ impl PmFetchCommand {
                     ) {
                         Ok(()) => {}
                         Err(e) if e == bun_core::err!(OutOfMemory) => bun_core::out_of_memory(),
-                        Err(_) => {
-                            report_invalid_url(pm, is_required, &pkg_name);
-                            continue;
-                        }
+                        // `NetworkTask::for_tarball` has already logged a
+                        // specific error to `pm.log` for `InvalidURL`.
+                        Err(_) => continue,
                     }
                 }
                 ResolutionTag::Git => {
@@ -198,10 +195,9 @@ impl PmFetchCommand {
                     ) {
                         Ok(()) => {}
                         Err(e) if e == bun_core::err!(OutOfMemory) => bun_core::out_of_memory(),
-                        Err(_) => {
-                            report_invalid_url(pm, is_required, &pkg_name);
-                            continue;
-                        }
+                        // `NetworkTask::for_tarball` has already logged a
+                        // specific error to `pm.log` for `InvalidURL`.
+                        Err(_) => continue,
                     }
                 }
                 ResolutionTag::LocalTarball => {
@@ -222,10 +218,9 @@ impl PmFetchCommand {
                     ) {
                         Ok(()) => {}
                         Err(e) if e == bun_core::err!(OutOfMemory) => bun_core::out_of_memory(),
-                        Err(_) => {
-                            report_invalid_url(pm, is_required, &pkg_name);
-                            continue;
-                        }
+                        // `NetworkTask::for_tarball` has already logged a
+                        // specific error to `pm.log` for `InvalidURL`.
+                        Err(_) => continue,
                     }
                 }
                 _ => continue,
@@ -306,26 +301,6 @@ impl PmFetchCommand {
         }
 
         Ok(())
-    }
-}
-
-fn report_invalid_url(pm: &mut PackageManager, is_required: bool, pkg_name: &[u8]) {
-    if is_required {
-        bun_ast::add_error_pretty!(
-            pm.log_mut(),
-            None,
-            bun_ast::Loc::EMPTY,
-            "invalid tarball url for <b>{}<r>",
-            BStr::new(pkg_name),
-        );
-    } else {
-        bun_ast::add_warning_pretty!(
-            pm.log_mut(),
-            None,
-            bun_ast::Loc::EMPTY,
-            "invalid tarball url for <b>{}<r>",
-            BStr::new(pkg_name),
-        );
     }
 }
 

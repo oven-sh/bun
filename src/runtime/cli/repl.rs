@@ -86,18 +86,22 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 
 /// Reborrow `&VirtualMachine` as `&mut VirtualMachine`.
 ///
-/// SAFETY: The Zig spec passes `*JSC.VirtualMachine` (mutable, freely-aliasing)
+/// The Zig spec passes `*JSC.VirtualMachine` (mutable, freely-aliasing)
 /// everywhere; `VirtualMachine` is single-threaded per JS thread and the REPL
 /// is the sole driver of `tick()` / `wait_for_promise()` here. Phase-B port
-/// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
+/// stores `&VirtualMachine` for borrowck simplicity and reborrows at the call
+/// site.
+///
+/// Routes through [`VirtualMachine::as_mut`] so the `&mut` comes from the
+/// thread-local `*mut` installed by `init()` — not from `&vm` laundered via
+/// `cast_mut()`, which would hit the `invalid_reference_casting` lint for
+/// good reason (`&self`-derived provenance cannot legally be promoted to
+/// `&mut`). Same single-JS-thread soundness contract as
+/// `VirtualMachine::as_mut`; keep the borrow short and do not hold it across
+/// reentrant JS calls.
 #[inline]
-#[allow(invalid_reference_casting)]
 fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
-    // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
-    // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
-    // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
-    let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
-    unsafe { &mut *ptr }
+    vm.as_mut()
 }
 
 // ============================================================================

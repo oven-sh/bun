@@ -37,7 +37,7 @@ domain.createDomain = domain.create = function () {
     return function () {
       var args = Array.prototype.slice.$call(arguments);
       try {
-        fn.$apply(null, args);
+        return fn.$apply(null, args);
       } catch (err) {
         emitError(err);
       }
@@ -50,7 +50,7 @@ domain.createDomain = domain.create = function () {
       } else {
         var args = Array.prototype.slice.$call(arguments, 1);
         try {
-          fn.$apply(null, args);
+          return fn.$apply(null, args);
         } catch (err) {
           emitError(err);
         }
@@ -59,11 +59,10 @@ domain.createDomain = domain.create = function () {
   };
   d.run = function (fn) {
     try {
-      fn();
+      return fn();
     } catch (err) {
       emitError(err);
     }
-    return this;
   };
   d.dispose = function () {
     this.removeAllListeners();

@@ -1493,7 +1493,7 @@ impl FFI {
                 () => b"dll",
                 // TODO(port): wasm @compileError("TODO")
             };
-            // Spec `ffi.zig:1030` — `ModuleLoader.resolveEmbeddedFile(vm, buf,
+            // `ModuleLoader.resolveEmbeddedFile(vm, buf,
             // name_slice.slice(), ext)` extracts a bunfs-embedded shared
             // library (added via `import lib from "./lib.so" with { type:
             // "file" }` and shipped through `bun build --compile`) to a real
@@ -1506,7 +1506,7 @@ impl FFI {
                 ext,
                 &mut filepath_buf[..],
             ) {
-                // Spec `ffi.zig:1041` — NUL-terminate in place so `DynLib::open`
+                // NUL-terminate in place so `DynLib::open`
                 // can pass the slice to libc without copying. `resolve_*_to_buf`
                 // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
                 // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.

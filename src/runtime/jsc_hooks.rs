@@ -4521,8 +4521,8 @@ pub(crate) fn resolve_embedded_file_to_buf(
     Some(result.len())
 }
 
-/// `LoaderHooks::resolve_embedded_node_file` body — port of
-/// `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71) for the
+/// `LoaderHooks::resolve_embedded_node_file` body —
+/// `ModuleLoader.resolveEmbeddedFile` for the
 /// `process.dlopen()`-on-a-compiled-executable path. Delegates to
 /// [`resolve_embedded_file_to_buf`] with `extname = "node"` and writes the
 /// resulting on-disk path back into `*in_out_str`
@@ -4537,7 +4537,7 @@ unsafe fn resolve_embedded_node_file_hook(
     vm: *mut VirtualMachine,
     in_out_str: *mut bun_core::String,
 ) -> bool {
-    // Spec ModuleLoader.zig:1334-1337 — `in_out_str.toUTF8()` + `path_buffer_pool.get()`.
+    // `in_out_str.toUTF8()` + `path_buffer_pool.get()`.
     // SAFETY: per fn contract — `in_out_str` is a valid `bun.String*`.
     let input_path_utf8 = unsafe { &*in_out_str }.to_utf8();
     let input_path = input_path_utf8.slice();

@@ -1140,7 +1140,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(result)
     }
 
-    fn sort_internal<C: SortContext, const STABLE: bool>(&self, a: usize, b: usize, ctx: C) {
+    fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: C) {
         let slice = self.slice();
         let swap = |a_index: usize, b_index: usize| {
             for fi in 0..Reflected::<T>::COUNT {
@@ -1168,22 +1168,22 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Stable sort by index-based context.
-    pub fn sort<C: SortContext>(&self, ctx: C) {
+    pub fn sort<C: SortContext>(&mut self, ctx: C) {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
     /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&self, a: usize, b: usize, ctx: C) {
+    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
         self.sort_internal::<C, true>(a, b, ctx);
     }
 
     /// Unstable sort by index-based context.
-    pub fn sort_unstable<C: SortContext>(&self, ctx: C) {
+    pub fn sort_unstable<C: SortContext>(&mut self, ctx: C) {
         self.sort_internal::<C, false>(0, self.len, ctx);
     }
 
     /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&self, a: usize, b: usize, ctx: C) {
+    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
         self.sort_internal::<C, false>(a, b, ctx);
     }
 
@@ -1201,7 +1201,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Zero-initialize all allocated memory.
-    pub fn zero(&self) {
+    pub fn zero(&mut self) {
         let (p, n) = self.allocated_bytes();
         if n != 0 {
             // SAFETY: `p` is the start of an allocation of `n` bytes.

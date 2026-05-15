@@ -1193,8 +1193,12 @@ impl Task {
                                             #[cfg(windows)]
                                             {
                                                 'win: {
-                                                    if let Some(_e) = sys::rmdir(local.slice_z()).err() {
-                                                        if let Some(e) = sys::unlink(local.slice_z()).err() {
+                                                    if let Some(_e) =
+                                                        sys::rmdir(local.slice_z()).err()
+                                                    {
+                                                        if let Some(e) =
+                                                            sys::unlink(local.slice_z()).err()
+                                                        {
                                                             break 'win Some(e);
                                                         }
                                                     }
@@ -1219,9 +1223,9 @@ impl Task {
                                                 // AV/sharing-violation or EACCES
                                                 // instead of silently mutating the
                                                 // shared cache.
-                                                return Ok(Yield::failure(
-                                                    TaskError::LinkPackage(e),
-                                                ));
+                                                return Ok(Yield::failure(TaskError::LinkPackage(
+                                                    e,
+                                                )));
                                             }
                                         }
                                     }

@@ -1,8 +1,8 @@
 # Miri-Confirmed UB Summary — Pass 4 Verification
 
-**Standard of evidence:** every bug listed here has a concrete `cargo +nightly miri run` trace. Four traces have dedicated sibling detail files in this directory; PUB-INSTALL-3 is currently captured in this summary only and should be split into its own detail file before using the miri corpus as a standalone public artifact. These claims are no longer "static-analysis hypothesis" — they are runtime-detected UB with miri's word for the minimized witness pattern.
+**Standard of evidence:** every entry listed here has a concrete `cargo +nightly miri run` trace. Four traces have dedicated sibling detail files in this directory; PUB-INSTALL-3 is currently captured in this summary only and should be split into its own detail file before using the miri corpus as a standalone public artifact. These claims are no longer "static-analysis hypothesis" — they are runtime-detected UB with miri's word for the minimized witness pattern.
 
-## The 5 miri-confirmed bugs
+## The 5 miri-backed UB witnesses
 
 | # | Bug | Source | Miri error (verbatim) | Detail file |
 |---|-----|--------|----------------------|-------------|
@@ -14,7 +14,7 @@
 
 ## What this verification proves
 
-For each bug:
+For each entry:
 1. The audit's static-analysis claim is **independently corroborated by miri**.
 2. The exact arithmetic / Layout shape Bun's source uses produces the UB.
 3. The bug class (niche violation, allocator-layout mismatch, uninit-read) is one of Rust's well-defined UB axes — not a stylistic concern.

@@ -22,6 +22,7 @@ members = [
   "src/resolver",
   "src/safety",
   "src/semver",
+  "src/sigstore",
   "src/sourcemap",
   "src/sql",
   "src/sys",
@@ -371,6 +372,7 @@ bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
 bun_semver = { path = "src/semver" }
+bun_sigstore = { path = "src/sigstore" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }

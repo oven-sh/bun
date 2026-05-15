@@ -1,0 +1,42 @@
+[package]
+name = "bun_sigstore"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_core.workspace = true
+bun_http.workspace = true
+bun_url.workspace = true
+bun_base64.workspace = true
+bun_sha_hmac.workspace = true
+bun_alloc.workspace = true
+thiserror.workspace = true
+strum.workspace = true
+bstr.workspace = true
+# JSON body/bundle (de)serialization — already transitive via lol_html.
+# NOTE: serde_json defines `impl PartialEq<Value> for i32` (and all other
+# integer types), which makes `x == Y as _` patterns elsewhere in bun_runtime
+# fail inference (E0282). Those call sites have been fixed to use explicit
+# `as c_int` / `as i32`.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# RustCrypto primitives for Sigstore keyless signing — the same crates
+# `sigstore-rs` uses under the hood. We depend on them directly rather than
+# on the `sigstore` crate because:
+#   - sigstore-rs only supports `hashedrekord` (plain signing), not DSSE
+#     attestation — which is what npm provenance requires;
+#   - its `IdentityToken` hard-requires an `email` claim that GitHub Actions
+#     OIDC tokens do not carry;
+#   - its `sign`/`fulcio`/`rekor` features pull reqwest + tokio + aws-lc-rs,
+#     duplicating bun's own HTTP (`bun_http`) and TLS (BoringSSL) stacks.
+# The protocol itself is ~3 HTTP calls + one ECDSA signature, so we speak it
+# directly and stay on bun's I/O path.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pem", "std"] }
+pkcs8 = { version = "0.10", default-features = false, features = ["pem", "std"] }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }

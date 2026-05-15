@@ -917,8 +917,7 @@ impl Options {
             // bunfig.
             if let Some(registry_) = env_var::BUN_CONFIG_FORCE_REGISTRY.get() {
                 if !registry_.is_empty()
-                    && (registry_.starts_with(b"https://")
-                        || registry_.starts_with(b"http://"))
+                    && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                 {
                     let mut api_registry = Api::NpmRegistry::default();
                     api_registry.url = registry_.into();

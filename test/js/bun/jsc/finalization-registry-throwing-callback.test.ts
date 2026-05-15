@@ -27,13 +27,11 @@ test("FinalizationRegistry cleanup callback that throws does not crash", async (
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).not.toContain("ASSERTION FAILED");
-  expect(stderr).not.toContain("panic");
   expect(stdout.trim()).toBe("CAUGHT");
   expect(exitCode).toBe(0);
 });

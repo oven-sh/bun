@@ -45,19 +45,30 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 
 /// Mutable view of a [`Blob`]'s backing `Store` through its
 /// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `StoreRef::data_mut` already documents: Zig-semantics
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
+/// `(*blob.store.get()…as_ptr()).mime_type = …` deref used by the body-mixin
+/// `consume_` helpers.
+///
+/// This mirrors [`blob::StoreRef::data_mut`]: it projects `&mut` to the same
+/// heap `Store` from a shared `&Blob` via `StoreRef::as_ptr()`. `StoreRef`
+/// itself is `!Sync` so a single `&Blob` can't project the handle to another
+/// thread, but cloned `StoreRef` handles (`Send`) and `Blob: Sync` projecting
+/// `fn store(&self) -> Option<&StoreRef>` both allow other references to the
+/// same `Store` to exist concurrently — discharge the precondition at every
+/// call site.
+///
+/// # Safety
+/// For the lifetime of the returned `&mut Store`, the caller asserts that no
+/// other reference (`&Store`, `&mut Store`, `&Data`, `&mut Data`) to the same
+/// pointee is live — on this thread **or any other**. Same contract as
+/// [`blob::StoreRef::data_mut`].
 #[inline]
 #[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
+unsafe fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
     blob.store
         .get()
         .as_ref()
-        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
-        // any `StoreRef` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
+        // SAFETY: precondition — no aliasing `&`/`&mut` to the pointee is
+        // live for the returned borrow's duration (see fn doc).
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
 
@@ -1232,7 +1243,13 @@ impl Value {
                                 // we give the Store the owning Cow and let `blob.content_type` alias it
                                 // (Blob holds a +1 on Store, alias valid for Blob's lifetime). When there is
                                 // no store, transfer the buffer into `blob.content_type` directly.
-                                if let Some(store) = blob_store_mut(blob) {
+                                // SAFETY: synchronous JS-thread continuation of a body-consumer;
+                                // no JS re-entry occurs inside the match, so no other
+                                // `&Data`/`&mut Data`/`&Store`/`&mut Store` to this `Store` is
+                                // live. Other `StoreRef` clones (e.g. the originating JS `Blob`)
+                                // can exist but only call `data_mut`/`blob_store_mut` on the same
+                                // thread, so they cannot overlap this borrow.
+                                if let Some(store) = unsafe { blob_store_mut(blob) } {
                                     store.mime_type = mime_type;
                                     blob.content_type.set(std::ptr::from_ref::<[u8]>(
                                         store.mime_type.value.as_ref(),
@@ -1256,7 +1273,9 @@ impl Value {
                             ));
                             blob.content_type_allocated.set(false);
                             blob.content_type_was_set.set(true);
-                            blob_store_mut(blob)
+                            // SAFETY: see the `blob_store_mut` call above —
+                            // same synchronous JS-thread context.
+                            unsafe { blob_store_mut(blob) }
                                 .expect("infallible: checked above")
                                 .mime_type = bun_http_types::MimeType::TEXT;
                         }
@@ -2238,7 +2257,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                     // PORT NOTE: ownership reshape vs Zig — see `resolve` (Action::None|GetBlob).
                     // Store's Cow becomes the sole owner; Blob aliases it. With no store, Blob
                     // takes the buffer directly via `content_type_allocated`.
-                    if let Some(store) = blob_store_mut(blob) {
+                    // SAFETY: synchronous JS-thread `reject`-path; no JS re-entry occurs inside
+                    // the match, so no other `&Data`/`&Store` borrow of this `Store` is live.
+                    if let Some(store) = unsafe { blob_store_mut(blob) } {
                         store.mime_type = mime_type;
                         blob.content_type
                             .set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
@@ -2259,7 +2280,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 ));
                 blob.content_type_allocated.set(false);
                 blob.content_type_was_set.set(true);
-                blob_store_mut(blob)
+                // SAFETY: see the `blob_store_mut` call above — same
+                // synchronous JS-thread context.
+                unsafe { blob_store_mut(blob) }
                     .expect("infallible: checked above")
                     .mime_type = bun_http_types::MimeType::TEXT;
             }

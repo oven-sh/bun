@@ -1176,9 +1176,11 @@ pub mod store {
         /// cross-thread `&StoreRef` shape, but that is only a partial guard:
         /// cloned `StoreRef`s (which are `Send`) and `Blob: Sync` projecting
         /// `fn store(&self) -> Option<&StoreRef>` from a shared `&Blob` both
-        /// route around it. This fn's precondition is therefore the *sole*
-        /// compile-time guard on the single-owner contract; discharge it in
-        /// writing at every call site.
+        /// route around it. This fn's precondition is the primary
+        /// compile-time guard on the single-owner contract — together with
+        /// the sibling `unsafe fn blob_store_mut` in `webcore::body` (which
+        /// carries the same contract via `StoreRef::as_ptr()`). Discharge
+        /// both in writing at every call site.
         #[inline]
         #[allow(clippy::mut_from_ref)]
         pub unsafe fn data_mut(&self) -> &mut Data {

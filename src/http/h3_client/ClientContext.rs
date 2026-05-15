@@ -27,9 +27,6 @@ pub struct ClientContext {
     sessions: Vec<*mut ClientSession>,
 }
 
-/// TODO: verify soundness
-unsafe impl Sync for ClientContext {}
-
 /// One instance per HTTP-thread loop. Stored as a process global only
 /// because `bun.http.http_thread` is itself a process singleton — the
 /// underlying lsquic engine is bound to the `loop` passed to

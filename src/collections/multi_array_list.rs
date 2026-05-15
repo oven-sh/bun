@@ -440,6 +440,19 @@ pub trait SortContext {
 }
 
 /// Struct-of-arrays list. See module docs.
+///
+/// # Thread safety
+///
+/// `MultiArrayList` is `Send` (it's effectively a unique-owned `Box`-like
+/// handle over a single allocation) but deliberately **not** `Sync`. Several
+/// `&self` methods — `sort*` and `zero` — mutate the backing bytes through
+/// raw pointers (an interior-mutability pattern, chosen so callers can pass
+/// read-only column borrows into a sort context; see
+/// `sourcemap::Mapping::sort`). If the type were `Sync`, two threads could
+/// each call those methods concurrently through a shared reference — a data
+/// race, UB through a safe API. Because the inline `*mut u8` is already
+/// `!Sync`, we inherit the correct default; the Send impl below explicitly
+/// adds Send back, and we intentionally do NOT add an `unsafe impl Sync`.
 pub struct MultiArrayList<T, A: Allocator = Global> {
     bytes: *mut u8,
     len: usize,
@@ -448,9 +461,39 @@ pub struct MultiArrayList<T, A: Allocator = Global> {
     _marker: PhantomData<T>,
 }
 
-// SAFETY: `bytes` is uniquely owned; the only shared state is the allocator.
+// SAFETY: `bytes` is uniquely owned; a single owner is free to move the list
+// to another thread.
 unsafe impl<T: Send, A: Allocator + Send> Send for MultiArrayList<T, A> {}
-unsafe impl<T: Sync, A: Allocator + Sync> Sync for MultiArrayList<T, A> {}
+
+// No `unsafe impl Sync`. See the type-level doc comment for rationale — the
+// `&self` mutating methods (`sort*`, `zero`) would be racy under `Sync`.
+//
+// Compile-time proof that `MultiArrayList` is `!Sync` even when its payload is
+// `Sync`. Stable Rust has no negative trait bounds, so we use the
+// auto-trait-ambiguity trick (same pattern as `src/runtime/shell/subproc.rs`):
+// if `MultiArrayList<SyncRow>` ever becomes `Sync`, both blanket impls apply
+// and `_NOT_SYNC` fails to compile with "conflicting impls".
+#[doc(hidden)]
+#[allow(dead_code)]
+mod __sync_check {
+    use super::MultiArrayList;
+    #[derive(Clone, Copy)]
+    struct SyncRow {
+        a: u32,
+        b: u64,
+    }
+    trait NotSyncCheck<A> {
+        const OK: () = ();
+    }
+    impl<T: ?Sized> NotSyncCheck<()> for T {}
+    impl<T: ?Sized + Sync> NotSyncCheck<u8> for T {}
+    trait IsSendCheck {
+        const OK: () = ();
+    }
+    impl<T: ?Sized + Send> IsSendCheck for T {}
+    const _NOT_SYNC: () = <MultiArrayList<SyncRow> as NotSyncCheck<_>>::OK;
+    const _IS_SEND: () = <MultiArrayList<SyncRow> as IsSendCheck>::OK;
+}
 
 /// A `MultiArrayList::Slice` contains cached start pointers for each field in
 /// the list. These pointers are not normally stored to reduce the size of the

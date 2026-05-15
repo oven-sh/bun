@@ -115,8 +115,6 @@ pub enum HardcodedModule {
     NodeWorkerThreads,
     #[strum(serialize = "node:punycode")]
     NodePunycode,
-    #[strum(serialize = "undici")]
-    Undici,
     #[strum(serialize = "ws")]
     Ws,
     #[strum(serialize = "isomorphic-fetch")]
@@ -264,7 +262,6 @@ impl HardcodedModule {
 
         b"node-fetch" => HardcodedModule::NodeFetch,
         b"isomorphic-fetch" => HardcodedModule::IsomorphicFetch,
-        b"undici" => HardcodedModule::Undici,
         b"ws" => HardcodedModule::Ws,
         b"@vercel/fetch" => HardcodedModule::VercelFetch,
         b"utf-8-validate" => HardcodedModule::Utf8Validate,
@@ -700,7 +697,6 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("@vercel/fetch"),
     entry!("isomorphic-fetch"),
     entry!("node-fetch"),
-    entry!("undici"),
     entry!("utf-8-validate"),
     entry!("ws"),
     (
@@ -739,15 +735,6 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
         b"next/dist/compiled/node-fetch",
         Alias {
             path: zstr!("node-fetch"),
-            tag: import_record::Tag::Builtin,
-            node_builtin: false,
-            node_only_prefix: false,
-        },
-    ),
-    (
-        b"next/dist/compiled/undici",
-        Alias {
-            path: zstr!("undici"),
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,

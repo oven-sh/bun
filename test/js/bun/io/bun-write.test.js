@@ -288,6 +288,121 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
+  describe("streams pending Response/Request body to disk", () => {
+    // https://github.com/oven-sh/bun/issues/13237
+    // https://github.com/oven-sh/bun/issues/21455
+    // Previously these buffered the entire body in memory before writing,
+    // and hung forever if the JS Response object was GC'd while the body
+    // was still arriving.
+    it("fetch Response (body still arriving, Response GC'd)", async () => {
+      using dir = tempDir("bun-write-fetch-stream", {});
+      const TOTAL = 100 * 64 * 1024;
+      await using server = Bun.serve({
+        port: 0,
+        async fetch() {
+          let i = 0;
+          return new Response(
+            new ReadableStream({
+              type: "bytes",
+              async pull(c) {
+                if (i++ === 0) await Bun.sleep(20); // headers flush before body
+                if (i > 100) return c.close();
+                c.enqueue(new Uint8Array(64 * 1024).fill(65));
+                await Bun.sleep(2);
+              },
+            }),
+          );
+        },
+      });
+
+      const out = join(String(dir), "out.bin");
+      // The Response is unreferenced after this expression; force GC
+      // while the body is still in flight.
+      const p = Bun.write(out, await fetch(server.url));
+      Bun.gc(true);
+      await Bun.sleep(10);
+      Bun.gc(true);
+
+      expect(await p).toBe(TOTAL);
+      expect((await Bun.file(out).stat()).size).toBe(TOTAL);
+    });
+
+    it("new Response(ReadableStream)", async () => {
+      using dir = tempDir("bun-write-response-stream", {});
+      const out = join(String(dir), "out.txt");
+      const wrote = await Bun.write(
+        out,
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("hello "));
+              c.enqueue(new TextEncoder().encode("world"));
+              c.close();
+            },
+          }),
+        ),
+      );
+      expect(wrote).toBe(11);
+      expect(await Bun.file(out).text()).toBe("hello world");
+    });
+
+    it("new Request(url, { body: ReadableStream })", async () => {
+      using dir = tempDir("bun-write-request-stream", {});
+      const out = join(String(dir), "out.txt");
+      const wrote = await Bun.write(
+        out,
+        new Request("http://example.com", {
+          method: "POST",
+          body: new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("from a request body"));
+              c.close();
+            },
+          }),
+        }),
+      );
+      expect(wrote).toBe(19);
+      expect(await Bun.file(out).text()).toBe("from a request body");
+    });
+
+    it("truncates the destination", async () => {
+      using dir = tempDir("bun-write-stream-trunc", {});
+      const out = join(String(dir), "out.txt");
+      await Bun.write(out, Buffer.alloc(1000, "0").toString());
+      const wrote = await Bun.write(
+        out,
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("short"));
+              c.close();
+            },
+          }),
+        ),
+      );
+      expect(wrote).toBe(5);
+      expect(await Bun.file(out).text()).toBe("short");
+    });
+
+    it("creates parent directory (createPath default true)", async () => {
+      using dir = tempDir("bun-write-stream-mkdirp", {});
+      const out = join(String(dir), "a", "b", "c", "out.txt");
+      const wrote = await Bun.write(
+        out,
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("nested"));
+              c.close();
+            },
+          }),
+        ),
+      );
+      expect(wrote).toBe(6);
+      expect(await Bun.file(out).text()).toBe("nested");
+    });
+  });
+
   it("Response -> Bun.file -> Response -> text", async () => {
     await gcTick();
     const file = path.join(import.meta.dir, "fetch.js.txt");

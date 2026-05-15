@@ -233,6 +233,23 @@ impl Options {
         }
         Ok(opts)
     }
+
+    /// Whether `--minimum-release-age=<N>` represents an active supply-chain
+    /// gate. A value of `0` (the documented disable spelling — see the
+    /// `handles 0 value to disable` test in `minimum-release-age.test.ts`)
+    /// or any other non-positive number is treated as "no gate"; we avoid
+    /// forcing cache re-resolution or hard-erroring `--no-install` in that
+    /// case. Parse failures fall through to the subprocess, which reports
+    /// a proper error.
+    fn has_active_age_gate(&self) -> bool {
+        match self.minimum_release_age {
+            None => false,
+            Some(v) => match bun_core::parse_double(v) {
+                Ok(secs) => secs > 0.0,
+                Err(_) => true,
+            },
+        }
+    }
 }
 
 // PORT NOTE: `fn deinit` only freed `passthrough_list`; `Vec` drops automatically,
@@ -1023,8 +1040,9 @@ impl BunxCommand {
                         // asserting what versions they're willing to execute. A bunx-cache
                         // hit from a previous run (which may have installed something the
                         // gate now forbids) must not bypass that — force re-resolution so
-                        // the spawned `bun add` re-applies the filter.
-                        let age_gate_forces_refresh = opts.minimum_release_age.is_some();
+                        // the spawned `bun add` re-applies the filter. `=0` is the
+                        // documented disable value, so honor it by NOT forcing refresh.
+                        let age_gate_forces_refresh = opts.has_active_age_gate();
                         let is_stale: bool = 'is_stale: {
                             if age_gate_forces_refresh {
                                 break 'is_stale true;
@@ -1138,15 +1156,17 @@ impl BunxCommand {
                         root_dir_fd,
                         bunx_cache_dir,
                         result_package_name,
-                        // When `--minimum-release-age` is set, force the cache
-                        // to be treated as stale so we re-resolve through
-                        // `bun add` (where the age filter is applied). Without
-                        // this, `bunx --minimum-release-age=<N> <pkg-whose-bin-
-                        // name-differs-from-initial-guess>` would find the
-                        // cached bin via `get_bin_name_from_temp_directory` and
-                        // run it — bypassing the gate for packages like
-                        // `@angular/cli` (initial guess `cli`, real bin `ng`).
-                        opts.minimum_release_age.is_some(),
+                        // When `--minimum-release-age` is an active gate, force
+                        // the cache to be treated as stale so we re-resolve
+                        // through `bun add` (where the age filter is applied).
+                        // Without this, `bunx --minimum-release-age=<N> <pkg-
+                        // whose-bin-name-differs-from-initial-guess>` would
+                        // find the cached bin via
+                        // `get_bin_name_from_temp_directory` and run it —
+                        // bypassing the gate for packages like `@angular/cli`
+                        // (initial guess `cli`, real bin `ng`). `=0` is the
+                        // documented disable value and doesn't force refresh.
+                        opts.has_active_age_gate(),
                     ) {
                         Ok(package_name_for_bin) => {
                             // if we check the bin name and its actually the same, we don't need to check $PATH here again

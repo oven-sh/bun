@@ -2694,5 +2694,58 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       expect(exitCode).not.toBe(0);
     });
+
+    // `--minimum-release-age=0` is the documented disable spelling (see
+    // `handles 0 value to disable` above). bunx must honor that for the
+    // cache-bypass checks — otherwise `=0` unnecessarily forces re-resolution
+    // on a warm cache, and `--no-install --minimum-release-age=0` hard-errors
+    // instead of running the cached binary.
+    test.skipIf(isWindows)("--minimum-release-age=0 honors cached binary (disable semantics)", async () => {
+      using dir = tempDir("bunx-min-age-zero", {});
+      using cacheDir = tempDir("bunx-min-age-cache-zero", {});
+      using tmp = tempDir("bunx-min-age-tmp-zero", {});
+
+      const uid = process.getuid?.() ?? 0;
+      const binDir = join(String(tmp), `bunx-${uid}-regular-package@latest`, "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      const binPath = join(binDir, "regular-package");
+      writeFileSync(binPath, "#!/bin/sh\necho ZERO_DISABLE_OK\nexit 0\n");
+      chmodSync(binPath, 0o755);
+
+      // Without --no-install: should run the cached binary, not force
+      // re-resolution via `bun add`.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", "--minimum-release-age=0", "regular-package"],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stdout).toContain("ZERO_DISABLE_OK");
+      expect(stderr).not.toContain("Cannot use --no-install");
+      expect(exitCode).toBe(0);
+
+      // With --no-install: same, since =0 isn't an active gate.
+      await using proc2 = Bun.spawn({
+        cmd: [bunExe(), "x", "--no-install", "--minimum-release-age=0", "regular-package"],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout2, stderr2, exitCode2] = await Promise.all([
+        proc2.stdout.text(),
+        proc2.stderr.text(),
+        proc2.exited,
+      ]);
+      expect(stdout2).toContain("ZERO_DISABLE_OK");
+      expect(stderr2).not.toContain("Cannot use --no-install");
+      expect(exitCode2).toBe(0);
+    });
   });
 });

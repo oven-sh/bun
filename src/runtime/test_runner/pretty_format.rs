@@ -10,7 +10,7 @@ use bun_jsc::{
 };
 use bun_core::{strings, ZigString, ZigStringSlice};
 
-use super::expect;
+use super::expect::{self, dom_element_outer_html, is_dom_element_like};
 use crate::webcore::BlobExt as _;
 
 /// Local shim over `Output::pretty_fmt` that (a) accepts the const-generic
@@ -485,6 +485,7 @@ pub enum Tag {
     ArrayBuffer,
 
     JSX,
+    DOMElement,
     Event,
 }
 
@@ -599,6 +600,13 @@ impl Tag {
                 {
                     return Ok(TagResult { tag: Tag::JSX, cell: js_type });
                 }
+            }
+
+            // Userland DOM implementations like happy-dom/jsdom are ordinary
+            // JS objects to JSC. Format their markup instead of recursively
+            // expanding implementation internals.
+            if is_dom_element_like(value, global_this)? {
+                return Ok(TagResult { tag: Tag::DOMElement, cell: js_type });
             }
         }
 
@@ -2508,6 +2516,19 @@ impl<'a> Formatter<'a> {
                         }
                     }
                 }
+                Tag::DOMElement => {
+                    if let Some(html) = dom_element_outer_html(value, self.global_this)? {
+                        writer.write_all(&html);
+                        self.add_for_new_line(html.len());
+                        return Ok(());
+                    }
+
+                    return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                        writer.ctx,
+                        value,
+                        js_type,
+                    );
+                }
                 Tag::TypedArray => {
                     let array_buffer = value.as_array_buffer(self.global_this).unwrap();
                     let slice = array_buffer.byte_slice();
@@ -2712,6 +2733,10 @@ impl<'a> Formatter<'a> {
             Tag::JSX => {
                 self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
+            Tag::DOMElement => self
+                .print_as::<W, { Tag::DOMElement }, ENABLE_ANSI_COLORS>(
+                    writer, value, result.cell,
+                ),
             Tag::Event => {
                 self.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }

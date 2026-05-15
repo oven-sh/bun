@@ -348,6 +348,50 @@ pub mod expect {
         f
     }
 
+    #[inline]
+    pub fn is_dom_element_like(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        if !value.is_object() {
+            return Ok(false);
+        }
+
+        let Some(node_type) = value.get(global, "nodeType")? else {
+            return Ok(false);
+        };
+        if !node_type.is_number() || node_type.to_int32() != 1 {
+            return Ok(false);
+        }
+
+        let Some(outer_html) = value.get(global, "outerHTML")? else {
+            return Ok(false);
+        };
+
+        Ok(outer_html.is_string())
+    }
+
+    #[inline]
+    pub fn dom_element_outer_html(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Vec<u8>>> {
+        if !value.is_object() {
+            return Ok(None);
+        }
+
+        let Some(node_type) = value.get(global, "nodeType")? else {
+            return Ok(None);
+        };
+        if !node_type.is_number() || node_type.to_int32() != 1 {
+            return Ok(None);
+        }
+
+        let Some(outer_html) = value.get(global, "outerHTML")? else {
+            return Ok(None);
+        };
+        if !outer_html.is_string() {
+            return Ok(None);
+        }
+
+        let outer_html = outer_html.to_slice(global)?;
+        Ok(Some(outer_html.slice().to_vec()))
+    }
+
     // ── numeric ordering matchers (toBe{Greater,Less}Than[OrEqual]) ───────
     // The four matchers are near-identical; collapse to one body
     // parameterised by relation.

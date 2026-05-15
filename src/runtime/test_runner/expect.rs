@@ -17,9 +17,14 @@ use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
+#[allow(unused_imports)]
+use super::expect::{
+    dom_element_outer_html, make_formatter, FormatterTestExt, JSGlobalObjectTestExt, JSValueTestExt,
+};
 
 use bun_jsc::js_error_to_write_error;
+
+const DOM_ELEMENT_HTML_MAX_LEN: usize = 10_000;
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.
@@ -2020,6 +2025,71 @@ impl Expect {
         }
         let mut formatter = make_formatter(global);
         let signature = Self::get_signature(matcher_name, "", not);
+        this.throw(
+            global,
+            signature,
+            format_args!("\n\nReceived: <red>{}<r>\n", value.to_fmt(&mut formatter)),
+        )
+    }
+
+    #[inline]
+    fn escape_pretty_format_markup(bytes: &[u8]) -> Vec<u8> {
+        let mut escaped = Vec::with_capacity(bytes.len());
+        for byte in bytes {
+            if matches!(byte, b'<' | b'>') {
+                escaped.push(b'\\');
+            }
+            escaped.push(*byte);
+        }
+        escaped
+    }
+
+    #[inline]
+    fn truncate_dom_element_outer_html(bytes: &[u8]) -> Vec<u8> {
+        if bytes.len() <= DOM_ELEMENT_HTML_MAX_LEN {
+            return bytes.to_vec();
+        }
+
+        let valid_len = match core::str::from_utf8(bytes) {
+            Ok(_) => bytes.len(),
+            Err(error) => error.valid_up_to(),
+        };
+        let html = core::str::from_utf8(&bytes[..valid_len]).unwrap_or("");
+        let mut truncate_at = DOM_ELEMENT_HTML_MAX_LEN.min(html.len());
+        while truncate_at > 0 && !html.is_char_boundary(truncate_at) {
+            truncate_at -= 1;
+        }
+
+        let mut truncated = Vec::with_capacity(DOM_ELEMENT_HTML_MAX_LEN + 3);
+        truncated.extend_from_slice(&bytes[..truncate_at]);
+        truncated.extend_from_slice(b"...");
+        truncated
+    }
+
+    #[inline]
+    pub fn run_boolean_matcher_predicate(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        matcher_name: &'static str,
+        pred: impl FnOnce(JSValue) -> bool,
+    ) -> JsResult<JSValue> {
+        let (this, value, not) = self.matcher_prelude(global, frame.this(), matcher_name, "")?;
+        if pred(value) != not {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let signature = Self::get_signature(matcher_name, "", not);
+        if let Some(received) = dom_element_outer_html(value, global)? {
+            let received = Self::truncate_dom_element_outer_html(&received);
+            let received = Self::escape_pretty_format_markup(&received);
+            return this.throw(
+                global,
+                signature,
+                format_args!("\n\nReceived: <red>{}<r>\n", bstr::BStr::new(&received)),
+            );
+        }
+
+        let mut formatter = make_formatter(global);
         this.throw(
             global,
             signature,

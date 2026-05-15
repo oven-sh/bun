@@ -403,10 +403,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 /// identically — matches `eql`, which masks the user-bit lane and ignores
 /// debug-only ptrbits) and `[0] != [2]` (distinct refs produce distinct hashes
 /// with overwhelming probability for wyhash over distinct 8-byte inputs).
-pub fn ident_or_ref_hash_refs(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub fn ident_or_ref_hash_refs(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::Ref;
     use bun_css::css_values::ident::{IdentOrRef, debug_ident};
     use bun_wyhash::Wyhash;

@@ -12,9 +12,9 @@
 
 import { file, spawn } from "bun";
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 const FIXTURES = join(import.meta.dir, "..", "..", "cli", "install");
 const PKG = "baz";

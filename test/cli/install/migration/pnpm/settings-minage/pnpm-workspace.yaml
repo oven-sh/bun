@@ -1,0 +1,4 @@
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - webpack
+  - react

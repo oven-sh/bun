@@ -1,0 +1,6 @@
+shamefullyHoist: true
+hoistPattern:
+  - "*eslint*"
+  - "*babel*"
+publicHoistPattern:
+  - "*plugin*"

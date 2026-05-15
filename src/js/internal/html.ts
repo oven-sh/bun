@@ -104,10 +104,6 @@ yourself with Bun.serve().
         resolved = Bun.resolveSync("./" + arg, cwd);
       }
 
-      if (resolved.includes(path.sep + "node_modules" + path.sep)) {
-        continue;
-      }
-
       args.push(resolved);
     }
 

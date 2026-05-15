@@ -1667,7 +1667,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !this.has_tcp() {
             return;
         }
-        let mut close_reason_buf = [0u8; 128];
+        // `send_close_with_body` takes `&mut [u8; 125]`; keep the array at
+        // 125 bytes so the borrow covers the full provenance and matches the
+        // other caller (server-initiated close echo).
+        let mut close_reason_buf = [0u8; 125];
+        // RFC 6455 §5.5.1: a close-frame payload is the 2-byte status code
+        // plus a ≤123-byte reason. Cap the transcode cursor at 123 so an
+        // over-long reason bails via `break 'inner` (on the `WriteZero` /
+        // `NoSpaceLeft` arms below) to the clean no-reason close, instead of
+        // reaching `send_close_with_body`'s `.min(123)` clamp, which could cut
+        // a multi-byte UTF-8 sequence mid-codepoint and trip
+        // `terminate(InvalidUtf8)`.
+        const MAX_REASON_BYTES: usize = 123;
         // SAFETY: reason is null or a valid *const ZigString from C++
         if let Some(str) = unsafe { reason.as_ref() } {
             'inner: {
@@ -1677,9 +1688,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // replicate the encoding switch directly: 8-bit copies bytes,
                 // 16-bit transcodes via `to_owned_slice()` (UTF-16 → UTF-8).
                 use std::io::Write;
-                let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..]);
+                let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..MAX_REASON_BYTES]);
                 if str.is_16bit() {
-                    // Allocates; close-reason is bounded ≤125 bytes and this
+                    // Allocates; close-reason is bounded ≤123 bytes and this
                     // path is cold (close handshake).
                     let utf8 = str.to_owned_slice();
                     if cursor.write_all(&utf8).is_err() {
@@ -1706,16 +1717,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                     cursor.set_position((pos + result.written as usize) as u64);
                 }
                 let wrote_len = cursor.position() as usize;
-                // 125-byte close-frame payload budget minus the 2-byte status code.
-                if wrote_len > 123 {
-                    break 'inner;
-                }
-                // SAFETY: `close_reason_buf` is a 128-byte stack array, so its
-                // first 125 bytes form a valid `[u8; 125]` (align 1); `cursor`
-                // (the only other borrow) ended at `wrote_len` above, so this
-                // `&mut` is unique.
-                let buf = unsafe { &mut *close_reason_buf.as_mut_ptr().cast::<[u8; 125]>() };
-                this.send_close_with_body(code, None, Some(buf), wrote_len);
+                // Cursor is over a 123-byte view; overflow takes `break 'inner` above.
+                debug_assert!(wrote_len <= MAX_REASON_BYTES);
+                this.send_close_with_body(code, None, Some(&mut close_reason_buf), wrote_len);
                 return;
             }
         }

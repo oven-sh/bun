@@ -11,8 +11,8 @@
 // The fix hashes `Ref::as_u64()` — the identity bits that `Ref::eql` compares
 // against — so equal refs hash identically and distinct refs hash distinctly.
 
-import { test, expect } from "bun:test";
 import { cssInternals } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 
 test("IdentOrRef::hash distinguishes distinct refs and is invariant over debug-only ptrbits", () => {
   const [h_a, h_a_dup, h_b, h_b_dup] = cssInternals.identOrRefHashRefs(

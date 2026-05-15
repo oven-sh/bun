@@ -968,7 +968,12 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
-        this.enclosing_layer.v.set_len(len);
+        // SAFETY: `len` was captured by `enclosing_layer_length` earlier in
+        // `parse_block` before the layer was optionally grown via
+        // `push_to_enclosing_layer`, so it is always ≤ the current length
+        // (i.e. a shrink). Segments are `&'static [u8]` (Copy), so the
+        // truncated suffix has no `Drop` to leak.
+        unsafe { this.enclosing_layer.v.set_len(len) };
     }
 
     fn bump_anon_layer_count(this: &mut Self, amount: i32) {

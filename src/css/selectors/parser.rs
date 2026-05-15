@@ -65,7 +65,10 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
             unsafe { v.push(core::ptr::read(src.get_unchecked(i))) };
         }
     }
-    sl.set_len(0);
+    // SAFETY: shrink to 0; `0 <= capacity` and the empty prefix is trivially
+    // initialised. Every original element was moved out via `ptr::read`
+    // above, so suppressing their `Drop` here is intentional.
+    unsafe { sl.set_len(0) };
     v.into_boxed_slice()
 }
 

@@ -210,8 +210,15 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         // it is safe to just set the length to 0.
         //
         // Combinators don't need to be deinitialized because they are simple enums.
-        self.simple_selectors.set_len(0);
-        self.combinators.set_len(0);
+        //
+        // SAFETY: shrink to 0. Every `GenericComponent<Impl>` was moved out of
+        // `simple_selectors` via `ptr::read` in the loop above, and
+        // `combinators` holds `(Combinator, usize)` pairs (`Copy`) that have
+        // no `Drop` to skip.
+        unsafe {
+            self.simple_selectors.set_len(0);
+            self.combinators.set_len(0);
+        }
 
         BuildResult {
             specificity_and_flags: spec,

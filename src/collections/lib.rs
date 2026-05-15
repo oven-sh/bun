@@ -440,13 +440,17 @@ impl<T, const N: usize> SmallList<T, N> {
             self.0.reserve_exact(new_capacity as usize - cur);
         }
     }
-    /// Zig `setLen` — exposed as safe for API parity with the previous port
-    /// (whose only external caller shrinks to 0). Growing past the initialised
-    /// region is the caller's responsibility, same as before.
+    /// Zig `setLen` — raw length store (same contract as [`Vec::set_len`]).
+    ///
+    /// # Safety
+    /// - `new_len` must be ≤ `self.capacity()`.
+    /// - Every element in `0..new_len` must be initialised.
+    ///
+    /// In practice all callers shrink (either to `0` after draining by
+    /// `ptr::read`, or back to a previously-observed length).
     #[inline]
-    pub fn set_len(&mut self, new_len: u32) {
-        // SAFETY: matches the previous bun_css::SmallList::set_len contract
-        // (Zig callers treat this as a raw length store).
+    pub unsafe fn set_len(&mut self, new_len: u32) {
+        // SAFETY: the caller upholds the `Vec::set_len` contract above.
         unsafe { self.0.set_len(new_len as usize) }
     }
 
@@ -477,6 +481,75 @@ impl<T, const N: usize> SmallList<T, N> {
         for item in self.0.iter_mut() {
             func(item);
         }
+    }
+}
+
+#[cfg(test)]
+mod small_list_tests {
+    use super::SmallList;
+
+    /// `SmallList::set_len` must be `unsafe fn` — same contract as
+    /// [`Vec::set_len`]. With `#![deny(unused_unsafe)]` in effect, the
+    /// `unsafe { … }` block below only compiles when the callee is itself
+    /// `unsafe fn`; regressing the signature to safe would produce an
+    /// `unused_unsafe` compile error here.
+    ///
+    /// Exercises the shrink-to-0 shape of every real caller (CSS selector
+    /// builder, selector parser, `@layer` reset) — elements moved out via
+    /// `ptr::read`, then `set_len(0)` suppresses their `Drop`.
+    #[test]
+    #[deny(unused_unsafe)]
+    fn set_len_is_unsafe_and_shrink_to_zero_works() {
+        let mut sl: SmallList<Box<u32>, 2> = SmallList::default();
+        sl.append(Box::new(10));
+        sl.append(Box::new(20));
+        sl.append(Box::new(30)); // forces spill to heap
+        assert_eq!(sl.len(), 3);
+
+        let mut drained: Vec<Box<u32>> = Vec::with_capacity(3);
+        for i in 0..3 {
+            // SAFETY: each index read exactly once; `set_len(0)` below
+            // suppresses the source's `Drop` so no double-free.
+            drained.push(unsafe { core::ptr::read(&sl.slice()[i]) });
+        }
+        // SAFETY: shrink to 0 is always sound — `0 <= capacity` and the
+        // empty prefix is trivially initialised. The elements we just
+        // `ptr::read`'d out must not be re-dropped; `set_len(0)` is the
+        // exact primitive `Vec::set_len`/`SmallVec::set_len` expose for
+        // that, and it must stay `unsafe fn` (hence the `deny` above).
+        unsafe { sl.set_len(0) };
+        assert_eq!(sl.len(), 0);
+        assert!(sl.is_empty());
+
+        // Elements survived the move — `Box`'s `Drop` runs on `drained`
+        // only, not on `sl`. No double-free under Miri / ASan.
+        assert_eq!(*drained[0], 10);
+        assert_eq!(*drained[1], 20);
+        assert_eq!(*drained[2], 30);
+
+        // Subsequent pushes into the cleared list still work (capacity
+        // preserved, no corrupted Vec header).
+        sl.append(Box::new(99));
+        assert_eq!(sl.len(), 1);
+        assert_eq!(**sl.at(0), 99);
+    }
+
+    /// Mirrors `reset_enclosing_layer` in `css/css_parser.rs`: capture a
+    /// length, grow past it, then `set_len` back — safe so long as the
+    /// truncated suffix's `T` has no `Drop` to leak (here `u64: Copy`).
+    #[test]
+    fn set_len_shrink_to_prior_length() {
+        let mut sl: SmallList<u64, 1> = SmallList::default();
+        sl.append(1);
+        let old = sl.len();
+        sl.append(2);
+        sl.append(3);
+        assert_eq!(sl.len(), 3);
+        // SAFETY: `old` was previously observed; `old <= self.len()`, and
+        // `u64: Copy` means the truncated tail has no `Drop`.
+        unsafe { sl.set_len(old) };
+        assert_eq!(sl.len(), 1);
+        assert_eq!(*sl.at(0), 1);
     }
 }
 

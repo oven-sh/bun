@@ -1,6 +1,7 @@
 //  zig translate-c -I${VCPKG_ROOT}/installed/x64-windows/include/  ${VCPKG_ROOT}/current/installed/x64-windows/include/zlib.h -target x86_64-windows-msvc -lc > src/zlib_sys/win32.zig
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
 
 pub use crate::shared::{
@@ -235,7 +236,7 @@ pub const Z_NULL: c_int = 0;
 #[inline]
 pub unsafe fn deflate_init(strm: z_streamp, level: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer; zlib reads version/stream_size for ABI check.
-    unsafe {
+    yolo! {
         deflateInit_(
             strm,
             level,
@@ -247,7 +248,7 @@ pub unsafe fn deflate_init(strm: z_streamp, level: c_int) -> ReturnCode {
 #[inline]
 pub unsafe fn inflate_init(strm: z_streamp) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe {
+    yolo! {
         inflateInit_(
             strm,
             zlibVersion(),
@@ -265,7 +266,7 @@ pub unsafe fn deflate_init2(
     strategy: c_int,
 ) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe {
+    yolo! {
         deflateInit2_(
             strm,
             level,
@@ -281,7 +282,7 @@ pub unsafe fn deflate_init2(
 #[inline]
 pub unsafe fn inflate_init2(strm: z_streamp, window_bits: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe {
+    yolo! {
         inflateInit2_(
             strm,
             window_bits,
@@ -297,7 +298,7 @@ pub unsafe fn inflate_back_init(
     window: *mut u8,
 ) -> ReturnCode {
     // SAFETY: caller guarantees `strm` and `window` are valid.
-    unsafe {
+    yolo! {
         inflateBackInit_(
             strm,
             window_bits,

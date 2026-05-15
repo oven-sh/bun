@@ -1,5 +1,6 @@
 //! JSC bridge for `bun.sys.Error`. Keeps `src/sys/` free of JSC types.
 
+use bun_yolo::yolo;
 use bun_sys::Error;
 
 use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SystemErrorJsc};
@@ -144,7 +145,7 @@ pub mod TestingAPIs {
             // the sigset_t/sigaction storage is fully owned and initialized
             // here, and SIGUSR2's previous disposition is restored before
             // return so no process-level side effect leaks.
-            let (act_flags, rb_handler, rb_flags) = unsafe {
+            let (act_flags, rb_handler, rb_flags) = yolo! {
                 let mut mask = core::mem::MaybeUninit::<sigset_t>::zeroed();
                 sigemptyset(mask.as_mut_ptr());
                 sigaddset(mask.as_mut_ptr(), SIGUSR2);

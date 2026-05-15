@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::RefCell;
 use core::marker::PhantomData;
 use core::mem::{MaybeUninit, offset_of};
@@ -39,7 +40,7 @@ pub struct Node<T> {
 
 impl<T> Node<T> {
     /// Read `(*p).next` for a known-non-null, live node pointer. Centralises
-    /// the `unsafe { (*p).next }` walk that appears throughout this module's
+    /// the `yolo! { (*p).next }` walk that appears throughout this module's
     /// list traversals. Caller contract: `p` points at a live `Node<T>` (never
     /// null — debug-asserted).
     #[inline(always)]
@@ -48,7 +49,7 @@ impl<T> Node<T> {
         // SAFETY: every call site passes a node either just popped from the
         // free list, just compared non-null in the surrounding `while`/`if`,
         // or `&self`/`self.first` after an explicit null check.
-        unsafe { (*p).next }
+        yolo! { (*p).next }
     }
 
     /// Access the pooled value.
@@ -60,14 +61,14 @@ impl<T> Node<T> {
     #[inline]
     pub unsafe fn data_ref(&self) -> &T {
         // SAFETY: caller guarantees `data` is initialized.
-        unsafe { self.data.assume_init_ref() }
+        yolo! { self.data.assume_init_ref() }
     }
 
     /// See [`Node::data_ref`] for safety requirements.
     #[inline]
     pub unsafe fn data_mut(&mut self) -> &mut T {
         // SAFETY: caller guarantees `data` is initialized.
-        unsafe { self.data.assume_init_mut() }
+        yolo! { self.data.assume_init_mut() }
     }
 
     /// Insert a new node after the current one.
@@ -145,7 +146,7 @@ impl<T> SinglyLinkedList<T> {
     ///     new_node: Pointer to the new node to insert.
     pub fn prepend(&mut self, new_node: *mut Node<T>) {
         // SAFETY: caller guarantees new_node is a live, exclusively-owned Node
-        unsafe { (*new_node).next = self.first };
+        yolo! { (*new_node).next = self.first };
         self.first = new_node;
     }
 
@@ -162,7 +163,7 @@ impl<T> SinglyLinkedList<T> {
             let mut current_elm = self.first;
             // SAFETY: walk live list nodes; Zig's `.?` would panic on null —
             // mirror that with an unchecked deref (debug_assert in Phase B).
-            unsafe {
+            yolo! {
                 while (*current_elm).next != node {
                     current_elm = (*current_elm).next;
                 }
@@ -190,7 +191,7 @@ impl<T> SinglyLinkedList<T> {
     pub fn len(&self) -> usize {
         if !self.first.is_null() {
             // SAFETY: first is non-null and live
-            1 + unsafe { (*self.first).count_children() }
+            1 + yolo! { (*self.first).count_children() }
         } else {
             0
         }
@@ -308,7 +309,7 @@ impl<'a, T: ObjectPoolType> core::ops::Deref for PoolGuard<'a, T> {
         // SAFETY: `node` is exclusively owned for the guard's lifetime and its
         // `data` was initialized by the pool's `get()` path before being handed
         // out (either via `T::INIT` or by reuse of a previously-written node).
-        unsafe { (*self.node).data.assume_init_ref() }
+        yolo! { (*self.node).data.assume_init_ref() }
     }
 }
 
@@ -316,7 +317,7 @@ impl<'a, T: ObjectPoolType> core::ops::DerefMut for PoolGuard<'a, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: see `Deref` impl.
-        unsafe { (*self.node).data.assume_init_mut() }
+        yolo! { (*self.node).data.assume_init_mut() }
     }
 }
 
@@ -394,7 +395,7 @@ where
             // SAFETY: node was just popped from the free list and is exclusively owned;
             // free-list nodes always carry initialized `data` (they reach the list
             // via `push` or `release` of a previously-used node).
-            unsafe { (*node).data.assume_init_mut().reset() };
+            yolo! { (*node).data.assume_init_mut().reset() };
             if MAX_COUNT > 0 {
                 d.count = d.count.saturating_sub(1);
             }
@@ -405,7 +406,7 @@ where
 
     pub fn first() -> *mut T {
         // SAFETY: `get_node()` always returns a valid, exclusively-owned node
-        unsafe { (*Self::get_node()).data.as_mut_ptr() }
+        yolo! { (*Self::get_node()).data.as_mut_ptr() }
     }
 
     /// Zig `get()` — pop a node from the free list or allocate a fresh one.
@@ -416,7 +417,7 @@ where
                 if let Some(node) = d.list.pop_first() {
                     // SAFETY: node just popped from free list, exclusively owned;
                     // free-list nodes always carry initialized `data`.
-                    unsafe { (*node).data.assume_init_mut().reset() };
+                    yolo! { (*node).data.assume_init_mut().reset() };
                     if MAX_COUNT > 0 {
                         d.count = d.count.saturating_sub(1);
                     }
@@ -461,7 +462,7 @@ where
 
     pub fn release_value(value: *mut T) {
         // SAFETY: `value` points to the `data` field of a live `Node<T>`
-        let node = unsafe { bun_core::from_field_ptr!(Node<T>, data, value) };
+        let node = yolo! { bun_core::from_field_ptr!(Node<T>, data, value) };
         Self::release(node);
     }
 
@@ -522,7 +523,7 @@ where
         // is exclusively owned by the caller. `data` is initialized: `destroy_node`
         // is only reached from `release()` (caller had a usable node, so `data`
         // was written) or `delete_all()` (free-list nodes, always initialized).
-        unsafe {
+        yolo! {
             (*node).data.assume_init_drop();
             drop(bun_core::heap::take(node));
         }

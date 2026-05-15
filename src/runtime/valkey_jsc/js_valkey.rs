@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -84,7 +85,7 @@ fn deref_guard(
     fn drop_fn(p: *const JSValkeyClient) {
         // SAFETY: `p` was a live `&JSValkeyClient` at guard creation; the
         // intrusive `ref_()` taken just before guarantees liveness here.
-        unsafe { JSValkeyClient::deref(p.cast_mut()) }
+        yolo! { JSValkeyClient::deref(p.cast_mut()) }
     }
     scopeguard::guard(this, drop_fn as fn(*const JSValkeyClient))
 }
@@ -418,11 +419,11 @@ impl bun_ptr::RefCounted for JSValkeyClient {
     type DestructorCtx = ();
     unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` is live.
-        unsafe { &raw mut (*this).ref_count }
+        yolo! { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: last ref dropped; sole owner.
-        unsafe { JSValkeyClient::deinit(this) };
+        yolo! { JSValkeyClient::deinit(this) };
     }
 }
 
@@ -430,7 +431,7 @@ impl JSValkeyClient {
     #[inline]
     pub fn ref_(&self) {
         // SAFETY: `self` is live; intrusive count is interior-mutable.
-        unsafe { bun_ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
+        yolo! { bun_ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
     /// Decrement the intrusive refcount; on zero runs [`deinit`](Self::deinit)
     /// which frees the heap allocation. After this returns `this` may dangle.
@@ -447,7 +448,7 @@ impl JSValkeyClient {
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
-        unsafe { bun_ptr::RefCount::deref(this) };
+        yolo! { bun_ptr::RefCount::deref(this) };
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -475,7 +476,7 @@ impl JSValkeyClient {
         // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
         // `&mut` is fresh per call site; reentrancy through
         // `ValkeyClient::parent()` forms a shared `&JSValkeyClient` only.
-        unsafe { self.client.get_mut() }
+        yolo! { self.client.get_mut() }
     }
 
     // Factory function to create a new Valkey client from JS
@@ -571,7 +572,7 @@ impl JSValkeyClient {
         };
         // SAFETY: `from_utf8` heap-allocates; release on scope exit (Zig: `defer parsed_url.deinit()`).
         let _parsed_url_drop =
-            scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
+            scopeguard::guard(parsed_url, |p| yolo! { URL::destroy(p.as_ptr()) });
         // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
         // `BackRef` liveness invariant holds; `Deref` encapsulates the single
         // `NonNull::as_ref` site.
@@ -766,7 +767,7 @@ impl JSValkeyClient {
     ) -> JsResult<*mut JSValkeyClient> {
         let new_client_ptr = JSValkeyClient::create_no_js_no_pubsub(global_object, arguments)?;
         // SAFETY: just allocated above
-        let new_client = unsafe { &*new_client_ptr };
+        let new_client = yolo! { &*new_client_ptr };
 
         // Initially, we only need to hold a weak reference to the JS object.
         new_client.this_value.set(JsRef::init_weak(js_this));
@@ -1119,7 +1120,7 @@ impl JSValkeyClient {
         // SAFETY: `vm` is the live per-thread VM; `timer` is an unlinked
         // `EventLoopTimer` field of the boxed `JSValkeyClient` (stable address
         // until `remove_timer`/`stop_timers` unlinks it).
-        unsafe { VirtualMachine::timer_insert(vm, timer.as_ptr()) };
+        yolo! { VirtualMachine::timer_insert(vm, timer.as_ptr()) };
         self.ref_();
     }
 
@@ -1130,13 +1131,13 @@ impl JSValkeyClient {
             let vm = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
             // SAFETY: `vm` is the live per-thread VM; `timer` is currently
             // linked into the heap (state == ACTIVE checked above).
-            unsafe { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
+            yolo! { VirtualMachine::timer_remove(vm, timer.as_ptr()) };
 
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
             // SAFETY: balanced with add_timer's ref_(); count stays > 0 so
             // `&self` remains valid past this call.
-            unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
+            yolo! { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         }
     }
 
@@ -1274,7 +1275,7 @@ impl JSValkeyClient {
         debug_assert!(self.this_value.get().is_strong());
 
         let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| unsafe {
+        let _defer = scopeguard::guard(self_ptr, |p| yolo! {
             (*p).client_mut().on_writable();
             // update again after running the callback
             (*p).update_poll_ref();
@@ -1416,7 +1417,7 @@ impl JSValkeyClient {
         let global_object = self.global_object;
 
         let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| unsafe {
+        let _defer = scopeguard::guard(self_ptr, |p| yolo! {
             // Update poll reference to allow garbage collection of disconnected clients
             (*p).update_poll_ref();
             JSValkeyClient::deref(p);
@@ -1498,10 +1499,10 @@ impl JSValkeyClient {
         impl Holder {
             fn run(self_: *mut Holder) {
                 // SAFETY: allocated via heap::alloc below; reclaimed here.
-                let self_ = unsafe { bun_core::heap::take(self_) };
+                let self_ = yolo! { bun_core::heap::take(self_) };
                 let ctx = self_.ctx;
                 // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
-                unsafe {
+                yolo! {
                     (*ctx).client_mut().close();
                     JSValkeyClient::deref(ctx.cast_mut());
                 }
@@ -1514,7 +1515,7 @@ impl JSValkeyClient {
         }));
         // SAFETY: holder just allocated; closure captures nothing so it coerces
         // to `fn(*mut c_void) -> JsResult<()>`.
-        unsafe {
+        yolo! {
             (*holder).task = jsc::AnyTask::AnyTask {
                 ctx: Some(core::ptr::NonNull::new_unchecked(holder.cast::<c_void>())),
                 callback: |p: *mut c_void| {
@@ -1525,7 +1526,7 @@ impl JSValkeyClient {
         }
 
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
-        unsafe {
+        yolo! {
             (*self.vm().event_loop()).enqueue_task(jsc::Task::init(&raw mut (*holder).task));
         }
     }
@@ -1574,7 +1575,7 @@ impl JSValkeyClient {
         let vm_ptr = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
         // SAFETY: per-thread VM, accessed from the JS thread; `rare_data()`
         // lazy-inits the box.
-        let group: *mut uws::SocketGroup = unsafe {
+        let group: *mut uws::SocketGroup = yolo! {
             let rare = std::ptr::from_mut::<jsc::rare_data::RareData>((*vm_ptr).rare_data());
             if is_tls {
                 (*rare).valkey_group::<true>(&*vm_ptr)
@@ -1599,7 +1600,7 @@ impl JSValkeyClient {
                 debug_assert!(!state.is_null(), "RuntimeState not installed");
                 // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
                 // stable address for the VM's lifetime, JS-thread-only.
-                let cache = unsafe { &mut (*state).ssl_ctx_cache };
+                let cache = yolo! { &mut (*state).ssl_ctx_cache };
                 self._secure.set(cache.get_or_create(custom, &mut err));
             }
             self._secure.get().is_none()
@@ -1620,7 +1621,7 @@ impl JSValkeyClient {
             valkey::TLS::None => None,
             // SAFETY: `vm_ptr` is the live per-thread VM (see above).
             valkey::TLS::Enabled => {
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
+                Some(yolo! { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
@@ -1630,10 +1631,10 @@ impl JSValkeyClient {
         // only knows to clean up its own state, not the keep-alive ref.
         let self_ptr = self.as_ctx_ptr();
         let errdefer_deref =
-            scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p) });
+            scopeguard::guard(self_ptr, |p| yolo! { JSValkeyClient::deref(p) });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
-        let errdefer_status = scopeguard::guard(self_ptr, |p| unsafe {
+        let errdefer_status = scopeguard::guard(self_ptr, |p| yolo! {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
         });
@@ -1650,7 +1651,7 @@ impl JSValkeyClient {
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
         // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
-        let socket = unsafe {
+        let socket = yolo! {
             (*client_ptr)
                 .address
                 .connect(owner_ptr, &mut *group, ssl_ctx, is_tls)
@@ -1722,11 +1723,11 @@ impl JSValkeyClient {
         // pointer re-derived from `&Self` (SharedReadOnly under Stacked
         // Borrows, which would make the dealloc-write UB).
         {
-            let this_ref = unsafe { &*this };
+            let this_ref = yolo! { &*this };
             debug_assert!(this_ref.client.get().socket.is_closed());
             if let Some(s) = this_ref._secure.get() {
                 // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-                unsafe { boringssl::c::SSL_CTX_free(s) };
+                yolo! { boringssl::c::SSL_CTX_free(s) };
             }
             this_ref.client_mut().shutdown(None);
             this_ref.poll_ref.with_mut(|r| r.disable());
@@ -1738,7 +1739,7 @@ impl JSValkeyClient {
         // SAFETY: `this` was created via `heap::alloc` in `new()`; the shared
         // borrow above has ended, and `this` is the original raw pointer with
         // its Box-derived write provenance intact.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     /// Keep the event loop alive, or don't keep it alive
@@ -1903,10 +1904,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     .cast();
                 // SAFETY: SSL_get_servername returns null or NUL-terminated.
                 let mut hostname: &[u8] = if let Some(servername) =
-                    unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
+                    yolo! { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
                 {
                     // SAFETY: NUL-terminated
-                    unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }.to_bytes()
+                    yolo! { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }.to_bytes()
                 } else {
                     match &this.client.get().address {
                         valkey::Address::Host { host, .. } => &host[..],
@@ -1926,7 +1927,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 if !hostname.is_empty()
                     // SAFETY: in the TLS handshake-success path the socket's native
                     // handle is a live `SSL*`; Zig calls `@ptrCast` on it directly.
-                    && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
+                    && !boringssl::check_server_identity(yolo! { &mut *ssl_ptr }, hostname)
                 {
                     let err = this
                         .global_object
@@ -2015,7 +2016,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let this_ptr = this.as_ctx_ptr();
-        let _defer = scopeguard::guard(this_ptr, |p| unsafe {
+        let _defer = scopeguard::guard(this_ptr, |p| yolo! {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
             JSValkeyClient::deref(p);
@@ -2042,7 +2043,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         this.ref_();
         let this_ptr = this.as_ctx_ptr();
-        let _defer = scopeguard::guard(this_ptr, |p| unsafe {
+        let _defer = scopeguard::guard(this_ptr, |p| yolo! {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
             JSValkeyClient::deref(p);

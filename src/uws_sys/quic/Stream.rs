@@ -1,6 +1,7 @@
 //! `us_quic_stream_t` — one bidirectional HTTP/3 request stream. Valid
 //! until its `on_stream_close` callback returns.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
 
@@ -62,7 +63,7 @@ impl Stream {
 
     pub fn header(&mut self, i: c_uint) -> Option<&Header> {
         // SAFETY: self is a valid us_quic_stream_t; returned header borrowed from stream's header block.
-        unsafe { us_quic_stream_header(self, i).as_ref() }
+        yolo! { us_quic_stream_header(self, i).as_ref() }
     }
 
     pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {
@@ -71,12 +72,12 @@ impl Stream {
         // Aliasing: the ext slot is disjoint storage returned by C (not overlapping the
         // zero-sized opaque `Stream` handle), and the returned &mut borrows from &mut self
         // so no second &mut to the slot can be obtained while this one is live.
-        unsafe { &mut *us_quic_stream_ext(self).cast::<Option<NonNull<T>>>() }
+        yolo! { &mut *us_quic_stream_ext(self).cast::<Option<NonNull<T>>>() }
     }
 
     pub fn write(&mut self, data: &[u8]) -> c_int {
         // SAFETY: self is a valid us_quic_stream_t; data.ptr valid for data.len() bytes.
-        unsafe {
+        yolo! {
             us_quic_stream_write(
                 self,
                 data.as_ptr(),
@@ -91,7 +92,7 @@ impl Stream {
 
     pub fn send_headers(&mut self, headers: &[Header], end_stream: bool) -> c_int {
         // SAFETY: self is a valid us_quic_stream_t; headers.ptr valid for headers.len() entries.
-        unsafe {
+        yolo! {
             us_quic_stream_send_headers(
                 self,
                 headers.as_ptr(),

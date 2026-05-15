@@ -1,5 +1,6 @@
 //! Web APIs implemented in Rust live here
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 // NOTE(port): the Zig `comptime { _ = @import("./webcore/prompt.zig"); _ = @import("./webcore/TextEncoder.zig"); }`
@@ -234,7 +235,7 @@ impl HasAutoFlusher for file_sink::FileSink {
         // single-threaded (drained on the JS thread after microtasks), so no
         // aliasing across the call. `FileSink::on_auto_flush` takes the raw ptr
         // directly (no `&mut self`).
-        unsafe { file_sink::FileSink::on_auto_flush(this) }
+        yolo! { file_sink::FileSink::on_auto_flush(this) }
     }
 }
 
@@ -251,7 +252,7 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     }
     fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: see FileSink impl above.
-        unsafe { (*this).on_auto_flush() }
+        yolo! { (*this).on_auto_flush() }
     }
 }
 
@@ -442,7 +443,7 @@ impl<T: PipeHandler> Wrap<T> {
     pub fn pipe(self_: NonNull<()>, stream: streams::Result) {
         // SAFETY: `self_` was produced from `NonNull::from(&mut T)` in `init` below; caller
         // guarantees the pointee outlives the Pipe and is exclusively borrowed here.
-        let this = unsafe { self_.cast::<T>().as_mut() };
+        let this = yolo! { self_.cast::<T>().as_mut() };
         this.on_pipe(stream);
     }
 

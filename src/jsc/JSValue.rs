@@ -8,6 +8,7 @@
 //!
 //! Ported from `src/jsc/JSValue.zig`.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
@@ -457,7 +458,7 @@ impl JSValue {
             // SAFETY: `is_cell()` proved `self.0` is a non-null GC-heap cell
             // pointer; the header byte at +5 is always initialized. `JSType`
             // is `#[repr(transparent)] u8`, so any byte is a valid value.
-            unsafe { JSType(*(self.0 as *const u8).add(5)) }
+            yolo! { JSType(*(self.0 as *const u8).add(5)) }
         } else {
             // C++ returns 0 (`CellType`) for non-cells.
             JSType::Cell
@@ -586,7 +587,7 @@ impl JSValue {
         // with `MarkedArrayBuffer_deallocator` (or null for empty slices).
         // SAFETY: `global` is live; slice ptr/len describe a valid range whose
         // ownership is transferred to JSC (freed via the deallocator).
-        unsafe {
+        yolo! {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 slice.as_mut_ptr(),
@@ -613,7 +614,7 @@ impl JSValue {
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         // SAFETY: `global` is live; `ptr`/`len` describe the just-released
         // mimalloc allocation whose ownership is transferred to JSC.
-        unsafe {
+        yolo! {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 ptr,
@@ -639,7 +640,7 @@ impl JSValue {
         let len = bytes.len();
         // SAFETY: `global` is live; `bytes` describes a valid range whose
         // ownership transfers to JSC and is released via `free` on collection.
-        unsafe {
+        yolo! {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 bytes.as_ptr().cast::<u8>(),
@@ -651,7 +652,7 @@ impl JSValue {
     }
     pub fn from_date_string(global: &JSGlobalObject, s: &core::ffi::CStr) -> JSValue {
         // SAFETY: `global` is live; `s` is a valid NUL-terminated C string.
-        unsafe { JSC__JSValue__dateInstanceFromNullTerminatedString(global, s.as_ptr()) }
+        yolo! { JSC__JSValue__dateInstanceFromNullTerminatedString(global, s.as_ptr()) }
     }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
@@ -691,7 +692,7 @@ impl JSValue {
         debug_assert_eq!(keys.len(), values.len());
         // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
         // elements; the C++ binding only reads (and optionally clones) them.
-        unsafe {
+        yolo! {
             JSC__JSValue__fromEntries(
                 global,
                 keys.as_mut_ptr(),
@@ -973,7 +974,7 @@ impl JSValue {
     /// stack-root guard type to tie it to); callers MUST NOT stash the
     /// reference past the point where `self` is last used. This mirrors the
     /// raw-pointer contract of [`as_`](Self::as_) but lets read-only callers
-    /// drop their `unsafe { &*p }` boilerplate.
+    /// drop their `yolo! { &*p }` boilerplate.
     ///
     /// There is intentionally **no** `as_class_mut`: re-entry into JS (via a
     /// getter, `toString`, etc.) can produce a second `JSValue` for the same
@@ -988,7 +989,7 @@ impl JSValue {
         // scan for as long as `self` is reachable on the stack, so the shared
         // borrow is valid for the caller's frame. We never hand out `&mut`,
         // so aliasing with other `as_class_ref` borrows is fine.
-        self.as_::<T>().map(|p| unsafe { &*p })
+        self.as_::<T>().map(|p| yolo! { &*p })
     }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer (mirrors Zig `?*JSPromise`); conjuring a
@@ -1047,7 +1048,7 @@ impl JSValue {
         let mut len: usize = 0;
         if JSC__JSValue__getClassInfoName(self, &mut ptr, &mut len) {
             // SAFETY: C++ guarantees `ptr[..len]` is a static `ClassInfo::className`.
-            Some(unsafe { bun_core::ffi::slice(ptr, len) })
+            Some(yolo! { bun_core::ffi::slice(ptr, len) })
         } else {
             None
         }
@@ -1114,7 +1115,7 @@ impl JSValue {
         // of the *string* property. Always go through the by-name FFI; callers
         // that statically know they want a builtin should call `fast_get` directly.
         // `[[ZIG_EXPORT(zero_is_throw)]]` — zero ⟺ threw. SAFETY: bytes valid for the call.
-        let v = unsafe {
+        let v = yolo! {
             crate::cpp::JSC__JSValue__getIfPropertyExistsImpl(
                 self,
                 global,
@@ -1363,7 +1364,7 @@ impl JSValue {
     ) -> JsResult<JSValue> {
         // SAFETY: `global`/`name` outlive the FFI call; `args` is a contiguous
         // slice of `JSValue` (`repr(transparent)` over `EncodedJSValue`).
-        host_fn::from_js_host_call(global, || unsafe {
+        host_fn::from_js_host_call(global, || yolo! {
             Bun__JSValue__bind(
                 self,
                 global,
@@ -1635,7 +1636,7 @@ impl JSValue {
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
-            unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
+            yolo! { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
         })
     }
 }
@@ -2147,14 +2148,14 @@ impl SerializedScriptValue {
         // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
         // `handle` (until `Bun__SerializedScriptSlice__free`); the returned
         // borrow is tied to `&self` so it cannot outlive `Drop`.
-        unsafe { bun_core::ffi::slice(self.bytes, self.size) }
+        yolo! { bun_core::ffi::slice(self.bytes, self.size) }
     }
 }
 impl Drop for SerializedScriptValue {
     #[inline]
     fn drop(&mut self) {
         // SAFETY: `handle` is the non-null opaque returned by `Bun__serializeJSValue`.
-        unsafe { Bun__SerializedScriptSlice__free(self.handle) }
+        yolo! { Bun__SerializedScriptSlice__free(self.handle) }
     }
 }
 #[repr(C)]
@@ -2525,7 +2526,7 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
         let result = scope.return_if_exception();
         // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
+        yolo! { crate::TopExceptionScope::destroy(scope) };
         result
     }
     /// `JSValue.isBuffer` (JSValue.zig:492) — `instanceof Buffer` check via
@@ -2621,7 +2622,7 @@ impl JSValue {
     /// `JSValue.deserialize(bytes, global)`.
     pub fn deserialize(bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `global` is live; `bytes` valid for the call.
-        host_fn::from_js_host_call(global, || unsafe {
+        host_fn::from_js_host_call(global, || yolo! {
             Bun__JSValue__deserialize(global, bytes.as_ptr(), bytes.len())
         })
     }

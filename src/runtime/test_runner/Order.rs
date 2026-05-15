@@ -1,5 +1,6 @@
 //! take Collection phase output and convert to Execution phase input
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use bun_jsc::JsResult;
@@ -52,7 +53,7 @@ impl Order {
             // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
             // a long-lived `&mut`.
             let entry: *mut ExecutionEntry = box_inner_mut(entry_box);
-            unsafe {
+            yolo! {
                 if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
                     debug_assert!((*entry).next.is_none());
                 }
@@ -125,9 +126,9 @@ impl Order {
         // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
         // loop below, so we never hold a long-lived `&mut *current` across those calls — each access
         // dereferences the raw pointer locally.
-        debug_assert!(unsafe { (*current).base.has_callback == (*current).callback.is_some() });
-        let use_each_hooks = unsafe { (*current).base.has_callback };
-        let first_parent: Option<*mut DescribeScope> = unsafe { (*current).base.parent };
+        debug_assert!(yolo! { (*current).base.has_callback == (*current).callback.is_some() });
+        let use_each_hooks = yolo! { (*current).base.has_callback };
+        let first_parent: Option<*mut DescribeScope> = yolo! { (*current).base.parent };
 
         let mut list = EntryList::default();
 
@@ -136,7 +137,7 @@ impl Order {
             let mut parent: Option<*mut DescribeScope> = first_parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { &*p_ptr };
+                let p = yolo! { &*p_ptr };
                 // prepend in reverse so they end up in forwards order
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
@@ -146,7 +147,7 @@ impl Order {
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = bun_core::heap::into_raw(Box::new(yolo! { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
                 }
@@ -162,12 +163,12 @@ impl Order {
             let mut parent: Option<*mut DescribeScope> = first_parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { &*p_ptr };
+                let p = yolo! { &*p_ptr };
                 for entry in p.after_each.iter() {
                     // PERF(port): was arena bulk-free — see note above.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     let src: *const ExecutionEntry = &raw const **entry;
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = bun_core::heap::into_raw(Box::new(yolo! { core::ptr::read(src) }));
                     list.append(cloned);
                 }
                 parent = p.base.parent;
@@ -179,7 +180,7 @@ impl Order {
         let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current);
         while let Some(entry_ptr) = index {
             // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
-            unsafe {
+            yolo! {
                 (*entry_ptr).failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
                 if Some(entry_ptr) == failure_skip_past {
                     failure_skip_past = None;
@@ -191,7 +192,7 @@ impl Order {
         // add these as a single sequence
         // SAFETY: `current` still valid; re-derive fields locally so no `&mut` outlives the
         // competing reborrows performed by `list.append` / the skip-past loop above.
-        let (retry_count, repeat_count, concurrent) = unsafe {
+        let (retry_count, repeat_count, concurrent) = yolo! {
             (
                 (*current).retry_count,
                 (*current).repeat_count,
@@ -330,7 +331,7 @@ struct EntryList {
 impl EntryList {
     pub fn prepend(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
-        unsafe { (*current).next = self.first };
+        yolo! { (*current).next = self.first };
         self.first = Some(current);
         if self.last.is_none() {
             self.last = Some(current);
@@ -339,14 +340,14 @@ impl EntryList {
 
     pub fn append(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
-        let cur = unsafe { &mut *current };
+        let cur = yolo! { &mut *current };
         if bun_core::Environment::CI_ASSERT && cur.added_in_phase != AddedInPhase::Preload {
             debug_assert!(cur.next.is_none());
         }
         cur.next = None;
         if let Some(last) = self.last {
             // SAFETY: `last` was stored by a prior prepend/append and is still live.
-            let last_ref = unsafe { &mut *last };
+            let last_ref = yolo! { &mut *last };
             if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != AddedInPhase::Preload {
                 debug_assert!(last_ref.next.is_none());
             }

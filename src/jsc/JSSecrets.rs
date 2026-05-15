@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSValue, JsResult, Strong};
 
 // Opaque pointer to C++ SecretsJobOptions struct
@@ -56,7 +57,7 @@ impl AnyTaskJobCtx for SecretsCtx {
 impl Drop for SecretsCtx {
     fn drop(&mut self) {
         // SAFETY: `ctx` is the C++ SecretsJobOptions* passed to `create`; C++ side owns cleanup.
-        unsafe { Bun__SecretsJobOptions__deinit(self.ctx) };
+        yolo! { Bun__SecretsJobOptions__deinit(self.ctx) };
         // `promise: Strong` drops automatically.
     }
 }

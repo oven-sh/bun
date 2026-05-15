@@ -1,6 +1,7 @@
 // Windows PE sections use standard file alignment (typically 512 bytes)
 // No special 16KB alignment needed like macOS code signing
 
+use bun_yolo::yolo;
 use core::mem::{offset_of, size_of};
 use core::ptr;
 use core::slice;
@@ -209,7 +210,7 @@ fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
         return Err(Error::OutOfBounds);
     }
     // SAFETY: bounds-checked above; pointer remains within `buf`
-    Ok(unsafe { buf.as_ptr().add(off).cast::<T>() })
+    Ok(yolo! { buf.as_ptr().add(off).cast::<T>() })
 }
 
 fn view_at_mut<T>(buf: &mut [u8], off: usize) -> Result<*mut T, Error> {
@@ -217,7 +218,7 @@ fn view_at_mut<T>(buf: &mut [u8], off: usize) -> Result<*mut T, Error> {
         return Err(Error::OutOfBounds);
     }
     // SAFETY: bounds-checked above; pointer remains within `buf`
-    Ok(unsafe { buf.as_mut_ptr().add(off).cast::<T>() })
+    Ok(yolo! { buf.as_mut_ptr().add(off).cast::<T>() })
 }
 
 fn is_pow2(x: u32) -> bool {
@@ -286,8 +287,8 @@ impl PEFile {
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
         // TODO(port): potentially unaligned — Zig used []align(1) const SectionHeader
-        let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
-        Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
+        let ptr = yolo! { self.data.as_ptr().add(start).cast::<SectionHeader>() };
+        Ok(yolo! { slice::from_raw_parts(ptr, self.num_sections as usize) })
     }
 
     fn get_section_headers_mut(&mut self) -> Result<&mut [SectionHeader], Error> {
@@ -298,8 +299,8 @@ impl PEFile {
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
         // TODO(port): potentially unaligned — Zig used []align(1) SectionHeader
-        let ptr = unsafe { self.data.as_mut_ptr().add(start).cast::<SectionHeader>() };
-        Ok(unsafe { slice::from_raw_parts_mut(ptr, self.num_sections as usize) })
+        let ptr = yolo! { self.data.as_mut_ptr().add(start).cast::<SectionHeader>() };
+        Ok(yolo! { slice::from_raw_parts_mut(ptr, self.num_sections as usize) })
     }
 
     pub fn init(pe_data: &[u8]) -> Result<Box<PEFile>, Error> {
@@ -314,7 +315,7 @@ impl PEFile {
 
         let dos_header = view_at_const::<DOSHeader>(&data, 0)?;
         // SAFETY: validated bounds; offset 0 in Vec<u8> backing store
-        let dos_header = unsafe { &*dos_header };
+        let dos_header = yolo! { &*dos_header };
         if dos_header.e_magic != DOS_SIGNATURE {
             return Err(Error::InvalidDOSSignature);
         }
@@ -331,7 +332,7 @@ impl PEFile {
         let pe_off = dos_header.e_lfanew as usize;
         let pe_header = view_at_mut::<PEHeader>(&mut data, pe_off)?;
         // SAFETY: validated bounds above
-        let pe_header = unsafe { &mut *pe_header };
+        let pe_header = yolo! { &mut *pe_header };
         if pe_header.signature != PE_SIGNATURE {
             return Err(Error::InvalidPESignature);
         }
@@ -351,7 +352,7 @@ impl PEFile {
         // PORT NOTE: reshaped for borrowck — drop pe_header borrow before re-borrowing data
         let optional_header = view_at_mut::<OptionalHeader64>(&mut data, optional_header_offset)?;
         // SAFETY: validated bounds above
-        let optional_header = unsafe { &mut *optional_header };
+        let optional_header = yolo! { &mut *optional_header };
         if optional_header.magic != OPTIONAL_HEADER_MAGIC_64 {
             return Err(Error::UnsupportedPEFormat);
         }
@@ -388,12 +389,12 @@ impl PEFile {
 
         if num_sections > 0 {
             // SAFETY: bounds-checked above
-            let sections_ptr = unsafe {
+            let sections_ptr = yolo! {
                 data.as_ptr()
                     .add(section_headers_offset)
                     .cast::<SectionHeader>()
             };
-            let sections = unsafe { slice::from_raw_parts(sections_ptr, num_sections as usize) };
+            let sections = yolo! { slice::from_raw_parts(sections_ptr, num_sections as usize) };
 
             for section in sections {
                 if section.size_of_raw_data > 0 {
@@ -437,10 +438,10 @@ impl PEFile {
         // Read Security directory (index 4)
         // SAFETY: opt points into self.data at validated offset
         let dd_ptr: *mut DataDirectory =
-            unsafe { ptr::addr_of_mut!((*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY]) };
+            yolo! { ptr::addr_of_mut!((*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY]) };
         // SAFETY: dd_ptr is within the OptionalHeader64 struct
-        let sec_off_u32 = unsafe { (*dd_ptr).virtual_address }; // file offset (not RVA)
-        let sec_size_u32 = unsafe { (*dd_ptr).size };
+        let sec_off_u32 = yolo! { (*dd_ptr).virtual_address }; // file offset (not RVA)
+        let sec_size_u32 = yolo! { (*dd_ptr).size };
 
         if sec_off_u32 == 0 || sec_size_u32 == 0 {
             return Ok(()); // nothing to strip
@@ -485,20 +486,20 @@ impl PEFile {
         // Re-get pointers after resize
         let opt_after = self.get_optional_header_mut()?;
         // SAFETY: opt_after points into self.data at validated offset
-        let dd_after: *mut DataDirectory = unsafe {
+        let dd_after: *mut DataDirectory = yolo! {
             ptr::addr_of_mut!((*opt_after).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY])
         };
 
         // Zero Security directory entry
         // SAFETY: dd_after is within the OptionalHeader64 struct
-        unsafe {
+        yolo! {
             (*dd_after).virtual_address = 0;
             (*dd_after).size = 0;
         }
 
         // Clear FORCE_INTEGRITY bit if set
         // SAFETY: opt_after points into self.data at validated offset
-        unsafe {
+        yolo! {
             if ((*opt_after).dll_characteristics & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY) != 0 {
                 (*opt_after).dll_characteristics &= !IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY;
             }
@@ -549,7 +550,7 @@ impl PEFile {
 
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
-        unsafe {
+        yolo! {
             (*opt).checksum = final_sum;
         }
         Ok(())
@@ -567,7 +568,7 @@ impl PEFile {
             // Read Security directory to check if signed
             let opt = self.get_optional_header()?;
             // SAFETY: opt points into self.data at validated offset
-            let dd = unsafe { (*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY] };
+            let dd = yolo! { (*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY] };
             if dd.virtual_address != 0 || dd.size != 0 {
                 self.strip_authenticode(StripOpts {
                     require_overlay: true,
@@ -580,8 +581,8 @@ impl PEFile {
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
         // PORT NOTE: reshaped for borrowck — capture needed scalars from opt before re-borrowing self.data
-        let file_alignment = unsafe { (*opt).file_alignment };
-        let section_alignment = unsafe { (*opt).section_alignment };
+        let file_alignment = yolo! { (*opt).file_alignment };
+        let section_alignment = yolo! { (*opt).section_alignment };
 
         // 3. Duplicate .bun guard - compare all 8 bytes exactly
         let section_headers = self.get_section_headers()?;
@@ -672,7 +673,7 @@ impl PEFile {
             return Err(Error::InsufficientHeaderSpace);
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD
-        let sh_bytes = unsafe {
+        let sh_bytes = yolo! {
             slice::from_raw_parts((&raw const sh).cast::<u8>(), size_of::<SectionHeader>())
         };
         self.data[new_sh_off..new_sh_off + size_of::<SectionHeader>()].copy_from_slice(sh_bytes);
@@ -689,14 +690,14 @@ impl PEFile {
         // Get fresh pointers after resize
         let pe_after = self.get_pe_header_mut()?;
         // SAFETY: pe_after points into self.data at validated offset
-        unsafe {
+        yolo! {
             (*pe_after).number_of_sections += 1;
         }
         self.num_sections += 1;
 
         let opt_after = self.get_optional_header_mut()?;
         // SAFETY: opt_after points into self.data at validated offset
-        unsafe {
+        yolo! {
             // If opt.size_of_headers < new_size_of_headers
             if (*opt_after).size_of_headers < new_size_of_headers {
                 (*opt_after).size_of_headers = new_size_of_headers;
@@ -802,20 +803,20 @@ impl PEFile {
         // Check DOS & PE signatures
         let dos_header = self.get_dos_header()?;
         // SAFETY: dos_header points into self.data at validated offset
-        if unsafe { (*dos_header).e_magic } != DOS_SIGNATURE {
+        if yolo! { (*dos_header).e_magic } != DOS_SIGNATURE {
             return Err(Error::InvalidDOSSignature);
         }
 
         let pe_header = self.get_pe_header()?;
         // SAFETY: pe_header points into self.data at validated offset
-        if unsafe { (*pe_header).signature } != PE_SIGNATURE {
+        if yolo! { (*pe_header).signature } != PE_SIGNATURE {
             return Err(Error::InvalidPESignature);
         }
 
         // Check optional header magic is 0x20B (64-bit)
         let optional_header = self.get_optional_header()?;
         // SAFETY: optional_header points into self.data at validated offset
-        let optional_header = unsafe { &*optional_header };
+        let optional_header = yolo! { &*optional_header };
         if optional_header.magic != OPTIONAL_HEADER_MAGIC_64 {
             return Err(Error::UnsupportedPEFormat);
         }
@@ -904,7 +905,7 @@ pub mod utils {
 
         // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
         // TODO(port): potentially unaligned — Zig used *align(1) const DOSHeader
-        let dos = unsafe { &*data.as_ptr().cast::<DOSHeader>() };
+        let dos = yolo! { &*data.as_ptr().cast::<DOSHeader>() };
         if dos.e_magic != DOS_SIGNATURE {
             return false;
         }
@@ -916,7 +917,7 @@ pub mod utils {
 
         // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
         // TODO(port): potentially unaligned — Zig used *align(1) const PEHeader
-        let pe = unsafe { &*data.as_ptr().add(off).cast::<PEHeader>() };
+        let pe = yolo! { &*data.as_ptr().add(off).cast::<PEHeader>() };
         pe.signature == PE_SIGNATURE
     }
 }

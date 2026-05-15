@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::Loc;
 use bun_collections::StringArrayHashMap;
 
@@ -54,7 +55,7 @@ pub struct TSNamespaceScope {
     /// This is shared between all sibling namespace blocks
     // LIFETIMES.tsv: ARENA — p.arena.create(Pair); &pair.map; shared across
     // sibling scopes. `StoreRef` (arena back-pointer with safe `Deref`) so
-    // callers don't open-code `unsafe { &mut *exported_members }` at every use.
+    // callers don't open-code `yolo! { &mut *exported_members }` at every use.
     pub exported_members: crate::nodes::StoreRef<TSNamespaceMemberMap>,
 
     /// This is a lazily-generated map of identifiers that actually represent

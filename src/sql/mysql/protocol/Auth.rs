@@ -1,5 +1,6 @@
 // Authentication methods
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int};
 
 use bun_boringssl as boringssl;
@@ -156,7 +157,7 @@ pub mod caching_sha2_password {
     // Borrowed param-pack: caller-owned slices that live only across a single
     // `write()` call. `RawSlice<u8>` (encapsulated fat raw pointer with safe
     // `Deref` under the outlives-holder invariant) avoids the per-method
-    // `unsafe { &*self.field }` deref triple while keeping the struct
+    // `yolo! { &*self.field }` deref triple while keeping the struct
     // lifetime-free per PORTING.md Phase-A rules.
     pub struct EncryptedPassword {
         pub password: bun_ptr::RawSlice<u8>,
@@ -205,11 +206,11 @@ pub mod caching_sha2_password {
             }
             boringssl::load();
             // SAFETY: FFI call with no preconditions; clears thread-local error queue.
-            unsafe { boringssl::c::ERR_clear_error() };
+            yolo! { boringssl::c::ERR_clear_error() };
             // Decode public key
             // SAFETY: public_key is non-empty (checked above); BIO_new_mem_buf
             // borrows the buffer for the lifetime of `bio` and does not take ownership.
-            let bio = unsafe {
+            let bio = yolo! {
                 boringssl::c::BIO_new_mem_buf(
                     public_key.as_ptr().cast::<core::ffi::c_void>(),
                     isize::try_from(public_key.len()).expect("int cast"),
@@ -220,13 +221,13 @@ pub mod caching_sha2_password {
             }
             let bio = scopeguard::guard(bio, |bio| {
                 // SAFETY: bio is a valid non-null BIO* allocated by BIO_new_mem_buf above.
-                unsafe {
+                yolo! {
                     let _ = boringssl::c::BIO_free(bio);
                 }
             });
 
             // SAFETY: *bio is a valid BIO*; null callback/userdata are permitted.
-            let rsa = unsafe {
+            let rsa = yolo! {
                 boringssl::c::PEM_read_bio_RSA_PUBKEY(
                     *bio,
                     core::ptr::null_mut(),
@@ -239,7 +240,7 @@ pub mod caching_sha2_password {
                 {
                     // SAFETY: FFI calls with no preconditions; buf is 256 bytes which is
                     // the documented minimum for ERR_error_string.
-                    unsafe {
+                    yolo! {
                         boringssl::c::ERR_load_ERR_strings();
                         boringssl::c::ERR_load_crypto_strings();
                         let mut buf = [0u8; 256];
@@ -258,19 +259,19 @@ pub mod caching_sha2_password {
             }
             let rsa = scopeguard::guard(rsa, |rsa| {
                 // SAFETY: rsa is a valid non-null RSA* returned by PEM_read_bio_RSA_PUBKEY.
-                unsafe { boringssl::c::RSA_free(rsa) };
+                yolo! { boringssl::c::RSA_free(rsa) };
             });
             // encrypt password
 
             // SAFETY: *rsa is a valid RSA*.
-            let rsa_size = unsafe { boringssl::c::RSA_size(*rsa) } as usize;
+            let rsa_size = yolo! { boringssl::c::RSA_size(*rsa) } as usize;
             // should never ne bigger than 4096 but lets cover all cases
             // PERF(port): was stack-fallback (4096-byte stack buf with heap overflow path) — profile in Phase B
             let mut encrypted_password = vec![0u8; rsa_size];
 
             // SAFETY: plain_password and encrypted_password are valid for the given
             // lengths; *rsa is a valid RSA*; padding constant is a valid mode.
-            let encrypted_password_len = unsafe {
+            let encrypted_password_len = yolo! {
                 boringssl::c::RSA_public_encrypt(
                     plain_password.len(),
                     plain_password.as_ptr(),

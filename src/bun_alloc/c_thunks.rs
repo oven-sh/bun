@@ -14,6 +14,7 @@
 //! The plain (non-zone-tagged) variants are free functions below; the
 //! zone-tagged variants are minted per-label by [`c_thunks_for_zone!`].
 
+use bun_yolo::yolo;
 use core::ffi::{c_uint, c_void};
 
 use crate::mimalloc;
@@ -41,7 +42,7 @@ pub extern "C" fn mi_malloc_items(_: *mut c_void, items: c_uint, size: c_uint) -
 /// `brotli_free_func`.
 pub unsafe extern "C" fn mi_free_opaque(_: *mut c_void, ptr: *mut c_void) {
     // SAFETY: ptr was allocated by mimalloc (or is null, which mi_free accepts).
-    unsafe { mimalloc::mi_free(ptr) };
+    yolo! { mimalloc::mi_free(ptr) };
 }
 
 /// JSC `JSTypedArrayBytesDeallocator` → `mi_free(ctx)`. Frees the **second**
@@ -54,7 +55,7 @@ pub use mi_free_opaque as mi_free_ctx;
 /// argument; `ctx` is ignored.
 pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
     // SAFETY: bytes was allocated by mimalloc; mi_free is null-safe.
-    unsafe { mimalloc::mi_free(bytes) };
+    yolo! { mimalloc::mi_free(bytes) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -121,11 +122,11 @@ macro_rules! c_thunks_for_zone {
             if $crate::heap_breakdown::ENABLED {
                 // SAFETY: `data` was allocated by this zone in one of the
                 // alloc thunks above.
-                unsafe { $crate::get_zone!($name).malloc_zone_free(data) };
+                yolo! { $crate::get_zone!($name).malloc_zone_free(data) };
                 return;
             }
             // SAFETY: data was allocated by mimalloc (or is null).
-            unsafe { $crate::mimalloc::mi_free(data) };
+            yolo! { $crate::mimalloc::mi_free(data) };
         }
     };
 }

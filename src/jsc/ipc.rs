@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
@@ -149,14 +150,14 @@ impl InternalMsgHolder {
         // re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
+        let messages = core::mem::take(yolo! { &mut (*this).messages });
         for strong in messages {
             if let Some(message) = strong.get() {
                 // SAFETY: `this` is still live across re-entry — the IPC
                 // dispatcher is owned by the Subprocess/Worker which outlives
                 // this `flush` frame; `&mut *this` is the unique mutable view
                 // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, global)?;
+                yolo! { &mut *this }.dispatch_unsafe(message, global)?;
             }
             // strong drops here (== `strong.deinit()`)
         }
@@ -454,7 +455,7 @@ mod json {
     extern "C" fn json_ipc_data_string_free_cb(context: *mut bool, _: *mut c_void, _: usize) {
         // SAFETY: context points to `was_ascii_string_freed` on the caller's stack,
         // kept alive across the deref/defer block in decode_ipc_message.
-        unsafe { *context = true };
+        yolo! { *context = true };
     }
 
     pub fn get_version_packet() -> &'static [u8] {
@@ -789,7 +790,7 @@ impl WindowsWrite {
     pub fn destroy(this: *mut WindowsWrite) {
         // SAFETY: `this` was produced by heap::alloc in SendQueue::_write;
         // libuv guarantees the write callback fires exactly once.
-        let _ = unsafe { bun_core::heap::take(this) };
+        let _ = yolo! { bun_core::heap::take(this) };
         // write_slice freed by Box<[u8]> Drop.
     }
 }
@@ -851,7 +852,7 @@ pub struct SendQueue {
     /// BACKREF to the embedding owner (`Subprocess` or `IPCInstance`). The
     /// SendQueue is stored inline in its owner, so this is a self-referential
     /// raw pointer; never reborrow as `&mut dyn` while a `&mut SendQueue` is
-    /// live (every access goes through `unsafe { &mut *self.owner }` at the
+    /// live (every access goes through `yolo! { &mut *self.owner }` at the
     /// call site, mirroring the Zig union dispatch).
     pub owner: *mut dyn SendQueueOwner,
 
@@ -911,7 +912,7 @@ impl SendQueue {
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it;
         // `owner` is set in `init()` / by the embedder before first use and
         // never null afterward.
-        unsafe { &*self.owner }
+        yolo! { &*self.owner }
     }
 
     pub fn init(mode: Mode, owner: *mut dyn SendQueueOwner, socket: SocketUnion) -> Self {
@@ -959,8 +960,8 @@ impl SendQueue {
                 {
                     let pipe: *mut uv::Pipe = *s;
                     // SAFETY: pipe is a live uv_pipe_t owned until _windowsOnClosed fires.
-                    let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
-                    unsafe { (*stream).read_stop() };
+                    let stream: *mut uv::uv_stream_t = yolo! { (*pipe).as_stream() };
+                    yolo! { (*stream).read_stop() };
 
                     if self.windows.windows_write.is_some() && from != CloseFrom::Deinit {
                         log!("SendQueue#closeSocket -> mark ready for close");
@@ -996,7 +997,7 @@ impl SendQueue {
                 // `_write`; libuv still holds it and will free it in
                 // `_windows_on_write_complete`. We only clear the backref so
                 // the callback doesn't touch a dead `SendQueue`.
-                unsafe { (*windows_write).owner = None };
+                yolo! { (*windows_write).owner = None };
             }
             self.windows.windows_write = None; // will be freed by _windowsOnWriteComplete
         }
@@ -1037,7 +1038,7 @@ impl SendQueue {
             return;
         };
         // SAFETY: pipe is live until the close cb fires.
-        unsafe {
+        yolo! {
             (*pipe).data = pipe.cast();
             (*pipe).close(Self::_windows_on_closed);
         }
@@ -1050,7 +1051,7 @@ impl SendQueue {
     extern "C" fn _windows_on_closed(windows: *mut uv::Pipe) {
         log!("SendQueue#_windowsOnClosed");
         // SAFETY: pipe was heap-allocated in windowsConfigureClient / created by caller.
-        let _ = unsafe { bun_core::heap::take(windows) };
+        let _ = yolo! { bun_core::heap::take(windows) };
     }
 
     pub fn close_socket_next_tick(&mut self, next_tick: bool) {
@@ -1082,7 +1083,7 @@ impl SendQueue {
     fn _close_socket_task(this: *mut SendQueue) -> JsResult<()> {
         // SAFETY: `this` was the live `*mut SendQueue` passed to ManagedTask::new;
         // the task is cancelled in Drop before the storage is freed.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         log!("SendQueue#closeSocketTask");
         debug_assert!(this.close_next_tick.is_some());
         this.close_next_tick = None;
@@ -1092,7 +1093,7 @@ impl SendQueue {
 
     fn _on_after_ipc_closed(this: *mut SendQueue) -> JsResult<()> {
         // SAFETY: see _close_socket_task.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         log!("SendQueue#_onAfterIPCClosed");
         this.after_close_task = None;
         if this.close_event_sent {
@@ -1100,7 +1101,7 @@ impl SendQueue {
         }
         this.close_event_sent = true;
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-        unsafe { (*this.owner).handle_ipc_close() };
+        yolo! { (*this.owner).handle_ipc_close() };
         Ok(())
     }
 
@@ -1472,10 +1473,10 @@ impl SendQueue {
             self.windows.windows_write = Some(write_req);
 
             // SAFETY: pipe is live (socket == .open).
-            unsafe { (*pipe).ref_() }; // ref on write
+            yolo! { (*pipe).ref_() }; // ref on write
             // SAFETY: `write_req` is a freshly-leaked Box; libuv owns it until
             // the write callback fires.
-            let result = unsafe {
+            let result = yolo! {
                 (*write_req).write_req.write(
                     (*pipe).as_stream(),
                     &(*write_req).write_buffer,
@@ -1504,7 +1505,7 @@ impl SendQueue {
                 self.windows.windows_write = None;
                 // SAFETY: pipe is live (socket == .open); pairs with the
                 // `(*pipe).ref_()` above.
-                unsafe { (*pipe).unref() };
+                yolo! { (*pipe).unref() };
                 self._on_write_complete(-1);
                 if self.windows.try_close_after_write {
                     self.close_socket(CloseReason::Normal, CloseFrom::User);
@@ -1539,9 +1540,9 @@ impl SendQueue {
         // SAFETY: write_req was passed to uv_write as the data ptr; libuv hands it back here.
         // Explicit `&` so the slice `.len()` autoref doesn't trigger
         // `dangerous_implicit_autorefs` on the raw-ptr place.
-        let write_len = unsafe { (&(*write_req).write_slice).len() };
+        let write_len = yolo! { (&(*write_req).write_slice).len() };
         let this: *mut SendQueue = 'blk: {
-            let owner = unsafe { (*write_req).owner };
+            let owner = yolo! { (*write_req).owner };
             WindowsWrite::destroy(write_req);
             match owner {
                 Some(o) => break 'blk o,
@@ -1549,18 +1550,18 @@ impl SendQueue {
             }
         };
         // SAFETY: owner is a BACKREF into the live SendQueue (cleared in _socket_closed if not).
-        let this: &mut SendQueue = unsafe { &mut *this };
+        let this: &mut SendQueue = yolo! { &mut *this };
 
         let vm = VirtualMachine::get();
         // RAII: `enter()` now, `exit()` on drop — replaces the
-        // `unsafe { (*(*vm).event_loop()).enter() }` / `.exit()` pair.
+        // `yolo! { (*(*vm).event_loop()).enter() }` / `.exit()` pair.
         let _scope = vm.enter_event_loop_scope();
 
         this.windows.windows_write = None;
         if let Some(socket) = this.get_socket() {
             // SAFETY: `get_socket()` -> `&*mut uv::Pipe`; double-deref reaches the
             // live `uv_pipe_t` place (matches the `(*pipe).ref_()` site in `_write`).
-            unsafe { (**socket).unref() }; // write complete; unref
+            yolo! { (**socket).unref() }; // write complete; unref
         }
         if status.to_error(bun_sys::Tag::write).is_some() {
             this._on_write_complete(-1);
@@ -1587,7 +1588,7 @@ impl SendQueue {
     extern "C" fn on_server_pipe_close(this: *mut uv::Pipe) {
         // safely free the pipes
         // SAFETY: pipe was heap-allocated by the caller that configured it.
-        let _ = unsafe { bun_core::heap::take(this) };
+        let _ = yolo! { bun_core::heap::take(this) };
     }
 
     /// # Safety
@@ -1604,25 +1605,25 @@ impl SendQueue {
         log!("configureServer");
         // SAFETY: ipc_pipe is a live uv_pipe_t handed in by the caller; `this`
         // is the root-raw SendQueue pointer per the fn safety contract.
-        unsafe {
+        yolo! {
             (*ipc_pipe).data = this.cast();
             (*ipc_pipe).unref();
         }
         // SAFETY: caller contract — `this` is a live SendQueue.
-        unsafe {
+        yolo! {
             (*this).socket = SocketUnion::Open(ipc_pipe);
             (*this).windows.is_server = true;
         }
         // SAFETY: caller contract — `this` is a live SendQueue.
-        let pipe: *mut uv::Pipe = match unsafe { &(*this).socket } {
+        let pipe: *mut uv::Pipe = match yolo! { &(*this).socket } {
             SocketUnion::Open(p) => *p,
             _ => unreachable!(),
         };
         // SAFETY: pipe is the live uv handle just stored in (*this).socket.
-        unsafe { (*pipe).data = this.cast() };
+        yolo! { (*pipe).data = this.cast() };
 
         // SAFETY: pipe is the live uv handle just stored in (*this).socket.
-        let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
+        let stream: *mut uv::uv_stream_t = yolo! { (*pipe).as_stream() };
 
         // SAFETY: stream points to the live uv handle; `this` is the root-raw
         // context pointer (see fn safety contract) so storing it in
@@ -1630,10 +1631,10 @@ impl SendQueue {
         // `StreamReader for SendQueue` impl below (wraps the
         // `IPCHandlers::WindowsNamedPipe` callbacks).
         let read_start_result =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen);
+            yolo! { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen);
         if let Some(err) = read_start_result {
             // SAFETY: caller contract — `this` is a live SendQueue.
-            unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
+            yolo! { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
             return Err(err);
         }
         bun_sys::Result::Ok(())
@@ -1656,37 +1657,37 @@ impl SendQueue {
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
         // SAFETY: ipc_pipe just allocated above.
         if let Some(err) =
-            unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
+            yolo! { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
         {
             // SAFETY: ipc_pipe was heap-allocated above and init failed before libuv took ownership.
-            let _ = unsafe { bun_core::heap::take(ipc_pipe) };
+            let _ = yolo! { bun_core::heap::take(ipc_pipe) };
             return Err(err.into());
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        if let Some(err) = unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::open) {
+        if let Some(err) = yolo! { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::open) {
             // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
-            unsafe { uv::Pipe::close_and_destroy(ipc_pipe) };
+            yolo! { uv::Pipe::close_and_destroy(ipc_pipe) };
             return Err(err.into());
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        unsafe { (*ipc_pipe).unref() };
+        yolo! { (*ipc_pipe).unref() };
         // SAFETY: caller contract — `this` is a live SendQueue.
-        unsafe {
+        yolo! {
             (*this).socket = SocketUnion::Open(ipc_pipe);
             (*this).windows.is_server = false;
         }
 
         // SAFETY: ipc_pipe is the live uv handle just stored in (*this).socket.
-        let stream = unsafe { (*ipc_pipe).as_stream() };
+        let stream = yolo! { (*ipc_pipe).as_stream() };
 
         // SAFETY: stream points to the live uv handle; `this` is the root-raw
         // context pointer (see fn safety contract) so storing it in
         // `handle.data` is sound for the handle's lifetime.
         if let Some(err) =
-            unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen)
+            yolo! { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen)
         {
             // SAFETY: caller contract — `this` is a live SendQueue.
-            unsafe { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
+            yolo! { (*this).close_socket(CloseReason::Failure, CloseFrom::User) };
             return Err(err.into());
         }
         Ok(())
@@ -1723,7 +1724,7 @@ impl uv::StreamReader for SendQueue {
         let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
         // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
-        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
+        IPCHandlers::WindowsNamedPipe::on_read(yolo! { &mut *this }, nread);
     }
 }
 
@@ -1746,7 +1747,7 @@ impl Drop for SendQueue {
             // SAFETY: the task was created via `ManagedTask::new` (tag ==
             // ManagedTask) and `Task.ptr` is the heap-allocated ManagedTask.
             let managed: &mut ManagedTask =
-                unsafe { &mut *(close_next_tick_task.ptr.cast::<ManagedTask>()) };
+                yolo! { &mut *(close_next_tick_task.ptr.cast::<ManagedTask>()) };
             managed.cancel();
         }
         // Same for the close-notification task. `closeSocket` above may have
@@ -1756,7 +1757,7 @@ impl Drop for SendQueue {
         if let Some(after_close_task) = self.after_close_task {
             // SAFETY: see above.
             let managed: &mut ManagedTask =
-                unsafe { &mut *(after_close_task.ptr.cast::<ManagedTask>()) };
+                yolo! { &mut *(after_close_task.ptr.cast::<ManagedTask>()) };
             managed.cancel();
             self.after_close_task = None;
         }
@@ -1897,7 +1898,7 @@ fn handle_ipc_message(
         }
     } else {
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-        unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
+        yolo! { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
     }
 }
 
@@ -2148,12 +2149,12 @@ pub mod IPCHandlers {
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(json_buf) => {
                     // SAFETY: libuv writes into this region before notify_written reads.
-                    let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
+                    let spare = yolo! { json_buf.data.uv_alloc_spare_u8(suggested_size) };
                     &mut spare[..suggested_size]
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
                     // SAFETY: libuv writes into this region before on_read commits.
-                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
+                    let spare = yolo! { adv_buf.uv_alloc_spare_u8(suggested_size) };
                     &mut spare[..suggested_size]
                 }
             }
@@ -2238,7 +2239,7 @@ pub mod IPCHandlers {
                         unreachable!()
                     };
                     // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                    unsafe { adv_buf.uv_commit(nread) };
+                    yolo! { adv_buf.uv_commit(nread) };
                     let total_len = adv_buf.len() as usize;
                     let mut slice_start: usize = 0;
 

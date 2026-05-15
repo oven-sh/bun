@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -362,7 +363,7 @@ impl JSPromise {
             F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
             // SAFETY: `this` is `&mut Wrapper<F>` passed below.
-            let this = unsafe { bun_ptr::callback_ctx::<Wrapper<F>>(this) };
+            let this = yolo! { bun_ptr::callback_ctx::<Wrapper<F>>(this) };
             // `g` is a live JSGlobalObject; safe ZST-handle deref (panics on null).
             let g = JSGlobalObject::opaque_ref(g);
             let f = this.f.take().unwrap();
@@ -420,7 +421,7 @@ impl JSPromise {
     /// (`vm.pending_internal_promise` etc.). `JSPromise` is a GC-managed JSC
     /// heap cell; pointers to it are kept alive by the VM's strong-ref slots,
     /// not by Rust ownership. Centralizes the per-call-site
-    /// `unsafe { (*p).status() }` deref so callers don't open-code it.
+    /// `yolo! { (*p).status() }` deref so callers don't open-code it.
     #[inline]
     pub fn status_ptr(p: *mut JSPromise) -> Status {
         // `p` is a non-null GC-managed cell tracked by the VM (caller obtained

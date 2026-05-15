@@ -1,6 +1,7 @@
 // This file contains code derived from the following source:
 //   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync2-zig
 
+use bun_yolo::yolo;
 use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
 
@@ -123,22 +124,22 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: `read` only writes initialized `T` into the first `n` slots
         // and returns `n`; we never read an uninitialized slot.
-        let slice = unsafe { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
+        let slice = yolo! { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
         if self.read(slice)? != 1 {
             return Ok(None);
         }
         // SAFETY: read() returned 1, so items[0] is initialized.
-        Ok(Some(unsafe { items[0].assume_init_read() }))
+        Ok(Some(yolo! { items[0].assume_init_read() }))
     }
 
     // TODO(port): narrow error set
     pub fn read_item(&self) -> Result<T, ChannelError> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: see try_read_item.
-        let slice = unsafe { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
+        let slice = yolo! { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
         self.read_all(slice)?;
         // SAFETY: read_all() filled all slots.
-        Ok(unsafe { items[0].assume_init_read() })
+        Ok(yolo! { items[0].assume_init_read() })
     }
 
     // TODO(port): narrow error set
@@ -176,7 +177,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
                     return Err(ChannelError::Closed);
                 }
                 // SAFETY: mutex is held; this &mut does not live across wait().
-                let buffer = unsafe { &mut *self.buffer.get() };
+                let buffer = yolo! { &mut *self.buffer.get() };
                 match buffer.write(items) {
                     Ok(()) => {}
                     Err(err) => {
@@ -214,7 +215,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
             // borrow lives across `getters.wait()` (which releases the mutex).
             let new_item: Option<T> = 'blk: {
                 // SAFETY: mutex is held; this &mut does not live across wait().
-                let buffer = unsafe { &mut *self.buffer.get() };
+                let buffer = yolo! { &mut *self.buffer.get() };
                 // Buffer can contain null items but readItem will return null if the buffer is empty.
                 // we need to check if the buffer is empty before trying to read an item.
                 if buffer.readable_length() == 0 {

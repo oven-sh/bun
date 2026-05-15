@@ -17,6 +17,7 @@
 //!
 //! CowSlice does not support slices longer than `2^(usize::BITS - 1)`.
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
@@ -104,7 +105,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // exclusively in `Drop`; borrowed cows share the owner's box, which by
         // API contract outlives every borrow. The returned `&DebugData` is tied
         // to `&self` and so cannot dangle past the `CowSliceZ` itself.
-        self.debug.map(|d| unsafe { d.as_ref() })
+        self.debug.map(|d| yolo! { d.as_ref() })
     }
 
     // TODO(port): Zig exposed `pub const Slice` / `SliceMut` associated type
@@ -170,7 +171,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// Borrow this Cow's slice.
     pub fn slice(&self) -> &[T] {
         // SAFETY: `ptr` is valid for `len` elements for the lifetime of `self`.
-        unsafe { core::slice::from_raw_parts(self.ptr, self.flags.len()) }
+        yolo! { core::slice::from_raw_parts(self.ptr, self.flags.len()) }
     }
 
     #[inline]
@@ -190,7 +191,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
             self.into_owned()?;
         }
         // SAFETY: owned ⇒ `ptr` is uniquely owned and valid for `len` elements.
-        Ok(unsafe { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) })
+        Ok(yolo! { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) })
     }
 
     /// Mutably borrow this `Cow`'s slice, assuming it already owns its data.
@@ -201,7 +202,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
             "CowSlice.slice_mut_unsafe cannot be called on Cows that borrow their data."
         );
         // SAFETY: caller contract — `self` is owned.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) }
+        yolo! { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) }
     }
 
     /// Take ownership over this string's allocation. `self` is left in a
@@ -223,7 +224,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         if self.is_owned() {
             if let Some(d) = self.debug.take() {
                 // SAFETY: `d` was created via `heap::alloc` in `init_owned`/`into_owned`.
-                drop(unsafe { bun_core::heap::take(d.as_ptr()) });
+                drop(yolo! { bun_core::heap::take(d.as_ptr()) });
             }
         }
         // Zig: `defer str.* = Self.empty` — a *bitwise* overwrite. In Rust,
@@ -232,7 +233,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // `mem::forget(mem::replace(..))` resets `self` without dropping.
         core::mem::forget(core::mem::replace(self, Self::EMPTY));
         // SAFETY: owned ⇒ `ptr[..len]` was produced by `heap::alloc`.
-        Ok(unsafe { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) })
+        Ok(yolo! { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) })
     }
 
     /// Returns a new string that borrows this string's data.
@@ -269,7 +270,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // the sentinel is present at `end_`. No equivalent check here.
         let mut result = self.borrow();
         // SAFETY: const semantics are enforced by is_owned flag; `start <= end_ <= len`.
-        result.ptr = unsafe { self.ptr.add(start) };
+        result.ptr = yolo! { self.ptr.add(start) };
         result.flags.set_len(end_ - start);
         result
     }
@@ -351,7 +352,7 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
                 );
                 drop(borrows);
                 // SAFETY: owned ⇒ we created this via `heap::alloc`.
-                drop(unsafe { bun_core::heap::take(self.debug.unwrap().as_ptr()) });
+                drop(yolo! { bun_core::heap::take(self.debug.unwrap().as_ptr()) });
             } else {
                 let mut borrows = dbg.mutex.lock();
                 *borrows -= 1; // double deinit of a borrowed string would underflow
@@ -359,7 +360,7 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
         }
         if self.flags.is_owned() {
             // SAFETY: owned ⇒ `ptr[..len]` came from `heap::alloc`.
-            drop(unsafe {
+            drop(yolo! {
                 bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                     self.ptr,
                     self.flags.len(),

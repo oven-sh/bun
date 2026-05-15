@@ -30,6 +30,7 @@
 //! `self.parent` now take `(&mut Interpreter, this: NodeId)` and look their
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
@@ -203,7 +204,7 @@ macro_rules! node_accessors {
                 #[allow(clippy::mut_from_ref)]
                 pub fn $get_mut(&self, id: NodeId) -> &mut $ty {
                     // SAFETY: R-2 single-JS-thread invariant — see `nodes_mut`.
-                    match unsafe { &mut self.nodes.get_mut()[id.idx()] } {
+                    match yolo! { &mut self.nodes.get_mut()[id.idx()] } {
                         Node::$variant(v) => v,
                         other => panic!(
                             concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
@@ -422,7 +423,7 @@ impl ShellArgs {
         let stmts = script.stmts;
         // SAFETY: lifetime-only widen; arena outlives `self` (see above).
         let stmts: &'static [ast::Stmt] =
-            unsafe { core::slice::from_raw_parts(stmts.as_ptr().cast::<ast::Stmt>(), stmts.len()) };
+            yolo! { core::slice::from_raw_parts(stmts.as_ptr().cast::<ast::Stmt>(), stmts.len()) };
         self.script_ast = ast::Script { stmts };
     }
 
@@ -480,7 +481,7 @@ impl Interpreter {
         let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = {
             let len = jsobjs.len();
             let ptr = jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>();
-            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+            yolo! { core::slice::from_raw_parts_mut(ptr, len) }
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
         out_parser.as_mut().unwrap().parse()
@@ -518,7 +519,7 @@ impl Interpreter {
             // SAFETY: `event_loop.env()` returns the `MiniEventLoop`'s
             // `DotEnv::Loader`, which is set by `init_global()` and outlives
             // the interpreter (thread-lifetime singleton).
-            let env_loader = unsafe { &mut *event_loop.env() };
+            let env_loader = yolo! { &mut *event_loop.env() };
             let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
             let mut iter = env_loader.iterator();
             while let Some(entry) = iter.next() {
@@ -740,7 +741,7 @@ impl Interpreter {
             // SAFETY: `shargs` lives on this stack frame for the whole block;
             // arena is not moved/dropped while `out_parser`/`out_lex_result`
             // borrow it.
-            let arena = unsafe { &*arena_ptr };
+            let arena = yolo! { &*arena_ptr };
             let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
             let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
             match Self::parse(
@@ -809,7 +810,7 @@ impl Interpreter {
             // SAFETY: `interp` lives in this stack frame for the whole tick
             // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
             // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
+            yolo! { (*interp_ptr).flags.get().done() }
         });
 
         let code = interp.exit_code.get().expect("exit_code set by finish()");
@@ -914,7 +915,7 @@ impl Interpreter {
     #[allow(clippy::mut_from_ref)]
     unsafe fn nodes_mut(&self) -> &mut Vec<Node> {
         // SAFETY: forwarded to caller — see fn-level contract.
-        unsafe { self.nodes.get_mut() }
+        yolo! { self.nodes.get_mut() }
     }
 
     // ── arena management ───────────────────────────────────────────────────
@@ -925,7 +926,7 @@ impl Interpreter {
     pub fn alloc_node(&self, node: Node) -> NodeId {
         if let Some(slot) = self.free_list.with_mut(|f| f.pop()) {
             // SAFETY: no other borrow of `nodes` is live across this store.
-            unsafe { self.nodes_mut()[slot as usize] = node };
+            yolo! { self.nodes_mut()[slot as usize] = node };
             return NodeId(slot);
         }
         self.nodes.with_mut(|n| {
@@ -962,7 +963,7 @@ impl Interpreter {
     #[allow(clippy::mut_from_ref)]
     pub fn node_mut(&self, id: NodeId) -> &mut Node {
         // SAFETY: see `nodes_mut` — single-JS-thread, no overlapping borrow.
-        unsafe { &mut self.nodes_mut()[id.idx()] }
+        yolo! { &mut self.nodes_mut()[id.idx()] }
     }
 
     /// Look up the `parent` field of any state node. (Replaces
@@ -1469,7 +1470,7 @@ impl Interpreter {
     /// `m_ctx`; called exactly once from the GC thread's finalizer.
     pub unsafe fn deinit_from_finalizer(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `heap::alloc` payload.
-        let this = unsafe { bun_core::heap::take(this) };
+        let this = yolo! { bun_core::heap::take(this) };
         log!(
             "Interpreter(0x{:x}) deinitFromFinalizer (cleanup_state={})",
             &raw const *this as usize,
@@ -1630,7 +1631,7 @@ impl Interpreter {
         // See [`deinit_from_finalizer`](Self::deinit_from_finalizer).
         // SAFETY: `self` is the unique GC-owned `m_ctx` payload; round-trip via
         // raw ptr so `deinit_from_finalizer` can `heap::take` it.
-        unsafe { Self::deinit_from_finalizer(Box::into_raw(self)) };
+        yolo! { Self::deinit_from_finalizer(Box::into_raw(self)) };
     }
 
     /// Spec: interpreter.zig `hasPendingActivity`. GC `hasPendingActivity()`.
@@ -1664,7 +1665,7 @@ impl Interpreter {
                 for arg in argv {
                     // SAFETY: each `WTFStringImpl` in `argv` is a live
                     // `*WTF::StringImpl` borrowed from `worker.argv`.
-                    v.push(unsafe { (**arg).to_utf8() });
+                    v.push(yolo! { (**arg).to_utf8() });
                 }
             }
         });
@@ -1700,7 +1701,7 @@ impl Interpreter {
                 }
                 // SAFETY: `bun_vm()` on a JS event loop returns the live
                 // `*VirtualMachine` owning that loop.
-                let vm = unsafe { &*vm_ptr };
+                let vm = yolo! { &*vm_ptr };
                 let main = vm.main();
                 if !main.is_empty() {
                     if int == 0 {
@@ -1713,7 +1714,7 @@ impl Interpreter {
                 if let Some(worker_ptr) = vm.worker {
                     // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
                     // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                    let worker = yolo! { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
                         return;
@@ -1723,7 +1724,7 @@ impl Interpreter {
                         for arg in argv {
                             // SAFETY: each `WTFStringImpl` in `argv` is a live
                             // `*WTF::StringImpl` borrowed from `worker.argv`.
-                            vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+                            vm_args_utf8.push(yolo! { (**arg).to_utf8() });
                         }
                     }
                     out.extend_from_slice(vm_args_utf8[int as usize].slice());
@@ -1740,7 +1741,7 @@ impl Interpreter {
                 }
                 // SAFETY: `command_ctx` is the process-global `ContextData`
                 // (see `init`); it outlives the interpreter.
-                let ctx = unsafe { &*command_ctx };
+                let ctx = yolo! { &*command_ctx };
                 if int as usize >= 1 + ctx.passthrough.len() {
                     return;
                 }
@@ -1764,7 +1765,7 @@ fn io_to_js_value(
     buf: *mut Vec<u8>,
 ) -> crate::jsc::JSValue {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
-    let bytelist = core::mem::take(unsafe { &mut *buf });
+    let bytelist = core::mem::take(yolo! { &mut *buf });
     // PORT NOTE: Zig wraps in `jsc.Node.Buffer{ .buffer = ArrayBuffer.fromBytes
     // (..., .Uint8Array) }.toNodeBuffer(global)`. `MarkedArrayBuffer::
     // to_node_buffer` is the same `JSBuffer__bufferFromPointerAndLengthAndDeinit`
@@ -1838,7 +1839,7 @@ impl Bufio {
             Bufio::Owned(o) => o.memory_cost(),
             // SAFETY: borrowed buffer points into a live parent `ShellExecEnv`
             // (set by `dupe_for_subshell`); the parent outlives the child.
-            Bufio::Borrowed(b) => unsafe { (**b).memory_cost() },
+            Bufio::Borrowed(b) => yolo! { (**b).memory_cost() },
         }
     }
 }
@@ -1919,7 +1920,7 @@ impl ShellExecEnv {
         match &mut self._buffered_stdout {
             Bufio::Owned(o) => o,
             // SAFETY: caller contract.
-            Bufio::Borrowed(b) => unsafe { &mut **b },
+            Bufio::Borrowed(b) => yolo! { &mut **b },
         }
     }
 
@@ -1932,7 +1933,7 @@ impl ShellExecEnv {
         match &mut self._buffered_stderr {
             Bufio::Owned(o) => o,
             // SAFETY: caller contract; see `buffered_stdout_mut`.
-            Bufio::Borrowed(b) => unsafe { &mut **b },
+            Bufio::Borrowed(b) => yolo! { &mut **b },
         }
     }
 
@@ -2000,7 +2001,7 @@ impl ShellExecEnv {
         // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
         // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
         // explicit close (Zig: `closefd(this.cwd_fd)`).
-        let boxed = unsafe { bun_core::heap::take(this) };
+        let boxed = yolo! { bun_core::heap::take(this) };
         closefd(boxed.cwd_fd);
         // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
         // is a raw ptr so its drop is a no-op (matches Zig's
@@ -2264,7 +2265,7 @@ impl CowFd {
     /// otherwise hand out a fresh `dup()`.
     pub fn use_(this: *mut CowFd) -> bun_sys::Result<*mut CowFd> {
         // SAFETY: caller holds a live `CowFd` (refcount ≥ 1).
-        unsafe {
+        yolo! {
             if !(*this).being_used {
                 (*this).being_used = true;
                 (*this).ref_();
@@ -2286,13 +2287,13 @@ impl CowFd {
     /// Spec: `CowFd.dupeRef` — bump refcount and return the same pointer.
     pub fn dupe_ref(this: *mut CowFd) -> *mut CowFd {
         // SAFETY: caller holds a live `CowFd`.
-        unsafe { (*this).ref_() };
+        yolo! { (*this).ref_() };
         this
     }
 
     pub fn deref(this: *mut CowFd) {
         // SAFETY: caller holds a valid CowFd
-        unsafe {
+        yolo! {
             (*this).refcount -= 1;
             if (*this).refcount == 0 {
                 // Spec `CowFd.deinit` (interpreter.zig:192-196): close the fd
@@ -2590,7 +2591,7 @@ impl ParseError {
     pub fn opt(&self) -> &[u8] {
         match self {
             // SAFETY: see doc comment.
-            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => unsafe { &**s },
+            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => yolo! { &**s },
             ParseError::ShowUsage => b"",
         }
     }
@@ -2643,7 +2644,7 @@ pub fn parse_flags<'a, O: FlagParser>(
     let mut idx = 0usize;
     while idx < args.len() {
         // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init).
-        let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
+        let flag = yolo! { bun_core::ffi::cstr(args[idx]) }.to_bytes();
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
             ParseFlagResult::ContinueParsing => {}
@@ -2699,7 +2700,7 @@ impl OutputSrc {
             OutputSrc::Arrlist(v) => v.as_slice(),
             OutputSrc::OwnedBuf(b) => b,
             // SAFETY: caller guarantees the borrow outlives the OutputTask.
-            OutputSrc::BorrowedBuf(p) => unsafe { &**p },
+            OutputSrc::BorrowedBuf(p) => yolo! { &**p },
         }
     }
 }
@@ -2772,7 +2773,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         // of `me`).
         let this = bun_core::heap::into_raw(me);
         // SAFETY: `this` is a fresh, uniquely-owned heap allocation.
-        unsafe {
+        yolo! {
             let me = &mut *this;
             log!(
                 "OutputTask(0x{:x}) start errbuf={:?}",
@@ -2799,7 +2800,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     /// Spec: interpreter.zig `OutputTask.next`.
     pub unsafe fn next(this: *mut Self, interp: &Interpreter) -> Yield {
         // SAFETY: caller contract — see `start`.
-        unsafe {
+        yolo! {
             let me = &mut *this;
             match me.state {
                 OutputTaskState::WaitingWriteErr => {
@@ -2831,13 +2832,13 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     ) -> Yield {
         log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
         // Zig derefs the SystemError; in Rust drop handles it.
-        unsafe { Self::next(this, interp) }
+        yolo! { Self::next(this, interp) }
     }
 
     /// Spec: interpreter.zig `OutputTask.deinit` — fires `on_done` then frees.
     unsafe fn deinit(this: *mut Self, interp: &Interpreter) -> Yield {
         // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
-        let me = unsafe { bun_core::heap::take(this) };
+        let me = yolo! { bun_core::heap::take(this) };
         debug_assert!(me.state == OutputTaskState::Done);
         log!("OutputTask(0x{:x}) deinit", this as usize);
         let parent = me.parent;
@@ -2893,7 +2894,7 @@ pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     unsafe fn from_work_task(task: *mut WorkPoolTask) -> *mut Self {
         // SAFETY: caller contract — `task` is the first `#[repr(C)]` field of
         // `ShellTask`, embedded in `Self` at `TASK_OFFSET`.
-        unsafe { bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET) }
+        yolo! { bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET) }
     }
 }
 
@@ -2990,7 +2991,7 @@ impl ShellTask {
     pub unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
         log!("ShellTask schedule");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        unsafe {
+        yolo! {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this)
                 .keep_alive
@@ -3012,7 +3013,7 @@ impl ShellTask {
         // Stay on raw pointers: once `WorkPool::schedule` returns the worker
         // thread may already be touching `*this`, so we must not hold a live
         // `&mut ShellTask` across that call.
-        unsafe {
+        yolo! {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;
             WorkPool::schedule(&raw mut (*this).task);
@@ -3037,7 +3038,7 @@ impl ShellTask {
         // main thread may already be touching `*this`, so no live `&mut`
         // into it may span that call. `this` is live and exclusively owned by
         // this thread until the enqueue below.
-        let (event_loop, task_ptr) = unsafe {
+        let (event_loop, task_ptr) = yolo! {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             let event_loop = (*this).event_loop;
             let task_ptr = match &mut (*this).concurrent_task {
@@ -3076,7 +3077,7 @@ impl ShellTask {
     pub unsafe fn run_from_main_thread<C: ShellTaskCtx>(ctx: *mut C) {
         log!("ShellTask runFromJS");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        unsafe {
+        yolo! {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this)
                 .keep_alive
@@ -3093,7 +3094,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
     // embedded in `C` at `TASK_OFFSET` (Zig: two `container_of` hops). `ctx`
     // remains the live heap allocation handed to `schedule`.
-    unsafe {
+    yolo! {
         let ctx = C::from_work_task(task);
         // The worker thread is the sole accessor until `on_finish` publishes
         // the task back; the `&mut` ends before that call.
@@ -3107,7 +3108,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
 fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
-    unsafe {
+    yolo! {
         ShellTask::run_from_main_thread::<C>(bun_core::container_of::<C, _>(this, C::TASK_OFFSET))
     };
 }
@@ -3177,7 +3178,7 @@ pub fn create_shell_interpreter(
     // shared (`&*const`) — `ParsedShellScript`'s methods/fields are `&self` +
     // interior-mutable, so no `&mut` is required (and forming one here would
     // alias if JS re-enters another host fn on the same wrapper).
-    let parsed_shell_script: &ParsedShellScript = unsafe { &*parsed_shell_script };
+    let parsed_shell_script: &ParsedShellScript = yolo! { &*parsed_shell_script };
 
     if parsed_shell_script.args.get().is_none() {
         return Err(global.throw(format_args!(
@@ -3222,7 +3223,7 @@ pub fn create_shell_interpreter(
     // SAFETY: `interpreter` is a fresh heap allocation; the C++ wrapper takes
     // ownership of the raw pointer and `interpreter` outlives this call.
     // Single-threaded.
-    let js_value = unsafe {
+    let js_value = yolo! {
         let it = &*interpreter;
         it.update_flags(|f| f.set_quiet(quiet));
         it.global_this

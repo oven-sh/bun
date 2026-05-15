@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -36,9 +37,9 @@ impl MarkedArgumentBuffer {
         {
             // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; `args` is the
             // live stack-allocated buffer C++ hands us.
-            let ctx = unsafe { &mut *ctx };
+            let ctx = yolo! { &mut *ctx };
             let f = ctx.f.take().unwrap();
-            ctx.r = Some(f(unsafe { &mut *args }));
+            ctx.r = Some(f(yolo! { &mut *args }));
         }
         let mut ctx = Ctx {
             f: Some(f),
@@ -60,7 +61,7 @@ impl MarkedArgumentBuffer {
             std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
             // SAFETY: both fn-pointer signatures are `extern "C"` with two
             // thin-pointer params; ABI-identical modulo pointee type.
-            unsafe {
+            yolo! {
                 bun_ptr::cast_fn_ptr::<
                     extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),
@@ -97,8 +98,8 @@ macro_rules! marked_argument_buffer_wrap {
             ) {
                 // SAFETY: `this` is the `&mut ctx` passed to `MarkedArgumentBuffer::run` below;
                 // `marked_argument_buffer` is the live stack-allocated buffer C++ hands us.
-                let this = unsafe { &mut *this };
-                this.result = $function(this.global_this, this.callframe, unsafe {
+                let this = yolo! { &mut *this };
+                this.result = $function(this.global_this, this.callframe, yolo! {
                     &mut *marked_argument_buffer
                 });
             }

@@ -1,6 +1,7 @@
 #![allow(unused)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 
 use bun_core::ZStr;
@@ -205,7 +206,7 @@ bun_core::named_error_set!(ZstdError);
 //                                   int compressionLevel);
 pub fn compress(dest: &mut [u8], src: &[u8], level: Option<i32>) -> Result {
     // SAFETY: dest/src are valid for their lengths; ZSTD_compress reads src and writes dest.
-    let result = unsafe {
+    let result = yolo! {
         c::ZSTD_compress(
             dest.as_mut_ptr().cast::<c_void>(),
             dest.len(),
@@ -218,7 +219,7 @@ pub fn compress(dest: &mut [u8], src: &[u8], level: Option<i32>) -> Result {
     };
     if c::ZSTD_isError(result) != 0 {
         // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
+        return Result::Err(yolo! { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
     }
     Result::Success(result)
 }
@@ -237,7 +238,7 @@ pub fn compress_bound(src_size: usize) -> usize {
 //   const void* src, size_t compressedSize);
 pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
     // SAFETY: dest/src are valid for their lengths; ZSTD_decompress reads src and writes dest.
-    let result = unsafe {
+    let result = yolo! {
         c::ZSTD_decompress(
             dest.as_mut_ptr().cast::<c_void>(),
             dest.len(),
@@ -247,7 +248,7 @@ pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
     };
     if c::ZSTD_isError(result) != 0 {
         // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
+        return Result::Err(yolo! { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
     }
     Result::Success(result)
 }
@@ -298,7 +299,7 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
 
 pub fn get_decompressed_size(src: &[u8]) -> usize {
     // SAFETY: src is valid for src.len() bytes.
-    unsafe { c::ZSTD_findDecompressedSize(src.as_ptr().cast::<c_void>(), src.len()) as usize }
+    yolo! { c::ZSTD_findDecompressedSize(src.as_ptr().cast::<c_void>(), src.len()) as usize }
 }
 
 pub use bun_core::compress::State;
@@ -337,7 +338,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             return Err(ZstdError::ZstdFailedToCreateInstance);
         }
         // SAFETY: zstd is a freshly created non-null DStream.
-        let _ = unsafe { c::ZSTD_initDStream(zstd) };
+        let _ = yolo! { c::ZSTD_initDStream(zstd) };
 
         Ok(Box::new(ZstdReaderArrayList {
             input,
@@ -353,7 +354,7 @@ impl<'a> ZstdReaderArrayList<'a> {
         if self.state != State::End {
             // SAFETY: self.zstd was created by ZSTD_createDStream and has not been freed
             // (guarded by state != End).
-            let _ = unsafe { c::ZSTD_freeDStream(self.zstd) };
+            let _ = yolo! { c::ZSTD_freeDStream(self.zstd) };
             self.state = State::End;
         }
     }
@@ -385,7 +386,7 @@ impl<'a> ZstdReaderArrayList<'a> {
 
             // SAFETY: write-only spare; ZSTD_decompressStream initializes the
             // first `out_buf.pos` bytes.
-            let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
+            let spare = yolo! { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
             let mut in_buf = c::ZSTD_inBuffer {
                 src: next_in.as_ptr().cast::<c_void>(),
                 size: next_in.len(),
@@ -400,7 +401,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             // SAFETY: self.zstd is a valid DStream (state != End); in_buf/out_buf point
             // into live slices with correct sizes.
             let rc =
-                unsafe { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
+                yolo! { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
             if c::ZSTD_isError(rc) != 0 {
                 self.state = State::Error;
                 return Err(ZstdError::ZstdDecompressionError);
@@ -410,7 +411,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             let bytes_read = in_buf.pos;
             // SAFETY: ZSTD_decompressStream wrote exactly `bytes_written` initialized bytes
             // into the spare capacity starting at the previous len.
-            unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
+            yolo! { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
             self.total_out += bytes_written;
 
@@ -434,7 +435,7 @@ impl<'a> ZstdReaderArrayList<'a> {
                 // ZSTD_initDStream() safely resets the stream state without needing cleanup
                 // It's designed to be called multiple times on the same DStream object
                 // SAFETY: self.zstd is a valid DStream.
-                let _ = unsafe { c::ZSTD_initDStream(self.zstd) };
+                let _ = yolo! { c::ZSTD_initDStream(self.zstd) };
                 continue;
             }
 

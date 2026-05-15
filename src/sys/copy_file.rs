@@ -2,6 +2,7 @@
 // The copy starts at offset 0, the initial offsets are preserved.
 // No metadata is transferred over.
 
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::Tag;
@@ -200,7 +201,7 @@ pub fn copy_file_with_state(
         // kernel-version probing — our minimum is 14.0.
         loop {
             // SAFETY: FFI call; fds are valid, offset ptrs are null (kernel uses file position)
-            let rc = unsafe {
+            let rc = yolo! {
                 libc::copy_file_range(
                     in_.native(),
                     core::ptr::null_mut(),
@@ -233,7 +234,7 @@ pub fn copy_file_with_state(
     #[cfg(windows)]
     {
         // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
-        let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
+        let rc = yolo! { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
         if rc == 0 {
             return Err(crate::Error::from_code(
                 crate::windows::get_last_errno(),
@@ -371,7 +372,7 @@ pub fn copy_file_range(
         loop {
             // TODO(port): raw syscall binding `std.os.linux.copy_file_range`
             // SAFETY: raw syscall; fds valid, offset ptrs null
-            let rc = unsafe {
+            let rc = yolo! {
                 crate::linux::copy_file_range(
                     in_,
                     core::ptr::null_mut(),
@@ -414,7 +415,7 @@ pub fn copy_file_range(
     while !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
         // TODO(port): raw syscall binding `std.os.linux.sendfile`
         // SAFETY: raw syscall; fds valid, offset ptr null
-        let rc = unsafe { crate::linux::sendfile(out, in_, core::ptr::null_mut(), len) };
+        let rc = yolo! { crate::linux::sendfile(out, in_, core::ptr::null_mut(), len) };
         crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);
         match crate::get_errno(rc) {
             E::SUCCESS => return Ok(rc as usize),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
@@ -75,12 +76,12 @@ impl Expect {
                 // for_each as opaque userdata; non-null asserted by Zig `entry_.?`. global/pass
                 // point at live stack locals for the duration of the for_each call.
                 debug_assert!(!entry_.is_null());
-                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
-                let Ok(same) = item.is_same_value(entry.expected, unsafe { &*entry.global }) else {
+                let entry = yolo! { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
+                let Ok(same) = item.is_same_value(entry.expected, yolo! { &*entry.global }) else {
                     return;
                 };
                 if same {
-                    unsafe { *entry.pass = true };
+                    yolo! { *entry.pass = true };
                     // TODO(perf): break out of the `forEach` when a match is found
                 }
             }

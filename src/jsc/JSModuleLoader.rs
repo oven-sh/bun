@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult};
 use bun_core::String as BunString;
 
@@ -59,7 +60,7 @@ impl JSModuleLoader {
         // ptr/len pairs are valid for reads and `exception` points to a writable JSValue slot.
         // `global_object` is an opaque ZST handle — passed as `*const` per the FFI convention
         // in `JSGlobalObject.rs`; C++-side mutation is outside Rust's aliasing model.
-        unsafe {
+        yolo! {
             JSC__JSModuleLoader__evaluate(
                 global_object,
                 source_code_ptr,

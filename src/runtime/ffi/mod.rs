@@ -7,6 +7,7 @@
 //! host-fns (`cc`/`linkSymbols`/`callback`) stay gated on `bun_tcc_sys::State`
 //! API.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
 use std::sync::Once;
@@ -63,7 +64,7 @@ mod dom_call_slowpath {
             ) -> JSValue {
                 // SAFETY: C++ DOMJIT slowpath caller passes a live global and a
                 // valid `[JSValue; arguments_len]` span (ZigLazyStaticFunctions).
-                let (global, arguments) = unsafe {
+                let (global, arguments) = yolo! {
                     (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
                 };
                 bun_jsc::to_js_host_call(global, move || $target(global, this_value, arguments))
@@ -97,7 +98,7 @@ mod dom_call_slowpath {
         arguments_len: usize,
     ) -> JSValue {
         // SAFETY: see `dom_call_slowpath!` above.
-        let (global, arguments) = unsafe {
+        let (global, arguments) = yolo! {
             (
                 &*global,
                 core::slice::from_raw_parts(arguments_ptr, arguments_len),
@@ -143,7 +144,7 @@ impl JitWriteUnprotected {
     fn new() -> Self {
         if Self::HAS_PROTECTION {
             // SAFETY: aarch64 macOS only; toggles W^X for the current thread
-            unsafe { pthread_jit_write_protect_np(false as c_int) };
+            yolo! { pthread_jit_write_protect_np(false as c_int) };
         }
         Self(())
     }
@@ -154,7 +155,7 @@ impl Drop for JitWriteUnprotected {
     fn drop(&mut self) {
         if Self::HAS_PROTECTION {
             // SAFETY: re-enable JIT write protection on scope exit
-            unsafe { pthread_jit_write_protect_np(true as c_int) };
+            yolo! { pthread_jit_write_protect_np(true as c_int) };
         }
     }
 }
@@ -196,13 +197,13 @@ unsafe extern "C" {
 impl Offsets {
     fn load_once() {
         // SAFETY: extern "C" fn populating a static
-        unsafe { bun_ffi_ensure_offsets_are_loaded() };
+        yolo! { bun_ffi_ensure_offsets_are_loaded() };
     }
     pub fn get() -> &'static Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
         // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*BUN_FFI_OFFSETS.get() }
+        yolo! { &*BUN_FFI_OFFSETS.get() }
     }
 }
 
@@ -221,7 +222,7 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
         use std::io::Write as _;
         // SAFETY: GetLastError() reads thread-local Win32 state, takes no
         // arguments, and has no preconditions; always safe to call.
-        let err = unsafe { bun_sys::windows::GetLastError() };
+        let err = yolo! { bun_sys::windows::GetLastError() };
         let err_int = err as u32;
         let mut v = Vec::new();
         write!(&mut v, "error code {}", err_int).ok();
@@ -230,7 +231,7 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
     #[cfg(not(windows))]
     {
         // SAFETY: dlerror is safe to call from any thread
-        let msg: &[u8] = unsafe {
+        let msg: &[u8] = yolo! {
             let p = libc::dlerror();
             if !p.is_null() {
                 bun_core::ffi::cstr(p).to_bytes()
@@ -367,12 +368,12 @@ impl Drop for Function {
         if let Some(state) = self.state.take() {
             // SAFETY: `state` is the live TCCState* allocated for this Function's
             // trampoline; ownership is unique here (taken from self).
-            unsafe { TCC::tcc_delete(state.as_ptr()) };
+            yolo! { TCC::tcc_delete(state.as_ptr()) };
         }
         if let Step::Compiled(compiled) = &mut self.step {
             if let Some(wrapper) = compiled.ffi_callback_function_wrapper.take() {
                 // SAFETY: wrapper was created by Bun__createFFICallbackFunction
-                unsafe { FFICallbackFunctionWrapper_destroy(wrapper.as_ptr()) };
+                yolo! { FFICallbackFunctionWrapper_destroy(wrapper.as_ptr()) };
             }
         }
     }
@@ -493,13 +494,13 @@ impl CompilerRT {
     #[inline(never)]
     pub extern "C" fn memset(dest: *mut u8, c: u8, byte_count: usize) {
         // SAFETY: caller (TCC-compiled code) guarantees dest[0..byte_count] is writable
-        unsafe { core::slice::from_raw_parts_mut(dest, byte_count) }.fill(c);
+        yolo! { core::slice::from_raw_parts_mut(dest, byte_count) }.fill(c);
     }
 
     #[inline(never)]
     pub extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
         // SAFETY: caller (TCC-compiled code) guarantees non-overlapping valid ranges
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts_mut(dest, byte_count)
                 .copy_from_slice(core::slice::from_raw_parts(source, byte_count));
         }

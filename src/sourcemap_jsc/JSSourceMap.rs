@@ -1,5 +1,6 @@
 //! This implements the JavaScript SourceMap class from Node.js.
 
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -207,7 +208,7 @@ impl JSSourceMap {
         // ownership transfers to the C++ JSCell wrapper (`m_ctx`). The extern takes
         // an erased `*mut ()` (matching `src/jsc/generated.rs::__create`) since
         // C++ stores it opaquely; cast back in `finalize`.
-        unsafe {
+        yolo! {
             SourceMap__create(
                 global.as_mut_ptr(),
                 bun_core::heap::into_raw(this).cast::<()>(),
@@ -217,14 +218,14 @@ impl JSSourceMap {
     #[inline]
     fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
-        unsafe {
+        yolo! {
             SourceMapPrototype__payloadSetCachedValue(this_value, global.as_mut_ptr(), value)
         };
     }
     #[inline]
     fn line_lengths_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         // SAFETY: `global` is live; `this_value` is the freshly-constructed wrapper.
-        unsafe {
+        yolo! {
             SourceMapPrototype__lineLengthsSetCachedValue(this_value, global.as_mut_ptr(), value)
         };
     }
@@ -294,7 +295,7 @@ impl JSSourceMap {
         // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
         // `as_ptr()` derives `*mut` via the struct's `UnsafeCell` interior, so the
         // C++ callee may mutate the global without laundering a read-only pointer.
-        Ok(unsafe {
+        Ok(yolo! {
             Bun__createNodeModuleSourceMapOriginObject(
                 global.as_mut_ptr(),
                 name,
@@ -325,7 +326,7 @@ impl JSSourceMap {
         // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
         // `as_ptr()` derives `*mut` via the struct's `UnsafeCell` interior, so the
         // C++ callee may mutate the global without laundering a read-only pointer.
-        Ok(unsafe {
+        Ok(yolo! {
             Bun__createNodeModuleSourceMapEntryObject(
                 global.as_mut_ptr(),
                 JSValue::js_number(mapping.generated.lines.zero_based() as f64),

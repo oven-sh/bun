@@ -1,6 +1,7 @@
 //! libspng decode/encode for `Bun.Image`. Indexed-PNG encode quantises via
 //! `quantize.rs`. Dispatch lives in codecs.rs; this file is the codec body.
 
+use bun_yolo::yolo;
 use core::ffi::c_int;
 use core::ptr::NonNull;
 
@@ -113,33 +114,33 @@ struct Trns {
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // SAFETY: spng_ctx_new is safe to call with any flags; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(0) };
+    let ctx = yolo! { spng_ctx_new(0) };
     if ctx.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
     let _ctx_guard = scopeguard::guard(ctx, |c| {
         // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
-        unsafe { spng_ctx_free(c) }
+        yolo! { spng_ctx_free(c) }
     });
 
     // SAFETY: ctx is valid; bytes outlives the ctx (freed at end of scope).
-    if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
+    if yolo! { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let mut ihdr = Ihdr::default();
     // SAFETY: ctx is valid; ihdr is a valid out-ptr.
-    if unsafe { spng_get_ihdr(ctx, &raw mut ihdr) } != 0 {
+    if yolo! { spng_get_ihdr(ctx, &raw mut ihdr) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     codecs::guard(ihdr.width, ihdr.height, max_pixels)?;
     let mut size: usize = 0;
     // SAFETY: ctx is valid; size is a valid out-ptr.
-    if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &raw mut size) } != 0 {
+    if yolo! { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &raw mut size) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let mut out = vec![0u8; size];
     // SAFETY: ctx is valid; out is a valid mutable buffer of `size` bytes.
-    if unsafe {
+    if yolo! {
         spng_decode_image(
             ctx,
             out.as_mut_ptr(),
@@ -161,14 +162,14 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // P3 / Adobe RGB / XYB, and a "no profile" result there is a visible
     // colour shift, which is the exact bug #30197 is about.
     // SAFETY: all-zero is a valid Iccp (POD; null profile ptr is the "no profile" state).
-    let mut iccp: Iccp = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut iccp: Iccp = yolo! { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: ctx is valid; iccp is a valid out-ptr.
-    let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &raw mut iccp) } == 0
+    let icc: Option<Vec<u8>> = if yolo! { spng_get_iccp(ctx, &raw mut iccp) } == 0
         && iccp.profile_len > 0
         && !iccp.profile.is_null()
     {
         // SAFETY: libspng guarantees profile points to profile_len bytes owned by ctx.
-        Some(unsafe { core::slice::from_raw_parts(iccp.profile, iccp.profile_len) }.to_vec())
+        Some(yolo! { core::slice::from_raw_parts(iccp.profile, iccp.profile_len) }.to_vec())
     } else {
         None
     };
@@ -207,7 +208,7 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let name = b"ICC Profile";
     iccp.profile_name[..name.len()].copy_from_slice(name);
     // SAFETY: ctx is valid; iccp is fully initialised; libspng only reads from it.
-    let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
+    let _ = yolo! { spng_set_iccp(ctx, &raw const iccp) };
 }
 
 pub fn encode(
@@ -218,21 +219,21 @@ pub fn encode(
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
+    let ctx = yolo! { spng_ctx_new(SPNG_CTX_ENCODER) };
     if ctx.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
     let _ctx_guard = scopeguard::guard(ctx, |c| {
         // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
-        unsafe { spng_ctx_free(c) }
+        yolo! { spng_ctx_free(c) }
     });
 
     // SAFETY: ctx is valid.
-    let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
+    let _ = yolo! { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
     if level >= 0 {
         // SAFETY: ctx is valid.
         let _ =
-            unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
+            yolo! { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
     }
     let ihdr = Ihdr {
         width: w,
@@ -242,12 +243,12 @@ pub fn encode(
         ..Default::default()
     };
     // SAFETY: ctx is valid; ihdr is fully initialised.
-    if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
+    if yolo! { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
     embed_iccp(ctx, icc_profile);
     // SAFETY: ctx is valid; rgba is a valid readable buffer.
-    if unsafe {
+    if yolo! {
         spng_encode_image(
             ctx,
             rgba.as_ptr(),
@@ -262,7 +263,7 @@ pub fn encode(
     let mut len: usize = 0;
     let mut err: c_int = 0;
     // SAFETY: ctx is valid; len/err are valid out-ptrs.
-    let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
+    let buf = yolo! { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
     if buf.is_null() {
         return Err(codecs::Error::EncodeFailed);
     }
@@ -270,7 +271,7 @@ pub fn encode(
     // with libc `free` as the finalizer instead of duping.
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
     Ok(codecs::Encoded {
-        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        bytes: yolo! { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
         free: encoded_wrap_free!(libc::free),
     })
 }
@@ -302,21 +303,21 @@ pub fn encode_indexed(
     .map_err(|_| codecs::Error::OutOfMemory)?;
 
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
-    let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
+    let ctx = yolo! { spng_ctx_new(SPNG_CTX_ENCODER) };
     if ctx.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
     let _ctx_guard = scopeguard::guard(ctx, |c| {
         // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
-        unsafe { spng_ctx_free(c) }
+        yolo! { spng_ctx_free(c) }
     });
 
     // SAFETY: ctx is valid.
-    let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
+    let _ = yolo! { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
     if level >= 0 {
         // SAFETY: ctx is valid.
         let _ =
-            unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
+            yolo! { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
     }
 
     let ihdr = Ihdr {
@@ -327,7 +328,7 @@ pub fn encode_indexed(
         ..Default::default()
     };
     // SAFETY: ctx is valid; ihdr is fully initialised.
-    if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
+    if yolo! { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
     embed_iccp(ctx, icc_profile);
@@ -354,16 +355,16 @@ pub fn encode_indexed(
         trns.type3_alpha[i] = q.palette[i * 4 + 3];
     }
     // SAFETY: ctx is valid; plte is fully initialised.
-    if unsafe { spng_set_plte(ctx, &raw const plte) } != 0 {
+    if yolo! { spng_set_plte(ctx, &raw const plte) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
     // SAFETY: ctx is valid; trns is fully initialised.
-    if q.has_alpha && unsafe { spng_set_trns(ctx, &raw const trns) } != 0 {
+    if q.has_alpha && yolo! { spng_set_trns(ctx, &raw const trns) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
 
     // SAFETY: ctx is valid; q.indices is a valid readable buffer.
-    if unsafe {
+    if yolo! {
         spng_encode_image(
             ctx,
             q.indices.as_ptr(),
@@ -379,13 +380,13 @@ pub fn encode_indexed(
     let mut len: usize = 0;
     let mut err: c_int = 0;
     // SAFETY: ctx is valid; len/err are valid out-ptrs.
-    let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
+    let buf = yolo! { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
     if buf.is_null() {
         return Err(codecs::Error::EncodeFailed);
     }
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
     Ok(codecs::Encoded {
-        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        bytes: yolo! { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
         free: encoded_wrap_free!(libc::free),
     })
 }

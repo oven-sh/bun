@@ -3,6 +3,7 @@
 //! XXH32 name lookup; the canonical lowercase name string is the map key, so
 //! a hit also avoids lowercasing on the caller side.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint};
 
 #[repr(C)]
@@ -25,7 +26,7 @@ impl Header {
         if self.name.is_null() {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.name, self.name_len as usize) }
+            yolo! { core::slice::from_raw_parts(self.name, self.name_len as usize) }
         }
     }
     /// Safe view of the header value bytes.
@@ -36,7 +37,7 @@ impl Header {
         if self.value.is_null() {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.value, self.value_len as usize) }
+            yolo! { core::slice::from_raw_parts(self.value, self.value_len as usize) }
         }
     }
 

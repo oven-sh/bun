@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::SmallList;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
@@ -42,7 +43,7 @@ macro_rules! arena_slice_newtype {
             pub fn v(&self) -> &[u8] {
                 // SAFETY: arena-owned, never null, immutable for the parse session
                 // (see field-level TODO(port) on `'bump` threading).
-                unsafe { crate::arena_str(self.v) }
+                yolo! { crate::arena_str(self.v) }
             }
 
             pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
@@ -146,7 +147,7 @@ impl DashedIdentReference {
             // `&'a [u8]` (arena lifetime), but the safe accessor ties the borrow
             // to `&self`. Raw deref yields the unbounded arena borrow.
             // SAFETY: arena-owned slice; see `DashedIdent::v`.
-            let ident_v = unsafe { crate::arena_str(self.ident.v) };
+            let ident_v = yolo! { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
             // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
@@ -319,10 +320,10 @@ impl IdentOrRef {
         if self.ref_bit() {
             // SAFETY: in debug builds, ptrbits stores a heap pointer to a *const [u8] written by from_ref
             let ptr = self.ptrbits() as usize as *const *const [u8];
-            unsafe { crate::arena_str(*ptr) }
+            yolo! { crate::arena_str(*ptr) }
         } else {
             // SAFETY: as_ident reconstructs the arena slice this was packed from
-            unsafe { crate::arena_str(self.as_ident().unwrap().v) }
+            yolo! { crate::arena_str(self.as_ident().unwrap().v) }
         }
     }
 
@@ -378,7 +379,7 @@ impl IdentOrRef {
             let len = self.len_bits() as usize;
             // SAFETY: ptr/len were packed from a valid arena slice in from_ident
             let slice =
-                std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
+                std::ptr::from_ref::<[u8]>(yolo! { core::slice::from_raw_parts(ptr, len) });
             return Some(Ident { v: slice });
         }
         None
@@ -401,7 +402,7 @@ impl IdentOrRef {
         // TODO(port): lifetime — returns arena/symbol-table borrow; `'static` is a placeholder.
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
-            return Some(unsafe { crate::arena_str(self.as_ident().unwrap().v) });
+            return Some(yolo! { crate::arena_str(self.as_ident().unwrap().v) });
         }
         let r = self.as_ref().unwrap();
         let final_ref = map.follow(r);
@@ -411,13 +412,13 @@ impl IdentOrRef {
         local_names
             .unwrap()
             .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(&**p) })
+            .map(|p| yolo! { crate::arena_str(&**p) })
     }
 
     pub fn as_original_string(self, symbols: &bun_ast::symbol::List) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
-            return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
+            return yolo! { crate::arena_str(self.as_ident().unwrap().v) };
         }
         let r = self.as_ref().unwrap();
         symbols.at(r.inner_index() as usize).original_name.slice()
@@ -430,7 +431,7 @@ impl IdentOrRef {
             // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
             // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
             // TODO(port): verify upstream intent; preserving behavior verbatim.
-            let bytes = unsafe {
+            let bytes = yolo! {
                 core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
             };
             hasher.update(bytes);
@@ -518,7 +519,7 @@ impl CustomIdent {
             };
         // SAFETY: arena-owned slice valid for the printer's `'a` lifetime
         // (`arena_str` yields an unbounded borrow, which coerces to `'a`).
-        let v = unsafe { crate::arena_str(self.v) };
+        let v = yolo! { crate::arena_str(self.v) };
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
 }

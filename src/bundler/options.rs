@@ -1,6 +1,7 @@
 //! This file is mostly the API schema but with all the options normalized.
 //! Normalization is necessary because most fields in the API schema are optional
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
@@ -586,12 +587,12 @@ pub fn get_loader_and_virtual_source<'a>(
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
-    let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
+    let mut loader: Option<Loader> = path.loader(yolo! { &*jsc_vm.loaders() });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
-        let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
+        let eval_source: &'a bun_ast::Source = yolo! { &*eval_source };
         // Spec: `bun.pathLiteral("/[eval]")` — the eval/stdin entry path is built
         // via `bun.pathLiteral` (cli.zig / run_command.zig / bun.js.zig), which
         // rewrites `/` → `\` on Windows, so the suffix uses the platform separator.
@@ -667,7 +668,7 @@ pub fn get_loader_and_virtual_source<'a>(
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
         jsc_vm
             .read_dir_info_package_json(dir)
-            .map(|p| unsafe { &*p })
+            .map(|p| yolo! { &*p })
     } else {
         None
     };
@@ -1398,7 +1399,7 @@ pub struct BundleOptions<'a> {
     /// Spec `options.zig:1753`: `?*const Api.BunInstall`. Stored as a raw
     /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
     /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
-    /// unrelated to `'a`; a typed reference forced an `unsafe { &*(p as *const _) }`
+    /// unrelated to `'a`; a typed reference forced an `yolo! { &*(p as *const _) }`
     /// lifetime-extension cast at every call site (PORTING.md §Forbidden).
     /// The sole consumer (`PackageManager::init_with_runtime` via the resolver's
     /// erased `*const ()`) only reads through it.
@@ -1642,7 +1643,7 @@ impl<'a> BundleOptions<'a> {
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
     pub fn log(&self) -> &bun_ast::Log {
-        unsafe { &*self.log }
+        yolo! { &*self.log }
     }
 
     /// Reborrow the per-Transpiler `Log` mutably. `&self` receiver (not
@@ -1655,7 +1656,7 @@ impl<'a> BundleOptions<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> &mut bun_ast::Log {
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Read-only view of the parsed `bunfig.toml` `[install]` block, if any.
@@ -1666,7 +1667,7 @@ impl<'a> BundleOptions<'a> {
     /// (`PackageManager::init_with_runtime`) only reads through it.
     #[inline]
     pub fn install(&self) -> Option<&api::BunInstall> {
-        self.install.map(|p| unsafe { p.as_ref() })
+        self.install.map(|p| yolo! { p.as_ref() })
     }
 
     /// Whether `bake.DevServer` is driving this bundle. The stored pointer is

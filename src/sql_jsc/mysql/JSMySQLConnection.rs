@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 
@@ -104,7 +105,7 @@ impl Drop for DerefOnDrop {
     fn drop(&mut self) {
         // SAFETY: constructor contract — `self.0` is a live `heap::alloc`
         // pointer with at least one outstanding ref owned by this guard.
-        unsafe { JSMySQLConnection::deref(self.0) }
+        yolo! { JSMySQLConnection::deref(self.0) }
     }
 }
 
@@ -139,7 +140,7 @@ impl JSMySQLConnection {
     }
 
     /// `&mut EventLoop` for `entered()`/`run_callback`. One audited unsafe
-    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
+    /// here replaces the per-site `yolo! { self.vm().event_loop_mut() }` —
     /// the loop is a disjoint heap allocation owned by the JS-thread VM
     /// singleton; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
@@ -184,7 +185,7 @@ impl JSMySQLConnection {
         // `&mut` is fresh per call site; reentrancy through
         // `MySQLConnection::get_js_connection()` forms a shared
         // `&JSMySQLConnection` only.
-        unsafe { self.connection.get_mut() }
+        yolo! { self.connection.get_mut() }
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -421,7 +422,7 @@ impl JSMySQLConnection {
         // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
         // `this` is the live `heap::alloc` ptr from `create_instance`, sole
         // owner; no `&`/`&mut Self` outlives the `heap::take` below.
-        unsafe {
+        yolo! {
             {
                 let r = &*this;
                 r.stop_timers();
@@ -546,7 +547,7 @@ impl JSMySQLConnection {
         let mut tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
             if let Some(s) = s {
                 // SAFETY: secure was created by ssl_ctx_cache; we own one ref until transferred.
-                unsafe { boringssl::SSL_CTX_free(s) };
+                yolo! { boringssl::SSL_CTX_free(s) };
             }
             drop(cfg);
         });
@@ -660,7 +661,7 @@ impl JSMySQLConnection {
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
                     let _ = this;
-                    unsafe { Self::deref(ptr) };
+                    yolo! { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
                 }
             };

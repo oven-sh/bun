@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::fmt;
 
@@ -159,7 +160,7 @@ impl FdExt for Fd {
                         let mut req = uv::fs_t::uninitialized();
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the
                         // stack for the duration of the call.
-                        let rc = unsafe {
+                        let rc = yolo! {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
                         // Zig: `defer req.deinit();` — fs_t has no Drop impl, so cleanup
@@ -503,7 +504,7 @@ unsafe extern "C" {
 #[cfg(windows)]
 pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
     // SAFETY: FFI call into libuv. Raw extern lives in `bun_core::fd` (T0).
-    let out = unsafe { bun_core::fd::uv_open_osfhandle(in_) };
+    let out = yolo! { bun_core::fd::uv_open_osfhandle(in_) };
     debug_assert!(out >= -1);
     if out == -1 {
         return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded);

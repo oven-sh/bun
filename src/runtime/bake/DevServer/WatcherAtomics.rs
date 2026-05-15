@@ -2,6 +2,7 @@
 //! It attempts to recycle as much memory as possible, since files are very
 //! frequently updated (the whole point of HMR)
 
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::bake::dev_server::{DevServer, HotReloadEvent};
@@ -104,7 +105,7 @@ impl WatcherAtomics {
 
         // SAFETY: `ev` points into `self.events[index]`, which the watcher thread has exclusive
         // access to (it is neither `current_event` nor `pending_event`).
-        let ev_ref = unsafe { &mut *ev };
+        let ev_ref = yolo! { &mut *ev };
 
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
@@ -128,7 +129,7 @@ impl WatcherAtomics {
     pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
         // SAFETY: `ev` was returned by `watcher_acquire_event` and points into `self.events`;
         // the watcher thread has exclusive access until it is submitted below.
-        let ev_ref = unsafe { &mut *ev };
+        let ev_ref = yolo! { &mut *ev };
 
         ev_ref.assert_watcher_thread_locked();
 
@@ -167,7 +168,7 @@ impl WatcherAtomics {
 
         // SAFETY: `ev` points into `self.events`; both are within the same allocation.
         let ev_index: u8 =
-            u8::try_from(unsafe { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
+            u8::try_from(yolo! { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
         let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
         match old_next {
             NextEvent::DONE => {
@@ -195,7 +196,7 @@ impl WatcherAtomics {
                 };
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
-                unsafe {
+                yolo! {
                     (*(&(*ev_ref.owner).vm).event_loop)
                         .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
                 }
@@ -235,7 +236,7 @@ impl WatcherAtomics {
     ) -> Option<*mut HotReloadEvent> {
         // SAFETY: `old_event` was previously submitted to the dev server thread and is now
         // exclusively owned by it for reset.
-        unsafe { (*old_event).reset() };
+        yolo! { (*old_event).reset() };
 
         #[cfg(debug_assertions)]
         {

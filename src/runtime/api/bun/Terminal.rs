@@ -9,6 +9,7 @@
 //! - Downgrades to weak on EOF from master_fd
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -393,7 +394,7 @@ impl Terminal {
         // last callback fires). R-2: shared borrow only — bodies take `&self`;
         // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
         // fresh `&Self` from `m_ctx` aliases soundly.
-        unsafe { &*this }
+        yolo! { &*this }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -403,7 +404,7 @@ impl Terminal {
         // refcount mixin only reads/writes the `ref_count` field via shared
         // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
         // materialized).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
+        yolo! { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
     }
 
     pub fn deref_(&self) {
@@ -412,7 +413,7 @@ impl Terminal {
         // `destructor()` (→ deinit_and_destroy) iff the count hits zero.
         // Callers must treat `self` as potentially-freed on return (always
         // tail-position in this file).
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
+        yolo! { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
     /// Internal initialization - shared by constructor and createFromSpawn
@@ -473,7 +474,7 @@ impl Terminal {
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
         // through `Cell`/`JsCell`.
-        let terminal = unsafe { &*terminal };
+        let terminal = yolo! { &*terminal };
 
         // Set reader parent
         let parent_ptr = terminal.as_ctx_ptr();
@@ -571,7 +572,7 @@ impl Terminal {
         Ok(CreateResult {
             // SAFETY: `parent_ptr` is the heap-allocated allocation above with
             // ref_count >= 1; IntrusiveRc::from_raw adopts one existing ref.
-            terminal: unsafe { bun_ptr::IntrusiveRc::from_raw(parent_ptr) },
+            terminal: yolo! { bun_ptr::IntrusiveRc::from_raw(parent_ptr) },
             js_value: this_value,
         })
     }
@@ -715,7 +716,7 @@ impl Terminal {
         match std::thread::Builder::new().spawn(move || {
             // SAFETY: hpcon was a valid HPCON when taken; ClosePseudoConsole is
             // safe to call from any thread per Win32 docs.
-            unsafe { windows::ClosePseudoConsole(hpcon_addr as windows::HPCON) };
+            yolo! { windows::ClosePseudoConsole(hpcon_addr as windows::HPCON) };
         }) {
             Ok(_t) => {
                 // detached: JoinHandle dropped without join → thread runs to completion.
@@ -892,7 +893,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     };
 
     // SAFETY: openpty writes to master_fd/slave_fd; name/termp are null (allowed).
-    let result = unsafe {
+    let result = yolo! {
         openpty_fn(
             &raw mut master_fd,
             &raw mut slave_fd,
@@ -971,7 +972,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             // libc termios on Linux encodes speed in c_cflag, so use
             // cfsetispeed/cfsetospeed (the portable way to set both).
             // SAFETY: `t` is a fully-initialized termios from tcgetattr.
-            unsafe {
+            yolo! {
                 libc::cfsetispeed(&raw mut t, libc::B38400);
                 libc::cfsetospeed(&raw mut t, libc::B38400);
             }
@@ -1064,7 +1065,7 @@ fn create_overlapped_pipe_pair(
     let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let server = unsafe {
+    let server = yolo! {
         k32::CreateNamedPipeW(
             name_w.as_ptr(),
             server_access | windows::FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -1079,7 +1080,7 @@ fn create_overlapped_pipe_pair(
     if server == windows::INVALID_HANDLE_VALUE {
         return Err(CreatePtyError::OpenPtyFailed);
     }
-    let server_guard = scopeguard::guard(server, |h| unsafe {
+    let server_guard = scopeguard::guard(server, |h| yolo! {
         // SAFETY: h is a valid open HANDLE on the error path.
         let _ = windows::CloseHandle(h);
     });
@@ -1091,7 +1092,7 @@ fn create_overlapped_pipe_pair(
     };
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let client = unsafe {
+    let client = yolo! {
         k32::CreateFileW(
             name_w.as_ptr(),
             client_access,
@@ -1132,7 +1133,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
             // SAFETY: every Some(h) is a valid open Win32 handle still owned by
             // this fn (not yet transferred); ClosePseudoConsole/CloseHandle are
             // safe on those values.
-            unsafe {
+            yolo! {
                 if let Some(h) = hpcon {
                     windows::ClosePseudoConsole(h);
                 }
@@ -1185,7 +1186,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     {
         let mut pc: windows::HPCON = core::ptr::null_mut();
         // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
-        if unsafe {
+        if yolo! {
             windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
         } < 0
         {
@@ -1197,7 +1198,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
 
     // ConPTY duplicated the client handles internally; close our copies.
     // SAFETY: in_client/out_client are valid open HANDLEs.
-    unsafe {
+    yolo! {
         let _ = windows::CloseHandle(in_client.take().unwrap());
         let _ = windows::CloseHandle(out_client.take().unwrap());
     }
@@ -1482,7 +1483,7 @@ impl Terminal {
 
             // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
             // takes a *const winsize.
-            let ioctl_result = unsafe {
+            let ioctl_result = yolo! {
                 libc::ioctl(
                     self.master_fd.get().native(),
                     TIOCSWINSZ as _,
@@ -1502,7 +1503,7 @@ impl Terminal {
                     Y: clamp_to_coord(new_rows),
                 };
                 // SAFETY: hpcon is a valid open HPCON.
-                let hr = unsafe { windows::ResizePseudoConsole(hpcon, size) };
+                let hr = yolo! { windows::ResizePseudoConsole(hpcon, size) };
                 if hr < 0 {
                     return Err(global_object.throw(format_args!("Failed to resize terminal")));
                 }
@@ -1897,7 +1898,7 @@ fn deinit_and_destroy(this: *mut Terminal) {
     // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
     // R-2: deref as shared — `close_internal` takes `&self` and all field
     // mutation routes through `Cell`/`JsCell`.
-    let t = unsafe { &*this };
+    let t = yolo! { &*this };
     // Set reader/writer done flags to prevent extra deref calls in closeInternal
     t.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
     // Close all FDs if not already closed (handles constructor error paths)
@@ -1908,7 +1909,7 @@ fn deinit_and_destroy(this: *mut Terminal) {
     // bun.destroy(this)
     // SAFETY: `this` was heap-allocated in init_terminal and ref_count == 0, so
     // no other live references exist.
-    drop(unsafe { bun_core::heap::take(this) });
+    drop(yolo! { bun_core::heap::take(this) });
 }
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares
@@ -1975,18 +1976,18 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
     unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.uv_loop() }
+        yolo! { (*this).event_loop_handle.uv_loop() }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump via raw pointer — do NOT
         // form &Terminal here: this is called from inside writer methods while
         // a &mut self.writer borrow is live (Stacked-Borrows aliasing).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
+        yolo! { bun_ptr::RefCount::<Terminal>::ref_(this) };
     }
     unsafe fn deref(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount drop via raw pointer; may free
         // `this`. See ref_ for aliasing rationale.
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
+        yolo! { bun_ptr::RefCount::<Terminal>::deref(this) };
     }
 }
 

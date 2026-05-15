@@ -49,6 +49,7 @@
 //! It's noteworthy that `WellDefinedProtocol` doesn't refer to "true" protocols, but includes fake
 //! tags like `github:` which are handled as "shortcuts" by this library.
 
+use bun_yolo::yolo;
 use core::ops::Range;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -366,14 +367,14 @@ impl core::ops::Deref for OwnedJscUrl {
     type Target = JscUrl;
     fn deref(&self) -> &JscUrl {
         // SAFETY: `from_string`/`from_utf8` returned a live heap WTF::URL we own.
-        unsafe { self.0.as_ref() }
+        yolo! { self.0.as_ref() }
     }
 }
 impl Drop for OwnedJscUrl {
     fn drop(&mut self) {
         // SAFETY: pointer is the unique owner of a `new WTF::URL` from C++; `deinit`
         // calls `URL__deinit` which `delete`s it.
-        unsafe { self.0.as_mut() }.deinit();
+        yolo! { self.0.as_mut() }.deinit();
     }
 }
 

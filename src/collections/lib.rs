@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! bun_collections — crate root.
 //! Thin re-export hub mirroring `src/collections/collections.zig`.
 
@@ -367,7 +368,7 @@ impl<T, const N: usize> SmallList<T, N> {
     #[inline]
     pub fn get_last_unchecked(&self) -> &T {
         // SAFETY: caller guarantees len >= 1 (Zig contract).
-        unsafe { self.0.get_unchecked(self.0.len() - 1) }
+        yolo! { self.0.get_unchecked(self.0.len() - 1) }
     }
 
     // ── mutation ───────────────────────────────────────────────────────────
@@ -452,7 +453,7 @@ impl<T, const N: usize> SmallList<T, N> {
     pub fn set_len(&mut self, new_len: u32) {
         // SAFETY: matches the previous bun_css::SmallList::set_len contract
         // (Zig callers treat this as a raw length store).
-        unsafe { self.0.set_len(new_len as usize) }
+        yolo! { self.0.set_len(new_len as usize) }
     }
 
     // ── conversion / clone ─────────────────────────────────────────────────

@@ -31,6 +31,7 @@
 //! This mirrors the Zig spec, which freely aliases `*WebSocketProxyTunnel` across
 //! callbacks.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr;
 use core::ptr::NonNull;
@@ -66,10 +67,10 @@ impl UpgradeClientUnion {
     pub fn handle_decrypted_data(&self, data: &[u8]) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
+            UpgradeClientUnion::Http(client) => yolo! {
                 HttpUpgradeClient::handle_decrypted_data(*client, data)
             },
-            UpgradeClientUnion::Https(client) => unsafe {
+            UpgradeClientUnion::Https(client) => yolo! {
                 HttpsUpgradeClient::handle_decrypted_data(*client, data)
             },
             UpgradeClientUnion::None => {}
@@ -79,10 +80,10 @@ impl UpgradeClientUnion {
     pub fn terminate(&self, code: ErrorCode) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
+            UpgradeClientUnion::Http(client) => yolo! {
                 HttpUpgradeClient::terminate(*client, code)
             },
-            UpgradeClientUnion::Https(client) => unsafe {
+            UpgradeClientUnion::Https(client) => yolo! {
                 HttpsUpgradeClient::terminate(*client, code)
             },
             UpgradeClientUnion::None => {}
@@ -92,10 +93,10 @@ impl UpgradeClientUnion {
     pub fn on_proxy_tls_handshake_complete(&self) {
         match self {
             // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
+            UpgradeClientUnion::Http(client) => yolo! {
                 HttpUpgradeClient::on_proxy_tls_handshake_complete(*client)
             },
-            UpgradeClientUnion::Https(client) => unsafe {
+            UpgradeClientUnion::Https(client) => yolo! {
                 HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
             },
             UpgradeClientUnion::None => {}
@@ -225,7 +226,7 @@ impl WebSocketProxyTunnel {
 
         // SAFETY: caller contract — `this` is live. Short-lived raw derefs to assign
         // fields; no `&mut Self` is bound across the re-entrant `start*()` below.
-        unsafe {
+        yolo! {
             (*this).ssl = ssl;
             (*this).wrapper = Some(wrapper);
         }
@@ -240,7 +241,7 @@ impl WebSocketProxyTunnel {
         // identical: SNI is set on the `SSL*` before the handshake is driven.
         if let Some(ssl_ptr) = ssl {
             // SAFETY: `this` is live; field projection covers only `sni_hostname`.
-            if let Some(hostname) = unsafe { (*this).sni_hostname.as_deref() } {
+            if let Some(hostname) = yolo! { (*this).sni_hostname.as_deref() } {
                 if !strings::is_ip_address(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
@@ -265,10 +266,10 @@ impl WebSocketProxyTunnel {
         // from `wrapper` (`ref_count`, `ssl`, `sni_hostname`, `write_buffer`,
         // `socket`, …), so the `&mut SslWrapper` formed here — which covers only
         // the `wrapper` field bytes — is never aliased.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
+        let wrapper_ptr = yolo! { ptr::addr_of_mut!((*this).wrapper) };
         if !initial_data.is_empty() {
             // SAFETY: deref of field projection; `this` is live.
-            unsafe {
+            yolo! {
                 (*wrapper_ptr)
                     .as_mut()
                     .unwrap()
@@ -276,7 +277,7 @@ impl WebSocketProxyTunnel {
             };
         } else {
             // SAFETY: deref of field projection; `this` is live.
-            unsafe { (*wrapper_ptr).as_mut().unwrap().start() };
+            yolo! { (*wrapper_ptr).as_mut().unwrap().start() };
         }
         Ok(())
     }
@@ -284,7 +285,7 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called before TLS handshake starts
     fn on_open(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this) };
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // SNI configuration is done in `start()` before the wrapper is driven;
         // see PORT NOTE there. This callback intentionally does not touch
@@ -296,7 +297,7 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called with decrypted data from the network
     fn on_data(this: *mut WebSocketProxyTunnel, decrypted_data: &[u8]) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this) };
 
         bun_core::scoped_log!(
             WebSocketProxyTunnel,
@@ -312,13 +313,13 @@ impl WebSocketProxyTunnel {
         // so no `&Self`/`&mut Self` may be live across it.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (connected_websocket, upgrade_client) =
-            unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
+            yolo! { ((*this).connected_websocket, (*this).upgrade_client) };
 
         // If we have a connected WebSocket client, forward data to it
         if !connected_websocket.is_null() {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
             // No `&`/`&mut WebSocket` is live in this frame across the call.
-            unsafe { WebSocketClient::handle_tunnel_data(connected_websocket, decrypted_data) };
+            yolo! { WebSocketClient::handle_tunnel_data(connected_websocket, decrypted_data) };
             return;
         }
 
@@ -333,7 +334,7 @@ impl WebSocketProxyTunnel {
         ssl_error: us_bun_verify_error_t,
     ) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this) };
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 
@@ -342,7 +343,7 @@ impl WebSocketProxyTunnel {
         // `*this` may span the dispatch.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (upgrade_client, reject_unauthorized) =
-            unsafe { ((*this).upgrade_client, (*this).reject_unauthorized) };
+            yolo! { ((*this).upgrade_client, (*this).reject_unauthorized) };
 
         if upgrade_client.is_none() {
             return;
@@ -366,7 +367,7 @@ impl WebSocketProxyTunnel {
             // `receive_data()` frame that fired us.
             // SAFETY: ScopedRef guard holds a ref; `this` is live. `ssl` is `Copy`;
             // `sni_hostname` autoref covers only that field's bytes.
-            let failed_identity = unsafe {
+            let failed_identity = yolo! {
                 match ((*this).ssl, (*this).sni_hostname.as_deref()) {
                     (Some(ssl_ptr), Some(hostname)) => {
                         // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper
@@ -389,7 +390,7 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called when connection is closing
     fn on_close(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this) };
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
@@ -398,12 +399,12 @@ impl WebSocketProxyTunnel {
         // `tunnel.detach_upgrade_client()`, so no borrow of `*this` may span them.
         // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (connected_websocket, upgrade_client) =
-            unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
+            yolo! { ((*this).connected_websocket, (*this).upgrade_client) };
 
         // If we have a connected WebSocket client, notify it of the close
         if !connected_websocket.is_null() {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
-            unsafe { (*connected_websocket).fail(ErrorCode::Ended) };
+            yolo! { (*connected_websocket).fail(ErrorCode::Ended) };
             return;
         }
 
@@ -447,7 +448,7 @@ impl WebSocketProxyTunnel {
         // `start`) holds a live `&mut SslWrapper` derived from `(*this).wrapper`, so
         // a whole-struct `&mut *this` here would alias it (Stacked Borrows UB).
         // Project to the disjoint `write_buffer`/`socket` fields only.
-        let (write_buffer, socket) = unsafe {
+        let (write_buffer, socket) = yolo! {
             (
                 &mut *ptr::addr_of_mut!((*this).write_buffer),
                 &*ptr::addr_of!((*this).socket),
@@ -488,15 +489,15 @@ impl WebSocketProxyTunnel {
     /// operates on `*mut Self` end-to-end and never binds a whole-struct `&mut`.
     pub unsafe fn on_writable(this: *mut Self) {
         // SAFETY: caller contract — `this` is live.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this) };
 
         // Flush the SSL state machine via raw field projection so no `&mut Self`
         // spans the synchronous `write_encrypted` re-entry.
         // SAFETY: `this` is live; projection covers only `wrapper`.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
+        let wrapper_ptr = yolo! { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `write_encrypted`'s `&mut *ctx` derives
         // from the Box-provenance `ctx`, not from this borrow.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_mut() } {
+        if let Some(w) = yolo! { (*wrapper_ptr).as_mut() } {
             let _ = w.flush();
         }
 
@@ -504,7 +505,7 @@ impl WebSocketProxyTunnel {
         // above may have mutated `write_buffer`, so we must not reuse any earlier borrow.
         // SAFETY: `this` is live; short-lived borrows that do not span re-entrant calls
         // (`socket.write` is a uws send, `write_buffer` ops are local).
-        unsafe {
+        yolo! {
             let to_send = (*this).write_buffer.slice();
             if !to_send.is_empty() {
                 // PORT NOTE: reshaped for borrowck — capture len before re-borrowing write_buffer
@@ -528,11 +529,11 @@ impl WebSocketProxyTunnel {
         // `handle_tunnel_writable()` re-enters `tunnel.write()`; snapshot the pointer
         // into a local so no `&Self` borrow is active across the dispatch.
         // SAFETY: `this` is live; read of `Copy` field.
-        let connected_websocket = unsafe { (*this).connected_websocket };
+        let connected_websocket = yolo! { (*this).connected_websocket };
         if !connected_websocket.is_null() {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
             // No `&`/`&mut WebSocket` is live in this frame across the call.
-            unsafe { WebSocketClient::handle_tunnel_writable(connected_websocket) };
+            yolo! { WebSocketClient::handle_tunnel_writable(connected_websocket) };
         }
     }
 
@@ -545,14 +546,14 @@ impl WebSocketProxyTunnel {
     /// `&mut Self` across the call.
     pub unsafe fn receive(this: *mut Self, data: &[u8]) {
         // SAFETY: caller contract — `this` is live.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this) };
 
         // SAFETY: raw field projection; the `&mut Option<SslWrapper>` covers only
         // `wrapper`, and the re-entrant callbacks access tunnel fields via the
         // Box-provenance `ctx`, not through this borrow.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
+        let wrapper_ptr = yolo! { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_mut() } {
+        if let Some(w) = yolo! { (*wrapper_ptr).as_mut() } {
             w.receive_data(data);
         }
     }
@@ -566,9 +567,9 @@ impl WebSocketProxyTunnel {
     pub unsafe fn write(this: *mut Self, data: &[u8]) -> Result<usize, bun_core::Error> {
         // TODO(port): narrow error set
         // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
+        let wrapper_ptr = yolo! { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_mut() } {
+        if let Some(w) = yolo! { (*wrapper_ptr).as_mut() } {
             return w
                 .write_data(data)
                 .map_err(|_| bun_core::err!("ConnectionClosed"));
@@ -584,9 +585,9 @@ impl WebSocketProxyTunnel {
     /// `wrapper` via raw projection and never holds a `&mut Self` across the call.
     pub unsafe fn shutdown(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
+        let wrapper_ptr = yolo! { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_mut() } {
+        if let Some(w) = yolo! { (*wrapper_ptr).as_mut() } {
             let _ = w.shutdown(true); // Fast shutdown
         }
     }
@@ -612,7 +613,7 @@ pub extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     ws: *mut WebSocketClient,
 ) {
     // SAFETY: called from C++ with a live tunnel pointer
-    unsafe { (*tunnel).set_connected_web_socket(ws) };
+    yolo! { (*tunnel).set_connected_web_socket(ws) };
 }
 
 // ported from: src/http_jsc/websocket_client/WebSocketProxyTunnel.zig

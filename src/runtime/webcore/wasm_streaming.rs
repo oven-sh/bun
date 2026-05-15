@@ -6,6 +6,7 @@
 //! C++ calls this via `jsc.host_fn.wrap3` — i.e. plain C ABI with the three
 //! original arguments, returning a possibly-empty `JSValue` (empty == thrown).
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
@@ -36,7 +37,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
     // the cell stays live for the duration of this host call (rooted on the
     // C++ caller's stack).
     let response: &mut Response = match response::from_js(response_value) {
-        Some(r) => unsafe { &mut *r },
+        Some(r) => yolo! { &mut *r },
         None => {
             return Err(this.throw_invalid_argument_type_value2(
                 b"source",
@@ -160,7 +161,7 @@ pub extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     streaming_compiler: *mut c_void,
 ) -> JSValue {
     // SAFETY: C++ passes a live global object.
-    let this = unsafe { &*this };
+    let this = yolo! { &*this };
     match get_body_stream_or_bytes_for_wasm_streaming(this, response_value, streaming_compiler) {
         Ok(v) => v,
         Err(JsError::OutOfMemory) => {

@@ -1,5 +1,6 @@
 // Sub-modules
 
+use bun_yolo::yolo;
 use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block shape)
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -155,7 +156,7 @@ impl<'a> Parser<'a> {
         // push_container_bytes; the buffer holds a valid BlockHeader at that offset.
         // TODO(port): borrowck — this returns &mut into self.block_bytes while other
         // &mut self borrows may be live at call sites; Phase B may need raw *mut.
-        unsafe { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
+        yolo! { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
     }
 
     #[inline]

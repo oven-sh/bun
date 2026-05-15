@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use enumset::EnumSet;
 
 #[allow(non_camel_case_types)]
@@ -269,7 +270,7 @@ pub extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // non-null by construction). The (ptr,len) pair cannot be a `&[u8]` across
     // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not
     // outlive this stack frame.
-    let slice = unsafe { core::slice::from_raw_parts(str, len) };
+    let slice = yolo! { core::slice::from_raw_parts(str, len) };
     let Some(method) = Method::find(slice) else {
         return -1;
     };

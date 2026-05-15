@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::size_of;
 
 use bun_event_loop::EventLoopHandle;
@@ -142,7 +143,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             buffer: RawSlice::EMPTY,
         }));
         // SAFETY: `this` was just allocated above and is non-null.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         #[cfg(windows)]
         {
             // Zig: `this.writer.setPipe(this.stdio_result.buffer)` — on Windows
@@ -157,7 +158,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 WindowsStdioResult::Buffer(pipe) => {
                     // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
                     // takes ownership via `heap::take`.
-                    unsafe { this_ref.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
+                    yolo! { this_ref.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
                 }
                 WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
                     unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
@@ -166,7 +167,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
         this_ref.writer.set_parent(this);
         // SAFETY: ownership of the initial ref is transferred to the returned IntrusiveRc.
-        unsafe { IntrusiveRc::from_raw(this) }
+        yolo! { IntrusiveRc::from_raw(this) }
     }
 
     pub fn start(&mut self) -> bun_sys::Result<()> {
@@ -177,7 +178,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         );
         // Zig `this.ref()` — intrusive-refcount increment.
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
-        unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
+        yolo! { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // TODO(port): self-borrow — see `buffer` field note.
         self.buffer = RawSlice::new(self.source.slice());
         #[cfg(windows)]
@@ -244,7 +245,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.source.detach();
         // SAFETY: `process` is a backref to the owning process, guaranteed alive
         // for the lifetime of this writer (the process owns/outlives its stdio writers).
-        unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
+        yolo! { P::on_close_io(self.process, StdioKind::Stdin) };
     }
 
     pub fn memory_cost(&self) -> usize {

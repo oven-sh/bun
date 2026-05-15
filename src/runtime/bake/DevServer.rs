@@ -10,6 +10,7 @@
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
+use bun_yolo::yolo;
 use ::core::ffi::c_void;
 use ::core::mem::offset_of;
 use bun_bundler::mal_prelude::*;
@@ -147,32 +148,32 @@ impl DevServer {
     #[inline]
     pub fn server_transpiler(&self) -> &Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_ref() }
+        yolo! { self.server_transpiler.assume_init_ref() }
     }
     #[inline]
     pub fn server_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_mut() }
+        yolo! { self.server_transpiler.assume_init_mut() }
     }
     #[inline]
     pub fn client_transpiler(&self) -> &Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_ref() }
+        yolo! { self.client_transpiler.assume_init_ref() }
     }
     #[inline]
     pub fn client_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_mut() }
+        yolo! { self.client_transpiler.assume_init_mut() }
     }
     #[inline]
     pub fn ssr_transpiler(&self) -> &Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
-        unsafe { self.ssr_transpiler.assume_init_ref() }
+        yolo! { self.ssr_transpiler.assume_init_ref() }
     }
     #[inline]
     pub fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
-        unsafe { self.ssr_transpiler.assume_init_mut() }
+        yolo! { self.ssr_transpiler.assume_init_mut() }
     }
 }
 pub use crate::bake::dev_server::WatcherAtomics;
@@ -571,7 +572,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `addr_of_mut!((*p).field)` computes an in-bounds field address without
     // creating a reference to the (partially-uninit) whole. Every field is written
     // exactly once before `assume_init()` below.
-    unsafe {
+    yolo! {
         w!(magic, Magic::Valid);
         w!(root, Box::from(options.root.as_bytes()));
         w!(vm, bun_ptr::BackRef::new(options.vm));
@@ -703,7 +704,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
-    unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
+    yolo! { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
     // errdefer dev.bun_watcher.deinit(false) — handled by `Watcher::shutdown` in
     // `Drop for DevServer` when `dev_uninit` is dropped on an error path after
     // `assume_init()`.
@@ -712,7 +713,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
     // as a BACKREF for later `concurrent_task.from(dev)` / `run`; not dereferenced
     // during construction.
-    unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
+    yolo! { w!(watcher_atomics, WatcherAtomics::init(p)) };
 
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
     // (allocator param dropped — global mimalloc)
@@ -729,8 +730,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // box (Zig had no lifetime). Widen `'a → 'static` here once.
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
-    let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
-    unsafe {
+    let arena: &'static Arena = yolo! { bun_ptr::detach_lifetime_ref(options.arena) };
+    yolo! {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
@@ -784,7 +785,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // ── every field is now written ───────────────────────────────────────────
     // SAFETY: all fields of `*p` were written exactly once above via
     // `addr_of_mut!().write()` / `copy_nonoverlapping`; no field remains uninit.
-    let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
+    let mut dev: Box<DevServer> = yolo! { dev_uninit.assume_init() };
     let dev_ptr: *mut DevServer = &raw mut *dev;
 
     // PORT NOTE: Zig asserted `*.owner() == dev` (intrusive parent-ptr derived
@@ -828,9 +829,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // borrowck doesn't see three overlapping `&mut dev`.
     // SAFETY: `dev_ptr` is the live `Box<DevServer>` heap address; the three
     // fields are disjoint.
-    if let Err(_) = unsafe { &mut (*dev_ptr).framework }.resolve(
-        unsafe { &mut (*(*dev_ptr).server_transpiler.as_mut_ptr()).resolver },
-        unsafe { &mut (*(*dev_ptr).client_transpiler.as_mut_ptr()).resolver },
+    if let Err(_) = yolo! { &mut (*dev_ptr).framework }.resolve(
+        yolo! { &mut (*(*dev_ptr).server_transpiler.as_mut_ptr()).resolver },
+        yolo! { &mut (*(*dev_ptr).client_transpiler.as_mut_ptr()).resolver },
         options.arena,
     ) {
         if dev.framework.is_built_in_react {
@@ -983,7 +984,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `framework.file_system_router_types` by shared ref. All five fields
         // are disjoint; reborrow them through `dev_ptr` so the shared
         // `framework` iter does not lock `*dev`.
-        for (i, fsr) in unsafe { &(*dev_ptr).framework }
+        for (i, fsr) in yolo! { &(*dev_ptr).framework }
             .file_system_router_types
             .iter()
             .enumerate()
@@ -996,7 +997,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             );
             // SAFETY: `server_transpiler` was fully initialized by `init_transpiler`
             // above; `.resolver` is disjoint from `framework`.
-            let Some(entry) = unsafe { (*dev_ptr).server_transpiler.assume_init_mut() }
+            let Some(entry) = yolo! { (*dev_ptr).server_transpiler.assume_init_mut() }
                 .resolver
                 .read_dir_info_ignore_error(joined_root)
             else {
@@ -1004,7 +1005,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             };
 
             // SAFETY: `server_graph` is disjoint from `framework`.
-            let server_file = unsafe { &mut (*dev_ptr).server_graph }.insert_stale_extra(
+            let server_file = yolo! { &mut (*dev_ptr).server_graph }.insert_stale_extra(
                 &fsr.entry_server,
                 false,
                 true,
@@ -1030,7 +1031,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 client_file: if let Some(client) = &fsr.entry_client {
                     Some(to_opaque_file_id::<{ bake::Side::Client }>(
                         // SAFETY: `client_graph` is disjoint from `framework`.
-                        unsafe { &mut (*dev_ptr).client_graph }.insert_stale(client, false)?,
+                        yolo! { &mut (*dev_ptr).client_graph }.insert_stale(client, false)?,
                     ))
                 } else {
                     None
@@ -1039,7 +1040,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             });
 
             // SAFETY: `route_lookup` is disjoint from `framework`.
-            unsafe { &mut (*dev_ptr).route_lookup }.put(
+            yolo! { &mut (*dev_ptr).route_lookup }.put(
                 server_file,
                 RouteIndexAndRecurseFlag::new(
                     framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")),
@@ -1091,7 +1092,7 @@ impl Drop for DevServer {
                     self.active_websocket_connections.keys().copied().collect();
                 for s in sockets {
                     // SAFETY: s is a valid HmrSocket ptr owned by the connection map
-                    if let Some(websocket) = unsafe { (*s).underlying } {
+                    if let Some(websocket) = yolo! { (*s).underlying } {
                         websocket.close();
                     }
                 }
@@ -1114,7 +1115,7 @@ impl Drop for DevServer {
         // later allocation is a kernel write into live unrelated heap data.
         // SAFETY: `bun_watcher` was written exactly once in `init()` and is
         // never taken elsewhere; this is `Drop`, so the field is not read again.
-        let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
+        let watcher = yolo! { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
         Watcher::shutdown(Box::into_raw(watcher), true);
 
         #[cfg(feature = "bake_debugging_features")]
@@ -1138,8 +1139,8 @@ impl Drop for DevServer {
             let mut r = self.next_bundle.requests.first;
             while !r.is_null() {
                 // SAFETY: intrusive list node; `data` was written by `defer_request`.
-                let request = unsafe { &mut *r };
-                let data = unsafe { request.data.assume_init_mut() };
+                let request = yolo! { &mut *r };
+                let data = yolo! { request.data.assume_init_mut() };
                 debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
                 let next = request.next;
                 data.deref_();
@@ -1256,7 +1257,7 @@ impl DevServer {
         // SAFETY: `router`, `server_transpiler.resolver`, and the
         // `InsertionHandler` callbacks (touch `server_graph`/`route_lookup`)
         // are disjoint fields of `*self_ptr`.
-        unsafe {
+        yolo! {
             (*self_ptr).router.scan_all(
                 &mut (*(*self_ptr).server_transpiler.as_mut_ptr()).resolver,
                 framework_router::InsertionContext::wrap(&mut *self_ptr),
@@ -1279,7 +1280,7 @@ impl DevServer {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
         // SAFETY: app is set before set_routes is called (server init path)
-        let app = unsafe { &mut *server.app.unwrap() };
+        let app = yolo! { &mut *server.app.unwrap() };
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // PORT NOTE: Zig's `wrapGenericRequestHandler(fn, is_ssl)` produced a
@@ -1380,8 +1381,8 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 ) {
     // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
     // route; uWS guarantees they are non-null in handler callbacks.
-    let dev = unsafe { bun_ptr::callback_ctx::<DevServer>(ud) };
-    let req = unsafe { &mut *req.cast::<Request>() };
+    let dev = yolo! { bun_ptr::callback_ctx::<DevServer>(ud) };
+    let req = yolo! { &mut *req.cast::<Request>() };
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
     } else {
@@ -1455,7 +1456,7 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     #[inline]
     unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
         // SAFETY: `this` is the live user-data pointer (per trait contract).
-        HmrSocket::on_open(unsafe { &mut *this }, ws)
+        HmrSocket::on_open(yolo! { &mut *this }, ws)
     }
     #[inline]
     unsafe fn on_message(
@@ -1465,12 +1466,12 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
         opcode: bun_uws_sys::Opcode,
     ) {
         // SAFETY: see `on_open`.
-        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
+        HmrSocket::on_message(yolo! { &mut *this }, ws, message, opcode)
     }
     #[inline]
     unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: see `on_open`.
-        unsafe { HmrSocket::on_close(this, ws, code, message) }
+        yolo! { HmrSocket::on_close(this, ws, code, message) }
     }
     unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
     unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
@@ -1489,10 +1490,10 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: DevServer always registers `*mut Self` with `id == 0`
         // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
         // callback's duration.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
-        let res = unsafe { &mut *res };
+        let res = yolo! { &mut *res };
         let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
         let _ = this.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
@@ -1609,7 +1610,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         // SAFETY: `entry_ptr` points into `dev.source_maps.entries` storage,
         // which is not reallocated by `render_json`.
         let json_bytes =
-            match unsafe { &*entry_ptr }.render_json(dev, source_id.kind(), bake::Side::Client) {
+            match yolo! { &*entry_ptr }.render_json(dev, source_id.kind(), bake::Side::Client) {
                 Ok(b) => b,
                 Err(e) => bun_core::handle_oom(Err(e)),
             };
@@ -1622,9 +1623,9 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
             },
         );
         // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
-        scopeguard::defer! { unsafe { StaticRoute::deref_(response) } };
+        scopeguard::defer! { yolo! { StaticRoute::deref_(response) } };
         // SAFETY: `response` is live until `_deref` runs after this returns.
-        unsafe { StaticRoute::on_request(response, bun_uws::AnyRequest::H1(req), resp) };
+        yolo! { StaticRoute::on_request(response, bun_uws::AnyRequest::H1(req), resp) };
         return;
     }
 
@@ -1665,7 +1666,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     };
     req.set_yield(false);
     // SAFETY: asset is a live `*mut StaticRoute` held by the content-addressable store
-    unsafe { StaticRoute::on(asset, resp) };
+    yolo! { StaticRoute::on(asset, resp) };
 }
 
 pub use bun_core::fmt::parse_hex_to_int;
@@ -1716,7 +1717,7 @@ fn redirect_handler<const IS_SSL: bool>(
 ) -> impl Fn(&mut DevServer, &mut Request, *mut bun_uws_sys::NewAppResponse<IS_SSL>) {
     move |_dev, _req, resp| {
         // SAFETY: resp is valid for the duration of the callback
-        let resp = unsafe { &mut *resp };
+        let resp = yolo! { &mut *resp };
         resp.write_status(b"302 Found");
         resp.write_header(b"Location", path);
         resp.end(b"Redirecting...", false);
@@ -1760,7 +1761,7 @@ impl RequestEnsureRouteBundledCtx {
     /// outlives the ctx (the ctx is stack-local in the request handler scope).
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
-        unsafe { &mut *self.dev }
+        yolo! { &mut *self.dev }
     }
 
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
@@ -1782,7 +1783,7 @@ impl RequestEnsureRouteBundledCtx {
         };
         // SAFETY: requests_array points into self.dev which is still valid
         self.dev_mut().defer_request(
-            unsafe { &mut *requests_array },
+            yolo! { &mut *requests_array },
             route_bundle_index,
             kind,
             req,
@@ -1800,7 +1801,7 @@ impl RequestEnsureRouteBundledCtx {
                 // `Strong` field is move-only. Take ownership out of `self.req`
                 // (it is consumed by `on_framework_request_with_bundle`).
                 let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
-                    ReqOrSaved::Req(r) => SavedRequestUnion::Stack(unsafe { &mut *r }),
+                    ReqOrSaved::Req(r) => SavedRequestUnion::Stack(yolo! { &mut *r }),
                     ReqOrSaved::Saved(s) => SavedRequestUnion::Saved(s),
                     ReqOrSaved::Aborted => unreachable!(),
                 };
@@ -1834,7 +1835,7 @@ impl RequestEnsureRouteBundledCtx {
         );
         // SAFETY: `failure` points into `route_bundles[i].data` which is not
         // mutated by `send_serialized_failures`.
-        let failures = ::core::slice::from_ref(unsafe { &*failure });
+        let failures = ::core::slice::from_ref(yolo! { &*failure });
         let resp = self.resp;
         self.dev_mut().send_serialized_failures(
             DevResponse::Http(resp),
@@ -2077,9 +2078,9 @@ impl ReqOrSaved {
         match self {
             // SAFETY: req is valid for the duration of the handler callback
             ReqOrSaved::Req(req) => {
-                Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST)
+                Method::which(yolo! { &**req }.method()).unwrap_or(Method::POST)
             }
-            ReqOrSaved::Saved(saved) => unsafe { (*saved.request).method },
+            ReqOrSaved::Saved(saved) => yolo! { (*saved.request).method },
             ReqOrSaved::Aborted => unreachable!(),
         }
     }
@@ -2097,7 +2098,7 @@ impl DevServer {
         let deferred_ptr = self.deferred_request_pool.get();
         // SAFETY: HiveArrayFallback::get returns an exclusively-owned, live node ptr
         // (heap-allocates on overflow; never null).
-        let deferred = unsafe { &mut *deferred_ptr };
+        let deferred = yolo! { &mut *deferred_ptr };
         // Precompute the data slot pointer (used inside the initializer for
         // abort-callback registration) before borrowing `deferred.data` for `.write()`.
         let deferred_data_ptr: *mut c_void = deferred.data.as_mut_ptr().cast::<c_void>();
@@ -2105,8 +2106,8 @@ impl DevServer {
 
         let method = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-            ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
-            ReqOrSaved::Saved(saved) => unsafe { (*saved.request).method },
+            ReqOrSaved::Req(r) => Method::which(yolo! { &**r }.method()).unwrap_or(Method::GET),
+            ReqOrSaved::Saved(saved) => yolo! { (*saved.request).method },
             _ => unreachable!(),
         };
 
@@ -2122,7 +2123,7 @@ impl DevServer {
                     resp.on_aborted(
                         |p: *mut c_void, r: AnyResponse| {
                             // SAFETY: p is the &mut deferred.data registered below; lifetime erased
-                            unsafe { &mut *p.cast::<DeferredRequest>() }.on_abort(r)
+                            yolo! { &mut *p.cast::<DeferredRequest>() }.on_abort(r)
                         },
                         deferred_data_ptr,
                     );
@@ -2141,7 +2142,7 @@ impl DevServer {
                                 .unwrap()
                                 .prepare_and_save_js_request_context(
                                     // SAFETY: r is the live µWS request for this handler frame.
-                                    unsafe { &mut *r },
+                                    yolo! { &mut *r },
                                     resp,
                                     global,
                                     Some(method),
@@ -2157,7 +2158,7 @@ impl DevServer {
                                     // T" contract. `put_raw` recycles/frees without
                                     // `drop_in_place`, matching Zig's `pool.put`
                                     // (no destructor).
-                                    unsafe { self.deferred_request_pool.put_raw(deferred_ptr) };
+                                    yolo! { self.deferred_request_pool.put_raw(deferred_ptr) };
                                     return Ok(());
                                 }
                             }
@@ -2175,12 +2176,12 @@ impl DevServer {
                                 cb
                             },
                             // SAFETY: deferred.data is a live field of a HiveArray-owned node
-                            data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
+                            data: yolo! { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
                             deref_fn: {
                                 fn deref_fn(ptr: *mut c_void) {
                                     // SAFETY: ptr is &mut DeferredRequest from above
                                     let self_: &mut DeferredRequest =
-                                        unsafe { &mut *ptr.cast::<DeferredRequest>() };
+                                        yolo! { &mut *ptr.cast::<DeferredRequest>() };
                                     self_.weak_deref();
                                 }
                                 deref_fn
@@ -2193,7 +2194,7 @@ impl DevServer {
         });
 
         // SAFETY: `deferred.data` was just initialized above.
-        let deferred_data = unsafe { deferred.data.assume_init_mut() };
+        let deferred_data = yolo! { deferred.data.assume_init_mut() };
         if matches!(deferred_data.handler, Handler::ServerHandler(_)) {
             deferred_data.weak_ref();
         }
@@ -2222,7 +2223,7 @@ fn check_route_failures(
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     scopeguard::defer! {
         // SAFETY: see PORT NOTE above.
-        unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
+        yolo! { (*dev_ptr).incremental_result.failures_added.clear() }
     };
     let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
@@ -2230,7 +2231,7 @@ fn check_route_failures(
     // mutates `route_bundles`; the raw-pointer reborrow sidesteps the
     // overlapping `&mut self`.
     dev.trace_all_route_imports(
-        unsafe { &*route_bundle },
+        yolo! { &*route_bundle },
         &mut gts,
         TraceImportGoal::FindErrors,
     )?;
@@ -2257,7 +2258,7 @@ fn check_route_failures(
         // SAFETY: `send_serialized_failures` does not mutate
         // `incremental_result.failures_added`; reborrow through raw ptr to
         // satisfy borrowck.
-        let failures = unsafe { &(*dev_ptr).incremental_result.failures_added };
+        let failures = yolo! { &(*dev_ptr).incremental_result.failures_added };
         dev.send_serialized_failures(resp, failures, ErrorPageKind::Bundler, None)?;
         Ok(CheckResult::Stop)
     } else {
@@ -2315,7 +2316,7 @@ impl DevServer {
             }
             route_bundle::Data::Html(html) => {
                 // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-                let bundle_path = unsafe { &(&(*html.html_bundle).bundle).path };
+                let bundle_path = yolo! { &(&(*html.html_bundle).bundle).path };
                 entry_points.append(bundle_path, entry_point_list::Flags::CLIENT)?;
             }
         }
@@ -2375,12 +2376,12 @@ impl DevServer {
     ) -> JsResult<FrameworkRequestArgs> {
         // SAFETY: `this` is live; `vm` is a `BackRef` (safe Deref); `vm.global`
         // is valid for VM lifetime.
-        let global = unsafe { &*(&(*this).vm).global };
+        let global = yolo! { &*(&(*this).vm).global };
         // SAFETY: place projections off `*this` — `router` / `server_graph` /
         // `route_bundles` are disjoint fields; each reborrow is scoped to its
         // expression so no two `&mut` overlap. `framework_bundle` lives in
         // `route_bundles[_].data`, disjoint from every other field touched here.
-        let route_type_idx = unsafe {
+        let route_type_idx = yolo! {
             (*this)
                 .router
                 .route_ptr(framework_bundle.route_index)
@@ -2389,20 +2390,20 @@ impl DevServer {
         // Held raw; deref per-access. `router.types` is a `Box<[Type]>` — never
         // reallocated for the lifetime of `DevServer`.
         let router_type: *mut framework_router::Type =
-            unsafe { (*this).router.type_ptr(route_type_idx) };
+            yolo! { (*this).router.type_ptr(route_type_idx) };
         // Scalar copy — `route_bundles[i]` is otherwise only read (via
         // `generate_css_js_array`, which now takes `&RouteBundle`).
-        let client_script_generation: u32 = unsafe {
+        let client_script_generation: u32 = yolo! {
             (&(*this).route_bundles)[route_bundle_index.get() as usize].client_script_generation
         };
 
         Ok(FrameworkRequestArgs {
             // routerTypeMain
-            router_type_main: match unsafe { (*router_type).server_file_string.get() } {
+            router_type_main: match yolo! { (*router_type).server_file_string.get() } {
                 Some(s) => s,
                 None => 'str: {
                     // SAFETY: `server_graph` is disjoint from `router` / `route_bundles`.
-                    let name = unsafe {
+                    let name = yolo! {
                         &(*this).server_graph.bundled_files.keys()[from_opaque_file_id::<
                             { bake::Side::Server },
                         >(
@@ -2416,10 +2417,10 @@ impl DevServer {
                         global,
                         // SAFETY: `relative_path(&self)` only reads `self.root`;
                         // no `&mut` derived from `*this` is live across this call.
-                        unsafe { (*this).relative_path(&mut *buf, name) },
+                        yolo! { (*this).relative_path(&mut *buf, name) },
                     )?;
                     // SAFETY: per-access raw deref; `router.types` not reallocated.
-                    unsafe {
+                    yolo! {
                         (*router_type).server_file_string = jsc::StrongOptional::create(s, global)
                     };
                     break 'str s;
@@ -2431,22 +2432,22 @@ impl DevServer {
                 None => 'arr: {
                     // SAFETY: `server_graph` / `router` are disjoint from
                     // `route_bundles`; `route` is a `&Route` reborrowed per step.
-                    let keys = unsafe { (*this).server_graph.bundled_files.keys() };
+                    let keys = yolo! { (*this).server_graph.bundled_files.keys() };
                     let mut n: usize = 1;
                     let mut route =
-                        unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
+                        yolo! { (*this).router.route_ptr(framework_bundle.route_index) };
                     loop {
                         if route.file_layout.is_some() {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        route = unsafe { (*this).router.route_ptr(p) };
+                        route = yolo! { (*this).router.route_ptr(p) };
                     }
                     let arr = JSValue::create_empty_array(global, n)?;
-                    route = unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
+                    route = yolo! { (*this).router.route_ptr(framework_bundle.route_index) };
                     {
                         let mut buf = paths::path_buffer_pool::get();
-                        let mut route_name = BunString::clone_utf8(unsafe {
+                        let mut route_name = BunString::clone_utf8(yolo! {
                             (*this).relative_path(
                                 &mut *buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(
@@ -2461,7 +2462,7 @@ impl DevServer {
                     loop {
                         if let Some(layout) = route.file_layout {
                             let mut buf = paths::path_buffer_pool::get();
-                            let mut layout_name = BunString::clone_utf8(unsafe {
+                            let mut layout_name = BunString::clone_utf8(yolo! {
                                 (*this).relative_path(
                                     &mut *buf,
                                     &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout)
@@ -2476,7 +2477,7 @@ impl DevServer {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        route = unsafe { (*this).router.route_ptr(p) };
+                        route = yolo! { (*this).router.route_ptr(p) };
                     }
                     framework_bundle.cached_module_list = jsc::StrongOptional::create(arr, global);
                     break 'arr arr;
@@ -2495,7 +2496,7 @@ impl DevServer {
                     bun_core::fmt::bytes_to_hex_lower(&bundle_index.to_ne_bytes(), &mut hex[..8]);
                     bun_core::fmt::bytes_to_hex_lower(&generation.to_ne_bytes(), &mut hex[8..]);
                     // SAFETY: `bytes_to_hex_lower` writes ASCII [0-9a-f] only.
-                    let hex_str = unsafe { ::core::str::from_utf8_unchecked(&hex) };
+                    let hex_str = yolo! { ::core::str::from_utf8_unchecked(&hex) };
                     let s = OwnedString::new(BunString::create_format(format_args!(
                         "{CLIENT_PREFIX}/route-{hex_str}.js",
                     )));
@@ -2515,7 +2516,7 @@ impl DevServer {
                     // here is the *only* one in this fn — no other `&`/`&mut`
                     // derived from `*this` is live across it (`router_type` /
                     // `keys` / `route` were all consumed in earlier arms).
-                    let js = unsafe {
+                    let js = yolo! {
                         (*this).generate_css_js_array(
                             &(&(*this).route_bundles)[route_bundle_index.get() as usize],
                         )
@@ -2558,13 +2559,13 @@ impl DevServer {
         // aliased `dev` across this scope.
         let route_bundle: *mut RouteBundle = self.route_bundle_ptr(route_bundle_index);
         debug_assert!(matches!(
-            unsafe { &(*route_bundle).data },
+            yolo! { &(*route_bundle).data },
             route_bundle::Data::Framework(_)
         ));
 
         // SAFETY: `route_bundle` points into `self.route_bundles`, which is not
         // resized or dropped for the duration of this fn.
-        let framework_bundle = match unsafe { &mut (*route_bundle).data } {
+        let framework_bundle = match yolo! { &mut (*route_bundle).data } {
             route_bundle::Data::Framework(f) => f,
             _ => unreachable!(),
         };
@@ -2576,7 +2577,7 @@ impl DevServer {
             SavedRequestUnion::Stack(r) => BunString::borrow_utf8((**r).url()),
             SavedRequestUnion::Saved(data) => 'brk: {
                 // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-                let url = unsafe { (*data.request).url.get() };
+                let url = yolo! { (*data.request).url.get() };
                 url.ref_();
                 break 'brk url;
             }
@@ -2603,7 +2604,7 @@ impl DevServer {
         // SAFETY: `self` is live; `framework_bundle` points into
         // `self.route_bundles[route_bundle_index].data`. Raw-ptr receiver — see
         // PORT NOTE on `compute_arguments_for_framework_request`.
-        let args = unsafe {
+        let args = yolo! {
             Self::compute_arguments_for_framework_request(
                 self,
                 route_bundle_index,
@@ -2647,32 +2648,32 @@ impl DevServer {
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `route_bundles` is not reallocated for the duration of this fn.
         let route_bundle: *mut RouteBundle =
-            &raw mut unsafe { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
+            &raw mut yolo! { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(matches!(
-            unsafe { &(*route_bundle).data },
+            yolo! { &(*route_bundle).data },
             route_bundle::Data::Html(_)
         ));
 
-        let blob: *mut StaticRoute = match unsafe { (*route_bundle).data.html().cached_response } {
+        let blob: *mut StaticRoute = match yolo! { (*route_bundle).data.html().cached_response } {
             Some(b) => b.as_ptr(),
             None => 'generate: {
                 // SAFETY: `generate_html_payload` reads `route_bundle.data` /
                 // `client_graph` and never reallocates `route_bundles`. No
                 // `&mut` into `*route_bundle` is live across this call.
-                let payload = unsafe { &mut *self_ptr }
-                    .generate_html_payload(route_bundle_index, unsafe { &*route_bundle })
+                let payload = yolo! { &mut *self_ptr }
+                    .generate_html_payload(route_bundle_index, yolo! { &*route_bundle })
                     .expect("oom");
 
                 let route_ptr = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
-                        server: unsafe { &*self_ptr }.server,
+                        server: yolo! { &*self_ptr }.server,
                         ..Default::default()
                     },
                 );
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
-                unsafe {
+                yolo! {
                     (*route_bundle).data.html_mut().cached_response =
                         ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from)
                 };
@@ -2680,7 +2681,7 @@ impl DevServer {
             }
         };
         // SAFETY: blob is a live boxed StaticRoute owned by html.cached_response
-        unsafe { StaticRoute::on_with_method(blob, method, resp) };
+        yolo! { StaticRoute::on_with_method(blob, method, resp) };
     }
 }
 
@@ -2713,7 +2714,7 @@ impl DevServer {
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
         debug_assert!(
-            unsafe { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index)
+            yolo! { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index)
         );
         debug_assert!(html.cached_response.is_none());
         let script_injection_offset = html.script_injection_offset.unwrap().get_usize();
@@ -2727,7 +2728,7 @@ impl DevServer {
 
         let mut display_name = strings::without_suffix_comptime(
             // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-            paths::basename(unsafe { &(&(*html.html_bundle).bundle).path }),
+            paths::basename(yolo! { &(&(*html.html_bundle).bundle).path }),
             b".html",
         );
         // TODO: function for URL safe chars
@@ -2861,19 +2862,19 @@ impl DevServer {
         // doesn't conflict with `generate_client_bundle(&mut self, ..)`.
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `self_ptr` accesses below touch disjoint fields of `*self`.
-        let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
+        let route_bundle = yolo! { &mut *self_ptr }.route_bundle_ptr(bundle_index);
         let client_bundle: *mut StaticRoute = match route_bundle.client_bundle {
             Some(cb) => cb.as_ptr(),
             None => 'generate: {
                 // SAFETY: `generate_client_bundle` does not mutate `route_bundles`.
-                let payload = unsafe { &mut *self_ptr }
+                let payload = yolo! { &mut *self_ptr }
                     .generate_client_bundle(route_bundle)
                     .expect("oom");
                 let route_ptr = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::JAVASCRIPT),
-                        server: unsafe { &*self_ptr }.server,
+                        server: yolo! { &*self_ptr }.server,
                         ..Default::default()
                     },
                 );
@@ -2883,11 +2884,11 @@ impl DevServer {
             }
         };
         // SAFETY: `source_maps` is disjoint from `route_bundles`.
-        unsafe { &mut *self_ptr }
+        yolo! { &mut *self_ptr }
             .source_maps
             .add_weak_ref(route_bundle.source_map_id());
         // SAFETY: client_bundle is a live boxed StaticRoute owned by route_bundle.client_bundle
-        unsafe { StaticRoute::on_with_method(client_bundle, method, resp) };
+        yolo! { StaticRoute::on_with_method(client_bundle, method, resp) };
     }
 }
 
@@ -2987,7 +2988,7 @@ impl DeferredRequest {
 
     fn on_abort_wrapper(this: *mut c_void) {
         // SAFETY: this is &mut DeferredRequest registered in defer_request
-        let self_ = unsafe { bun_ptr::callback_ctx::<DeferredRequest>(this) };
+        let self_ = yolo! { bun_ptr::callback_ctx::<DeferredRequest>(this) };
         if !self_.is_alive() {
             return;
         }
@@ -3010,14 +3011,14 @@ impl DeferredRequest {
     /// Actually free the underlying allocation for the node, does not deinitialize children
     fn __free(&mut self) {
         // SAFETY: self is the .data field of a Node in deferred_request_pool
-        let node = unsafe {
+        let node = yolo! {
             bun_core::from_field_ptr!(deferred_request::Node, data, std::ptr::from_mut(self))
         };
         // SAFETY: dev backref is valid while the pool entry exists; `node` is a
         // fully-initialized hive slot. `pool::Node<T>` has no drop glue (`data`
         // is `MaybeUninit`), so `put`'s in-place drop is a no-op — `__deinit`
         // already tore down the payload.
-        unsafe {
+        yolo! {
             (*self.dev.cast_mut()).deferred_request_pool.put(node);
         }
     }
@@ -3055,7 +3056,7 @@ impl DeferredRequest {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
-                    bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())
+                    bstr::BStr::new(yolo! { (*saved.request).url.get() }.byte_slice())
                 );
                 saved
                     .ctx
@@ -3090,7 +3091,7 @@ impl DevServer {
 
         // Notify inspector about bundle start
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-        if let Some(agent) = unsafe { self.inspector() } {
+        if let Some(agent) = yolo! { self.inspector() } {
             // PERF(port): was stack-fallback
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());
             for key in entry_points.set.keys() {
@@ -3124,7 +3125,7 @@ impl DevServer {
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
         // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
         // and `_ast_scope` is dropped before `bv2` at end of this fn.
-        let _ast_scope = unsafe { &mut *ast_memory_store }.enter();
+        let _ast_scope = yolo! { &mut *ast_memory_store }.enter();
 
         // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
         // by value; the Rust bundler instead stores
@@ -3157,21 +3158,21 @@ impl DevServer {
         let self_ptr = std::ptr::from_mut::<Self>(self);
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
+            yolo! { (*self_ptr).server_transpiler.assume_init_mut() },
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),
                 // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
                 // raw pointers and never moves them.
-                client_transpiler: unsafe {
+                client_transpiler: yolo! {
                     ::core::ptr::NonNull::from((*self_ptr).client_transpiler.assume_init_mut())
                 },
-                ssr_transpiler: unsafe {
+                ssr_transpiler: yolo! {
                     ::core::ptr::NonNull::from((*self_ptr).ssr_transpiler.assume_init_mut())
                 },
                 plugins: self.bundler_options.plugin,
             }),
             // SAFETY: see `heap_ptr` note above.
-            unsafe { &*heap_ptr },
+            yolo! { &*heap_ptr },
             event_loop,
             false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
@@ -3406,7 +3407,7 @@ impl DevServer {
         // local — otherwise borrowck treats `*self_ptr` as held for the guard's
         // lifetime and rejects later `&mut (*self_ptr).…` reborrows.
         let self_ptr_defer: *mut Self = self_ptr;
-        scopeguard::defer! { unsafe { (*self_ptr_defer).client_graph.reset() } };
+        scopeguard::defer! { yolo! { (*self_ptr_defer).client_graph.reset() } };
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindClientModules)?;
 
         let mut react_fast_refresh_id: &[u8] = b"";
@@ -3448,7 +3449,7 @@ impl DevServer {
             source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
                 // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
                 // errdefer: unref on early-`?`; disarmed via `into_inner` on success.
-                let guard = scopeguard::guard(script_id, move |id| unsafe {
+                let guard = scopeguard::guard(script_id, move |id| yolo! {
                     (*self_ptr).source_maps.unref(id)
                 });
                 gts.clear_and_free();
@@ -3456,7 +3457,7 @@ impl DevServer {
                 // allocates internally with the global allocator in the port.
                 // SAFETY: see `self_ptr` SAFETY above; `client_graph` is a
                 // disjoint field from `source_maps`.
-                unsafe { &mut (*self_ptr).client_graph }.take_source_map(entry)?;
+                yolo! { &mut (*self_ptr).client_graph }.take_source_map(entry)?;
                 scopeguard::ScopeGuard::into_inner(guard);
             }
             source_map_store::PutOrIncrementRefCount::Shared(_) => {}
@@ -3713,8 +3714,8 @@ pub fn finalize_bundle(
     let bv2_ptr_outer: *mut BundleV2 = bv2_ptr;
     scopeguard::defer! {
         // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
-        let dev = unsafe { &mut *dev_ptr_outer };
-        let bv2 = unsafe { &mut *bv2_ptr_outer };
+        let dev = yolo! { &mut *dev_ptr_outer };
+        let bv2 = yolo! { &mut *bv2_ptr_outer };
         // TODO(port): heap moved out before deinit
         let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
@@ -3768,7 +3769,7 @@ pub fn finalize_bundle(
             // every use of this macro. `dev.current_bundle` is never reassigned
             // (so the inner `CurrentBundle` is not moved) between here and the
             // outer-defer.
-            unsafe { &mut *current_bundle_ptr }
+            yolo! { &mut *current_bundle_ptr }
         };
     }
     // PORT NOTE: see `dev_ptr_outer` rationale above — separate copy for the
@@ -3777,7 +3778,7 @@ pub fn finalize_bundle(
     scopeguard::defer! {
         // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
         // before `_outer_defer` (LIFO), so `current_bundle_ptr` is still live.
-        let current_bundle = unsafe { &mut *current_bundle_ptr_defer };
+        let current_bundle = yolo! { &mut *current_bundle_ptr_defer };
         if !current_bundle.requests.first.is_null() {
             // cannot be an assertion because in the case of OOM, the request list was not drained.
             Output::debug(
@@ -3787,7 +3788,7 @@ pub fn finalize_bundle(
         while let Some(node) = current_bundle.requests.pop_first() {
             // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
             // initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
+            let req = yolo! { (*node).data.assume_init_mut() };
             req.abort();
             req.deref_();
         }
@@ -3930,7 +3931,7 @@ pub fn finalize_bundle(
             let chunk_ptr: *mut bundler::chunk::Chunk = chunk;
             // SAFETY: `intermediate_output` is a disjoint field of `*chunk`;
             // `code()` does not access it via the `chunk`/`chunks` arguments.
-            let io = unsafe { &mut (*chunk_ptr).intermediate_output };
+            let io = yolo! { &mut (*chunk_ptr).intermediate_output };
             io.code(
                 None,
                 &bv2.graph,
@@ -3938,11 +3939,11 @@ pub fn finalize_bundle(
                 b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
                 // SAFETY: see above; shared reborrow of the same allocation,
                 // disjoint from the `&mut intermediate_output` receiver.
-                unsafe { &*chunk_ptr },
+                yolo! { &*chunk_ptr },
                 // SAFETY: `result.chunks` outlives this loop body; Zig passed
                 // the same slice while iterating it. `chunks_ptr/len` were
                 // snapshotted before `split_at_mut`; `code()` only reads.
-                unsafe { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
+                yolo! { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
                 None,
                 false,
                 false,
@@ -4043,7 +4044,7 @@ pub fn finalize_bundle(
         {
             // SAFETY: `route_bundle` borrows `dev.route_bundles[_]`; `source_maps`
             // is a disjoint field reborrowed through the raw `dev_ptr`.
-            route_bundle.invalidate_client_bundle(unsafe { &mut (*dev_ptr).source_maps });
+            route_bundle.invalidate_client_bundle(yolo! { &mut (*dev_ptr).source_maps });
         }
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,
@@ -4149,7 +4150,7 @@ pub fn finalize_bundle(
                 let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
                 // SAFETY: `source_map_entry` is a stack local that outlives this guard.
                 scopeguard::defer! {
-                    unsafe {
+                    yolo! {
                         (*entry_ptr).ref_count = 0;
                         (*entry_ptr).deinit();
                     }
@@ -4218,7 +4219,7 @@ pub fn finalize_bundle(
         // index slices via `dev_ptr` (disjoint fields).
         // SAFETY: `dev_ptr == dev`; `incremental_result` is not mutated by
         // `make_array_for_server_components_patch`.
-        let (added, removed) = unsafe {
+        let (added, removed) = yolo! {
             let ir = &(*dev_ptr).incremental_result;
             (
                 ir.client_components_added.as_slice(),
@@ -4382,7 +4383,7 @@ pub fn finalize_bundle(
             // SAFETY: `route_bundle` points into `dev.route_bundles`, which is not
             // resized inside this loop; `trace_all_route_imports` does not mutate
             // `route_bundles`.
-            let route_bundle = unsafe { &mut *route_bundle };
+            let route_bundle = yolo! { &mut *route_bundle };
             if had_adjusted_edges {
                 match &mut route_bundle.data {
                     route_bundle::Data::Framework(fw_bundle) => {
@@ -4439,7 +4440,7 @@ pub fn finalize_bundle(
                 w_all!(&hex[..n]);
                 // SAFETY: `asset_values[i]` is `*mut StaticRoute` owned by `dev.assets`.
                 let css_data =
-                    &unsafe { &*asset_values[chunk.entry_point.entry_point_id() as usize] }
+                    &yolo! { &*asset_values[chunk.entry_point.entry_point_id() as usize] }
                         .blob
                         .internal_blob()
                         .bytes;
@@ -4466,7 +4467,7 @@ pub fn finalize_bundle(
                 let mut sockets: u32 = 0;
                 for socket_ptr in dev.active_websocket_connections.keys() {
                     // SAFETY: socket_ptr is a valid *mut HmrSocket owned by the connection map
-                    let socket = unsafe { &mut **socket_ptr };
+                    let socket = yolo! { &mut **socket_ptr };
                     if socket.is_subscribed(HmrTopic::HotUpdate) {
                         let entry = socket
                             .referenced_source_maps
@@ -4487,7 +4488,7 @@ pub fn finalize_bundle(
                         // PORT NOTE: reborrow `client_graph` via `dev_ptr` so the
                         // `&mut Entry` borrow inside `source_maps` does not alias.
                         // SAFETY: `dev_ptr` is live for this fn; disjoint fields.
-                        unsafe { &mut (*dev_ptr).client_graph }.take_source_map(entry)?;
+                        yolo! { &mut (*dev_ptr).client_graph }.take_source_map(entry)?;
                         break 'brk entry;
                     }
                     source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
@@ -4521,13 +4522,13 @@ pub fn finalize_bundle(
         // through `send_serialized_failures` (which also borrows `dev`) and then
         // re-used below — Zig passed the optional pointer by value.
         let mut inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
-            unsafe { dev.inspector() }.map(|a| std::ptr::from_mut(a));
+            yolo! { dev.inspector() }.map(|a| std::ptr::from_mut(a));
         if current_bundle!().promise.strong.has_value() {
             // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
             // PORT NOTE: copy the raw ptr so `defer!`'s by-ref capture does not
             // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
             let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-            scopeguard::defer! { unsafe { (*cb_ptr_defer).promise.reset() } };
+            scopeguard::defer! { yolo! { (*cb_ptr_defer).promise.reset() } };
             current_bundle!()
                 .promise
                 .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
@@ -4538,7 +4539,7 @@ pub fn finalize_bundle(
             // value with no aliasing check). The callee never touches
             // `bundling_failures`.
             // SAFETY: `dev_ptr` is live for the entire fn body (see line 3133).
-            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
+            let failures = yolo! { (*dev_ptr).bundling_failures.values() };
             dev.send_serialized_failures(
                 DevResponse::Promise(PromiseResponse {
                     promise: current_bundle!().promise.strong.take(),
@@ -4547,17 +4548,17 @@ pub fn finalize_bundle(
                 failures,
                 ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` just above; live for this scope.
-                inspector_agent_ptr.map(|p| unsafe { &mut *p }),
+                inspector_agent_ptr.map(|p| yolo! { &mut *p }),
             )?;
         }
 
         while let Some(node) = current_bundle!().requests.pop_first() {
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
             // `data` was initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
+            let req = yolo! { (*node).data.assume_init_mut() };
             let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
             // SAFETY: the node stays alive until `deref_()` releases it below.
-            scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
+            scopeguard::defer! { yolo! { (*req_ptr).deref_() } };
 
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
@@ -4574,13 +4575,13 @@ pub fn finalize_bundle(
 
             // SAFETY: see PORT NOTE on `failures` above; `dev_ptr` is live and
             // `send_serialized_failures` does not mutate `bundling_failures`.
-            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
+            let failures = yolo! { (*dev_ptr).bundling_failures.values() };
             dev.send_serialized_failures(
                 resp,
                 failures,
                 ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-                inspector_agent_ptr.take().map(|p| unsafe { &mut *p }),
+                inspector_agent_ptr.take().map(|p| yolo! { &mut *p }),
             )?;
         }
         if let Some(agent_ptr) = inspector_agent_ptr {
@@ -4589,7 +4590,7 @@ pub fn finalize_bundle(
             dev.encode_serialized_failures(
                 dev.bundling_failures.values(),
                 &mut buf,
-                Some(unsafe { &mut *agent_ptr }),
+                Some(yolo! { &mut *agent_ptr }),
             )?;
         }
 
@@ -4660,7 +4661,7 @@ pub fn finalize_bundle(
                         if !first.is_null() {
                             // SAFETY: first is an intrusive list node valid while current_bundle.requests holds it
                             // SAFETY: `data` was initialized by `defer_request`.
-                            break 'rbi unsafe { (*first).data.assume_init_ref() }
+                            break 'rbi yolo! { (*first).data.assume_init_ref() }
                                 .route_bundle_index;
                         }
                         let route_bundle_indices =
@@ -4677,7 +4678,7 @@ pub fn finalize_bundle(
                         route_bundle::Data::Html(html) => {
                             Some(dev.relative_path(
                                 &mut *buf,
-                                &unsafe { &*html.html_bundle }.bundle.path,
+                                &yolo! { &*html.html_bundle }.bundle.path,
                             ))
                         }
                         route_bundle::Data::Framework(fw) => 'file_name: {
@@ -4708,7 +4709,7 @@ pub fn finalize_bundle(
         Output::flush();
 
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-        if let Some(agent) = unsafe { dev.inspector() } {
+        if let Some(agent) = yolo! { dev.inspector() } {
             agent.notify_bundle_complete(dev.inspector_server_id, ms_elapsed as f64);
         }
     }
@@ -4717,7 +4718,7 @@ pub fn finalize_bundle(
     dev.graph_safety_lock.unlock();
     // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
     // so the outer unlock guard sees a locked state again.
-    scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
+    scopeguard::defer! { yolo! { (*dev_ptr).graph_safety_lock.lock() } };
 
     // Set all the deferred routes to the .loaded state up front
     {
@@ -4725,8 +4726,8 @@ pub fn finalize_bundle(
         while !node.is_null() {
             // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
             // `data` was initialized by `defer_request`.
-            let n = unsafe { &*node };
-            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
+            let n = yolo! { &*node };
+            let rb = dev.route_bundle_ptr(yolo! { n.data.assume_init_ref() }.route_bundle_index);
             rb.server_state = route_bundle::State::Loaded;
             node = n.next;
         }
@@ -4737,7 +4738,7 @@ pub fn finalize_bundle(
         // PORT NOTE: copy the raw ptr so `defer!`'s by-ref capture does not
         // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
         let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-        scopeguard::defer! { unsafe { (*cb_ptr_defer).promise.deinit_idempotently() } };
+        scopeguard::defer! { yolo! { (*cb_ptr_defer).promise.deinit_idempotently() } };
         current_bundle!()
             .promise
             .set_route_bundle_state(dev, route_bundle::State::Loaded);
@@ -4752,10 +4753,10 @@ pub fn finalize_bundle(
     while let Some(node) = current_bundle!().requests.pop_first() {
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
         // `data` was initialized by `defer_request`.
-        let req = unsafe { (*node).data.assume_init_mut() };
+        let req = yolo! { (*node).data.assume_init_mut() };
         let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
         // SAFETY: the node stays alive until `deref_()` releases it below.
-        scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
+        scopeguard::defer! { yolo! { (*req_ptr).deref_() } };
 
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;
@@ -4812,7 +4813,7 @@ impl DevServer {
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
                 'brk: {
                     // SAFETY: event points into self.watcher_atomics.events[]
-                    let event = unsafe { &mut *event };
+                    let event = yolo! { &mut *event };
                     let reload_event_timer = event.timer;
 
                     let self_ptr: *mut DevServer = self;
@@ -4821,7 +4822,7 @@ impl DevServer {
                         // SAFETY: `self_ptr` is `self`; `current` borrows
                         // `self.watcher_atomics.events[_]`, disjoint from the
                         // graph/watcher fields `process_file_list` mutates.
-                        current.process_file_list(unsafe { &mut *self_ptr }, &mut entry_points);
+                        current.process_file_list(yolo! { &mut *self_ptr }, &mut entry_points);
                         let Some(next) = self.watcher_atomics.recycle_event_from_dev_server(
                             std::ptr::from_mut::<HotReloadEvent>(current),
                         ) else {
@@ -4829,7 +4830,7 @@ impl DevServer {
                         };
                         // SAFETY: `recycle_event_from_dev_server` returns a slot
                         // in `self.watcher_atomics.events[..]`, valid for `self`.
-                        current = unsafe { &mut *next };
+                        current = yolo! { &mut *next };
                         #[cfg(debug_assertions)]
                         debug_assert!(current.debug_mutex.try_lock());
                     }
@@ -5161,11 +5162,11 @@ impl DevServer {
                 // R-2: `dev_server_id` is `Cell<Option<Index>>`; `Cell::as_ptr`
                 // yields the inner `*mut Option<Index>` so the `*index_location`
                 // read/write below stays raw and matches the framework arm's type.
-                unsafe { (*html).dev_server_id.as_ptr() }
+                yolo! { (*html).dev_server_id.as_ptr() }
             }
         };
         // SAFETY: index_location points into self/html which outlive this fn
-        if let Some(bundle_index) = unsafe { *index_location } {
+        if let Some(bundle_index) = yolo! { *index_location } {
             return Ok(bundle_index);
         }
 
@@ -5191,7 +5192,7 @@ impl DevServer {
                     // SAFETY: caller guarantees `html` is live; single-threaded.
                     // R-2: shared deref — only `bundle.path` is read; mutation of
                     // `dev_server_id` goes through the `Cell` `index_location` above.
-                    let html_ref = unsafe { &*html };
+                    let html_ref = yolo! { &*html };
                     let incremental_graph_index =
                         self.client_graph
                             .insert_stale_extra(&html_ref.bundle.path, false, true)?;
@@ -5203,7 +5204,7 @@ impl DevServer {
                     // Zig `.initRef(html)` — bump intrusive refcount; matched by
                     // `RouteBundle::deinit`'s deref of `html_bundle`.
                     // SAFETY: `html` is a live IntrusiveRc-managed allocation.
-                    unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
+                    yolo! { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
                         html_bundle: html,
                         bundled_file: incremental_graph_index,
@@ -5219,7 +5220,7 @@ impl DevServer {
             active_viewers: 0,
         });
         // SAFETY: index_location still valid (route_bundles is a separate field)
-        unsafe { *index_location = Some(bundle_index) };
+        yolo! { *index_location = Some(bundle_index) };
         Ok(bundle_index)
     }
 
@@ -5361,7 +5362,7 @@ impl DevServer {
                 // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`;
                 // ownership is transferred to `HeadersRef`.
                 let headers_ref =
-                    unsafe { crate::webcore::response::HeadersRef::adopt(fetch_headers) };
+                    yolo! { crate::webcore::response::HeadersRef::adopt(fetch_headers) };
                 let mut response: Response = Response::init(
                     crate::webcore::response::Init {
                         status_code: 500,
@@ -5543,7 +5544,7 @@ impl DevServer {
         // unique borrow for the rest of the fn (Zig `defer` had no aliasing).
         let self_ptr: *mut Self = self;
         // SAFETY: `self_ptr` points to `*self`, live for the fn body.
-        scopeguard::defer! { unsafe { (*self_ptr).emit_memory_visualizer_message_if_needed() } };
+        scopeguard::defer! { yolo! { (*self_ptr).emit_memory_visualizer_message_if_needed() } };
         if self.emit_incremental_visualizer_events == 0 {
             return;
         }
@@ -5571,7 +5572,7 @@ impl DevServer {
             return;
         }
         // SAFETY: timer is the .memory_visualizer_timer field of DevServer
-        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
+        let dev: &mut DevServer = yolo! { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
         timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
@@ -5843,7 +5844,7 @@ mod c {
         // SAFETY: `global` is live; `source_map_json_ptr`/`len` are forwarded from
         // the sole caller's `ManuallyDrop<Vec<u8>>` (valid for `len`, ownership
         // ceded to C++) — discharges the ptr+len precondition above.
-        jsc::from_js_host_call(global, || unsafe {
+        jsc::from_js_host_call(global, || yolo! {
             BakeLoadServerHmrPatchWithSourceMap(
                 global,
                 code,
@@ -5917,7 +5918,7 @@ impl DevServer {
             // interior mutability (Zig spec returns `*Agent` from `*const
             // DevServer`). JS-thread only; caller upholds the no-alias
             // contract documented above.
-            let agent = unsafe { &mut *debugger.frontend_dev_server_agent.get() };
+            let agent = yolo! { &mut *debugger.frontend_dev_server_agent.get() };
             if agent.is_enabled() {
                 bun_core::hint::cold();
                 return Some(agent);
@@ -5943,29 +5944,29 @@ impl DevServer {
         // the use sites — the columns never alias (per `MultiArrayElement` layout).
         let file_paths: *const [std::borrow::Cow<'static, [u8]>] = slice.items_file_path();
         // SAFETY: column 4 (`Count`) is `u32` per `WatchItemField`.
-        let counts: *mut [u32] = unsafe { slice.items_mut::<"count", u32>() };
+        let counts: *mut [u32] = yolo! { slice.items_mut::<"count", u32>() };
         let kinds: *const [bun_watcher::Kind] = slice.items_kind();
         // SAFETY: `file_paths`/`kinds`/`counts` point to disjoint SoA columns owned
         // by `watchlist`, which outlives this fn; reborrow as slices for indexing.
-        let file_paths = unsafe { &*file_paths };
-        let counts = unsafe { &mut *counts };
-        let kinds = unsafe { &*kinds };
+        let file_paths = yolo! { &*file_paths };
+        let counts = yolo! { &mut *counts };
+        let kinds = yolo! { &*kinds };
 
         let ev_ptr = self.watcher_atomics.watcher_acquire_event();
         // SAFETY: `watcher_acquire_event` returns a valid `*mut HotReloadEvent`
         // into `self.watcher_atomics.events`; exclusive on the watcher thread.
-        let ev = unsafe { &mut *ev_ptr };
+        let ev = yolo! { &mut *ev_ptr };
         // PORT NOTE: erase `self` to a raw ptr in the deferred closures so the
         // loop body can keep using `self.bun_watcher` (Zig `defer` had no
         // aliasing check).
         let self_ptr: *mut Self = self;
         // SAFETY: `self_ptr` is live for the entire fn body; guards run at scope exit.
         scopeguard::defer! {
-            unsafe { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_ptr) }
+            yolo! { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_ptr) }
         };
 
         // SAFETY: see `self_ptr` SAFETY above.
-        scopeguard::defer! { unsafe { (*self_ptr).bun_watcher.flush_evictions() } };
+        scopeguard::defer! { yolo! { (*self_ptr).bun_watcher.flush_evictions() } };
 
         for event in events {
             // TODO: why does this out of bounds when you delete every file in the directory?
@@ -6234,7 +6235,7 @@ impl DevServer {
     /// - The user passed "console": true in serve options
     fn should_receive_console_log_from_browser(&self) -> bool {
         // SAFETY: read-only check; agent borrow not retained.
-        unsafe { self.inspector() }.is_some() || self.broadcast_console_log_from_browser_to_server
+        yolo! { self.inspector() }.is_some() || self.broadcast_console_log_from_browser_to_server
     }
 }
 
@@ -6452,7 +6453,7 @@ impl DevServer {
         while let Some(item) = self.next_bundle.requests.pop_first() {
             // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
             // `data` was initialized by `defer_request`.
-            unsafe {
+            yolo! {
                 let d = (*item).data.assume_init_mut();
                 d.abort();
                 d.deref_();
@@ -6482,12 +6483,12 @@ impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest
     ) -> Result<(), bun_core::Error> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
-        unsafe { Self::run_with_body(this, body, resp) }
+        yolo! { Self::run_with_body(this, body, resp) }
     }
     unsafe fn on_error(this: *mut Self) {
         // SAFETY: caller passes the original heap-allocated pointer; finalize
         // consumes it via heap::take exactly once.
-        unsafe { Self::finalize(this) }
+        yolo! { Self::finalize(this) }
     }
 }
 
@@ -6513,9 +6514,9 @@ impl UnrefSourceMapRequest {
     unsafe fn finalize(ctx: *mut UnrefSourceMapRequest) {
         // SAFETY: caller contract — ctx is the original Box allocation; no
         // live borrow of *ctx exists.
-        let ctx = unsafe { bun_core::heap::take(ctx) };
+        let ctx = yolo! { bun_core::heap::take(ctx) };
         // SAFETY: dev outlives the request
-        unsafe {
+        yolo! {
             (*ctx.dev)
                 .server
                 .as_mut()
@@ -6542,7 +6543,7 @@ impl UnrefSourceMapRequest {
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
         // SAFETY: ctx is live (caller contract); dev outlives the request.
-        let _ = unsafe { &mut *(*ctx).dev }
+        let _ = yolo! { &mut *(*ctx).dev }
             .source_maps
             .remove_or_upgrade_weak_ref(
                 source_map_key,
@@ -6553,7 +6554,7 @@ impl UnrefSourceMapRequest {
         // SAFETY: ctx is the original heap-allocated pointer; the only borrow
         // derived from it points into a separate DevServer allocation and has
         // ended.
-        unsafe { Self::finalize(ctx) };
+        yolo! { Self::finalize(ctx) };
         Ok(())
     }
 }
@@ -6627,7 +6628,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     /// construction; the ctx is stack-local in the request handler scope.
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
-        unsafe { &mut *self.dev }
+        yolo! { &mut *self.dev }
     }
 
     /// Reborrow the GC-heap `JSPromise` recorded in `self.p`. Single `unsafe`
@@ -6641,7 +6642,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // the JSPromise GC cell is rooted for the lifetime of `self` by either
         // `self.promise: JSPromiseStrong` or the bundle's `promise.strong`
         // (`current_bundle`/`next_bundle`), so the pointee outlives the borrow.
-        unsafe { &mut *self.p.expect("infallible: promise bound") }
+        yolo! { &mut *self.p.expect("infallible: promise bound") }
     }
 
     fn ensure_promise(&mut self) -> jsc::JSPromiseStrong {
@@ -6741,7 +6742,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         );
         // SAFETY: `failure` points into `route_bundles[i].data` which is not
         // mutated by `send_serialized_failures`.
-        let failures = ::core::slice::from_ref(unsafe { &*failure });
+        let failures = ::core::slice::from_ref(yolo! { &*failure });
         self.dev_mut().send_serialized_failures(
             DevResponse::Promise(promise_response),
             failures,
@@ -6813,7 +6814,7 @@ fn bundle_new_route_js_function_impl(
     let url = url_bunstr.to_utf8();
 
     // SAFETY: request_ptr is a *bun.webcore.Request from C++
-    let request: &mut WebRequest = unsafe { &mut *request_ptr.cast::<WebRequest>() };
+    let request: &mut WebRequest = yolo! { &mut *request_ptr.cast::<WebRequest>() };
     let Some(dev) = request.request_context.dev_server() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
@@ -6847,7 +6848,7 @@ fn bundle_new_route_js_function_impl(
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
-    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
+    let dev: &mut DevServer = yolo! { &mut *dev_ptr };
 
     let route_bundle_index = dev
         .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
@@ -6865,7 +6866,7 @@ fn bundle_new_route_js_function_impl(
     let rbi = ctx.route_bundle_index;
     // SAFETY: `ctx.dev` aliases the same DevServer; Zig passed both freely.
     // Reborrow via raw ptr to satisfy borrowck while ctx is also &mut-borrowed.
-    ensure_route_is_bundled(unsafe { &mut *dev_ptr }, rbi, &mut ctx)?;
+    ensure_route_is_bundled(yolo! { &mut *dev_ptr }, rbi, &mut ctx)?;
 
     let array = JSValue::create_empty_array(global, 2)?;
 
@@ -6955,7 +6956,7 @@ fn new_route_params_for_bundle_promise_for_js(
         return Err(global.throw(format_args!("Expected a Request object")));
     };
     // SAFETY: `from_js` returned a live native pointer; JS holds the GC ref.
-    let request: &mut WebRequest = unsafe { &mut *request_ptr };
+    let request: &mut WebRequest = yolo! { &mut *request_ptr };
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
@@ -6963,7 +6964,7 @@ fn new_route_params_for_bundle_promise_for_js(
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
-    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
+    let dev: &mut DevServer = yolo! { &mut *dev_ptr };
 
     let route_bundle_index = route_bundle::Index::init(
         u32::try_from(route_bundle_index_js.to_int32()).expect("int cast"),
@@ -6985,7 +6986,7 @@ fn new_route_params_for_bundle_promise(
     // (Zig held these as plain heap pointers).
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     // SAFETY: `dev_ptr` accesses below touch disjoint fields of `*dev`.
-    let route_bundle = unsafe { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
+    let route_bundle = yolo! { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
     let framework_bundle = match &mut route_bundle.data {
         route_bundle::Data::Framework(f) => f,
         _ => unreachable!(),
@@ -7013,7 +7014,7 @@ fn new_route_params_for_bundle_promise(
     // SAFETY: `dev_ptr` is live; `framework_bundle` points into
     // `(*dev_ptr).route_bundles[route_bundle_index].data`. Raw-ptr receiver —
     // see PORT NOTE on `compute_arguments_for_framework_request`.
-    let args = unsafe {
+    let args = yolo! {
         DevServer::compute_arguments_for_framework_request(
             dev_ptr,
             route_bundle_index,

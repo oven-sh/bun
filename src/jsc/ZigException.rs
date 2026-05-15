@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::mem::MaybeUninit;
 use core::ptr;
@@ -176,7 +177,7 @@ impl Holder {
     pub fn deinit(&mut self, vm: &mut VirtualMachine) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
-            unsafe { self.zig_exception.assume_init_mut() }.deinit();
+            yolo! { self.zig_exception.assume_init_mut() }.deinit();
             // Make idempotent so the subsequent `Drop` is a no-op.
             self.loaded = false;
         }
@@ -221,7 +222,7 @@ impl Holder {
 
         // SAFETY: either the branch above just wrote it, or `loaded` was already
         // true from a prior call that wrote it.
-        unsafe { self.zig_exception.assume_init_mut() }
+        yolo! { self.zig_exception.assume_init_mut() }
     }
 }
 
@@ -233,7 +234,7 @@ impl Drop for Holder {
     fn drop(&mut self) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
-            unsafe { self.zig_exception.assume_init_mut() }.deinit();
+            yolo! { self.zig_exception.assume_init_mut() }.deinit();
             self.loaded = false;
         }
     }

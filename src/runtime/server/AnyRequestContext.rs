@@ -1,6 +1,7 @@
 //! A generic wrapper for the HTTP(s) Server `RequestContext`s.
 //! Only really exists because of `NewServer()` and `NewRequestContext()` generics.
 
+use bun_yolo::yolo;
 use core::ffi::{c_uint, c_void};
 
 use bun_uws as uws;
@@ -108,7 +109,7 @@ macro_rules! dispatch {
             ($Ty:ty) => {{
                 // SAFETY: tag matched; ptr is non-null and exclusively
                 // accessed for the duration of the dispatch arm.
-                let $ctx = unsafe { &mut *this.ptr.cast::<$Ty>() };
+                let $ctx = yolo! { &mut *this.ptr.cast::<$Ty>() };
                 type $T = $Ty;
                 #[allow(unused)]
                 let _ = core::marker::PhantomData::<$T>;
@@ -223,7 +224,7 @@ impl AnyRequestContext {
         // pointer, so there is no input lifetime to tie the borrow to.
         dispatch!(self, None, |_T, ctx| ctx
             .dev_server()
-            .map(|r| unsafe { bun_ptr::detach_lifetime_ref(r) }))
+            .map(|r| yolo! { bun_ptr::detach_lifetime_ref(r) }))
     }
 
     /// Mutable access to the attached DevServer. Zig passed `*DevServer`
@@ -236,7 +237,7 @@ impl AnyRequestContext {
             // SAFETY: server backref outlives this context; `dev_server` is a
             // `Box` field never moved while requests are in flight.
             let server = ctx.server?.as_ptr();
-            let ds = unsafe { (*server).dev_server.as_deref_mut()? };
+            let ds = yolo! { (*server).dev_server.as_deref_mut()? };
             Some(core::ptr::from_mut(ds))
         })
     }

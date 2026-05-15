@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::autolinks::is_list_item_mark;
 use crate::helpers;
 use crate::parser::{self, Parser};
@@ -221,7 +222,7 @@ impl Parser<'_> {
                             & !align_mask_;
                         if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
                             // SAFETY: block_bytes stores BlockHeader-aligned records; top_off computed above
-                            let top_hdr: &BlockHeader = unsafe {
+                            let top_hdr: &BlockHeader = yolo! {
                                 &*(self
                                     .block_bytes
                                     .as_ptr()
@@ -247,7 +248,7 @@ impl Parser<'_> {
                         && self.block_bytes.len() > size_of::<BlockHeader>()
                     {
                         // SAFETY: block_bytes stores BlockHeader-aligned records at len - sizeof
-                        let top_hdr: &BlockHeader = unsafe {
+                        let top_hdr: &BlockHeader = yolo! {
                             &*(self
                                 .block_bytes
                                 .as_ptr()
@@ -933,7 +934,7 @@ impl Parser<'_> {
 
             // Write accumulated lines to block_bytes
             // SAFETY: VerbatimLine is POD; reinterpret slice as bytes for serialization
-            let line_bytes: &[u8] = unsafe {
+            let line_bytes: &[u8] = yolo! {
                 core::slice::from_raw_parts(
                     self.current_block_lines.as_ptr().cast::<u8>(),
                     self.current_block_lines.len() * size_of::<VerbatimLine>(),

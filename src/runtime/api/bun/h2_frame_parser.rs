@@ -5,6 +5,7 @@
     clippy::too_many_arguments
 )]
 
+use bun_yolo::yolo;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -375,7 +376,7 @@ impl StreamPriority {
     #[inline]
     fn from(dst: &mut StreamPriority, src: &[u8]) {
         // SAFETY: src.len() == BYTE_SIZE asserted by caller
-        unsafe {
+        yolo! {
             core::ptr::copy_nonoverlapping(
                 src.as_ptr(),
                 std::ptr::from_mut(dst).cast::<u8>(),
@@ -449,7 +450,7 @@ impl SettingsPayloadUnit {
     #[inline]
     fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
         // SAFETY: caller guarantees src.len() + offset <= BYTE_SIZE
-        unsafe {
+        yolo! {
             core::ptr::copy_nonoverlapping(
                 src.as_ptr(),
                 std::ptr::from_mut(dst).cast::<u8>().add(offset),
@@ -1322,7 +1323,7 @@ impl H2FrameParser {
     #[inline]
     fn deinit_raw(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner.
-        unsafe { (*this).deinit() };
+        yolo! { (*this).deinit() };
     }
 
     /// Safe accessor for the JSC_BORROW global.
@@ -1344,7 +1345,7 @@ impl H2FrameParser {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that single field access.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
+        yolo! { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
     }
     // R-2: `&self` — `RefCount` is `Cell`-backed and every other field is
     // `Cell`/`JsCell`, so `destructor()` (→ `deinit()`) writes only through
@@ -1353,7 +1354,7 @@ impl H2FrameParser {
         // SAFETY: `self` is live; `deref` decrements the intrusive count and,
         // on zero, calls `destructor(this)` which frees via `heap::take`.
         // The caller must not touch `self` after this returns when count was 1.
-        unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
+        yolo! { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
     }
 }
 
@@ -1480,7 +1481,7 @@ impl SignalRef {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
         // SAFETY: this is a stable heap allocation owned by Stream.signal
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
         // R-2: shared deref — `abort_stream` takes `&self`.
         let parser = this.parser.get();
@@ -1488,7 +1489,7 @@ impl SignalRef {
             return;
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
+        let stream = yolo! { &mut *stream };
         if stream.state != StreamState::CLOSED {
             let wrapped = Bun__wrapAbortError(&parser.global_this, reason);
             parser.abort_stream(stream, wrapped);
@@ -1627,7 +1628,7 @@ impl Stream {
         // capture pointers and rely on stable Vec backing within this scope.
         let frame: *mut PendingFrame = frame;
         // SAFETY: frame is a stable element of self.data_frame_queue's Vec backing store; not moved while this borrow lives (no push/pop until after use)
-        let frame = unsafe { &mut *frame };
+        let frame = yolo! { &mut *frame };
 
         let mut is_flow_control_limited = false;
         let no_backpressure: bool = 'brk: {
@@ -1732,7 +1733,7 @@ impl Stream {
                     if padding != 0 {
                         break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
                             // SAFETY: src/dst may overlap — use ptr::copy (memmove)
-                            unsafe {
+                            yolo! {
                                 core::ptr::copy(
                                     able_to_send.as_ptr(),
                                     buffer.as_mut_ptr().add(1),
@@ -1789,7 +1790,7 @@ impl Stream {
                     if padding != 0 {
                         break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
                             // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
-                            unsafe {
+                            yolo! {
                                 core::ptr::copy(
                                     frame_slice.as_ptr(),
                                     buffer.as_mut_ptr().add(1),
@@ -1868,7 +1869,7 @@ impl Stream {
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the live `&mut self` payload; no other `&` to
         // `*this` exists between here and the dispatch call.
-        if let Some(last_frame_ref) = unsafe { (*this).data_frame_queue.peek_last() } {
+        if let Some(last_frame_ref) = yolo! { (*this).data_frame_queue.peek_last() } {
             // Raw, opaque-provenance pointer for post-dispatch accesses.
             let last_frame: *mut PendingFrame =
                 core::hint::black_box(core::ptr::from_mut(last_frame_ref));
@@ -1878,7 +1879,7 @@ impl Stream {
             // every access — see PORT NOTE above).
             macro_rules! lf {
                 () => {
-                    unsafe { &mut *last_frame }
+                    yolo! { &mut *last_frame }
                 };
             }
             if bytes.is_empty() {
@@ -1935,7 +1936,7 @@ impl Stream {
                 // SAFETY: `this` is the live `&mut self`; no borrow of `*this`
                 // is held here (the `last_frame` raw pointer is unused past
                 // this point).
-                return unsafe { (*this).queue_frame(client, more_data, callback, end_stream) };
+                return yolo! { (*this).queue_frame(client, more_data, callback, end_stream) };
             }
         }
         bun_output::scoped_log!(
@@ -2261,7 +2262,7 @@ impl H2FrameParser {
         let mut updates: Vec<(u32, u64)> = Vec::new();
         for (_, item) in self.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
+            let stream = yolo! { &mut **item };
             bun_output::scoped_log!(
                 H2FrameParser,
                 "incrementWindowSizeIfNeeded stream {} {} {} {}",
@@ -2702,7 +2703,7 @@ impl H2FrameParser {
             }
             // force uncork
             // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser; valid until matching deref() in uncork
-            unsafe { (*corked.cast_const()).uncork() };
+            yolo! { (*corked.cast_const()).uncork() };
         }
         // cork
         CORKED_H2.with(|c| c.set(Some(self.as_ctx_ptr())));
@@ -2844,7 +2845,7 @@ impl H2FrameParser {
             while let Some(stream) = it.next() {
                 // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the
                 // map entry exists. Separate heap allocation from `self`, so no aliasing.
-                let stream = unsafe { &mut *stream };
+                let stream = yolo! { &mut *stream };
                 // reach backpressure
                 let result = stream.flush_queue(self, &mut written);
                 match result {
@@ -2864,7 +2865,7 @@ impl H2FrameParser {
         // not borrow `self`.
         // SAFETY: `self` is live; all mutation goes through `Cell`/`JsCell`
         // (UnsafeCell-backed), so the `*mut` cast is signature-only.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        let _keepalive = yolo! { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
 
         self.uncork();
         let mut written = match self.native_socket.get() {
@@ -2980,7 +2981,7 @@ impl H2FrameParser {
         if let Some(corked_ptr) = CORKED_H2.with(|c| c.get()) {
             // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser, valid until the matching
             // deref() below. R-2: deref as shared (`&*const`) — every method below takes `&self`.
-            let corked: &H2FrameParser = unsafe { &*corked_ptr.cast_const() };
+            let corked: &H2FrameParser = yolo! { &*corked_ptr.cast_const() };
             corked.unregister_auto_flush();
             bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
 
@@ -3071,7 +3072,7 @@ impl H2FrameParser {
 // PORT NOTE: raw-ptr slice — Zig's `[]const u8` payload may alias `this.readBuffer` across
 // `readBuffer.reset()` (e.g. handleHeadersFrame resets then calls decodeHeaderBlock(payload)).
 // A borrowed `&'a [u8]` tied to `&'a mut self` forces every caller into an aliasing
-// `unsafe { &mut *self_ptr }` reborrow, which under Stacked Borrows invalidates the slice the
+// `yolo! { &mut *self_ptr }` reborrow, which under Stacked Borrows invalidates the slice the
 // moment the caller touches `self` again. Carrying a raw pointer keeps the Zig aliasing intent
 // without materialising overlapping `&mut` borrows.
 pub struct Payload {
@@ -3100,7 +3101,7 @@ impl Payload {
         // SAFETY: see doc comment above — `data_ptr` is valid for `data_len` bytes for the
         // full lifetime of this `Payload` local. `ffi::slice` tolerates the (null, 0) shape
         // used for empty payloads.
-        unsafe { bun_core::ffi::slice(self.data_ptr, self.data_len) }
+        yolo! { bun_core::ffi::slice(self.data_ptr, self.data_len) }
     }
 }
 
@@ -3133,7 +3134,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const H2FrameParser` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.
-    unsafe { (*(ctx.cast_const().cast::<H2FrameParser>())).on_auto_flush() }
+    yolo! { (*(ctx.cast_const().cast::<H2FrameParser>())).on_auto_flush() }
 }
 
 // (`JsValueArrayPush` / `VmReportExtraMemory` shims removed —
@@ -3235,7 +3236,7 @@ impl H2FrameParser {
             self.read_buffer.with_mut(|rb| rb.reset());
             if let Some(s) = stream {
                 // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
-                unsafe { (*s).remote_window_size += window_size_increment.uint31() as u64 };
+                yolo! { (*s).remote_window_size += window_size_increment.uint31() as u64 };
             } else {
                 self.remote_window_size
                     .set(self.remote_window_size.get() + window_size_increment.uint31() as u64);
@@ -3426,7 +3427,7 @@ impl H2FrameParser {
             return data.len();
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let mut stream = unsafe { &mut *stream_ptr };
+        let mut stream = yolo! { &mut *stream_ptr };
 
         let settings = self
             .remote_settings
@@ -3456,7 +3457,7 @@ impl H2FrameParser {
         // window size considering the full frame.length received so far
         self.adjust_window_size(Some(stream), payload.len() as u32);
         // SAFETY: stream_ptr unchanged; re-borrow after intervening call (borrowck reshape)
-        stream = unsafe { &mut *stream_ptr };
+        stream = yolo! { &mut *stream_ptr };
         let previous_remaining_length: isize = self.remaining_length.get() as isize;
 
         self.remaining_length
@@ -3561,7 +3562,7 @@ impl H2FrameParser {
             if emitted {
                 stream = match self.streams.get().get(&frame.stream_identifier).copied() {
                     // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                    Some(s) => unsafe { &mut *s },
+                    Some(s) => yolo! { &mut *s },
                     None => return end,
                 };
             }
@@ -3824,7 +3825,7 @@ impl H2FrameParser {
             return data.len();
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        let stream = yolo! { &mut *stream_ptr };
 
         if frame.length != 4 {
             self.send_go_away(
@@ -3956,7 +3957,7 @@ impl H2FrameParser {
             return data.len();
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        let stream = yolo! { &mut *stream_ptr };
 
         if frame.length as usize != StreamPriority::BYTE_SIZE {
             self.send_go_away(
@@ -4016,7 +4017,7 @@ impl H2FrameParser {
             return Ok(data.len());
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let mut stream = unsafe { &mut *stream_ptr };
+        let mut stream = yolo! { &mut *stream_ptr };
 
         if !stream.is_waiting_more_headers {
             self.send_go_away(
@@ -4035,7 +4036,7 @@ impl H2FrameParser {
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
             stream = match self.decode_header_block(payload, stream, frame.flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                Some(s) => unsafe { &mut *s },
+                Some(s) => yolo! { &mut *s },
                 None => return Ok(end),
             };
             if stream.end_after_headers {
@@ -4090,7 +4091,7 @@ impl H2FrameParser {
             return Ok(data.len());
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let mut stream = unsafe { &mut *stream_ptr };
+        let mut stream = yolo! { &mut *stream_ptr };
 
         let settings = self
             .remote_settings
@@ -4168,7 +4169,7 @@ impl H2FrameParser {
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
             stream = match self.decode_header_block(&payload[offset..end], stream, frame.flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                Some(s) => unsafe { &mut *s },
+                Some(s) => yolo! { &mut *s },
                 None => return Ok(end_),
             };
             stream.is_waiting_more_headers =
@@ -4264,7 +4265,7 @@ impl H2FrameParser {
                         let delta = new_size - old_size;
                         for (_, item) in self.streams.get().iter() {
                             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-                            let stream = unsafe { &mut **item };
+                            let stream = yolo! { &mut **item };
                             if delta >= 0 {
                                 stream.window_size = stream
                                     .window_size
@@ -4312,7 +4313,7 @@ impl H2FrameParser {
                     if remote_settings.initial_window_size as u64 >= self.remote_window_size.get() {
                         for (_, item) in self.streams.get().iter() {
                             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-                            let stream = unsafe { &mut **item };
+                            let stream = yolo! { &mut **item };
                             if remote_settings.initial_window_size as u64
                                 >= stream.remote_window_size
                             {
@@ -4384,7 +4385,7 @@ impl H2FrameParser {
             if remote_settings.initial_window_size as u64 >= self.remote_window_size.get() {
                 for (_, item) in self.streams.get().iter() {
                     // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-                    let stream = unsafe { &mut **item };
+                    let stream = yolo! { &mut **item };
                     if remote_settings.initial_window_size as u64 >= stream.remote_window_size {
                         stream.remote_window_size = remote_settings.initial_window_size as u64;
                     }
@@ -4943,7 +4944,7 @@ impl H2FrameParser {
         }
         for (_, item) in this.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
+            let stream = yolo! { &mut **item };
             if stream.used_window_size > window_size_value as u64 {
                 continue;
             }
@@ -5281,7 +5282,7 @@ impl H2FrameParser {
         };
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        Ok(JSValue::from(unsafe { (*stream).end_after_headers }))
+        Ok(JSValue::from(yolo! { (*stream).end_after_headers }))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -5309,7 +5310,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &*stream };
+        let stream = yolo! { &*stream };
 
         if let Some(signal_ref) = &stream.signal {
             return Ok(JSValue::from(signal_ref.is_aborted()));
@@ -5345,7 +5346,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
+        let stream = yolo! { &mut *stream };
         let state = JSValue::create_empty_object(global_object, 6);
 
         state.put(
@@ -5409,7 +5410,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        let stream = yolo! { &mut *stream_ptr };
 
         if !stream.can_send_data() && !stream.can_receive_data() {
             return Ok(JSValue::FALSE);
@@ -5528,7 +5529,7 @@ impl H2FrameParser {
         let error_code = error_arg.to_u32();
 
         // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
-        this.end_stream(unsafe { &mut *stream }, ErrorCode(error_code));
+        this.end_stream(yolo! { &mut *stream }, ErrorCode(error_code));
 
         Ok(JSValue::TRUE)
     }
@@ -5682,7 +5683,7 @@ impl H2FrameParser {
                     if padding != 0 {
                         SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
                             // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
-                            unsafe {
+                            yolo! {
                                 core::ptr::copy(
                                     slice.as_ptr(),
                                     buffer.as_mut_ptr().add(1),
@@ -5753,7 +5754,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        let stream = unsafe { &mut *stream };
+        let stream = yolo! { &mut *stream };
 
         stream.wait_for_trailers = false;
         this.send_data(stream, b"", true, JSValue::UNDEFINED);
@@ -5852,7 +5853,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        let stream = yolo! { &mut *stream_ptr };
 
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
@@ -6180,7 +6181,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        let stream = yolo! { &mut *stream_ptr };
         if !stream.can_send_data() {
             this.dispatch_write_callback(callback_arg);
             return Ok(JSValue::FALSE);
@@ -6325,7 +6326,7 @@ impl H2FrameParser {
         };
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        Ok(unsafe { (*stream).js_context.get() }.unwrap_or(JSValue::UNDEFINED))
+        Ok(yolo! { (*stream).js_context.get() }.unwrap_or(JSValue::UNDEFINED))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -6354,7 +6355,7 @@ impl H2FrameParser {
         }
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        unsafe { (*stream).set_context(context_arg, global_object) };
+        yolo! { (*stream).set_context(context_arg, global_object) };
         Ok(JSValue::UNDEFINED)
     }
 
@@ -6378,7 +6379,7 @@ impl H2FrameParser {
         let mut it = StreamResumableIterator::init(this);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            let Some(value) = (unsafe { (*stream).js_context.get() }) else {
+            let Some(value) = (yolo! { (*stream).js_context.get() }) else {
                 continue;
             };
             this.handlers.get().vm.event_loop_mut().run_callback(
@@ -6404,7 +6405,7 @@ impl H2FrameParser {
         while let Some(stream_ptr) = it.next() {
             // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
-            let stream = unsafe { &mut *stream_ptr };
+            let stream = yolo! { &mut *stream_ptr };
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
             if this.is_server.get() {
                 if stream.id % 2 == 0 {
@@ -6448,7 +6449,7 @@ impl H2FrameParser {
         while let Some(stream_ptr) = it.next() {
             // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
-            let stream = unsafe { &mut *stream_ptr };
+            let stream = yolo! { &mut *stream_ptr };
             if stream.state != StreamState::CLOSED {
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = args_list.ptr[0].to_u32();
@@ -6674,7 +6675,7 @@ impl H2FrameParser {
                                 return Ok(JSValue::js_number(-1.0));
                             };
                             // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                            let stream = unsafe { &mut *stream };
+                            let stream = yolo! { &mut *stream };
                             if !stream_ctx_arg.is_empty_or_undefined_or_null()
                                 && stream_ctx_arg.is_object()
                             {
@@ -6750,7 +6751,7 @@ impl H2FrameParser {
                             return Ok(JSValue::js_number(-1.0));
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
+                        let stream = yolo! { &mut *stream };
                         stream.state = StreamState::CLOSED;
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
@@ -6774,7 +6775,7 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(-1.0));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        let stream = yolo! { &mut *stream_ptr };
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }
@@ -6926,7 +6927,7 @@ impl H2FrameParser {
             if let Some(signal_arg) = options.get(global_object, "signal")? {
                 if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
                     // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
-                    let signal_ = unsafe { &mut *signal_ptr };
+                    let signal_ = yolo! { &mut *signal_ptr };
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
                         let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
@@ -7268,7 +7269,7 @@ impl H2FrameParser {
         // increments the intrusive refcount (Cell-backed) and wraps the pointer. The
         // `*mut` spelling is signature-only — `IntrusiveRc` only ever derefs as shared
         // (`on_native_*` callbacks take `&self`).
-        let h2 = unsafe { IntrusiveRc::init_ref(self.as_ctx_ptr()) };
+        let h2 = yolo! { IntrusiveRc::init_ref(self.as_ctx_ptr()) };
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by the
         // caller's `socket_js`; it strictly outlives the returned `BunSocket` via the
         // attach/detach refcount protocol (see `BunSocket` docs). `NonNull::new` panics on
@@ -7376,7 +7377,7 @@ impl H2FrameParser {
                 // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
                 // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
                 // `init` in without dropping prior contents.
-                unsafe { slot.write(init) };
+                yolo! { slot.write(init) };
                 slot
             })
         } else {
@@ -7388,11 +7389,11 @@ impl H2FrameParser {
         let guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is the freshly-allocated parser above; on the error path
             // it has refcount 1 and no other owners, so `deinit` is the sole release.
-            unsafe { (*this).deinit() };
+            yolo! { (*this).deinit() };
         });
         // SAFETY: `this` was just allocated above; unique ownership, non-null.
         // R-2: deref as shared — every method below takes `&self`.
-        let this_ref = unsafe { &*this };
+        let this_ref = yolo! { &*this };
 
         // check if socket is provided, and if it is a valid native socket
         if let Some(socket_js) = options.get(global_object, "native")? {
@@ -7519,7 +7520,7 @@ impl H2FrameParser {
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid until freed below / map
             // cleared. `stream` points into a disjoint Box.
-            unsafe { (*stream).free_resources::<false>(this) };
+            yolo! { (*stream).free_resources::<false>(this) };
         }
         this.detach();
         if let Some(this_value) = this.strong_this.get().try_get() {
@@ -7560,7 +7561,7 @@ impl H2FrameParser {
         for (_, item) in streams.iter() {
             let stream = *item;
             // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via heap::take
-            unsafe {
+            yolo! {
                 (*stream).free_resources::<true>(self);
                 drop(bun_core::heap::take(stream));
             }
@@ -7582,7 +7583,7 @@ impl H2FrameParser {
                 // SAFETY: `this` is a live, fully-initialised allocation we exclusively
                 // own (refcount hit zero / errdefer path); `put` drops it in place and
                 // recycles the storage.
-                unsafe {
+                yolo! {
                     pool.as_mut()
                         .expect("H2FrameParser deinit before constructor initialised pool")
                         .put(this)
@@ -7591,7 +7592,7 @@ impl H2FrameParser {
         } else {
             // SAFETY: `this` was `heap::alloc`'d in `constructor`; reconstruct the
             // `Box<Self>` so Drop runs and the allocation is freed.
-            unsafe { bun_core::heap::destroy(this) };
+            yolo! { bun_core::heap::destroy(this) };
         }
     }
 

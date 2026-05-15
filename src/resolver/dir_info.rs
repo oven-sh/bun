@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use enumset::{EnumSet, EnumSetType};
@@ -23,7 +24,7 @@ pub type Index = IndexType;
 // DirInfoRef — arena handle into the DirInfo BSSMap singleton.
 //
 // Resolver code threads `*mut DirInfo` (Zig: `*DirInfo`) pervasively and
-// open-coded `unsafe { &*dir_info }` at ~50 read sites. The BSSMap backing
+// open-coded `yolo! { &*dir_info }` at ~50 read sites. The BSSMap backing
 // store is process-lifetime and append-only (slots are never freed; `reset()`
 // runs only at shutdown after all readers are gone), so a `Copy` handle that
 // `Deref`s to `&DirInfo` is sound: the pointee outlives every holder, and no
@@ -38,7 +39,7 @@ pub type Index = IndexType;
 
 /// Non-owning, `Copy` handle to a `DirInfo` slot in the BSSMap singleton.
 /// `Deref<Target = DirInfo>` so call sites read `dir.abs_path` instead of
-/// `unsafe { &*dir }.abs_path`.
+/// `yolo! { &*dir }.abs_path`.
 ///
 /// Wraps [`bun_ptr::BackRef`] (the canonical non-owning back-reference type)
 /// rather than open-coding `NonNull` + `unsafe as_ref` here: the BSSMap
@@ -62,7 +63,7 @@ impl DirInfoRef {
     pub const unsafe fn from_raw(p: *mut DirInfo) -> Self {
         // SAFETY: caller contract — `p` is a non-null BSSMap slot that
         // outlives every copy of the handle (the `BackRef` invariant).
-        DirInfoRef(unsafe { bun_ptr::BackRef::from_raw(p) })
+        DirInfoRef(yolo! { bun_ptr::BackRef::from_raw(p) })
     }
 
     /// Wrap a BSSMap slot reference. Safe: a `&mut DirInfo` obtained from
@@ -190,7 +191,7 @@ impl Default for DirInfo {
 fn arena_ref<T>(p: NonNull<T>) -> &'static T {
     // SAFETY: ARENA — see fn doc; pointee is process-lifetime, never freed
     // while a `DirInfo` reader is live.
-    unsafe { &*p.as_ptr() }
+    yolo! { &*p.as_ptr() }
 }
 
 impl DirInfo {
@@ -289,7 +290,7 @@ impl DirInfo {
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
         // SAFETY: read-only path; no other live `&mut EntriesOption` for this index
         // exists in this scope (resolver invariant).
-        let entries_ptr = unsafe { fs::FileSystem::instance().fs.entries.at_index(self.entries) }?;
+        let entries_ptr = yolo! { fs::FileSystem::instance().fs.entries.at_index(self.entries) }?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,
@@ -347,7 +348,7 @@ fn ref_at_index(index: Index) -> Option<DirInfoRef> {
     // SAFETY: ARENA — `hash_map_instance()` is the never-null BSSMap singleton
     // (process-lifetime; never freed). Resolver mutex held by caller serializes
     // mutation. `at_index` yields a slot satisfying `DirInfoRef`'s invariant.
-    unsafe { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
+    yolo! { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
 }
 
 bitflags::bitflags! {
@@ -380,7 +381,7 @@ impl DirInfo {
             // remaining owner at shutdown. `drop_in_place` releases its owned
             // resources in-place (storage itself is BSS/cache-owned and not freed
             // here, matching Zig `p.deinit()`).
-            unsafe { core::ptr::drop_in_place(p.as_ptr()) };
+            yolo! { core::ptr::drop_in_place(p.as_ptr()) };
         }
         if let Some(t) = self.tsconfig_json.take() {
             // SAFETY: `t` carries mut-provenance from `heap::alloc` in the
@@ -388,7 +389,7 @@ impl DirInfo {
             // `drop_in_place` releases its owned resources in-place (storage
             // itself is BSS/cache-owned and not freed here, matching Zig
             // `t.deinit()`).
-            unsafe { core::ptr::drop_in_place(t.as_ptr()) };
+            yolo! { core::ptr::drop_in_place(t.as_ptr()) };
         }
     }
 }

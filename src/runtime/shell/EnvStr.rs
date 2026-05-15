@@ -7,6 +7,7 @@
 //!
 //! So environment strings can be ref counted or borrowed slices
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use super::ref_counted_str::RefCountedStr;
@@ -164,12 +165,12 @@ impl EnvStr {
         if self.tag() == Tag::Refcounted {
             // SAFETY: tag == Refcounted guarantees a live *mut RefCountedStr;
             // `deref` may free it, so this stays raw-ptr (not `as_ref_counted`).
-            unsafe { RefCountedStr::deref(self.cast_ref_counted()) };
+            yolo! { RefCountedStr::deref(self.cast_ref_counted()) };
         }
     }
 
     /// Shared-borrow accessor for the ref-counted backing — centralises the
-    /// `unsafe { &*self.cast_ref_counted() }` back-ref deref under the
+    /// `yolo! { &*self.cast_ref_counted() }` back-ref deref under the
     /// `Tag::Refcounted ⇒ live heap RefCountedStr` invariant. Returns `None`
     /// for `Slice`/`Empty`. The borrow is tied to `&self` (best-effort: `EnvStr`
     /// is `Copy`, so the caller is still responsible for keeping the +1 alive).
@@ -179,7 +180,7 @@ impl EnvStr {
             // SAFETY: tag == Refcounted guarantees `ptr` is a live
             // *mut RefCountedStr (set by init_ref_counted/dupe_ref_counted)
             // with refcount >= 1; read-only borrow here.
-            return Some(unsafe { &*self.cast_ref_counted() });
+            return Some(yolo! { &*self.cast_ref_counted() });
         }
         None
     }
@@ -190,7 +191,7 @@ impl EnvStr {
         // length `len` whose lifetime is managed elsewhere (caller contract of init_slice).
         // The returned borrow is tied to `&self` so callers cannot pick `'static`.
         // TODO(port): strict-provenance — ptr was round-tripped through an integer.
-        unsafe { core::slice::from_raw_parts(self.ptr() as usize as *const u8, self.len()) }
+        yolo! { core::slice::from_raw_parts(self.ptr() as usize as *const u8, self.len()) }
     }
 
     #[inline]

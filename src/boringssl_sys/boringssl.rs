@@ -8,6 +8,7 @@
 //
 // ported from: src/boringssl_sys/boringssl.zig
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -461,12 +462,12 @@ pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X
     //   - `sk_value` returns `*mut c_void` from the C heap; we narrow that to
     //     `*mut X509` (mut→mut). Mutability originates from BoringSSL's ABI
     //     (`void *sk_value(const _STACK *, size_t)`), not from `sk`.
-    unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<X509>() }
+    yolo! { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<X509>() }
 }
 
 #[inline]
 pub unsafe fn sk_GENERAL_NAME_num(sk: *const struct_stack_st_GENERAL_NAME) -> usize {
-    unsafe { sk_num(sk.cast::<OPENSSL_STACK>()) }
+    yolo! { sk_num(sk.cast::<OPENSSL_STACK>()) }
 }
 
 #[inline]
@@ -477,12 +478,12 @@ pub unsafe fn sk_GENERAL_NAME_value(
     // SAFETY: `sk` cast is const→const between opaque stack types; the `*mut`
     // return is narrowed from `sk_value`'s own `*mut c_void` result (C-heap
     // provenance), not derived from `sk`. No const→mut on a single value.
-    unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<GENERAL_NAME>() }
+    yolo! { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<GENERAL_NAME>() }
 }
 
 #[inline]
 pub unsafe extern "C" fn sk_GENERAL_NAME_free(sk: *mut struct_stack_st_GENERAL_NAME) {
-    unsafe { sk_free(sk.cast::<OPENSSL_STACK>()) }
+    yolo! { sk_free(sk.cast::<OPENSSL_STACK>()) }
 }
 
 unsafe extern "C" fn sk_GENERAL_NAME_call_free_func(
@@ -492,12 +493,12 @@ unsafe extern "C" fn sk_GENERAL_NAME_call_free_func(
     // SAFETY: `free_func` was originally an `sk_GENERAL_NAME_free_func` erased
     // through `OPENSSL_sk_free_func` by `sk_GENERAL_NAME_pop_free` below; both
     // are `extern "C" fn(*mut _)` so the pointer round-trip is ABI-sound.
-    let f: sk_GENERAL_NAME_free_func = unsafe {
+    let f: sk_GENERAL_NAME_free_func = yolo! {
         core::mem::transmute::<unsafe extern "C" fn(*mut c_void), sk_GENERAL_NAME_free_func>(
             free_func.expect("non-null free_func"),
         )
     };
-    unsafe { f(ptr.cast::<struct_stack_st_GENERAL_NAME>()) }
+    yolo! { f(ptr.cast::<struct_stack_st_GENERAL_NAME>()) }
 }
 
 #[inline]
@@ -505,7 +506,7 @@ pub unsafe fn sk_GENERAL_NAME_pop_free(
     sk: *mut struct_stack_st_GENERAL_NAME,
     free_func: sk_GENERAL_NAME_free_func,
 ) {
-    unsafe {
+    yolo! {
         sk_pop_free_ex(
             sk.cast::<OPENSSL_STACK>(),
             Some(sk_GENERAL_NAME_call_free_func),

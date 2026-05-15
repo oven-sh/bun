@@ -4,6 +4,7 @@
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
 //! in `bun_options_types`) is gone now that those are canonical in `bun_ast`.
 
+use bun_yolo::yolo;
 use bun_alloc::AstAlloc;
 use bun_collections::array_hash_map::{AutoContext, StringContext};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap, VecExt};
@@ -193,7 +194,7 @@ impl Ast {
             // SAFETY: test-only helper; the borrowed list is tagged
             // `Origin::Borrowed`, so `Vec::drop` skips the free, and no
             // grow/free path is reached on `Ast.parts` before the borrow ends.
-            parts: std::mem::ManuallyDrop::into_inner(unsafe {
+            parts: std::mem::ManuallyDrop::into_inner(yolo! {
                 PartList::from_borrowed_slice_dangerous(parts)
             }),
             runtime_imports: Default::default(),

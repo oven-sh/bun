@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! Entry point for the standalone `bun_shim_impl.exe` PE.
 //!
 //! `bun_shim_impl.rs` is `#![cfg(windows)]` at module scope and its `main()`
@@ -264,7 +265,7 @@ pub mod bun_core {
         #[inline(always)]
         pub const fn zeroed<T: Zeroable>() -> T {
             // SAFETY: `T: Zeroable` asserts all-zero is valid for `T`.
-            unsafe { core::mem::zeroed() }
+            yolo! { core::mem::zeroed() }
         }
     }
 }

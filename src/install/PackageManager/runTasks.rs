@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use core::cell::Cell;
 use core::sync::atomic::Ordering;
@@ -173,13 +174,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // SAFETY: `manager_ptr`/`extract_ctx_ptr` were just derived from unique
     // `&mut` fn params; reborrowing here yields the sole live `&mut` to each
     // for the body. Dropped before the guards reborrow the same pointers.
-    let manager = unsafe { &mut *manager_ptr };
-    let extract_ctx = unsafe { &mut *extract_ctx_ptr };
+    let manager = yolo! { &mut *manager_ptr };
+    let extract_ctx = yolo! { &mut *extract_ctx_ptr };
     scopeguard::defer! {
         // SAFETY: guard drops after every body borrow of `manager` has ended
         // (scope exit or `?` unwind); `manager_ptr` retains provenance because
         // the body only ever accessed that allocation through reborrows of it.
-        let manager = unsafe { &mut *manager_ptr };
+        let manager = yolo! { &mut *manager_ptr };
         manager.drain_dependency_list();
 
         if log_level.show_progress() {
@@ -213,7 +214,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // batch. `ptask_ptr` was produced by `heap::alloc` in `PatchTask::new_*`
         // — reclaim ownership exactly once here so the `Box` drops at end of
         // iteration on every path (Zig: `defer ptask.deinit();`).
-        let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
+        let mut ptask = yolo! { bun_core::heap::take(ptask_ptr) };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
@@ -274,7 +275,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 break;
             }
             // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-            let task = unsafe { &mut *task_ptr };
+            let task = yolo! { &mut *task_ptr };
             match &task.result {
                 store_installer::Result::None => {
                     if Environment::CI_ASSERT {
@@ -300,7 +301,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).
                     // Zig: `list.*` — by-value copy of the List.
-                    let list_val = unsafe { (*list).clone() };
+                    let list_val = yolo! { (*list).clone() };
                     // PORT NOTE: reshaped for borrowck — `Command::Context<'a>`
                     // is `&'a mut ContextData`; reborrow instead of moving the
                     // field out of `*installer`.
@@ -354,7 +355,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             break;
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-        let task = unsafe { &mut *task_ptr };
+        let task = yolo! { &mut *task_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
@@ -375,7 +376,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // SAFETY: `name` lives in `task.callback` which outlives this
                 // match arm (the task is only `put` back to the pool by a later
                 // resolve-task pass, never inside this loop iteration).
-                let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
+                let name = yolo! { bun_ptr::detach_lifetime(name.slice()) };
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
@@ -533,7 +534,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // `for_manifest`/`for_tarball` before `schedule()`;
                         // direct field access (not `task.http()`) to keep the
                         // split borrow with `&mut task.callback` above.
-                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
+                        (yolo! { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
                             / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
@@ -640,7 +641,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // this match arm; the methods called on `task` below never
                 // touch `task.callback` (see `NetworkTask::reset_streaming_*`
                 // / `discard_unused_streaming_state`).
-                let extract = unsafe { &mut *extract_ptr };
+                let extract = yolo! { &mut *extract_ptr };
                 // Streaming extraction never pushes its NetworkTask to
                 // `async_network_task_queue` once committed — the
                 // extract Task published by `TarballStream.finish()`
@@ -889,7 +890,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // `for_manifest`/`for_tarball` before `schedule()`;
                         // direct field access (not `task.http()`) to keep the
                         // split borrow with `&mut task.callback` above.
-                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
+                        (yolo! { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
                             / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
@@ -933,7 +934,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
-        let task = unsafe { &mut *task_ptr };
+        let task = yolo! { &mut *task_ptr };
         // The per-iteration scopeguards capture the function-scope provenance
         // roots (`manager_ptr`/`extract_ctx_ptr`) — the body shadows
         // `manager`/`extract_ctx` are reborrows of those same roots (see
@@ -942,7 +943,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         scopeguard::defer! {
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
-            unsafe { (*manager_ptr).preallocated_resolve_tasks.put(task_ptr) };
+            yolo! { (*manager_ptr).preallocated_resolve_tasks.put(task_ptr) };
         };
         manager.decrement_pending_tasks();
 
@@ -978,7 +979,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // (HTTP completed, so it IS init) so the inner
                     // `AsyncHTTP.{request,response}_headers: EntryList` don't
                     // leak per put/get cycle.
-                    unsafe {
+                    yolo! {
                         (*net_ptr).unsafe_http_client.assume_init_drop();
                         (*manager_ptr).preallocated_network_tasks.put(net_ptr);
                     }
@@ -994,7 +995,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             name,
                             err,
                             // SAFETY: same active-arm read as `req` above.
-                            unsafe { &(*req.network).url_buf },
+                            yolo! { &(*req.network).url_buf },
                         );
                     } else {
                         bun_ast::add_error_pretty!(
@@ -1059,7 +1060,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `unsafe_http_client` is `MaybeUninit` so `put()`'s drop
                     // skips it — drop manually so headers don't leak.
                     if !net_ptr.is_null() {
-                        unsafe {
+                        yolo! {
                             (*net_ptr).unsafe_http_client.assume_init_drop();
                             (*manager_ptr).preallocated_network_tasks.put(net_ptr);
                         }
@@ -1068,8 +1069,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 // SAFETY: `task.tag` selects the active union arm.
                 let tarball = match task.tag {
-                    Task::Tag::Extract => unsafe { &task.request.extract.tarball },
-                    Task::Tag::LocalTarball => unsafe { &task.request.local_tarball.tarball },
+                    Task::Tag::Extract => yolo! { &task.request.extract.tarball },
+                    Task::Tag::LocalTarball => yolo! { &task.request.local_tarball.tarball },
                     _ => unreachable!(),
                 };
                 let dependency_id = tarball.dependency_id;
@@ -1077,7 +1078,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // SAFETY: `tarball` borrows `task.request` which is reborrowed
                 // `&mut` below; the backing `StringOrTinyString` lives in the
                 // pooled `Task` for the whole iteration and is not mutated.
-                let alias = unsafe { bun_ptr::detach_lifetime(tarball.name.slice()) };
+                let alias = yolo! { bun_ptr::detach_lifetime(tarball.name.slice()) };
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
@@ -1096,10 +1097,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         // SAFETY: `task.tag` selects the active union arm.
                         let fail_url: &[u8] = match task.tag {
-                            Task::Tag::Extract => unsafe {
+                            Task::Tag::Extract => yolo! {
                                 &(*task.request.extract.network).url_buf
                             },
-                            Task::Tag::LocalTarball => unsafe {
+                            Task::Tag::LocalTarball => yolo! {
                                 task.request.local_tarball.tarball.url.slice()
                             },
                             _ => unreachable!(),
@@ -1157,7 +1158,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             dependency_id,
                             // SAFETY: `task.tag` is Extract/LocalTarball — `data.extract`
                             // is the active union arm.
-                            unsafe { &mut task.data.extract },
+                            yolo! { &mut task.data.extract },
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
@@ -1195,7 +1196,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // SAFETY: `extract_ctx_ptr` is the function-scope provenance
                             // root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && any_root.get() {
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                                C::on_resolve(yolo! { &mut *extract_ctx_ptr });
                             }
                         };
 
@@ -1376,7 +1377,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // SAFETY: `string_bytes` lives as long as `manager.lockfile`
                     // and is not reallocated while resolve tasks are draining
                     // (Zig: same buffer is read after `enqueueGitCheckout`).
-                    let string_buf = unsafe {
+                    let string_buf = yolo! {
                         bun_ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
                     };
                     let dep_name = dep_name_handle.slice(string_buf);
@@ -1440,7 +1441,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::GitCheckout => {
                 // SAFETY: `task.tag == GitCheckout` — active union arm.
-                let git_checkout = unsafe { &*task.request.git_checkout };
+                let git_checkout = yolo! { &*task.request.git_checkout };
                 let alias = &git_checkout.name;
                 let resolution = &git_checkout.resolution;
                 let mut package_id: PackageID = INVALID_PACKAGE_ID;
@@ -1489,7 +1490,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             git_checkout.dependency_id,
                             // SAFETY: `task.tag == GitCheckout` — `data.git_checkout`
                             // is the active union arm.
-                            unsafe { &mut task.data.git_checkout },
+                            yolo! { &mut task.data.git_checkout },
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
@@ -1522,7 +1523,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // SAFETY: `extract_ctx_ptr` is the function-scope provenance
                             // root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && any_root.get() {
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                                C::on_resolve(yolo! { &mut *extract_ctx_ptr });
                             }
                         };
 
@@ -1532,7 +1533,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 | bun_install::TaskCallbackContext::RootDependency(id) => {
                                     // SAFETY: this branch is only reached for
                                     // git dependencies — `version.tag == Git`.
-                                    let repo = unsafe {
+                                    let repo = yolo! {
                                         &mut *manager.lockfile.buffers.dependencies[id as usize]
                                             .version
                                             .value
@@ -1616,7 +1617,7 @@ pub fn flush_network_queue(this: &mut PackageManager) {
     while let Some(network_task) = this.network_task_fifo.read_item() {
         // SAFETY: fifo stores live `*mut NetworkTask` pushed by
         // `enqueue_network_task`; exclusive ownership transferred here.
-        let nt = unsafe { &mut *network_task };
+        let nt = yolo! { &mut *network_task };
         nt.schedule(if matches!(nt.callback, NetworkTaskCallback::Extract(_)) {
             &mut this.network_tarball_batch
         } else {
@@ -1629,7 +1630,7 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
     while let Some(patch_task) = this.patch_task_fifo.read_item() {
         // SAFETY: fifo stores live `*mut PatchTask` pushed by
         // `enqueue_patch_task`; exclusive ownership transferred here.
-        let pt = unsafe { &mut *patch_task };
+        let pt = yolo! { &mut *patch_task };
         pt.schedule(if matches!(pt.callback, PatchTaskCallback::Apply(_)) {
             &mut this.patch_apply_batch
         } else {
@@ -1796,11 +1797,11 @@ pub fn generate_network_task_for_tarball<'a>(
             PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
         // SAFETY: `task` is a fresh non-null `heap::alloc` from
         // `new_apply_patch_hash`; we hold the only reference.
-        if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
+        if let PatchTaskCallback::Apply(apply) = yolo! { &mut (*task).callback } {
             apply.task_id = Some(task_id);
         }
         // SAFETY: reclaiming the `Box` produced by `new_apply_patch_hash`.
-        Some(unsafe { bun_core::heap::take(task) })
+        Some(yolo! { bun_core::heap::take(task) })
     } else {
         None
     };
@@ -1822,10 +1823,10 @@ pub fn generate_network_task_for_tarball<'a>(
     // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref, apply_patch_task) };
+    yolo! { NetworkTask::write_init(net_ptr, task_id, this_backref, apply_patch_task) };
     // SAFETY: `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_tarball`.
-    let network_task = unsafe { &mut *net_ptr };
+    let network_task = yolo! { &mut *net_ptr };
 
     let pkg_name = this.lockfile.str(&package.name);
     let scope = this.scope_for_package_name(pkg_name);
@@ -1872,14 +1873,14 @@ pub fn generate_network_task_for_tarball<'a>(
         // `this`. Phase B: have `get_network_task` return a pool index so this
         // intrusive-pointer pattern goes away.
         // SAFETY: see disjointness note above.
-        let tarball_ref = unsafe {
+        let tarball_ref = yolo! {
             let NetworkTaskCallback::Extract(t) = &(*net_ptr).callback else {
                 unreachable!()
             };
             t
         };
         let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
-        unsafe {
+        yolo! {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(
                 extract_task,
@@ -1891,7 +1892,7 @@ pub fn generate_network_task_for_tarball<'a>(
 
     // SAFETY: final reborrow of the pool slot for the caller; `net_ptr` is the
     // sole live handle (see above) and outlives nothing past this return.
-    Ok(Some(unsafe { &mut *net_ptr }))
+    Ok(Some(yolo! { &mut *net_ptr }))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1954,7 +1955,7 @@ fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
             Some(move |()| {
                 // SAFETY: `ctx_ptr` derived from a unique `&mut` that outlives
                 // this closure; `process_dependency_list` does not alias it.
-                C::on_resolve(unsafe { &mut *ctx_ptr });
+                C::on_resolve(yolo! { &mut *ctx_ptr });
             })
         } else {
             None

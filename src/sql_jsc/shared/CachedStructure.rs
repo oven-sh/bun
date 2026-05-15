@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::{ManuallyDrop, MaybeUninit};
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
@@ -55,7 +56,7 @@ impl CachedStructure {
         // SAFETY: `[MaybeUninit<T>; N]` is always sound to `assume_init` — every
         // element is itself `MaybeUninit` and thus has no validity invariant.
         let mut stack_ids: [MaybeUninit<ExternColumnIdentifier>; 70] =
-            unsafe { MaybeUninit::uninit().assume_init() };
+            yolo! { MaybeUninit::uninit().assume_init() };
         // lets de duplicate the fields early
         let non_duplicated_count = columns
             .clone()
@@ -106,7 +107,7 @@ impl CachedStructure {
         if non_duplicated_count > max_inline {
             // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every
             // slot in [0..non_duplicated_count] was initialized in the loop above.
-            unsafe { heap_ids.set_len(non_duplicated_count) };
+            yolo! { heap_ids.set_len(non_duplicated_count) };
             // Ownership transfer of heap `ids` to CachedStructure (Zig: cached_structure
             // becomes responsible for freeing the alloc'd slice).
             self.set(global_object, None, Some(heap_ids.into_boxed_slice()));

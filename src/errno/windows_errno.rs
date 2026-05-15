@@ -4,6 +4,7 @@
     clippy::upper_case_acronyms
 )]
 
+use bun_yolo::yolo;
 use core::ffi::c_int;
 
 // `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
@@ -251,7 +252,7 @@ impl E {
         // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
         // of `E` (Zig `@enumFromInt` precondition). Debug-asserted above; for
         // untrusted input use `try_from_raw` instead.
-        unsafe { core::mem::transmute::<u16, E>(n) }
+        yolo! { core::mem::transmute::<u16, E>(n) }
     }
 
     /// Checked discriminant lookup. Port of Zig `std.meta.intToEnum(E, n)` —

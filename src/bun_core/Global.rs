@@ -1,5 +1,6 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 #[allow(unused_imports)]
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
@@ -560,21 +561,21 @@ pub fn set_thread_name(name: &ZStr) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: PR_SET_NAME takes a NUL-terminated byte string; `name` is `[:0]const u8`.
-        unsafe {
+        yolo! {
             let _ = libc::prctl(libc::PR_SET_NAME, name.as_ptr() as usize);
         }
     }
     #[cfg(target_os = "macos")]
     {
         // SAFETY: macOS pthread_setname_np takes the current thread implicitly.
-        unsafe {
+        yolo! {
             let _ = libc::pthread_setname_np(name.as_ptr().cast::<c_char>());
         }
     }
     #[cfg(target_os = "freebsd")]
     {
         // SAFETY: FreeBSD signature is (pthread_t, const char*).
-        unsafe {
+        yolo! {
             libc::pthread_set_name_np(libc::pthread_self(), name.as_ptr().cast::<c_char>());
         }
     }
@@ -726,7 +727,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     #[cfg(unix)]
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
-        unsafe {
+        yolo! {
             let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
@@ -754,7 +755,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     #[cfg(not(windows))]
     {
         // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.
-        unsafe {
+        yolo! {
             let mut sa: libc::sigaction = crate::ffi::zeroed();
             sa.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut sa.sa_mask);

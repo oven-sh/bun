@@ -1,6 +1,7 @@
 // @link "deps/zlib/libz.a"
 
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
@@ -162,7 +163,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub fn end(&mut self) {
         if self.state == ZlibReaderState::Inflating {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(&raw mut self.zlib) };
+            yolo! { inflateEnd(&raw mut self.zlib) };
             self.state = ZlibReaderState::End;
         }
     }
@@ -198,7 +199,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
         };
 
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
+        match yolo! {
             inflateInit2_(
                 &raw mut zlib_reader.zlib,
                 15 + 32,
@@ -227,7 +228,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib (static or stream-owned).
             return Some(
-                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
+                yolo! { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
             );
         }
         None
@@ -278,7 +279,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
 
             // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
             // SAFETY: self.zlib was initialized via inflateInit2_.
-            let rc = unsafe { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
+            let rc = yolo! { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
             self.state = ZlibReaderState::Inflating;
 
             match rc {
@@ -381,7 +382,7 @@ impl<'a> ZlibReaderArrayList<'a> {
         // always free with `inflateEnd`
         if self.state != ZlibReaderArrayListState::End {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(&raw mut self.zlib) };
+            yolo! { inflateEnd(&raw mut self.zlib) };
             self.state = ZlibReaderArrayListState::End;
         }
     }
@@ -439,7 +440,7 @@ impl<'a> ZlibReaderArrayList<'a> {
         };
 
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
+        match yolo! {
             inflateInit2_(
                 &raw mut zlib_reader.zlib,
                 options.window_bits,
@@ -468,7 +469,7 @@ impl<'a> ZlibReaderArrayList<'a> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
             return Some(
-                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
+                yolo! { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
             );
         }
         None
@@ -511,14 +512,14 @@ impl<'a> ZlibReaderArrayList<'a> {
 
                 if self.zlib.avail_out == 0 {
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let (next_out, avail_out) = yolo! { self.list_ptr.reserve_expand_tail(4096) };
                     self.zlib.next_out = next_out;
                     self.zlib.avail_out = avail_out as uInt;
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
                 // SAFETY: self.zlib was initialized via inflateInit2_.
-                let rc = unsafe { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
+                let rc = yolo! { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
                 self.state = ZlibReaderArrayListState::Inflating;
 
                 match rc {
@@ -564,7 +565,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             self.list_ptr.truncate(total_out);
         } else if total_out < self.list_ptr.capacity() {
             // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
-            unsafe { self.list_ptr.set_len(total_out) };
+            yolo! { self.list_ptr.set_len(total_out) };
         }
 
         result
@@ -883,7 +884,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
     pub fn end(&mut self) {
         if self.state != ZlibCompressorArrayListState::End {
             // SAFETY: zlib was initialized via deflateInit2_; safe to end.
-            unsafe { deflateEnd(&raw mut self.zlib) };
+            yolo! { deflateEnd(&raw mut self.zlib) };
             self.state = ZlibCompressorArrayListState::End;
         }
     }
@@ -932,7 +933,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         };
 
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
-        match unsafe {
+        match yolo! {
             deflateInit2_(
                 &raw mut zlib_reader.zlib,
                 options.level,
@@ -950,7 +951,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         } {
             ReturnCode::Ok => {
                 // SAFETY: zlib initialized; deflateBound returns upper bound on output.
-                let bound = unsafe {
+                let bound = yolo! {
                     deflateBound(
                         &raw mut zlib_reader.zlib,
                         uLong::try_from(input.len()).expect("int cast"),
@@ -985,7 +986,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
             return Some(
-                unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
+                yolo! { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes(),
             );
         }
         None
@@ -1024,7 +1025,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
                 if self.zlib.avail_out == 0 {
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let (next_out, avail_out) = yolo! { self.list_ptr.reserve_expand_tail(4096) };
                     self.zlib.next_out = next_out;
                     self.zlib.avail_out = avail_out as uInt;
                 }
@@ -1034,13 +1035,13 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 }
 
                 // SAFETY: self.zlib was initialized via deflateInit2_.
-                let rc = unsafe { deflate(&raw mut self.zlib, FlushValue::Finish) };
+                let rc = yolo! { deflate(&raw mut self.zlib, FlushValue::Finish) };
                 self.state = ZlibCompressorArrayListState::Inflating;
 
                 match rc {
                     ReturnCode::StreamEnd => {
                         // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
-                        unsafe { self.list_ptr.set_len(self.zlib.total_out as usize) };
+                        yolo! { self.list_ptr.set_len(self.zlib.total_out as usize) };
                         self.end();
 
                         return Ok(());

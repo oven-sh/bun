@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -14,7 +15,7 @@ impl JSUint8Array {
         // SAFETY: `self` points at a live JSUint8Array cell; the typed-array vector
         // pointer lives at a fixed byte offset computed by the C++ codegen (sizes.zig).
         // Using byte_add preserves provenance vs. the Zig `@ptrFromInt(@intFromPtr(..)+off)`.
-        unsafe {
+        yolo! {
             std::ptr::from_ref::<Self>(self)
                 .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR)
                 .cast::<*mut u8>()
@@ -25,7 +26,7 @@ impl JSUint8Array {
     pub fn len(&self) -> usize {
         // SAFETY: same invariant as `ptr()` — fixed byte offset into the JSUint8Array
         // cell where the typed-array length is stored.
-        unsafe {
+        yolo! {
             std::ptr::from_ref::<Self>(self)
                 .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_LENGTH)
                 .cast::<usize>()
@@ -37,7 +38,7 @@ impl JSUint8Array {
         // PORT NOTE: detached/empty JSUint8Array has ptr=null, len=0. Zig `ptr[0..0]` is
         // valid for any ptr; `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` bytes while the cell is alive.
-        unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
+        yolo! { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
     }
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
@@ -49,12 +50,12 @@ impl JSUint8Array {
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         // SAFETY: `ptr`/`len` describe a heap allocation from the global (mimalloc)
         // allocator; the C++ side adopts and later frees it with the same allocator.
-        unsafe { JSUint8Array__fromDefaultAllocator(global, ptr, len) }
+        yolo! { JSUint8Array__fromDefaultAllocator(global, ptr, len) }
     }
 
     pub fn from_bytes_copy(global: &JSGlobalObject, bytes: &[u8]) -> JSValue {
         // SAFETY: C++ copies `len` bytes out of `ptr`; it does not retain the pointer.
-        unsafe {
+        yolo! {
             Bun__createUint8ArrayForCopy(
                 global,
                 bytes.as_ptr().cast::<c_void>(),
@@ -66,7 +67,7 @@ impl JSUint8Array {
 
     pub fn create_empty(global: &JSGlobalObject) -> JSValue {
         // SAFETY: null/0 is the documented "empty" input for this FFI entrypoint.
-        unsafe { Bun__createUint8ArrayForCopy(global, core::ptr::null(), 0, false) }
+        yolo! { Bun__createUint8ArrayForCopy(global, core::ptr::null(), 0, false) }
     }
 }
 

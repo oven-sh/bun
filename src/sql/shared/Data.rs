@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::{BoundedArray, VecExt};
 use bun_core::ZStr;
 use bun_ptr::RawSlice;
@@ -61,7 +62,7 @@ impl Data {
                 // Zero bytes before deinit — Zig `bun.freeSensitive`.
                 let s = owned.slice_mut();
                 // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
-                unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
+                yolo! { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
                 owned.clear_and_free();
             }
             Data::Temporary(_) => {}
@@ -103,7 +104,7 @@ impl Data {
             return ZStr::EMPTY;
         }
         // SAFETY: caller invariant — bytes are NUL-terminated at `len`.
-        unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
+        yolo! { ZStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
 

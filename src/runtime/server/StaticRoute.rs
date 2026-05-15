@@ -1,6 +1,7 @@
 //! StaticRoute stores and serves a static blob. This can be created out of a JS
 //! Response object, or from globally allocated bytes.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem::size_of;
 
@@ -72,7 +73,7 @@ impl StaticRoute {
     #[inline]
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: forwarded caller contract — see `CellRefCounted::deref`.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
+        yolo! { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 
     /// Ownership of `blob` is transferred to this function.
@@ -124,7 +125,7 @@ impl StaticRoute {
         let temp_route = StaticRoute::init_from_any_blob(blob, options);
         // SAFETY: init_from_any_blob returns a freshly boxed StaticRoute (ref_count=1)
         // with write provenance; on()/deref_() consume it via that same *mut.
-        unsafe {
+        yolo! {
             StaticRoute::on(temp_route, resp);
             StaticRoute::deref_(temp_route);
         }
@@ -254,7 +255,7 @@ impl StaticRoute {
     /// the constructors (write provenance intact). Mirrors Zig `*StaticRoute` receiver.
     pub unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             // Check If-None-Match for HEAD requests with 200 status
             if (*this).status_code == 200 {
                 if Self::render_304_not_modified_if_none_match(this, &mut req, resp) {
@@ -272,7 +273,7 @@ impl StaticRoute {
     /// See [`on_head_request`].
     pub unsafe fn on_head(this: *mut Self, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             debug_assert!((*this).server.get().is_some());
             (*this).ref_();
             if let Some(mut server) = (*this).server.get() {
@@ -294,7 +295,7 @@ impl StaticRoute {
     /// See [`on_head_request`].
     pub unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             let method = Method::find(req.method()).unwrap_or(Method::GET);
             if method == Method::GET {
                 Self::on_get(this, req, resp);
@@ -313,7 +314,7 @@ impl StaticRoute {
     /// See [`on_head_request`].
     pub unsafe fn on_get(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             // Check If-None-Match for GET requests with 200 status
             if (*this).status_code == 200 {
                 if Self::render_304_not_modified_if_none_match(this, &mut req, resp) {
@@ -331,7 +332,7 @@ impl StaticRoute {
     /// See [`on_head_request`].
     pub unsafe fn on(this: *mut Self, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             debug_assert!((*this).server.get().is_some());
             (*this).ref_();
             if let Some(mut server) = (*this).server.get() {
@@ -359,14 +360,14 @@ impl StaticRoute {
             |this: *mut StaticRoute, resp| {
                 // SAFETY: uws invokes with the same userdata pointer registered
                 // below, on the same thread, while the route holds a ref.
-                unsafe { Self::on_aborted(this, resp) }
+                yolo! { Self::on_aborted(this, resp) }
             },
             this,
         );
         resp.on_writable(
             |this: *mut StaticRoute, off, resp| {
                 // SAFETY: see on_aborted closure above.
-                unsafe { Self::on_writable(this, off, resp) }
+                yolo! { Self::on_writable(this, off, resp) }
             },
             this,
         );
@@ -376,7 +377,7 @@ impl StaticRoute {
     /// uws callback: `this` is the userdata registered in `to_async`.
     unsafe fn on_aborted(this: *mut Self, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe { Self::on_response_complete(this, resp) };
+        yolo! { Self::on_response_complete(this, resp) };
     }
 
     /// # Safety
@@ -384,7 +385,7 @@ impl StaticRoute {
     /// `*this` via `deref_` when the refcount reaches zero.
     unsafe fn on_response_complete(this: *mut Self, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             resp.clear_aborted();
             resp.clear_on_writable();
             resp.clear_timeout();
@@ -417,7 +418,7 @@ impl StaticRoute {
     /// uws callback: `this` is the userdata registered in `to_async`.
     unsafe fn on_writable(this: *mut Self, write_offset: u64, resp: AnyResponse) -> bool {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             if let Some(server) = (*this).server.get() {
                 resp.timeout(server.config().idle_timeout);
             }
@@ -500,7 +501,7 @@ impl StaticRoute {
     /// See [`on_head_request`].
     pub unsafe fn on_with_method(this: *mut Self, method: Method, resp: AnyResponse) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             match method {
                 Method::GET => Self::on(this, resp),
                 Method::HEAD => Self::on_head(this, resp),
@@ -521,7 +522,7 @@ impl StaticRoute {
         resp: AnyResponse,
     ) -> bool {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             let Some(if_none_match) = req.header(b"if-none-match") else {
                 return false;
             };

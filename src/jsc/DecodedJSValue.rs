@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::{JSCell, JSValue, ffi};
 
 /// ABI-compatible with `JSC::JSValue`.
@@ -32,7 +33,7 @@ impl DecodedJSValue {
         // SAFETY: `#[repr(C)]` union of 8-byte POD scalars (i64 / `*mut JSCell`
         // / `AsBits{i32,i32}`); reading `as_int64` is a same-size reinterpret
         // into a fully-inhabited type.
-        unsafe { self.u.as_int64 }
+        yolo! { self.u.as_int64 }
     }
 
     /// Equivalent to `JSC::JSValue::encode`.

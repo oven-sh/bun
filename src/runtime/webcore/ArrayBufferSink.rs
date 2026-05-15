@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::webcore::sink::{self, Sink, SinkHandler};
 use crate::webcore::streams::{self, Signal};
 use bun_collections::{ByteVecExt, VecExt};
@@ -100,7 +101,7 @@ impl ArrayBufferSink {
     pub fn finalize(this: *mut Self) {
         // SAFETY: called from JSC lazy sweep on the mutator thread; `this` is
         // the m_ctx payload allocated via heap::alloc in init/JSSink.
-        unsafe { Self::destroy(this) };
+        yolo! { Self::destroy(this) };
     }
 
     pub fn init(
@@ -190,7 +191,7 @@ impl ArrayBufferSink {
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
         // frees the box, matching Zig `this.bytes.deinit(...); bun.destroy(this)`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn to_js(

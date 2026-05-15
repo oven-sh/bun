@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate as css;
 use crate::css_rules::Location;
 use crate::css_values::ident::DashedIdent;
@@ -118,7 +119,7 @@ impl PropertyRule {
         // the sub-`ParserInput` constructed below. `'static` is the crate-wide
         // erasure (PORTING.md §AST crates).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
+            yolo! { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
 
         // `initial-value` is required unless the syntax is a universal definition.
         let initial_value = match syntax {

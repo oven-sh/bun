@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
@@ -222,7 +223,7 @@ fn get_argv0(
     } else if cfg!(unix) {
         // If the user explicitly passed an empty $PATH, we fallback to the OS-specific default (which libuv also does)
         // SAFETY: BUN_DEFAULT_PATH_FOR_SPAWN is a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
     } else {
         b""
     };
@@ -287,7 +288,7 @@ fn get_argv(
         path,
         cwd,
         // SAFETY: argv0 was produced by to_owned_slice_z above; NUL-terminated and outlives this call.
-        argv0.map(|p| unsafe { bun_core::ffi::cstr(p) }),
+        argv0.map(|p| yolo! { bun_core::ffi::cstr(p) }),
         cmds_array.next()?.unwrap(),
     )?;
 
@@ -1038,7 +1039,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
         // SAFETY: see PORT NOTE above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
-        unsafe {
+        yolo! {
             let sync_loop = (*jsc_vm_ptr)
                 .rare_data()
                 .spawn_sync_event_loop(&mut *jsc_vm_ptr);
@@ -1063,7 +1064,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     scopeguard::defer! {
         if IS_SYNC {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
-            unsafe {
+            yolo! {
                 let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
@@ -1128,7 +1129,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
                 // string we built above (lives in `arg0_backing`/`arg_backing`).
-                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
+                ZStr::from_cstr(yolo! { bun_core::ffi::cstr(argv[0]) })
             } else {
                 ZStr::EMPTY
             };
@@ -1168,7 +1169,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is non-null and points at a NUL-terminated
                             // string we built above (lives in `arg0_backing`/`arg_backing`).
-                            ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
+                            ZStr::from_cstr(yolo! { bun_core::ffi::cstr(argv[0]) })
                         } else {
                             ZStr::EMPTY
                         };
@@ -1226,7 +1227,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         global_this: bun_ptr::BackRef::new(global_this),
         // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
         // intrusive ref is released in `Subprocess::finalize`.
-        process: unsafe { bun_ptr::BackRef::from_raw(process) },
+        process: yolo! { bun_ptr::BackRef::from_raw(process) },
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1272,7 +1273,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         exited_due_to_maxbuf: Cell::new(None),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess_ptr };
+    let subprocess = yolo! { &mut *subprocess_ptr };
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
     let subprocess_nn: NonNull<SubprocessT<'static>> =
@@ -1304,7 +1305,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     match Writable::init(
         &mut stdio[0],
         // SAFETY: event_loop points to the live JSC EventLoop for this thread.
-        unsafe { &*event_loop },
+        yolo! { &*event_loop },
         subprocess,
         spawned_stdin,
         &mut promise_for_stream,
@@ -1350,7 +1351,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Zig: `subprocess.process.deref()` releases the intrusive ref
             // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.
-            unsafe { Process::deref(subprocess.process.as_ptr()) };
+            yolo! { Process::deref(subprocess.process.as_ptr()) };
             let mut mb = subprocess.stdout_maxbuf.get();
             MaxBuf::remove_from_subprocess(&mut mb);
             subprocess.stdout_maxbuf.set(mb);
@@ -1402,7 +1403,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // SAFETY: `subprocess_ptr` is the live JSC-allocated Subprocess that owns
     // `process` and outlives it (handler ctx invariant).
-    subprocess.process_mut().set_exit_handler(unsafe {
+    subprocess.process_mut().set_exit_handler(yolo! {
         bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
     });
 
@@ -1441,9 +1442,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Some(mode) = maybe_ipc_mode {
             // SAFETY: re-borrow `jsc_vm` through the raw pointer for the nested
             // `vm` arg while `rare_data()` holds the outer &mut.
-            let raw_socket = unsafe { &mut *jsc_vm_ptr }
+            let raw_socket = yolo! { &mut *jsc_vm_ptr }
                 .rare_data()
-                .spawn_ipc_group(unsafe { &mut *jsc_vm_ptr })
+                .spawn_ipc_group(yolo! { &mut *jsc_vm_ptr })
                 .from_fd(
                     bun_uws::SocketKind::SpawnIpc,
                     None,
@@ -1473,7 +1474,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
                     // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
                     // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = std::ptr::from_mut(ipc_data) };
+                    yolo! { *ctx = std::ptr::from_mut(ipc_data) };
                     ipc_data.socket = IPC::SocketUnion::Open(posix_ipc_info);
                 }
             }
@@ -1517,7 +1518,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // through `Option<SendQueue>` is tracked separately.
             // SAFETY: `ipc_data` points at the live SendQueue inline in
             // `*subprocess_ptr`; no other `&mut` to it is live in this scope.
-            if let Some(err) = unsafe {
+            if let Some(err) = yolo! {
                 IPC::SendQueue::windows_configure_server(core::ptr::from_mut(ipc_data), ipc_pipe)
             }
             .as_err()
@@ -1543,7 +1544,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `heap::alloc` above) and `stdin` was just confirmed to be the
         // `Pipe` variant; the signal's stored back-pointer remains valid for
         // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
-        unsafe {
+        yolo! {
             if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
                 (*pipe.as_ptr())
                     .signal
@@ -1593,7 +1594,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.
-            unsafe {
+            yolo! {
                 jsc::VirtualMachineRef::timer_insert(
                     jsc_vm_ptr,
                     subprocess.event_loop_timer.as_ptr(),
@@ -1643,7 +1644,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     scopeguard::defer! {
         if send_exit_notification {
             // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { &*subprocess_ptr_exit }.process_mut();
+            let proc = yolo! { &*subprocess_ptr_exit }.process_mut();
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
@@ -1707,7 +1708,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `add_listener` may synchronously fire `on_abort_signal` (already
         // aborted), which re-enters via `subprocess_ptr` — write through the
         // raw pointer so no `&mut Subprocess` is held across the call.
-        unsafe {
+        yolo! {
             (*signal).pending_activity_ref();
             let _ = (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
             (*subprocess_ptr).abort_signal.set(NonNull::new(signal));
@@ -1717,7 +1718,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     if !IS_SYNC {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+            yolo! { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
         }
         return Ok(out);
     }
@@ -1728,7 +1729,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
         // SAFETY: jsc_vm_ptr is the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }
+        yolo! { &mut *jsc_vm_ptr }
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
@@ -1745,7 +1746,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Therefore, we must do this at the very end.
             if let Some(signal) = abort_signal.take() {
                 // SAFETY: see the matching block above.
-                unsafe {
+                yolo! {
                     (*signal).pending_activity_ref();
                     let _ =
                         (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
@@ -1760,7 +1761,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+        yolo! { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
     }
 
     let mut did_timeout = false;
@@ -1803,9 +1804,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
 
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
-        let sync_loop = unsafe { &mut *jsc_vm_ptr }
+        let sync_loop = yolo! { &mut *jsc_vm_ptr }
             .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
+            .spawn_sync_event_loop(yolo! { &mut *jsc_vm_ptr });
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
@@ -1880,7 +1881,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             // SAFETY: jsc_vm_ptr is the live thread VM.
                             crate::test_runner::jest::Jest::runner()
                                 .unwrap()
-                                .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
+                                .remove_active_timeout(yolo! { &mut *jsc_vm_ptr });
 
                             // This might internally call `std.c.kill` on this
                             // spawnSync process. Even if we do that, we still
@@ -1891,7 +1892,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 taken_active_file,
                                 &absolute_timespec,
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
-                                unsafe { &*jsc_vm_ptr },
+                                yolo! { &*jsc_vm_ptr },
                             );
                             // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
                         }
@@ -1926,7 +1927,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
     // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
-    SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
+    SubprocessT::finalize(yolo! { Box::from_raw(subprocess_ptr) });
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
     sync_value.put(global_this, b"exitCode", exit_code);
@@ -2063,7 +2064,7 @@ pub fn append_envp_from_js(
             // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
             // outlives every read of `*path`), and `ZBox` is heap-backed so the
             // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line.as_bytes()[b"PATH=".len()..]) };
+            *path = yolo! { bun_ptr::detach_lifetime(&line.as_bytes()[b"PATH=".len()..]) };
         }
 
         envp.push(line.as_ptr());

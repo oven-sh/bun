@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use bstr::BStr;
 use bun_alloc::ArenaVecExt as _;
@@ -28,7 +29,7 @@ use bun_ast::Index as AstIndex;
 // `clear_retaining_capacity` so moved-from slots are never dropped.
 #[inline(always)]
 unsafe fn bitwise_copy<T>(src: &T) -> T {
-    unsafe { core::ptr::read(src) }
+    yolo! { core::ptr::read(src) }
 }
 
 /// Zig: `order.len = wip_order.len; @memcpy(order.slice(), wip_order.slice());
@@ -42,7 +43,7 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
     // here would double-free their `conditions` buffers.
     // SAFETY: `set_len(0)` is unconditionally sound (0 ≤ capacity; shrinking
     // exposes no uninitialized range).
-    unsafe { order.set_len(0) };
+    yolo! { order.set_len(0) };
     // `Vec::append` = reserve (no-op given the debug_assert) +
     // `copy_nonoverlapping` into `order[0..]` + `wip.set_len(0)` — exactly the
     // original `@memcpy` + `clearRetainingCapacity` sequence.
@@ -239,8 +240,8 @@ pub fn find_imported_files_in_css_order<'a>(
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path.clone()),
                                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
-                                conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                                condition_import_records: unsafe {
+                                conditions: yolo! { bitwise_copy(wrapping_conditions) },
+                                condition_import_records: yolo! {
                                     bitwise_copy(wrapping_import_records)
                                 },
                             });
@@ -285,7 +286,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 // both are `#[repr(transparent)]` over `u32`.
                 kind: CssImportOrderKind::SourceIndex(AstIndex(source_index.get())),
                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
-                conditions: unsafe { bitwise_copy(wrapping_conditions) },
+                conditions: yolo! { bitwise_copy(wrapping_conditions) },
                 condition_import_records: Vec::new(),
             });
 
@@ -340,7 +341,7 @@ pub fn find_imported_files_in_css_order<'a>(
             if (matches!(entry.kind, CssImportOrderKind::Layers(_)) && is_at_layer_prefix)
                 || matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
-                wip_order.push(unsafe { bitwise_copy(entry) });
+                wip_order.push(yolo! { bitwise_copy(entry) });
             }
             if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
                 is_at_layer_prefix = false;
@@ -353,7 +354,7 @@ pub fn find_imported_files_in_css_order<'a>(
             if (!matches!(entry.kind, CssImportOrderKind::Layers(_)) || !is_at_layer_prefix)
                 && !matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
-                wip_order.push(unsafe { bitwise_copy(entry) });
+                wip_order.push(yolo! { bitwise_copy(entry) });
             }
             if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
                 is_at_layer_prefix = false;
@@ -383,7 +384,7 @@ pub fn find_imported_files_in_css_order<'a>(
         'next_backward: while i != 0 {
             i -= 1;
             // SAFETY: i < order.len; buffer is not reallocated in this loop.
-            let entry: &CssImportOrder = unsafe { &*order_ptr.add(i as usize) };
+            let entry: &CssImportOrder = yolo! { &*order_ptr.add(i as usize) };
             match &entry.kind {
                 CssImportOrderKind::SourceIndex(idx) => {
                     let idx = *idx;
@@ -393,7 +394,7 @@ pub fn find_imported_files_in_css_order<'a>(
                     }
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
-                        let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
+                        let later = yolo! { &(*order_ptr.add(j as usize)).conditions };
                         if is_conditional_import_redundant(&entry.conditions, later) {
                             // This import is redundant, but it might have @layer rules.
                             // So we should keep the @layer rules so that the cascade ordering of layers
@@ -421,7 +422,7 @@ pub fn find_imported_files_in_css_order<'a>(
                     }
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
-                        let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
+                        let later = yolo! { &(*order_ptr.add(j as usize)).conditions };
                         if is_conditional_import_redundant(&entry.conditions, later) {
                             // Don't remove duplicates entirely. The import conditions may
                             // still introduce layers to the layer order. Represent this as a
@@ -484,7 +485,7 @@ pub fn find_imported_files_in_css_order<'a>(
                         //   }
                         //
                         if conditions.has_anonymous_layer() {
-                            unsafe { entry.conditions.set_len((i as u32) as usize) };
+                            yolo! { entry.conditions.set_len((i as u32) as usize) };
                             layers.replace(Vec::new());
                             break;
                         }
@@ -524,7 +525,7 @@ pub fn find_imported_files_in_css_order<'a>(
                             if condition.layer.is_some() {
                                 break;
                             }
-                            unsafe { entry.conditions.set_len((i) as usize) };
+                            yolo! { entry.conditions.set_len((i) as usize) };
                         }
                     }
 
@@ -554,7 +555,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],
             };
-            let layers_key: &[LayerName] = unsafe { &*layers_key };
+            let layers_key: &[LayerName] = yolo! { &*layers_key };
             let mut index: usize = 0;
             while index < layer_duplicates.len() as usize {
                 let dup_layers: &[LayerName] = layer_duplicates.at(index).layers.slice();
@@ -628,14 +629,14 @@ pub fn find_imported_files_in_css_order<'a>(
                             {
                                 // Remove the previous entry and then overwrite it below
                                 duplicates = &duplicates[0..j];
-                                unsafe { wip_order.set_len((duplicate_index) as usize) };
+                                yolo! { wip_order.set_len((duplicate_index) as usize) };
                                 break;
                             }
                         }
 
                         // Non-layer entries still need to be present because they have
                         // other side effects beside inserting things in the layer order
-                        wip_order.push(unsafe { bitwise_copy(entry) });
+                        wip_order.push(yolo! { bitwise_copy(entry) });
                     }
 
                     // Don't add this to the duplicate list below because it's redundant
@@ -647,7 +648,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 .mut_(index)
                 .indices
                 .push(wip_order.len() as u32);
-            wip_order.push(unsafe { bitwise_copy(entry) });
+            wip_order.push(yolo! { bitwise_copy(entry) });
         }
 
         debug_css_order(
@@ -731,7 +732,7 @@ fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
         // PORT NOTE: `ImportRecord` is plain-old-data in Zig (no destructor);
         // `Path<'static>` slices borrow resolver storage. Bitwise copy matches
         // the Zig `clone(arena)` semantics.
-        out.append_assume_capacity(unsafe { bitwise_copy(r) });
+        out.append_assume_capacity(yolo! { bitwise_copy(r) });
     }
     out
 }
@@ -906,7 +907,7 @@ fn debug_css_order_impl(
         let ast_urls_for_css = parse_graph.ast.items_url_for_css();
         // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
         // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
-        let unique_keys: &[&[u8]] = unsafe {
+        let unique_keys: &[&[u8]] = yolo! {
             bun_ptr::boxed_slices_as_borrowed(
                 parse_graph
                     .input_files

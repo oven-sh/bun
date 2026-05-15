@@ -3,6 +3,7 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -160,7 +161,7 @@ impl OSLog {
     pub fn init() -> Option<&'static OSLog> {
         // SAFETY: os_log_create returns either a valid os_log_t handle (process-lifetime)
         // or null; the literals are NUL-terminated.
-        unsafe {
+        yolo! {
             let ptr = os_log_create(c"com.bun.bun".as_ptr(), c"PointsOfInterest".as_ptr());
             if ptr.is_null() { None } else { Some(&*ptr) }
         }
@@ -185,7 +186,7 @@ pub struct Signpost<'a> {
 impl<'a> Signpost<'a> {
     pub fn emit(&self, category: Category) {
         // SAFETY: self.log is a valid os_log_t handle for 'a.
-        unsafe {
+        yolo! {
             bun_signpost_emit(
                 self.log,
                 self.id,
@@ -198,7 +199,7 @@ impl<'a> Signpost<'a> {
 
     pub fn interval(self, category: Category) -> Interval<'a> {
         // SAFETY: self.log is a valid os_log_t handle for 'a.
-        unsafe {
+        yolo! {
             bun_signpost_emit(
                 self.log,
                 self.id,
@@ -223,7 +224,7 @@ pub struct Interval<'a> {
 impl<'a> Interval<'a> {
     pub fn end(&self) {
         // SAFETY: self.signpost.log is a valid os_log_t handle for 'a.
-        unsafe {
+        yolo! {
             bun_signpost_emit(
                 self.signpost.log,
                 self.signpost.id,

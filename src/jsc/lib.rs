@@ -40,6 +40,7 @@ extern crate alloc;
 // inside this crate (e.g. `#[JsClass]` on `BuildMessage`).
 extern crate self as bun_jsc;
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
@@ -601,7 +602,7 @@ pub fn initialize(eval_mode: bool) {
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
-    unsafe { JSCInitialize(env.as_ptr(), env.len(), on_jsc_invalid_env_var, eval_mode, one_shot) };
+    yolo! { JSCInitialize(env.as_ptr(), env.len(), on_jsc_invalid_env_var, eval_mode, one_shot) };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -633,7 +634,7 @@ fn is_one_shot_eval_invocation() -> bool {
 /// Port of `onJSCInvalidEnvVar` (jsc.zig:254).
 extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     // SAFETY: C++ guarantees `name[..len]` is valid for the call.
-    let name = unsafe { bun_core::ffi::slice(name, len) };
+    let name = yolo! { bun_core::ffi::slice(name, len) };
     bun_core::err_generic!(
         "invalid JSC environment variable\n\n    <b>{}<r>\n\n\
 For a list of options, see this file:\n\n    \
@@ -2010,7 +2011,7 @@ impl ZigStringJsc for bun_core::ZigString {
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
         if self.len > bun_core::String::max_length() {
             // SAFETY: contract — bytes were allocated by the global mimalloc allocator.
-            unsafe {
+            yolo! {
                 bun_alloc::mimalloc::mi_free(
                     self.byte_slice()
                         .as_ptr()
@@ -2028,7 +2029,7 @@ impl ZigStringJsc for bun_core::ZigString {
         }
         // SAFETY: `self` is a valid `&ZigString`; `JSGlobalObject` is an opaque
         // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        unsafe { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
+        yolo! { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
     }
     #[inline]
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
@@ -2043,7 +2044,7 @@ impl ZigStringJsc for bun_core::ZigString {
     ) -> JSValue {
         if self.len > bun_core::String::max_length() {
             // SAFETY: invoking the caller-supplied finalizer on the buffer it owns.
-            unsafe {
+            yolo! {
                 callback(
                     ctx,
                     self.byte_slice()
@@ -2256,7 +2257,7 @@ where
     // TODO(port): Zig used `comptime Function: fn(*Context) void` as a value param.
     extern "C" fn callback<Context, F: FnTyped<Context>>(ctx: *mut c_void) {
         // SAFETY: caller guarantees ctx is a valid *mut Context.
-        let context: &mut Context = unsafe { bun_ptr::callback_ctx::<Context>(ctx) };
+        let context: &mut Context = yolo! { bun_ptr::callback_ctx::<Context>(ctx) };
         F::call(context);
     }
     callback::<Context, F>

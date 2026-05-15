@@ -7,6 +7,7 @@
 //! kind to `SocketKind` forces a compile error here until every event has an
 //! arm — no silent fallthrough.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 
 use bun_uws::NewSocketHandler;
@@ -120,7 +121,7 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
         | SocketKind::UwsWs
         | SocketKind::UwsWsTls => {
             // SAFETY: raw_group() is non-null for any socket with a valid kind.
-            unsafe { (*c.raw_group()).vtable.expect("group vtable") }
+            yolo! { (*c.raw_group()).vtable.expect("group vtable") }
         }
         _ => TABLES[kind as usize].expect("kind vtable"),
     }
@@ -139,7 +140,7 @@ macro_rules! us_dispatch_shims {
         #[allow(clippy::unused_unit)]
         pub extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
-                Some(f) => unsafe { f($($call),*) },
+                Some(f) => yolo! { f($($call),*) },
                 None => $default,
             }
         }
@@ -190,7 +191,7 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     // (stamped at construction); the slot read is safe via `opaque_mut`, only
     // the final `&*tls_ptr` needs the deref invariant.
     let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
-    let tls: &TLSSocket = unsafe { &*tls_ptr };
+    let tls: &TLSSocket = yolo! { &*tls_ptr };
     if let Some(raw) = tls.twin.get().as_ref() {
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
         // grab the raw `*mut` without consuming the ref so the +1 stays put.
@@ -198,12 +199,12 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice =
-            unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
+            yolo! { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
         // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
         // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
         // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
         // `&mut` exists. `on_data` takes `*mut Self` (noalias re-entrancy fix).
-        unsafe { TLSSocket::on_data(raw, NewSocketHandler::<true>::from(s), slice) };
+        yolo! { TLSSocket::on_data(raw, NewSocketHandler::<true>::from(s), slice) };
     }
     s
 }

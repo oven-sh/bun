@@ -15,6 +15,7 @@
 //!   - `u32`: Length of function name (0 for unavailable)
 //!   - `[n]u8`: Function name
 
+use bun_yolo::yolo;
 use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
@@ -56,7 +57,7 @@ impl BodyReaderHandler for ErrorReportRequest {
     ) -> Result<(), bun_core::Error> {
         // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
-        unsafe { ErrorReportRequest::run_with_body(this, body, resp) }
+        yolo! { ErrorReportRequest::run_with_body(this, body, resp) }
     }
 
     unsafe fn on_error(this: *mut Self) {
@@ -89,7 +90,7 @@ impl ErrorReportRequest {
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
         // both of which uphold this contract.
-        unsafe {
+        yolo! {
             (*ctx)
                 .dev
                 .get_mut()
@@ -133,7 +134,7 @@ impl ErrorReportRequest {
         // outlives this request). No `&mut *ctx` is formed for the body of this
         // fn — `finalize(ctx)` at the tail consumes the original Box pointer.
         // SAFETY: `ctx` is the live heap allocation from `run` (caller contract).
-        let dev: &DevServer = unsafe { &*ctx }.dev.get();
+        let dev: &DevServer = yolo! { &*ctx }.dev.get();
 
         // Read payload, assemble ZigException
         let name = read_string32(&mut reader)?;

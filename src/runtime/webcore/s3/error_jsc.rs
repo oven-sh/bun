@@ -1,6 +1,7 @@
 //! JSC bridges for `s3_signing/error.zig`. The pure error-code/message tables
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
+use bun_yolo::yolo;
 use bun_core::String as BunString;
 use bun_core::{Error, err};
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
@@ -13,7 +14,7 @@ pub use s3_error::S3Error;
 #[inline]
 fn msg(bytes: &'static [u8]) -> &'static str {
     // SAFETY: every value returned by `get_sign_error_message` is an ASCII string literal.
-    unsafe { core::str::from_utf8_unchecked(bytes) }
+    yolo! { core::str::from_utf8_unchecked(bytes) }
 }
 
 pub fn get_js_sign_error(err: Error, global_this: &JSGlobalObject) -> JSValue {

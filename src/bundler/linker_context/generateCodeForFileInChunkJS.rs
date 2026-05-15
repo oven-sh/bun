@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::bundled_ast::Flags as AstFlags;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
@@ -48,7 +49,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // don't conflict. Matches Zig which slices once at the top.
     // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
     // function (linking has already sized everything).
-    let parts: *mut [Part] = unsafe {
+    let parts: *mut [Part] = yolo! {
         let list = &mut c.graph.ast.items_parts_mut()[source_index];
         core::ptr::addr_of_mut!(
             list.slice_mut()
@@ -85,7 +86,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             let hmr_api_ref = ast.wrapper_ref;
 
             // SAFETY: see `parts` raw-pointer note above.
-            for part in unsafe { (*parts).iter() } {
+            for part in yolo! { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) =
                     convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
@@ -210,11 +211,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     path: new_path,
                     // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
                     // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
-                    contents: std::borrow::Cow::Borrowed(unsafe {
+                    contents: std::borrow::Cow::Borrowed(yolo! {
                         &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
                     }),
                     contents_is_recycled: source_ref.contents_is_recycled,
-                    identifier_name: std::borrow::Cow::Borrowed(unsafe {
+                    identifier_name: std::borrow::Cow::Borrowed(yolo! {
                         &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
                     }),
                     index: source_ref.index,
@@ -285,10 +286,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         // SAFETY: see `parts` raw-pointer note above.
-        && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
+        && yolo! { (*parts)[namespace_export_part_index as usize].is_live }
     {
         let ns_part_stmts: &[Stmt] =
-            unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
+            yolo! { (*parts)[namespace_export_part_index as usize].stmts }.slice();
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,
@@ -326,10 +327,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // Add all other parts in this chunk
     // SAFETY: see `parts` raw-pointer note above.
-    let parts_len = unsafe { (&*parts).len() };
+    let parts_len = yolo! { (&*parts).len() };
     for index_ in 0..parts_len {
         // SAFETY: index in bounds.
-        let part: &Part = unsafe { &(*parts)[index_] };
+        let part: &Part = yolo! { &(*parts)[index_] };
         let index = part_range.part_index_begin + (index_ as u32);
         if !part.is_live {
             // Skip the part if it's not in this chunk
@@ -404,13 +405,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 let mut new_properties = Vec::<G::Property>::init_capacity(src_len);
                 // SAFETY: `new_properties` has capacity `src_len`; source slice is live
                 // arena memory of length `src_len`; see note above re: no owned heap data.
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         e_object.properties.as_ptr(),
                         new_properties.as_mut_ptr(),
                         src_len,
                     );
-                    unsafe { new_properties.set_len((src_len as u32) as usize) };
+                    yolo! { new_properties.set_len((src_len as u32) as usize) };
                 }
 
                 let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index];
@@ -458,7 +459,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             // SAFETY: `prop` is a valid `&mut G::Property` slot;
                             // the overwritten old value aliases AST-owned data and
                             // MUST NOT be dropped (PTR_AUDIT.md class #1).
-                            unsafe {
+                            yolo! {
                                 core::ptr::write(
                                     prop,
                                     G::Property {
@@ -673,7 +674,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ref_: Ref,
                     ) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
-                        let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
+                        let this = yolo! { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
                         this.wrap_identifier(loc, ref_)
                     }
                 }

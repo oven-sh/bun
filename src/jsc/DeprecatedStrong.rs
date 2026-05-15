@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
@@ -118,7 +119,7 @@ impl DeprecatedStrong {
         if let Some(safety) = &mut self.safety {
             if safety.ref_count == 1 {
                 // SAFETY: ptr was produced by heap::alloc in `init` and not yet freed.
-                unsafe {
+                yolo! {
                     debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
                     (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
                     // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
@@ -143,7 +144,7 @@ impl Drop for DeprecatedStrong {
         if let Some(safety) = &mut self.safety {
             // SAFETY: ptr was produced by heap::alloc in `init` and has not been freed
             // (ref_count == 1 asserted below).
-            unsafe {
+            yolo! {
                 debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
                 (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
                 debug_assert!(safety.ref_count == 1);

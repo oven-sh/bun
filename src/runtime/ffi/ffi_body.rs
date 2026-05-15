@@ -1,5 +1,6 @@
 #![allow(unexpected_cfgs)] // `feature = "tinycc"` is a Phase-C placeholder; `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt::{self, Write as _};
@@ -73,7 +74,7 @@ fn create_object_2(
         ) -> JSValue;
     }
     // SAFETY: all pointers borrowed for the call; C++ clones key strings.
-    unsafe { JSC__JSValue__createObject2(global, key1, key2, value1, value2) }
+    yolo! { JSC__JSValue__createObject2(global, key1, key2, value1, value2) }
 }
 
 /// `bun.String.toJSArray` — local shim over `JSValue::create_array_from_iter`.
@@ -108,12 +109,12 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
     const HAS_PROTECTION: bool = cfg!(all(target_arch = "aarch64", target_os = "macos"));
     if HAS_PROTECTION {
         // SAFETY: aarch64 macOS only; toggles W^X for the current thread
-        unsafe { pthread_jit_write_protect_np(false as c_int) };
+        yolo! { pthread_jit_write_protect_np(false as c_int) };
     }
     scopeguard::defer! {
         if HAS_PROTECTION {
             // SAFETY: re-enable JIT write protection on scope exit
-            unsafe { pthread_jit_write_protect_np(true as c_int) };
+            yolo! { pthread_jit_write_protect_np(true as c_int) };
         }
     }
     // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
@@ -191,7 +192,7 @@ fn new_runtime_function(
 ) -> JSValue {
     // SAFETY: thin FFI wrapper; `global` is a live opaque JSC handle,
     // `function_pointer` is a JIT'd entry point owned by the caller.
-    unsafe {
+    yolo! {
         Bun__CreateFFIFunctionValue(
             global,
             symbol_name,
@@ -212,13 +213,13 @@ fn symbols_value_set_cached(js_object: JSValue, global: &JSGlobalObject, obj: JS
 impl Offsets {
     fn load_once() {
         // SAFETY: extern "C" fn populating a static
-        unsafe { bun_ffi_ensure_offsets_are_loaded() };
+        yolo! { bun_ffi_ensure_offsets_are_loaded() };
     }
     pub fn get() -> &'static Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
         // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*BUN_FFI_OFFSETS.get() }
+        yolo! { &*BUN_FFI_OFFSETS.get() }
     }
 }
 
@@ -382,7 +383,7 @@ mod stdarg {
             // SAFETY: taking addresses of process-global FILE* pointers; the
             // statics live for the process and we never form a Rust reference
             // to them (only a raw `*const c_void` for tcc_add_symbol).
-            unsafe {
+            yolo! {
                 state
                     .add_symbols(&[
                         ("__stdinp", core::ptr::addr_of!(FFI_STDINP).cast::<c_void>()),
@@ -486,12 +487,12 @@ impl CompileC {
         }
         // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; we hold
         // the unique borrow for the duration of the callback.
-        let this = unsafe { &mut *this_ };
+        let this = yolo! { &mut *this_ };
         // SAFETY: TCC guarantees message is a valid NUL-terminated string when non-null
         let mut msg: &[u8] = if message.is_null() {
             b""
         } else {
-            unsafe { bun_core::ffi::cstr(message) }.to_bytes()
+            yolo! { bun_core::ffi::cstr(message) }.to_bytes()
         };
         if msg.is_empty() {
             return;
@@ -641,7 +642,7 @@ impl CompileC {
             // TODO(port): @ptrCast from []const u8 to [:0]const u8 — env var must be NUL-terminated
             // SAFETY: env vars are NUL-terminated by the OS; the slice points into
             // the process env block, so a sentinel byte follows it.
-            unsafe { ZStr::from_raw(tcc_options.as_ptr(), tcc_options.len()) }
+            yolo! { ZStr::from_raw(tcc_options.as_ptr(), tcc_options.len()) }
         } else {
             zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
         };
@@ -666,7 +667,7 @@ impl CompileC {
         };
         // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
         // we hold the only reference for the rest of this function.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+        let state: &mut TCC::State = yolo! { &mut *state_ptr.as_ptr() };
 
         let mut pathbuf = PathBuffer::uninit();
 
@@ -1034,7 +1035,7 @@ impl FFI {
         }
 
         // SAFETY: already checked that symbols_object is an object
-        if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, unsafe {
+        if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, yolo! {
             &*symbols_object.get_object().unwrap()
         })? {
             if !val.is_empty() && !global_this.has_exception() {
@@ -1215,7 +1216,7 @@ impl FFI {
         let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
             if let Some(state) = s {
                 // SAFETY: state is a valid TCC::State pointer from compile()
-                unsafe { TCC::State::destroy(state.as_ptr()) };
+                yolo! { TCC::State::destroy(state.as_ptr()) };
             }
         });
 
@@ -1280,7 +1281,7 @@ impl FFI {
 
     pub fn close_callback(_global_this: &JSGlobalObject, ctx: JSValue) -> JSValue {
         // SAFETY: ctx encodes a heap::alloc(*mut Function) created by `callback`
-        drop(unsafe { bun_core::heap::take(ctx.as_ptr_address() as *mut Function) });
+        drop(yolo! { bun_core::heap::take(ctx.as_ptr_address() as *mut Function) });
         JSValue::UNDEFINED
     }
 
@@ -1336,7 +1337,7 @@ impl FFI {
             Step::Compiled(_) => {
                 let function_ = bun_core::heap::into_raw(Box::new(core::mem::take(func)));
                 // SAFETY: function_ is a valid heap::alloc pointer
-                let compiled_ptr = unsafe { (*function_).step.compiled_ptr() };
+                let compiled_ptr = yolo! { (*function_).step.compiled_ptr() };
                 Ok(create_object_2(
                     global_this,
                     &ZigString::static_(b"ptr"),
@@ -1361,7 +1362,7 @@ impl FFI {
 
         if let Some(state) = self.shared_state.take() {
             // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
-            unsafe { TCC::State::destroy(state.as_ptr()) };
+            yolo! { TCC::State::destroy(state.as_ptr()) };
         }
 
         self.functions.with_mut(|f| f.clear_retaining_capacity());
@@ -1416,7 +1417,7 @@ impl FFI {
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         if let Some(val) =
-            generate_symbols(global, &mut symbols, unsafe { &*obj }).unwrap_or(Some(JSValue::ZERO))
+            generate_symbols(global, &mut symbols, yolo! { &*obj }).unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
             // keys/arg_types freed by Drop
@@ -1501,7 +1502,7 @@ impl FFI {
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
+        if let Some(val) = generate_symbols(global, &mut symbols, yolo! { &*object })
             .unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
@@ -1649,7 +1650,7 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
+        if let Some(val) = generate_symbols(global, &mut symbols, yolo! { &*object })
             .unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
@@ -1951,12 +1952,12 @@ impl Drop for Function {
         // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
         if let Some(state) = self.state.take() {
             // SAFETY: state is a valid TCC::State pointer; we own it
-            unsafe { TCC::State::destroy(state.as_ptr()) };
+            yolo! { TCC::State::destroy(state.as_ptr()) };
         }
         if let Step::Compiled(compiled) = &mut self.step {
             if let Some(wrapper) = compiled.ffi_callback_function_wrapper.take() {
                 // SAFETY: wrapper was created by Bun__createFFICallbackFunction
-                unsafe { FFICallbackFunctionWrapper_destroy(wrapper.as_ptr()) };
+                yolo! { FFICallbackFunctionWrapper_destroy(wrapper.as_ptr()) };
             }
         }
     }
@@ -1995,9 +1996,9 @@ impl Function {
     pub unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
         debug_assert!(!ctx.is_null());
         // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
-        let this = unsafe { &mut *ctx };
+        let this = yolo! { &mut *ctx };
         // SAFETY: TCC passes a valid NUL-terminated string
-        let mut msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
+        let mut msg: &[u8] = yolo! { bun_core::ffi::cstr(message) }.to_bytes();
         if !msg.is_empty() {
             let mut offset: usize = 0;
             // the message we get from TCC sometimes has garbage in it
@@ -2052,16 +2053,16 @@ impl Function {
         self.state = Some(state);
         let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
             // SAFETY: this_ptr is &mut self for the duration of compile()
-            let this = unsafe { &mut *this_ptr };
+            let this = yolo! { &mut *this_ptr };
             if matches!(this.step, Step::Failed { .. }) {
                 if let Some(s) = this.state.take() {
                     // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
+                    yolo! { TCC::State::destroy(s.as_ptr()) };
                 }
             }
         });
         // SAFETY: state is non-null, just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
+        let state = yolo! { self.state.unwrap().as_mut() };
 
         if let Some(env) = napi_env {
             if state
@@ -2127,14 +2128,14 @@ impl Function {
         jsc::mark_binding();
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
-        let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };
+        let ffi_wrapper = yolo! { Bun__createFFICallbackFunction(js_context, js_function) };
         self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
 
         #[cfg(all(debug_assertions, unix))]
         'debug_write: {
             // TODO(port): uses std.posix directly in Zig — keep raw libc here for parity
             // SAFETY: best-effort debug write; failures are swallowed
-            unsafe {
+            yolo! {
                 let fd = libc::open(
                     b"/tmp/bun-ffi-callback-source.c\0"
                         .as_ptr()
@@ -2180,16 +2181,16 @@ impl Function {
         self.state = Some(state);
         let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
             // SAFETY: this_ptr is &mut self for the duration of compile_callback()
-            let this = unsafe { &mut *this_ptr };
+            let this = yolo! { &mut *this_ptr };
             if matches!(this.step, Step::Failed { .. }) {
                 if let Some(s) = this.state.take() {
                     // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
+                    yolo! { TCC::State::destroy(s.as_ptr()) };
                 }
             }
         });
         // SAFETY: just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
+        let state = yolo! { self.state.unwrap().as_mut() };
 
         if self.needs_napi_env() {
             if state
@@ -2676,13 +2677,13 @@ impl CompilerRT {
     #[inline(never)]
     extern "C" fn memset(dest: *mut u8, c: u8, byte_count: usize) {
         // SAFETY: caller (TCC-compiled code) guarantees dest[0..byte_count] is writable
-        unsafe { core::slice::from_raw_parts_mut(dest, byte_count) }.fill(c);
+        yolo! { core::slice::from_raw_parts_mut(dest, byte_count) }.fill(c);
     }
 
     #[inline(never)]
     extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
         // SAFETY: caller (TCC-compiled code) guarantees non-overlapping valid ranges
-        unsafe {
+        yolo! {
             bun_core::ffi::slice_mut(dest, byte_count)
                 .copy_from_slice(bun_core::ffi::slice(source, byte_count));
         }
@@ -2841,7 +2842,7 @@ fn make_napi_env_if_needed<'a>(
             // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
             // PORT NOTE: `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
             // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
+            return Some(yolo! { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
         }
     }
     None

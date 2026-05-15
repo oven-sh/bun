@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -183,7 +184,7 @@ impl ReadableStream {
         match self.ptr {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                let blobby = unsafe { &mut *blobby };
+                let blobby = yolo! { &mut *blobby };
                 if let Some(blob) = blobby.to_any_blob(global_this) {
                     self.done(global_this);
                     return Some(blob);
@@ -226,9 +227,9 @@ impl ReadableStream {
         // this will resolve any pending promises to done: true
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Blob(source) => unsafe { (*(*source).parent()).cancel() },
-            Source::File(source) => unsafe { (*(*source).parent()).cancel() },
-            Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
+            Source::Blob(source) => yolo! { (*(*source).parent()).cancel() },
+            Source::File(source) => yolo! { (*(*source).parent()).cancel() },
+            Source::Bytes(source) => yolo! { (*(*source).parent()).cancel() },
             _ => {}
         }
         self.detach_if_possible(global_this);
@@ -821,7 +822,7 @@ impl<C: SourceContext> NewSource<C> {
 
     /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.
     ///
-    /// Every call site of `new()` immediately did `unsafe { &mut *p }` to set
+    /// Every call site of `new()` immediately did `yolo! { &mut *p }` to set
     /// up the context and then handed ownership to the JS wrapper via
     /// [`Self::to_readable_stream`]. Centralising that deref here (one
     /// audited `unsafe`, N safe callers) — the allocation is fresh, non-null,
@@ -833,7 +834,7 @@ impl<C: SourceContext> NewSource<C> {
         // sole pointer to a fresh allocation; forming `&mut` is unique.
         // Ownership transfers to the JS wrapper's `m_ctx`, so the unbounded
         // lifetime is correct (no Rust owner will drop underneath the borrow).
-        unsafe { &mut *Self::new(init) }
+        yolo! { &mut *Self::new(init) }
     }
     // `bun.TrivialDeinit(@This())` → see `deinit()` below.
 
@@ -904,7 +905,7 @@ impl<C: SourceContext> NewSource<C> {
     /// identity check above matches.
     fn on_js_close(ptr: Option<*mut c_void>) {
         // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
-        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
+        let this = yolo! { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
         if let Some(cb) = this.close_jsvalue.try_swap() {
             this.global_this().queue_microtask(cb, &[]);
         }
@@ -927,7 +928,7 @@ impl<C: SourceContext> NewSource<C> {
     /// — nor any interior pointer such as `&mut context` — after this returns.
     pub unsafe fn decrement_count(this: *mut Self) -> u32 {
         // SAFETY: caller contract — `this` is live for the duration of this block.
-        let remaining = unsafe {
+        let remaining = yolo! {
             let r = &mut (*this).ref_count;
             #[cfg(debug_assertions)]
             if *r == 0 {
@@ -938,14 +939,14 @@ impl<C: SourceContext> NewSource<C> {
         };
         if remaining == 0 {
             // SAFETY: still live; run side-effect teardown while fields are valid.
-            unsafe {
+            yolo! {
                 (*this).close_jsvalue.deinit();
                 (*this).context.deinit_fn();
             }
             // SAFETY: `this` originated from `Box::into_raw` in `Self::new`. No
             // `&mut` borrow of `*this` is live at this point — reclaim and drop,
             // which runs `Drop` on `context` and all other fields, then frees.
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
             return 0;
         }
         remaining
@@ -1091,7 +1092,7 @@ impl<C: SourceContext> NewSource<C> {
             | streams::Result::IntoArrayAndDone(_) => {
                 let value = JSValue::TRUE;
                 // SAFETY: flags is a JS object passed from builtin JS; index 0 is writable.
-                unsafe {
+                yolo! {
                     jsc::c_api::JSObjectSetPropertyAtIndex(
                         std::ptr::from_ref::<JSGlobalObject>(global_this).cast_mut(),
                         flags.as_object_ref(),
@@ -1202,9 +1203,9 @@ impl<C: SourceContext> NewSource<C> {
         // the raw refcount via a raw pointer (the call may free `*this`).
         let this = Box::into_raw(self);
         // SAFETY: `this` is live — just unwrapped from `Box`.
-        unsafe { (*this).this_jsvalue = JSValue::ZERO };
+        yolo! { (*this).this_jsvalue = JSValue::ZERO };
         // SAFETY: `this` came from `Box::into_raw`; not accessed after.
-        let _ = unsafe { Self::decrement_count(this) };
+        let _ = yolo! { Self::decrement_count(this) };
     }
 
     pub fn drain_from_js(

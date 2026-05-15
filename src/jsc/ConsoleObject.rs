@@ -5,6 +5,7 @@
 //! `console.count`/`time`/`timeEnd`, and the C ABI shims that JavaScriptCore
 //! calls into.
 
+use bun_yolo::yolo;
 use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
 use bun_io::Write as _;
 use core::cell::{Cell, RefCell};
@@ -129,7 +130,7 @@ impl ConsoleObject {
     // pointer into the buffer field, so the struct is self-referential once
     // initialized. The previous out-param shape (`&mut MaybeUninit<Self>`)
     // still let the caller move the value afterwards (e.g.
-    // `Box::new(unsafe { mu.assume_init() })`), which is exactly what
+    // `Box::new(yolo! { mu.assume_init() })`), which is exactly what
     // `VirtualMachine` needs to do — and that move would dangle both
     // adapter pointers.
     //
@@ -162,7 +163,7 @@ impl ConsoleObject {
         // pointer because `adapt_to_new_api` would otherwise hold a unique
         // borrow of one field while we assign another.
         let p: *mut ConsoleObject = &raw mut *out;
-        unsafe {
+        yolo! {
             (*p).error_writer_backing = error_writer
                 .quiet_writer()
                 .adapt_to_new_api(&mut (*p).stderr_buffer);
@@ -196,7 +197,7 @@ impl ConsoleObject {
         // `out.stdout_buffer`, which remain valid for `out`'s lifetime
         // *provided the caller never moves it* (see fn doc).
         let p: *mut ConsoleObject = out;
-        unsafe {
+        yolo! {
             (*p).error_writer_backing = error_writer
                 .quiet_writer()
                 .adapt_to_new_api(&mut (*p).stderr_buffer);
@@ -329,7 +330,7 @@ fn vm_console_mut(global: &JSGlobalObject) -> &mut ConsoleObject {
     // at VM construction to a boxed `ConsoleObject` that lives for the VM's
     // lifetime; the C++ side never calls into `Bun__ConsoleObject__*` before
     // that. Single-JS-thread invariant ⇒ the returned `&mut` is exclusive.
-    unsafe { &mut *vm_console(global) }
+    yolo! { &mut *vm_console(global) }
 }
 
 static STDERR_MUTEX: Mutex = Mutex::new();
@@ -447,7 +448,7 @@ fn message_with_type_and_level_(
     let _indent_guard = scopeguard::guard(console, move |console| {
         // SAFETY: see `vm_console` — points at the live boxed
         // `ConsoleObject` for this VM; JS-thread-only.
-        unsafe {
+        yolo! {
             (*console).default_indent = (*console)
                 .default_indent
                 .saturating_add(is_start_group as u16);
@@ -511,7 +512,7 @@ fn message_with_type_and_level_(
     // `vm_console_mut`) so the resulting `writer` borrow does not pin a
     // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
     // arm below.
-    let raw_writer: &mut bun_core::io::Writer = unsafe {
+    let raw_writer: &mut bun_core::io::Writer = yolo! {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
             (*console).error_writer()
         } else {
@@ -550,7 +551,7 @@ fn message_with_type_and_level_(
     };
 
     // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
-    let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
+    let vals_slice = yolo! { bun_core::ffi::slice(vals, len) };
 
     if message_type == MessageType::Table && len >= 1 {
         // if value is not an object/array/iterable, don't print a table and just print it
@@ -601,7 +602,7 @@ fn message_with_type_and_level_(
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
         // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
+        let w = yolo! { (*console).writer() };
         let _ = w.write_all(b"\n");
         let _ = w.flush();
     } else if message_type != MessageType::Trace {
@@ -1001,7 +1002,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
+                    let ctx = yolo! { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     if ctx
                         .this
                         .update_columns_for_row(ctx.columns, RowKey::Num(ctx.idx), value)
@@ -1132,7 +1133,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
+                    let ctx = yolo! { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     if ctx
                         .this
                         .print_row::<C>(ctx.writer, ctx.columns, RowKey::Num(ctx.idx), value)
@@ -1245,7 +1246,7 @@ impl<'a> DynWriteAdapter<'a> {
         // SAFETY: only reachable via the `io::Writer` vtable installed in
         // `Self::new`, which always passes `&mut self.head` (first repr(C)
         // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
-        let this = unsafe { &mut *w.cast::<Self>() };
+        let this = yolo! { &mut *w.cast::<Self>() };
         this.inner.write_all(bytes)
     }
 
@@ -1253,7 +1254,7 @@ impl<'a> DynWriteAdapter<'a> {
         // SAFETY: only reachable via the `io::Writer` vtable installed in
         // `Self::new`, which always passes `&mut self.head` (first repr(C)
         // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
-        let this = unsafe { &mut *w.cast::<Self>() };
+        let this = yolo! { &mut *w.cast::<Self>() };
         this.inner.flush()
     }
 }
@@ -1481,7 +1482,7 @@ pub fn format2(
 ) -> JsResult<()> {
     // SAFETY: caller guarantees `vals` points at `len` valid JSValues on the
     // stack (conservative GC scan covers them).
-    let vals = unsafe { bun_core::ffi::slice(vals, len) };
+    let vals = yolo! { bun_core::ffi::slice(vals, len) };
 
     if len == 1 {
         // initialized later in this function.
@@ -1654,7 +1655,7 @@ pub mod formatter {
         fn drop(&mut self) {
             // SAFETY: `place` was taken via `addr_of_mut!` on a field of a
             // value that outlives this guard; no other borrow is live at drop.
-            unsafe { *self.place = self.prev };
+            yolo! { *self.place = self.prev };
         }
     }
 
@@ -1685,7 +1686,7 @@ pub mod formatter {
         fn drop(&mut self) {
             // SAFETY: `place` was taken via `addr_of_mut!` on a field of a
             // value that outlives this guard; no other borrow is live at drop.
-            unsafe { *self.place = (*self.place).saturating_dec() };
+            yolo! { *self.place = (*self.place).saturating_dec() };
         }
     }
 
@@ -1703,7 +1704,7 @@ pub mod formatter {
         fn drop(&mut self) {
             // SAFETY: `map`/`armed` were taken via `addr_of!` on locals that
             // outlive this guard; no other borrow is live at drop.
-            unsafe {
+            yolo! {
                 if *self.armed {
                     let _ = (*self.map).remove(&self.value);
                 }
@@ -2004,7 +2005,7 @@ pub mod formatter {
             // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
             // every node from `Pool::get_node()`; the caller owns `node`
             // exclusively until `Pool::release`, so forming `&mut` is sound.
-            unsafe { node.as_mut().data.assume_init_mut() }
+            yolo! { node.as_mut().data.assume_init_mut() }
         }
     }
 
@@ -2378,7 +2379,7 @@ pub mod formatter {
                     // SAFETY: `value` is a cell with `js_type == GlobalProxy`,
                     // so `as_object_ref()` is a valid `JSObjectRef` for the
                     // C API call.
-                    let target = JSValue::c(unsafe {
+                    let target = JSValue::c(yolo! {
                         jsc::C::JSObjectGetProxyTarget(value.as_object_ref())
                     });
                     return Tag::get(target, global_this);
@@ -3035,7 +3036,7 @@ pub mod formatter {
             next_value: JSValue,
         ) {
             // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
+            let Some(ctx) = (yolo! { ctx.cast::<Self>().as_mut() }) else {
                 return;
             };
             let this = ctx;
@@ -3132,7 +3133,7 @@ pub mod formatter {
             next_value: JSValue,
         ) {
             // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(this) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
+            let Some(this) = (yolo! { ctx.cast::<Self>().as_mut() }) else {
                 return;
             };
             if this.formatter.failed {
@@ -3326,7 +3327,7 @@ pub mod formatter {
             is_private_symbol: bool,
         ) -> Option<TagResult> {
             // SAFETY: caller passes a valid `*ZigString`.
-            let key = unsafe { &*key };
+            let key = yolo! { &*key };
             if key.eql_comptime(b"constructor") {
                 return None;
             }
@@ -3407,7 +3408,7 @@ pub mod formatter {
             is_private_symbol: bool,
         ) {
             // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else {
+            let Some(ctx) = (yolo! { ctx_ptr.cast::<Self>().as_mut() }) else {
                 return;
             };
 
@@ -4130,7 +4131,7 @@ pub mod formatter {
             scopeguard::defer! {
                 // SAFETY: `self.map` outlives this guard; no other borrow is
                 // live at the drop point.
-                unsafe {
+                yolo! {
                     if was_in_map {
                         let _ = (*map_restore_ptr).insert(value, ());
                     }
@@ -5977,7 +5978,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
 ) {
     let this = vm_console_mut(global_this);
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
+    let slice = yolo! { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
     let counter = this.counts.get_or_put(hash).expect("unreachable");
@@ -6017,7 +6018,7 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
 ) {
     let this = vm_console_mut(global_this);
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
+    let slice = yolo! { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't delete it because deleting is implemented via tombstoning
     if let Some(v) = this.counts.get_mut(&hash) {
@@ -6040,7 +6041,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
     len: usize,
 ) {
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
+    let id = bun_wyhash::hash(yolo! { bun_core::ffi::slice(chars, len) });
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
@@ -6067,7 +6068,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     }
 
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let slice = yolo! { bun_core::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
     // Zig `fetchPut(id, null)` — replace with `None`, returning the previous.
     let Some(prev) = PENDING_TIME_LOGS
@@ -6103,7 +6104,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     }
 
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
+    let slice = yolo! { bun_core::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
@@ -6130,7 +6131,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     let console = vm_console_mut(global);
     let mut writer = console.error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
+    for &arg in yolo! { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
@@ -6194,7 +6195,7 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     // TODO: this does an extra JSONStringify and we don't need it to!
     let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
-    unsafe {
+    yolo! {
         message_with_type_and_level(
             core::ptr::null_mut(), // Zig passes `undefined` here
             MessageType::Log,
@@ -6229,7 +6230,7 @@ pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     len: usize,
 ) {
     // SAFETY: forwarding the same FFI args to the inner host shim.
-    unsafe {
+    yolo! {
         message_with_type_and_level(
             ctype,
             MessageType::from_raw(message_type),

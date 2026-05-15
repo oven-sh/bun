@@ -13,6 +13,7 @@
 //! methods whose return types differ. Call sites that relied on the old
 //! variants are patched at the call site to `.first_mut()` / `.to_vec()` etc.
 
+use bun_yolo::yolo;
 use core::alloc::Allocator;
 use core::fmt;
 use core::mem::ManuallyDrop;
@@ -51,7 +52,7 @@ pub trait VecExt<T>: Sized {
     /// (read-only) since nothing is logically moved out.
     ///
     /// Covers the dominant js_parser pattern
-    /// `arena.alloc_slice_copy(&[a, b]) → unsafe { from_bump_slice(..) }` (B-1
+    /// `arena.alloc_slice_copy(&[a, b]) → yolo! { from_bump_slice(..) }` (B-1
     /// invariant: bump arena outlives the AST). Callers may pass the bump
     /// slice directly, or skip the intermediate bump alloc entirely and pass
     /// the stack array — both compile to one memcpy into the global heap.
@@ -66,7 +67,7 @@ pub trait VecExt<T>: Sized {
     /// once, so no double-drop and no allocator-identity confusion is
     /// possible at the call site.
     ///
-    /// Prefer this over `unsafe { from_bump_slice(v.into_bump_slice_mut()) }`
+    /// Prefer this over `yolo! { from_bump_slice(v.into_bump_slice_mut()) }`
     /// — it encodes the "source is leaked, never dropped again" contract in
     /// the type system instead of a `// SAFETY:` comment.
     fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
@@ -223,7 +224,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
             // SAFETY: `A == Global`, so `Vec<T>` and `Vec<T, A>` have identical
             // layout, allocator, and drop semantics.
             let mut list = core::mem::ManuallyDrop::new(list);
-            return unsafe {
+            return yolo! {
                 Vec::from_raw_parts_in(list.as_mut_ptr(), list.len(), list.capacity(), A::default())
             };
         }
@@ -246,7 +247,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // allocation, leaving the arena bytes abandoned (they were already
         // leaked into the bump and will never be element-dropped).
         let mut v = Vec::with_capacity_in(items.len(), A::default());
-        unsafe {
+        yolo! {
             core::ptr::copy_nonoverlapping(items.as_ptr(), v.as_mut_ptr(), items.len());
             v.set_len(items.len());
         }
@@ -283,7 +284,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // into O(nodes) dead arena bytes (≈+11% transpile RSS on a 5.7 MB
         // input). Freeing here makes the scratch slot O(1): mimalloc recycles
         // the same size-class block on the next iteration.
-        unsafe {
+        yolo! {
             core::ptr::copy_nonoverlapping(src.as_ptr(), out.as_mut_ptr(), len);
             out.set_len(len);
             src.set_len(0);
@@ -300,7 +301,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
         // SAFETY: caller must never drop or grow the returned `Vec` — its
         // buffer is borrowed.  Same contract as the original.
-        ManuallyDrop::new(unsafe {
+        ManuallyDrop::new(yolo! {
             Vec::from_raw_parts_in(
                 items.as_ptr().cast_mut(),
                 items.len(),
@@ -422,13 +423,13 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     unsafe fn expand_to_capacity(&mut self) {
         // SAFETY: caller contract — every element in `[len, cap)` is written
         // before being observed.
-        unsafe { self.set_len(self.capacity()) };
+        yolo! { self.set_len(self.capacity()) };
     }
     unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T] {
         self.reserve(additional);
         let prev = self.len();
         // SAFETY: caller contract — slice is fully written before any read.
-        unsafe { self.set_len(prev + additional) };
+        yolo! { self.set_len(prev + additional) };
         &mut self[prev..]
     }
     #[inline]
@@ -436,7 +437,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         debug_assert!(self.len() + additional <= self.capacity());
         let prev = self.len();
         // SAFETY: caller contract — capacity asserted; slice fully written before any read.
-        unsafe { self.set_len(prev + additional) };
+        yolo! { self.set_len(prev + additional) };
         &mut self[prev..]
     }
     #[inline]
@@ -444,7 +445,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         self.reserve_exact(additional);
         let prev = self.len();
         // SAFETY: caller contract — slice fully written before any read.
-        unsafe { self.set_len(prev + additional) };
+        yolo! { self.set_len(prev + additional) };
         &mut self[prev..]
     }
     #[inline]
@@ -460,9 +461,9 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         }
         let cap = self.capacity();
         // SAFETY: caller contract — `[prev, cap)` is FFI-written or truncated before any read.
-        unsafe { self.set_len(cap) };
+        yolo! { self.set_len(cap) };
         // SAFETY: `prev <= cap`; ptr is within (or one-past) the allocation.
-        (unsafe { self.as_mut_ptr().add(prev) }, cap - prev)
+        (yolo! { self.as_mut_ptr().add(prev) }, cap - prev)
     }
 
     #[inline]
@@ -477,7 +478,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
             // SAFETY: `A == Global`, so `Vec<T, A>` and `Vec<T>` have the
             // same layout, allocator, and drop semantics.
             let mut taken = core::mem::ManuallyDrop::new(taken);
-            return unsafe {
+            return yolo! {
                 Vec::from_raw_parts(taken.as_mut_ptr(), taken.len(), taken.capacity())
             };
         }
@@ -496,7 +497,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn shallow_copy(&self) -> ManuallyDrop<Self> {
         // SAFETY: caller must not drop/grow the alias; original stays the owner.
-        ManuallyDrop::new(unsafe {
+        ManuallyDrop::new(yolo! {
             Vec::from_raw_parts_in(
                 self.as_ptr().cast_mut(),
                 self.len(),
@@ -517,7 +518,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn allocated_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>] {
         // SAFETY: ptr[0..cap] is the full allocation.
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts_mut(
                 self.as_mut_ptr().cast::<core::mem::MaybeUninit<T>>(),
                 self.capacity(),
@@ -634,7 +635,7 @@ impl ByteVecExt for Vec<u8> {
         debug_assert!(self.capacity() >= self.len() + size);
         let prev = self.len();
         // SAFETY: capacity asserted; writing `size` bytes into the uninit tail.
-        unsafe {
+        yolo! {
             self.as_mut_ptr()
                 .add(prev)
                 .cast::<Int>()
@@ -652,11 +653,11 @@ impl ByteVecExt for Vec<u8> {
     }
     #[inline]
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
-        unsafe { bun_core::vec::reserve_spare_bytes(self, suggested) }
+        yolo! { bun_core::vec::reserve_spare_bytes(self, suggested) }
     }
     #[inline]
     unsafe fn uv_commit(&mut self, nread: usize) {
-        unsafe { bun_core::vec::commit_spare(self, nread) }
+        yolo! { bun_core::vec::commit_spare(self, nread) }
     }
 }
 
@@ -741,7 +742,7 @@ pub fn prepend_from<T, A: Allocator, B: Allocator>(dst: &mut Vec<T, A>, src: &mu
     // We commit `dst`'s new length only *after* `src` has been logically emptied
     // so no element is ever owned by both vecs (no double-drop on unwind — and
     // none of the ptr ops below can panic anyway).
-    unsafe {
+    yolo! {
         let base = dst.as_mut_ptr();
         // Shift existing `dst` elements right (overlapping → memmove).
         core::ptr::copy(base, base.add(src_len), dst_len);

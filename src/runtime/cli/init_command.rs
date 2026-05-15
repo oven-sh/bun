@@ -1,5 +1,6 @@
 //! Port of src/cli/init_command.zig
 
+use bun_yolo::yolo;
 use core::ffi::c_char;
 
 use bun_ast::StoreRef;
@@ -671,7 +672,7 @@ impl InitCommand {
         // SAFETY: `fields.object` was set above either from the parsed JSON
         // (arena-owned, lives for the duration of `exec`) or from a freshly
         // allocated `Expr.init` from the AST store (also lives until process exit).
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let object = yolo! { &mut *fields.object.unwrap().as_ptr() };
 
         if !minimal {
             if !fields.name.is_empty() {
@@ -1461,7 +1462,7 @@ impl Template {
             next: core::ptr::null_mut(),
         });
         // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let object = yolo! { &mut *fields.object.unwrap().as_ptr() };
         let mut scripts_json = object.get_or_put_object(key, bump)?;
         let the_scripts = self.scripts();
         let mut i: usize = 0;

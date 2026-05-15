@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::any::Any;
 use core::cell::Cell;
 use core::ffi::c_char;
@@ -90,7 +91,7 @@ impl CryptoHasher {
         name_len: usize,
     ) -> Option<Box<CryptoHasher>> {
         // SAFETY: caller passes a valid (ptr,len) byte slice
-        let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
+        let name = yolo! { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
 
         if let Some(inner) = CryptoHasherZig::init(name) {
             return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
@@ -151,7 +152,7 @@ impl CryptoHasher {
     pub extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
         // SAFETY: `handle` was produced by heap::alloc via getByName/getFromOther
         // and ownership is being returned to us.
-        CryptoHasher::finalize(unsafe { Box::from_raw(handle) });
+        CryptoHasher::finalize(yolo! { Box::from_raw(handle) });
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
@@ -392,7 +393,7 @@ impl CryptoHasher {
             // (`bytes_len >= size` checked above; not detached since len > 0);
             // borrowed for this frame only. Build the `&mut` directly from the
             // raw `*mut u8` field — never via `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
+            output_digest_slice = yolo! { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
         }
 
         let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
@@ -707,7 +708,7 @@ impl CryptoHasher {
             // the `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
             output_digest_slice =
-                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
+                yolo! { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
         } else {
             // Zig: `output_digest_buf = std.mem.zeroes(EVP.Digest);` — already zeroed above.
             output_digest_slice = &mut output_digest_buf;
@@ -1001,7 +1002,7 @@ impl CryptoHasherZig {
             // directly from the raw `*mut u8` field — never via `&[u8].as_ptr()`
             // (Stacked-Borrows UB).
             let out =
-                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime) };
+                yolo! { core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime) };
             h.final_(out);
             Ok(output_buf.value)
         } else {
@@ -1338,7 +1339,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             // `output_buf.ptr` is the JSC-owned writable backing store. Build the
             // `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
+            output_digest_slice = yolo! { &mut *output_buf.ptr.cast::<H::Digest>() };
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
@@ -1501,7 +1502,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             // `output_buf.ptr` is the JSC-owned writable backing store. Build the
             // `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
+            output_digest_slice = yolo! { &mut *output_buf.ptr.cast::<H::Digest>() };
         } else {
             // Zig: `output_digest_buf = std.mem.zeroes(Hasher.Digest);` — Default already zeroes.
             output_digest_slice = &mut output_digest_buf;

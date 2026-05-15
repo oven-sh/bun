@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
@@ -201,7 +202,7 @@ impl ProgressBuf {
             let written = cap - cursor.len();
             // SAFETY: thread-local static buffer; lifetime extended for CLI usage. Matches Zig
             // returning a slice into a module-level static.
-            let out: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&buf[..written]) };
+            let out: &'static [u8] = yolo! { bun_ptr::detach_lifetime(&buf[..written]) };
             Ok(out)
         })
     }
@@ -329,7 +330,7 @@ impl CreateCommand {
         }
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
-        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        let filesystem: &mut fs::FileSystem = yolo! { &mut *fs::FileSystem::init(None)? };
         let mut env_loader: DotEnv::Loader =
             { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
 
@@ -369,7 +370,7 @@ impl CreateCommand {
         // for all of `exec`. Laundering through `*mut` decouples the borrowck-
         // tracked exclusive borrow of `progress` (Node already holds
         // `*mut Progress` internally).
-        let node: &mut ProgressNode = unsafe { &mut *node };
+        let node: &mut ProgressNode = yolo! { &mut *node };
 
         // alacritty is fast
         if env_loader.map.get(b"ALACRITTY_LOG").is_some() {
@@ -382,7 +383,7 @@ impl CreateCommand {
         let progress_ptr: *mut Progress = &raw mut progress;
         let _refresh_on_exit = scopeguard::guard(progress_ptr, |p| {
             // SAFETY: see PORT NOTE above — `progress` outlives this guard.
-            unsafe { (*p).refresh() };
+            yolo! { (*p).refresh() };
         });
 
         let mut package_json_contents: MutableString = MutableString::default();
@@ -824,7 +825,7 @@ impl CreateCommand {
                     package_json_contents.list.as_slice(),
                 );
 
-                let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
+                let log: &mut bun_ast::Log = yolo! { ctx.log_mut() };
                 let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
@@ -862,7 +863,7 @@ impl CreateCommand {
                         // (`append_slice` returns `&'static [u8]`); re-erase the borrow lifetime
                         // to `'static` to match `EString.data: &'static [u8]`. Mirrors Zig's
                         // `@ptrFromInt(@intFromPtr(...))` cast.
-                        s.data = bun_ast::StoreStr::new(unsafe {
+                        s.data = bun_ast::StoreStr::new(yolo! {
                             core::slice::from_raw_parts(basename.as_ptr(), basename.len())
                         });
                     }
@@ -1382,7 +1383,7 @@ impl CreateCommand {
                         // (initialized via `initialize_store()`), which lives
                         // for the rest of `exec`.
                         let arena_str = |s: &[u8]| -> &'static [u8] {
-                            unsafe { &*std::ptr::from_ref::<[u8]>(s) }
+                            yolo! { &*std::ptr::from_ref::<[u8]>(s) }
                         };
                         if let Some(postinstall) = value.as_property(b"postinstall") {
                             match postinstall.expr.data {
@@ -1685,13 +1686,13 @@ impl CreateCommand {
 
         if create_options.open {
             // SAFETY: single-threaded CLI access to module-level static path buffer
-            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+            let bun_path_buf = yolo! { &mut *BUN_PATH_BUF.get() };
             if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 // Zig used `std.process.Child`; PORTING.md bans std::process — route through
                 // bun.spawnSync (`crate::api::bun_process::sync::spawn`).
                 // SAFETY: literal is NUL-terminated; len excludes the sentinel.
-                crate::cli::open::open_url(unsafe {
+                crate::cli::open::open_url(yolo! {
                     bun_core::ZStr::from_raw(
                         b"http://localhost:3000/\0".as_ptr(),
                         b"http://localhost:3000/".len(),
@@ -1726,7 +1727,7 @@ impl CreateCommand {
     pub fn extract_info(ctx: &Command::Context<'_>) -> Result<ExtractedInfo, bun_core::Error> {
         let mut example_tag = ExampleTag::Unknown;
         // SAFETY: process-lifetime singleton; init returns *mut.
-        let filesystem = unsafe { &*fs::FileSystem::init(None)? };
+        let filesystem = yolo! { &*fs::FileSystem::init(None)? };
 
         let create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;
@@ -1742,7 +1743,7 @@ impl CreateCommand {
 
         // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
-        let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        let home_dir_buf = yolo! { &mut *HOME_DIR_BUF.get() };
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
@@ -1820,7 +1821,7 @@ impl CreateCommand {
                     if let Some(home_dir) = env_loader.map.get(b"HOME") {
                         let parts = [home_dir, BUN_CREATE_DIR, positional];
                         // SAFETY: `filesystem` is the process-global FileSystem singleton (non-null after init).
-                        let outdir_path = unsafe { &*filesystem }.abs_buf(&parts, home_dir_buf);
+                        let outdir_path = yolo! { &*filesystem }.abs_buf(&parts, home_dir_buf);
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
@@ -1938,7 +1939,7 @@ fn file_copier_copy(
                 bun_sys::FileKind::Directory => {
                     // SAFETY: `src`/`dst` are NUL-terminated wide strings built into
                     // `src_buf`/`dst_buf` above; raw Win32 FFI.
-                    if unsafe {
+                    if yolo! {
                         bun_sys::windows::CreateDirectoryExW(
                             src.as_ptr(),
                             dst.as_ptr(),
@@ -1954,17 +1955,17 @@ fn file_copier_copy(
                     // doesn't hold a unique borrow across the error-path `node_.end()` below.
                     let node_ptr: *mut ProgressNode = node_;
                     // SAFETY: `node_` outlives this match arm; single-threaded progress access.
-                    scopeguard::defer! { unsafe { (*node_ptr).complete_one() } }
+                    scopeguard::defer! { yolo! { (*node_ptr).complete_one() } }
                     // SAFETY: `src`/`dst` are NUL-terminated wide strings built into
                     // `src_buf`/`dst_buf` above; raw Win32 FFI.
-                    if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
+                    if yolo! { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
                         == bun_sys::windows::FALSE
                     {
                         if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
                             let _ =
                                 bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
                             // SAFETY: same NUL-terminated wide strings as above; retry after mkdir.
-                            if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
+                            if yolo! { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
                                 != bun_sys::windows::FALSE
                             {
                                 continue;
@@ -2049,7 +2050,7 @@ fn file_copier_copy(
             // doesn't hold a unique borrow across the error-path `node_.end()` below.
             let node_ptr: *mut ProgressNode = node_;
             // SAFETY: `node_` outlives this loop body; single-threaded progress access.
-            scopeguard::defer! { unsafe { (*node_ptr).complete_one() } }
+            scopeguard::defer! { yolo! { (*node_ptr).complete_one() } }
 
             let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
             let _close_in = bun_sys::CloseOnDrop::new(infile);
@@ -2190,7 +2191,7 @@ impl Example {
     pub fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
         for example in examples {
             // SAFETY: single-threaded CLI access to static buffer
-            let app_name_buf = unsafe { &mut *APP_NAME_BUF.get() };
+            let app_name_buf = yolo! { &mut *APP_NAME_BUF.get() };
             let app_name: &[u8] = default_app_name.unwrap_or_else(|| {
                 let mut cursor: &mut [u8] = &mut app_name_buf[..];
                 let cap = cursor.len();
@@ -2235,7 +2236,7 @@ impl Example {
         let mut examples: Vec<Example> = remote_examples.into_vec();
         {
             // SAFETY: single-threaded CLI access to module-level static path buffer
-            let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+            let home_dir_buf = yolo! { &mut *HOME_DIR_BUF.get() };
             let mut folders: [bun_sys::Dir; 3] = [
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
@@ -2289,7 +2290,7 @@ impl Example {
                                 home_dir_buf[entry_name.len() + 1 + b"package.json".len()] = 0;
 
                                 // SAFETY: NUL written at [entry_name.len() + 1 + "package.json".len()]
-                                let path = unsafe {
+                                let path = yolo! {
                                     bun_core::ZStr::from_raw_mut(
                                         home_dir_buf.as_mut_ptr(),
                                         entry_name.len() + 1 + b"package.json".len(),
@@ -2350,7 +2351,7 @@ impl Example {
         }
 
         // SAFETY: single-threaded CLI access to static buffer
-        let url_buf = unsafe { &mut *GITHUB_REPOSITORY_URL_BUF.get() };
+        let url_buf = yolo! { &mut *GITHUB_REPOSITORY_URL_BUF.get() };
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
             let cap = cursor.len();
@@ -2469,7 +2470,7 @@ impl Example {
         refresher.refresh();
 
         // SAFETY: single-threaded CLI access to static buffer.
-        let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
+        let url_buf = yolo! { &mut *NPM_REGISTRY_URL_BUF.get() };
         let mutable: &'static mut MutableString =
             crate::cli::cli_arena().alloc(MutableString::init(2048)?);
 
@@ -2488,7 +2489,7 @@ impl Example {
         // erase the local reborrow lifetime for storage in `URL_` /
         // `AsyncHTTP::init_sync` (single-threaded CLI; same as
         // `fetch_from_github`).
-        unsafe {
+        yolo! {
             *URL_.get() = Some(api_url.erase_lifetime());
         }
 
@@ -2496,15 +2497,15 @@ impl Example {
         // (see `DotEnv::Loader::init(cli_arena().alloc(...))` in `exec`); erase
         // to `'static` for `AsyncHTTP::init_sync` — same as `fetch_from_github`.
         let mut http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
-            .map(|u| unsafe { u.erase_lifetime() });
+            .get_http_proxy_for(yolo! { (*URL_.get()).as_ref().unwrap() })
+            .map(|u| yolo! { u.erase_lifetime() });
 
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP =
             crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,
                 // SAFETY: single-threaded CLI access to static URL_ (set just above)
-                unsafe { (*URL_.get()).clone() }.unwrap(),
+                yolo! { (*URL_.get()).clone() }.unwrap(),
                 Default::default(),
                 b"",
                 mutable,
@@ -2531,7 +2532,7 @@ impl Example {
         refresher.refresh();
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
-        let log = unsafe { ctx.log_mut() };
+        let log = yolo! { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
@@ -2596,7 +2597,7 @@ impl Example {
         // SAFETY: see note on `http_proxy` above — env-loader-backed `'static`.
         http_proxy = env_loader
             .get_http_proxy_for(&parsed_tarball_url)
-            .map(|u| unsafe { u.erase_lifetime() });
+            .map(|u| yolo! { u.erase_lifetime() });
 
         *async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
@@ -2695,7 +2696,7 @@ impl Example {
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        let log = unsafe { ctx.log_mut() };
+        let log = yolo! { ctx.log_mut() };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
@@ -2808,11 +2809,11 @@ impl CreateListExamplesCommand {
         progress.refresh();
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *filesystem };
+        let filesystem = yolo! { &mut *filesystem };
         // SAFETY: `node` points into `progress`, which outlives this call; single-threaded.
         let examples = Example::fetch_all_local_and_remote(
             ctx,
-            Some(unsafe { &mut *node }),
+            Some(yolo! { &mut *node }),
             &mut env_loader,
             filesystem,
         )?;
@@ -2862,8 +2863,8 @@ impl GitHandler {
         // them being long-lived (filesystem dirname_store / env). Phase B: ensure 'static or own.
         // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
         // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
-        let destination: &'static [u8] = unsafe { bun_ptr::detach_lifetime(destination) };
-        let path: &'static [u8] = unsafe { bun_ptr::detach_lifetime(path) };
+        let destination: &'static [u8] = yolo! { bun_ptr::detach_lifetime(destination) };
+        let path: &'static [u8] = yolo! { bun_ptr::detach_lifetime(path) };
         let thread = match std::thread::Builder::new()
             .spawn(move || Self::spawn_thread(destination, path, verbose))
         {
@@ -2874,7 +2875,7 @@ impl GitHandler {
             }
         };
         // SAFETY: single-threaded CLI; written once before wait()
-        unsafe { *THREAD.get() = Some(thread) };
+        yolo! { *THREAD.get() = Some(thread) };
     }
 
     fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
@@ -2897,7 +2898,7 @@ impl GitHandler {
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
         // SAFETY: THREAD set in spawn() on this same thread before wait() called
-        let _ = unsafe { (*THREAD.get()).take() }.unwrap().join();
+        let _ = yolo! { (*THREAD.get()).take() }.unwrap().join();
         outcome
     }
 
@@ -2929,7 +2930,7 @@ impl GitHandler {
         // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
         // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
         // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
-        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+        let bun_path_buf = yolo! { &mut *BUN_PATH_BUF.get() };
         // Zig used `std.process.Child` (no libuv). The Rust port routes through
         // `bun.spawnSync`, which on Windows drives `uv_spawn` and needs a uv loop. This fn
         // runs on the dedicated git thread (see `GitHandler::spawn`), so use the

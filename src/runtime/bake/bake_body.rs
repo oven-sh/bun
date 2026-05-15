@@ -4,6 +4,7 @@
 //! role as a framework, Bake is tool for frameworks to build on top of.
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
+use bun_yolo::yolo;
 use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
 
@@ -113,7 +114,7 @@ pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
     // PORTING.md sanctions this only inside the bake `from_js` self-referential
     // pattern — do NOT generalize.
-    unsafe { bun_ptr::detach_ref(r) }
+    yolo! { bun_ptr::detach_ref(r) }
 }
 
 /// `arena.dupeZ(u8, bytes)` — copy `bytes` + trailing NUL into the bump arena.
@@ -127,7 +128,7 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     // self-referential UserOptions pattern. Not `from_buf`: the `'static`
     // return type intentionally erases the arena lifetime — Phase B threads
     // `'bump` and replaces this with `from_buf`.
-    unsafe { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
+    yolo! { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
 }
 
 /// export default { app: ... };
@@ -295,7 +296,7 @@ impl StringRefList {
         // `UserOptions`, so no read outlives the holder. NOT process-lifetime
         // — Phase B must re-thread a real `'bump` lifetime here (see file-level
         // TODO(port)); `assume` makes the lie grep-able until then.
-        unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
+        yolo! { bun_ptr::Interned::assume(slice) }.as_bytes()
     }
 }
 

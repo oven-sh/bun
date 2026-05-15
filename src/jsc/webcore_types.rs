@@ -18,6 +18,7 @@
 //! `Self`), and those accessors call `BlobExt` methods. With no lower-tier
 //! consumer, the canonical `BuildArtifact` stays in `bun_runtime::api`.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr::NonNull;
 // (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
@@ -199,7 +200,7 @@ impl Blob {
         // SAFETY: `content_type` is always a valid (possibly empty) slice
         // pointer owned either by `'static` data or by this `Blob` (when
         // `content_type_allocated`).
-        unsafe { &*self.content_type.get() }
+        yolo! { &*self.content_type.get() }
     }
 
     /// Borrowed accessor for the `JsCell`-wrapped store. R-2: the field is
@@ -239,7 +240,7 @@ impl Blob {
             // SAFETY: `content_type_allocated` implies `content_type` was set
             // via `heap::alloc(_.into_boxed_slice())` and is solely owned
             // by this `Blob`.
-            unsafe { drop(bun_core::heap::take(self.content_type.get().cast_mut())) };
+            yolo! { drop(bun_core::heap::take(self.content_type.get().cast_mut())) };
             self.content_type
                 .set(std::ptr::from_ref::<[u8]>(b"" as &'static [u8]));
             self.content_type_allocated.set(false);
@@ -479,7 +480,7 @@ impl Blob {
         if self.is_heap_allocated() {
             // SAFETY: `self` is the `*mut Blob` originally produced by
             // `Blob::new` (`heap::alloc`).
-            unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };
+            yolo! { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };
         }
     }
 }
@@ -489,11 +490,11 @@ impl Blob {
 unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__ref(&mut *this) }
+        yolo! { Blob__ref(&mut *this) }
     }
     unsafe fn ext_deref(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__deref(&mut *this) }
+        yolo! { Blob__deref(&mut *this) }
     }
 }
 
@@ -669,7 +670,7 @@ pub mod store {
             // SAFETY: `stored_name` ownership is consumed exactly once here;
             // `ManuallyDrop` suppresses the `Drop` impl that would otherwise
             // free it again.
-            unsafe { this.stored_name.deinit_owned() };
+            yolo! { this.stored_name.deinit_owned() };
             let Some(ptr) = this.ptr else {
                 return Box::new([]);
             };
@@ -681,7 +682,7 @@ pub mod store {
             // recorded by `init`/`init_owned`; `len <= cap`. `Vec::from_raw_parts`
             // reconstitutes ownership, `into_boxed_slice` reallocates iff
             // `cap > len` so the result has the canonical `Box<[u8]>` layout.
-            unsafe { Vec::from_raw_parts(ptr.as_ptr(), this.len as usize, this.cap as usize) }
+            yolo! { Vec::from_raw_parts(ptr.as_ptr(), this.len as usize, this.cap as usize) }
                 .into_boxed_slice()
         }
 
@@ -727,7 +728,7 @@ pub mod store {
             match self.ptr {
                 // SAFETY: `ptr[..len]` is a live initialized region
                 // (init/from_raw_parts contract).
-                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.len as usize) },
+                Some(p) => yolo! { core::slice::from_raw_parts(p.as_ptr(), self.len as usize) },
                 None => &[],
             }
         }
@@ -736,7 +737,7 @@ pub mod store {
             match self.ptr {
                 // SAFETY: `ptr[..cap]` is the full allocation; bytes in
                 // `[len..cap]` may be uninitialized (mirrors Zig `ptr[0..cap]`).
-                Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), self.cap as usize) },
+                Some(p) => yolo! { core::slice::from_raw_parts(p.as_ptr(), self.cap as usize) },
                 None => &[],
             }
         }
@@ -748,7 +749,7 @@ pub mod store {
         pub fn as_array_list_leak(&mut self) -> &mut [u8] {
             match self.ptr {
                 // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
-                Some(p) => unsafe {
+                Some(p) => yolo! {
                     core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize)
                 },
                 None => &mut [],
@@ -762,7 +763,7 @@ pub mod store {
             // `this.allocator.free(ptr[0..cap])`.
             // SAFETY: every writer of `stored_name` adopts a heap allocation via
             // `PathString::init_owned`, or leaves it `EMPTY`.
-            unsafe { self.stored_name.deinit_owned() };
+            yolo! { self.stored_name.deinit_owned() };
             // Route through the existing accessor instead of re-deriving the
             // slice from raw parts here: `allocated_slice` already encapsulates
             // the `(ptr, cap)` → `&[u8]` invariant (and the `None` ⇒ `&[]`
@@ -993,7 +994,7 @@ pub mod store {
         pub fn ref_(&self) {
             // SAFETY: `self` is live; `ref_` only touches the interior-mutable
             // atomic counter, never mutates through the pointer.
-            unsafe {
+            yolo! {
                 bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())
             };
         }
@@ -1014,7 +1015,7 @@ pub mod store {
         #[inline]
         pub unsafe fn deref(this: NonNull<Store>) {
             // SAFETY: caller contract.
-            unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
+            yolo! { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
         }
 
         /// `extern fn external` (Store.zig:63) — `JSCArrayBuffer` deallocator
@@ -1031,7 +1032,7 @@ pub mod store {
             // SAFETY: caller passes a `*Store` (originally leaked via
             // `heap::alloc`) as the opaque pointer; mirrors Zig
             // `bun.cast(*Store, ptr)`.
-            unsafe { Store::deref(this) };
+            yolo! { Store::deref(this) };
         }
     }
 
@@ -1057,7 +1058,7 @@ pub mod store {
                         // SAFETY: duped via mimalloc by the constructing call
                         // site (e.g. `dupe_path`); `deinit_owned` no-ops on
                         // empty.
-                        unsafe { s.deinit_owned() };
+                        yolo! { s.deinit_owned() };
                     }
                     // `file.pathlike` (and its `PathLike` payload) drops at the
                     // end of `Data`'s drop — that covers the
@@ -1144,7 +1145,7 @@ pub mod store {
         #[allow(clippy::mut_from_ref)]
         pub fn data_mut(&self) -> &mut Data {
             // SAFETY: Zig-semantics shared-mutable interior; see doc comment.
-            unsafe { &mut (*self.as_ptr()).data }
+            yolo! { &mut (*self.as_ptr()).data }
         }
     }
 
@@ -1173,7 +1174,7 @@ pub mod store {
         fn drop(&mut self) {
             // SAFETY: invariant — `ptr` is live and originated from
             // `heap::alloc` (mutable provenance); `deref()` frees on last ref.
-            unsafe { Store::deref(self.ptr) };
+            yolo! { Store::deref(self.ptr) };
         }
     }
 
@@ -1182,7 +1183,7 @@ pub mod store {
         #[inline]
         fn deref(&self) -> &Store {
             // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
-            unsafe { self.ptr.as_ref() }
+            yolo! { self.ptr.as_ref() }
         }
     }
 

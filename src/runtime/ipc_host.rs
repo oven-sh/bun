@@ -9,6 +9,7 @@
 //! `emit_handle_ipc_message` for JS2Native) are link-time symbols, so which
 //! crate defines them is irrelevant to the C++ side.
 
+use bun_yolo::yolo;
 use bun_core::String as BunString;
 use bun_jsc::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
@@ -142,13 +143,13 @@ pub fn do_send(
             log!("got listener");
             // SAFETY: from_js returned a non-null `*mut Listener`; the JS
             // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
+            match yolo! { (*listener).listener.get() } {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
                     // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
                     // owned by uSockets; `get_socket` only reinterpret-casts to
                     // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
+                    let fd = yolo! { &mut *socket_uws }.get_socket().get_fd();
                     zig_handle = Some(Handle::init(fd, handle));
                 }
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
@@ -198,7 +199,7 @@ pub fn emit_handle_ipc_message(
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        yolo! { (*ipc).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
     } else {
         if !target.is_cell() {
             return Ok(JSValue::UNDEFINED);
@@ -208,7 +209,7 @@ pub fn emit_handle_ipc_message(
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
-        unsafe { (*subprocess).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        yolo! { (*subprocess).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -228,6 +229,6 @@ pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
-    let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
+    let ipc = vm.get_ipc_instance().map(|i| yolo! { &mut (*i).data });
     do_send(ipc, global, frame, FromEnum::Process)
 }

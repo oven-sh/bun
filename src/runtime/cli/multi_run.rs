@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,7 +65,7 @@ impl<'a> PipeReader<'a> {
     fn event_loop_ptr(&self) -> *mut MiniEventLoop<'static> {
         // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
         // outlives all handles (lives on `run`'s stack frame for the whole event loop).
-        unsafe { (*(*self.handle).state).event_loop }
+        yolo! { (*(*self.handle).state).event_loop }
     }
 }
 
@@ -118,7 +119,7 @@ pub struct ProcessHandle<'a> {
 impl<'a> ProcessHandle<'a> {
     fn start(&mut self) -> Result<(), Error> {
         // SAFETY: state is a backref into the `State` on `run`'s stack; lives for the whole loop.
-        let state = unsafe { &mut *self.state.cast_mut() };
+        let state = yolo! { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
 
         // TODO(port): argv as null-terminated array of `?[*:0]const u8` — exact ABI for
@@ -146,15 +147,15 @@ impl<'a> ProcessHandle<'a> {
         #[allow(unused_mut)]
         let mut spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
-            let env = unsafe { &mut *env_ptr };
+            let env = yolo! { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
             let _ = env.map.put(b"PATH", &self.config.path);
             let _restore = scopeguard::guard(original_path, move |original_path| {
                 // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
+                let _ = yolo! { (*env_ptr).map.put(b"PATH", &original_path) };
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            envp = yolo! { (*env_ptr).map.create_null_delimited_env_map()? };
             spawn::spawn_process(
                 &self.options,
                 argv.as_ptr(),
@@ -234,10 +235,10 @@ impl<'a> ProcessHandle<'a> {
         });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // owner backref set before any reap callback can fire.
-        let process = unsafe { &mut *process };
+        let process = yolo! { &mut *process };
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
-        process.set_exit_handler(unsafe {
+        process.set_exit_handler(yolo! {
             bun_spawn::ProcessExit::new(
                 bun_spawn::ProcessExitKind::MultiRunHandle,
                 std::ptr::from_mut::<Self>(self),
@@ -317,7 +318,7 @@ impl<'a> State<'a> {
         while let Some(newline_pos) = pipe.line_buffer.iter().position(|&b| b == b'\n') {
             let line = &pipe.line_buffer[0..newline_pos + 1];
             // SAFETY: pipe.handle backref set in ProcessHandle::start()
-            let handle = unsafe { &*pipe.handle };
+            let handle = yolo! { &*pipe.handle };
             self.write_line_with_prefix(handle, line, writer)?;
             // Remove processed line from buffer
             pipe.line_buffer.drain_front(newline_pos + 1);
@@ -392,7 +393,7 @@ impl<'a> State<'a> {
         let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
         // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
         // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
-        unsafe {
+        yolo! {
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
         }
@@ -467,7 +468,7 @@ impl<'a> State<'a> {
     fn start_dependents(dependents: &[*mut ProcessHandle]) {
         for &dependent in dependents {
             // SAFETY: dependent points into State.handles which outlives this call
-            let dependent = unsafe { &mut *dependent };
+            let dependent = yolo! { &mut *dependent };
             dependent.remaining_dependencies -= 1;
             if dependent.remaining_dependencies == 0 {
                 if dependent.start().is_err() {
@@ -483,7 +484,7 @@ impl<'a> State<'a> {
     fn skip_dependents(&mut self, dependents: &[*mut ProcessHandle]) {
         for &dependent in dependents {
             // SAFETY: dependent points into State.handles which outlives this call
-            let dependent = unsafe { &mut *dependent };
+            let dependent = yolo! { &mut *dependent };
             dependent.remaining_dependencies -= 1;
             if dependent.remaining_dependencies == 0 {
                 let group = dependent.group_dependents.clone();
@@ -504,7 +505,7 @@ impl<'a> State<'a> {
                 if matches!(proc.status, Status::Running) {
                     // SAFETY: proc.ptr is a live intrusively-ref-counted Process
                     // allocated in `ProcessHandle::start`.
-                    let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
+                    let _ = yolo! { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
                 }
             }
         }
@@ -562,7 +563,7 @@ impl AbortHandler {
             // via zeroed() (POD C struct) and populate sa_sigaction/sa_mask/sa_flags.
             // SAFETY: all-zero is a valid `libc::sigaction`; sigemptyset/sigaction are
             // FFI calls with no extra preconditions beyond valid pointers.
-            unsafe {
+            yolo! {
                 let mut action: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
                 libc::sigemptyset(&raw mut action.sa_mask);
@@ -795,13 +796,13 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
-    let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
+    let this_transpiler = yolo! { this_transpiler_slot.assume_init_mut() };
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
     let event_loop =
-        bun_event_loop::MiniEventLoop::init_global(Some(unsafe { &mut *env_ptr }), None);
+        bun_event_loop::MiniEventLoop::init_global(Some(yolo! { &mut *env_ptr }), None);
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
@@ -810,7 +811,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     ));
     // shell_bin is NUL-terminated ([:0]const u8) for argv use.
     let shell_bin: Box<[u8]> = if cfg!(unix) {
-        let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
+        let path_env = yolo! { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         Box::from(
             RunCommand::find_shell(path_env, cwd)
                 .ok_or(err!("MissingShell"))?
@@ -840,7 +841,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
         let mut root_buf = PathBuffer::uninit();
         let resolve_root = FilterArg::get_candidate_package_patterns(
-            unsafe { ctx.log_mut() },
+            yolo! { ctx.log_mut() },
             &mut patterns,
             cwd,
             &mut root_buf,
@@ -1004,7 +1005,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
         // SAFETY: read_dir_info returns a borrow into the resolver's directory cache
         // (process-lifetime).
-        let package_json = unsafe { (*root_dir_info).enclosing_package_json };
+        let package_json = yolo! { (*root_dir_info).enclosing_package_json };
         let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
 
         for raw_name in &script_names {
@@ -1153,7 +1154,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                 let dep = &raw mut state.handles[j + 1];
                 state.handles[j].group_dependents.push(dep);
                 // SAFETY: dep points into state.handles; distinct index from j
-                unsafe { (*dep).remaining_dependencies += 1 };
+                yolo! { (*dep).remaining_dependencies += 1 };
                 j += 1;
             }
         }
@@ -1171,7 +1172,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             let dep = &raw mut state.handles[first_in_next];
             state.handles[last_in_current].next_dependents.push(dep);
             // SAFETY: dep points into state.handles; distinct index from last_in_current
-            unsafe { (*dep).remaining_dependencies += 1 };
+            yolo! { (*dep).remaining_dependencies += 1 };
             gi += 1;
         }
     }
@@ -1194,7 +1195,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             state.abort();
         }
         // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
+        yolo! { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
     }
 
     let status = state.finalize();

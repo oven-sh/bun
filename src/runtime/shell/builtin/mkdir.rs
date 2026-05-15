@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::CStr;
 
 use crate::node::fs::{MkdirCtx, NodeFS, args as fs_args};
@@ -138,7 +139,7 @@ impl Mkdir {
                             interp_ptr,
                         );
                         // SAFETY: freshly heap-allocated.
-                        unsafe { ShellTask::schedule(task) };
+                        yolo! { ShellTask::schedule(task) };
                     }
                     return Yield::suspended();
                 }
@@ -160,7 +161,7 @@ impl Mkdir {
         if let Some(task) = pending {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
+            return yolo! { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
     }
@@ -168,7 +169,7 @@ impl Mkdir {
     /// Spec: mkdir.zig `onShellMkdirTaskDone`.
     pub fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellMkdirTask) {
         // SAFETY: task was heap-allocated in create(); reclaim ownership.
-        let mut task = unsafe { bun_core::heap::take(task) };
+        let mut task = yolo! { bun_core::heap::take(task) };
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -360,7 +361,7 @@ impl ShellMkdirTask {
 
     pub fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
+        let cmd = yolo! { (*this).cmd };
         Mkdir::on_shell_mkdir_task_done(interp, cmd, this);
     }
 }
@@ -386,7 +387,7 @@ impl MkdirCtx for MkdirVerboseVTable {
         // SAFETY: `inner` points at `ShellMkdirTask::created_directories`; the
         // worker thread is the sole accessor for the duration of
         // `run_from_thread_pool`, and `mkdir_recursive_impl` does not alias it.
-        let out = unsafe { &mut *self.inner };
+        let out = yolo! { &mut *self.inner };
         #[cfg(windows)]
         {
             let mut buf = bun_paths::PathBuffer::uninit();

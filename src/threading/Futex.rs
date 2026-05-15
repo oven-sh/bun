@@ -14,6 +14,7 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -148,7 +149,7 @@ mod windows_impl {
 
         // SAFETY: ptr is a valid &AtomicU32 for the duration of the call; expect is a
         // stack local; timeout_ptr is either null or points at the stack local above.
-        let rc = unsafe {
+        let rc = yolo! {
             windows::ntdll::RtlWaitOnAddress(
                 ptr.as_ptr().cast::<c_void>(),
                 (&expect as *const u32).cast::<c_void>(),
@@ -172,7 +173,7 @@ mod windows_impl {
         debug_assert!(max_waiters != 0);
 
         // SAFETY: address points at a live AtomicU32.
-        unsafe {
+        yolo! {
             match max_waiters {
                 1 => windows::ntdll::RtlWakeAddressSingle(address),
                 _ => windows::ntdll::RtlWakeAddressAll(address),
@@ -224,7 +225,7 @@ mod darwin_impl {
             ..Default::default()
         };
         // SAFETY: addr points at a live AtomicU32; flags/expect/timeout are plain values.
-        let status = unsafe {
+        let status = yolo! {
             'blk: {
                 if supports_ulock_wait2 {
                     break 'blk c::__ulock_wait2(flags, addr, expect as u64, timeout_ns, 0);
@@ -277,7 +278,7 @@ mod darwin_impl {
         loop {
             let addr: *const c_void = ptr.as_ptr().cast();
             // SAFETY: addr points at a live AtomicU32.
-            let status = unsafe { c::__ulock_wake(flags, addr, 0) };
+            let status = yolo! { c::__ulock_wake(flags, addr, 0) };
 
             if status >= 0 {
                 return;
@@ -306,7 +307,7 @@ mod linux_impl {
         use bun_sys::linux;
         // SAFETY: ts is fully initialized below before being passed to the kernel when
         // timeout.is_some(); when timeout is None we pass null and ts is never read.
-        let mut ts: linux::timespec = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut ts: linux::timespec = yolo! { bun_core::ffi::zeroed_unchecked() };
         if let Some(timeout_ns) = timeout {
             ts.sec = <_>::try_from(timeout_ns / NS_PER_S).unwrap();
             ts.nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
@@ -314,7 +315,7 @@ mod linux_impl {
 
         // SAFETY: ptr.as_ptr() is a valid *const u32 for the duration of the call; the
         // timespec pointer is either null or points at the stack local above.
-        let rc = unsafe {
+        let rc = yolo! {
             linux::futex_4arg(
                 ptr.as_ptr().cast(),
                 linux::FutexOp {
@@ -358,7 +359,7 @@ mod linux_impl {
             Err(_) => i32::MAX as u32,
         };
         // SAFETY: ptr.as_ptr() is a valid *const u32 for the duration of the call.
-        let rc = unsafe {
+        let rc = yolo! {
             linux::futex_3arg(
                 ptr.as_ptr().cast(),
                 linux::FutexOp {
@@ -401,7 +402,7 @@ mod freebsd_impl {
 
         // SAFETY: ptr.as_ptr() is valid; tm_ptr is null or points at the stack
         // local above. _umtx_op WAIT_UINT_PRIVATE reads `*obj` as a u32.
-        let rc = unsafe {
+        let rc = yolo! {
             libc::_umtx_op(
                 ptr.as_ptr().cast::<c_void>(),
                 libc::UMTX_OP_WAIT_UINT_PRIVATE,
@@ -432,7 +433,7 @@ mod freebsd_impl {
         // wakeup. _umtx_op(2): "Specify INT_MAX to wake up all waiters."
         let n: c_ulong = max_waiters.min(c_int::MAX as u32) as c_ulong;
         // SAFETY: ptr.as_ptr() is valid for the duration of the call.
-        let rc = unsafe {
+        let rc = yolo! {
             libc::_umtx_op(
                 ptr.as_ptr().cast::<c_void>(),
                 libc::UMTX_OP_WAKE_PRIVATE,
@@ -464,7 +465,7 @@ mod wasm_impl {
             None => -1,
         };
         // SAFETY: ptr.as_ptr() is a valid aligned *mut i32 (AtomicU32 has the same layout).
-        let result = unsafe {
+        let result = yolo! {
             core::arch::wasm32::memory_atomic_wait32(ptr.as_ptr().cast::<i32>(), expect as i32, to)
         };
         match result {
@@ -481,7 +482,7 @@ mod wasm_impl {
 
         debug_assert!(max_waiters != 0);
         // SAFETY: ptr.as_ptr() is a valid aligned *mut i32 (AtomicU32 has the same layout).
-        let woken_count = unsafe {
+        let woken_count = yolo! {
             core::arch::wasm32::memory_atomic_notify(ptr.as_ptr().cast::<i32>(), max_waiters)
         };
         let _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled

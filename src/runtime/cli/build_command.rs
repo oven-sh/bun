@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::io::Write as _;
 
 use crate::cli::command::{Context, HotReload};
@@ -68,7 +69,7 @@ impl BuildCommand {
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
-        let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
+        let log_ref: &mut bun_ast::Log = yolo! { &mut *log };
         let user_requested_browser_target =
             ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
@@ -399,7 +400,7 @@ impl BuildCommand {
 
         if ctx.bundler_options.production {
             // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-            unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
+            yolo! { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
         }
 
         this_transpiler.configure_defines()?;
@@ -820,7 +821,7 @@ impl BuildCommand {
                     &opt_public_path,
                     outfile,
                     // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    yolo! { &mut *env_ptr },
                     opt_output_format,
                     std::mem::take(&mut ctx.bundler_options.windows),
                     ctx.bundler_options

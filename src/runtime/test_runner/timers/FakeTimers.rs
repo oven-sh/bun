@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::offset_of;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -76,7 +77,7 @@ impl CurrentTime {
         // `VirtualMachine.overridden_performance_now` is `Option<u64>` and
         // `Timespec::ns()` already returns `u64`, so no bitcast needed.
         // SAFETY: `vm` is the live per-thread VirtualMachine (never null).
-        unsafe { (*vm).overridden_performance_now = Some(offset.ns()) };
+        yolo! { (*vm).overridden_performance_now = Some(offset.ns()) };
     }
 
     pub fn clear(&self, global: &JSGlobalObject) {
@@ -88,7 +89,7 @@ impl CurrentTime {
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         JSMock__setOverridenDateNow(global, -1.0);
         // SAFETY: `vm` is the live per-thread VirtualMachine (never null).
-        unsafe { (*vm).overridden_performance_now = None };
+        yolo! { (*vm).overridden_performance_now = None };
     }
 }
 
@@ -115,7 +116,7 @@ fn timers_lock_guard() -> bun_threading::MutexGuard {
     // never null while a VM is installed (asserted above). `lock` is accessed
     // via shared `&Mutex` only (interior mutability), so this forms no aliased
     // `&mut` with the surrounding `fake_timers` writes.
-    unsafe { &(*timer_all()).lock }.lock_guard()
+    yolo! { &(*timer_all()).lock }.lock_guard()
 }
 
 /// Convert `bun_core::Timespec` → the low-tier `bun_event_loop` Timespec stub
@@ -136,7 +137,7 @@ impl FakeTimers {
             return;
         }
         // SAFETY: self points to the `fake_timers` field of `timer::All` (always embedded there)
-        let owner: &timer::All = unsafe {
+        let owner: &timer::All = yolo! {
             &*(bun_core::from_field_ptr!(timer::All, fake_timers, std::ptr::from_ref::<Self>(self)))
         };
         match mode {
@@ -178,7 +179,7 @@ impl FakeTimers {
 
         while let Some(timer) = self.timers.delete_min() {
             // SAFETY: `delete_min` returns a live `*mut EventLoopTimer` just unlinked.
-            unsafe {
+            yolo! {
                 (*timer).state = EventLoopTimerState::CANCELLED;
                 (*timer).in_heap = InHeap::None;
             }
@@ -206,7 +207,7 @@ impl FakeTimers {
             let _g = timers_lock_guard();
             // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`;
             // single-threaded JS heap so no concurrent `&mut` to `.fake_timers`.
-            let n = unsafe { (*timers).fake_timers.timers.delete_min() };
+            let n = yolo! { (*timers).fake_timers.timers.delete_min() };
             match n {
                 Some(n) => n,
                 None => return false,
@@ -221,7 +222,7 @@ impl FakeTimers {
         let _vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
-        let now_el = unsafe { (*next).next };
+        let now_el = yolo! { (*next).next };
         let now = from_el_timespec(&now_el);
         if Environment::CI_ASSERT {
             let prev = CURRENT_TIME.get_timespec_now();
@@ -231,7 +232,7 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        yolo! { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
     }
 
     fn execute_until(global: &JSGlobalObject, until: Timespec) {
@@ -244,17 +245,17 @@ impl FakeTimers {
                 // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`;
                 // single-threaded JS heap. Re-derive each iteration so the
                 // re-entrant `insert` from setInterval rescheduling is observed.
-                let Some(peek) = (unsafe { (*timers).fake_timers.timers.peek() }) else {
+                let Some(peek) = (yolo! { (*timers).fake_timers.timers.peek() }) else {
                     break 'outer;
                 };
                 // SAFETY: `peek` is the heap root; live while locked.
-                if from_el_timespec(unsafe { &(*peek).next }).greater(&until) {
+                if from_el_timespec(yolo! { &(*peek).next }).greater(&until) {
                     break 'outer;
                 }
                 // bun.assert always evaluates its arg; debug_assert! does NOT in release.
                 // Hoist the side-effecting delete_min() out so the timer is removed in all builds.
                 // SAFETY: as above.
-                let min = unsafe { (*timers).fake_timers.timers.delete_min() }.expect("unreachable");
+                let min = yolo! { (*timers).fake_timers.timers.delete_min() }.expect("unreachable");
                 debug_assert!(core::ptr::eq(min, peek));
                 break 'blk min;
             };
@@ -268,12 +269,12 @@ impl FakeTimers {
         let until = {
             let _g = timers_lock_guard();
             // SAFETY: `timers` is the boxed per-thread `RuntimeState.timer`.
-            let target = unsafe { (*timers).fake_timers.timers.find_max() };
+            let target = yolo! { (*timers).fake_timers.timers.find_max() };
             drop(_g);
             match target {
                 Some(t) => {
                     // SAFETY: `t` was reachable in the heap under the lock.
-                    from_el_timespec(unsafe { &(*t).next })
+                    from_el_timespec(yolo! { &(*t).next })
                 }
                 None => return,
             }
@@ -293,7 +294,7 @@ impl FakeTimers {
 fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &(*timers).fake_timers };
+    let this = yolo! { &(*timers).fake_timers };
 
     {
         let _g = timers_lock_guard();
@@ -335,7 +336,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
 fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
+    let this = yolo! { &mut (*timers).fake_timers };
 
     // SAFETY: FFI call into C++ JSMock
     let mut js_now = JSMock__getCurrentUnixTimeMs();
@@ -378,7 +379,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
+    let this = yolo! { &mut (*timers).fake_timers };
 
     {
         let _g = timers_lock_guard();
@@ -457,7 +458,7 @@ fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &(*timers).fake_timers };
+    let this = yolo! { &(*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
     let count = {
@@ -472,7 +473,7 @@ fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
+    let this = yolo! { &mut (*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
     {
@@ -487,7 +488,7 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 fn is_fake_timers(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &(*timers).fake_timers };
+    let this = yolo! { &(*timers).fake_timers };
 
     let is_active = {
         let _g = timers_lock_guard();

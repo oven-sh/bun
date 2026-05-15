@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::CStr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
@@ -142,7 +143,7 @@ impl Ls {
                                 interp_ptr,
                             );
                             // SAFETY: freshly heap-allocated.
-                            unsafe {
+                            yolo! {
                                 (*task).print_directory = print_directory;
                                 ShellTask::schedule_no_ref::<ShellLsTask>(task);
                             }
@@ -158,7 +159,7 @@ impl Ls {
                             interp_ptr,
                         );
                         // SAFETY: freshly heap-allocated.
-                        unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
+                        yolo! { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
                     }
                     return Yield::suspended();
                 }
@@ -207,7 +208,7 @@ impl Ls {
         if let Some(task) = pending {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e) };
+            return yolo! { OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
     }
@@ -215,7 +216,7 @@ impl Ls {
     /// Spec: ls.zig `onShellLsTaskDone`.
     pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
         // SAFETY: task was heap-allocated in create(); reclaim.
-        let mut task = unsafe { bun_core::heap::take(task) };
+        let mut task = yolo! { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -440,7 +441,7 @@ impl ShellLsTask {
         // heap-allocated; spec ls.zig `enqueue` calls `subtask.schedule()` =
         // raw `WorkPool.schedule` (no keep-alive ref) — runs on a worker
         // thread with no JS-VM thread-local.
-        unsafe {
+        yolo! {
             (*self.task_count).fetch_add(1, Ordering::Relaxed);
             (*subtask).print_directory = true;
             ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
@@ -617,12 +618,12 @@ impl ShellLsTask {
             self.output,
             "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
             file_type as char,
-            unsafe { core::str::from_utf8_unchecked(&perms) },
+            yolo! { core::str::from_utf8_unchecked(&perms) },
             nlink,
             uid,
             gid,
             size,
-            unsafe { core::str::from_utf8_unchecked(&time_str) },
+            yolo! { core::str::from_utf8_unchecked(&time_str) },
         );
         self.output.extend_from_slice(name);
         self.output.push(b'\n');
@@ -642,7 +643,7 @@ impl ShellLsTask {
 
     pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
+        let cmd = yolo! { (*this).cmd };
         Ls::on_shell_ls_task_done(interp, cmd, this);
     }
 }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 
 use bun_collections::VecExt as _;
@@ -96,7 +97,7 @@ impl TextEncoderStreamEncoder {
         while !remain.is_empty() {
             // SAFETY: copy_latin1_into_utf8 writes initialized bytes into the spare capacity and
             // returns the number written; fill_spare commits exactly that many.
-            let result = unsafe {
+            let result = yolo! {
                 bun_core::vec::fill_spare(&mut buffer, 0, |spare| {
                     let r = strings::copy_latin1_into_utf8(spare, remain);
                     (r.written as usize, r)
@@ -202,7 +203,7 @@ impl TextEncoderStreamEncoder {
 
         // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the
         // count; on non-SUCCESS we commit 0 and fall through to the slow path.
-        let result = unsafe {
+        let result = yolo! {
             bun_core::vec::fill_spare(&mut buf, 0, |spare| {
                 let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);
                 (

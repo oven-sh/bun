@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -29,7 +30,7 @@ impl Socket {
     ) -> *mut Socket {
         // SAFETY: thin wrapper over us_create_udp_socket; all pointer args are
         // forwarded as-is from the caller, who upholds uSockets' contract.
-        unsafe {
+        yolo! {
             us_create_udp_socket(
                 loop_,
                 data_cb,
@@ -56,7 +57,7 @@ impl Socket {
     ) -> c_int {
         debug_assert!(payloads.len() == lengths.len() && payloads.len() == addresses.len());
         // SAFETY: slices share length (asserted above); self is a live us_udp_socket_t.
-        unsafe {
+        yolo! {
             us_udp_socket_send(
                 self,
                 payloads.as_ptr(),
@@ -78,12 +79,12 @@ impl Socket {
 
     pub fn bound_ip(&mut self, buf: *mut u8, length: &mut i32) {
         // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_bound_ip(self, buf, length) }
+        yolo! { us_udp_socket_bound_ip(self, buf, length) }
     }
 
     pub fn remote_ip(&mut self, buf: *mut u8, length: &mut i32) {
         // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_remote_ip(self, buf, length) }
+        yolo! { us_udp_socket_remote_ip(self, buf, length) }
     }
 
     pub fn close(&mut self) {
@@ -92,7 +93,7 @@ impl Socket {
 
     pub fn connect(&mut self, hostname: *const c_char, port: c_uint) -> c_int {
         // SAFETY: thin FFI passthrough; hostname must be NUL-terminated per uSockets.
-        unsafe { us_udp_socket_connect(self, hostname, port) }
+        yolo! { us_udp_socket_connect(self, hostname, port) }
     }
 
     pub fn disconnect(&mut self) -> c_int {
@@ -206,7 +207,7 @@ impl PacketBuffer {
         // other Rust or C path holds a reference to it. The reborrow of `&mut self`
         // ties the returned lifetime to this handle, so the borrow checker prevents
         // obtaining a second overlapping `&mut` via `get_peer`/`get_payload`.
-        unsafe { &mut *us_udp_packet_buffer_peer(self, index) }
+        yolo! { &mut *us_udp_packet_buffer_peer(self, index) }
     }
 
     pub fn get_payload(&mut self, index: c_int) -> &mut [u8] {
@@ -215,7 +216,7 @@ impl PacketBuffer {
         // exclusively loaned to the data callback for its duration. The
         // returned borrow is tied to `&mut self`, so the borrow checker
         // prevents overlapping `&mut` via `get_peer`/`get_payload`.
-        unsafe {
+        yolo! {
             let payload = us_udp_packet_buffer_payload(self, index);
             let len = us_udp_packet_buffer_payload_length(self, index);
             core::slice::from_raw_parts_mut(payload, usize::try_from(len).expect("int cast"))

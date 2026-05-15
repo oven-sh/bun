@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate as css;
 use crate::css_rules::Location;
 use crate::{DeclarationBlock, PrintErr, Printer};
@@ -212,7 +213,7 @@ impl PageRule {
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see declaration.rs `DeclarationBlock::parse`).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
+            yolo! { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
         let mut declarations = DeclarationBlock::new_in(bump);
         let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
         let mut rule_parser = PageRuleParser {

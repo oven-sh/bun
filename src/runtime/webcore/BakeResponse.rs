@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 
 use crate::webcore::Response;
@@ -52,7 +53,7 @@ pub unsafe fn to_js_for_ssr(
     kind: SSRKind,
 ) -> JSValue {
     // SAFETY: caller contract — `this` is a valid exclusive heap allocation.
-    unsafe { &mut *this }.calculate_estimated_byte_size();
+    yolo! { &mut *this }.calculate_estimated_byte_size();
     BakeResponse__createForSSR(global_object, this, kind as u8)
 }
 
@@ -66,7 +67,7 @@ bun_jsc::jsc_host_abi! {
         js_this: JSValue,
     ) -> *mut c_void {
         // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
-        let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
+        let bake_ssr_has_jsx = yolo! { &mut *bake_ssr_has_jsx };
         match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
             Ok(response) => response.cast::<c_void>(),
             Err(JsError::Thrown) => core::ptr::null_mut(),
@@ -134,7 +135,7 @@ pub fn construct_redirect(
         // Ownership of the allocation transfers to the JS wrapper.
         let ptr = bun_core::heap::into_raw(response);
         // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
-        return Ok(unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Redirect) });
+        return Ok(yolo! { to_js_for_ssr(ptr, global_this, SSRKind::Redirect) });
     }
 
     // Ownership of the allocation transfers to the JS wrapper (freed in
@@ -142,7 +143,7 @@ pub fn construct_redirect(
     let ptr = bun_core::heap::into_raw(response);
     // SAFETY: `ptr` is a fresh heap allocation; `Response::to_js` hands it to
     // the C++ wrapper which owns it thereafter.
-    Ok(unsafe { &mut *ptr }.to_js(global_this))
+    Ok(yolo! { &mut *ptr }.to_js(global_this))
 }
 
 // C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
@@ -213,7 +214,7 @@ pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
     // Ownership of the allocation transfers to the JS wrapper.
     let ptr = bun_core::heap::into_raw(response);
     // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
-    let response_js = unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Render) };
+    let response_js = yolo! { to_js_for_ssr(ptr, global_this, SSRKind::Render) };
     response_js.ensure_still_alive();
 
     Ok(response_js)

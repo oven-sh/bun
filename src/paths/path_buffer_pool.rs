@@ -10,6 +10,7 @@
 //! Same observable behavior: at most 4 buffers cached per thread; excess `put`s
 //! drop. RAII guard replaces the manual `get`/`put` pairing.
 
+use bun_yolo::yolo;
 use core::cell::RefCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
@@ -51,7 +52,7 @@ impl PoolStorage for PathBuffer {
         // on pool cache miss (≤ once per slot per thread); `alloc_zeroed` for a
         // 64 KB heap block is typically satisfied by fresh OS-zeroed pages, so
         // there is no hot-path memset cost.
-        unsafe { Box::<Self>::new_zeroed().assume_init() }
+        yolo! { Box::<Self>::new_zeroed().assume_init() }
     }
 }
 impl PoolStorage for WPathBuffer {
@@ -64,7 +65,7 @@ impl PoolStorage for WPathBuffer {
         // `new_zeroed` writes every byte to `0`, which is a valid `u16`, so the
         // value is fully initialized before `assume_init`. See `PathBuffer`
         // impl above for rationale re: `new_uninit` UB and perf.
-        unsafe { Box::<Self>::new_zeroed().assume_init() }
+        yolo! { Box::<Self>::new_zeroed().assume_init() }
     }
 }
 

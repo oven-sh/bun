@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::custom_getter_setter::CustomGetterSetter;
@@ -140,7 +141,7 @@ impl<T> JsCell<T> {
     #[allow(clippy::mut_from_ref)]
     pub fn get(&self) -> &T {
         // SAFETY: single-JS-thread invariant — see type docs.
-        unsafe { &*self.0.get() }
+        yolo! { &*self.0.get() }
     }
 
     /// Mutable-reference projection from `&self`.
@@ -162,7 +163,7 @@ impl<T> JsCell<T> {
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn get_mut(&self) -> &mut T {
         // SAFETY: forwarded to caller — see fn-level contract.
-        unsafe { &mut *self.0.get() }
+        yolo! { &mut *self.0.get() }
     }
 
     /// Closure-scoped mutable access. The `&mut T` cannot escape `f`, so the
@@ -175,7 +176,7 @@ impl<T> JsCell<T> {
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         // SAFETY: single-JS-thread invariant (see type docs); the `&mut T`
         // is confined to `f`'s frame and cannot be stored or returned.
-        f(unsafe { &mut *self.0.get() })
+        f(yolo! { &mut *self.0.get() })
     }
 
     /// Overwrite the contained value.

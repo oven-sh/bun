@@ -8,6 +8,7 @@
 // Zig's `threadlocal var` semantics exactly.
 #![feature(thread_local)]
 
+use bun_yolo::yolo;
 use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
@@ -137,7 +138,7 @@ impl StdAllocator {
     #[inline]
     pub fn raw_alloc(&self, len: usize, alignment: Alignment, ra: usize) -> Option<*mut u8> {
         // SAFETY: vtable invariant — `alloc` callee respects (ptr, len, alignment, ra) contract.
-        let p = unsafe { (self.vtable.alloc)(self.ptr, len, alignment, ra) };
+        let p = yolo! { (self.vtable.alloc)(self.ptr, len, alignment, ra) };
         if p.is_null() { None } else { Some(p) }
     }
     /// Zig: `Allocator.rawResize`.
@@ -150,7 +151,7 @@ impl StdAllocator {
         ra: usize,
     ) -> bool {
         // SAFETY: see `raw_alloc`.
-        unsafe { (self.vtable.resize)(self.ptr, buf, alignment, new_len, ra) }
+        yolo! { (self.vtable.resize)(self.ptr, buf, alignment, new_len, ra) }
     }
     /// Zig: `Allocator.rawRemap`.
     #[inline]
@@ -162,14 +163,14 @@ impl StdAllocator {
         ra: usize,
     ) -> Option<*mut u8> {
         // SAFETY: see `raw_alloc`.
-        let p = unsafe { (self.vtable.remap)(self.ptr, buf, alignment, new_len, ra) };
+        let p = yolo! { (self.vtable.remap)(self.ptr, buf, alignment, new_len, ra) };
         if p.is_null() { None } else { Some(p) }
     }
     /// Zig: `Allocator.rawFree`.
     #[inline]
     pub fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
         // SAFETY: see `raw_alloc`.
-        unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
+        yolo! { (self.vtable.free)(self.ptr, buf, alignment, ra) }
     }
     /// Zig: `Allocator.free` — `rawFree` with `ret_addr = 0`, byte-aligned.
     #[inline]
@@ -180,7 +181,7 @@ impl StdAllocator {
         // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
         // callee treats it as opaque (Zig passes `[]u8`).
         let buf =
-            unsafe { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
+            yolo! { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
         self.raw_free(buf, Alignment::from_byte_units(1), 0);
     }
 }
@@ -556,7 +557,7 @@ impl Mutex {
         // `<'static, ()>` have identical layout. Every `bun_alloc::Mutex` lives
         // in a `'static` BSS singleton, so the inner `&Mutex` the guard holds
         // is in fact valid for `'static`.
-        MutexGuard(unsafe {
+        MutexGuard(yolo! {
             core::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(
                 g,
             )
@@ -635,7 +636,7 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
         // mimalloc tracks size+alignment in page metadata; `mi_free` is universal.
-        unsafe { mimalloc::mi_free(ptr.cast()) }
+        yolo! { mimalloc::mi_free(ptr.cast()) }
     }
 
     #[inline]
@@ -645,7 +646,7 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         layout: core::alloc::Layout,
         new_size: usize,
     ) -> *mut u8 {
-        unsafe {
+        yolo! {
             if layout.align() <= MI_MAX_ALIGN_SIZE {
                 mimalloc::mi_realloc(ptr.cast(), new_size)
             } else {
@@ -668,13 +669,13 @@ pub unsafe fn realloc_slice(
     new_size: usize,
 ) -> core::result::Result<&mut [u8], AllocError> {
     // SAFETY: caller guarantees `slice.as_mut_ptr()` is a mimalloc-owned block.
-    let new_ptr = unsafe { mimalloc::mi_realloc(slice.as_mut_ptr().cast(), new_size) };
+    let new_ptr = yolo! { mimalloc::mi_realloc(slice.as_mut_ptr().cast(), new_size) };
     if new_ptr.is_null() {
         return Err(AllocError);
     }
     // SAFETY: `mi_realloc` returns at least `new_size` bytes, aligned per
     // `MI_MAX_ALIGN_SIZE`, with the prefix preserved up to `min(old, new)`.
-    Ok(unsafe { core::slice::from_raw_parts_mut(new_ptr.cast::<u8>(), new_size) })
+    Ok(yolo! { core::slice::from_raw_parts_mut(new_ptr.cast::<u8>(), new_size) })
 }
 
 /// Raw-pointer variant of [`realloc_slice`] for callers that cannot soundly
@@ -690,7 +691,7 @@ pub unsafe fn realloc_raw(
     new_size: usize,
 ) -> core::result::Result<*mut u8, AllocError> {
     // SAFETY: caller guarantees `ptr` is a mimalloc-owned block.
-    let new_ptr = unsafe { mimalloc::mi_realloc(ptr.cast(), new_size) };
+    let new_ptr = yolo! { mimalloc::mi_realloc(ptr.cast(), new_size) };
     if new_ptr.is_null() {
         return Err(AllocError);
     }
@@ -701,7 +702,7 @@ pub unsafe fn realloc_raw(
 #[inline]
 pub fn usable_size(ptr: *const u8) -> usize {
     // SAFETY: `mi_usable_size` is null-safe (returns 0).
-    unsafe { mimalloc::mi_usable_size(ptr.cast()) }
+    yolo! { mimalloc::mi_usable_size(ptr.cast()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -959,7 +960,7 @@ impl ZigString {
         );
         // SAFETY: constructor stored a valid ptr/len; flag bits stripped. Zig
         // caps at u32::MAX (ZigString.zig:642).
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts(
                 Self::untagged(self._unsafe_ptr_do_not_use),
                 core::cmp::min(self.len, u32::MAX as usize),
@@ -977,7 +978,7 @@ impl ZigString {
         debug_assert!(self.is_16bit());
         // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
         // for `self.len` u16 units; flag bits stripped by `untagged`.
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts(
                 Self::untagged(self._unsafe_ptr_do_not_use).cast::<u16>(),
                 self.len,
@@ -1070,7 +1071,7 @@ impl WTFStringImplStruct {
     fn ref_count_atomic(&self) -> &AtomicU32 {
         // SAFETY: layout-compatible reborrow of `UnsafeCell<u32>` as
         // `AtomicU32`; see doc comment above.
-        unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
+        yolo! { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
     }
     /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
     ///
@@ -1113,7 +1114,7 @@ impl WTFStringImplStruct {
         // destruction (handles substring/symbol/external buffer ownership).
         // SAFETY: `old == s_refCountIncrement` ⇒ count is now 0 and we held
         // the sole ref; `self` is not touched again after this call.
-        unsafe { Bun__WTFStringImpl__destroy(self) };
+        yolo! { Bun__WTFStringImpl__destroy(self) };
     }
     #[inline]
     pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
@@ -1130,7 +1131,7 @@ impl WTFStringImplStruct {
     pub fn raw_bytes(&self, len: usize) -> &[u8] {
         // SAFETY: `m_ptr.latin1` points at the impl's character buffer for the
         // lifetime of `self`; every caller passes `len ≤ byte_length()`.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
+        yolo! { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
     }
     #[inline]
     pub fn byte_slice(&self) -> &[u8] {
@@ -1145,7 +1146,7 @@ impl WTFStringImplStruct {
     pub fn utf16_slice(&self) -> &[u16] {
         debug_assert!(!self.is_8bit());
         // SAFETY: WebKit guarantees m_ptr.utf16 valid for m_length u16s when !8-bit.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.utf16, self.m_length as usize) }
+        yolo! { core::slice::from_raw_parts(self.m_ptr.utf16, self.m_length as usize) }
     }
     #[inline]
     pub fn utf16_byte_length(&self) -> usize {
@@ -1173,7 +1174,7 @@ impl WTFStringImplStruct {
     #[inline]
     pub fn has_prefix(&self, text: &[u8]) -> bool {
         // SAFETY: `self` is a valid WTF::StringImpl; text.ptr/len describe a valid slice.
-        unsafe { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
+        yolo! { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
     }
     #[inline]
     pub fn to_zig_string(&self) -> ZigString {
@@ -1223,7 +1224,7 @@ pub mod StringImplAllocator {
         // to `ref_count_allocator`, live with refcount ≥ 1 for this call. Single
         // deref site (nonnull-asref reduction) — `byte_length`/`r#ref` are safe
         // `&self` methods.
-        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
+        let this = yolo! { &*ptr.cast::<WTFStringImplStruct>() };
         if this.byte_length() != len {
             // we don't actually allocate, we just reference count
             return core::ptr::null_mut();
@@ -1232,13 +1233,13 @@ pub mod StringImplAllocator {
         // we should never actually allocate
         // SAFETY: `m_ptr.latin1` is the byte-view union arm (both arms share
         // offset 0); valid for `byte_length()` bytes.
-        unsafe { this.m_ptr.latin1 }.cast_mut()
+        yolo! { this.m_ptr.latin1 }.cast_mut()
     }
 
     unsafe fn free(ptr: *mut core::ffi::c_void, buf: &mut [u8], _: Alignment, _: usize) {
         // SAFETY: see `alloc` — single deref site for the vtable's `WTFStringImpl`
         // ctx pointer; `byte_slice`/`byte_length`/`deref` are safe `&self` methods.
-        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
+        let this = yolo! { &*ptr.cast::<WTFStringImplStruct>() };
         debug_assert!(this.byte_slice().as_ptr() == buf.as_ptr());
         // Zig: `bun.assert(this.latin1Slice().len == buf.len)` — `latin1Slice().len` is
         // `byteLength()` (i.e. `m_length * 2` for UTF-16), not the code-unit count.
@@ -1310,13 +1311,13 @@ impl String {
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
         // union field and a non-null, live `*mut WTFStringImplStruct`
         // (refcount ≥ 1 for the `String`'s lifetime).
-        unsafe { &*self.value.wtf_string_impl }
+        yolo! { &*self.value.wtf_string_impl }
     }
 
     #[inline]
     pub fn to_zig_string(&self) -> ZigString {
         match self.tag {
-            Tag::StaticZigString | Tag::ZigString => unsafe { self.value.zig_string },
+            Tag::StaticZigString | Tag::ZigString => yolo! { self.value.zig_string },
             Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
             _ => ZigString::EMPTY,
         }
@@ -1340,7 +1341,7 @@ impl String {
     pub fn is_8bit(&self) -> bool {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
-            Tag::ZigString => unsafe { !self.value.zig_string.is_16bit() },
+            Tag::ZigString => yolo! { !self.value.zig_string.is_16bit() },
             _ => true,
         }
     }
@@ -1443,7 +1444,7 @@ pub unsafe fn default_free(ptr: *mut u8, len: usize) {
         return;
     }
     // SAFETY: caller contract — `ptr[..len]` is a live mimalloc allocation.
-    let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+    let buf = yolo! { core::slice::from_raw_parts_mut(ptr, len) };
     basic::C_ALLOCATOR.raw_free(buf, Alignment::from_byte_units(1), 0);
 }
 
@@ -1465,7 +1466,7 @@ pub fn default_dupe(src: &[u8]) -> &'static [u8] {
     // bytes, byte-aligned; non-overlapping with `src`. The returned slice's
     // lifetime is tied to the matching `default_free` call (caller contract),
     // hence `'static` at the type level.
-    unsafe {
+    yolo! {
         core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
         core::slice::from_raw_parts(ptr, src.len())
     }
@@ -1485,7 +1486,7 @@ pub fn default_dupe(src: &[u8]) -> &'static [u8] {
 #[inline]
 pub unsafe fn secure_zero(p: *mut u8, len: usize) {
     // SAFETY: caller contract.
-    unsafe { core::ptr::write_bytes(p, 0, len) };
+    yolo! { core::ptr::write_bytes(p, 0, len) };
     // Treat `p` as escaped so the preceding stores cannot be eliminated.
     core::hint::black_box(p);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
@@ -1502,7 +1503,7 @@ pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
     // SAFETY: `slice` is exclusively owned; writing `size_of_val` zero bytes
     // over its storage is sound for `T: Copy` (no drop glue, no invariants on
     // the bit pattern we're discarding).
-    unsafe {
+    yolo! {
         let len = core::mem::size_of_val::<[T]>(&slice);
         secure_zero(slice.as_mut_ptr().cast::<u8>(), len);
     }
@@ -1518,7 +1519,7 @@ pub fn free_sensitive_cstr(p: *const core::ffi::c_char) {
         return;
     }
     // SAFETY: p is a NUL-terminated mimalloc'd buffer per `dupe_z` contract.
-    unsafe {
+    yolo! {
         let len = libc::strlen(p);
         secure_zero(p as *mut u8, len);
         // `mi_free` is size-agnostic (mimalloc tracks the allocation size in
@@ -1680,7 +1681,7 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
     // matching Zig). `init_at` is therefore free to skip writing any field whose
     // all-zeros bit pattern is already a valid initial value (e.g. `OverflowList`'s
     // 32 KiB `[Option<Box<_>>; 4095]` array — `None` is the null niche).
-    unsafe { init_at(ptr.as_ptr()) };
+    yolo! { init_at(ptr.as_ptr()) };
     ptr
 }
 
@@ -1789,7 +1790,7 @@ fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
             // SAFETY: `aligned + size <= BSS_ARENA_SIZE`; `base` spans
             // `[0, BSS_ARENA_SIZE)` from a single `mmap`, so the offset is
             // in-bounds of that allocation.
-            Ok(_) => return unsafe { base.add(aligned) },
+            Ok(_) => return yolo! { base.add(aligned) },
             Err(observed) => cur = observed,
         }
     }
@@ -1811,7 +1812,7 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
-    let p = unsafe {
+    let p = yolo! {
         libc::mmap(
             core::ptr::null_mut(),
             len,
@@ -1901,7 +1902,7 @@ macro_rules! get_zone {
         *ZONE.get_or_init(|| {
             // SAFETY: concat!($name, "\0") is a valid NUL-terminated string
             // literal in static memory — valid for process lifetime.
-            unsafe {
+            yolo! {
                 $crate::heap_breakdown::Zone::init(
                     concat!($name, "\0").as_ptr().cast::<::core::ffi::c_char>(),
                 )
@@ -1996,9 +1997,9 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
             // is `[MaybeUninit<T>; N]` and stays uninit exactly as Zig does.
             let mut b: Box<core::mem::MaybeUninit<Block>> = Box::new_uninit();
             // SAFETY: `b.as_mut_ptr()` is a valid, exclusive, aligned `*mut Block`.
-            unsafe { Block::zero(b.as_mut_ptr()) };
+            yolo! { Block::zero(b.as_mut_ptr()) };
             // SAFETY: after `zero`, all non-`MaybeUninit` fields of `Block` are initialized.
-            self.ptrs[self.allocated as usize] = Some(unsafe { b.assume_init() });
+            self.ptrs[self.allocated as usize] = Some(yolo! { b.assume_init() });
             self.allocated = self.allocated.wrapping_add(1);
         }
 
@@ -2039,14 +2040,14 @@ impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
         self.items[index].write(value);
         self.used = self.used.wrapping_add(1);
         // SAFETY: just initialized on the line above.
-        unsafe { self.items[index].assume_init_mut() }
+        yolo! { self.items[index].assume_init_mut() }
     }
 }
 
 impl<ValueType, const COUNT: usize> OverflowBlock for OverflowListBlock<ValueType, COUNT> {
     unsafe fn zero(this: *mut Self) {
         // SAFETY: caller contract — `this` is a valid, aligned `*mut Self`.
-        unsafe { addr_of_mut!((*this).used).write(0) };
+        yolo! { addr_of_mut!((*this).used).write(0) };
     }
     fn is_full(&self) -> bool {
         (self.used as usize) >= COUNT
@@ -2082,7 +2083,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     #[inline]
     pub unsafe fn init_counters_at(slot: *mut Self) {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             addr_of_mut!((*slot).list.used).write(0);
             addr_of_mut!((*slot).list.allocated).write(0);
             addr_of_mut!((*slot).count).write(0);
@@ -2119,7 +2120,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         );
 
         // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
-        unsafe {
+        yolo! {
             self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT].assume_init_ref()
         }
     }
@@ -2136,7 +2137,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         );
 
         // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
-        unsafe {
+        yolo! {
             self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT].assume_init_mut()
         }
     }
@@ -2213,7 +2214,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         // https://github.com/ziglang/zig/issues/24313
         // Raw `ptr::write` — `*this` may be uninit; assignment would run drop glue
         // on garbage (UAF for `prev: Option<Box<..>>`).
-        unsafe {
+        yolo! {
             addr_of_mut!((*this).used).write(AtomicU16::new(0));
             addr_of_mut!((*this).prev).write(None);
         }
@@ -2227,7 +2228,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         // Raw write — slot may be uninit; Zig assignment has no drop glue.
         self.data[index as usize].write(item);
         // SAFETY: just initialized on the line above.
-        Ok(unsafe { self.data[index as usize].assume_init_mut() })
+        Ok(yolo! { self.data[index as usize].assume_init_mut() })
     }
 
     /// Reserve a slot and return its uninitialized storage. Caller MUST
@@ -2241,7 +2242,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
             return Err(AllocError);
         }
         // SAFETY: `index < BSS_LIST_CHUNK_SIZE` checked above.
-        Ok(unsafe { self.data.as_mut_ptr().add(index as usize) })
+        Ok(yolo! { self.data.as_mut_ptr().add(index as usize) })
     }
 }
 
@@ -2281,7 +2282,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     pub unsafe fn init_at(slot: *mut Self) {
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned,
         // all-zeros `*mut Self`.
-        unsafe {
+        yolo! {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             // Zig: `instance.head = &instance.tail` — self-referential; raw NonNull.
             let tail_ptr = addr_of_mut!((*slot).tail);
@@ -2329,7 +2330,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // Restructured to check capacity first, allocate the new block if
         // needed, then reserve exactly one slot. Safe under `self.mutex`.
         // SAFETY: `head_ptr` is a valid exclusive ref (mutex held).
-        let head_full = unsafe {
+        let head_full = yolo! {
             (*head_ptr.as_ptr()).used.load(Ordering::Acquire) as usize >= BSS_LIST_CHUNK_SIZE
         };
         if head_full {
@@ -2337,9 +2338,9 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 Box::new_uninit();
             // SAFETY: `as_mut_ptr()` is a valid, exclusive, aligned `*mut`; zero() initializes
             // `used` and `prev` via raw writes; `data` is `[MaybeUninit; N]` (always valid).
-            unsafe { BSSListOverflowBlock::zero(new_block.as_mut_ptr()) };
+            yolo! { BSSListOverflowBlock::zero(new_block.as_mut_ptr()) };
             // SAFETY: all non-`MaybeUninit` fields are now initialized.
-            let mut new_block = unsafe { new_block.assume_init() };
+            let mut new_block = yolo! { new_block.assume_init() };
             // Preserve the chain (Zig: `new_block.prev = self.head`). The inline `self.tail`
             // is not Boxed, so represent it as `prev = None`; heap heads were
             // `Box::into_raw`'d by an earlier call here and are reclaimed as `Box`.
@@ -2349,16 +2350,16 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
             } else {
                 // SAFETY: the previous head was `Box::into_raw`'d by an earlier
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
-                Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
+                Some(yolo! { Box::from_raw(head_ptr.as_ptr()) })
             };
             let raw = Box::into_raw(new_block);
             // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = yolo! { NonNull::new_unchecked(raw) };
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with
         // free capacity; no other alias exists (mutex held).
-        unsafe { (*head_ptr.as_ptr()).append_uninit() }
+        yolo! { (*head_ptr.as_ptr()).append_uninit() }
     }
 
     /// Reserve a slot and return its uninitialized storage. Caller MUST
@@ -2388,16 +2389,16 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = yolo! { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         if this.used as usize > Self::MAX_INDEX {
             this.append_overflow_uninit()
         } else {
             let index = this.used as usize;
             this.used += 1;
             // SAFETY: `index <= MAX_INDEX < COUNT` checked above.
-            Ok(unsafe { this.backing_buf.as_mut_ptr().add(index) })
+            Ok(yolo! { this.backing_buf.as_mut_ptr().add(index) })
         }
     }
 
@@ -2415,10 +2416,10 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         value: ValueType,
     ) -> core::result::Result<*mut ValueType, AllocError> {
         // SAFETY: forwarded — see `append_uninit`.
-        let slot = unsafe { Self::append_uninit(this)? };
+        let slot = yolo! { Self::append_uninit(this)? };
         // SAFETY: `slot` is a freshly-reserved uninit cell exclusively owned by
         // this thread (index already bumped under the mutex).
-        unsafe { Ok(core::ptr::from_mut((*slot).write(value))) }
+        yolo! { Ok(core::ptr::from_mut((*slot).write(value))) }
     }
 
     // Zig: `pub const Pair = struct { index: IndexType, value: *ValueType };`
@@ -2438,7 +2439,7 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
                 // SAFETY: `head` was `Box::into_raw`'d by `append_overflow_uninit` and is
                 // exclusively owned by this struct. Dropping the Box recursively
                 // drops `prev`, freeing the whole heap chain.
-                drop(unsafe { Box::from_raw(head.as_ptr()) });
+                drop(yolo! { Box::from_raw(head.as_ptr()) });
             }
         }
     }
@@ -2553,7 +2554,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // already `[None; 4095]` because `slot` came from `bss_heap_init`).
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
         // `*mut Self` in all-zeros storage from `bss_heap_init`.
-        unsafe {
+        yolo! {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).backing_buf).write(bss_lazy_slice::<u8>(COUNT * ITEM_LENGTH));
             addr_of_mut!((*slot).backing_buf_used).write(0);
@@ -2596,7 +2597,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// `(ptr, len)` must describe a region returned from `append*` on this instance, point
     /// into our owned mutable backing storage, and have no other live borrow.
     pub unsafe fn editable_slice<'a>(ptr: *mut u8, len: usize) -> &'a mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+        yolo! { core::slice::from_raw_parts_mut(ptr, len) }
     }
 
     /// Append `value` and return a mutable slice over the freshly-reserved bytes.
@@ -2618,14 +2619,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = yolo! { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let (ptr, len) = unsafe { (*this).do_append(value)? };
+        let (ptr, len) = yolo! { (*this).do_append(value)? };
         // SAFETY: `ptr` came from `out.as_mut_ptr()` inside `do_append` (write provenance)
         // and points into storage owned by `*this` (backing_buf or a process-lifetime
         // mimalloc region); the slot was freshly reserved under the mutex so no other
         // live borrow of that region exists.
-        Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
+        Ok(yolo! { core::slice::from_raw_parts_mut(ptr, len) })
     }
 
     /// SAFETY: see [`append_mutable`].
@@ -2634,7 +2635,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         len: usize,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
         // SAFETY: forwarded — see `append_mutable`.
-        unsafe { Self::append_mutable(this, EmptyType { len }) }
+        yolo! { Self::append_mutable(this, EmptyType { len }) }
     }
 
     /// SAFETY: see [`append_mutable`].
@@ -2662,19 +2663,19 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // uninit bytes is sound here — every byte in `[..c.at]` is initialized
         // before being observed below. Same pattern as `do_append`'s
         // `backing_buf` slice formation.
-        let mut c = crate::SliceCursor::new(unsafe {
+        let mut c = crate::SliceCursor::new(yolo! {
             core::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast::<u8>(), STACK)
         });
         if core::fmt::write(&mut c, args).is_ok() {
             let written: &[u8] = &c.buf[..c.at];
             // SAFETY: forwarded — see `append`.
-            return unsafe { Self::append(this, written) };
+            return yolo! { Self::append(this, written) };
         }
 
         // Overflow (> STACK bytes — rare): count exactly, reserve, re-format.
         let len = crate::fmt_count(args);
         // SAFETY: forwarded — see `append_mutable`.
-        let buf = unsafe { Self::append_mutable(this, EmptyType { len: len + 1 })? };
+        let buf = yolo! { Self::append_mutable(this, EmptyType { len: len + 1 })? };
         let buf_len = buf.len();
         buf[buf_len - 1] = 0;
         let written = crate::buf_print_len(&mut buf[..buf_len - 1], args).expect("counted length");
@@ -2687,7 +2688,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: forwarded — see `append_mutable`.
-        unsafe { Self::print_with_type(this, args) }
+        yolo! { Self::print_with_type(this, args) }
     }
 
     /// Append `value`, returning a stable `&[u8]` over the freshly-reserved bytes.
@@ -2708,14 +2709,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = yolo! { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let (ptr, len) = unsafe { (*this).do_append(value)? };
+        let (ptr, len) = yolo! { (*this).do_append(value)? };
         // SAFETY: `ptr` points into storage owned by `*this` (backing_buf or a
         // process-lifetime mimalloc region); the slot was freshly reserved under
         // the mutex so no other writer aliases it, and reborrowing as shared is
         // always sound.
-        Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
+        Ok(yolo! { core::slice::from_raw_parts(ptr, len) })
     }
 
     /// Append `value` lowercased ASCII-wise.
@@ -2733,9 +2734,9 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &[u8],
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: see `append`.
-        let _guard = unsafe { (*this).mutex.lock() };
+        let _guard = yolo! { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
 
         // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
         // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
@@ -2752,14 +2753,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
                 return Err(AllocError);
             }
             // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
-            let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
+            let tmp = yolo! { core::slice::from_raw_parts_mut(p, value.len()) };
             let r = this_ref.do_append(crate::copy_lowercase(value, tmp));
             // SAFETY: `p` was allocated by `mi_malloc` above.
-            unsafe { mimalloc::mi_free(p.cast()) };
+            yolo! { mimalloc::mi_free(p.cast()) };
             r?
         };
         // SAFETY: see `append`.
-        Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
+        Ok(yolo! { core::slice::from_raw_parts(ptr, len) })
     }
 
     /// Returns `(ptr, len)` of the freshly-appended payload (excluding the trailing NUL),
@@ -2786,7 +2787,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             // Forming `&mut [u8]` only over `[start..end]` — these bytes are
             // about to be fully written (payload + trailing NUL), so no uninit
             // byte is exposed through the reference.
-            let dst: &mut [u8] = unsafe {
+            let dst: &mut [u8] = yolo! {
                 core::slice::from_raw_parts_mut(
                     self.backing_buf.as_ptr().cast::<u8>().add(start),
                     end - start,
@@ -2806,7 +2807,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
                 return Err(AllocError);
             }
             // SAFETY: `ptr` is a fresh allocation of `value_len` bytes with no other alias.
-            let value_buf = unsafe { core::slice::from_raw_parts_mut(ptr, value_len) };
+            let value_buf = yolo! { core::slice::from_raw_parts_mut(ptr, value_len) };
             value.copy_into(&mut value_buf[..value_len - 1]);
             value_buf[value_len - 1] = 0;
             let out = &mut value_buf[..value_len - 1];
@@ -2828,7 +2829,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // SAFETY: `out_ptr` addresses self.backing_buf or a process-lifetime alloc, both
         // outliving 'static (singleton). Zig stores it as `[]const u8` with no lifetime
         // tracking.
-        let stored: &'static [u8] = unsafe { core::slice::from_raw_parts(out_ptr, out_len) };
+        let stored: &'static [u8] = yolo! { core::slice::from_raw_parts(out_ptr, out_len) };
 
         if result.is_overflow() {
             if self.overflow_list.len() == result.index() {
@@ -2841,7 +2842,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             // `&[u8]`-sized slots owned by this singleton; `result.index() <
             // slice_buf_used <= COUNT`; we hold `&mut self`. Raw write — slot
             // may be uninit (Zig leaves it `undefined`).
-            unsafe {
+            yolo! {
                 self.slice_buf
                     .as_ptr()
                     .cast::<MaybeUninit<&'static [u8]>>()
@@ -2890,7 +2891,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         // `overflow_list.list.ptrs` array is already `[None; 4095]` (null
         // niche), so write only the three counters; `backing_buf` is
         // intentionally left uninitialized (Zig: `undefined`).
-        unsafe {
+        yolo! {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
             addr_of_mut!((*slot).backing_buf_used).write(0);
@@ -2986,7 +2987,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         } else {
             // SAFETY: a non-sentinel, non-overflow index was assigned by `put`, which
             // initialized this slot via `.write()`.
-            Some(unsafe { self.backing_buf[index.index() as usize].assume_init_mut() })
+            Some(yolo! { self.backing_buf[index.index() as usize].assume_init_mut() })
         }
     }
 
@@ -3024,7 +3025,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             // Raw write — fresh slots are uninit; Zig assignment has no drop glue.
             self.backing_buf[idx].write(value);
             // SAFETY: just initialized on the line above.
-            unsafe { self.backing_buf[idx].assume_init_mut() }
+            yolo! { self.backing_buf[idx].assume_init_mut() }
         };
         Ok(ret)
     }
@@ -3040,7 +3041,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub fn values(&mut self) -> &mut [ValueType] {
         // SAFETY: `backing_buf[0..backing_buf_used]` was initialized by `put`;
         // `MaybeUninit<T>` is `#[repr(transparent)]` so the slice cast is layout-sound.
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts_mut(
                 self.backing_buf.as_mut_ptr().cast::<ValueType>(),
                 self.backing_buf_used as usize,
@@ -3088,7 +3089,7 @@ impl<
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     pub unsafe fn init_at(slot: *mut Self) {
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
-        unsafe {
+        yolo! {
             // Inner map in its own lazy mapping so its inline backing_buf +
             // overflow ptrs fault on demand.
             addr_of_mut!((*slot).map).write(bss_heap_init(BSSMapInner::init_at));
@@ -3112,12 +3113,12 @@ impl<
     pub fn map(&self) -> &BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES> {
         // SAFETY: `map` was set in `init_at` to a fresh `bss_heap_init` mapping
         // that lives for process lifetime and is exclusively owned by `*self`.
-        unsafe { self.map.as_ref() }
+        yolo! { self.map.as_ref() }
     }
     #[inline(always)]
     pub fn map_mut(&mut self) -> &mut BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES> {
         // SAFETY: see `map()`; `&mut self` guarantees exclusive access.
-        unsafe { self.map.as_mut() }
+        yolo! { self.map.as_mut() }
     }
 
     // Zig `deinit`: `self.map.deinit()` then free instance — process-lifetime; never freed.
@@ -3152,7 +3153,7 @@ impl<
                     // by `put_key` at this slot before any reader could observe
                     // the index — the slot is initialized. `key_list_slices` is
                     // a process-lifetime mapping of `COUNT` slots.
-                    Some(unsafe { *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i) })
+                    Some(yolo! { *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i) })
                 } else {
                     // TODO(port): see key_list_overflow note — Zig indexes `.items` here.
                     Some(self.key_list_overflow[index.index() as usize])
@@ -3176,7 +3177,7 @@ impl<
         // SAFETY: ptr points into self.map.backing_buf / overflow_list, which are owned by
         // `self` and not reallocated by put_key (put_key only touches key_list_* fields).
         // We still hold the unique &mut self borrow, so no other alias exists.
-        Ok(unsafe { &mut *ptr })
+        Ok(yolo! { &mut *ptr })
     }
 
     pub fn is_key_statically_allocated(&self, key: &[u8]) -> bool {
@@ -3202,7 +3203,7 @@ impl<
         // Is this actually a slice into the map? Don't free it.
         if self.is_key_statically_allocated(key) {
             // SAFETY: key points into self.key_list_buffer which lives for the singleton's life.
-            slice = unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
+            slice = yolo! { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
         } else if self.key_list_buffer_used + key.len() < self.key_list_buffer.len() {
             let start = self.key_list_buffer_used;
             self.key_list_buffer_used += key.len();
@@ -3210,7 +3211,7 @@ impl<
             // `COUNT*ESTIMATED_KEY_LENGTH` writable bytes owned by this
             // singleton; `[start..start+key.len()]` is in-bounds (just checked)
             // and about to be fully written; we hold `&mut self`.
-            let dst: &mut [u8] = unsafe {
+            let dst: &mut [u8] = yolo! {
                 core::slice::from_raw_parts_mut(
                     self.key_list_buffer.as_ptr().cast::<u8>().add(start),
                     key.len(),
@@ -3218,7 +3219,7 @@ impl<
             };
             dst.copy_from_slice(key);
             // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
-            slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
+            slice = yolo! { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
         } else {
             // Zig: `slice = try self.map.allocator.dupe(u8, key);` — propagate OOM. Route
             // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
@@ -3229,10 +3230,10 @@ impl<
                 return Err(AllocError);
             }
             // SAFETY: `ptr` is a fresh allocation of `key.len()` bytes with no other alias.
-            unsafe { core::ptr::copy_nonoverlapping(key.as_ptr(), ptr, key.len()) };
+            yolo! { core::ptr::copy_nonoverlapping(key.as_ptr(), ptr, key.len()) };
             // SAFETY: allocation is owned by this singleton for process lifetime (or until
             // freed below on overwrite).
-            slice = unsafe { core::slice::from_raw_parts(ptr, key.len()) };
+            slice = yolo! { core::slice::from_raw_parts(ptr, key.len()) };
         }
 
         let slice = if REMOVE_TRAILING_SLASHES {
@@ -3247,7 +3248,7 @@ impl<
             // SAFETY: `key_list_slices` is a process-lifetime mapping of
             // `COUNT` slots; `i < COUNT`; we hold `&mut self`. Raw write —
             // slot may be uninit (Zig leaves it `undefined`).
-            unsafe {
+            yolo! {
                 self.key_list_slices
                     .as_ptr()
                     .cast::<MaybeUninit<&'static [u8]>>()
@@ -3264,7 +3265,7 @@ impl<
                     // size-agnostic, so a trimmed (shorter) stored slice is fine.
                     // SAFETY: existing_slice was `mi_malloc`'d by a prior put_key call
                     // (the only non-static-buffer source above) and not yet freed.
-                    unsafe {
+                    yolo! {
                         mimalloc::mi_free(
                             existing_slice
                                 .as_ptr()

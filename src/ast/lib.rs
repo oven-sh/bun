@@ -18,6 +18,7 @@
 //! `'source` lifetime threaded through `Location`/`Data`/`Msg`).
 
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::fmt;
 use std::borrow::Cow;
 
@@ -521,7 +522,7 @@ impl IntoStr for &[u8] {
     #[inline]
     fn into_str(self) -> Str {
         // SAFETY: Phase-A lifetime erasure; see module-level OWNERSHIP note.
-        unsafe { bun_collections::detach_lifetime(self) }
+        yolo! { bun_collections::detach_lifetime(self) }
     }
 }
 impl IntoStr for &str {
@@ -610,7 +611,7 @@ impl fmt::Write for IoWriterAdapter {
         // SAFETY: `Output::error_writer()` returns a pointer to a long-lived
         // adapter header (see bun_core::io::Writer); callers hold it only for
         // the duration of this `print` call.
-        unsafe { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
+        yolo! { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
     }
 }
 impl IntoLogWrite for *mut bun_core::io::Writer {
@@ -1583,7 +1584,7 @@ impl Log {
         // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
         // and never removed; its heap allocation is stable across the `Vec`'s
         // growth, so the returned slice is valid for the life of `self`.
-        let view: &'static [u8] = unsafe { bun_collections::detach_lifetime(&boxed[..]) };
+        let view: &'static [u8] = yolo! { bun_collections::detach_lifetime(&boxed[..]) };
         self.owned_strings.push(boxed);
         view
     }
@@ -3256,7 +3257,7 @@ pub mod store_ast_alloc_heap {
         // either null or a live `Box::into_raw` allocation owned by this thread
         // and freed only by `exit()` (on this thread). No other `&`/`&mut` to
         // the arena is reachable: this module is its sole accessor.
-        unsafe { ARENA.get().as_mut() }
+        yolo! { ARENA.get().as_mut() }
     }
 
     pub fn enter() {
@@ -3310,7 +3311,7 @@ pub mod store_ast_alloc_heap {
         if !arena.is_null() {
             // SAFETY: `arena` was `Box::into_raw`'d in `enter()` on this
             // thread and is now being reclaimed exactly once.
-            drop(unsafe { Box::from_raw(arena) });
+            drop(yolo! { Box::from_raw(arena) });
         }
     }
 }
@@ -3353,7 +3354,7 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
         // on scope drop — callers must not hold it past that boundary). This is
         // lifetime erasure, not a value cast, so no safe `bytemuck`/`as`
         // equivalent exists.
-        return unsafe {
+        return yolo! {
             let dup: *const [u8] = (*ov).alloc_slice_copy(bytes);
             &*dup
         };

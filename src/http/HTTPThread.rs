@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,7 +45,7 @@ impl SslContextCacheEntry {
     #[inline]
     fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.ctx.as_ptr() }
+        yolo! { &mut *self.ctx.as_ptr() }
     }
 
     /// Release the strong intrusive ref the cache holds on `ctx` (taken at
@@ -56,7 +57,7 @@ impl SslContextCacheEntry {
         // SAFETY: same INVARIANT as [`ctx_mut`] — `ctx` is a
         // `heap::release`-boxed `NewHttpContext` on which the cache holds one
         // strong ref; this `deref` is its sole release.
-        unsafe { NewHttpContext::<true>::deref(self.ctx.as_ptr()) };
+        yolo! { NewHttpContext::<true>::deref(self.ctx.as_ptr()) };
         // self.config_ref drops here (entry.config_ref.deinit()).
     }
 }
@@ -77,7 +78,7 @@ static CUSTOM_SSL_CONTEXT_MAP: bun_core::RacyCell<
 fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslContextCacheEntry> {
     // SAFETY: HTTP-thread-only; initialized on first call. Every call site is
     // a per-statement reborrow (audited in r3), so no two `&mut` overlap.
-    unsafe { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) }
+    yolo! { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
 use bun_event_loop::MiniEventLoop as mini_event_loop;
@@ -286,7 +287,7 @@ impl LibdeflateState {
     #[inline]
     pub fn decompressor_mut<'a>(&self) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.decompressor }
+        yolo! { &mut *self.decompressor }
     }
 }
 
@@ -330,7 +331,7 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
             // SAFETY: `abs_ca_file_name` is Zig `stringZ` (`[:0]const u8`) by
             // contract — already passed as a C string to BoringSSL via
             // `init_with_thread_opts`, so `ptr[len] == 0` holds.
-            let path = unsafe {
+            let path = yolo! {
                 bun_core::ZStr::from_raw(
                     opts.abs_ca_file_name.as_ptr(),
                     opts.abs_ca_file_name.len(),
@@ -386,7 +387,7 @@ impl HttpThread {
     #[inline]
     fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.uws_loop }
+        yolo! { &mut *self.uws_loop }
     }
 
     /// Zig `timer.read()` returns u64 ns directly; Rust `Instant::elapsed().as_nanos()` is u128.
@@ -435,10 +436,10 @@ impl HttpThread {
         // differently. Route through a raw-pointer `.cast()` (identity).
         if IS_SSL {
             // SAFETY: identical type when IS_SSL == true; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.https_context).cast::<NewHttpContext<IS_SSL>>() }
+            yolo! { &mut *(&raw mut self.https_context).cast::<NewHttpContext<IS_SSL>>() }
         } else {
             // SAFETY: identical type when IS_SSL == false; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.http_context).cast::<NewHttpContext<IS_SSL>>() }
+            yolo! { &mut *(&raw mut self.http_context).cast::<NewHttpContext<IS_SSL>>() }
         }
     }
 
@@ -534,7 +535,7 @@ impl HttpThread {
                     // `group.loop_` is null), so reclaiming the Box is safe.
                     // SAFETY: custom_context was just Box::leak'd above and
                     // has refcount 1; reclaim and drop on error.
-                    drop(unsafe {
+                    drop(yolo! {
                         bun_core::heap::take(std::ptr::from_mut::<NewHttpContext<true>>(
                             custom_context,
                         ))
@@ -813,7 +814,7 @@ impl HttpThread {
 
         for http in self.queued_threadlocal_proxy_derefs.drain(..) {
             // SAFETY: pointer was queued by schedule_proxy_deref on this thread; still live.
-            unsafe { ProxyTunnel::deref(http) };
+            yolo! { ProxyTunnel::deref(http) };
         }
         // .clearRetainingCapacity() — drain(..) above already cleared while keeping capacity.
 
@@ -951,7 +952,7 @@ impl HttpThread {
             // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
             // cross-thread while the HTTP thread owns the loop, so forming
             // `&mut Loop` here would alias.
-            unsafe { uws::us_wakeup_loop(self.uws_loop) };
+            yolo! { uws::us_wakeup_loop(self.uws_loop) };
         }
     }
 
@@ -984,7 +985,7 @@ impl HttpThread {
         // shared `&HttpThread` is ever materialised; the HTTP thread itself
         // never holds a long-lived `&mut HttpThread` across the points these
         // touch (both fields are designed for cross-thread shared access).
-        let this = unsafe {
+        let this = yolo! {
             bun_ptr::ParentRef::<Self>::from_raw((*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr())
         };
         {
@@ -992,7 +993,7 @@ impl HttpThread {
             while let Some(task) = batch_.pop() {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
                 let http: *mut AsyncHttp =
-                    unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
+                    yolo! { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
                 this.queued_tasks.push(http);
             }
         }
@@ -1020,7 +1021,7 @@ fn evict_oldest_ssl_context() {
 
 fn start_queued_task(http: *mut AsyncHttp) {
     // SAFETY: http points to a live AsyncHttp queued by the caller thread.
-    let cloned = crate::ThreadlocalAsyncHttp::new(unsafe { core::ptr::read(http) });
+    let cloned = crate::ThreadlocalAsyncHttp::new(yolo! { core::ptr::read(http) });
     // PORT NOTE: Zig used struct copy `http.*`; AsyncHttp is byte-copied here
     // since the original stays valid (real owner is `http`, copy is the
     // HTTP-thread working set).
@@ -1083,7 +1084,7 @@ mod _event_loop_draft {
         // `loop_`/`uws_loop`/contexts.
         // SAFETY: `init_once` runs under `Once`; no other thread reads
         // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
-        unsafe {
+        yolo! {
             (*crate::HTTP_THREAD.get()).write(HttpThread::new());
         }
         crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);

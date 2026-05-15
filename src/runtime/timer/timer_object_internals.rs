@@ -10,6 +10,7 @@
 //! `cancel()`/`do_ref`/`do_unref`/`do_refresh`/`to_primitive` stay in the
 //! gated draft (`TimerObjectInternals.rs`).
 
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use bun_core::{Timespec, TimespecMockMode};
@@ -108,12 +109,12 @@ impl TimerObjectInternals {
         match self.flags.get().kind() {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
             // of a live `ImmediateObject` (set in `init()`).
-            Kind::SetImmediate => TimerParent::Immediate(unsafe {
+            Kind::SetImmediate => TimerParent::Immediate(yolo! {
                 bun_core::from_field_ptr!(ImmediateObject, internals, this)
             }),
             // SAFETY: `kind ∈ {SetTimeout, SetInterval}` ⇒ `self` is the
             // `internals` field of a live `TimeoutObject`.
-            Kind::SetTimeout | Kind::SetInterval => TimerParent::Timeout(unsafe {
+            Kind::SetTimeout | Kind::SetInterval => TimerParent::Timeout(yolo! {
                 bun_core::from_field_ptr!(TimeoutObject, internals, this)
             }),
         }
@@ -126,9 +127,9 @@ impl TimerObjectInternals {
     fn event_loop_timer(&self) -> *mut EventLoopTimer {
         match self.parent_ptr() {
             // SAFETY: `p` points into a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => unsafe { core::ptr::addr_of_mut!((*p).event_loop_timer) },
+            TimerParent::Immediate(p) => yolo! { core::ptr::addr_of_mut!((*p).event_loop_timer) },
             // SAFETY: as above.
-            TimerParent::Timeout(p) => unsafe { core::ptr::addr_of_mut!((*p).event_loop_timer) },
+            TimerParent::Timeout(p) => yolo! { core::ptr::addr_of_mut!((*p).event_loop_timer) },
         }
     }
 
@@ -136,9 +137,9 @@ impl TimerObjectInternals {
     fn ref_(&self) {
         match self.parent_ptr() {
             // SAFETY: `p` is a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => unsafe { ImmediateObject::ref_(p) },
+            TimerParent::Immediate(p) => yolo! { ImmediateObject::ref_(p) },
             // SAFETY: as above.
-            TimerParent::Timeout(p) => unsafe { TimeoutObject::ref_(p) },
+            TimerParent::Timeout(p) => yolo! { TimeoutObject::ref_(p) },
         }
     }
 
@@ -147,9 +148,9 @@ impl TimerObjectInternals {
     fn deref(&self) {
         match self.parent_ptr() {
             // SAFETY: `p` is a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => unsafe { ImmediateObject::deref(p) },
+            TimerParent::Immediate(p) => yolo! { ImmediateObject::deref(p) },
             // SAFETY: as above.
-            TimerParent::Timeout(p) => unsafe { TimeoutObject::deref(p) },
+            TimerParent::Timeout(p) => yolo! { TimeoutObject::deref(p) },
         }
     }
 
@@ -176,17 +177,17 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `vm` is the live per-thread VM (hook contract); field read only.
-        let uws_loop = unsafe { (*vm).uws_loop() };
+        let uws_loop = yolo! { (*vm).uws_loop() };
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // SAFETY: `state` points at the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-            Kind::SetTimeout | Kind::SetInterval => unsafe {
+            Kind::SetTimeout | Kind::SetInterval => yolo! {
                 (*state).timer.increment_timer_ref(delta, uws_loop)
             },
             // setImmediate has slightly different event loop logic
             // SAFETY: as above.
-            Kind::SetImmediate => unsafe {
+            Kind::SetImmediate => yolo! {
                 (*state).timer.increment_immediate_ref(delta, uws_loop)
             },
         }
@@ -223,12 +224,12 @@ impl TimerObjectInternals {
         // SAFETY: `this` live per fn contract; pinned by caller's `ref_()`.
         // `&Self` (NOT `&mut`) — fields are `Cell`/`JsCell` so re-entrant JS
         // touching this object via another `&Self` is sound (no `noalias`).
-        let s = unsafe { &*this };
+        let s = yolo! { &*this };
         // `JSGlobalObject` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
         // deref (panics on null; `vm.global` is never null).
         let global = JSGlobalObject::opaque_ref(global_this);
         // SAFETY: `vm` is the live per-thread VM (hook contract).
-        if unsafe { (*vm).is_inspector_enabled() } {
+        if yolo! { (*vm).is_inspector_enabled() } {
             Debugger::will_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
         }
 
@@ -247,7 +248,7 @@ impl TimerObjectInternals {
         // PORT NOTE: Zig `defer { if isInspectorEnabled() didDispatch }` —
         // moved to tail (no early returns above).
         // SAFETY: as above.
-        if unsafe { (*vm).is_inspector_enabled() } {
+        if yolo! { (*vm).is_inspector_enabled() } {
             Debugger::did_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
         }
 
@@ -284,12 +285,12 @@ impl TimerObjectInternals {
                 f.set_kind(kind);
                 // SAFETY: `state` is the boxed per-thread `RuntimeState`;
                 // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-                f.set_epoch(unsafe { (*state).timer.epoch });
+                f.set_epoch(yolo! { (*state).timer.epoch });
                 Cell::new(f)
             },
             interval: Cell::new(interval),
             // SAFETY: `vm` is the live per-thread VM; field read only.
-            generation: unsafe { (*vm).test_isolation_generation },
+            generation: yolo! { (*vm).test_isolation_generation },
             this_value: JsCell::new(JsRef::empty()),
         };
 
@@ -303,7 +304,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
             // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
             // to `*mut ImmediateObject`.
-            unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
+            yolo! { (*vm).enqueue_immediate_task(parent.cast()) };
             self.set_enable_keeping_event_loop_alive(vm, true);
             // ref'd by event loop
             self.ref_();
@@ -356,15 +357,15 @@ impl TimerObjectInternals {
         // are `Cell`/`JsCell` so re-entrant JS touching this object via another
         // `&Self` is sound (no `noalias`). Last use of `s` is the final
         // `s.deref()` below; `*this` may be freed only after that point.
-        let s = unsafe { &*this };
+        let s = yolo! { &*this };
         let cleared = s.flags.get().has_cleared_timer()
             // SAFETY: `vm` is the live per-thread VM (hook contract).
-            || s.generation != unsafe { (*vm).test_isolation_generation }
+            || s.generation != yolo! { (*vm).test_isolation_generation }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
                 // SAFETY: `vm` live per hook contract.
-                && !unsafe { (*vm).is_event_loop_alive_excluding_immediates() });
+                && !yolo! { (*vm).is_event_loop_alive_excluding_immediates() });
         if cleared {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.this_value.with_mut(|r| r.downgrade());
@@ -383,7 +384,7 @@ impl TimerObjectInternals {
             }
         };
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
-        let global_this = unsafe { (*vm).global };
+        let global_this = yolo! { (*vm).global };
         s.this_value.with_mut(|r| r.downgrade());
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
         s.set_enable_keeping_event_loop_alive(vm, false);
@@ -391,7 +392,7 @@ impl TimerObjectInternals {
 
         // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
         // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
-        unsafe { (*(*vm).event_loop()).enter() };
+        yolo! { (*(*vm).event_loop()).enter() };
         let callback =
             JSImmediate::callback_get_cached(timer).expect("ImmediateObject callback slot");
         let arguments =
@@ -403,7 +404,7 @@ impl TimerObjectInternals {
             // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
             // above pins the parent across re-entrancy.
             let result =
-                unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
+                yolo! { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
             // PORT NOTE: Zig `defer { if state == .FIRED deref(); deref(); }` —
             // moved to tail of this block; `Self::run` has no early return so
             // ordering is preserved. After the second `deref()` `*this` may be
@@ -419,7 +420,7 @@ impl TimerObjectInternals {
         // --- after this point, the timer is no longer guaranteed to be alive ---
 
         // SAFETY: `vm` is live; see `enter()` note above.
-        if unsafe { (*(*vm).event_loop()).exit_maybe_drain_microtasks(!exception_thrown) }.is_err()
+        if yolo! { (*(*vm).event_loop()).exit_maybe_drain_microtasks(!exception_thrown) }.is_err()
         {
             return true;
         }
@@ -461,21 +462,21 @@ impl TimerObjectInternals {
         // `&Self` is sound (no `noalias`; LLVM cannot cache `Cell` reads across
         // `Self::run`). Last use of `s` is the final `s.deref()` at the end of
         // the pinned block; `*this` may be freed only after that point.
-        let s = unsafe { &*this };
+        let s = yolo! { &*this };
         let id = s.id;
         let kind: KindBig = s.flags.get().kind().into();
         let async_id = ID { id, kind };
         let has_been_cleared = s.event_loop_timer_state() == EventLoopTimerState::CANCELLED
             || s.flags.get().has_cleared_timer()
             // SAFETY: `vm` is the live per-thread VM (hook contract).
-            || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
+            || yolo! { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: `vm` live per hook contract.
-            || s.generation != unsafe { (*vm).test_isolation_generation };
+            || s.generation != yolo! { (*vm).test_isolation_generation };
 
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
-        let global_this = unsafe { (*vm).global };
+        let global_this = yolo! { (*vm).global };
         let Some(this_object) = s.this_value.get().try_get() else {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
@@ -510,7 +511,7 @@ impl TimerObjectInternals {
 
         if has_been_cleared || !callback.to_boolean() {
             // SAFETY: `vm`/`global_this` live per hook contract.
-            if unsafe { (*vm).is_inspector_enabled() } {
+            if yolo! { (*vm).is_inspector_enabled() } {
                 Debugger::did_cancel_async_call(
                     // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
                     JSGlobalObject::opaque_ref(global_this),
@@ -543,7 +544,7 @@ impl TimerObjectInternals {
 
         // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
         // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
-        unsafe { (*(*vm).event_loop()).enter() };
+        yolo! { (*(*vm).event_loop()).enter() };
         {
             // Ensure it stays alive for this scope.
             s.ref_();
@@ -553,7 +554,7 @@ impl TimerObjectInternals {
 
             // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
             // above pins the parent across re-entrancy.
-            let _ = unsafe {
+            let _ = yolo! {
                 Self::run(
                     this,
                     global_this,
@@ -592,7 +593,7 @@ impl TimerObjectInternals {
                             // single-threaded JS heap so no concurrent `&mut` to
                             // `.timer`. `event_loop_timer()` derives a fresh raw
                             // ptr (no `&mut` aliasing across `update`).
-                            unsafe {
+                            yolo! {
                                 (*state)
                                     .timer
                                     .update(s.event_loop_timer(), &time_before_call)
@@ -607,7 +608,7 @@ impl TimerObjectInternals {
                         EventLoopTimerState::ACTIVE => {
                             // The developer called timer.refresh() synchronously in the callback.
                             // SAFETY: as above.
-                            unsafe {
+                            yolo! {
                                 (*state)
                                     .timer
                                     .update(s.event_loop_timer(), &time_before_call)
@@ -670,7 +671,7 @@ impl TimerObjectInternals {
         // --- after this point, the timer is no longer guaranteed to be alive ---
 
         // SAFETY: `vm` is live; see `enter()` note above.
-        unsafe { (*(*vm).event_loop()).exit() };
+        yolo! { (*(*vm).event_loop()).exit() };
     }
 
     /// Spec TimerObjectInternals.zig `convertToInterval` — a `setTimeout` whose
@@ -759,14 +760,14 @@ impl TimerObjectInternals {
         if was_active {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
             // `&mut` to `.timer` for this call only.
-            unsafe { (*state).timer.remove(self.event_loop_timer()) };
+            yolo! { (*state).timer.remove(self.event_loop_timer()) };
         } else {
             self.ref_();
         }
 
         // SAFETY: as above — `event_loop_timer()` derives a fresh raw ptr (no
         // `&mut` aliasing across `update`).
-        unsafe {
+        yolo! {
             (*state)
                 .timer
                 .update(self.event_loop_timer(), &scheduled_time)
@@ -818,7 +819,7 @@ impl TimerObjectInternals {
         if self.event_loop_timer_state() == EventLoopTimerState::ACTIVE {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-            unsafe { (*state).timer.remove(self.event_loop_timer()) };
+            yolo! { (*state).timer.remove(self.event_loop_timer()) };
         }
 
         // (c) `vm.timer.maps.get(kind).orderedRemove(id)` if
@@ -826,7 +827,7 @@ impl TimerObjectInternals {
         //     entry minted by `toPrimitive`.
         if self.flags.get().has_accessed_primitive() {
             // SAFETY: as above — fresh `&mut` to `.timer.maps` for this call.
-            let map = unsafe { (*state).timer.maps.get(kind) };
+            let map = yolo! { (*state).timer.maps.get(kind) };
             // PORT NOTE: Zig follows up with a shrink-and-free heuristic
             // (>256 KiB slack ⇒ `shrinkAndFree`); `bun_collections::ArrayHashMap`
             // exposes neither `capacity()` nor `shrink_and_free()`, so the
@@ -852,10 +853,10 @@ impl TimerObjectInternals {
     /// Read-only `container_of` to the owning `EventLoopTimer.state`.
     ///
     /// Single back-ref deref site for the read path: every former
-    /// `unsafe { (*self.event_loop_timer()).state }` routes through here.
+    /// `yolo! { (*self.event_loop_timer()).state }` routes through here.
     fn event_loop_timer_state(&self) -> EventLoopTimerState {
         // SAFETY: ptr into the live parent per `parent_ptr()`; read-only deref.
-        unsafe { (*self.event_loop_timer()).state }
+        yolo! { (*self.event_loop_timer()).state }
     }
 
     /// Write the owning `EventLoopTimer.state`. Paired write-side accessor for
@@ -866,7 +867,7 @@ impl TimerObjectInternals {
         // plain `Copy` enum; writes happen on the single JS thread, and
         // `event_loop_timer()` returns a raw `*mut` precisely so re-entrant
         // `cancel()`/`refresh()` cannot alias a `&mut` (see its doc comment).
-        unsafe { (*self.event_loop_timer()).state = state };
+        yolo! { (*self.event_loop_timer()).state = state };
     }
 
     /// Spec TimerObjectInternals.zig `doRef`.
@@ -956,7 +957,7 @@ impl TimerObjectInternals {
             let elt = self.event_loop_timer();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer.maps`.
-            unsafe {
+            yolo! {
                 (*state)
                     .timer
                     .maps
@@ -1018,7 +1019,7 @@ impl TimerObjectInternals {
             debug_assert!(!state.is_null(), "RuntimeState not installed");
             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-            unsafe { (*state).timer.remove(self.event_loop_timer()) };
+            yolo! { (*state).timer.remove(self.event_loop_timer()) };
             self.deref();
         }
     }

@@ -2,6 +2,7 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
+use bun_yolo::yolo;
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -48,7 +49,7 @@ impl ClientContext {
     #[inline]
     fn qctx_mut(&mut self) -> &mut quic::Context {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.qctx.as_ptr() }
+        yolo! { &mut *self.qctx.as_ptr() }
     }
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
@@ -67,7 +68,7 @@ impl ClientContext {
     pub fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
         // SAFETY: see INVARIANT above — leaked Box, process-lifetime,
         // HTTP-thread-confined singleton.
-        unsafe { &mut *this.as_ptr() }
+        yolo! { &mut *this.as_ptr() }
     }
 
     pub fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
@@ -76,7 +77,7 @@ impl ClientContext {
         }
         LSQUIC_INIT_ONCE.call_once(|| quic::global_init());
         // SAFETY: caller passes the live HTTP-thread uws loop.
-        let qctx = unsafe {
+        let qctx = yolo! {
             quic::Context::create_client(
                 loop_,
                 0,

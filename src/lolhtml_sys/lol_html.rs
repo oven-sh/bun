@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
@@ -56,7 +57,7 @@ fn ptr_without_panic(buf: &[u8]) -> *const u8 {
 /// validity requirement is non-null — which `<*mut T>::as_mut`/`as_ref`
 /// already check. That lets callers store the lol-html-owned pointer as
 /// `*mut T` (nullable after detach) and recover a usable `&mut T` without a
-/// per-call `unsafe { }` at every method site.
+/// per-call `yolo! { }` at every method site.
 mod sealed {
     pub trait Sealed {}
 }
@@ -70,7 +71,7 @@ pub trait Opaque: sealed::Sealed {
         // SAFETY: `Self` is a zero-sized `UnsafeCell<[u8; 0]>` opaque (sealed
         // impls only); a non-null pointer to a ZST is always dereferenceable
         // for 0 bytes and `&mut` over `UnsafeCell` carries no `noalias`.
-        unsafe { p.as_mut() }
+        yolo! { p.as_mut() }
     }
 }
 macro_rules! lol_opaque {
@@ -111,7 +112,7 @@ impl HTMLRewriter {
         auto_disable();
         let ptr = ptr_without_panic(chunk);
         // SAFETY: caller guarantees `this` is valid; ptr/len describe a valid slice
-        let rc = unsafe { lol_html_rewriter_write(this, ptr, chunk.len()) };
+        let rc = yolo! { lol_html_rewriter_write(this, ptr, chunk.len()) };
         if rc < 0 {
             return Err(Error::Fail);
         }
@@ -132,7 +133,7 @@ impl HTMLRewriter {
         auto_disable();
 
         // SAFETY: caller guarantees `this` is valid
-        if unsafe { lol_html_rewriter_end(this) } < 0 {
+        if yolo! { lol_html_rewriter_end(this) } < 0 {
             return Err(Error::Fail);
         }
         Ok(())
@@ -143,7 +144,7 @@ impl HTMLRewriter {
     pub unsafe fn destroy(this: *mut HTMLRewriter) {
         auto_disable();
         // SAFETY: caller guarantees `this` was returned by lol_html_rewriter_build and not yet freed
-        unsafe { lol_html_rewriter_free(this) };
+        yolo! { lol_html_rewriter_free(this) };
     }
 }
 
@@ -202,13 +203,13 @@ impl HTMLRewriterBuilder {
     pub unsafe fn destroy(this: *mut HTMLRewriterBuilder) {
         auto_disable();
         // SAFETY: caller guarantees `this` came from lol_html_rewriter_builder_new and not yet freed
-        unsafe { lol_html_rewriter_builder_free(this) };
+        yolo! { lol_html_rewriter_builder_free(this) };
     }
 
     pub fn init() -> *mut HTMLRewriterBuilder {
         auto_disable();
         // SAFETY: FFI constructor; returns a fresh builder
-        unsafe { lol_html_rewriter_builder_new() }
+        yolo! { lol_html_rewriter_builder_new() }
     }
 
     /// Adds document-level content handlers to the builder.
@@ -252,7 +253,7 @@ impl HTMLRewriterBuilder {
 
         // SAFETY: self is a valid builder; handler fn pointers are valid extern "C" trampolines;
         // user_data pointers are either null or point to live handler objects the caller keeps alive
-        unsafe {
+        yolo! {
             lol_html_rewriter_builder_add_document_content_handlers(
                 self,
                 doctype_handler_data.map(|_| directive_handler::<DocType, DT> as _),
@@ -313,7 +314,7 @@ impl HTMLRewriterBuilder {
         auto_disable();
         // SAFETY: self/selector are valid FFI handles; trampolines are valid extern "C" fns;
         // user_data pointers are either null or point to live handler objects the caller keeps alive
-        let rc = unsafe {
+        let rc = yolo! {
             lol_html_rewriter_builder_add_element_content_handlers(
                 self,
                 selector,
@@ -354,7 +355,7 @@ impl HTMLRewriterBuilder {
         let encoding_ = encoding.label();
         // SAFETY: self is a valid builder; encoding_ is a valid static slice; output_sink_function::<S>
         // is a valid extern "C" trampoline; output_sink lives as long as the rewriter (caller invariant)
-        let ptr = unsafe {
+        let ptr = yolo! {
             lol_html_rewriter_build(
                 self,
                 encoding_.as_ptr(),
@@ -387,10 +388,10 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(
 
     // Zig: @setRuntimeSafety(false)
     // SAFETY: user_data was set to &mut S in build(); ptr[0..len] is valid for the duration of this call
-    let this = unsafe { bun_core::callback_ctx::<S>(user_data) };
+    let this = yolo! { bun_core::callback_ctx::<S>(user_data) };
     match len {
         0 => this.done(),
-        _ => this.write(unsafe { bun_core::ffi::slice(ptr, len) }),
+        _ => this.write(yolo! { bun_core::ffi::slice(ptr, len) }),
     }
 }
 
@@ -409,7 +410,7 @@ impl HTMLSelector {
     pub unsafe fn destroy(selector: *mut HTMLSelector) {
         auto_disable();
         // SAFETY: caller guarantees `selector` was returned by parse() and not yet freed
-        unsafe { lol_html_selector_free(selector) };
+        yolo! { lol_html_selector_free(selector) };
     }
 
     /// Parses given CSS selector string.
@@ -425,7 +426,7 @@ impl HTMLSelector {
         auto_disable();
 
         // SAFETY: ptr_without_panic returns a valid non-null pointer; len matches selector
-        let ptr = unsafe { lol_html_selector_parse(ptr_without_panic(selector), selector.len()) };
+        let ptr = yolo! { lol_html_selector_parse(ptr_without_panic(selector), selector.len()) };
         if ptr.is_null() {
             Err(Error::Fail)
         } else {
@@ -449,7 +450,7 @@ impl TextChunkContent {
     pub fn slice(&self) -> &[u8] {
         auto_disable();
         // SAFETY: lol-html guarantees ptr[0..len] is valid for the lifetime of the handler call
-        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
+        yolo! { bun_core::ffi::slice(self.ptr, self.len) }
     }
 }
 
@@ -457,7 +458,7 @@ impl TextChunkContent {
 // `&mut TextChunk` are ABI-identical to a non-null pointer with no
 // `readonly`/`noalias` attribute. Shims whose only pointer argument is the
 // chunk itself (plus value-type returns) are declared `safe fn` so the
-// validity proof lives in the type signature instead of per-call `unsafe { }`.
+// validity proof lives in the type signature instead of per-call `yolo! { }`.
 // Shims that take a separate (ptr,len) pair stay `unsafe`.
 unsafe extern "C" {
     safe fn lol_html_text_chunk_content_get(chunk: &TextChunk) -> TextChunkContent;
@@ -505,7 +506,7 @@ impl TextChunk {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        if unsafe {
+        if yolo! {
             lol_html_text_chunk_before(self, ptr_without_panic(content), content.len(), is_html)
         } < 0
         {
@@ -522,7 +523,7 @@ impl TextChunk {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        if unsafe {
+        if yolo! {
             lol_html_text_chunk_after(self, ptr_without_panic(content), content.len(), is_html)
         } < 0
         {
@@ -540,7 +541,7 @@ impl TextChunk {
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        if unsafe {
+        if yolo! {
             lol_html_text_chunk_replace(self, ptr_without_panic(content), content.len(), is_html)
         } < 0
         {
@@ -675,12 +676,12 @@ impl Element {
     pub fn get_attribute(&self, name: &[u8]) -> HTMLString {
         auto_disable();
         // SAFETY: name ptr/len describe a valid slice
-        unsafe { lol_html_element_get_attribute(self, ptr_without_panic(name), name.len()) }
+        yolo! { lol_html_element_get_attribute(self, ptr_without_panic(name), name.len()) }
     }
     pub fn has_attribute(&self, name: &[u8]) -> Result<bool, Error> {
         auto_disable();
         // SAFETY: name ptr/len describe a valid slice
-        match unsafe { lol_html_element_has_attribute(self, ptr_without_panic(name), name.len()) } {
+        match yolo! { lol_html_element_has_attribute(self, ptr_without_panic(name), name.len()) } {
             0 => Ok(false),
             1 => Ok(true),
             -1 => Err(Error::Fail),
@@ -690,7 +691,7 @@ impl Element {
     pub fn set_attribute(&mut self, name: &[u8], value: &[u8]) -> Result<(), Error> {
         auto_disable();
         // SAFETY: name/value ptr/len describe valid slices
-        match unsafe {
+        match yolo! {
             lol_html_element_set_attribute(
                 self,
                 ptr_without_panic(name),
@@ -707,7 +708,7 @@ impl Element {
     pub fn remove_attribute(&mut self, name: &[u8]) -> Result<(), Error> {
         auto_disable();
         // SAFETY: name ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_element_remove_attribute(self, ptr_without_panic(name), name.len())
         } {
             0 => Ok(()),
@@ -718,7 +719,7 @@ impl Element {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_element_before(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -729,7 +730,7 @@ impl Element {
     pub fn prepend(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_element_prepend(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -740,7 +741,7 @@ impl Element {
     pub fn append(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_element_append(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -751,7 +752,7 @@ impl Element {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_element_after(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -762,7 +763,7 @@ impl Element {
     pub fn set_inner_content(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_element_set_inner_content(
                 self,
                 ptr_without_panic(content),
@@ -784,7 +785,7 @@ impl Element {
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_element_replace(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -846,7 +847,7 @@ impl Element {
 
     pub fn set_tag_name(&mut self, name: &[u8]) -> Result<(), Error> {
         // SAFETY: name ptr/len describe a valid slice
-        match unsafe { lol_html_element_tag_name_set(self, ptr_without_panic(name), name.len()) } {
+        match yolo! { lol_html_element_tag_name_set(self, ptr_without_panic(name), name.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -888,14 +889,14 @@ impl HTMLString {
         auto_disable();
         // if (this.len > 0) {
         // SAFETY: self was returned by an lol_html_* fn that allocates a string
-        unsafe { lol_html_str_free(self) };
+        yolo! { lol_html_str_free(self) };
         // }
     }
 
     pub fn last_error() -> HTMLString {
         auto_disable();
         // SAFETY: FFI getter for thread-local last error
-        unsafe { lol_html_take_last_error() }
+        yolo! { lol_html_take_last_error() }
     }
 
     pub fn slice(&self) -> &[u8] {
@@ -905,7 +906,7 @@ impl HTMLString {
         // lol_html_doctype_*_get) return { data: NULL, len: 0 } to mean "absent". `ffi::slice`
         // tolerates the (null, 0) shape.
         // SAFETY: lol-html guarantees ptr[0..len] is valid until lol_html_str_free
-        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
+        yolo! { bun_core::ffi::slice(self.ptr, self.len) }
     }
 
     /// Free callback for `bun.String.createExternal`. Exposed so the higher-level
@@ -913,7 +914,7 @@ impl HTMLString {
     pub extern "C" fn deinit_external(_: *mut u8, ptr: *mut c_void, len: usize) {
         auto_disable();
         // SAFETY: ptr/len were the original HTMLString fields passed to createExternal
-        unsafe {
+        yolo! {
             lol_html_str_free(HTMLString {
                 ptr: ptr as *const u8,
                 len,
@@ -962,7 +963,7 @@ impl EndTag {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_end_tag_before(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -974,7 +975,7 @@ impl EndTag {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_end_tag_after(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -986,7 +987,7 @@ impl EndTag {
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_end_tag_replace(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -1007,7 +1008,7 @@ impl EndTag {
     pub fn set_name(&mut self, name: &[u8]) -> Result<(), Error> {
         auto_disable();
         // SAFETY: name ptr/len describe a valid slice
-        match unsafe { lol_html_end_tag_name_set(self, ptr_without_panic(name), name.len()) } {
+        match yolo! { lol_html_end_tag_name_set(self, ptr_without_panic(name), name.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -1062,7 +1063,7 @@ impl AttributeIterator {
         if p.is_null() {
             None
         } else {
-            Some(unsafe { &*p })
+            Some(yolo! { &*p })
         }
     }
 
@@ -1116,7 +1117,7 @@ impl Comment {
     pub fn set_text(&mut self, text: &[u8]) -> Result<(), Error> {
         auto_disable();
         // SAFETY: text ptr/len describe a valid slice
-        match unsafe { lol_html_comment_text_set(self, ptr_without_panic(text), text.len()) } {
+        match yolo! { lol_html_comment_text_set(self, ptr_without_panic(text), text.len()) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),
@@ -1126,7 +1127,7 @@ impl Comment {
     pub fn before(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -1139,7 +1140,7 @@ impl Comment {
         auto_disable();
         // PORT NOTE: Zig source calls lol_html_comment_before here (likely an upstream bug); ported faithfully
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -1151,7 +1152,7 @@ impl Comment {
     pub fn after(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_comment_after(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -1211,7 +1212,7 @@ impl DocEnd {
     pub fn append(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
         // SAFETY: content ptr/len describe a valid slice
-        match unsafe {
+        match yolo! {
             lol_html_doc_end_append(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
@@ -1247,7 +1248,7 @@ pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Conta
 ) -> Directive {
     auto_disable();
     // SAFETY: user_data was set to &mut U when registering; this is valid for the handler call
-    let result = unsafe { (&mut *user_data.cast::<U>()).call(&mut *this) };
+    let result = yolo! { (&mut *user_data.cast::<U>()).call(&mut *this) };
     // @enumFromInt(@intFromBool(result))
     if result {
         Directive::Stop

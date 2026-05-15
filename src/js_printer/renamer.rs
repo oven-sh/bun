@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
 use std::io::Write as _;
@@ -688,7 +689,7 @@ impl NumberRenamer {
     ) {
         let s: *mut NumberScope = self.number_scope_pool.get();
         // SAFETY: `s` is a valid pool slot (HiveArrayFallback::get never returns null).
-        unsafe {
+        yolo! {
             s.write(NumberScope {
                 parent,
                 name_counts: StringHashMap::default(),
@@ -701,7 +702,7 @@ impl NumberRenamer {
         // so no scopeguard needed; cleanup runs unconditionally below.
         // SAFETY: s came from number_scope_pool.get() and was initialized above;
         // `put` drops `name_counts` in place before recycling the slot.
-        unsafe { self.number_scope_pool.put(s) };
+        yolo! { self.number_scope_pool.put(s) };
     }
 
     fn assign_names_in_scope(
@@ -752,7 +753,7 @@ impl NumberRenamer {
             if scope.members.count() > 0 || scope.generated.len_u32() > 0 {
                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
                 // SAFETY: `new_child_scope` is a valid pool slot.
-                unsafe {
+                yolo! {
                     new_child_scope.write(NumberScope {
                         // `s` is non-null (either `initial_scope` or a fresh
                         // pool slot from a prior iteration); the new child
@@ -766,7 +767,7 @@ impl NumberRenamer {
                 s = new_child_scope;
 
                 // SAFETY: s is a valid pool slot just initialized above
-                self.assign_names_in_scope(unsafe { &mut *s }, scope, source_index, sorted);
+                self.assign_names_in_scope(yolo! { &mut *s }, scope, source_index, sorted);
             }
 
             if scope.children.len_u32() == 1 {
@@ -794,13 +795,13 @@ impl NumberRenamer {
             // SAFETY: `s` is a pool slot we allocated and initialized in the
             // loop above; every such slot has `parent: Some(...)`. Read parent
             // before `put` (which drops/frees the slot).
-            let parent = unsafe { (*s).parent }
+            let parent = yolo! { (*s).parent }
                 .map(|p| p.as_mut_ptr())
                 .unwrap_or(initial_scope);
             // SAFETY: `s` came from `number_scope_pool.get()` in the loop above
             // and was fully initialized; `put` drops `name_counts` in place
             // before recycling/freeing the slot.
-            unsafe { self.number_scope_pool.put(s) };
+            yolo! { self.number_scope_pool.put(s) };
             s = parent;
         }
     }
@@ -810,7 +811,7 @@ impl NumberRenamer {
         // TODO(port): self.assign_name needs &mut self AND &mut self.root simultaneously
         let root: *mut NumberScope = &raw mut self.root;
         // SAFETY: assign_name does not touch self.root through `self`
-        self.assign_name(unsafe { &mut *root }, ref_);
+        self.assign_name(yolo! { &mut *root }, ref_);
     }
 
     pub fn add_top_level_declared_symbols(

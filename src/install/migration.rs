@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::VecExt;
 use bun_collections::{StringArrayHashMap, StringHashMap};
@@ -863,7 +864,7 @@ pub fn migrate_npm_lockfile<'a>(
     #[cfg(debug_assertions)]
     {
         // SAFETY: capacity reserved above for num_deps
-        unsafe {
+        yolo! {
             for i in 0..(num_deps as usize) {
                 core::ptr::write(dependencies_base.add(i), Dependency::default());
                 core::ptr::write(resolutions_base.add(i), UNSET_PACKAGE_ID);
@@ -1004,7 +1005,7 @@ pub fn migrate_npm_lockfile<'a>(
                     let wksp_name = sb.append(&value.name)?;
                     let wksp_path = sb.append(key)?;
                     // SAFETY: deps_cursor < num_deps; capacity reserved above
-                    unsafe {
+                    yolo! {
                         core::ptr::write(
                             dependencies_base.add(deps_cursor),
                             Dependency {
@@ -1175,7 +1176,7 @@ pub fn migrate_npm_lockfile<'a>(
                             };
 
                             // SAFETY: cursor < num_deps; capacity reserved
-                            unsafe {
+                            yolo! {
                                 core::ptr::write(
                                     dependencies_base.add(deps_cursor),
                                     Dependency {
@@ -1445,7 +1446,7 @@ pub fn migrate_npm_lockfile<'a>(
                                             if b.value {
                                                 let behavior = Behavior::OPTIONAL | Behavior::PEER;
                                                 // SAFETY: cursor < num_deps; capacity reserved
-                                                unsafe {
+                                                yolo! {
                                                     core::ptr::write(
                                                         dependencies_base.add(deps_cursor),
                                                         Dependency {
@@ -1488,7 +1489,7 @@ pub fn migrate_npm_lockfile<'a>(
     }
 
     // SAFETY: res_cursor elements written above into reserved capacity
-    unsafe {
+    yolo! {
         this.buffers.resolutions.set_len(res_cursor);
         this.buffers.dependencies.set_len(res_cursor);
     }

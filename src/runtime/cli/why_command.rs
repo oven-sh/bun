@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::io::Write as _;
@@ -355,7 +356,7 @@ impl WhyCommand {
         // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
-        let log = unsafe { ctx.log_mut() };
+        let log = yolo! { ctx.log_mut() };
 
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
         let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);

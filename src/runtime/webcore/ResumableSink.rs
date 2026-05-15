@@ -4,6 +4,7 @@
 //! Calling `cancel` will cancel the stream, onEnd will be called with the reason passed to cancel.
 //! Different from JSSink this is not intended to be exposed to the users, like FileSink or HTTPRequestSink etc.
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::cell::Cell;
 
@@ -132,12 +133,12 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         // SAFETY: `context` is a BACKREF to the owning Context (FetchTasklet /
         // S3UploadStreamWrapper) which outlives this sink — see LIFETIMES.tsv.
         // Dereferenced as `&mut` because impls mutate (detachSink, deref, etc.).
-        unsafe { (*ctx).write_request_data(bytes) }
+        yolo! { (*ctx).write_request_data(bytes) }
     }
     #[inline]
     fn on_end(ctx: *mut Context, err: Option<JSValue>) {
         // SAFETY: see on_write.
-        unsafe { (*ctx).write_end_request(err) }
+        yolo! { (*ctx).write_end_request(err) }
     }
 
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
@@ -171,7 +172,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             _js: core::marker::PhantomData,
         }));
         // SAFETY: just allocated above; unique &mut for the remainder of this fn.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
 
         if stream.is_locked(global_this) || stream.is_disturbed(global_this) {
             // PORT NOTE: `SystemError` has no `Default` impl upstream — spell out
@@ -192,7 +193,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             Self::on_end(this_ref.context, Some(err_instance));
             // SAFETY: `this` allocated above; may free here (see Zig — caller
             // gets a dangling ptr in the error path and must not deref it).
-            unsafe { Self::deref_(this) };
+            yolo! { Self::deref_(this) };
             return this;
         }
         if let Some(byte_stream) = stream.ptr.bytes() {
@@ -225,7 +226,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                     Self::on_end(this_ref.context, err);
                     // SAFETY: see the locked/disturbed branch above.
-                    unsafe { Self::deref_(this) };
+                    yolo! { Self::deref_(this) };
                     return this;
                 }
                 // We can pipe but we also wanna to drain as much as possible first
@@ -392,7 +393,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 // SAFETY: `bun_vm()` returns a live `*mut VirtualMachine` owned by
                 // the global; `event_loop()` returns its self-referential
                 // `*mut EventLoop`. Both outlive this call.
-                unsafe {
+                yolo! {
                     (*global_object.bun_vm().as_mut().event_loop()).run_callback(
                         ondrain,
                         global_object,
@@ -434,7 +435,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             if let Some(callback) = on_cancel_callback {
                 // SAFETY: see `drain()` — VM/event-loop pointers are live for the
                 // global's lifetime.
-                unsafe {
+                yolo! {
                     (*global_object.bun_vm().as_mut().event_loop()).run_callback(
                         callback,
                         global_object,
@@ -475,7 +476,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let this = bun_core::heap::release(self);
         this.js_this.finalize();
         // SAFETY: `this` is the live m_ctx allocation; `deref_` frees on count==0.
-        unsafe { Self::deref_(this) };
+        yolo! { Self::deref_(this) };
     }
 
     fn on_stream_pipe(&mut self, mut stream: StreamResult) {
@@ -555,7 +556,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let this: *mut Self = self;
         // SAFETY: `this` was allocated via `heap::alloc` in `init_exact_refs`
         // and is live until the final `deref_` below drops the count to 0.
-        unsafe {
+        yolo! {
             if !js_is_strong {
                 // no js attached, so we can just deref
                 Self::deref_(this);
@@ -572,7 +573,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     #[inline]
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: forwarded caller contract.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
+        yolo! { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 }
 

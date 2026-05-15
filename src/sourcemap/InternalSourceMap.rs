@@ -84,6 +84,7 @@
 //! Delta indices are 0..count-2 (first mapping is the seed; only count-1
 //! deltas are encoded).
 
+use bun_yolo::yolo;
 use core::mem::size_of;
 use core::ptr;
 
@@ -148,31 +149,31 @@ impl InternalSourceMap {
     #[inline]
     pub fn total_len(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes (validated by is_valid_blob / producer).
-        unsafe { u64::from_ne_bytes(*self.data.cast::<[u8; 8]>()) as usize }
+        yolo! { u64::from_ne_bytes(*self.data.cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
     pub fn mapping_count(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u64::from_ne_bytes(*self.data.add(8).cast::<[u8; 8]>()) as usize }
+        yolo! { u64::from_ne_bytes(*self.data.add(8).cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
     pub fn input_line_count(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u64::from_ne_bytes(*self.data.add(16).cast::<[u8; 8]>()) as usize }
+        yolo! { u64::from_ne_bytes(*self.data.add(16).cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
     pub fn sync_count(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
+        yolo! { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
     }
 
     #[inline]
     pub fn stream_offset(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*self.data.add(28).cast::<[u8; 4]>()) }
+        yolo! { u32::from_ne_bytes(*self.data.add(28).cast::<[u8; 4]>()) }
     }
 
     pub fn sync_entry(self, index: usize) -> SyncEntry {
@@ -180,7 +181,7 @@ impl InternalSourceMap {
         // SAFETY: index < sync_count, sync entries are laid out contiguously
         // starting at HEADER_SIZE; blob layout is byte-addressed (no alignment
         // assumed) so we read unaligned.
-        unsafe { ptr::read_unaligned(self.data.add(off).cast::<SyncEntry>()) }
+        yolo! { ptr::read_unaligned(self.data.add(off).cast::<SyncEntry>()) }
     }
 
     #[inline]
@@ -189,7 +190,7 @@ impl InternalSourceMap {
         // is valid; callers in this file only use the slice while `self` is live.
         // SAFETY: stream_offset..total_len is within the blob (validated by
         // is_valid_blob / producer).
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts(
                 self.data.add(self.stream_offset() as usize),
                 self.total_len() - self.stream_offset() as usize,
@@ -206,7 +207,7 @@ impl InternalSourceMap {
     pub fn free_owned(self) {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
-        unsafe {
+        yolo! {
             drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
                 self.data.cast_mut(),
                 self.total_len(),
@@ -330,7 +331,7 @@ fn write_varint(buf: *mut u8, signed: i32) -> usize {
             byte |= 0x80;
         }
         // SAFETY: caller guarantees buf has at least MAX_VARINT_LEN bytes available.
-        unsafe { *buf.add(i) = byte };
+        yolo! { *buf.add(i) = byte };
         i += 1;
         if v == 0 {
             return i;
@@ -367,7 +368,7 @@ fn read_varint(bytes: &[u8], pos: &mut usize) -> i32 {
 #[inline]
 fn test_bit(base: *const u8, idx: usize) -> bool {
     // SAFETY: caller guarantees base[idx >> 3] is within the window header / mask region.
-    unsafe { (*base.add(idx >> 3) >> (idx & 7)) & 1 != 0 }
+    yolo! { (*base.add(idx >> 3) >> (idx & 7)) & 1 != 0 }
 }
 
 const FLAG_HAS_GEN_LINE_EXCEPTIONS: u8 = 1 << 2;
@@ -432,13 +433,13 @@ impl WindowReader {
         // SAFETY: `bytes` was set from `InternalSourceMap.stream()` which is
         // valid for the lifetime of the blob; readers are only used while the
         // blob is live.
-        unsafe { &*self.bytes }
+        yolo! { &*self.bytes }
     }
 
     fn parse(&mut self, bytes: &[u8], start: usize) {
         // SAFETY: `start` is a valid window header offset within `bytes` (came
         // from a SyncEntry.byte_offset produced by Builder).
-        let b = unsafe { bytes.as_ptr().add(start) };
+        let b = yolo! { bytes.as_ptr().add(start) };
         self.bytes = std::ptr::from_ref::<[u8]>(bytes);
         self.base = b;
         // Clamp `count` so a corrupted header byte cannot drive `next()` past
@@ -446,21 +447,21 @@ impl WindowReader {
         // exceed K; this is defense-in-depth for the standalone-graph path.
         // SAFETY: window header is 32 bytes within the stream; COUNT_OFF/FLAGS_OFF
         // are fixed offsets within that 32-byte header at `b`.
-        self.count = unsafe { *b.add(win_hdr::COUNT_OFF) }.min(SYNC_INTERVAL as u8);
+        self.count = yolo! { *b.add(win_hdr::COUNT_OFF) }.min(SYNC_INTERVAL as u8);
         // SAFETY: same — FLAGS_OFF is within the 32-byte header at `b`.
-        let flags = unsafe { *b.add(win_hdr::FLAGS_OFF) };
+        let flags = yolo! { *b.add(win_hdr::FLAGS_OFF) };
         self.flags = flags;
         self.delta_idx = 0;
 
         // SAFETY: u16 LE fields at fixed header offsets within the 32-byte header.
         let gen_col_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
+            yolo! { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
         let orig_line_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
+            yolo! { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
         let orig_col_len: usize =
-            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
+            yolo! { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
 
         self.gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
@@ -480,7 +481,7 @@ impl WindowReader {
             }
             if flags & FLAG_HAS_SRC_IDX != 0 {
                 // SAFETY: pos is within bytes (mask region is 8 bytes).
-                self.src_idx_mask = unsafe { bytes.as_ptr().add(pos) };
+                self.src_idx_mask = yolo! { bytes.as_ptr().add(pos) };
                 pos += 8;
                 self.src_idx_exc_pos = pos;
             }
@@ -500,7 +501,7 @@ impl WindowReader {
 
         let mut d_gen_line: i32 = if test_bit(
             // SAFETY: header masks are at fixed offsets within the 32-byte header at `b`.
-            unsafe { b.add(win_hdr::GEN_LINE_MASK_OFF) },
+            yolo! { b.add(win_hdr::GEN_LINE_MASK_OFF) },
             delta_idx as usize,
         ) {
             1
@@ -510,7 +511,7 @@ impl WindowReader {
         let d_gen_col = read_varint(bytes, &mut self.gen_col_pos);
         let mut d_orig_line: i32 = if test_bit(
             // SAFETY: header masks are at fixed offsets within the 32-byte header at `b`.
-            unsafe { b.add(win_hdr::ORIG_LINE_EQ_MASK_OFF) },
+            yolo! { b.add(win_hdr::ORIG_LINE_EQ_MASK_OFF) },
             delta_idx as usize,
         ) {
             d_gen_line
@@ -519,7 +520,7 @@ impl WindowReader {
         };
         let d_orig_col: i32 = if test_bit(
             // SAFETY: header masks are at fixed offsets within the 32-byte header at `b`.
-            unsafe { b.add(win_hdr::ORIG_COL_EQ_MASK_OFF) },
+            yolo! { b.add(win_hdr::ORIG_COL_EQ_MASK_OFF) },
             delta_idx as usize,
         ) {
             d_gen_col
@@ -555,7 +556,7 @@ impl WindowReader {
             *d_gen_line = read_varint(bytes, &mut p);
             if test_bit(
                 // SAFETY: header mask at fixed offset within `base`.
-                unsafe { self.base.add(win_hdr::ORIG_LINE_EQ_MASK_OFF) },
+                yolo! { self.base.add(win_hdr::ORIG_LINE_EQ_MASK_OFF) },
                 delta_idx as usize,
             ) {
                 *d_orig_line = *d_gen_line;
@@ -1003,7 +1004,7 @@ impl Builder {
         // tail of this fn flushes (resetting to 0) the moment it would reach
         // SYNC_INTERVAL, so on entry `pending_n <= SYNC_INTERVAL-1`. Elides the
         // per-mapping bounds check (Zig stores into `self.pending[n]` unchecked).
-        unsafe {
+        yolo! {
             *self.pending_generated_line.get_unchecked_mut(i) = generated_line;
             *self.pending_generated_column.get_unchecked_mut(i) = current.generated_column;
             *self.pending_source_index.get_unchecked_mut(i) = current.source_index;
@@ -1078,13 +1079,13 @@ impl Builder {
         let cap: usize = src_idx_base + 8 + n_deltas * MAX_VARINT_LEN;
         let buf_ptr: *mut u8 = self.win_stream.reserve_spare(cap).as_mut_ptr().cast();
         // SAFETY: `cap >= GEN_COL_LANE_OFF` bytes were just reserved as spare.
-        unsafe { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
+        yolo! { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
         // SAFETY: COUNT_OFF is within the zeroed 32-byte header.
-        unsafe { *buf_ptr.add(win_hdr::COUNT_OFF) = n };
+        yolo! { *buf_ptr.add(win_hdr::COUNT_OFF) = n };
         // The src_idx lane starts with an 8-byte "d_src_idx == 0" bitmask; zero
         // it up front so the loop can OR bits in as it goes.
         // SAFETY: [src_idx_base, src_idx_base + 8) is within the reserved `cap`.
-        unsafe { buf_ptr.add(src_idx_base).write_bytes(0, 8) };
+        yolo! { buf_ptr.add(src_idx_base).write_bytes(0, 8) };
 
         let mut flags: u8 = 0;
         let mut w_gen_col = gen_col_base;
@@ -1110,29 +1111,29 @@ impl Builder {
             // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
             // and the header mask byte offset is within the zeroed 32-byte header.
             if d_gen_line >= 1 {
-                unsafe { *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit };
+                yolo! { *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit };
             }
 
             // gen_col lane: one zig-zag varint per delta.
             // SAFETY: `w_gen_col` stays within [gen_col_base, gen_col_base + nd*MAX_VARINT_LEN).
-            w_gen_col += write_varint(unsafe { buf_ptr.add(w_gen_col) }, d_gen_col);
+            w_gen_col += write_varint(yolo! { buf_ptr.add(w_gen_col) }, d_gen_col);
 
             // orig_line: a bit in the eq-mask when it equals d_gen_line, else one varint.
             if d_orig_line == d_gen_line {
                 // SAFETY: mask byte within the zeroed 32-byte header.
-                unsafe { *buf_ptr.add(win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)) |= bit };
+                yolo! { *buf_ptr.add(win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)) |= bit };
             } else {
                 // SAFETY: `w_orig_line` stays within [orig_line_base, orig_line_base + nd*MAX_VARINT_LEN).
-                w_orig_line += write_varint(unsafe { buf_ptr.add(w_orig_line) }, d_orig_line);
+                w_orig_line += write_varint(yolo! { buf_ptr.add(w_orig_line) }, d_orig_line);
             }
 
             // orig_col: a bit in the eq-mask when it equals d_gen_col, else one varint.
             if d_orig_col == d_gen_col {
                 // SAFETY: mask byte within the zeroed 32-byte header.
-                unsafe { *buf_ptr.add(win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)) |= bit };
+                yolo! { *buf_ptr.add(win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)) |= bit };
             } else {
                 // SAFETY: `w_orig_col` stays within [orig_col_base, orig_col_base + nd*MAX_VARINT_LEN).
-                w_orig_col += write_varint(unsafe { buf_ptr.add(w_orig_col) }, d_orig_col);
+                w_orig_col += write_varint(yolo! { buf_ptr.add(w_orig_col) }, d_orig_col);
             }
 
             // gen_line exceptions: (idx:u8, varint) pair when d_gen_line does not
@@ -1142,32 +1143,32 @@ impl Builder {
                 // SAFETY: `w_gen_line` stays within
                 // [gen_line_base, gen_line_base + nd*(1+MAX_VARINT_LEN)); the trailing
                 // +1 byte (for the 0xFF terminator) is written after the loop.
-                unsafe { *buf_ptr.add(w_gen_line) = k as u8 };
+                yolo! { *buf_ptr.add(w_gen_line) = k as u8 };
                 w_gen_line += 1;
-                w_gen_line += write_varint(unsafe { buf_ptr.add(w_gen_line) }, d_gen_line);
+                w_gen_line += write_varint(yolo! { buf_ptr.add(w_gen_line) }, d_gen_line);
             }
 
             // src_idx: a bit in the leading mask when zero, else one varint after it.
             if d_src_idx == 0 {
                 // SAFETY: [src_idx_base, src_idx_base + 8) was zeroed; k >> 3 <= 7.
-                unsafe { *buf_ptr.add(src_idx_base + (k >> 3)) |= bit };
+                yolo! { *buf_ptr.add(src_idx_base + (k >> 3)) |= bit };
             } else {
                 flags |= FLAG_HAS_SRC_IDX;
                 // SAFETY: `w_src_idx` stays within
                 // [src_idx_base + 8, src_idx_base + 8 + nd*MAX_VARINT_LEN).
-                w_src_idx += write_varint(unsafe { buf_ptr.add(w_src_idx) }, d_src_idx);
+                w_src_idx += write_varint(yolo! { buf_ptr.add(w_src_idx) }, d_src_idx);
             }
         }
 
         // 0xFF terminator closes the gen_line exception stream when present.
         if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
             // SAFETY: the reserved +1 slot past nd*(1+MAX_VARINT_LEN) in the gen_line sub-range.
-            unsafe { *buf_ptr.add(w_gen_line) = 0xFF };
+            yolo! { *buf_ptr.add(w_gen_line) = 0xFF };
             w_gen_line += 1;
         }
 
         // SAFETY: FLAGS_OFF is within the zeroed 32-byte header.
-        unsafe { *buf_ptr.add(win_hdr::FLAGS_OFF) = flags };
+        yolo! { *buf_ptr.add(win_hdr::FLAGS_OFF) = flags };
 
         // True lane lengths. gen_line/src_idx are 0 unless their flag bit is set
         // (the cursors never advance past their base in that case).
@@ -1186,7 +1187,7 @@ impl Builder {
         debug_assert!(gen_col_len <= u16::MAX as usize);
         debug_assert!(orig_line_len <= u16::MAX as usize);
         debug_assert!(orig_col_len <= u16::MAX as usize);
-        unsafe {
+        yolo! {
             buf_ptr
                 .add(win_hdr::GEN_COL_LEN_OFF)
                 .cast::<[u8; 2]>()
@@ -1208,7 +1209,7 @@ impl Builder {
         let mut w = gen_col_base + gen_col_len;
         // SAFETY: every copy stays within the reserved `cap` and never reads past
         // a lane's written prefix; `dst <= src` for each so overlap is fine.
-        unsafe {
+        yolo! {
             ptr::copy(buf_ptr.add(orig_line_base), buf_ptr.add(w), orig_line_len);
             w += orig_line_len;
             ptr::copy(buf_ptr.add(orig_col_base), buf_ptr.add(w), orig_col_len);
@@ -1221,7 +1222,7 @@ impl Builder {
 
         debug_assert!(w <= cap);
         // SAFETY: w <= cap (reserved); all bytes in spare[..w] were written above.
-        unsafe { bun_core::vec::commit_spare(&mut self.win_stream, w) };
+        yolo! { bun_core::vec::commit_spare(&mut self.win_stream, w) };
         self.pending_n = 0;
     }
 
@@ -1248,7 +1249,7 @@ impl Builder {
             // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
             // no uninit bytes are exposed by set_len.
             // SAFETY: every byte in [0..total) is written below (see comment above).
-            let blob = unsafe { out.list.writable_slice_exact(total) };
+            let blob = yolo! { out.list.writable_slice_exact(total) };
 
             blob[0..24].fill(0);
             blob[24..28].copy_from_slice(
@@ -1260,7 +1261,7 @@ impl Builder {
             if sync_bytes > 0 {
                 // SAFETY: SyncEntry is #[repr(C)] POD with no padding (size==24,
                 // 6×4-byte fields); reinterpreting as bytes is sound.
-                let src = unsafe {
+                let src = yolo! {
                     core::slice::from_raw_parts(self.sync_entries.as_ptr().cast::<u8>(), sync_bytes)
                 };
                 blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(src);

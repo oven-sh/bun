@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_ulong;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
@@ -232,7 +233,7 @@ impl<'a> Snapshots<'a> {
         // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
         // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
         // `.files` bytes, disjoint from `&mut self`.
-        let test_file_source = unsafe {
+        let test_file_source = yolo! {
             let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
             &(*p).files.items_source()[file.id as usize]
         };
@@ -410,7 +411,7 @@ impl<'a> Snapshots<'a> {
             // PORT NOTE: avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
             // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file_source = unsafe {
+            let test_file_source = yolo! {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
@@ -559,7 +560,7 @@ impl<'a> Snapshots<'a> {
                     // discussion.
                     let log_ptr: *mut bun_ast::Log = &raw mut *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
-                        unsafe { &mut *log_ptr },
+                        yolo! { &mut *log_ptr },
                         &source,
                         &arena,
                     );
@@ -598,10 +599,10 @@ impl<'a> Snapshots<'a> {
                     // SAFETY: `init` returned `Ok`, so `*__parser_slot` is initialized;
                     // the guard's drop closure is the sole owner of the slot from here.
                     let mut __parser_guard =
-                        scopeguard::guard(__parser_slot, |mut s| unsafe { s.assume_init_drop() });
+                        scopeguard::guard(__parser_slot, |mut s| yolo! { s.assume_init_drop() });
                     // SAFETY: guard armed only after `init` succeeded.
                     let parser: &mut js_parser::TSXParser<'_> =
-                        unsafe { __parser_guard.assume_init_mut() };
+                        yolo! { __parser_guard.assume_init_mut() };
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;
@@ -869,7 +870,7 @@ impl<'a> Snapshots<'a> {
 
             // PORT NOTE: avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file_source = unsafe {
+            let test_file_source = yolo! {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
@@ -887,7 +888,7 @@ impl<'a> Snapshots<'a> {
 
             // SAFETY: snapshot_dir_path is a BACKREF into Jest::runner().files[..].source.path,
             // which outlives self (runner is process-global; files are never freed mid-run).
-            let cached_dir = self.snapshot_dir_path.map(|p| unsafe { p.as_ref() });
+            let cached_dir = self.snapshot_dir_path.map(|p| yolo! { p.as_ref() });
             if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
                 buf[pos] = 0;
                 // SAFETY: buf[pos] == 0 written above

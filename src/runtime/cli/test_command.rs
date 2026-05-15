@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_io::Write as _;
 
 use crate::cli::Command;
@@ -890,7 +891,7 @@ impl CommandLineReporter {
                 break;
             }
             // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
+            parent_ = yolo! { (*scope).base.parent.map(|p| p.cast_const()) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -957,7 +958,7 @@ impl CommandLineReporter {
                     let index = (scopes.len() - 1) - i;
                     let scope = scopes[index];
                     // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = yolo! { (*scope).base.name.as_deref() }.unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -978,7 +979,7 @@ impl CommandLineReporter {
                     let index = (scopes.len() - 1) - i;
                     let scope = scopes[index];
                     // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = yolo! { (*scope).base.name.as_deref() }.unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1104,7 +1105,7 @@ impl CommandLineReporter {
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
         // exclusive access for the duration of this callback (mirrors Zig
         // `?*CommandLineReporter`).
-        let cmd_reporter: &mut CommandLineReporter = unsafe { &mut *cmd_reporter.as_ptr() };
+        let cmd_reporter: &mut CommandLineReporter = yolo! { &mut *cmd_reporter.as_ptr() };
         let Some(junit) = cmd_reporter.reporters.junit.as_mut() else {
             return;
         };
@@ -1129,7 +1130,7 @@ impl CommandLineReporter {
                 break;
             }
             // SAFETY: scope kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
+            parent_ = yolo! { (*scope).base.parent.map(|p| p.cast_const()) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -1167,7 +1168,7 @@ impl CommandLineReporter {
                 let index = (scopes.len() - 1) - i;
                 let scope = scopes[index];
                 // SAFETY: scope alive for test run
-                if let Some(name) = unsafe { (*scope).base.name.as_deref() } {
+                if let Some(name) = yolo! { (*scope).base.name.as_deref() } {
                     if !name.is_empty() {
                         needed_suites.push(scope);
                     }
@@ -1205,7 +1206,7 @@ impl CommandLineReporter {
                     let needed_scope = needed_suites[suite_index];
                     // SAFETY: needed_scope alive for test run
                     let needed_name =
-                        unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
+                        yolo! { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
                     if !strings::eql(&suite_info.name, needed_name) {
                         suites_to_close = u32::try_from(current_suite_depth).unwrap()
                             - u32::try_from(suite_index).unwrap();
@@ -1241,7 +1242,7 @@ impl CommandLineReporter {
             while describe_suite_index < needed_suites.len() {
                 let scope = needed_suites[describe_suite_index];
                 // SAFETY: scope alive for test run
-                let (name, line_no) = unsafe {
+                let (name, line_no) = yolo! {
                     (
                         (*scope).base.name.as_deref().unwrap_or(b""),
                         (*scope).base.line_no,
@@ -1260,7 +1261,7 @@ impl CommandLineReporter {
                 let initial_length = concatenated_describe_scopes.len();
                 for &scope in scopes {
                     // SAFETY: scope alive for test run
-                    if let Some(name) = unsafe { (*scope).base.name.as_deref() } {
+                    if let Some(name) = yolo! { (*scope).base.name.as_deref() } {
                         if !name.is_empty() {
                             if initial_length != concatenated_describe_scopes.len() {
                                 concatenated_describe_scopes.extend_from_slice(b" &gt; ");
@@ -1326,7 +1327,7 @@ impl CommandLineReporter {
             // before `maybe_print_junit_line` derives `&mut` from the same `NonNull`
             // (stacked-borrows hygiene — Zig re-reads `buntest.reporter.?` per site).
             let reporter_ref: Option<&CommandLineReporter> =
-                buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
+                buntest.reporter.map(|p| yolo! { &*p.as_ptr() });
             let basic = result.basic_result();
             let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
                 && matches!(
@@ -1401,7 +1402,7 @@ impl CommandLineReporter {
         // borrows. Mirrors Zig's per-site `buntest.reporter.?` deref.
         let worker_idx = buntest
             .reporter
-            .and_then(|p| unsafe { (*p.as_ptr()).worker_ipc_file_idx });
+            .and_then(|p| yolo! { (*p.as_ptr()).worker_ipc_file_idx });
         if let Some(idx) = worker_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line);
         } else {
@@ -1414,7 +1415,7 @@ impl CommandLineReporter {
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
         // sole writer for the duration of this completion callback.
-        let this: &mut CommandLineReporter = unsafe { &mut *this.as_ptr() };
+        let this: &mut CommandLineReporter = yolo! { &mut *this.as_ptr() };
 
         if !this.reporters.dots && !this.reporters.only_failures {
             match sequence.result.basic_result() {
@@ -1519,7 +1520,7 @@ impl CommandLineReporter {
         };
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
-        let map = unsafe { &mut *map.as_ptr() };
+        let map = yolo! { &mut *map.as_ptr() };
         // PORT NOTE: Zig bitwise-copied each `ByteRangeMapping` out of the map
         // (`entry.*`). The Rust struct owns a `MultiArrayList` and is not
         // `Copy`, so collect mutable borrows into the thread-local map instead
@@ -1556,7 +1557,7 @@ impl CommandLineReporter {
         };
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
-        let map = unsafe { &mut *map.as_ptr() };
+        let map = yolo! { &mut *map.as_ptr() };
         // PORT NOTE: see `generate_code_coverage` — collect borrows, not bitwise copies.
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
@@ -2107,7 +2108,7 @@ impl TestCommand {
         let env_map: *mut DotEnv::Map = bun_core::heap::into_raw(Box::new(DotEnv::Map::init()));
         // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
         let mut env_loader: Box<DotEnv::Loader> =
-            Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
+            Box::new(DotEnv::Loader::init(yolo! { &mut *env_map }));
         jsc::initialize(false);
         bun_http::http_thread::init(&Default::default());
 
@@ -2152,14 +2153,14 @@ impl TestCommand {
         let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+                    .map(|b| yolo! { bun_ptr::detach_lifetime::<u8>(b) })
                     .collect()
             });
         let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
             .test_options
             .path_ignore_patterns
             .iter()
-            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+            .map(|b| yolo! { bun_ptr::detach_lifetime::<u8>(b) })
             .collect();
 
         // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
@@ -2177,7 +2178,7 @@ impl TestCommand {
                 // in this never-returning frame.
                 concurrent_test_glob: concurrent_test_glob_view
                     .as_deref()
-                    .map(|s| unsafe { bun_ptr::detach_lifetime(s) }),
+                    .map(|s| yolo! { bun_ptr::detach_lifetime(s) }),
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
@@ -2199,12 +2200,12 @@ impl TestCommand {
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit), mirroring Zig's stack-address capture.
-                    file_buf: unsafe { &mut *(&raw mut snapshot_file_buf) },
-                    values: unsafe { &mut *(&raw mut snapshot_values) },
-                    counts: unsafe { &mut *(&raw mut snapshot_counts) },
+                    file_buf: yolo! { &mut *(&raw mut snapshot_file_buf) },
+                    values: yolo! { &mut *(&raw mut snapshot_values) },
+                    counts: yolo! { &mut *(&raw mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
-                    inline_snapshots_to_write: unsafe {
+                    inline_snapshots_to_write: yolo! {
                         &mut *(&raw mut inline_snapshots_to_write)
                     },
                     last_error_snapshot_name: None,
@@ -2222,7 +2223,7 @@ impl TestCommand {
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
-                test_options: unsafe { &*(&raw const ctx.test_options) },
+                test_options: yolo! { &*(&raw const ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
             },
@@ -2241,7 +2242,7 @@ impl TestCommand {
         // SAFETY: single-threaded CLI startup; `reporter` is a `Box` that lives
         // until `exec()` exits the process, so `&mut reporter.jest` remains
         // valid for the process lifetime.
-        unsafe {
+        yolo! {
             jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
         }
         // PORT NOTE: `reporter.jest.test_options` is initialised in the struct
@@ -2261,7 +2262,7 @@ impl TestCommand {
 
         bun_ast::initialize_store();
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
-        let vm: &mut VirtualMachine = unsafe {
+        let vm: &mut VirtualMachine = yolo! {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
                 // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
@@ -2336,7 +2337,7 @@ impl TestCommand {
             b"Etc/UTC";
 
         // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
-        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
+        if let Some(tz) = yolo! { (*vm.transpiler.env).get(b"TZ") } {
             tz_name = tz;
         }
 
@@ -2358,7 +2359,7 @@ impl TestCommand {
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =
-            unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+            yolo! { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2400,7 +2401,7 @@ impl TestCommand {
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
                             let vm_ptr: *mut VirtualMachine = vm;
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.run_with_api_lock(|| yolo! { (*vm_ptr).global_exit() });
                         }
                     }
                 }
@@ -2415,7 +2416,7 @@ impl TestCommand {
             } else {
                 ctx.positionals[1..]
                     .iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(&**b) })
+                    .map(|b| yolo! { bun_ptr::detach_lifetime::<u8>(&**b) })
                     .collect()
             };
             #[cfg(windows)]
@@ -2445,7 +2446,7 @@ impl TestCommand {
                 // in this frame. Sound only because this frame never returns
                 // (every exit path is `global_exit()`), so the storage Vec is
                 // never dropped while `scanner.filter_names` is observed.
-                .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+                .map(|b| yolo! { bun_ptr::detach_lifetime::<u8>(b) })
                 .collect();
             #[cfg(not(windows))]
             let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
@@ -2457,7 +2458,7 @@ impl TestCommand {
             // and the underlying bytes are either in `ctx` (process-lifetime)
             // or in `filter_names_normalized_storage` above.
             scanner.filter_names =
-                unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
+                yolo! { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
 
             // PORT NOTE: Zig used `vm.allocator.dupe` (arena-scoped). PORTING.md
             // §Forbidden bans leaking to satisfy a borrow — own the joined
@@ -2495,7 +2496,7 @@ impl TestCommand {
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
                     let vm_ptr: *mut VirtualMachine = vm;
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.run_with_api_lock(|| yolo! { (*vm_ptr).global_exit() });
                 }
             }
         }
@@ -2704,7 +2705,7 @@ impl TestCommand {
             // b2-cycle erasure (see field comment in VirtualMachine.rs); the
             // cast recovers the concrete type.
             let watcher =
-                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
+                yolo! { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
                 let loader = vm.transpiler.options.loader(bun_path::extension(path));
                 let _ = watcher.add_file_by_path_slow(path, loader);
@@ -3008,7 +3009,7 @@ impl TestCommand {
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(yolo! { &mut *vm_ptr }));
         }
         let summary = reporter.summary();
 
@@ -3028,7 +3029,7 @@ impl TestCommand {
         vm.is_shutting_down = true;
         {
             let vm_ptr: *mut VirtualMachine = vm;
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+            vm.run_with_api_lock(|| yolo! { (*vm_ptr).global_exit() });
         }
         #[allow(unreachable_code)]
         Ok(())
@@ -3117,7 +3118,7 @@ impl TestCommand {
             vm: vm_,
             files: files_,
         };
-        unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        yolo! { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
     extern "C" fn timer_noop(_: *mut uws::Timer) {}
@@ -3136,7 +3137,7 @@ impl TestCommand {
 
             if let Some(log_ptr) = vm_log {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
-                let log = unsafe { &mut *log_ptr.as_ptr() };
+                let log = yolo! { &mut *log_ptr.as_ptr() };
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     log.msgs.clear();
@@ -3153,7 +3154,7 @@ impl TestCommand {
         // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
         // escape mirrors Zig's `defer` so the closure does not hold a borrowck
         // lock on `reporter` for the entire function body.
-        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
+        scopeguard::defer! { yolo! { (*reporter_ptr).jest.only = prev_only; } }
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
         vm.clear_entry_point()?;
@@ -3203,13 +3204,13 @@ impl TestCommand {
             // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
             // raw-ptr escape mirrors Zig `defer bun_test_root.exitFile()` so the
             // closure does not hold a borrowck lock on it for the loop body.
-            scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
+            scopeguard::defer! { yolo! { (*bun_test_root_ptr).exit_file(); } }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
             // split (not the defer-captured `reporter_ptr`) mirrors Zig's
             // freely-aliasing `*CommandLineReporter` without tripping borrowck.
-            unsafe {
+            yolo! {
                 let rp: *mut CommandLineReporter = reporter;
                 (*rp).jest.current_file.set(
                     file_title,
@@ -3260,7 +3261,7 @@ impl TestCommand {
                         // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
                         // runWithAPILock(*VM, vm, globalExit).
                         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                        yolo! { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
                     return Ok(());
@@ -3310,7 +3311,7 @@ impl TestCommand {
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(std::ptr::from_mut::<VirtualMachine>(vm)) };
+                yolo! { (*el).tick_immediate_tasks(std::ptr::from_mut::<VirtualMachine>(vm)) };
                 drop(buntest_strong);
             }
 

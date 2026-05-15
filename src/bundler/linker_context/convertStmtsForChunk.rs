@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
@@ -409,7 +410,7 @@ pub fn convert_stmts_for_chunk(
                         stmt = Stmt::alloc(
                             S::Function {
                                 // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s.func`).
-                                func: unsafe { core::ptr::read(&raw const s.func) },
+                                func: yolo! { core::ptr::read(&raw const s.func) },
                             },
                             stmt.loc,
                         );
@@ -429,7 +430,7 @@ pub fn convert_stmts_for_chunk(
                         stmt = Stmt::alloc(
                             S::Class {
                                 // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s.class`).
-                                class: unsafe { core::ptr::read(&raw const s.class) },
+                                class: yolo! { core::ptr::read(&raw const s.class) },
                                 is_export: false,
                             },
                             stmt.loc,
@@ -442,7 +443,7 @@ pub fn convert_stmts_for_chunk(
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
                         // SAFETY: shallow bitwise copy of arena-backed S::Local (matches Zig `s.*`).
-                        let copied: S::Local = unsafe { core::ptr::read(s.as_ptr()) };
+                        let copied: S::Local = yolo! { core::ptr::read(s.as_ptr()) };
                         stmt = Stmt::alloc(copied, stmt.loc);
                         stmt.data.s_local_mut().unwrap().is_export = false;
                     } else if FeatureFlags::UNWRAP_COMMONJS_TO_ESM
@@ -519,7 +520,7 @@ pub fn convert_stmts_for_chunk(
                                         stmt = Stmt::alloc(
                                             S::Function {
                                                 // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s2.func`).
-                                                func: unsafe {
+                                                func: yolo! {
                                                     core::ptr::read(&raw const s2.func)
                                                 },
                                             },
@@ -537,7 +538,7 @@ pub fn convert_stmts_for_chunk(
                                         stmt = Stmt::alloc(
                                             S::Class {
                                                 // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s2.class`).
-                                                class: unsafe {
+                                                class: yolo! {
                                                     core::ptr::read(&raw const s2.class)
                                                 },
                                                 is_export: false,

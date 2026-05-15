@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_int;
 use core::fmt;
 
@@ -107,7 +108,7 @@ impl SystemError {
         // whose bitwise copy is sound provided we immediately bump each ref
         // (preventing a double-free on drop). This is exactly the Zig spec
         // `var v = this.*; v.ref();`.
-        let mut v: SystemError = unsafe { core::ptr::read(self) };
+        let mut v: SystemError = yolo! { core::ptr::read(self) };
         v.ref_();
         v
     }

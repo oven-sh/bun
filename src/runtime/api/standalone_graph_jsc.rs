@@ -2,6 +2,7 @@
 //! `standalone_graph/` (used by the bundler with no JS in the loop); only the
 //! `Blob` accessor that needs a `&JSGlobalObject` lives here.
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicU32;
 
@@ -35,7 +36,7 @@ impl FileJsc for File {
             // SAFETY: `contents` is `'static` and never freed (see above);
             // `@constCast` mirrors Zig — Blob consumers only read via
             // `shared_view()`.
-            let bytes = unsafe {
+            let bytes = yolo! {
                 Bytes::from_raw_parts(
                     contents.as_ptr().cast_mut(),
                     contents.len() as SizeType,
@@ -67,7 +68,7 @@ impl FileJsc for File {
             )) {
                 // SAFETY: `store_ptr` is the sole live mutable view; held ref
                 // guarantees liveness for the process lifetime.
-                let store = unsafe { &mut *store_ptr };
+                let store = yolo! { &mut *store_ptr };
                 store.mime_type = mime;
                 b.content_type
                     .set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
@@ -77,7 +78,7 @@ impl FileJsc for File {
 
             // The real name goes here:
             // SAFETY: see above; `data` is `Bytes` by construction.
-            if let Data::Bytes(bytes) = unsafe { &mut (*store_ptr).data } {
+            if let Data::Bytes(bytes) = yolo! { &mut (*store_ptr).data } {
                 bytes.stored_name = PathString::init(self.name);
             }
 
@@ -105,7 +106,7 @@ impl FileJsc for File {
         // SAFETY: populated above; pointer originates from `Blob::new` and is
         // never freed for the graph's lifetime (store is intentionally leaked
         // via `.ref_()`). Cast restores the real `webcore::Blob` type.
-        unsafe { self.cached_blob.unwrap().cast::<Blob>().as_mut() }
+        yolo! { self.cached_blob.unwrap().cast::<Blob>().as_mut() }
     }
 }
 

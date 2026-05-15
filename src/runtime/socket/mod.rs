@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! Port of `src/runtime/socket/socket.zig`.
 //!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
@@ -132,17 +133,17 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     #[inline]
     unsafe fn on_open(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
         // SAFETY: caller (RawPtrHandler) passes the live ext-slot pointer.
-        unsafe { NewSocket::on_open(this, s) };
+        yolo! { NewSocket::on_open(this, s) };
     }
     #[inline]
     unsafe fn on_data(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) {
         // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_data(this, s, data) };
+        yolo! { NewSocket::on_data(this, s, data) };
     }
     #[inline]
     unsafe fn on_writable(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
         // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_writable(this, s) };
+        yolo! { NewSocket::on_writable(this, s) };
     }
     #[inline]
     unsafe fn on_close(
@@ -152,7 +153,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         reason: *mut core::ffi::c_void,
     ) {
         // SAFETY: see `on_open`.
-        let _ = unsafe {
+        let _ = yolo! {
             NewSocket::on_close(
                 this,
                 s,
@@ -164,17 +165,17 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     #[inline]
     unsafe fn on_timeout(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
         // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_timeout(this, s) };
+        yolo! { NewSocket::on_timeout(this, s) };
     }
     #[inline]
     unsafe fn on_end(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
         // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_end(this, s) };
+        yolo! { NewSocket::on_end(this, s) };
     }
     #[inline]
     unsafe fn on_connect_error(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>, code: i32) {
         // SAFETY: see `on_open`.
-        let _ = unsafe { NewSocket::on_connect_error(this, s, code) };
+        let _ = yolo! { NewSocket::on_connect_error(this, s, code) };
     }
     #[inline]
     unsafe fn on_handshake(
@@ -184,7 +185,7 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         err: bun_uws_sys::us_bun_verify_error_t,
     ) {
         // SAFETY: see `on_open`.
-        let _ = unsafe { NewSocket::on_handshake(this, s, ok, err) };
+        let _ = yolo! { NewSocket::on_handshake(this, s, ok, err) };
     }
 }
 

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr;
 
 use bun_alloc::ArenaVecExt as _;
@@ -63,7 +64,7 @@ impl SrcAscii {
     #[inline]
     fn bytes(&self) -> &[u8] {
         // SAFETY: `bytes` outlives the iter by construction (caller contract, same as Zig).
-        unsafe { &*self.bytes }
+        yolo! { &*self.bytes }
     }
     #[inline]
     fn index(&self) -> Option<AsciiIndexValue> {
@@ -120,7 +121,7 @@ impl SrcUnicode {
     fn init(bytes: &[u8]) -> Self {
         // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter (same as Zig).
         let bytes: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+            yolo! { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let iter = CodepointIterator::init(bytes);
         let mut cursor = Cursor::default();
         Self::next_cursor(&iter, &mut cursor);
@@ -514,7 +515,7 @@ fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
         ast::Atom::Expansion(exp) => {
             out.extend_from_slice(b"{\"expansion\":{\"variants\":[");
             // SAFETY: `variants` is a bump-allocated slice live for the parse arena.
-            let variants = unsafe { &*exp.variants };
+            let variants = yolo! { &*exp.variants };
             for (i, g) in variants.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
@@ -552,7 +553,7 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
         ast::GroupAtoms::Many(atoms) => {
             out.extend_from_slice(b"{\"many\":[");
             // SAFETY: bump-allocated slice live for the parse arena.
-            let atoms = unsafe { &**atoms };
+            let atoms = yolo! { &**atoms };
             for (i, a) in atoms.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
@@ -654,7 +655,7 @@ pub fn expand(
     // SAFETY: root_node lives on this stack frame for the duration of expand_nested;
     // all bubble_up backrefs written during recursion point into bump-owned Groups
     // or back at this root.
-    unsafe { expand_nested(&raw mut root_node, out, 0, &mut out_key_counter, 0) }
+    yolo! { expand_nested(&raw mut root_node, out, 0, &mut out_key_counter, 0) }
 }
 
 // SAFETY contract: `root` must be a valid *mut Group whose `atoms` slices and
@@ -673,7 +674,7 @@ unsafe fn expand_nested(
 ) -> Result<(), ExpandError> {
     // SAFETY: see fn doc comment — raw-pointer derefs mirror Zig pointer semantics;
     // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
-    unsafe {
+    yolo! {
         if let ast::GroupAtoms::Single(_) = (*root).atoms {
             if start > 0 {
                 if !(*root).bubble_up.is_null() {

@@ -20,6 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use bun_yolo::yolo;
 use core::any::TypeId;
 use core::fmt;
 
@@ -989,7 +990,7 @@ pub fn diff_chars_to_lines<Unit: DiffUnit>(
         let mut j: usize = 0;
         while j < d.text.len() {
             // SAFETY: line_array entries borrow from input texts which outlive this call.
-            text.extend_from_slice(unsafe { &*line_array[d.text[j]] });
+            text.extend_from_slice(yolo! { &*line_array[d.text[j]] });
             j += 1;
         }
         // PERF(port): was assume_capacity

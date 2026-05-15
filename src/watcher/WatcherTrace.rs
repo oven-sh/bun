@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::io::Write as _;
 
 use bun_core::{ZStr, env_var, fmt as bun_fmt, output};
@@ -64,7 +65,7 @@ pub fn write_events(
                 let n = c.position() as usize;
                 // SAFETY: `write!(.., "{}", io::ErrorKind)` emits an ASCII variant
                 // name (`NotFound`, `PermissionDenied`, …) — pure-ASCII output.
-                unsafe { core::str::from_utf8_unchecked(&name_buf[..n]) }
+                yolo! { core::str::from_utf8_unchecked(&name_buf[..n]) }
             };
             output::err(name, "Failed to flush watcher trace file", ());
         }

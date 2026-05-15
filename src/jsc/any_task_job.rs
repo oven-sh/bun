@@ -9,6 +9,7 @@
 //! `WorkTask`) — those go through the central `TaskTag` dispatch table, not
 //! the type-erased `AnyTask` path, and would need a per-instantiation tag.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -91,7 +92,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `New<T>`
         // cannot carry a comptime callback, so build the erased AnyTask
         // directly with a non-capturing shim.
-        unsafe {
+        yolo! {
             (*job).any_task = AnyTask {
                 ctx: NonNull::new(job.cast::<c_void>()),
                 callback: |p: *mut c_void| Self::run_from_js(p.cast::<Self>()).map_err(Into::into),
@@ -101,10 +102,10 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // box so `Drop for C` releases any resources `ctx` already owns.
         let mut guard = scopeguard::guard(job, |job| {
             // SAFETY: `job` came from `heap::into_raw` above and was not consumed.
-            drop(unsafe { bun_core::heap::take(job) });
+            drop(yolo! { bun_core::heap::take(job) });
         });
         // SAFETY: `job` is exclusively owned here.
-        unsafe { (**guard).ctx.init(global)? };
+        yolo! { (**guard).ctx.init(global)? };
         Ok(scopeguard::ScopeGuard::into_inner(guard))
     }
 
@@ -117,7 +118,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     /// yet been scheduled.
     pub unsafe fn schedule(this: *mut Self) {
         // SAFETY: caller contract.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         this.poll.ref_(bun_io::js_vm_ctx());
         WorkPool::schedule(&raw mut this.task);
     }
@@ -127,7 +128,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     pub fn create_and_schedule(global: &JSGlobalObject, ctx: C) -> JsResult<()> {
         let job = Self::create(global, ctx)?;
         // SAFETY: `job` is a freshly-created live pointer.
-        unsafe { Self::schedule(job) };
+        yolo! { Self::schedule(job) };
         Ok(())
     }
 
@@ -142,7 +143,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // SAFETY: only reachable via the `WorkPoolTask::callback` slot wired
         // in `create`; `task` points to `Self.task` and the job is live until
         // `run_from_js` reclaims it.
-        let job = unsafe { &mut *Self::from_task_ptr(task) };
+        let job = yolo! { &mut *Self::from_task_ptr(task) };
         let vm = job.vm;
         job.ctx.run(vm.global);
         // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — there is no early
@@ -158,7 +159,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     fn run_from_js(this: *mut Self) -> JsResult<()> {
         // SAFETY: `this` was produced by `heap::into_raw` in `create` and is
         // uniquely owned here (the `AnyTask` fires exactly once).
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let mut this = yolo! { bun_core::heap::take(this) };
         let vm = this.vm;
         if vm.is_shutting_down() {
             return Ok(());

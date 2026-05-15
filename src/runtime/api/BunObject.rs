@@ -83,6 +83,7 @@ pub fn get_public_path<W: core::fmt::Write>(to: &[u8], origin: &bun_url::URL, wr
     )
 }
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use std::io::Write as _;
 
@@ -278,7 +279,7 @@ pub mod bun_object {
                         f: *mut CallFrame,
                     ) -> JSValue {
                         // SAFETY: JSC always passes valid pointers here.
-                        let (g, f) = unsafe { (&*g, &*f) };
+                        let (g, f) = yolo! { (&*g, &*f) };
                         bun_jsc::to_js_host_call(g, || $target(g, f))
                     }
                 }
@@ -319,7 +320,7 @@ pub mod bun_object {
                         object: *mut JSObject,
                     ) -> JSValue {
                         // SAFETY: JSC always passes valid pointers here.
-                        let (g, o) = unsafe { (&*this, &*object) };
+                        let (g, o) = yolo! { (&*this, &*object) };
                         bun_jsc::to_js_host_call(g, || {
                             IntoLazyPropResult::into_lazy_prop_result($target(g, o))
                         })
@@ -1035,7 +1036,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         // outlives any caller; we never reallocate it while
                         // `edit.name` is observed (single-threaded JS VM).
                         edit.name =
-                            unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                            yolo! { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
                         edit.detect_editor(env);
                         editor_choice = edit.editor;
                         if editor_choice.is_none() {
@@ -1052,7 +1053,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                             slot.name_storage = edit.path.to_vec();
                             // SAFETY: see above.
                             edit.name =
-                                unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                                yolo! { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
                         }
                     }
                 }
@@ -1240,10 +1241,10 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 
     if !errorable.success {
         // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
-        return Err(ctx.throw_value(unsafe { errorable.result.err }.value));
+        return Err(ctx.throw_value(yolo! { errorable.result.err }.value));
     }
     // SAFETY: success → `value` arm of the #[repr(C)] union is active.
-    owned.result_value = unsafe { errorable.result.value };
+    owned.result_value = yolo! { errorable.result.value };
 
     if !owned.query_string.is_empty() {
         // PERF(port): was stack-fallback
@@ -1368,7 +1369,7 @@ pub fn bun_resolve_sync_with_paths(
     let paths: &[BunString] = if paths_len == 0 {
         &[]
     } else {
-        unsafe { core::slice::from_raw_parts(paths_ptr, paths_len) }
+        yolo! { core::slice::from_raw_parts(paths_ptr, paths_len) }
     };
 
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
@@ -1396,7 +1397,7 @@ pub fn bun_resolve_sync_with_paths(
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
     // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
     // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    bun_vm.transpiler.resolver.custom_dir_paths = Some(yolo! { bun_ptr::detach_lifetime(paths) });
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
@@ -1574,7 +1575,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
                 macro_rules! reload {
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
-                        let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
+                        let server: &mut $T = yolo! { &mut *entry.ptr.cast::<$T>() };
                         server.on_reload_from_zig(&mut config, global_object);
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
@@ -1601,7 +1602,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
                 return Ok(JSValue::ZERO);
             }
             // SAFETY: `init` returned a live heap-allocated server pointer.
-            let server_ref: &mut $ServerType = unsafe { &mut *server };
+            let server_ref: &mut $ServerType = yolo! { &mut *server };
             let route_list_object = <$ServerType>::listen(server);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
@@ -1669,7 +1670,7 @@ pub extern "C" fn Bun__escapeHTML16(
 ) -> JSValue {
     debug_assert!(len > 0);
     // SAFETY: caller passes a valid [ptr, len) UTF-16 slice.
-    let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let input_slice = yolo! { core::slice::from_raw_parts(ptr, len) };
     use bun_core::immutable::escape_html::{Escaped, escape_html_for_utf16_input};
     let escaped = match escape_html_for_utf16_input(input_slice) {
         Ok(v) => v,
@@ -1702,7 +1703,7 @@ pub extern "C" fn Bun__escapeHTML8(
 ) -> JSValue {
     debug_assert!(len > 0);
     // SAFETY: caller passes a valid [ptr, len) byte slice.
-    let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let input_slice = yolo! { core::slice::from_raw_parts(ptr, len) };
     // PERF(port): was stack-fallback (256 bytes) — profile in Phase B
 
     use bun_core::immutable::escape_html::{Escaped, escape_html_for_latin1_input};
@@ -1740,7 +1741,7 @@ pub extern "C" fn Bun__escapeHTML8(
             // SAFETY: `raw` is a freshly-leaked Box<[u8]> allocation, valid for
             // the duration of this call; the resulting JSC external string
             // adopts and later frees it.
-            ZigString::init(unsafe { &*raw }).to_external_value(global_object)
+            ZigString::init(yolo! { &*raw }).to_external_value(global_object)
         }
     }
 }
@@ -1950,7 +1951,7 @@ pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
     // from `rare_data` storage.
     let env_creds =
-        crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
+        crate::webcore::fetch::s3_credentials_from_env(yolo! { (*env_ptr).get_s3_credentials() });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -2023,7 +2024,7 @@ pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> 
 
     // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
     // hold the only reference for field init below.
-    let valkey_ref = unsafe { &*valkey };
+    let valkey_ref = yolo! { &*valkey };
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
@@ -2059,7 +2060,7 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
     // process singleton — `Graph::get()` returns the same instance the trait
     // object was built from (`vm.standalone_module_graph.is_some()` ⇔
     // `Graph::get().is_some()`).
-    let graph: &mut StandaloneModuleGraph = unsafe {
+    let graph: &mut StandaloneModuleGraph = yolo! {
         &mut *StandaloneModuleGraph::get()
             .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")
     };
@@ -2096,11 +2097,11 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
         let input_blob: *mut Blob = standalone_file_blob(file, global_this);
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         // SAFETY: `standalone_file_blob` returns a non-null heap allocation.
-        let blob = Blob::new(unsafe { (*input_blob).dupe_with_content_type(true) });
+        let blob = Blob::new(yolo! { (*input_blob).dupe_with_content_type(true) });
         // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set((*input_blob).name.get().dupe_ref()) };
+        yolo! { (*blob).name.set((*input_blob).name.get().dupe_ref()) };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
-        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+        array.put_index(global_this, i as u32, yolo! { (*blob).to_js(global_this) })?;
     }
 
     Ok(array)
@@ -2175,7 +2176,7 @@ impl CSRFObject {
                 f: *mut CallFrame,
             ) -> JSValue {
                 // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
+                let (g, f) = yolo! { (&*g, &*f) };
                 bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__generate(g, f))
             }
         }
@@ -2185,7 +2186,7 @@ impl CSRFObject {
                 f: *mut CallFrame,
             ) -> JSValue {
                 // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
+                let (g, f) = yolo! { (&*g, &*f) };
                 bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__verify(g, f))
             }
         }
@@ -2245,7 +2246,7 @@ pub mod environment_variables {
         data_ptr: &mut core::mem::MaybeUninit<*const u8>,
     ) -> usize {
         // SAFETY: ptr was returned from Bun__getEnvCount; i < count.
-        let item: &[u8] = unsafe { &**ptr.add(i) };
+        let item: &[u8] = yolo! { &**ptr.add(i) };
         data_ptr.write(item.as_ptr());
         item.len()
     }
@@ -2615,8 +2616,8 @@ pub mod JSZlib {
                     return Err(global_this.throw_out_of_memory());
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
-                let decompressor = unsafe { &mut *decompressor_ptr };
-                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| unsafe {
+                let decompressor = yolo! { &mut *decompressor_ptr };
+                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| yolo! {
                     bun_libdeflate::Decompressor::destroy(p)
                 });
                 let encoding = if is_gzip {
@@ -2763,8 +2764,8 @@ pub mod JSZlib {
                     return Err(global_this.throw_out_of_memory());
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
-                let compressor = unsafe { &mut *compressor_ptr };
-                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| unsafe {
+                let compressor = yolo! { &mut *compressor_ptr };
+                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| yolo! {
                     bun_libdeflate::Compressor::destroy(p)
                 });
                 let encoding = if is_gzip {
@@ -3023,7 +3024,7 @@ pub mod JSZstd {
         )
         .expect("ZstdCtx::init is infallible");
         // SAFETY: `job` is a freshly-created live pointer.
-        unsafe { jsc::AnyTaskJob::schedule(job) };
+        yolo! { jsc::AnyTaskJob::schedule(job) };
         promise_value
     }
 
@@ -3137,7 +3138,7 @@ mod stdio_stores {
         });
         let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&mut *blob).to_js(global_this) }
+        yolo! { (&mut *blob).to_js(global_this) }
     }
 
     pub fn stdin(global_this: &JSGlobalObject) -> JSValue {

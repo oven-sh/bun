@@ -21,6 +21,7 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use crate::PrintResult;
 use crate::compat::Feature;
 use crate::css_parser as css;
@@ -362,7 +363,7 @@ impl FontFamily {
 
         // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
+            yolo! { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
         let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
@@ -372,14 +373,14 @@ impl FontFamily {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
                 // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(value) });
+                s.extend_from_slice(yolo! { crate::arena_str(value) });
                 string = Some(s);
             }
 
             if let Some(s) = string.as_mut() {
                 s.push(b' ');
                 // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(ident) });
+                s.extend_from_slice(yolo! { crate::arena_str(ident) });
             }
         }
 
@@ -396,7 +397,7 @@ impl FontFamily {
             FontFamily::Generic(val) => val.to_css(dest),
             FontFamily::FamilyName(val_ptr) => {
                 // SAFETY: arena-owned slice valid for 'bump (parser/printer arena outlives FontFamily)
-                let val: &[u8] = unsafe { crate::arena_str(*val_ptr) };
+                let val: &[u8] = yolo! { crate::arena_str(*val_ptr) };
                 // Generic family names such as sans-serif must be quoted if parsed as a string.
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
@@ -450,7 +451,7 @@ impl PartialEq for FontFamily {
             (FontFamily::Generic(a), FontFamily::Generic(b)) => a == b,
             (FontFamily::FamilyName(a), FontFamily::FamilyName(b)) => {
                 // SAFETY: arena-owned slices valid for the parse session.
-                unsafe { (&**a).eq(&**b) }
+                yolo! { (&**a).eq(&**b) }
             }
             _ => false,
         }
@@ -468,7 +469,7 @@ impl core::hash::Hash for FontFamily {
             FontFamily::Generic(g) => g.hash(state),
             FontFamily::FamilyName(p) => {
                 // SAFETY: arena-owned slice valid for the parse session.
-                unsafe { (&**p).hash(state) }
+                yolo! { (&**p).hash(state) }
             }
         }
     }

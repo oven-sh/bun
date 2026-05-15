@@ -4,6 +4,7 @@
 //! Regains control of the calling thread when the function panics or behaves
 //! undefined.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 
 // TODO(port): move externs to <area>_sys crate
@@ -40,7 +41,7 @@ pub fn panicked() {
         // SAFETY: ctx was set from a live stack frame in `call`/`call_for_test`
         // on this same thread; the pointee outlives this jump because the
         // setter's frame is where execution resumes.
-        unsafe { set_context(ctx) };
+        yolo! { set_context(ctx) };
     }
 }
 
@@ -56,9 +57,9 @@ pub fn call_for_test(
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
-    let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
+    let mut ctx: Context = yolo! { core::mem::zeroed::<Context>() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
-    unsafe { get_context(&raw mut ctx) };
+    yolo! { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
         TOP_CTX.with(|c| c.set(prev_ctx));
         return Err(bun_core::err!("Panic"));
@@ -81,9 +82,9 @@ pub fn call<T>(
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
-    let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
+    let mut ctx: Context = yolo! { core::mem::zeroed::<Context>() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
-    unsafe { get_context(&raw mut ctx) };
+    yolo! { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
         TOP_CTX.with(|c| c.set(prev_ctx));
         return Err(bun_core::err!("Panic"));
@@ -134,12 +135,12 @@ unsafe fn get_context(ctx: *mut Context) {
     {
         // TODO(port): std.os.windows.ntdll.RtlCaptureContext → bun_sys::windows::ntdll
         // SAFETY: ctx is a valid, writable, properly-aligned CONTEXT (caller contract).
-        unsafe { bun_sys::windows::ntdll_context::RtlCaptureContext(ctx) };
+        yolo! { bun_sys::windows::ntdll_context::RtlCaptureContext(ctx) };
     }
     #[cfg(all(target_os = "linux", target_env = "musl"))]
     {
         // SAFETY: ctx is a valid, writable, properly-aligned jmp_buf (caller contract).
-        let _ = unsafe { musl::setjmp(ctx) };
+        let _ = yolo! { musl::setjmp(ctx) };
     }
     #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
     {
@@ -148,7 +149,7 @@ unsafe fn get_context(ctx: *mut Context) {
         // locally (uniform across all unix targets).
         unsafe extern "C" { fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int; }
         // SAFETY: ctx is a valid, writable, properly-aligned ucontext_t (caller contract).
-        let _ = unsafe { getcontext(ctx) };
+        let _ = yolo! { getcontext(ctx) };
     }
 }
 
@@ -158,19 +159,19 @@ unsafe fn set_context(ctx: *const Context) -> ! {
     {
         // SAFETY: ctx points to a Context previously filled by get_context on
         // this thread; the captured frame is still live (caller contract).
-        unsafe { RtlRestoreContext(ctx, core::ptr::null()) };
+        yolo! { RtlRestoreContext(ctx, core::ptr::null()) };
     }
     #[cfg(all(target_os = "linux", target_env = "musl"))]
     {
         // SAFETY: ctx points to a jmp_buf previously filled by setjmp on this
         // thread; the captured frame is still live (caller contract).
-        unsafe { musl::longjmp(ctx, 1) };
+        yolo! { musl::longjmp(ctx, 1) };
     }
     #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
     {
         // SAFETY: ctx points to a ucontext_t previously filled by getcontext on
         // this thread; the captured frame is still live (caller contract).
-        unsafe { setcontext(ctx) };
+        yolo! { setcontext(ctx) };
     }
 }
 

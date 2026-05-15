@@ -1,6 +1,7 @@
 //! This is a slow, dynamically-allocated one-off task
 //! Use it when you can't add to jsc.Task directly and managing the lifetime of the Task struct is overly complex
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -27,7 +28,7 @@ impl ManagedTask {
         // `bun.default_allocator.create`). Reconstituting the Box here mirrors
         // Zig's `defer bun.default_allocator.destroy(this)` — it drops at scope
         // exit on both the Ok and Err paths.
-        let this = unsafe { bun_core::heap::take(this) };
+        let this = yolo! { bun_core::heap::take(this) };
         let callback = this.callback;
         let ctx = this.ctx;
         callback(ctx.unwrap().as_ptr())
@@ -53,7 +54,7 @@ impl ManagedTask {
             // SAFETY: `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
             // ABI for all `T: Sized`; `run` passes back the exact pointer stored
             // in `ctx` below, so the callee observes its original `*mut T`.
-            callback: unsafe {
+            callback: yolo! {
                 bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
                     callback,
                 )

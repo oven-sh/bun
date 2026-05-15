@@ -2,6 +2,7 @@
 //! HTML file, and can be passed to the `static` option in `Bun.serve`. The build
 //! is done lazily (state held in HTMLBundle.Route or DevServer.RouteBundle.HTML).
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
@@ -209,7 +210,7 @@ impl State {
             State::Building(Some(c)) => {
                 // SAFETY: `c` was produced by `create_and_schedule_completion_task`
                 // (heap::alloc, refcount ≥ 1) and we hold one of those refs.
-                unsafe {
+                yolo! {
                     (*c).cancelled = true;
                     RefCount::<JSBundleCompletionTask>::deref(c);
                 }
@@ -218,7 +219,7 @@ impl State {
             State::Html(html) => {
                 // SAFETY: `html` was produced by `StaticRoute::clone` (heap::alloc,
                 // refcount == 1) or via `ref_()`; this drops our ref.
-                unsafe { StaticRoute::deref_(html) };
+                yolo! { StaticRoute::deref_(html) };
             }
             State::Pending => {}
         }
@@ -232,7 +233,7 @@ impl State {
             State::Building(_) => 0,
             State::Err(log) => log.memory_cost(),
             // SAFETY: `*html` is a live intrusive-refcounted allocation while held.
-            State::Html(html) => unsafe { (**html).memory_cost() },
+            State::Html(html) => yolo! { (**html).memory_cost() },
         }
     }
 }
@@ -249,7 +250,7 @@ impl Route {
     pub fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
         IntrusiveRc::new(Route {
             // SAFETY: caller passes a live HTMLBundle pointer.
-            bundle: unsafe { IntrusiveRc::<HTMLBundle>::init_ref(html_bundle) },
+            bundle: yolo! { IntrusiveRc::<HTMLBundle>::init_ref(html_bundle) },
             pending_responses: JsCell::new(Vec::new()),
             ref_count: RefCount::init(),
             server: Cell::new(None),
@@ -270,11 +271,11 @@ impl Route {
     fn on_any_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
         // SAFETY: `this` is a live IntrusiveRc-managed allocation; `ScopedRef`
         // bumps the count and derefs on every exit path.
-        let _keep_alive = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _keep_alive = yolo! { bun_ptr::ScopedRef::new(this) };
         // SAFETY: held alive by `_keep_alive`; single-threaded (uws JS-thread
         // callback). R-2: deref as shared (`&*`) — every method below takes
         // `&self`; mutation goes through `Cell`/`JsCell`.
-        let route = unsafe { &*this };
+        let route = yolo! { &*this };
 
         let Some(server) = route.server.get() else {
             resp.end_without_body(true);
@@ -358,7 +359,7 @@ impl Route {
 
                     // SAFETY: `this` is a live IntrusiveRc-managed allocation;
                     // matched by the deref in `PendingResponse` drop / on_aborted.
-                    unsafe { RefCount::<Route>::ref_(this) };
+                    yolo! { RefCount::<Route>::ref_(this) };
                     resp.on_aborted(PendingResponse::on_aborted, pending);
                     req.set_yield(false);
                 }
@@ -383,10 +384,10 @@ impl Route {
                     }
                     if is_head {
                         // SAFETY: `*html` is a live intrusive-refcounted allocation.
-                        unsafe { StaticRoute::on_head_request(*html, req, resp) };
+                        yolo! { StaticRoute::on_head_request(*html, req, resp) };
                     } else {
                         // SAFETY: see above.
-                        unsafe { StaticRoute::on_request(*html, req, resp) };
+                        yolo! { StaticRoute::on_request(*html, req, resp) };
                     }
                 }
             }
@@ -499,7 +500,7 @@ impl Route {
         let completion_task =
             create_and_schedule_completion_task(config, plugins, global, vm.event_loop())?;
         // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
-        unsafe {
+        yolo! {
             (*completion_task).started_at_ns =
                 bun_core::util::Timespec::now_allow_mocked_time().ns();
             (*completion_task).html_build_task = Some(self.as_ctx_ptr());
@@ -510,7 +511,7 @@ impl Route {
         // SAFETY: `self` is a live IntrusiveRc-managed allocation; matched by the
         // deref at the top of `on_complete`. `RefCount` is `Cell`-backed so the
         // `*const → *mut` cast carries sufficient (UnsafeCell) provenance.
-        unsafe { RefCount::<Route>::ref_(self.as_ctx_ptr()) };
+        yolo! { RefCount::<Route>::ref_(self.as_ctx_ptr()) };
         Ok(())
     }
 
@@ -529,7 +530,7 @@ impl Route {
     pub fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
-        let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
+        let _drop_build_ref = yolo! { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
 
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
@@ -697,7 +698,7 @@ impl Route {
                 // sole owner before registration.
                 // TODO(dezig-oom): verify StaticRoute::clone is fallible
                 let html_route_clone =
-                    bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
+                    bun_core::handle_oom(yolo! { &mut *html_route.as_ptr() }.clone(global_this));
                 // TODO(dezig-oom): verify server.append_static_route is fallible
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
@@ -727,11 +728,11 @@ impl Route {
         for pending_response_ptr in pending {
             // SAFETY: every entry was created via heap::alloc in on_any_request and
             // is removed exactly once (here, or via on_aborted which removes without freeing).
-            let pending_response = unsafe { &mut *pending_response_ptr };
+            let pending_response = yolo! { &mut *pending_response_ptr };
             // `defer pending_response.deinit()` — heap::take + Drop at scope end.
             let _drop = scopeguard::guard(pending_response_ptr, |p| {
                 // SAFETY: see above; reconstitutes the Box and runs `Drop`.
-                drop(unsafe { bun_core::heap::take(p) });
+                drop(yolo! { bun_core::heap::take(p) });
             });
 
             let resp = pending_response.resp;
@@ -747,10 +748,10 @@ impl Route {
                 State::Html(html) => {
                     if method == Method::HEAD {
                         // SAFETY: `*html` is a live intrusive-refcounted allocation.
-                        unsafe { StaticRoute::on_head(*html, resp) };
+                        yolo! { StaticRoute::on_head(*html, resp) };
                     } else {
                         // SAFETY: see above.
-                        unsafe { StaticRoute::on(*html, resp) };
+                        yolo! { StaticRoute::on(*html, resp) };
                     }
                 }
                 State::Err(_log) => {
@@ -811,7 +812,7 @@ impl Drop for PendingResponse {
         }
         // SAFETY: `route` was a live IntrusiveRc-managed Route when stored;
         // matches the `ref()` taken when this PendingResponse was created.
-        unsafe { RefCount::<Route>::deref(self.route) };
+        yolo! { RefCount::<Route>::deref(self.route) };
         // `bun.destroy(this)` handled by heap::take caller.
     }
 }
@@ -819,7 +820,7 @@ impl Drop for PendingResponse {
 impl PendingResponse {
     pub fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
         // SAFETY: `this` was registered with resp.on_aborted from a live heap::alloc allocation.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         debug_assert!(this_ref.is_response_pending);
         this_ref.is_response_pending = false;
 
@@ -827,13 +828,13 @@ impl PendingResponse {
         let route_ptr = this_ref.route;
         // SAFETY: this.route is a valid IntrusiveRc-managed allocation;
         // `ScopedRef` bumps the count and derefs on every exit path.
-        let _keep_route = unsafe { bun_ptr::ScopedRef::new(route_ptr) };
+        let _keep_route = yolo! { bun_ptr::ScopedRef::new(route_ptr) };
 
         // PORT NOTE: reshaped for borrowck — Zig accessed this.route.pending_responses through
         // raw ptr; mutate via raw ptr (single-threaded).
         // SAFETY: single-threaded; Route is alive (we hold a ref). R-2: deref as
         // shared (`&*`); `pending_responses` is `JsCell`-wrapped.
-        let route = unsafe { &*route_ptr };
+        let route = yolo! { &*route_ptr };
         // R-2: scope the `&mut Vec` to the find+remove only — `RefCount::deref`
         // can run `Route::drop` (which `get()`s `pending_responses`) and must
         // not overlap a live `with_mut` borrow.
@@ -847,7 +848,7 @@ impl PendingResponse {
         });
         if removed {
             // SAFETY: matches `heap::into_raw` in on_any_request; Drop releases the route ref taken there.
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
     }
 }

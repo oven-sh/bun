@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::cell::UnsafeCell;
 use core::fmt;
@@ -172,7 +173,7 @@ impl CompileResultSlots {
     #[inline]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompileResult> + '_ {
         // SAFETY: reads happen only after the pool join; no concurrent writer.
-        self.0.iter().map(|c| unsafe { &*c.get() })
+        self.0.iter().map(|c| yolo! { &*c.get() })
     }
 }
 
@@ -181,7 +182,7 @@ impl core::ops::Index<usize> for CompileResultSlots {
     #[inline]
     fn index(&self, i: usize) -> &CompileResult {
         // SAFETY: reads happen only after the pool join; no concurrent writer.
-        unsafe { &*self.0[i].get() }
+        yolo! { &*self.0[i].get() }
     }
 }
 
@@ -230,7 +231,7 @@ impl Chunk {
     pub unsafe fn write_compile_result_slot(chunk: *mut Chunk, i: usize, result: CompileResult) {
         // SAFETY: per fn contract — `chunk` is live, `i` in-bounds, slot
         // exclusively owned by this caller.
-        unsafe {
+        yolo! {
             // Project to the slots field with no intermediate `&`/`&mut Chunk`.
             let slots: *mut CompileResultSlots =
                 core::ptr::addr_of_mut!((*chunk).compile_results_for_chunk);

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 /// Protocol for types whose reference count is managed externally (e.g., by extern functions).
@@ -34,7 +35,7 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
     pub unsafe fn adopt(incremented_raw: *mut T) -> Self {
         Self {
             // SAFETY: Zig `*T` is non-null by construction.
-            ptr: unsafe { NonNull::new_unchecked(incremented_raw) },
+            ptr: yolo! { NonNull::new_unchecked(incremented_raw) },
         }
     }
 
@@ -54,10 +55,10 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
     /// `raw` must be a valid pointer managed by the external refcount.
     pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
         // SAFETY: caller contract.
-        unsafe { T::ext_ref(raw) };
+        yolo! { T::ext_ref(raw) };
         Self {
             // SAFETY: Zig `*T` is non-null.
-            ptr: unsafe { NonNull::new_unchecked(raw) },
+            ptr: yolo! { NonNull::new_unchecked(raw) },
         }
     }
 
@@ -90,7 +91,7 @@ impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
         // side; any C++-side mutation goes through `UnsafeCell`/opaque-FFI
         // interior mutability on `T` itself, so `&T` carries no `noalias
         // readonly` assumption that the FFI could violate.
-        unsafe { self.ptr.as_ref() }
+        yolo! { self.ptr.as_ref() }
     }
 }
 
@@ -98,7 +99,7 @@ impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
 impl<T: ExternalSharedDescriptor> Clone for ExternalShared<T> {
     fn clone(&self) -> Self {
         // SAFETY: `self.ptr` is valid while `self` is alive.
-        unsafe { T::ext_ref(self.ptr.as_ptr()) };
+        yolo! { T::ext_ref(self.ptr.as_ptr()) };
         Self { ptr: self.ptr }
     }
 }
@@ -107,7 +108,7 @@ impl<T: ExternalSharedDescriptor> Clone for ExternalShared<T> {
 impl<T: ExternalSharedDescriptor> Drop for ExternalShared<T> {
     fn drop(&mut self) {
         // SAFETY: `self.ptr` is valid; we hold one ref which we now release.
-        unsafe { T::ext_deref(self.ptr.as_ptr()) };
+        yolo! { T::ext_deref(self.ptr.as_ptr()) };
     }
 }
 
@@ -148,7 +149,7 @@ impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
     pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
         if let Some(some_raw) = NonNull::new(raw) {
             // SAFETY: caller contract.
-            unsafe { T::ext_ref(some_raw.as_ptr()) };
+            yolo! { T::ext_ref(some_raw.as_ptr()) };
         }
         Self {
             ptr: NonNull::new(raw),
@@ -173,7 +174,7 @@ impl<T: ExternalSharedDescriptor> Clone for ExternalSharedOptional<T> {
     fn clone(&self) -> Self {
         if let Some(ptr) = self.ptr {
             // SAFETY: `ptr` is valid while `self` is alive.
-            unsafe { T::ext_ref(ptr.as_ptr()) };
+            yolo! { T::ext_ref(ptr.as_ptr()) };
         }
         Self { ptr: self.ptr }
     }
@@ -183,7 +184,7 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
     fn drop(&mut self) {
         if let Some(ptr) = self.ptr {
             // SAFETY: `ptr` is valid; we hold one ref which we now release.
-            unsafe { T::ext_deref(ptr.as_ptr()) };
+            yolo! { T::ext_deref(ptr.as_ptr()) };
         }
     }
 }
@@ -199,11 +200,11 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
 unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live WTFStringImpl.
-        unsafe { (*this).r#ref() }
+        yolo! { (*this).r#ref() }
     }
     unsafe fn ext_deref(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live WTFStringImpl.
-        unsafe { (*this).deref() }
+        yolo! { (*this).deref() }
     }
 }
 

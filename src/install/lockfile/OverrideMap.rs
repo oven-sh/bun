@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
@@ -479,7 +480,7 @@ pub fn parse_override_value(
     // SAFETY: `string_bytes` was pre-reserved by `allocate()`; subsequent
     // `append` calls don't realloc, so a detached view is sound here while we
     // still need `&mut builder` for the next `append`.
-    let string_bytes = unsafe { bun_ptr::detach_lifetime(builder.string_bytes.as_slice()) };
+    let string_bytes = yolo! { bun_ptr::detach_lifetime(builder.string_bytes.as_slice()) };
     let literal_sliced = literal_string.sliced(string_bytes);
 
     let name_hash = SemverBuilder::string_hash(key);

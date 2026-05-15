@@ -35,6 +35,7 @@
 //!   A variant of DynamicBitSet which does not store a pointer to its
 //!   allocator, in order to save space.
 
+use bun_yolo::yolo;
 use core::mem;
 use core::ptr;
 use core::slice;
@@ -811,7 +812,7 @@ static EMPTY_MASKS_DATA: bun_core::RacyCell<[usize; 2]> = bun_core::RacyCell::ne
 fn empty_masks_ptr() -> *mut usize {
     // SAFETY: pointer arithmetic into a static array; index 1 is in-bounds.
     // The `*mut` is never written through while pointing at this static.
-    unsafe { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
+    yolo! { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
 }
 
 impl Default for DynamicBitSetUnmanaged {
@@ -836,7 +837,7 @@ impl DynamicBitSetUnmanaged {
         // SAFETY: `masks` is never null (defaults to `empty_masks_ptr()`) and
         // points to at least `n` valid, initialized usize words, maintained by
         // `resize` / `List::at`. Padding bits in the last word are zeroed.
-        unsafe { slice::from_raw_parts(self.masks, n) }
+        yolo! { slice::from_raw_parts(self.masks, n) }
     }
 
     /// Borrow the mask words as an exclusive slice of length `num_masks(bit_length)`.
@@ -850,7 +851,7 @@ impl DynamicBitSetUnmanaged {
         // SAFETY: see `masks_slice`. `&mut self` gives us exclusive access to
         // *this* struct; the caller is responsible for not aliasing the
         // underlying storage via another view.
-        unsafe { slice::from_raw_parts_mut(self.masks, n) }
+        yolo! { slice::from_raw_parts_mut(self.masks, n) }
     }
 
     /// Raw pointer to the mask words. Use this (not `masks_slice{,_mut}`) when
@@ -879,7 +880,7 @@ impl DynamicBitSetUnmanaged {
             // SAFETY: `i < num_masks(self.bit_length)`; `dst`/`src` each point
             // at ≥ `num_masks` initialized words (`resize`/`List::at` invariant).
             // The two pointers may be equal — see method doc.
-            unsafe { *dst.add(i) = f(*dst.add(i), *src.add(i)) };
+            yolo! { *dst.add(i) = f(*dst.add(i), *src.add(i)) };
         }
     }
 
@@ -911,15 +912,15 @@ impl DynamicBitSetUnmanaged {
         // SAFETY: `self.masks - 1` is the start of the true allocation (or the
         // start of EMPTY_MASKS_DATA), and `(self.masks - 1)[0]` holds its
         // length. Maintained by this function.
-        let alloc_base = unsafe { self.masks.sub(1) };
-        let old_alloc_len = unsafe { *alloc_base };
+        let alloc_base = yolo! { self.masks.sub(1) };
+        let old_alloc_len = yolo! { *alloc_base };
 
         if new_masks == 0 {
             debug_assert!(new_len == 0);
             // SAFETY: alloc_base/old_alloc_len describe a valid allocation
             // (possibly the static EMPTY_MASKS_DATA, in which case len==0 and
             // free is a no-op handled by `dyn_free`).
-            unsafe { dyn_free(alloc_base, old_alloc_len) };
+            yolo! { dyn_free(alloc_base, old_alloc_len) };
             self.masks = empty_masks_ptr();
             self.bit_length = 0;
             return Ok(());
@@ -936,7 +937,7 @@ impl DynamicBitSetUnmanaged {
             // hold on to the extra 8 bytes required to be able to free
             // this allocation properly.
             // SAFETY: alloc_base/old_alloc_len describe the current allocation.
-            let new_alloc = match unsafe { dyn_realloc(alloc_base, old_alloc_len, new_masks + 1) } {
+            let new_alloc = match yolo! { dyn_realloc(alloc_base, old_alloc_len, new_masks + 1) } {
                 Ok(p) => p,
                 Err(err) => {
                     if new_masks + 1 > old_alloc_len {
@@ -947,9 +948,9 @@ impl DynamicBitSetUnmanaged {
             };
 
             // SAFETY: new_alloc points to at least new_masks+1 usize words.
-            unsafe { *new_alloc = new_masks + 1 };
+            yolo! { *new_alloc = new_masks + 1 };
             // SAFETY: new_alloc points to at least new_masks+1 words; +1 is in-bounds.
-            self.masks = unsafe { new_alloc.add(1) };
+            self.masks = yolo! { new_alloc.add(1) };
         }
 
         // If we increased in size, we need to set any new bits
@@ -961,14 +962,14 @@ impl DynamicBitSetUnmanaged {
                     u32::try_from(old_masks * DYN_MASK_BITS as usize - old_len).expect("int cast");
                 let old_mask = usize::MAX >> old_padding_bits;
                 // SAFETY: index in [0, new_masks).
-                unsafe { *self.masks.add(old_masks - 1) |= !old_mask };
+                yolo! { *self.masks.add(old_masks - 1) |= !old_mask };
             }
 
             // fill in any new masks
             if new_masks > old_masks {
                 let fill_value = bool_mask_usize(fill);
                 // SAFETY: range [old_masks, new_masks) is within the allocation.
-                unsafe {
+                yolo! {
                     slice::from_raw_parts_mut(self.masks.add(old_masks), new_masks - old_masks)
                         .fill(fill_value);
                 }
@@ -981,7 +982,7 @@ impl DynamicBitSetUnmanaged {
                 u32::try_from(new_masks * DYN_MASK_BITS as usize - new_len).expect("int cast");
             let last_item_mask = usize::MAX >> padding_bits;
             // SAFETY: new_masks > 0 here.
-            unsafe { *self.masks.add(new_masks - 1) &= last_item_mask };
+            yolo! { *self.masks.add(new_masks - 1) &= last_item_mask };
         }
 
         // And finally, save the new length.
@@ -1318,13 +1319,13 @@ impl DynamicBitSetList {
 
         let layout = core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
         // SAFETY: `buf_len > 0` so layout has nonzero size.
-        let raw = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<usize>();
+        let raw = yolo! { std::alloc::alloc_zeroed(layout) }.cast::<usize>();
         let buf = ptr::NonNull::new(raw).ok_or(AllocError)?;
 
         for i in 0..n {
             // SAFETY: `i * single_bitset_buf_size < buf_len`; allocation is
             // zero-initialized and at least `buf_len` words long.
-            unsafe { *buf.as_ptr().add(i * single_bitset_buf_size) = single_bitset_buf_size };
+            yolo! { *buf.as_ptr().add(i * single_bitset_buf_size) = single_bitset_buf_size };
         }
 
         Ok(Self {
@@ -1360,7 +1361,7 @@ impl DynamicBitSetList {
             // view (e.g. from `set`/`set_union`) are sound even though we only
             // hold `&self` here — `&self` freezes the pointer *value*, not the
             // pointee.
-            masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
+            masks: yolo! { self.buf.as_ptr().add(offset).add(1) },
         }
     }
 
@@ -1383,7 +1384,7 @@ impl Drop for DynamicBitSetList {
         let layout = core::alloc::Layout::array::<usize>(self.buf_len).expect("unreachable");
         // SAFETY: `buf` was allocated in `init_empty` with exactly this layout
         // and has not been freed (no other code path deallocates it).
-        unsafe { std::alloc::dealloc(self.buf.as_ptr().cast(), layout) };
+        yolo! { std::alloc::dealloc(self.buf.as_ptr().cast(), layout) };
     }
 }
 
@@ -1402,7 +1403,7 @@ unsafe fn dyn_free(base: *mut usize, len: usize) {
     }
     let layout = core::alloc::Layout::array::<usize>(len).expect("unreachable");
     // SAFETY: caller guarantees `base` was allocated with this layout.
-    unsafe { std::alloc::dealloc(base.cast(), layout) };
+    yolo! { std::alloc::dealloc(base.cast(), layout) };
 }
 
 unsafe fn dyn_realloc(
@@ -1414,7 +1415,7 @@ unsafe fn dyn_realloc(
     if old_len == 0 {
         // SAFETY: new_layout is nonzero size (caller never passes new_len==0
         // through this path).
-        let p = unsafe { std::alloc::alloc(new_layout) };
+        let p = yolo! { std::alloc::alloc(new_layout) };
         if p.is_null() {
             return Err(AllocError);
         }
@@ -1422,7 +1423,7 @@ unsafe fn dyn_realloc(
     }
     let old_layout = core::alloc::Layout::array::<usize>(old_len).expect("unreachable");
     // SAFETY: caller guarantees `base` was allocated with `old_layout`.
-    let p = unsafe { std::alloc::realloc(base.cast(), old_layout, new_layout.size()) };
+    let p = yolo! { std::alloc::realloc(base.cast(), old_layout, new_layout.size()) };
     if p.is_null() {
         return Err(AllocError);
     }

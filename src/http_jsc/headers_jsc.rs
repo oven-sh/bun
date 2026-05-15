@@ -1,6 +1,7 @@
 //! JSC bridges for `bun.http.{Headers,H2Client,H3Client}`. Keeps `src/http/`
 //! free of JSC types.
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -28,7 +29,7 @@ pub fn from_fetch_headers(
     let mut buf_len: u32 = 0;
     if let Some(h) = h_ptr {
         // SAFETY: `h` is a valid `&FetchHeaders` for the call; FFI is read-only.
-        unsafe { (*h).count(&mut header_count, &mut buf_len) };
+        yolo! { (*h).count(&mut header_count, &mut buf_len) };
     }
     let mut headers = Headers {
         entries: EntryList::default(),
@@ -39,7 +40,7 @@ pub fn from_fetch_headers(
         if let Some(body_ct) = body_content_type {
             // SAFETY: see `count` above.
             let has_ct_header = h_ptr
-                .map(|h| unsafe { (*h).fast_has_(HTTPHeaderName::ContentType as u8) })
+                .map(|h| yolo! { (*h).fast_has_(HTTPHeaderName::ContentType as u8) })
                 .unwrap_or(false);
             if !has_ct_header {
                 header_count += 1;
@@ -58,10 +59,10 @@ pub fn from_fetch_headers(
     }
     // SAFETY: capacity reserved above; columns are `StringPointer` (POD) and fully
     // overwritten by `copy_to` / the explicit writes below before any read.
-    unsafe { headers.entries.set_len(header_count as usize) };
+    yolo! { headers.entries.set_len(header_count as usize) };
     headers.buf.reserve_exact(buf_len as usize);
     // SAFETY: capacity reserved above; bytes are fully initialized by copyTo / the copy below.
-    unsafe { headers.buf.set_len(buf_len as usize) };
+    yolo! { headers.buf.set_len(buf_len as usize) };
     // PORT NOTE: reshaped for borrowck — Zig took two column slices off one `sliced` view.
     // The Rust `Slice::items` returns `&mut [F]` from `&self`; the two columns are
     // disjoint allocations so simultaneous access is sound, but borrowck can't see
@@ -70,12 +71,12 @@ pub fn from_fetch_headers(
     // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
     // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
     let names_ptr: *mut api::StringPointer =
-        unsafe { sliced.items_raw::<"name", api::StringPointer>() };
+        yolo! { sliced.items_raw::<"name", api::StringPointer>() };
     let values_ptr: *mut api::StringPointer =
-        unsafe { sliced.items_raw::<"value", api::StringPointer>() };
+        yolo! { sliced.items_raw::<"value", api::StringPointer>() };
     if let Some(h) = h_ptr {
         // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
-        unsafe { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };
+        yolo! { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };
     }
 
     // TODO: maybe we should send Content-Type header first instead of last?
@@ -85,7 +86,7 @@ pub fn from_fetch_headers(
         headers.buf[buf_len_before_content_type as usize..][..ct.len()].copy_from_slice(ct);
         // SAFETY: header_count >= 1 (incremented above); names_ptr points to a
         // live column of `header_count` slots.
-        unsafe {
+        yolo! {
             *names_ptr.add(header_count as usize - 1) = api::StringPointer {
                 offset: buf_len_before_content_type,
                 length: u32::try_from(ct.len()).unwrap(),
@@ -95,7 +96,7 @@ pub fn from_fetch_headers(
         headers.buf[buf_len_before_content_type as usize + ct.len()..][..body_ct.len()]
             .copy_from_slice(body_ct);
         // SAFETY: see above.
-        unsafe {
+        yolo! {
             *values_ptr.add(header_count as usize - 1) = api::StringPointer {
                 offset: buf_len_before_content_type + u32::try_from(ct.len()).unwrap(),
                 length: u32::try_from(body_ct.len()).unwrap(),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_uint, c_void};
 use core::ptr;
 
@@ -164,7 +165,7 @@ impl ArrayBuffer {
         // Wrapped in `from_js_host_call` so the C++ throw scope opened by
         // `Bun__createUint8ArrayForCopy` is checked before `as_array_buffer` below
         // declares `ASSERT_NO_PENDING_EXCEPTION` (validateExceptionChecks).
-        let buffer_value = match crate::host_fn::from_js_host_call(global, || unsafe {
+        let buffer_value = match crate::host_fn::from_js_host_call(global, || yolo! {
             Bun__createUint8ArrayForCopy(global, ptr::null(), size, true)
         }) {
             Ok(v) => v,
@@ -288,7 +289,7 @@ impl ArrayBuffer {
         }
         // SAFETY: ptr is non-null (checked above), FFI-backed; caller must keep backing JSValue alive.
         let slice =
-            unsafe { core::slice::from_raw_parts_mut::<'static, u8>(self.ptr, self.byte_len) };
+            yolo! { core::slice::from_raw_parts_mut::<'static, u8>(self.ptr, self.byte_len) };
         std::io::Cursor::new(slice)
     }
 
@@ -301,12 +302,12 @@ impl ArrayBuffer {
         match KIND {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
             // ptr/len come from a live slice, copied by callee.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
+            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || yolo! {
                 Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
             }),
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
             // ptr/len come from a live slice, copied by callee.
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
+            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || yolo! {
                 Bun__createArrayBufferForCopy(global, bytes.as_ptr().cast(), bytes.len())
             }),
             _ => panic!("ArrayBuffer::create: KIND not implemented"), // Zig: @compileError
@@ -318,12 +319,12 @@ impl ArrayBuffer {
         match KIND {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
             // with len 0 is the documented empty case.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
+            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || yolo! {
                 Bun__createUint8ArrayForCopy(global, ptr::null(), 0, false)
             }),
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
             // with len 0 is the documented empty case.
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
+            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || yolo! {
                 Bun__createArrayBufferForCopy(global, ptr::null(), 0)
             }),
             _ => panic!("ArrayBuffer::create_empty: KIND not implemented"), // Zig: @compileError
@@ -334,7 +335,7 @@ impl ArrayBuffer {
         crate::mark_binding!();
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
         // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, || unsafe {
+        crate::host_fn::from_js_host_call(global, || yolo! {
             Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), true)
         })
     }
@@ -343,7 +344,7 @@ impl ArrayBuffer {
         crate::mark_binding!();
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
         // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, || unsafe {
+        crate::host_fn::from_js_host_call(global, || yolo! {
             Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
         })
     }
@@ -363,7 +364,7 @@ impl ArrayBuffer {
             _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
         };
         // SAFETY: Bun__alloc*ForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
-        let slice = unsafe { bun_core::ffi::slice_mut(ptr_out, len as usize) };
+        let slice = yolo! { bun_core::ffi::slice_mut(ptr_out, len as usize) };
         Ok((buf, slice))
     }
 
@@ -374,7 +375,7 @@ impl ArrayBuffer {
     pub fn to_js_from_default_allocator(global: &JSGlobalObject, bytes: &mut [u8]) -> JSValue {
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is a
         // mimalloc-backed buffer whose ownership transfers to JSC.
-        unsafe { JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len()) }
+        yolo! { JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len()) }
     }
 
     pub fn from_default_allocator(
@@ -385,7 +386,7 @@ impl ArrayBuffer {
         match typed_array_type {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
             // a mimalloc-backed buffer whose ownership transfers to JSC.
-            JSType::ArrayBuffer => unsafe {
+            JSType::ArrayBuffer => yolo! {
                 JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
             },
             // PORT NOTE: `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
@@ -396,7 +397,7 @@ impl ArrayBuffer {
                 // transfers to JSC. Coerce the borrowed slice directly to its
                 // fat raw pointer — no need to round-trip through
                 // `from_raw_parts_mut(as_mut_ptr(), len)`.
-                let owned = unsafe { bun_core::heap::take(bytes as *mut [u8]) };
+                let owned = yolo! { bun_core::heap::take(bytes as *mut [u8]) };
                 jsc::JSUint8Array::from_bytes(global, owned)
             }
             _ => unreachable!("Not implemented yet"), // Zig: @compileError
@@ -484,7 +485,7 @@ impl ArrayBuffer {
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
         // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
-        if self.len > 0 && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) } {
+        if self.len > 0 && !yolo! { mimalloc::mi_is_in_heap_region(self.ptr.cast()) } {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 
             if self.typed_array_type == JSType::ArrayBuffer {
@@ -561,7 +562,7 @@ impl ArrayBuffer {
         }
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
         // Hot path — bare `from_raw_parts` to avoid the helper's redundant null-branch.
-        unsafe { core::slice::from_raw_parts(self.ptr, self.byte_len) }
+        yolo! { core::slice::from_raw_parts(self.ptr, self.byte_len) }
     }
 
     #[inline]
@@ -571,7 +572,7 @@ impl ArrayBuffer {
         }
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
         // `&mut self` enforces exclusive access to this view.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
+        yolo! { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
     }
 
     /// The equivalent of
@@ -611,7 +612,7 @@ impl ArrayBuffer {
         // align 1, so any `*mut u8` is a valid `*mut Unaligned<u16>`. `&mut self`
         // enforces exclusive access to this view for the borrow's lifetime.
         let len = self.byte_len / core::mem::size_of::<u16>();
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u16>>(), len) }
+        yolo! { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u16>>(), len) }
     }
 
     /// See [`as_u16`]; 4-byte variant.
@@ -630,7 +631,7 @@ impl ArrayBuffer {
         // `*mut u8` is a valid `*mut Unaligned<u32>`. `&mut self` enforces
         // exclusive access to this view.
         let len = self.byte_len / core::mem::size_of::<u32>();
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
+        yolo! { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
     }
 }
 
@@ -803,7 +804,7 @@ impl BinaryType {
                 // provenance (see PORT NOTE on the extern block above). `buffer` is a
                 // fresh ArrayBuffer JSValue (cell pointer), so `as_object_ref` yields a
                 // valid `JSObjectRef`.
-                let obj = unsafe {
+                let obj = yolo! {
                     jsc_c::JSObjectMakeTypedArrayWithArrayBuffer(
                         std::ptr::from_ref::<JSGlobalObject>(global).cast_mut(),
                         self.to_typed_array_type().to_c(),
@@ -926,7 +927,7 @@ impl MarkedArrayBuffer {
         let len = buf.len();
         let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
         // SAFETY: ptr/len from heap::alloc; backed by global mimalloc.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
+        let bytes = yolo! { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
 
@@ -967,7 +968,7 @@ impl MarkedArrayBuffer {
         if self.owns_buffer {
             self.owns_buffer = false;
             // SAFETY: buffer.ptr was allocated via global mimalloc (heap::alloc / allocator.dupe).
-            unsafe { mimalloc::mi_free(self.buffer.ptr.cast()) };
+            yolo! { mimalloc::mi_free(self.buffer.ptr.cast()) };
         }
     }
 
@@ -1086,7 +1087,7 @@ impl JSCArrayBuffer {
     pub fn as_array_buffer(&mut self) -> ArrayBuffer {
         let mut out = core::mem::MaybeUninit::<ArrayBuffer>::uninit();
         // SAFETY: C++ fully initializes `out`.
-        unsafe {
+        yolo! {
             JSC__ArrayBuffer__asBunArrayBuffer(self, out.as_mut_ptr());
             out.assume_init()
         }

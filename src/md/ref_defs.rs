@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::{align_of, size_of};
 
 use bun_alloc::AllocError;
@@ -353,7 +354,7 @@ impl Parser<'_> {
 
             // SAFETY: off is aligned to BlockHeader and within bounds; block_bytes
             // stores BlockHeader-prefixed records written by the block parser.
-            let hdr: &mut BlockHeader = unsafe { &mut *bytes_ptr.add(off).cast::<BlockHeader>() };
+            let hdr: &mut BlockHeader = yolo! { &mut *bytes_ptr.add(off).cast::<BlockHeader>() };
             let hdr_off = off;
             off += size_of::<BlockHeader>();
 
@@ -364,9 +365,9 @@ impl Parser<'_> {
             }
 
             // SAFETY: VerbatimLine array immediately follows the header in block_bytes.
-            let line_ptr: *mut VerbatimLine = unsafe { bytes_ptr.add(off).cast::<VerbatimLine>() };
+            let line_ptr: *mut VerbatimLine = yolo! { bytes_ptr.add(off).cast::<VerbatimLine>() };
             let block_lines: &[VerbatimLine] =
-                unsafe { core::slice::from_raw_parts(line_ptr, n_lines) };
+                yolo! { core::slice::from_raw_parts(line_ptr, n_lines) };
             off += lines_size;
 
             // Only process paragraph blocks (not container openers/closers)
@@ -452,7 +453,7 @@ impl Parser<'_> {
                 } else {
                     // Mark consumed lines as invalid (beg > end triggers skip in processLeafBlock)
                     // SAFETY: same VerbatimLine array as above; hdr_off + sizeof(header) is its start.
-                    let line_base: *mut VerbatimLine = unsafe {
+                    let line_base: *mut VerbatimLine = yolo! {
                         bytes_ptr
                             .add(hdr_off + size_of::<BlockHeader>())
                             .cast::<VerbatimLine>()
@@ -460,7 +461,7 @@ impl Parser<'_> {
                     let mut i: u32 = 0;
                     while i < lines_consumed {
                         // SAFETY: i < lines_consumed < n_lines, in-bounds of the line array.
-                        unsafe {
+                        yolo! {
                             (*line_base.add(i as usize)).beg = 1;
                             (*line_base.add(i as usize)).end = 0;
                         }

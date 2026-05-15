@@ -10,6 +10,7 @@
 // Phase B: audit call sites of `bun.from(...)` / `bun.fromEntries(...)` and
 // likely replace them with direct `.collect()` / `Vec::from` at the caller.
 
+use bun_yolo::yolo;
 use core::hash::Hash;
 
 // TODO(b0): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
@@ -202,7 +203,7 @@ pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
     );
     let len = bytes.len() / core::mem::size_of::<T>();
     // SAFETY: alignment + validity preconditions documented above.
-    unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
+    yolo! { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
 }
 
 // ─── Unaligned<T> ─────────────────────────────────────────────────────────────
@@ -234,7 +235,7 @@ impl<T: Copy> Unaligned<T> {
     pub fn set(&mut self, value: T) {
         // SAFETY: `self` points to `size_of::<T>()` writable bytes; alignment
         // is 1 by `#[repr(packed)]`, hence `write_unaligned`.
-        unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
+        yolo! { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
     }
 
     /// Reinterpret `&[Unaligned<T>]` as `&[T]` once the caller has proven
@@ -249,7 +250,7 @@ impl<T: Copy> Unaligned<T> {
         // SAFETY: same address, same length, same element size; alignment
         // precondition asserted above. `Unaligned<T>` is `repr(C, packed)`
         // around a single `T`, so layout is byte-identical.
-        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast::<T>(), slice.len()) }
+        yolo! { core::slice::from_raw_parts(slice.as_ptr().cast::<T>(), slice.len()) }
     }
 
     /// Mutable counterpart of [`slice_align_cast`].
@@ -261,7 +262,7 @@ impl<T: Copy> Unaligned<T> {
             core::mem::align_of::<T>(),
         );
         // SAFETY: see `slice_align_cast`; `&mut` exclusivity is preserved.
-        unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
+        yolo! { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
     }
 }
 
@@ -296,7 +297,7 @@ impl<T> ArrayLike for Vec<T> {
         // SAFETY: capacity reserved above; caller immediately memcpy-fills [0..n].
         // Matches Zig `map.items.len = default.len; slice = map.items;` which
         // also exposes uninitialized memory until the subsequent @memcpy.
-        unsafe { self.set_len(n) };
+        yolo! { self.set_len(n) };
         self.as_mut_slice()
     }
 }
@@ -321,19 +322,19 @@ impl<T> ArrayLike for Vec<T> {
 pub struct ZStr([u8]);
 
 impl ZStr {
-    pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(b"\0".as_ptr(), 0) };
+    pub const EMPTY: &'static ZStr = yolo! { Self::from_raw(b"\0".as_ptr(), 0) };
 
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
-        unsafe {
+        yolo! {
             &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr)
         }
     }
     /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
-        unsafe {
+        yolo! {
             &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len))
                 as *mut ZStr)
         }
@@ -345,7 +346,7 @@ impl ZStr {
     pub const fn from_static(s: &'static [u8]) -> &'static ZStr {
         debug_assert!(!s.is_empty() && s[s.len() - 1] == 0);
         // SAFETY: caller-supplied literal ends in NUL; lifetime is 'static.
-        unsafe { Self::from_raw(s.as_ptr(), s.len() - 1) }
+        yolo! { Self::from_raw(s.as_ptr(), s.len() - 1) }
     }
     /// Borrow `buf[..len]` as a `&ZStr`, where `buf[len] == 0`. This is the
     /// safe-surface form of [`from_raw`] for the dominant call shape in the
@@ -359,7 +360,7 @@ impl ZStr {
         // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; release
         // relies on caller upholding the documented `buf[len] == 0`
         // precondition, same contract as Zig `[:0]const u8` slicing).
-        unsafe { Self::from_raw(buf.as_ptr(), len) }
+        yolo! { Self::from_raw(buf.as_ptr(), len) }
     }
     /// Borrow `buf[..buf.len()-1]` as a `&ZStr`, where the last byte of `buf`
     /// is the NUL terminator. This is [`from_buf`] specialized for the second
@@ -377,7 +378,7 @@ impl ZStr {
         );
         // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
-        unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
+        yolo! { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
     /// Mutable variant of [`from_buf`].
     #[inline]
@@ -385,7 +386,7 @@ impl ZStr {
         debug_assert!(len < buf.len());
         debug_assert_eq!(buf[len], 0);
         // SAFETY: see `from_buf`.
-        unsafe { Self::from_raw_mut(buf.as_mut_ptr(), len) }
+        yolo! { Self::from_raw_mut(buf.as_mut_ptr(), len) }
     }
     #[inline]
     pub const fn as_bytes(&self) -> &[u8] {
@@ -407,7 +408,7 @@ impl ZStr {
     #[inline]
     pub fn as_bytes_with_nul(&self) -> &[u8] {
         // SAFETY: invariant — byte at `len` is NUL and owned by the same allocation.
-        unsafe { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
+        yolo! { core::slice::from_raw_parts(self.0.as_ptr(), self.0.len() + 1) }
     }
     /// View as `&CStr`. Safe-surface bridge for FFI sites that need a
     /// `*const c_char` via `CStr` — funnels the ~dozen open-coded
@@ -423,14 +424,14 @@ impl ZStr {
         );
         // SAFETY: `as_bytes_with_nul()` is `[.., 0]` by the ZStr invariant;
         // no interior NUL is debug-asserted above (caller contract in release).
-        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(self.as_bytes_with_nul()) }
+        yolo! { core::ffi::CStr::from_bytes_with_nul_unchecked(self.as_bytes_with_nul()) }
     }
     /// Borrow a `&CStr` as `&ZStr` — both are NUL-terminated, len excludes NUL.
     #[inline]
     pub fn from_cstr(s: &core::ffi::CStr) -> &ZStr {
         // SAFETY: `CStr` guarantees `bytes[count] == 0` and the whole range is
         // readable for the borrow lifetime — exactly the ZStr invariant.
-        unsafe { Self::from_raw(s.as_ptr().cast::<u8>(), s.count_bytes()) }
+        yolo! { Self::from_raw(s.as_ptr().cast::<u8>(), s.count_bytes()) }
     }
     /// Borrow a NUL-terminated FFI C string as `&ZStr`, or `EMPTY` if `p` is
     /// null. Single audited funnel for the `strlen`-then-`from_raw` shape that
@@ -446,9 +447,9 @@ impl ZStr {
             return Self::EMPTY;
         }
         // SAFETY: caller contract — `p` is non-null, NUL-terminated, valid for `'a`.
-        let len = unsafe { libc::strlen(p) };
+        let len = yolo! { libc::strlen(p) };
         // SAFETY: `p[len] == 0` (strlen postcondition) and `p[..len]` readable.
-        unsafe { Self::from_raw(p.cast::<u8>(), len) }
+        yolo! { Self::from_raw(p.cast::<u8>(), len) }
     }
     // NOTE: prefer `ZBox` for owned NUL-terminated strings. `Box<ZStr>` is
     // supported only as a transitional shim for ported fields that were typed
@@ -464,7 +465,7 @@ impl ZStr {
         let b: Box<[u8]> = v.into_boxed_slice();
         // SAFETY: `ZStr` is a transparent newtype over `[u8]`; the fat-pointer
         // metadata (len = bytes.len()+1) is preserved by the `as *mut ZStr` cast.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
+        yolo! { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
     }
 }
 
@@ -529,7 +530,7 @@ impl ZBox {
     #[inline]
     pub fn as_zstr(&self) -> &ZStr {
         // SAFETY: invariant — `self.0[len] == 0`.
-        unsafe { ZStr::from_raw(self.0.as_ptr(), self.len()) }
+        yolo! { ZStr::from_raw(self.0.as_ptr(), self.len()) }
     }
     #[inline]
     pub fn into_vec_with_nul(self) -> Vec<u8> {
@@ -570,7 +571,7 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
         return None;
     }
     #[cfg(unix)]
-    unsafe {
+    yolo! {
         // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
         let p = libc::getenv(key.as_ptr());
         if p.is_null() {
@@ -615,7 +616,7 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 /// CI-detection vars where casing varies across providers).
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
-    unsafe {
+    yolo! {
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
         let mut p = c_environ();
         while !(*p).is_null() {
@@ -638,14 +639,14 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         // but the block is owned by us (Box::leak'd) instead of libc.
         // SAFETY: env block is process-lifetime; written exactly once at
         // startup before any reader runs.
-        let environ = unsafe { crate::os::environ() };
+        let environ = yolo! { crate::os::environ() };
         for &entry in environ {
             if entry.is_null() {
                 continue;
             }
             // SAFETY: each entry is a NUL-terminated WTF-8 string into the
             // leaked `WTF8_ENV_BUF` allocation.
-            let line = unsafe {
+            let line = yolo! {
                 let mut len = 0usize;
                 while *entry.add(len) != 0 {
                     len += 1;
@@ -674,11 +675,11 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
 pub struct WStr([u16]);
 
 impl WStr {
-    pub const EMPTY: &'static WStr = unsafe { Self::from_raw([0u16].as_ptr(), 0) };
+    pub const EMPTY: &'static WStr = yolo! { Self::from_raw([0u16].as_ptr(), 0) };
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
-        unsafe {
+        yolo! {
             &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr)
         }
     }
@@ -694,7 +695,7 @@ impl WStr {
         debug_assert_eq!(buf[len], 0, "WStr::from_buf: missing NUL at buf[len]");
         // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; caller
         // contract in release).
-        unsafe { Self::from_raw(buf.as_ptr(), len) }
+        yolo! { Self::from_raw(buf.as_ptr(), len) }
     }
     /// Borrow `buf[..buf.len()-1]` as a `&WStr`, where the last unit of `buf`
     /// is the NUL terminator. Mirrors [`ZStr::from_slice_with_nul`].
@@ -708,7 +709,7 @@ impl WStr {
         );
         // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
-        unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
+        yolo! { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
     /// Borrow a NUL-terminated FFI wide string as `&WStr`, or [`EMPTY`] if
     /// `p` is null. UTF-16 mirror of [`ZStr::from_c_ptr`]; single audited
@@ -724,7 +725,7 @@ impl WStr {
             return Self::EMPTY;
         }
         // SAFETY: non-null and NUL-terminated per caller contract.
-        unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
+        yolo! { Self::from_raw(p, crate::ffi::wcslen(p)) }
     }
     #[inline]
     pub const fn as_slice(&self) -> &[u16] {
@@ -744,7 +745,7 @@ impl WStr {
     /// through an owned buffer.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
-        unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
+        yolo! { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
     }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
@@ -802,7 +803,7 @@ macro_rules! zstr {
     ($s:literal) => {{
         const __B: &[u8] = ::core::concat!($s, "\0").as_bytes();
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
-        unsafe { $crate::ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
+        yolo! { $crate::ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
     }};
 }
 
@@ -1000,7 +1001,7 @@ impl PathBuffer {
         // scratch buffer (length-tracked) exactly like Zig
         // `var buf: bun.PathBuffer = undefined`. No byte is read before being
         // written by the consuming syscall / encoder.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+        yolo! { core::mem::MaybeUninit::uninit().assume_init() }
     }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -1047,7 +1048,7 @@ impl WPathBuffer {
         // valid `u16`. Callers treat this as a write-only scratch buffer and
         // track the written length out-of-band — mirrors Zig
         // `var wbuf: bun.WPathBuffer = undefined`.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+        yolo! { core::mem::MaybeUninit::uninit().assume_init() }
     }
     /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
     /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
@@ -1232,7 +1233,7 @@ impl Fd {
         // the `Fd` type's contract — every API taking `Fd` requires the
         // caller to keep the descriptor open for the call, and the returned
         // borrow cannot outlive `&self`.
-        unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
+        yolo! { std::os::fd::BorrowedFd::borrow_raw(raw) }
     }
     /// libuv c_int file number. On POSIX this equals `native()`. On Windows,
     /// when kind=uv this extracts the stored uv_file; when kind=system this
@@ -1573,7 +1574,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         let mut c = std::io::Cursor::new(&mut proc[..]);
         let _ = write!(c, "/proc/self/fd/{}\0", fd.0);
         // SAFETY: proc is NUL-terminated above; buf has cap bytes.
-        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
+        let n = yolo! { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
         if n < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1588,7 +1589,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     {
         // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
         // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
+        let rc = yolo! { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1598,19 +1599,19 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
             };
         }
         // SAFETY: kernel wrote a NUL-terminated path.
-        return unsafe { libc::strlen(buf.cast()) as isize };
+        return yolo! { libc::strlen(buf.cast()) as isize };
     }
     #[cfg(target_os = "freebsd")]
     {
         use core::ptr::{addr_of, addr_of_mut};
         let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
         // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
+        yolo! {
             addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
                 .write(core::mem::size_of::<libc::kinfo_file>() as libc::c_int);
         }
         // SAFETY: F_KINFO expects a *mut kinfo_file with kf_structsize set.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
+        let rc = yolo! { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1620,11 +1621,11 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
             };
         }
         // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path.cast()) };
+        let path = yolo! { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
+        let len = yolo! { libc::strlen(path.cast()) };
         let n = len.min(cap);
         // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
-        unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
+        yolo! { core::ptr::copy_nonoverlapping(path, buf, n) };
         return n as isize;
     }
     #[cfg(not(any(
@@ -1658,7 +1659,7 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         }
         // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
         // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
+        let n = yolo! { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
         // Zig `bun.windows.GetFinalPathNameByHandle`: `if (return_length >=
         // out_buffer.len) return error.NameTooLong;` — `>=` because a return
         // value equal to `cap` is the buffer-too-small sentinel (required size
@@ -1673,7 +1674,7 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         // `buf` would invalidate that borrow's tag under Stacked Borrows.
         // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
         // bounds-checked against `n` first.
-        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
+        let at = |i: usize| -> u16 { yolo! { *buf.add(i) } };
         let bs = b'\\' as u16;
         let off: usize =
             if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
@@ -1685,7 +1686,7 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
                 {
                     // `\\?\UNC\server\share` → `\\server\share`
                     // SAFETY: index 6 < n (checked above).
-                    unsafe { *buf.add(6) = bs };
+                    yolo! { *buf.add(6) = bs };
                     6
                 } else {
                     // `\\?\C:\...` → `C:\...`
@@ -1699,7 +1700,7 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
             // SAFETY: src = buf+off and dst = buf both derive from the same
             // raw `*mut u16` provenance (no intervening reference), src > dst,
             // and `out_len` units fit within the `n` initialized units.
-            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
+            yolo! { core::ptr::copy(buf.add(off), buf, out_len) };
         }
         return out_len as isize;
     }
@@ -1723,7 +1724,7 @@ impl core::fmt::Display for Fd {
             if fd.0 >= 3 {
                 let mut buf = [0u8; 1024];
                 // SAFETY: buf is 1024 bytes, passed with matching cap.
-                let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = yolo! { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
                 if n > 0 {
                     write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
                 } else if n == -1 {
@@ -1806,7 +1807,7 @@ pub mod fd {
         // SAFETY: PEB and ProcessParameters are process-lifetime; the three
         // handle fields are at fixed asserted offsets (`windows_sys`). Reading
         // a `*mut c_void` is `Copy` and atomic on x64.
-        unsafe {
+        yolo! {
             let pp = (*crate::windows_sys::peb()).ProcessParameters;
             ProcessParametersStdio {
                 hStdInput: (*pp).hStdInput as *mut c_void,
@@ -1825,7 +1826,7 @@ pub mod fd {
         // caching.
         // SAFETY: PEB and ProcessParameters are process-lifetime; raw-pointer
         // read because the OS mutates the struct out-of-band (see `peb()` doc).
-        unsafe {
+        yolo! {
             let pp = (*crate::windows_sys::peb()).ProcessParameters;
             (*pp).CurrentDirectory.Handle
         }
@@ -1951,11 +1952,11 @@ pub mod io {
     impl Writer {
         #[inline]
         pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
-            unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
+            yolo! { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
         pub fn flush(&mut self) -> Result<(), crate::Error> {
-            unsafe { (self.flush)(std::ptr::from_mut(self)) }
+            yolo! { (self.flush)(std::ptr::from_mut(self)) }
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
@@ -2159,11 +2160,11 @@ pub mod io {
     impl Write for Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
-            unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
+            yolo! { (self.write_all)(core::ptr::from_mut(self), buf) }
         }
         #[inline]
         fn flush(&mut self) -> Result<(), crate::Error> {
-            unsafe { (self.flush)(core::ptr::from_mut(self)) }
+            yolo! { (self.flush)(core::ptr::from_mut(self)) }
         }
     }
 
@@ -2288,7 +2289,7 @@ impl<T> RacyCell<T> {
         Self(core::cell::Cell::new(value))
     }
     /// Raw pointer to the contained value. Never produces a reference; callers
-    /// deref per-access (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
+    /// deref per-access (`yolo! { *X.get() }` / `yolo! { (*X.get()).field }`).
     #[inline]
     pub const fn get(&self) -> *mut T {
         self.0.as_ptr()
@@ -2458,7 +2459,7 @@ impl Drop for ThreadLockGuard {
         // SAFETY: `self.0` was `&ThreadLock` at `ThreadLock::guard()` and the
         // lock is a field of a struct the caller holds for the entire guard
         // scope; the pointee outlives the guard. `unlock` takes `&self`.
-        unsafe { (*self.0).unlock() }
+        yolo! { (*self.0).unlock() }
     }
 }
 
@@ -2571,7 +2572,7 @@ impl StackCheck {
         {
             let sp: usize;
             // SAFETY: reading rsp is side-effect-free.
-            unsafe {
+            yolo! {
                 core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags))
             };
             sp
@@ -2580,7 +2581,7 @@ impl StackCheck {
         {
             let sp: usize;
             // SAFETY: reading sp is side-effect-free.
-            unsafe {
+            yolo! {
                 core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags))
             };
             sp
@@ -2724,7 +2725,7 @@ impl<T, F> Once<T, F> {
             // SAFETY: DONE is only stored after `cell` has been fully written;
             // the Acquire load synchronises with that Release store. The cell
             // is never mutated again for the process lifetime.
-            Some(unsafe { (*self.cell.get()).assume_init_ref() })
+            Some(yolo! { (*self.cell.get()).assume_init_ref() })
         } else {
             None
         }
@@ -2768,14 +2769,14 @@ impl<T, F> Once<T, F> {
             let v = f();
             // SAFETY: we hold BUSY exclusively (CAS won); no other thread can
             // be reading or writing `cell` until we publish DONE below.
-            unsafe { (*self.cell.get()).write(v) };
+            yolo! { (*self.cell.get()).write(v) };
             core::mem::forget(guard);
             self.state
                 .store(ONCE_DONE, core::sync::atomic::Ordering::Release);
         }
         // SAFETY: either we just stored DONE, or `once_claim_slow` observed
         // DONE from another thread (Acquire in the CAS failure path).
-        unsafe { (*self.cell.get()).assume_init_ref() }
+        yolo! { (*self.cell.get()).assume_init_ref() }
     }
 
     /// `OnceLock::set` equivalent: store `value` if uninitialised, else hand it
@@ -2791,7 +2792,7 @@ impl<T, F> Once<T, F> {
             .is_ok()
         {
             // SAFETY: we hold BUSY exclusively; see `init_slow`.
-            unsafe { (*self.cell.get()).write(value) };
+            yolo! { (*self.cell.get()).write(value) };
             self.state.store(ONCE_DONE, Release);
             Ok(())
         } else {
@@ -2805,7 +2806,7 @@ impl<T, F> Drop for Once<T, F> {
     fn drop(&mut self) {
         if *self.state.get_mut() == ONCE_DONE {
             // SAFETY: DONE ⇒ cell holds a valid `T`; we have `&mut self`.
-            unsafe { self.cell.get_mut().assume_init_drop() };
+            yolo! { self.cell.get_mut().assume_init_drop() };
         }
     }
 }
@@ -2906,7 +2907,7 @@ pub fn is_readable(fd: Fd) -> Pollable {
         revents: 0,
     }];
     // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = yolo! { libc::poll(polls.as_mut_ptr(), 1, 0) };
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -2946,7 +2947,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
         revents: 0,
     }];
     // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = yolo! { libc::poll(polls.as_mut_ptr(), 1, 0) };
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -2981,7 +2982,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
         revents: 0,
     }];
     // SAFETY: polls is a valid 1-element WSAPOLLFD array; len=1 matches the buffer.
-    let rc = unsafe { ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
+    let rc = yolo! { ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
     let result = rc != ws2_32::SOCKET_ERROR && rc != 0;
     crate::scoped_log!(
         SYS,
@@ -3014,7 +3015,7 @@ pub fn csprng(bytes: &mut [u8]) {
         let mut filled = 0usize;
         while filled < bytes.len() {
             // SAFETY: writes at most len-filled bytes into the slice.
-            let rc = unsafe {
+            let rc = yolo! {
                 libc::getrandom(
                     bytes.as_mut_ptr().add(filled).cast(),
                     bytes.len() - filled,
@@ -3036,7 +3037,7 @@ pub fn csprng(bytes: &mut [u8]) {
         // getentropy caps at 256 bytes per call.
         for chunk in bytes.chunks_mut(256) {
             // SAFETY: chunk is a valid writable slice ≤ 256 bytes.
-            let rc = unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) };
+            let rc = yolo! { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) };
             if rc != 0 {
                 panic!("getentropy failed");
             }
@@ -3051,7 +3052,7 @@ pub fn csprng(bytes: &mut [u8]) {
         }
         for chunk in bytes.chunks_mut(u32::MAX as usize) {
             // SAFETY: chunk fits in u32; RtlGenRandom writes exactly that many bytes.
-            let ok = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
+            let ok = yolo! { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
             if ok == 0 {
                 panic!("RtlGenRandom failed");
             }
@@ -3141,7 +3142,7 @@ pub fn get_thread_count() -> u16 {
                 #[cfg(windows)]
                 if let Ok(s) = std::env::var(
                     // SAFETY: keys above are ASCII literals.
-                    unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
+                    yolo! { core::str::from_utf8_unchecked(key.as_bytes()) },
                 ) {
                     if let Ok(n) = s.trim().parse::<u16>() {
                         if n >= MIN {
@@ -3359,7 +3360,7 @@ macro_rules! __runtime_embed_impl {
             // CODEGEN_PATH/BASE_PATH come from `option_env!` (always &str → bytes);
             // round-tripping through validation is wasted work.
             // SAFETY: see above — provenance is a `&'static str` literal.
-            let __from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
+            let __from = |b: &'static [u8]| yolo! { ::core::str::from_utf8_unchecked(b) };
             let mut p = match $kind {
                 $crate::EmbedKind::Codegen | $crate::EmbedKind::CodegenEager => {
                     ::std::path::PathBuf::from(__from($crate::build_options::CODEGEN_PATH))
@@ -3609,7 +3610,7 @@ macro_rules! extern_union_accessors {
             // SAFETY: tag-guarded; `addr_of!` projects without forming an
             // intermediate `&Union`. Cast is identity for plain fields and
             // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
-            unsafe { &*(::core::ptr::addr_of!(self.$vf.$ufield) as *const $Ty) }
+            yolo! { &*(::core::ptr::addr_of!(self.$vf.$ufield) as *const $Ty) }
         }
     };
     (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $ufield:ident, $accessor_mut:ident, $Ty:ty) => {
@@ -3617,7 +3618,7 @@ macro_rules! extern_union_accessors {
         pub fn $accessor_mut(&mut self) -> &mut $Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
-            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$ufield) as *mut $Ty) }
+            yolo! { &mut *(::core::ptr::addr_of_mut!(self.$vf.$ufield) as *mut $Ty) }
         }
     };
 }
@@ -4124,7 +4125,7 @@ pub mod base64 {
 pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
     // SAFETY: mimalloc FFI; returns null on OOM or a writable region of
     // ≥len+1 bytes (alignment ≤ MI_MAX_ALIGN_SIZE for u8).
-    unsafe {
+    yolo! {
         let p = bun_alloc::mimalloc::mi_malloc(bytes.len() + 1).cast::<u8>();
         if p.is_null() {
             crate::out_of_memory();
@@ -4196,7 +4197,7 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     let n = OS_ARGC.load(core::sync::atomic::Ordering::Relaxed);
     // SAFETY: `init_argv` contract — `p` points to `n` C-string pointers that
     // live for the process lifetime.
-    Some(unsafe { core::slice::from_raw_parts(p, n) })
+    Some(yolo! { core::slice::from_raw_parts(p, n) })
 }
 
 fn argv_storage() -> &'static [ZBox] {
@@ -4216,17 +4217,17 @@ fn argv_storage() -> &'static [ZBox] {
             // `CommandLineToArgvW` allocates its own array (lifetime managed
             // by the system per Zig spec — intentionally not `LocalFree`d, the
             // argv strings are referenced for the process lifetime).
-            let argvw = unsafe { CommandLineToArgvW(GetCommandLineW(), &mut argc) };
+            let argvw = yolo! { CommandLineToArgvW(GetCommandLineW(), &mut argc) };
             if !argvw.is_null() {
                 let argc = argc.max(0) as usize;
                 // SAFETY: `CommandLineToArgvW` returned `argc` valid `LPWSTR`s.
-                let argvw = unsafe { core::slice::from_raw_parts(argvw, argc) };
+                let argvw = yolo! { core::slice::from_raw_parts(argvw, argc) };
                 return argvw
                     .iter()
                     .map(|&p| {
                         // SAFETY: each entry is a NUL-terminated UTF-16 string
                         // owned by the `CommandLineToArgvW` allocation.
-                        let arg = unsafe { crate::ffi::wstr_units(p) };
+                        let arg = yolo! { crate::ffi::wstr_units(p) };
                         ZBox::from_vec(crate::strings::to_utf8_alloc(arg))
                     })
                     .collect();
@@ -4242,7 +4243,7 @@ fn argv_storage() -> &'static [ZBox] {
                 .map(|&p| {
                     // SAFETY: kernel argv entries are NUL-terminated and live
                     // for the process; `init_argv` guarantees `p` is valid.
-                    let s = unsafe { core::ffi::CStr::from_ptr(p) };
+                    let s = yolo! { core::ffi::CStr::from_ptr(p) };
                     ZBox::from_bytes(s.to_bytes())
                 })
                 .collect();
@@ -4270,7 +4271,7 @@ fn argv_view_init() {
         set_bun_options_argc(view.len() - original_len);
     }
     // SAFETY: single-threaded lazy init guarded by Once.
-    unsafe { ARGV.write(Vec::leak(view)) };
+    yolo! { ARGV.write(Vec::leak(view)) };
 }
 
 #[inline]
@@ -4278,7 +4279,7 @@ fn argv_view() -> &'static [&'static ZStr] {
     ARGV_INIT.call_once(argv_view_init);
     // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
     // single-threaded startup or by the Once above.
-    unsafe { ARGV.read() }
+    yolo! { ARGV.read() }
 }
 
 #[derive(Clone, Copy)]
@@ -4405,7 +4406,7 @@ impl OptionsEnvArg for Box<ZStr> {
         // SAFETY: `ZStr` is `#[repr(transparent)]` over `[u8]`; the fat-pointer
         // metadata (len includes the trailing NUL) is preserved by the cast —
         // identical to `ZStr::boxed` but consuming the Vec without re-copying.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
+        yolo! { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
     }
 }
 
@@ -4545,7 +4546,7 @@ pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
     // Prevent the lazy OS-argv init from later clobbering a manually-set view.
     ARGV_INIT.call_once(|| {});
     // SAFETY: see fn doc — single-threaded startup.
-    unsafe { ARGV.write(v) };
+    yolo! { ARGV.write(v) };
 }
 
 /// Park an owned argv `Vec` in process-static storage and return the
@@ -4564,7 +4565,7 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 /// `PathBuffer` and returns the NUL-terminated slice on success.
 pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     #[cfg(unix)]
-    unsafe {
+    yolo! {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
             return Err(std::io::Error::last_os_error().into());
@@ -4581,7 +4582,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         }
         let mut wbuf = WPathBuffer::ZEROED;
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
-        let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
+        let n = yolo! { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {
             return Err(std::io::Error::last_os_error().into());
         }
@@ -4655,7 +4656,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         n += bin.len();
         buf.0[n] = 0;
         #[cfg(unix)]
-        unsafe {
+        yolo! {
             if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
                 return Some(n);
             }
@@ -4853,7 +4854,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
-    unsafe {
+    yolo! {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             unsafe extern "C" {
@@ -5039,7 +5040,7 @@ pub mod spawn_ffi {
 
 pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
     #[cfg(unix)]
-    unsafe {
+    yolo! {
         let cargs: Vec<ZBox> = argv
             .iter()
             .map(|a| ZBox::from_vec_with_nul(a.as_ref().to_vec()))
@@ -5673,7 +5674,7 @@ pub mod perf {
             let n = self.name.len().min(buf.len() - 1);
             buf[..n].copy_from_slice(&self.name.as_bytes()[..n]);
             // SAFETY: FFI; pointer is NUL-terminated within `buf`.
-            let _ = unsafe {
+            let _ = yolo! {
                 sys::Bun__linux_trace_emit(
                     buf.as_ptr() as *const core::ffi::c_char,
                     i64::try_from(duration).unwrap_or(i64::MAX),

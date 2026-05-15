@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bstr::BStr;
 
 use crate::node::PathLike;
@@ -379,7 +380,7 @@ impl S3Client {
         // that owns the heap pointer), same as `S3File::construct_internal_js`.
         // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`;
         // `to_js` hands ownership of that pointer to the C++ wrapper.
-        Ok(unsafe { &mut *blob }.to_js(global))
+        Ok(yolo! { &mut *blob }.to_js(global))
     }
 
     #[bun_jsc::host_fn(method)]

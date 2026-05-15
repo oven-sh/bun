@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
@@ -110,7 +111,7 @@ unsafe impl bun_threading::Linked for NetworkTask {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -150,14 +151,14 @@ impl NetworkTask {
         // SAFETY: every caller is reached only after `unsafe_http_client` was
         // populated via `MaybeUninit::new(AsyncHTTP::init(..))` (or the
         // `ptr::write(real, ..)` in `notify`).
-        unsafe { self.unsafe_http_client.assume_init_ref() }
+        yolo! { self.unsafe_http_client.assume_init_ref() }
     }
 
     /// Mutable counterpart of [`http`]; same precondition.
     #[inline]
     pub fn http_mut(&mut self) -> &mut AsyncHTTP<'static> {
         // SAFETY: see `http()`.
-        unsafe { self.unsafe_http_client.assume_init_mut() }
+        yolo! { self.unsafe_http_client.assume_init_mut() }
     }
 
     /// BACKREF accessor — single `unsafe` deref for the set-once
@@ -174,7 +175,7 @@ impl NetworkTask {
     #[allow(clippy::mut_from_ref)]
     fn pm_mut<'a>(&self) -> &'a mut PackageManager {
         // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
-        unsafe { self.package_manager.assume_mut() }
+        yolo! { self.package_manager.assume_mut() }
     }
 
     // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
@@ -188,10 +189,10 @@ impl NetworkTask {
         // SAFETY: `this` is the `&mut NetworkTask` that was erased into the
         // callback ctx in `get_completion_callback`; the HTTP thread is the
         // sole writer for the duration of this call.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         // SAFETY: `async_http` is the threadlocal AsyncHTTP the HTTP client
         // passes to every completion callback; live for this call.
-        let async_http = unsafe { &mut *async_http };
+        let async_http = yolo! { &mut *async_http };
         if let Some(stream) = this.tarball_stream.as_deref_mut() {
             // Runs on the HTTP thread. With response-body streaming enabled,
             // `notify` is called once per body chunk (has_more=true) and once
@@ -243,7 +244,7 @@ impl NetworkTask {
                         // `*TarballStream`) because a worker may be inside
                         // `drain()` concurrently; coercing the `&mut` to a
                         // raw pointer here matches that contract.
-                        unsafe { TarballStream::on_chunk(stream, chunk, false, None) };
+                        yolo! { TarballStream::on_chunk(stream, chunk, false, None) };
                         // Hand the buffer back to the HTTP client empty so
                         // the next chunk starts at offset 0.
                         this.response_buffer.reset();
@@ -261,7 +262,7 @@ impl NetworkTask {
                     // SAFETY: see the `on_chunk` call above — `stream` is
                     // live and `on_chunk` takes `*mut Self` to match Zig's
                     // freely-aliasing `*TarballStream` contract.
-                    unsafe { TarballStream::on_chunk(stream, chunk, true, result.fail) };
+                    yolo! { TarballStream::on_chunk(stream, chunk, true, result.fail) };
                     // Do NOT touch `this` — or anything it owns — after
                     // this point: `on_chunk(…, true, …)` sets `closed` and
                     // schedules a drain that may reach `finish()` on a
@@ -302,7 +303,7 @@ impl NetworkTask {
         // completion callback; Zig unwraps with `.?`.
         // TODO(port): Zig does a struct-value copy `real.* = async_http.*` —
         // requires `AsyncHTTP: Clone` or a bitwise copy helper.
-        unsafe {
+        yolo! {
             let real = async_http.real.expect("unreachable").as_ptr();
             ptr::write(real, ptr::read(async_http));
             (*real).response_buffer = async_http.response_buffer;
@@ -314,13 +315,13 @@ impl NetworkTask {
         // `this.response_buffer`, which `this` owns and outlives the stored
         // `HTTPClientResult`; erase the callback-scoped `'_` to `'static` to
         // match the field type (Zig stores it lifetime-less).
-        this.response = unsafe { result.detach_lifetime() };
+        this.response = yolo! { result.detach_lifetime() };
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
         }
         // SAFETY: `pm` is a live BACKREF; `async_network_task_queue` is
         // internally synchronized (`UnboundedQueue::push` takes `&self`).
-        unsafe {
+        yolo! {
             (*ptr::addr_of!((*pm).async_network_task_queue)).push(this);
             PackageManager::wake_raw(pm);
         }
@@ -538,7 +539,7 @@ impl NetworkTask {
                 // outlives the request (Zig leaks it). Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
                 let appended = header_builder.content.append(last_modified);
-                last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
+                last_modified = yolo! { bun_ptr::detach_lifetime(appended) };
             }
         } else {
             let header_buf: &'static str = if needs_extended {
@@ -574,13 +575,13 @@ impl NetworkTask {
         // because the HTTP thread reads them concurrently; the Zig source
         // passes raw slices under the same ownership contract. See the
         // identical pattern in `s3/simple_request.rs`.
-        let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
+        let url = URL::parse(yolo! { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
         // `written_slice()` is the safe (ptr,len) accessor; only the `'static`
         // erasure remains unsafe — the buffer is leaked into the HTTP client
         // below (`mem::forget`), so it genuinely outlives this frame.
         let headers_buf: &'static [u8] =
-            unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
+            yolo! { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         // PORT NOTE: Zig has no destructors — `header_builder.content` is
         // intentionally leaked (ownership transfers to the HTTP client).
         // Forget it so `StringBuilder::drop` doesn't free the buffer that
@@ -639,7 +640,7 @@ impl NetworkTask {
             // `self.callback`. Both outlive the HTTP request; Zig stores the
             // raw slice under the same contract.
             self.http_mut().client.if_modified_since =
-                unsafe { bun_ptr::detach_lifetime(last_modified) };
+                yolo! { bun_ptr::detach_lifetime(last_modified) };
         }
 
         Ok(())
@@ -774,7 +775,7 @@ impl NetworkTask {
             // `written_slice()` is the safe (ptr,len) accessor; only the
             // `'static` erasure remains unsafe — buffer is leaked below.
             header_buf =
-                unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
+                yolo! { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         }
         // PORT NOTE: Zig has no destructors — `header_builder.content` is
         // intentionally leaked (ownership transfers to the HTTP client).
@@ -787,7 +788,7 @@ impl NetworkTask {
         // `'static` borrow because the HTTP thread reads it concurrently; the
         // Zig source passes a raw slice under the same ownership contract. See
         // the identical pattern in `for_manifest` above.
-        let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
+        let url = URL::parse(yolo! { bun_ptr::detach_lifetime(&self.url_buf) });
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
@@ -862,7 +863,7 @@ impl NetworkTask {
             // (cleared immediately below); `put()` runs `Task::drop` on the
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
-            unsafe {
+            yolo! {
                 manager
                     .preallocated_resolve_tasks
                     .put(self.streaming_extract_task);
@@ -911,7 +912,7 @@ impl NetworkTask {
         apply_patch_task: Option<Box<PatchTask>>,
     ) {
         use core::ptr::addr_of_mut;
-        unsafe {
+        yolo! {
             addr_of_mut!((*slot).task_id).write(task_id);
             // SAFETY: `package_manager` is the live owner of this task; write
             // provenance is required for `for_manifest`/`for_tarball`'s

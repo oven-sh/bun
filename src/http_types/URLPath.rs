@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_core::strings;
 use bun_url::PercentEncoding;
 
@@ -184,7 +185,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         // SAFETY: local fn-item — every call below passes a slice that borrows
         // either the parser's input or `decoded_storage`, both of which are
         // moved into / outlive the returned `URLPath` (self-referential store).
-        unsafe { bun_collections::detach_lifetime(s) }
+        yolo! { bun_collections::detach_lifetime(s) }
     }
 
     Ok(URLPath {

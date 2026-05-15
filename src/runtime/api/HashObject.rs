@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::webcore::Blob;
 use bun_core::ZigStringSlice;
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
@@ -81,7 +82,7 @@ impl HashAlgorithm for Crc32 {
             };
             // SAFETY: offset < input.len() and chunk_len <= remaining, so the
             // pointer range [ptr+offset, ptr+offset+chunk_len) is in-bounds.
-            crc = unsafe { bun_zlib::crc32(crc, input.as_ptr().add(offset), chunk_len) };
+            crc = yolo! { bun_zlib::crc32(crc, input.as_ptr().add(offset), chunk_len) };
             offset += chunk_len as usize;
         }
         u32::try_from(crc).expect("int cast")

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -53,13 +54,13 @@ pub struct JSMySQLQuery {
 impl JSMySQLQuery {
     /// RAII `ref()`/`deref()` bracket around `self`. One audited
     /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
+    /// `yolo! { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
     /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
     /// (live, non-null) is always satisfied.
     #[inline]
     pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+        yolo! { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -80,7 +81,7 @@ impl JSMySQLQuery {
     fn deinit(this: *mut Self) {
         // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
         // `this` is the sole live owner of its `heap::alloc` allocation.
-        unsafe {
+        yolo! {
             (*this).query.with_mut(|q| q.cleanup());
             drop(bun_core::heap::take(this));
         }

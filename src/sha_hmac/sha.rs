@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::ptr;
 
@@ -69,8 +70,8 @@ macro_rules! new_hasher {
                 boringssl::load();
                 // SAFETY: BoringSSL *_Init fully initialises the context; we never
                 // read `hasher` before the call below writes it.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
-                let rc: c_int = unsafe { $init(&mut this.hasher) };
+                let mut this: Self = yolo! { bun_core::ffi::zeroed_unchecked() };
+                let rc: c_int = yolo! { $init(&mut this.hasher) };
                 debug_assert!(rc == 1);
                 this
             }
@@ -78,7 +79,7 @@ macro_rules! new_hasher {
             pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is exactly DIGEST bytes; BoringSSL one-shot hashers
                 // accept (ptr, len, out) and never read past `len`.
-                unsafe {
+                yolo! {
                     let _ = $full(bytes.as_ptr(), bytes.len(), out.as_mut_ptr());
                 }
             }
@@ -86,7 +87,7 @@ macro_rules! new_hasher {
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: `self.hasher` was initialised in `init()`; BoringSSL
                 // *_Update reads exactly `len` bytes from `data`.
-                let rc: c_int = unsafe {
+                let rc: c_int = yolo! {
                     $update(&mut self.hasher, data.as_ptr().cast::<c_void>(), data.len())
                 };
                 debug_assert!(rc == 1);
@@ -94,7 +95,7 @@ macro_rules! new_hasher {
 
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is exactly DIGEST bytes; *_Final writes that many.
-                let rc: c_int = unsafe { $final_(out.as_mut_ptr(), &mut self.hasher) };
+                let rc: c_int = yolo! { $final_(out.as_mut_ptr(), &mut self.hasher) };
                 debug_assert!(rc == 1);
             }
         }
@@ -122,13 +123,13 @@ macro_rules! new_evp {
                 // EVP md getters are infallible `safe fn` returning static singletons.
                 let md = ffi::$md_fn();
                 // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut this: Self = yolo! { bun_core::ffi::zeroed_unchecked() };
 
                 // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
                 ffi::EVP_MD_CTX_init(&mut this.ctx);
 
                 // SAFETY: ctx initialised by EVP_MD_CTX_init above; md is non-null.
-                let rc: c_int = unsafe { ffi::EVP_DigestInit(&mut this.ctx, md) };
+                let rc: c_int = yolo! { ffi::EVP_DigestInit(&mut this.ctx, md) };
                 debug_assert!(rc == 1);
 
                 this
@@ -138,7 +139,7 @@ macro_rules! new_evp {
                 let md = ffi::$md_fn();
 
                 // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
-                let rc: c_int = unsafe {
+                let rc: c_int = yolo! {
                     ffi::EVP_Digest(
                         bytes.as_ptr().cast::<c_void>(),
                         bytes.len(),
@@ -153,7 +154,7 @@ macro_rules! new_evp {
 
             pub fn update(&mut self, data: &[u8]) {
                 // SAFETY: ctx initialised in `init()`; EVP_DigestUpdate reads `len` bytes.
-                let rc: c_int = unsafe {
+                let rc: c_int = yolo! {
                     ffi::EVP_DigestUpdate(&mut self.ctx, data.as_ptr().cast::<c_void>(), data.len())
                 };
                 debug_assert!(rc == 1);
@@ -161,7 +162,7 @@ macro_rules! new_evp {
 
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
                 // SAFETY: `out` is DIGEST bytes; `out_size` is nullable.
-                let rc: c_int = unsafe {
+                let rc: c_int = yolo! {
                     ffi::EVP_DigestFinal(&mut self.ctx, out.as_mut_ptr(), ptr::null_mut())
                 };
                 debug_assert!(rc == 1);
@@ -172,7 +173,7 @@ macro_rules! new_evp {
             fn drop(&mut self) {
                 // SAFETY: ctx was EVP_MD_CTX_init'd; cleanup is idempotent on a
                 // zeroed/initialised ctx.
-                unsafe {
+                yolo! {
                     let _ = ffi::EVP_MD_CTX_cleanup(&mut self.ctx);
                 }
             }

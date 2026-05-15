@@ -21,6 +21,7 @@
 
 #![allow(dead_code)]
 
+use bun_yolo::yolo;
 use bun_alloc::Arena as Bump;
 
 use bun_ast as js_ast;
@@ -207,7 +208,7 @@ impl<'a, 'bump> LexerLog<'a> for Lexer<'a, 'bump> {
     type Err = bun_core::Error;
     #[inline]
     fn log_mut(&mut self) -> &mut bun_ast::Log {
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
     #[inline]
     fn source(&self) -> &'a bun_ast::Source {
@@ -330,7 +331,7 @@ where
         // SAFETY: see struct doc — `log` is the only handle to the `Log` for
         // the lifetime of the parse; no `&mut Log` is held elsewhere, so this
         // deref never overlaps another live borrow.
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Raw pointer escape hatch for the `MAYBE_AUTO_QUOTE` retry path in
@@ -572,7 +573,7 @@ where
                 // SAFETY: when Utf16, the raw-content slice was produced from a
                 // `[]const u16` reinterpreted as bytes; len is the u16 count.
                 // (JSON path never sets Utf16 — only the JSX rescan does.)
-                let s16 = unsafe {
+                let s16 = yolo! {
                     core::slice::from_raw_parts(
                         self.string_literal_raw_content.as_ptr().cast::<u16>(),
                         self.string_literal_raw_content.len(),
@@ -833,7 +834,7 @@ where
                     self.identifier = text;
                 } else if is_invalid_legacy_octal_literal {
                     // SAFETY: scanned bytes are ASCII digits/underscores.
-                    let s = unsafe { core::str::from_utf8_unchecked(text) };
+                    let s = yolo! { core::str::from_utf8_unchecked(text) };
                     match s.parse::<f64>() {
                         Ok(n) => self.number = n,
                         Err(_) => {
@@ -964,7 +965,7 @@ where
             } else {
                 // Parse a double-precision floating-point number.
                 // SAFETY: scanned bytes are ASCII (digits/./e/+/-).
-                let s = unsafe { core::str::from_utf8_unchecked(filtered) };
+                let s = yolo! { core::str::from_utf8_unchecked(filtered) };
                 match s.parse::<f64>() {
                     Ok(n) => self.number = n,
                     Err(_) => {

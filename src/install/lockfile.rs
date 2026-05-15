@@ -2,6 +2,7 @@
 //!
 //! Ported from src/install/lockfile.zig
 
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::fmt;
 use core::ptr::NonNull;
@@ -1155,7 +1156,7 @@ impl Lockfile {
                 // SAFETY: capacity reserved by `ensure_total_capacity` above; every
                 // slot in `0..old.count()` is overwritten by the copy/zip loops below
                 // before `re_index()` reads them. Mirrors Zig `entries.len = n`.
-                unsafe {
+                yolo! {
                     new.workspace_paths
                         .set_entries_len(old.workspace_paths.count())
                 };
@@ -1181,7 +1182,7 @@ impl Lockfile {
                     .ensure_total_capacity(old.workspace_versions.count())?;
                 // SAFETY: capacity reserved immediately above; every slot is filled by
                 // the zip loop below before `re_index()`. Mirrors Zig `entries.len = n`.
-                unsafe {
+                yolo! {
                     new.workspace_versions
                         .set_entries_len(old.workspace_versions.count())
                 };
@@ -1583,7 +1584,7 @@ impl Lockfile {
                     );
                     // SAFETY: `manifests` projected from `manager_ptr`; the
                     // call holds only that disjoint field.
-                    let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
+                    let Some(manifest) = yolo! { &mut (*manager_ptr).manifests }.by_name_hash(
                         cache_ctx,
                         scope,
                         pkg_name_hash,
@@ -1598,7 +1599,7 @@ impl Lockfile {
                         continue;
                     };
 
-                    let lockfile = unsafe { &mut *(*manager_ptr).lockfile };
+                    let lockfile = yolo! { &mut *(*manager_ptr).lockfile };
                     let mut builder = string_builder!(lockfile);
 
                     let mut bin_extern_strings_count: u32 = 0;
@@ -1726,13 +1727,13 @@ impl<'a> Printer<'a> {
             // can't see that the `path_in_buf2` flag picks the *other* buffer
             // for the chdir scratch write below, so the borrow must be detached.
             lockfile_path =
-                unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
+                yolo! { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
             path_in_buf2 = true;
         } else if !path.is_empty() {
             lockfile_path_buf1[..path.len()].copy_from_slice(path);
             lockfile_path_buf1[path.len()] = 0;
             // SAFETY: NUL written at [len] above. See note above re. borrowck.
-            lockfile_path = unsafe { ZStr::from_raw(lockfile_path_buf1.as_ptr(), path.len()) };
+            lockfile_path = yolo! { ZStr::from_raw(lockfile_path_buf1.as_ptr(), path.len()) };
         }
 
         if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
@@ -1819,7 +1820,7 @@ impl<'a> Printer<'a> {
         // is the process-static singleton (Zig `&FileSystem.instance`). Form a
         // short-lived `&mut` for the `read_directory` call only — single-threaded
         // CLI path, no concurrent access.
-        let fs = unsafe { &mut *FileSystem::instance() };
+        let fs = yolo! { &mut *FileSystem::instance() };
         let mut options = PackageManagerOptions {
             max_concurrent_lifecycle_scripts: 1,
             ..Default::default()
@@ -1831,7 +1832,7 @@ impl<'a> Printer<'a> {
         let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
         // SAFETY: `read_directory` returns a `*mut EntriesOption` into the
         // resolver's process-lifetime BSSMap; sole `&mut` on this CLI path.
-        let entries: &mut Fs::DirEntry = match unsafe { &mut *entries_option } {
+        let entries: &mut Fs::DirEntry = match yolo! { &mut *entries_option } {
             Fs::EntriesOption::Entries(e) => &mut **e,
             Fs::EntriesOption::Err(e) => return Err(e.canonical_error),
         };
@@ -2084,7 +2085,7 @@ impl Lockfile {
     /// `buffers.string_bytes` and then call back into `&mut PackageManager`
     /// (which owns the `Lockfile`). Zig's `[]const u8` carries no lifetime so
     /// the borrow conflict does not exist there; in Rust the caller would
-    /// otherwise have to write `unsafe { detach_lifetime(self.str(x)) }` at
+    /// otherwise have to write `yolo! { detach_lifetime(self.str(x)) }` at
     /// every site. Consolidating that here keeps the SAFETY argument in one
     /// place.
     ///
@@ -2096,7 +2097,7 @@ impl Lockfile {
     pub fn str_detached<'a, T: bun_semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
         // SAFETY: see doc comment — same invariant every prior call site
         // already relied on via `bun_ptr::detach_lifetime`.
-        unsafe { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
+        yolo! { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
     }
 
     /// Construct an empty Lockfile value (in-place equivalent of Zig `initEmpty`).
@@ -2458,7 +2459,7 @@ impl Lockfile {
     /// (borrowing `buffers.string_bytes` + `string_pool`) alongside mutable
     /// references to every other `Lockfile` field a caller might need while
     /// the builder is live. Use this instead of routing through
-    /// `*mut Lockfile` + `unsafe { &mut (*ptr).field }` reborrows.
+    /// `*mut Lockfile` + `yolo! { &mut (*ptr).field }` reborrows.
     #[inline]
     pub fn string_builder_split(&mut self) -> (StringBuilder<'_>, LockfileFields<'_>) {
         let Buffers {
@@ -2680,7 +2681,7 @@ impl<'a> StringBuilder<'a> {
         // `grow_default` precedent at :1578.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
-        self.ptr = Some(unsafe { string_bytes.as_mut_ptr().add(prev_len) });
+        self.ptr = Some(yolo! { string_bytes.as_mut_ptr().add(prev_len) });
         self.len = 0;
         Ok(())
     }
@@ -2895,7 +2896,7 @@ impl Lockfile {
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
         // SAFETY: capacity reserved; we fill via indexed writes below up to i.
-        unsafe { sort_buf.set_len(l_len + r_len) };
+        yolo! { sort_buf.set_len(l_len + r_len) };
         let (l_buf_full, r_buf_full) = sort_buf.split_at_mut(l_len);
         let mut l_buf = &mut l_buf_full[..];
         let mut r_buf = &mut r_buf_full[..];

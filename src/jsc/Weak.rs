@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
@@ -54,7 +55,7 @@ impl WeakImpl {
 
     pub unsafe fn destroy(this: NonNull<WeakImpl>) {
         // SAFETY: `this` is a live WeakImpl handle; consumed here.
-        unsafe { Bun__WeakRef__delete(this.as_ptr()) }
+        yolo! { Bun__WeakRef__delete(this.as_ptr()) }
     }
 }
 
@@ -190,7 +191,7 @@ impl<T> Drop for Weak<T> {
         };
         self.r#ref = None;
         // SAFETY: `r#ref` was live; we just took ownership and are deleting it.
-        unsafe { WeakImpl::destroy(r#ref) };
+        yolo! { WeakImpl::destroy(r#ref) };
     }
 }
 

@@ -1,4 +1,5 @@
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::ptr;
 
 pub use bun_brotli_sys::brotli_c as c;
@@ -89,7 +90,7 @@ impl<'a> BrotliReaderArrayList<'a> {
         // from `BrotliDecoder::create_instance` (never null), is never
         // reassigned, and is freed only in `Drop`. The brotli C API does not
         // call back into Rust, so no re-entrant aliasing is possible.
-        unsafe { &*self.brotli }
+        yolo! { &*self.brotli }
     }
 
     /// Exclusive access to the owned brotli decoder instance.
@@ -97,7 +98,7 @@ impl<'a> BrotliReaderArrayList<'a> {
     fn brotli_mut(&mut self) -> &mut c::BrotliDecoder {
         // SAFETY: see `brotli()`. `&mut self` guarantees no other Rust
         // reference to the decoder is live.
-        unsafe { &mut *self.brotli }
+        yolo! { &mut *self.brotli }
     }
 
     pub fn new_with_options(
@@ -182,7 +183,7 @@ impl<'a> BrotliReaderArrayList<'a> {
 
         while self.state == ReaderState::Uninitialized || self.state == ReaderState::Inflating {
             // SAFETY: write-only spare; brotli initializes the bytes it consumes.
-            let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
+            let spare = yolo! { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
             let out_len = spare.len();
             let mut next_out_ptr: *mut u8 = spare.as_mut_ptr();
             // `spare` borrow ends here (NLL); only raw ptr/len survive across FFI.
@@ -208,7 +209,7 @@ impl<'a> BrotliReaderArrayList<'a> {
 
             // SAFETY: brotli wrote `bytes_written` initialized bytes into the
             // spare-capacity region starting at the previous `len()`.
-            unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
+            yolo! { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
 
             match result {
@@ -321,7 +322,7 @@ impl BrotliCompressionStream {
         // and is freed only in `Drop`. The brotli C API does not call back
         // into Rust, so no re-entrant aliasing is possible. `&mut self`
         // guarantees no other Rust reference to the encoder is live.
-        unsafe { &mut *self.brotli }
+        yolo! { &mut *self.brotli }
     }
 
     // The returned slice borrows brotli's internal buffer, valid until the
@@ -341,7 +342,7 @@ impl BrotliCompressionStream {
         // case #3). Deref the raw field directly so the encoder borrow stays
         // disjoint from `self.state`.
         // SAFETY: see `brotli_mut()` invariant.
-        let result = BrotliEncoder::compress_stream(unsafe { &mut *self.brotli }, op, input);
+        let result = BrotliEncoder::compress_stream(yolo! { &mut *self.brotli }, op, input);
 
         if !result.success {
             self.state = CompressionState::Error;

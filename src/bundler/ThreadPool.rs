@@ -9,6 +9,7 @@
 //! bitwise struct copy); the `linker.resolver` backref is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
+use bun_yolo::yolo;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -51,7 +52,7 @@ pub struct ThreadPool {
     // module-static `io_thread_pool::THREAD_POOL`, live while `ref_count > 0`,
     // and all `ThreadPoolLib` driver methods (`schedule`, `warm`,
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
-    // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
+    // sufficient and the per-read `yolo! { p.as_ref() }` disappears.
     pub io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
     // TODO(port): lifetime — TSV class UNKNOWN. Conditionally owned via
     // `worker_pool_is_owned`; kept raw so callers (bundle_v2.rs draft) can
@@ -107,7 +108,7 @@ mod io_thread_pool {
         // an all-zero `Mutex` is the documented unlocked state on every impl.
         // SAFETY: `Mutex` is `repr(Rust)` over an atomic / Futex word; zero is
         // the valid initial value (matches `#[derive(Default)]`).
-        unsafe { bun_core::ffi::zeroed_unchecked() }
+        yolo! { bun_core::ffi::zeroed_unchecked() }
     };
     /// 0 means not initialized. 1 means initialized but not used.
     /// N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
@@ -144,7 +145,7 @@ mod io_thread_pool {
         // indicate the thread pool is initialized) is guarded by the mutex.
         if REF_COUNT.load(Ordering::Relaxed) == 0 {
             // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
-            unsafe {
+            yolo! {
                 (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config {
                         max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
@@ -192,7 +193,7 @@ mod io_thread_pool {
             return false;
         }
         // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 ⇒ initialized.
-        unsafe {
+        yolo! {
             (*THREAD_POOL.get()).assume_init_drop();
         }
         // PORT NOTE: Zig source falls off the end of a `bool`-returning fn here
@@ -270,7 +271,7 @@ impl ThreadPool {
     pub fn deinit(&mut self) {
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
-            unsafe { drop(bun_core::heap::take(self.worker_pool)) };
+            yolo! { drop(bun_core::heap::take(self.worker_pool)) };
             self.worker_pool = ptr::null_mut();
         }
         if Self::uses_io_pool() {
@@ -286,7 +287,7 @@ impl ThreadPool {
         debug_assert!(!self.worker_pool.is_null());
         // SAFETY: `worker_pool` is initialized before any caller can observe
         // `self` and lives until `deinit_v2`; all driver methods take `&self`.
-        unsafe { &*self.worker_pool }
+        yolo! { &*self.worker_pool }
     }
 
     /// Safe accessor for the IO pool. `Some` only when `uses_io_pool()`; the
@@ -397,12 +398,12 @@ impl ThreadPool {
     pub fn schedule(&self, parse_task: *mut ParseTask) {
         // SAFETY: caller passes a live, exclusively-owned ParseTask (heap- or
         // arena-allocated raw pointer); see call sites in bundle_v2.rs.
-        self.schedule_with_options(unsafe { &mut *parse_task }, false);
+        self.schedule_with_options(yolo! { &mut *parse_task }, false);
     }
 
     pub fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
         // SAFETY: see `schedule` above.
-        self.schedule_with_options(unsafe { &mut *parse_task }, true);
+        self.schedule_with_options(yolo! { &mut *parse_task }, true);
     }
 
     // PORT NOTE: returns `&'static mut` — the `Worker` is `heap::alloc`'d
@@ -420,7 +421,7 @@ impl ThreadPool {
                     let w = *o.into_mut();
                     drop(map);
                     // SAFETY: map only stores live heap-allocated Workers (inserted below).
-                    return unsafe { &mut *w };
+                    return yolo! { &mut *w };
                 }
                 MapEntry::Vacant(v) => {
                     // Allocate raw uninitialized storage; fully written via
@@ -439,7 +440,7 @@ impl ThreadPool {
         // SAFETY: `worker` is freshly heap-allocated and exclusive on this
         // thread until published via the map (already inserted above, but no
         // other thread looks it up under a different `id`).
-        unsafe {
+        yolo! {
             worker.write(Worker {
                 // Placeholder — overwritten by `init()` immediately below.
                 ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
@@ -560,11 +561,11 @@ impl Worker {
         // SAFETY: `task` points to `Worker.deinit_task` (intrusive field) —
         // only ever invoked by the thread pool against a `Worker` enqueued via
         // `deinit_soon`, so provenance covers the full `Worker` allocation.
-        let this: *mut Worker = unsafe { bun_core::from_field_ptr!(Worker, deinit_task, task) };
+        let this: *mut Worker = yolo! { bun_core::from_field_ptr!(Worker, deinit_task, task) };
         // SAFETY: `deinit_soon` schedules this exactly once on a live
         // heap-allocated `Worker`; the idle-task fires on the worker's own OS
         // thread with no other live borrow, so we hold exclusive ownership.
-        unsafe { Self::deinit(this) };
+        yolo! { Self::deinit(this) };
     }
 
     pub fn deinit_soon(&mut self) {
@@ -584,7 +585,7 @@ impl Worker {
             // SAFETY: `self` is the heap-allocated Worker; sole owner now that
             // the caller is about to `clear_retaining_capacity()` the
             // `workers_assignments` map.
-            unsafe { Self::deinit(self as *mut Self) };
+            yolo! { Self::deinit(self as *mut Self) };
         }
     }
 
@@ -594,7 +595,7 @@ impl Worker {
     /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
     pub unsafe fn deinit(this: *mut Worker) {
         // SAFETY: caller contract.
-        let worker = unsafe { &mut *this };
+        let worker = yolo! { &mut *this };
         if worker.has_created {
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.
@@ -611,7 +612,7 @@ impl Worker {
         // not). Ordered before `heap = None` in case the TODO(port) in
         // `ASTMemoryAllocator::new` ever threads `arena_ref` (= `&self.heap`)
         // through.
-        unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
+        yolo! { ManuallyDrop::drop(&mut worker.ast_memory_store) };
         if worker.has_created {
             worker.heap = None;
         }
@@ -619,7 +620,7 @@ impl Worker {
         // Runs full field drop glue: remaining `Option` fields are `None`
         // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
         // double-free; defends against future `Drop`-carrying fields.
-        unsafe { bun_core::heap::destroy(this) };
+        yolo! { bun_core::heap::destroy(this) };
     }
 
     // PORT NOTE: returns `&'static mut` (detached) — the `Worker` is
@@ -683,7 +684,7 @@ impl Worker {
         // erased `Transpiler<'static>` slot below; the arena outlives
         // `WorkerData`. Single detach for the three uses that follow.
         let arena_ref: &'static ThreadLocalArena =
-            unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
+            yolo! { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 
         // Zig: `.{ .arena = this.arena }` then `reset()`. The Rust
         // ASTMemoryAllocator owns its bump arena internally and ignores the
@@ -724,7 +725,7 @@ impl Worker {
         // SAFETY: `from` is the `BundleV2`-owned transpiler (or its
         // `client_transpiler`), which outlives every worker; the
         // `&'a`-carrying fields inside reference process-lifetime data.
-        unsafe { Transpiler::<'static>::for_worker(from, arena, log) }
+        yolo! { Transpiler::<'static>::for_worker(from, arena, log) }
     }
 
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
@@ -739,7 +740,7 @@ impl Worker {
                 // pinned for the worker's lifetime; detach to `'static` for the
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
-                    unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
+                    yolo! { bun_ptr::detach_lifetime_ref(self.arena.get()) };
                 let mut boxed = Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
                 // Wire self-refs after the value reached its final (heap) address.
                 boxed.wire_after_move();

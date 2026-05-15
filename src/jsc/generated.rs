@@ -27,6 +27,7 @@
 
 #![allow(dead_code, unused_variables, non_snake_case)]
 
+use bun_yolo::yolo;
 use core::ffi::c_uint;
 use core::mem::MaybeUninit;
 
@@ -143,7 +144,7 @@ impl<T: Copy> ExternOptional<T> {
         }
         debug_assert_eq!(self.tag, 1);
         // SAFETY: tag == 1 ⇒ C++ initialized the `_1` arm.
-        Some(unsafe { self.data._1 })
+        Some(yolo! { self.data._1 })
     }
 }
 
@@ -255,7 +256,7 @@ impl SocketConfigHandlers {
             bindgenConvertJSToSocketConfigHandlers(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
-        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        Ok(Self::convert_from_extern(yolo! { ext.assume_init() }))
     }
 }
 
@@ -402,11 +403,11 @@ impl SSLConfigSingleFile {
         // SAFETY: each arm reads the union field selected by `tag`, which C++
         // guarantees is the initialized one.
         match ext.tag {
-            0 => Self::String(GenVal(adopt_string(unsafe { ext.data._0 }))),
-            1 => Self::Buffer(GenVal(unsafe { ext.data._1 })),
-            2 => Self::File(GenVal(unsafe { ext.data._2 })),
+            0 => Self::String(GenVal(adopt_string(yolo! { ext.data._0 }))),
+            1 => Self::Buffer(GenVal(yolo! { ext.data._1 })),
+            2 => Self::File(GenVal(yolo! { ext.data._2 })),
             // SAFETY: tag space is 0..=2 per bindgen contract.
-            _ => unsafe { core::hint::unreachable_unchecked() },
+            _ => yolo! { core::hint::unreachable_unchecked() },
         }
     }
 }
@@ -435,19 +436,19 @@ impl SSLConfigFile {
         // SAFETY: each arm reads the union field selected by `tag`.
         match ext.tag {
             0 => Self::None,
-            1 => Self::String(GenVal(adopt_string(unsafe { ext.data._1 }))),
-            2 => Self::Buffer(GenVal(unsafe { ext.data._2 })),
-            3 => Self::File(GenVal(unsafe { ext.data._3 })),
+            1 => Self::String(GenVal(adopt_string(yolo! { ext.data._1 }))),
+            2 => Self::Buffer(GenVal(yolo! { ext.data._2 })),
+            3 => Self::File(GenVal(yolo! { ext.data._3 })),
             4 => {
                 // SAFETY: tag == 4 ⇒ `_4` is the initialized arm.
-                let arr = unsafe { ext.data._4 };
+                let arr = yolo! { ext.data._4 };
                 let len = arr.length as usize;
                 let mut out = Vec::with_capacity(len);
                 if !arr.data.is_null() {
                     for i in 0..len {
                         // SAFETY: `arr.data` points to `length` initialized elements
                         // (mimalloc-backed; C++ transferred ownership).
-                        let elem = unsafe { *arr.data.add(i) };
+                        let elem = yolo! { *arr.data.add(i) };
                         out.push(SSLConfigSingleFile::convert_from_extern(elem));
                     }
                     // PORT NOTE: Zig `BindgenArray` reuses the allocation in-place
@@ -461,7 +462,7 @@ impl SSLConfigFile {
                 Self::Array(GenList(out))
             }
             // SAFETY: tag space is 0..=4 per bindgen contract.
-            _ => unsafe { core::hint::unreachable_unchecked() },
+            _ => yolo! { core::hint::unreachable_unchecked() },
         }
     }
 }
@@ -488,10 +489,10 @@ impl SSLConfigAlpnProtocols {
         // SAFETY: each arm reads the union field selected by `tag`.
         match ext.tag {
             0 => Self::None,
-            1 => Self::String(GenVal(adopt_string(unsafe { ext.data._1 }))),
-            2 => Self::Buffer(GenVal(unsafe { ext.data._2 })),
+            1 => Self::String(GenVal(adopt_string(yolo! { ext.data._1 }))),
+            2 => Self::Buffer(GenVal(yolo! { ext.data._2 })),
             // SAFETY: tag space is 0..=2 per bindgen contract.
-            _ => unsafe { core::hint::unreachable_unchecked() },
+            _ => yolo! { core::hint::unreachable_unchecked() },
         }
     }
 }
@@ -557,7 +558,7 @@ impl SSLConfig {
             bindgenConvertJSToSSLConfig(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
-        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        Ok(Self::convert_from_extern(yolo! { ext.assume_init() }))
     }
 }
 
@@ -616,10 +617,10 @@ impl SocketConfigTls {
         // SAFETY: each arm reads the union field selected by `tag`.
         match ext.tag {
             0 => Self::None,
-            1 => Self::Boolean(unsafe { ext.data._1 }),
-            2 => Self::Object(SSLConfig::convert_from_extern(unsafe { ext.data._2 })),
+            1 => Self::Boolean(yolo! { ext.data._1 }),
+            2 => Self::Object(SSLConfig::convert_from_extern(yolo! { ext.data._2 })),
             // SAFETY: tag space is 0..=2 per bindgen contract.
-            _ => unsafe { core::hint::unreachable_unchecked() },
+            _ => yolo! { core::hint::unreachable_unchecked() },
         }
     }
 }
@@ -673,7 +674,7 @@ impl SocketConfig {
             bindgenConvertJSToSocketConfig(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
-        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        Ok(Self::convert_from_extern(yolo! { ext.assume_init() }))
     }
 }
 
@@ -1029,7 +1030,7 @@ macro_rules! js_class_module {
                 // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI
                 // only, never written through on the Rust side; `ptr` is a
                 // freshly boxed native payload (not yet owned by any wrapper).
-                unsafe { __create(global.as_ptr(), ptr) }
+                yolo! { __create(global.as_ptr(), ptr) }
             }
 
             /// Zig-compat alias for [`to_js`] with `(global, ptr)` argument
@@ -1059,7 +1060,7 @@ macro_rules! js_class_module {
             pub unsafe fn dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool {
                 // SAFETY: `value` is a valid encoded JSValue; the C++ side
                 // type-checks before writing `m_ctx`.
-                unsafe { __dangerously_set_ptr(value, ptr) }
+                yolo! { __dangerously_set_ptr(value, ptr) }
             }
         }
     };

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::io::Write as _;
@@ -80,7 +81,7 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -114,7 +115,7 @@ unsafe fn free_owned_href(href: &'static [u8]) {
         // global-allocator `Box<[u8]>` allocation. The fat `*mut [u8]` is
         // obtained directly from the borrowed slice — no need to round-trip
         // through `(ptr, len)` + `from_raw_parts`.
-        unsafe { bun_core::heap::destroy(core::ptr::from_ref(href).cast_mut()) };
+        yolo! { bun_core::heap::destroy(core::ptr::from_ref(href).cast_mut()) };
     }
 }
 
@@ -392,7 +393,7 @@ impl Preconnect {
     fn on_result(this: *mut Preconnect, _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {
         // SAFETY: `this` was produced by `heap::alloc` in `preconnect()` and is
         // uniquely owned here; `async_http` was fully written before scheduling.
-        unsafe {
+        yolo! {
             (*this).response_buffer = MutableString::default();
             (*this)
                 .async_http
@@ -418,7 +419,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         if is_url_owned {
             // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
             // global-allocator `Box<[u8]>` we now own.
-            unsafe { free_owned_href(url.href) };
+            yolo! { free_owned_href(url.href) };
         }
         return;
     }
@@ -441,7 +442,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we
     // in-place write `async_http` before any read and before it can be observed
     // by another thread. The address of `response_buffer` is stable (heap).
-    unsafe {
+    yolo! {
         let response_buffer: *mut MutableString = core::ptr::addr_of_mut!((*this).response_buffer);
         let url = (*this).url.clone();
         let async_http = (*this).async_http.insert(AsyncHTTP::init(
@@ -690,7 +691,7 @@ fn send_sync_callback(
 ) {
     // SAFETY: `async_http` is the HTTP-thread copy (inside ThreadlocalAsyncHTTP)
     // and `real` was set to the caller's stack/heap AsyncHTTP before scheduling.
-    let async_http = unsafe { &mut *async_http };
+    let async_http = yolo! { &mut *async_http };
     // PORT NOTE: Zig did `async_http.real.?.* = async_http.*` (whole-struct
     // bitwise copy back into the original) then re-seated `response_buffer`.
     // `AsyncHTTP` is not `Copy`/`Clone` in Rust and a raw `ptr::read`/`ptr::write`
@@ -700,7 +701,7 @@ fn send_sync_callback(
     // the HTTP-thread copy where necessary.
     if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
-        let real = unsafe { real.as_mut() };
+        let real = yolo! { real.as_mut() };
         real.response = async_http.response;
         real.request = async_http.request.take();
         real.response_headers = core::mem::take(&mut async_http.response_headers);
@@ -717,7 +718,7 @@ fn send_sync_callback(
     // alive for the process lifetime; `result` borrows the HTTP-thread copy's
     // response buffer, which is the caller's buffer — outlives the read in
     // `send_sync`.
-    unsafe {
+    yolo! {
         (*this).write_item(result.detach_lifetime());
     }
 }
@@ -744,7 +745,7 @@ impl<'a> AsyncHTTP<'a> {
         // are interior-mutable), so a `ParentRef` shared deref is sufficient.
         let result = bun_ptr::ParentRef::from(ctx).read_item();
         // SAFETY: see above — sole owner, callback completed.
-        drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
+        drop(yolo! { bun_core::heap::take(ctx.as_ptr()) });
         if let Some(err) = result.fail {
             return Err(err);
         }
@@ -774,7 +775,7 @@ impl<'a> AsyncHTTP<'a> {
         // (UB under stacked borrows).
         // SAFETY: `this` is the HTTP-thread copy set in `on_start`; lives in a
         // `ThreadlocalAsyncHTTP` heap allocation owned by the HTTP thread.
-        unsafe {
+        yolo! {
             debug_assert!((*this).real.is_some());
 
             let callback = (*this).result_callback;
@@ -904,7 +905,7 @@ pub unsafe fn start_async_http(task: *mut Task) {
     // live heap `AsyncHTTP` parent via container_of; the trampoline is its sole
     // borrower (HTTP-thread-only). Same single-step shape as every other
     // `IntrusiveWorkTask` call site (`&mut *Self::from_task_ptr(task)`).
-    let this = unsafe { &mut *AsyncHTTP::<'static>::from_task_ptr(task) };
+    let this = yolo! { &mut *AsyncHTTP::<'static>::from_task_ptr(task) };
     this.on_start();
 }
 
@@ -967,7 +968,7 @@ impl HTTPChannelContext<'_> {
     pub fn callback(data: HTTPCallbackPair) {
         // SAFETY: `data.0` points to the `http` field of an `HTTPChannelContext`.
         let this: &mut HTTPChannelContext =
-            unsafe { &mut *(bun_core::from_field_ptr!(HTTPChannelContext, http, data.0)) };
+            yolo! { &mut *(bun_core::from_field_ptr!(HTTPChannelContext, http, data.0)) };
         let boxed = bun_core::heap::into_raw(Box::new(data));
         // `channel` is a set-once `BackRef`; `write_item` takes `&self`, so the
         // safe `Deref` impl covers the access (no open-coded `unsafe as_ref`).

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -54,12 +55,12 @@ impl<'a> Writable<'a> {
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
         // SAFETY: see fn doc — +1-intrusive-ref'd, heap-disjoint, single-thread.
-        unsafe { &mut *pipe.as_ptr() }
+        yolo! { &mut *pipe.as_ptr() }
     }
 
     /// Release one intrusive ref on a `FileSink` held by `Writable::Pipe`
     /// (or freshly returned from `FileSink::create*`). Centralises the
-    /// `unsafe { FileSink::deref(ptr) }` so callers stay safe — same
+    /// `yolo! { FileSink::deref(ptr) }` so callers stay safe — same
     /// invariant as [`pipe_sink`](Self::pipe_sink): the `NonNull` was
     /// produced by `FileSink::create*` (heap-boxed, dealloc provenance) and
     /// carries a +1 intrusive ref the caller is now discharging. Single
@@ -68,7 +69,7 @@ impl<'a> Writable<'a> {
     pub(in crate::api) fn pipe_release(pipe: NonNull<FileSink>) {
         // SAFETY: see fn doc — +1-intrusive-ref'd heap allocation with
         // dealloc provenance; `deref` decrements and may free.
-        unsafe { FileSink::deref(pipe.as_ptr()) };
+        yolo! { FileSink::deref(pipe.as_ptr()) };
     }
 
     /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
@@ -88,7 +89,7 @@ impl<'a> Writable<'a> {
         buffer: &'b RefPtr<StaticPipeWriter<'a>>,
     ) -> &'b mut StaticPipeWriter<'a> {
         // SAFETY: see fn doc — sole-owning RefPtr, heap-disjoint, single-thread.
-        unsafe { &mut *buffer.as_ptr() }
+        yolo! { &mut *buffer.as_ptr() }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -256,7 +257,7 @@ impl<'a> Writable<'a> {
                         core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
                     let blob = match &*owned {
                         // SAFETY: owned is ManuallyDrop; payload moved exactly once.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
+                        Stdio::Blob(b) => yolo! { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
@@ -360,7 +361,7 @@ impl<'a> Writable<'a> {
                 let blob = match &*owned {
                     // SAFETY: `owned` is ManuallyDrop and discarded after this
                     // read; the Blob payload is moved out exactly once.
-                    Stdio::Blob(b) => unsafe { core::ptr::read(b) },
+                    Stdio::Blob(b) => yolo! { core::ptr::read(b) },
                     _ => unreachable!(),
                 };
                 Ok(Writable::Buffer(StaticPipeWriter::create(
@@ -443,7 +444,7 @@ impl<'a> Writable<'a> {
                     // SAFETY: `pipe_nn` is the canonical heap pointer from
                     // `FileSink::create*` with write+dealloc provenance, held
                     // live by the `Writable::Pipe` +1.
-                    unsafe {
+                    yolo! {
                         FileSink::on_attached_process_exit(
                             pipe_nn.as_ptr(),
                             &subprocess.process().status,

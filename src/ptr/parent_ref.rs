@@ -22,6 +22,7 @@
 //! [`ParentRef::assume_mut`] is the explicit unsafe escape hatch — named so it
 //! does not look like a routine accessor.
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 #[cfg(debug_assertions)]
@@ -216,7 +217,7 @@ impl<T: ?Sized> ParentRef<T> {
     pub const unsafe fn from_raw(p: *const T) -> Self {
         Self {
             // SAFETY: caller contract — `p` is non-null.
-            ptr: unsafe { NonNull::new_unchecked(p as *mut T) },
+            ptr: yolo! { NonNull::new_unchecked(p as *mut T) },
             #[cfg(debug_assertions)]
             generation: 0,
             #[cfg(debug_assertions)]
@@ -238,7 +239,7 @@ impl<T: ?Sized> ParentRef<T> {
     pub const unsafe fn from_raw_mut(p: *mut T) -> Self {
         Self {
             // SAFETY: caller contract — `p` is non-null.
-            ptr: unsafe { NonNull::new_unchecked(p) },
+            ptr: yolo! { NonNull::new_unchecked(p) },
             #[cfg(debug_assertions)]
             generation: 0,
             #[cfg(debug_assertions)]
@@ -274,7 +275,7 @@ impl<T: ?Sized> ParentRef<T> {
             // `DEAD` (assert fires). If the allocation was freed this is
             // technically a wild read — acceptable for a debug-only sanitizer
             // (it will read garbage that almost certainly ≠ `generation`, or fault).
-            let live = unsafe { m.as_ref() }.load(Ordering::Relaxed);
+            let live = yolo! { m.as_ref() }.load(Ordering::Relaxed);
             debug_assert_eq!(
                 live,
                 self.generation,
@@ -296,7 +297,7 @@ impl<T: ?Sized> ParentRef<T> {
         self.debug_assert_live();
         // SAFETY: ParentRef invariant — pointee outlives every copy of `self`;
         // non-null, aligned, dereferenceable. `&T` is `SharedReadOnly`.
-        unsafe { self.ptr.as_ref() }
+        yolo! { self.ptr.as_ref() }
     }
 
     /// Raw pointer (for `container_of`, FFI round-trip, ptr-eq).
@@ -341,7 +342,7 @@ impl<T: ?Sized> ParentRef<T> {
         #[cfg(debug_assertions)]
         self.debug_assert_live();
         // SAFETY: caller contract (a)+(b)+(c).
-        unsafe { &mut *self.ptr.as_ptr() }
+        yolo! { &mut *self.ptr.as_ptr() }
     }
 }
 

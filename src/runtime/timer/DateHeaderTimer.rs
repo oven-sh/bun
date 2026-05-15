@@ -13,6 +13,7 @@
 //!
 //! Note that we only check for potential updates ot this timer once per event loop tick.
 
+use bun_yolo::yolo;
 use bun_core::Timespec;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws::Loop;
@@ -70,13 +71,13 @@ impl DateHeaderTimer {
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
             // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
-            unsafe { (*timer_all()).update(elt, &now.add_ms(MS_PER_S)) };
+            yolo! { (*timer_all()).update(elt, &now.add_ms(MS_PER_S)) };
         } else {
             // The date was updated recently, just reschedule for the next second
             bun_output::scoped_log!(DateHeaderTimer, "rescheduling timer");
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: see above — disjoint-field access on `All`.
-            unsafe { (*timer_all()).insert(elt) };
+            yolo! { (*timer_all()).insert(elt) };
         }
     }
 
@@ -105,7 +106,7 @@ impl DateHeaderTimer {
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
             // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
-            unsafe { (*timer_all()).insert(elt) };
+            yolo! { (*timer_all()).insert(elt) };
         }
     }
 }
@@ -115,11 +116,11 @@ pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop)
     if let Some(vm_ptr) = VirtualMachine::get_or_null() {
         // SAFETY: loop_ is a valid uws Loop pointer passed from C++ and lives
         // for the call duration.
-        let loop_ref = unsafe { &*loop_ };
+        let loop_ref = yolo! { &*loop_ };
         // SAFETY: single JS thread; `timer_all()` returns the live per-thread
         // `All` (non-null after init). `update_date_header_timer_if_necessary`
         // takes the VM by raw pointer to avoid aliased-`&mut` (b2-cycle).
-        unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
+        yolo! { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
     }
 }
 

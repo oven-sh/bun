@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::MaybeUninit;
 
 use bun_ast::{self, ExprData, Log};
@@ -297,7 +298,7 @@ impl PackageFilterIterator {
         // TODO(port): narrow error set
         loop {
             // SAFETY: `valid == true` (caller invariant) so `iter` is initialized.
-            let iter = unsafe { self.iter.assume_init_mut() };
+            let iter = yolo! { self.iter.assume_init_mut() };
             match iter.next()? {
                 Err(err) => {
                     bun_core::pretty_errorln!("Error: {}", err);
@@ -334,17 +335,17 @@ impl PackageFilterIterator {
         // walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
         // SAFETY: `init_with_cwd` just initialized `self.walker` above; lifetime erased per TODO.
         let walker_ref =
-            unsafe { &mut *std::ptr::from_mut::<GlobWalker>(self.walker.assume_init_mut()) };
+            yolo! { &mut *std::ptr::from_mut::<GlobWalker>(self.walker.assume_init_mut()) };
         self.iter.write(glob::walk::Iterator::new(walker_ref));
         // SAFETY: just wrote `iter`.
-        unsafe { self.iter.assume_init_mut() }.init()??;
+        yolo! { self.iter.assume_init_mut() }.init()??;
         Ok(())
     }
 
     fn deinit_walker(&mut self) {
         // SAFETY: `valid == true` (caller invariant) so both are initialized.
         // Drop iter first (it borrows walker).
-        unsafe {
+        yolo! {
             self.iter.assume_init_drop();
             self.walker.assume_init_drop();
         }

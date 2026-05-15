@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![allow(
     unused,
     non_snake_case,
@@ -307,7 +308,7 @@ impl SystemErrno {
         // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
         // of `SystemErrno` (Zig `@enumFromInt` precondition). The enum is NOT
         // contiguous on Windows; do not assume `n < MAX` implies validity there.
-        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+        yolo! { core::mem::transmute::<u16, SystemErrno>(n) }
     }
 }
 

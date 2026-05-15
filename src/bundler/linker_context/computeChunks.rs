@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
 use core::mem::offset_of;
@@ -63,7 +64,7 @@ pub fn compute_chunks(
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the
     // link step. Raw deref (not `this.parse_graph()`) because the loop below
     // needs disjoint `&mut this.graph.*` borrows while `parse_graph` is held.
-    let parse_graph = unsafe { &*this.parse_graph };
+    let parse_graph = yolo! { &*this.parse_graph };
     // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the link step.
     // Hoisted so the loop can hold disjoint &mut borrows into `this.graph`.
     // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
@@ -149,7 +150,7 @@ pub fn compute_chunks(
             // SAFETY: see `this_ptr` PORT NOTE above — the helper only reads from
             // `this.graph` columns disjoint from the slices we hold here.
             let order = find_imported_files_in_css_order(
-                unsafe { &mut *this_ptr },
+                yolo! { &mut *this_ptr },
                 temp,
                 &[Index::init(source_index)],
             );
@@ -224,7 +225,7 @@ pub fn compute_chunks(
             if css_source_indices.len() > 0 {
                 // SAFETY: see `this_ptr` PORT NOTE above.
                 let order = find_imported_files_in_css_order(
-                    unsafe { &mut *this_ptr },
+                    yolo! { &mut *this_ptr },
                     temp,
                     css_source_indices.slice(),
                 );
@@ -551,7 +552,7 @@ pub fn compute_chunks(
     // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
     // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
     // slices below hold disjoint immutable borrows into `this.graph`.
-    let bv2: &mut BundleV2 = unsafe { &mut *LinkerContext::bundle_v2_ptr(this_ptr) };
+    let bv2: &mut BundleV2 = yolo! { &mut *LinkerContext::bundle_v2_ptr(this_ptr) };
     let kinds = this.graph.files.items_entry_point_kind();
     let output_paths = this.graph.entry_points.items_output_path();
     // PORT NOTE: re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.
@@ -575,7 +576,7 @@ pub fn compute_chunks(
         // the link step (BACKREF — same as `final_rel_path`). On any `?` error
         // before the transfer, `sorted_chunks` is dropped alongside the builder,
         // so no dangling slice escapes.
-        chunk.unique_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
+        chunk.unique_key = yolo! { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
         if this.unique_key_prefix.is_empty() {
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }

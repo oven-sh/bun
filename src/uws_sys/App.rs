@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
@@ -70,7 +71,7 @@ macro_rules! uws_app_route_methods {
             user_data: *mut c_void,
         ) {
             // SAFETY: self is a valid app; pattern outlives the call (uWS copies it).
-            unsafe {
+            yolo! {
                 c::$cfn(
                     Self::SSL_FLAG,
                     std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -95,7 +96,7 @@ impl<const SSL: bool> App<SSL> {
     fn as_raw(&mut self) -> &mut uws_app_s {
         // SAFETY: `App<SSL>` and `uws_app_s` are layout-identical opaque ZSTs
         // over the same C++ object; the borrow reborrows `&mut self`.
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<uws_app_s>() }
+        yolo! { &mut *std::ptr::from_mut::<Self>(self).cast::<uws_app_s>() }
     }
 
     pub fn close(&mut self) {
@@ -108,7 +109,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn create(opts: BunSocketContextOptions) -> Option<*mut Self> {
         // SAFETY: FFI call; uws_create_app returns null on failure.
-        let app = unsafe { c::uws_create_app(Self::SSL_FLAG, opts) };
+        let app = yolo! { c::uws_create_app(Self::SSL_FLAG, opts) };
         if app.is_null() {
             None
         } else {
@@ -121,7 +122,7 @@ impl<const SSL: bool> App<SSL> {
     // TODO(port): FFI destroy — caller must not use after; opaque #[repr(C)] handle, not Drop.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` is a valid *mut uws_app_s; ssl flag matches construction.
-        unsafe { c::uws_app_destroy(Self::SSL_FLAG, this.cast::<uws_app_t>()) }
+        yolo! { c::uws_app_destroy(Self::SSL_FLAG, this.cast::<uws_app_t>()) }
     }
 
     pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
@@ -149,7 +150,7 @@ impl<const SSL: bool> App<SSL> {
         compress: bool,
     ) -> bool {
         // SAFETY: self is a valid *mut uws_app_t; slices are valid for the call.
-        unsafe {
+        yolo! {
             c::uws_publish(
                 SSL as i32,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -181,8 +182,8 @@ impl<const SSL: bool> App<SSL> {
     //       req: *mut Request,
     //       user_data: *mut c_void,
     //   ) {
-    //       let user_data = unsafe { &mut *(user_data as *mut U) };
-    //       HANDLER(user_data, unsafe { &mut *req }, unsafe { &mut *(res as *mut Response<SSL>) });
+    //       let user_data = yolo! { &mut *(user_data as *mut U) };
+    //       HANDLER(user_data, yolo! { &mut *req }, yolo! { &mut *(res as *mut Response<SSL>) });
     //   }
     //
     // TODO(port): proc-macro or trait-based comptime handler dispatch (RouteHandler).
@@ -232,7 +233,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn domain(&mut self, pattern: &ZStr) {
         // SAFETY: pattern is NUL-terminated; self is a valid app.
-        unsafe {
+        yolo! {
             c::uws_app_domain(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -284,7 +285,7 @@ impl<const SSL: bool> App<SSL> {
         // comptime. Phase B: macro-generate the shim.
         // PERF(port): was @call(.always_inline) on the user handler.
         // SAFETY: self is a valid app; config.host (if non-null) is NUL-terminated and outlives the call.
-        unsafe {
+        yolo! {
             c::uws_app_listen_with_config(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -308,7 +309,7 @@ impl<const SSL: bool> App<SSL> {
         // comptime (ignoring domain/flags args, casting socket). Phase B: macro-generate.
         // PERF(port): was @call(.always_inline) on the user handler.
         // SAFETY: self is a valid app; domain_name is NUL-terminated.
-        unsafe {
+        yolo! {
             c::uws_app_listen_domain_with_options(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -327,7 +328,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
         // SAFETY: self is a valid app; topic valid for the call.
-        unsafe {
+        yolo! {
             c::uws_num_subscribers(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -345,7 +346,7 @@ impl<const SSL: bool> App<SSL> {
         compress: bool,
     ) -> bool {
         // SAFETY: self is a valid app; slices valid for the call.
-        unsafe {
+        yolo! {
             c::uws_publish(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -365,7 +366,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn remove_server_name(&mut self, hostname_pattern: &core::ffi::CStr) {
         // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
-        unsafe {
+        yolo! {
             c::uws_remove_server_name(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -376,7 +377,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn add_server_name(&mut self, hostname_pattern: &core::ffi::CStr) {
         // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
-        unsafe {
+        yolo! {
             c::uws_add_server_name(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -391,7 +392,7 @@ impl<const SSL: bool> App<SSL> {
         opts: BunSocketContextOptions,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
-        let rc = unsafe {
+        let rc = yolo! {
             c::uws_add_server_name_with_options(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
@@ -426,7 +427,7 @@ impl<const SSL: bool> App<SSL> {
     ) {
         let mut behavior = behavior_;
         // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
-        unsafe {
+        yolo! {
             uws_ws(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),

@@ -11,6 +11,7 @@
 //! `NewSocketHandler` methods take `&self`, and the `#[cfg(windows)]` Pipe
 //! split is owned exactly once by the `on_socket!` macro below.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -116,7 +117,7 @@ impl InternalSocket {
 // validity requirement — non-null — which uSockets guarantees for every
 // pointer it stores in `Connected` / `Connecting` / `UpgradedDuplex` / `Pipe`.
 // Centralizing the deref keeps the proof local instead of repeating
-// `unsafe { &mut *s }` at ~50 match arms.
+// `yolo! { &mut *s }` at ~50 match arms.
 
 /// Reborrow the `InternalSocket::Connected` payload.
 #[inline(always)]
@@ -730,7 +731,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         set_socket_field: impl FnOnce(*mut Owner, Self),
     ) -> bool {
         // SAFETY: `tcp` and `g` are non-null FFI handles; ext sizes are word-sized.
-        let new_s = unsafe {
+        let new_s = yolo! {
             sock_c::us_socket_adopt(
                 tcp,
                 g,

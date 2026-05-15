@@ -2,6 +2,7 @@
 // nightly-only). For B-2, `u8x16`/`u16x8` alias the scalar `ScalarVec`
 // stand-ins from `crate::string::immutable`; the per-lane methods are scalar loops.
 // PERF(port): swap to `bun_highway` / `std::arch` intrinsics in Phase B.
+use bun_yolo::yolo;
 use core::ffi::c_uint;
 
 use crate::string::immutable::{
@@ -1550,7 +1551,7 @@ pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf8(
 ) -> usize {
     let _ = ambiguous_as_wide; // UTF-8 version doesn't use this parameter
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
-    let input = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let input = yolo! { core::slice::from_raw_parts(ptr, len) };
     visible::width::exclude_ansi_colors::utf8(input)
 }
 
@@ -1562,7 +1563,7 @@ pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf16(
     ambiguous_as_wide: bool,
 ) -> usize {
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
-    let input = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let input = yolo! { core::slice::from_raw_parts(ptr, len) };
     visible::width::exclude_ansi_colors::utf16(input, ambiguous_as_wide)
 }
 
@@ -1570,7 +1571,7 @@ pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf16(
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_latin1(ptr: *const u8, len: usize) -> usize {
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
-    let input = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let input = yolo! { core::slice::from_raw_parts(ptr, len) };
     visible::width::exclude_ansi_colors::latin1(input)
 }
 
@@ -1586,10 +1587,10 @@ pub(super) extern "C" fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) -
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *mut u8) -> bool {
     // SAFETY: state_ptr is non-null per C++ caller contract; BreakState is #[repr(u8)].
-    let mut state = grapheme::BreakState::from_raw(unsafe { *state_ptr });
+    let mut state = grapheme::BreakState::from_raw(yolo! { *state_ptr });
     let result = grapheme::grapheme_break(cp1, cp2, &mut state);
     // SAFETY: same as above.
-    unsafe { *state_ptr = state as u8 };
+    yolo! { *state_ptr = state as u8 };
     result
 }
 

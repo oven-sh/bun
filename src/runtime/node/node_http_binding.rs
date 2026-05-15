@@ -1,6 +1,7 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
 //! `{get,set}MaxHTTPHeaderSize`.
 
+use bun_yolo::yolo;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
@@ -28,7 +29,7 @@ pub fn get_bun_server_all_closed_promise(
                 // SAFETY: `JSValue::as_` returns a non-null pointer to the live
                 // JS-owned server instance; we hold the JS thread for the duration
                 // of this call so the GC cannot collect it under us.
-                return Ok(unsafe { &mut *server }.get_all_closed_promise(global));
+                return Ok(yolo! { &mut *server }.get_all_closed_promise(global));
             }
         };
     }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::borrow::Cow;
 
 use bun_jsc::bun_string_jsc::create_utf8_for_js;
@@ -11,7 +12,7 @@ pub struct S3ListObjectsOptions {
     // Self-referential views: these borrow from the corresponding
     // `_field: Utf8Slice` below. In Zig the slice and its backing storage are
     // separate fields; `RawSlice` encodes the non-owning contract so callers
-    // read `.as_deref()` instead of open-coding `unsafe { &*p }`.
+    // read `.as_deref()` instead of open-coding `yolo! { &*p }`.
     pub continuation_token: Option<RawSlice<u8>>,
     pub delimiter: Option<RawSlice<u8>>,
     pub encoding_type: Option<RawSlice<u8>>,

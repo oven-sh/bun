@@ -2,6 +2,7 @@
 //! collection. This type implies there is always a valid value held.
 //! For a strong that may be empty (to reuse allocation), use `Optional`.
 
+use bun_yolo::yolo;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
@@ -57,7 +58,7 @@ impl Drop for Strong {
     /// Release the strong reference.
     fn drop(&mut self) {
         // SAFETY: `self.handle` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(self.handle) };
+        yolo! { Impl::destroy(self.handle) };
         // Zig: `if (Environment.isDebug) strong.* = undefined;` — Rust drop
         // already invalidates the binding; no poison needed.
     }
@@ -171,7 +172,7 @@ impl Optional {
     pub fn deinit(&mut self) {
         let Some(r) = self.handle.take() else { return };
         // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(r) };
+        yolo! { Impl::destroy(r) };
     }
 
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
@@ -191,7 +192,7 @@ impl Drop for Optional {
     fn drop(&mut self) {
         let Some(r) = self.handle.take() else { return };
         // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(r) };
+        yolo! { Impl::destroy(r) };
     }
 }
 
@@ -212,7 +213,7 @@ impl Impl {
         // lifetime of the Impl handle. JSValue stub is `#[repr(transparent)] usize` (same
         // size); reading it directly is the encode() operation.
         // TODO(b2): once DecodedJSValue.rs un-gates, switch back to `(*js_value).encode()`.
-        unsafe { *this.as_ptr().cast::<JSValue>() }
+        yolo! { *this.as_ptr().cast::<JSValue>() }
     }
 
     pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
@@ -246,7 +247,7 @@ impl Impl {
                 this.as_ptr(),
             );
         }
-        unsafe { Bun__StrongRef__delete(this.as_ptr()) };
+        yolo! { Bun__StrongRef__delete(this.as_ptr()) };
     }
 }
 

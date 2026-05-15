@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use std::io::Write as _;
 
@@ -114,7 +115,7 @@ impl PackageManagerCommand {
         // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
         // cannot alias. `load_from_bytes` reads `manager.options`/`manager.log`
         // only and never re-projects `manager.lockfile`.
-        let load_lockfile = unsafe {
+        let load_lockfile = yolo! {
             let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             let log: *mut bun_ast::Log = (*pm_raw).log;
             (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
@@ -356,7 +357,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             drop(load_lockfile);
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
-            let pm = unsafe { &mut *pm_ptr };
+            let pm = yolo! { &mut *pm_ptr };
             let _ = pm
                 .lockfile
                 .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
@@ -384,7 +385,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             drop(load_lockfile);
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
-            let pm = unsafe { &mut *pm_ptr };
+            let pm = yolo! { &mut *pm_ptr };
             let _ = pm
                 .lockfile
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
@@ -437,7 +438,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     #[cfg(unix)]
                     {
                         // SAFETY: getuid(2) is always-successful with no preconditions.
-                        write!(&mut prefix, "bunx-{}-", unsafe { libc::getuid() })
+                        write!(&mut prefix, "bunx-{}-", yolo! { libc::getuid() })
                             .expect("unreachable");
                     }
                     #[cfg(not(unix))]
@@ -639,7 +640,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // cannot alias. `detect_and_load_other_lockfile` reads
             // `manager.options`/`manager.log` only and never re-projects
             // `manager.lockfile`.
-            let mut load_lockfile = unsafe {
+            let mut load_lockfile = yolo! {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;
                 migration::detect_and_load_other_lockfile(
@@ -666,7 +667,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // `format`/`migrated` fields) and never dereferences `ok.lockfile`,
             // so `&mut *lf` remains the sole live mutable view of the heap
             // lockfile. `options` is read via `pm_raw` (disjoint allocation).
-            unsafe {
+            yolo! {
                 (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }
             Global::exit(0);

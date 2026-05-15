@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 use core::ptr::NonNull;
 use core::slice;
@@ -67,17 +68,17 @@ impl StringBuilder {
             buf[0] = 0;
             self.len += 1;
             // SAFETY: buf_ptr[0] == 0 written above; len 0 excludes the NUL.
-            return Some(unsafe { ZStr::from_raw_mut(buf_ptr, 0) });
+            return Some(yolo! { ZStr::from_raw_mut(buf_ptr, 0) });
         }
 
         let result = simdutf::convert::utf16::to::utf8::with_errors::le(slice, buf);
         if result.status == simdutf::Status::SUCCESS {
             let count = result.count;
             // SAFETY: buf has at least count+1 bytes (count16 reserved them).
-            unsafe { *buf_ptr.add(count) = 0 };
+            yolo! { *buf_ptr.add(count) = 0 };
             self.len += count + 1;
             // SAFETY: buf_ptr[count] == 0 written above.
-            Some(unsafe { ZStr::from_raw_mut(buf_ptr, count) })
+            Some(yolo! { ZStr::from_raw_mut(buf_ptr, count) })
         } else {
             // Fallback: WTF-16 → WTF-8 via the slow path that handles lone surrogates.
             // Zig allocated from `fallback_allocator` and handed ownership to the
@@ -92,13 +93,13 @@ impl StringBuilder {
                 return None;
             }
             // SAFETY: buf_ptr points to `avail` writable bytes (self.writable()).
-            unsafe {
+            yolo! {
                 core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr, len);
                 *buf_ptr.add(len) = 0;
             }
             self.len += len + 1;
             // SAFETY: buf_ptr[len] == 0 written above.
-            Some(unsafe { ZStr::from_raw_mut(buf_ptr, len) })
+            Some(yolo! { ZStr::from_raw_mut(buf_ptr, len) })
         }
     }
 
@@ -161,7 +162,7 @@ impl StringBuilder {
         // SAFETY: `base..base+slice.len()` was just initialized above and lives
         // for as long as `self.ptr` (heap allocation never moves). The unbound
         // `'a` lifetime is the documented caller contract of `append_raw`.
-        unsafe { core::slice::from_raw_parts(base, slice.len()) }
+        yolo! { core::slice::from_raw_parts(base, slice.len()) }
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {
@@ -285,11 +286,11 @@ impl StringBuilder {
         let Some(ptr) = self.ptr else { return &mut [] };
         debug_assert!(self.cap > 0);
         // SAFETY: ptr was allocated with self.cap bytes.
-        unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.cap) }
+        yolo! { slice::from_raw_parts_mut(ptr.as_ptr(), self.cap) }
     }
 
     /// Immutable view of the bytes appended so far (`ptr[0..len]`). Safe wrapper
-    /// for the recurring `unsafe { ffi::slice(self.ptr.unwrap().as_ptr(), self.len) }`
+    /// for the recurring `yolo! { ffi::slice(self.ptr.unwrap().as_ptr(), self.len) }`
     /// pattern at call sites.
     #[inline]
     pub fn written_slice(&self) -> &[u8] {
@@ -298,14 +299,14 @@ impl StringBuilder {
         // `allocate()`/`init_capacity()`; `self.len <= self.cap` is upheld by
         // every `append*` (debug-asserted there), and bytes `[0, len)` were
         // initialized by those appends. The borrow is tied to `&self`.
-        unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) }
+        yolo! { slice::from_raw_parts(ptr.as_ptr(), self.len) }
     }
 
     pub fn writable(&mut self) -> &mut [u8] {
         let Some(ptr) = self.ptr else { return &mut [] };
         debug_assert!(self.cap > 0);
         // SAFETY: ptr was allocated with self.cap bytes; len <= cap.
-        unsafe { slice::from_raw_parts_mut(ptr.as_ptr().add(self.len), self.cap - self.len) }
+        yolo! { slice::from_raw_parts_mut(ptr.as_ptr().add(self.len), self.cap - self.len) }
     }
 
     /// Transfer ownership of the underlying memory to a slice.
@@ -328,7 +329,7 @@ impl StringBuilder {
         // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above;
         // all `cap` bytes have been written iff caller appended everything counted.
         // TODO(port): if not fully written this reads uninit bytes — Zig didn't care.
-        unsafe { crate::heap::take(slice::from_raw_parts_mut(ptr.as_ptr(), cap)) }
+        yolo! { crate::heap::take(slice::from_raw_parts_mut(ptr.as_ptr(), cap)) }
     }
 }
 
@@ -340,7 +341,7 @@ impl Drop for StringBuilder {
         }
         // SAFETY: ptr came from Box::<[MaybeUninit<u8>]>::new_uninit_slice(self.cap)
         // leaked in init_capacity/allocate; reconstruct to free via global allocator.
-        unsafe {
+        yolo! {
             crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(slice::from_raw_parts_mut(
                 ptr.as_ptr().cast(),
                 self.cap,

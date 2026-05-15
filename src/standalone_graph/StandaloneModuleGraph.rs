@@ -2,6 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::ffi::{c_char, c_int};
 use core::mem::size_of;
@@ -284,12 +285,12 @@ mod macho {
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call returns pointer to embedded section header or null.
-        let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
+        let length_ptr = yolo! { Bun__getStandaloneModuleGraphMachoLength() };
         if length_ptr.is_null() {
             return None;
         }
         // SAFETY: pointer is valid if non-null; read unaligned u64.
-        let length = unsafe { core::ptr::read_unaligned(length_ptr) };
+        let length = yolo! { core::ptr::read_unaligned(length_ptr) };
         if length < 8 {
             return None;
         }
@@ -297,7 +298,7 @@ mod macho {
         let data_offset = core::mem::size_of::<u64>();
         let slice_ptr = length_ptr.cast::<u8>();
         // SAFETY: section data is `length` bytes immediately following the u64 header.
-        Some((unsafe { slice_ptr.add(data_offset) }, length as usize))
+        Some((yolo! { slice_ptr.add(data_offset) }, length as usize))
     }
 }
 
@@ -312,11 +313,11 @@ mod pe {
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI calls.
-        let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
+        let length = yolo! { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
             return None;
         }
-        let data_ptr = unsafe { Bun__getStandaloneModuleGraphPEData() };
+        let data_ptr = yolo! { Bun__getStandaloneModuleGraphPEData() };
         if data_ptr.is_null() {
             return None;
         }
@@ -337,12 +338,12 @@ mod elf {
     /// `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call.
-        let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
+        let vaddr_ptr = yolo! { Bun__getStandaloneModuleGraphELFVaddr() };
         if vaddr_ptr.is_null() {
             return None;
         }
         // SAFETY: read unaligned u64 vaddr.
-        let vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
+        let vaddr = yolo! { core::ptr::read_unaligned(vaddr_ptr) };
         if vaddr == 0 {
             return None;
         }
@@ -354,12 +355,12 @@ mod elf {
         let target = vaddr as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
-            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
+            u64::from_le_bytes(yolo! { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
         if payload_len < 8 {
             return None;
         }
         // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        Some((yolo! { target.add(8) }, payload_len as usize))
     }
 }
 
@@ -390,7 +391,7 @@ impl File {
 
     pub fn stat(&self) -> Stat {
         // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-        let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: Stat = yolo! { bun_core::ffi::zeroed_unchecked() };
         result.st_size = self.contents.len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
@@ -469,7 +470,7 @@ impl LazySourceMap {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
                     // (disjoint from bytecode); StringPointer offsets were serialized by
                     // `to_bytes` and are in-bounds.
-                    file_names.push(Box::from(unsafe {
+                    file_names.push(Box::from(yolo! {
                         slice_to(
                             serialized.bytes.as_ptr(),
                             serialized.bytes.len(),
@@ -555,7 +556,7 @@ impl StandaloneModuleGraph {
 
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
-        let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
+        let modules_list_bytes = yolo! { slice_to(raw_const, raw_len, offsets.modules_ptr) };
         // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
         // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
@@ -577,22 +578,22 @@ impl StandaloneModuleGraph {
         for i in 0..modules_list_count {
             // SAFETY: index < count derived from byte length above; bytes live for 'static.
             let module: CompiledModuleGraphFile =
-                unsafe { core::ptr::read_unaligned(modules_list_base.add(i)) };
+                yolo! { core::ptr::read_unaligned(modules_list_base.add(i)) };
             let module = &module;
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
             // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
             // PERF(port): was putAssumeCapacity
             let _ = modules.put(
-                unsafe { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
+                yolo! { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
                 File {
-                    name: unsafe { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
+                    name: yolo! { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
                     loader: module.loader,
-                    contents: unsafe { slice_to_z(raw_const, raw_len, module.contents) },
+                    contents: yolo! { slice_to_z(raw_const, raw_len, module.contents) },
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
                             // TODO(port): @alignCast — alignment of source map bytes
-                            bytes: unsafe { slice_to(raw_const, raw_len, module.sourcemap) },
+                            bytes: yolo! { slice_to(raw_const, raw_len, module.sourcemap) },
                         })
                     } else {
                         LazySourceMap::None
@@ -602,18 +603,18 @@ impl StandaloneModuleGraph {
                         // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
                         // disjoint from every read-only subslice handed out above — no
                         // `&[u8]` is ever formed over this range.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
+                        yolo! { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
                     } else {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     module_info: if module.module_info.length > 0 {
                         // SAFETY: see bytecode above.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
+                        yolo! { slice_to_mut(raw_ptr, raw_len, module.module_info) }
                     } else {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
-                        unsafe { slice_to_z(raw_const, raw_len, module.bytecode_origin_path) }
+                        yolo! { slice_to_z(raw_const, raw_len, module.bytecode_origin_path) }
                             .as_bytes()
                     } else {
                         b""
@@ -636,7 +637,7 @@ impl StandaloneModuleGraph {
             files: modules,
             entry_point_id: offsets.entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
-            compile_exec_argv: unsafe {
+            compile_exec_argv: yolo! {
                 slice_to_z(raw_const, raw_len, offsets.compile_exec_argv_ptr)
             }
             .as_bytes(),
@@ -660,7 +661,7 @@ unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static 
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
     let _ = len;
-    unsafe { core::slice::from_raw_parts(base.add(off), n) }
+    yolo! { core::slice::from_raw_parts(base.add(off), n) }
 }
 
 /// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
@@ -674,7 +675,7 @@ unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
     let _ = len;
-    core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
+    core::ptr::slice_from_raw_parts_mut(yolo! { base.add(off) }, n)
 }
 
 /// SAFETY: as `slice_to`, plus `base[ptr.offset + ptr.length] == 0` (written by
@@ -687,7 +688,7 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end < len));
     let _ = len;
-    unsafe { ZStr::from_raw(base.add(off), n) }
+    yolo! { ZStr::from_raw(base.add(off), n) }
 }
 
 pub fn to_bytes(
@@ -953,7 +954,7 @@ pub fn to_bytes(
     // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
     // invariants; reinterpreting its backing storage as bytes is the same as Zig's
     // `std.mem.sliceAsBytes`.
-    let modules_as_bytes: &[u8] = unsafe {
+    let modules_as_bytes: &[u8] = yolo! {
         core::slice::from_raw_parts(
             modules.as_ptr().cast::<u8>(),
             modules.len() * size_of::<CompiledModuleGraphFile>(),
@@ -968,14 +969,14 @@ pub fn to_bytes(
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
-    let offsets_as_bytes: &[u8] = unsafe {
+    let offsets_as_bytes: &[u8] = yolo! {
         core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
     };
     let _ = string_builder.append(offsets_as_bytes);
     let _ = string_builder.append(TRAILER);
 
     // SAFETY: string_builder.ptr was set by allocate() above.
-    let output_bytes = unsafe {
+    let output_bytes = yolo! {
         core::slice::from_raw_parts_mut(string_builder.ptr.unwrap().as_ptr(), string_builder.len)
     };
 
@@ -1096,7 +1097,7 @@ pub fn inject(
             use bun_sys::windows::Win32ErrorExt as _;
             // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
             // retain the pointers past return.
-            if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
+            if yolo! { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
                 let e = w::Win32Error::get();
                 // Zig prints `@errorName(err)` (e.g. `AccessDenied`); map the
                 // Win32 code through the errno table so users see a name, not
@@ -1189,7 +1190,7 @@ pub fn inject(
                                     zname_owned = Some(zname_z);
                                     // SAFETY: trailing 0 byte appended above; `zname_owned`
                                     // keeps the allocation alive for the rest of the fn.
-                                    zname = unsafe {
+                                    zname = yolo! {
                                         ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len)
                                     };
                                     continue;
@@ -1339,7 +1340,7 @@ pub fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                yolo! { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
             }
             return cloned_executable_fd;
         }
@@ -1397,7 +1398,7 @@ pub fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                yolo! { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
             }
             return cloned_executable_fd;
         }
@@ -1460,7 +1461,7 @@ pub fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                yolo! { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
             }
             return cloned_executable_fd;
         }
@@ -1537,7 +1538,7 @@ pub fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                yolo! { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
             }
 
             return cloned_executable_fd;
@@ -2003,7 +2004,7 @@ pub fn to_executable(
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
         // provenance covers the trailing NUL at index `len` that the W-suffix
         // API will read — matches Zig's `buf[0..len :0].ptr` sentinel slice.
-        if unsafe {
+        if yolo! {
             windows::kernel32::MoveFileExW(
                 temp_buf_u16.as_ptr(),
                 dest_buf_u16.as_ptr(),
@@ -2138,8 +2139,8 @@ impl StandaloneModuleGraph {
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            let trailer_bytes = unsafe {
+            let offsets_ptr = yolo! { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            let trailer_bytes = yolo! {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
@@ -2150,7 +2151,7 @@ impl StandaloneModuleGraph {
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
             let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
+                yolo! { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -2168,8 +2169,8 @@ impl StandaloneModuleGraph {
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            let trailer_bytes = unsafe {
+            let offsets_ptr = yolo! { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            let trailer_bytes = yolo! {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
@@ -2180,7 +2181,7 @@ impl StandaloneModuleGraph {
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
             let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
+                yolo! { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -2198,8 +2199,8 @@ impl StandaloneModuleGraph {
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
-            let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
-            let trailer_bytes = unsafe {
+            let offsets_ptr = yolo! { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            let trailer_bytes = yolo! {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
@@ -2210,7 +2211,7 @@ impl StandaloneModuleGraph {
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
             let offsets: Offsets =
-                unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
+                yolo! { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -2272,7 +2273,7 @@ impl StandaloneModuleGraph {
             // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
             // best-effort hint, so call libc directly and just log on failure.
             // SAFETY: start..end covers a mapped range of the executable image.
-            let rc = unsafe {
+            let rc = yolo! {
                 libc::madvise(
                     start as *mut core::ffi::c_void,
                     end - start,
@@ -2329,7 +2330,7 @@ pub struct SerializedSourceMapHeader {
 impl SerializedSourceMap {
     pub fn header(self) -> SerializedSourceMapHeader {
         // SAFETY: bytes.len() >= size_of::<Header>() must hold (caller checked); align(1) read.
-        unsafe {
+        yolo! {
             core::ptr::read_unaligned(self.bytes.as_ptr().cast::<SerializedSourceMapHeader>())
         }
     }
@@ -2365,14 +2366,14 @@ impl SerializedSourceMap {
     pub fn source_file_name(self, index: usize) -> StringPointer {
         debug_assert!(index < self.source_files_count());
         // SAFETY: index bounds-checked; layout per Header doc; pointer may be misaligned.
-        unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
+        yolo! { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
     }
 
     fn compressed_source_file(self, index: usize) -> StringPointer {
         let count = self.source_files_count();
         debug_assert!(index < count);
         // SAFETY: second contiguous StringPointer array immediately follows the first.
-        unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(count + index)) }
+        yolo! { core::ptr::read_unaligned(self.string_pointers_base().add(count + index)) }
     }
 }
 
@@ -2392,7 +2393,7 @@ impl SerializedSourceMapLoaded {
         if self.decompressed_files[index].is_none() {
             // SAFETY: `self.map.bytes` is a 'static read-only sourcemap subrange (disjoint
             // from bytecode); StringPointer was serialized by `to_bytes` and is in-bounds.
-            let compressed_file = unsafe {
+            let compressed_file = yolo! {
                 slice_to(
                     self.map.bytes.as_ptr(),
                     self.map.bytes.len(),
@@ -2518,7 +2519,7 @@ pub fn serialize_json_source_map_for_standalone(
         let bound = bun_zstd::compress_bound(utf8.len());
         // SAFETY: zstd writes only into the spare slice and reports the byte
         // count on success; on error we commit 0 and `Output::panic` diverges.
-        unsafe {
+        yolo! {
             bun_core::vec::fill_spare(string_payload, bound, |spare| {
                 match bun_zstd::compress(spare, utf8, Some(1)) {
                     bun_zstd::Result::Err(err_msg) => {

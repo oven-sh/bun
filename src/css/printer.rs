@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::fmt;
 
@@ -185,7 +186,7 @@ impl<'a> Printer<'a> {
         }
         if ident.is_ident() {
             // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
-            return unsafe { crate::arena_str(ident.as_ident().unwrap().v) };
+            return yolo! { crate::arena_str(ident.as_ident().unwrap().v) };
         }
         self.lookup_symbol(ident.as_ref().unwrap())
     }
@@ -613,7 +614,7 @@ impl<'a> Printer<'a> {
         // NOTE: cannot use `ident.v()` here — `add_dashed` requires `&'a [u8]`
         // (arena lifetime), but the safe accessor ties the borrow to `&ident`.
         // SAFETY: DashedIdent.v is an arena-owned slice valid for `'a`.
-        let ident_v: &'a [u8] = unsafe { crate::arena_str(ident.v) };
+        let ident_v: &'a [u8] = yolo! { crate::arena_str(ident.v) };
 
         let dashed_idents = match &self.css_module {
             Some(m) => m.config.dashed_idents,
@@ -800,7 +801,7 @@ impl<'a> Printer<'a> {
         // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
         // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
         // `StyleContext<'a>` share layout; only the borrow-checker tag differs).
-        self.ctx = Some(unsafe { &*core::ptr::from_ref(&ctx).cast::<css::StyleContext<'a>>() });
+        self.ctx = Some(yolo! { &*core::ptr::from_ref(&ctx).cast::<css::StyleContext<'a>>() });
         let res = func(closure, self);
         self.ctx = parent;
 

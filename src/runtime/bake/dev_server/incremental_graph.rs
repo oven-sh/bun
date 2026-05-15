@@ -8,6 +8,7 @@
 //! `File` payload is folded into a single struct carrying both field sets and
 //! per-side behaviour is dispatched on the `SIDE` const parameter.
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::mem::offset_of;
 use std::io::Write as _;
@@ -317,7 +318,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Server => offset_of!(DevServer, server_graph),
         };
         // SAFETY: `self` is the `<side>_graph` field of `DevServer`.
-        unsafe { bun_core::container_of::<DevServer, Self>(std::ptr::from_mut(self), offset) }
+        yolo! { bun_core::container_of::<DevServer, Self>(std::ptr::from_mut(self), offset) }
     }
 
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s
@@ -329,7 +330,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // `incremental_result` is field-disjoint from both `client_graph` and
         // `server_graph`, so the returned borrow and `&mut self` cover
         // non-overlapping memory.
-        unsafe { &mut (*self.owner()).incremental_result }
+        yolo! { &mut (*self.owner()).incremental_result }
     }
 
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s
@@ -343,7 +344,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // `bundling_failures` is field-disjoint from both `client_graph` and
         // `server_graph`, so the returned borrow and `&mut self` cover
         // non-overlapping memory.
-        unsafe { &mut (*self.owner()).bundling_failures }
+        yolo! { &mut (*self.owner()).bundling_failures }
     }
 
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s `dump_dir`
@@ -355,7 +356,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // SAFETY: `owner()` recovers the heap-allocated `DevServer`; `dump_dir`
         // is field-disjoint from both `client_graph` and `server_graph`, so the
         // returned borrow and `&mut self` cover non-overlapping memory.
-        unsafe { (*self.owner()).dump_dir.as_mut() }
+        yolo! { (*self.owner()).dump_dir.as_mut() }
     }
 
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
@@ -479,7 +480,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Content::CssRoot(_) | Content::CssChild => {
                 if css == FreeCssMode::UnrefCss {
                     // SAFETY: see `owner()`; touches `assets` sibling only.
-                    unsafe { (*self.owner()).assets.unref_by_path(key) };
+                    yolo! { (*self.owner()).assets.unref_by_path(key) };
                 }
             }
             Content::Unknown => {}
@@ -555,7 +556,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             // SAFETY: see `owner()`; touches `directory_watchers` sibling only,
             // and `key_ptr` points into `bundled_files` which is not mutated
             // by `remove_dependencies_for_file`.
-            unsafe {
+            yolo! {
                 (*self.owner())
                     .directory_watchers
                     .remove_dependencies_for_file(&*key_ptr);
@@ -588,9 +589,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<(), bun_core::Error> {
         let index: bun_ast::Index = index.into();
         // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
+        let dev = yolo! { self.owner() };
         // SAFETY: `graph_safety_lock` is a sibling field; debug-assert only.
-        unsafe { (*dev).graph_safety_lock.assert_locked() };
+        yolo! { (*dev).graph_safety_lock.assert_locked() };
 
         let path = &ctx.sources[index.get() as usize].path;
         let key = path.key_for_incremental_graph();
@@ -622,7 +623,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 // SAFETY: sibling-field access via `owner()`; `root` is
                 // disjoint from `dump_dir` and from `self` (the graph field).
                 crate::bake::dev_server_body::dump_bundle_for_chunk(
-                    unsafe { &*dev },
+                    yolo! { &*dev },
                     dump_dir,
                     SIDE,
                     key,
@@ -781,7 +782,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         // SAFETY: cross-graph access via `owner()`. We hold
                         // `&mut self` (server_graph); `client_graph` is a
                         // disjoint sibling field.
-                        let client_graph = unsafe { &mut (*dev).client_graph };
+                        let client_graph = yolo! { &mut (*dev).client_graph };
                         let key = bun_ptr::RawSlice::new(
                             &*self.bundled_files.keys()[file_index.get() as usize],
                         );
@@ -1138,7 +1139,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         gts.bits(SIDE).set(file_index.get() as usize);
 
         // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
+        let dev = yolo! { self.owner() };
 
         match SIDE {
             Side::Server => {
@@ -1148,7 +1149,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 };
                 if is_route {
                     // SAFETY: sibling-field access.
-                    let route_index = unsafe {
+                    let route_index = yolo! {
                         (*dev)
                             .route_lookup
                             .get(&ServerFileIndex::init(file_index.get()))
@@ -1181,7 +1182,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         &*self.bundled_files.keys()[file_index.get() as usize],
                     );
                     // SAFETY: cross-graph sibling access; `server_graph` disjoint.
-                    let server_graph = unsafe { &mut (*dev).server_graph };
+                    let server_graph = yolo! { &mut (*dev).server_graph };
                     let index = server_graph.get_file_index(key.slice()).unwrap_or_else(|| {
                         bun_core::Output::panic(format_args!(
                             "Server Incremental Graph is missing component for {:?}",
@@ -1239,7 +1240,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         gts.bits(SIDE).set(file_index.get() as usize);
 
         // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
+        let dev = yolo! { self.owner() };
 
         match SIDE {
             Side::Server => {
@@ -1252,7 +1253,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         &*self.bundled_files.keys()[file_index.get() as usize],
                     );
                     // SAFETY: disjoint sibling `client_graph`.
-                    let client_graph = unsafe { &mut (*dev).client_graph };
+                    let client_graph = yolo! { &mut (*dev).client_graph };
                     let index = client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
                         bun_core::Output::panic(format_args!(
                             "Client Incremental Graph is missing component for {:?}",
@@ -1538,7 +1539,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
+        let dev = yolo! { self.owner() };
         let fail_owner = serialized_failure::OwnerPacked::new(SIDE, idx as u32);
 
         // TODO(port): DevServer should get a stdio manager which can process
@@ -1549,7 +1550,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
             // SAFETY: sibling-field `relative_path` reads `dev.root` only.
-            let owner_display_name = unsafe { (*dev).relative_path(&mut *buf, key.slice()) };
+            let owner_display_name = yolo! { (*dev).relative_path(&mut *buf, key.slice()) };
             SerializedFailure::init_from_log(
                 match SIDE {
                     Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
@@ -1560,7 +1561,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             )?
         };
         // SAFETY: sibling-field access.
-        unsafe {
+        yolo! {
             let fail_gop = (*dev).bundling_failures.get_or_put(fail_owner)?;
             (*dev)
                 .incremental_result
@@ -1762,14 +1763,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // PERF(port): was std.heap.stackFallback(65536) — profile in Phase B.
         let mut end_list: Vec<u8> = Vec::with_capacity(256);
         // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
+        let dev = yolo! { self.owner() };
         match kind {
             ChunkKind::InitialResponse => {
                 end_list.extend_from_slice(b"}, {\n  main: ");
                 if !options.initial_response_entry_point.is_empty() {
                     let mut buf = bun_paths::path_buffer_pool::get();
                     // SAFETY: `relative_path` reads `dev.root` only.
-                    let rel = unsafe {
+                    let rel = yolo! {
                         (*dev).relative_path(&mut *buf, options.initial_response_entry_point)
                     };
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
@@ -1789,7 +1790,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let _ = write!(end_list, "{}", bun_core::fmt::hex_lower(&generation.to_ne_bytes()));
                 end_list.extend_from_slice(b"\",\n  version: \"");
                 // SAFETY: sibling-field read.
-                end_list.extend_from_slice(unsafe { &(*dev).configuration_hash_key });
+                end_list.extend_from_slice(yolo! { &(*dev).configuration_hash_key });
                 if options.console_log {
                     end_list.extend_from_slice(b"\",\n  console: true");
                 } else {
@@ -1798,7 +1799,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if !options.react_refresh_entry_point.is_empty() {
                     end_list.extend_from_slice(b",\n  refresh: ");
                     let mut buf = bun_paths::path_buffer_pool::get();
-                    let rel = unsafe {
+                    let rel = yolo! {
                         (*dev).relative_path(&mut *buf, options.react_refresh_entry_point)
                     };
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(

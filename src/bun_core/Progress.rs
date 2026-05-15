@@ -14,6 +14,7 @@
 //! * `refresh_rate_ms`
 //! * `initial_delay_ms`
 
+use bun_yolo::yolo;
 use core::fmt;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -251,7 +252,7 @@ impl Node {
         // SAFETY: parent backref points into caller-provided storage that
         // outlives this node per the non-allocating API contract (see module
         // docs); null only for the root node.
-        unsafe { self.parent.as_ref() }
+        yolo! { self.parent.as_ref() }
     }
 
     /// Raw pointer to the parent node for paths that must mutate it
@@ -291,17 +292,17 @@ impl Node {
         self.unprotected_completed_items
             .fetch_add(1, Ordering::Relaxed);
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        unsafe { (*self.context_ptr()).maybe_refresh() };
+        yolo! { (*self.context_ptr()).maybe_refresh() };
     }
 
     /// Finish a started `Node`. Thread-safe.
     pub fn end(&mut self) {
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        let context = unsafe { &mut *self.context_ptr() };
+        let context = yolo! { &mut *self.context_ptr() };
         context.maybe_refresh();
         // SAFETY: parent backref valid; `complete_one` below needs `&mut` and
         // re-enters `maybe_refresh`, so this stays a raw deref (see `parent_ptr`).
-        if let Some(parent) = unsafe { self.parent_ptr().as_mut() } {
+        if let Some(parent) = yolo! { self.parent_ptr().as_mut() } {
             {
                 let _g = context.update_mutex.lock();
                 let _ = parent.recently_updated_child.compare_exchange(
@@ -318,7 +319,7 @@ impl Node {
             let ctx_ptr = std::ptr::from_mut::<Progress>(context);
             let _g = context.update_mutex.lock();
             // SAFETY: ctx_ptr derived from &mut; guard only references the mutex field.
-            unsafe {
+            yolo! {
                 (*ctx_ptr).done = true;
                 (*ctx_ptr).refresh_with_held_lock();
             }
@@ -334,7 +335,7 @@ impl Node {
                 .recently_updated_child
                 .store(self_ptr, Ordering::Release);
             // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-            unsafe { (*ctx_ptr).maybe_refresh() };
+            yolo! { (*ctx_ptr).maybe_refresh() };
         }
     }
 
@@ -342,7 +343,7 @@ impl Node {
     pub fn set_name(&mut self, name: &'static [u8]) {
         let ctx_ptr = self.context_ptr();
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        let progress = unsafe { &mut *ctx_ptr };
+        let progress = yolo! { &mut *ctx_ptr };
         // `timer` is `Copy` and write-once (set in `Progress::start` before any
         // child node exists); read it through the live `&mut Progress` instead
         // of a second raw `(*ctx_ptr).timer` deref later.
@@ -362,7 +363,7 @@ impl Node {
             }
             if let Some(timer) = timer {
                 // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
+                yolo! { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
             }
         }
     }
@@ -374,7 +375,7 @@ impl Node {
         // enum type to keep it well-typed; revisit if any caller appears.
         let ctx_ptr = self.context_ptr();
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        let progress = unsafe { &mut *ctx_ptr };
+        let progress = yolo! { &mut *ctx_ptr };
         // See `set_name` — `timer` is write-once `Copy`; hoist the read.
         let timer = progress.timer;
         let _g = progress.update_mutex.lock();
@@ -392,7 +393,7 @@ impl Node {
             }
             if let Some(timer) = timer {
                 // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
+                yolo! { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
             }
         }
     }
@@ -464,7 +465,7 @@ impl Progress {
                 return;
             };
             // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
-            unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
+            yolo! { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
         }
     }
 
@@ -492,7 +493,7 @@ impl Progress {
             return;
         };
         // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
-        unsafe { (*ctx_ptr).refresh_with_held_lock() };
+        yolo! { (*ctx_ptr).refresh_with_held_lock() };
     }
 
     fn clear_with_held_lock(&mut self, end_ptr: &mut usize) {
@@ -615,7 +616,7 @@ impl Progress {
                 // aliasing model, so Progress.zig:313-345 holds `node: *Node`
                 // across `self.bufWrite` freely; Rust must not.)
                 let (name, unit, eti, completed_items);
-                unsafe {
+                yolo! {
                     name = (*maybe_node).name;
                     unit = (*maybe_node).unit;
                     eti = (*maybe_node)
@@ -720,7 +721,7 @@ impl Progress {
         let _g = self.update_mutex.lock();
         // SAFETY: ctx_ptr from &mut self; guard only references the mutex field
         // (same disjoint-field pattern as `refresh`/`maybe_refresh` above).
-        let this = unsafe { &mut *ctx_ptr };
+        let this = yolo! { &mut *ctx_ptr };
         if let Some(file) = this.terminal {
             let mut end: usize = 0;
             this.clear_with_held_lock(&mut end);
@@ -812,7 +813,7 @@ mod tests {
             // PORT NOTE: reshaped for borrowck — cannot borrow `progress` while `root_node`
             // (a &mut into progress.root) is live; refresh via the node's context backref.
             // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-            unsafe { (*node.context_ptr()).refresh() };
+            yolo! { (*node.context_ptr()).refresh() };
             thread::sleep(Duration::from_nanos(10 * speed_factor));
             node.end();
         }

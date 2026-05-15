@@ -1,6 +1,7 @@
 //! JS testing/debugging bindings for the crash handler. Keeps
 //! `src/crash_handler/` free of JSC types.
 
+use bun_yolo::yolo;
 use bun_analytics as analytics;
 use bun_collections::BoundedArray;
 use bun_core::String as BunString;
@@ -89,7 +90,7 @@ pub mod js_bindings {
             );
         }
         // SAFETY: intentionally dereferencing an invalid address to trigger SIGSEGV for testing.
-        unsafe {
+        yolo! {
             let ptr = 0xDEADBEEFusize as *mut u64;
             core::ptr::write_unaligned(ptr, 0xDEADBEEF);
             core::hint::black_box(ptr);

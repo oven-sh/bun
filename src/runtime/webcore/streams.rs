@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -502,7 +503,7 @@ impl WritableHandler {
         self.handler = {
             fn on_handle<C: WritablePendingCallback>(ctx_: *mut c_void, result: Writable) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
+                let ctx = yolo! { bun_ptr::callback_ctx::<C>(ctx_) };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -605,7 +606,7 @@ impl Writable {
             Writable::Done => JSValue::TRUE,
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let prom = unsafe { &mut *pending }.promise(global_this);
+                let prom = yolo! { &mut *pending }.promise(global_this);
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 JSPromise::opaque_ref(prom).to_js()
             }
@@ -700,7 +701,7 @@ impl Pending {
 
     pub fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
-        let mut boxed = unsafe { bun_core::heap::take(this) };
+        let mut boxed = yolo! { bun_core::heap::take(this) };
         boxed.run();
         drop(boxed);
     }
@@ -744,7 +745,7 @@ impl PendingHandler {
         self.handler = {
             fn on_handle<C: PendingCallback>(ctx_: *mut c_void, result: StreamResult) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { bun_ptr::callback_ctx::<C>(ctx_) };
+                let ctx = yolo! { bun_ptr::callback_ctx::<C>(ctx_) };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -908,7 +909,7 @@ impl StreamResult {
             }
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let promise = unsafe { &mut **pending }.promise(global_this);
+                let promise = yolo! { &mut **pending }.promise(global_this);
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let promise_js = JSPromise::opaque_ref(promise).to_js();
                 promise_js.protect();
@@ -980,7 +981,7 @@ impl Signal {
 
     pub fn init<T: SignalHandler>(handler: &mut T) -> Signal {
         // SAFETY: &mut T is a valid non-null pointer
-        unsafe { Self::init_with_type(std::ptr::from_mut::<T>(handler)) }
+        yolo! { Self::init_with_type(std::ptr::from_mut::<T>(handler)) }
     }
 
     pub fn close(&mut self, err: Option<SysError>) {
@@ -1042,7 +1043,7 @@ impl SignalVTable {
     pub fn wrap<W: SignalHandler>() -> SignalVTable {
         fn on_close<W: SignalHandler>(this: *mut c_void, err: Option<SysError>) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_close(err);
+            yolo! { bun_ptr::callback_ctx::<W>(this) }.on_close(err);
         }
         fn on_ready<W: SignalHandler>(
             this: *mut c_void,
@@ -1050,11 +1051,11 @@ impl SignalVTable {
             offset: Option<BlobSizeType>,
         ) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_ready(amount, offset);
+            yolo! { bun_ptr::callback_ctx::<W>(this) }.on_ready(amount, offset);
         }
         fn on_start<W: SignalHandler>(this: *mut c_void) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_start();
+            yolo! { bun_ptr::callback_ctx::<W>(this) }.on_start();
         }
 
         // PORT NOTE: Zig used `comptime &VTable.wrap(Type)` for a static address.
@@ -1321,7 +1322,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     |this: *mut Self, off, _r| {
                         // SAFETY: `this` was registered as live `*mut Self` and uWS invokes
                         // the callback while the sink is still alive.
-                        unsafe { (*this).on_writable(off, core::ptr::null_mut()) }
+                        yolo! { (*this).on_writable(off, core::ptr::null_mut()) }
                     },
                     std::ptr::from_mut::<Self>(self),
                 );
@@ -1406,7 +1407,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     |this: *mut Self, off, _r| {
                         // SAFETY: `this` was registered as a live `*mut Self`;
                         // uWS invokes the callback while the sink is alive.
-                        unsafe { (*this).on_writable(off, core::ptr::null_mut()) }
+                        yolo! { (*this).on_writable(off, core::ptr::null_mut()) }
                     },
                     std::ptr::from_mut::<Self>(self),
                 );
@@ -1533,7 +1534,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     // SAFETY: pooled_node is a valid pool checkout; `data` was
                     // written by `ByteListPool::push` (or zero-initialized).
                     // Move the Vec<u8> out by bitwise read and reset the slot.
-                    self.buffer = unsafe {
+                    self.buffer = yolo! {
                         core::mem::replace(
                             (*pooled_node.as_ptr()).data.assume_init_mut(),
                             Vec::<u8>::default(),
@@ -1919,7 +1920,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
         // the Box first so we never hold a `&mut *this` alongside the Box's
         // unique pointer.
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let mut this = yolo! { bun_core::heap::take(this) };
         // Callers may tear this sink down without routing through
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
@@ -1964,7 +1965,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 self.buffer.clear_and_free();
             }
             // SAFETY: pooled is a valid pool node checkout
-            unsafe {
+            yolo! {
                 (*pooled.as_ptr()).data =
                     core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
             }
@@ -2012,7 +2013,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             // SAFETY: `this` is the live heap payload (refcounted via the JS
             // wrapper); momentary access only.
-            unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
+            yolo! { (*this).wrote_at_start_of_flush = (*this).wrote };
             return Ok(result?);
         }
         Ok(())
@@ -2149,7 +2150,7 @@ impl NetworkSink {
     #[inline]
     fn task_mut(&mut self) -> Option<&mut bun_s3::MultiPartUpload> {
         // SAFETY: see doc comment — exclusive while `&mut self` held.
-        self.task.as_mut().map(|p| unsafe { p.get_mut() })
+        self.task.as_mut().map(|p| yolo! { p.get_mut() })
     }
 
     pub fn new(init: NetworkSink) -> Box<NetworkSink> {
@@ -2268,7 +2269,7 @@ impl NetworkSink {
     pub fn finalize_and_destroy(this: *mut Self) {
         // SAFETY: this was heap-allocated; reclaim sole ownership before
         // touching fields so no `&mut *this` is live alongside the Box.
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let mut this = yolo! { bun_core::heap::take(this) };
         this.finalize();
         drop(this);
     }
@@ -2586,13 +2587,13 @@ impl ReadResult {
                     // SAFETY: `owned` branch — `slice` is disjoint from `buf` and
                     // the caller transfers a default-allocator heap allocation of
                     // exactly `len` bytes (cap == len), all initialized.
-                    StreamResult::OwnedAndDone(unsafe {
+                    StreamResult::OwnedAndDone(yolo! {
                         Vec::from_raw_parts(slice_ptr, len as usize, len as usize)
                     })
                 } else if owned {
                     let len = u32::try_from(slice_len).expect("int cast");
                     // SAFETY: see above — ownership of `slice` is transferred here.
-                    StreamResult::Owned(unsafe {
+                    StreamResult::Owned(yolo! {
                         Vec::from_raw_parts(slice_ptr, len as usize, len as usize)
                     })
                 } else if done {

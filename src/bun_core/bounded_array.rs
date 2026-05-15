@@ -16,6 +16,7 @@
 //! let a_clone = a.clone(); // creates a copy - the structure doesn't use any internal pointers
 //! ```
 
+use bun_yolo::yolo;
 use core::mem::MaybeUninit;
 
 /// `error{Overflow}`
@@ -93,14 +94,14 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     pub fn slice(&mut self) -> &mut [T] {
         let len = self.len;
         // SAFETY: elements `[0..len]` are initialized by the public API's invariants.
-        unsafe { &mut *(&raw mut self.buffer[0..len] as *mut [T]) }
+        yolo! { &mut *(&raw mut self.buffer[0..len] as *mut [T]) }
     }
 
     /// View the internal array as a constant slice whose size was previously set.
     pub fn const_slice(&self) -> &[T] {
         let len = self.len;
         // SAFETY: elements `[0..len]` are initialized by the public API's invariants.
-        unsafe { &*(&raw const self.buffer[0..len] as *const [T]) }
+        yolo! { &*(&raw const self.buffer[0..len] as *const [T]) }
     }
 
     /// Adjust the slice's length to `len`.
@@ -170,7 +171,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         let i = self.len - 1;
         // SAFETY: index `i` is within `[0..len)`; caller treats the slot as uninitialized
         // and must write before reading (matches Zig `addOneAssumeCapacity` contract).
-        unsafe { &mut *self.buffer[i].as_mut_ptr() }
+        yolo! { &mut *self.buffer[i].as_mut_ptr() }
     }
 
     /// Resize the slice, adding `n` new elements, which have `undefined` values.
@@ -181,7 +182,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         // SAFETY: `[prev_len .. prev_len+N]` is within capacity after resize; caller must
         // initialize before reading (Zig returns `*[n]T` over undefined storage).
         let ptr = self.buffer[prev_len..][..N].as_mut_ptr().cast::<[T; N]>();
-        Ok(unsafe { &mut *ptr })
+        Ok(yolo! { &mut *ptr })
     }
 
     /// Resize the slice, adding `n` new elements, which have `undefined` values.
@@ -192,7 +193,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         // SAFETY: `[prev_len .. prev_len+n]` is within capacity after resize; caller must
         // initialize before reading.
         let s = &mut self.buffer[prev_len..][..n];
-        Ok(unsafe { &mut *(std::ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) })
+        Ok(yolo! { &mut *(std::ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) })
     }
 
     /// Remove and return the last element from the slice, or return `None` if the slice is empty.
@@ -203,7 +204,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         let i = self.len - 1;
         self.len -= 1;
         // SAFETY: index `i` was within `[0..old_len)` and is now logically removed; we move it out.
-        Some(unsafe { self.buffer[i].assume_init_read() })
+        Some(yolo! { self.buffer[i].assume_init_read() })
     }
 
     /// Return a slice of only the extra capacity after items.
@@ -227,7 +228,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         let s_len = self.len;
         // mem.copyBackwards(T, s[i + 1 .. s.len], s[i .. s.len - 1]);
         // SAFETY: ranges are within `[0..len)`; src and dst overlap, hence `ptr::copy` (memmove).
-        unsafe {
+        yolo! {
             let base = self.buffer.as_mut_ptr();
             core::ptr::copy(base.add(i), base.add(i + 1), s_len - 1 - i);
         }
@@ -246,7 +247,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         // mem.copyBackwards(T, self.slice()[i + items.len .. self.len], self.constSlice()[i .. self.len - items.len]);
         let len = self.len;
         // SAFETY: ranges are within `[0..len)` after the length bump; overlapping memmove.
-        unsafe {
+        yolo! {
             let base = self.buffer.as_mut_ptr();
             core::ptr::copy(
                 base.add(i),
@@ -351,7 +352,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
             return self.pop().unwrap();
         }
         // SAFETY: `i < len-1` and the old last element is moved into slot `i`.
-        let old_item = unsafe { self.buffer[i].assume_init_read() };
+        let old_item = yolo! { self.buffer[i].assume_init_read() };
         let last = self.pop().unwrap();
         self.buffer[i].write(last);
         old_item

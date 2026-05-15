@@ -173,7 +173,7 @@ impl Drop for HTTPResponseMetadata {
             // `Box::leak`s exactly this slice; we are its sole owner. The fat
             // `*mut [Header]` is obtained directly from the borrowed slice — no
             // need to round-trip through `(ptr, len)` + `from_raw_parts`.
-            unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
+            yolo! { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
         }
         self.response.headers = bun_picohttp::HeaderList::default();
         self.response.status = b"";
@@ -187,6 +187,7 @@ pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPa
 // the still-gated HTTPClient/HTTPContext/ssl_* surfaces.
 // ═══════════════════════════════════════════════════════════════════════
 
+use bun_yolo::yolo;
 use bun_core::MutableString;
 use bun_http_types::FetchRedirect::CommonAbortReason;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -404,12 +405,12 @@ impl HTTPClient<'_> {
         };
         // SAFETY: see fn doc — erased borrow is deep-copied by `clone_metadata`
         // before the backing storage is released.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
+        self.state.pending_response = Some(yolo! { response.detach_lifetime() });
         let should_continue = self.handle_response_metadata(&mut response)?;
         // handle_response_metadata may mutate `response` (e.g. the 304 rewrite
         // for force_last_modified); clone_metadata reads pending_response, so
         // re-sync. SAFETY: same lifetime erase as above.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
+        self.state.pending_response = Some(yolo! { response.detach_lifetime() });
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
         self.state.transfer_encoding = Encoding::Identity;
@@ -495,7 +496,7 @@ impl<'a> HTTPClientResult<'a> {
             // SAFETY: caller contract — the buffer outlives the stored result.
             body: self
                 .body
-                .map(|b| unsafe { &mut *core::ptr::from_mut::<MutableString>(b) }),
+                .map(|b| yolo! { &mut *core::ptr::from_mut::<MutableString>(b) }),
             has_more: self.has_more,
             redirected: self.redirected,
             can_stream: self.can_stream,
@@ -532,7 +533,7 @@ impl HTTPClientResultCallback {
             ctx: this.cast::<()>(),
             // SAFETY: fn-pointer cast over *mut T → *mut () first arg; same
             // calling convention, the receiver casts `ctx` back before use.
-            function: unsafe {
+            function: yolo! {
                 bun_ptr::cast_fn_ptr::<
                     fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
@@ -688,7 +689,7 @@ impl<'a> HTTPClient<'a> {
         p: NonNull<HTTPClient<'static>>,
     ) -> &'b mut HTTPClient<'static> {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *p.as_ptr() }
+        yolo! { &mut *p.as_ptr() }
     }
 }
 
@@ -747,7 +748,7 @@ pub fn http_thread() -> &'static mut HTTPThread {
     // `HTTP_THREAD.write(..)` in `init_once`, so the `MaybeUninit` is fully
     // written. Thread-affinity is documented (HTTP-thread-only after
     // `on_start`); the `ThreadCell` owner assert covers debug.
-    unsafe { (*HTTP_THREAD.get()).assume_init_mut() }
+    yolo! { (*HTTP_THREAD.get()).assume_init_mut() }
 }
 #[inline]
 pub fn http_thread_mut() -> &'static mut HTTPThread {
@@ -880,22 +881,22 @@ mod scratch {
     #[inline]
     pub(super) fn request_headers() -> &'static mut [picohttp::Header; MAX_REQUEST_HEADERS] {
         // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
+        yolo! { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
     }
     #[inline]
     pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
         // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
+        yolo! { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
     }
     #[inline]
     pub(super) fn single_packet_small_buffer() -> &'static mut [u8; 16 * 1024] {
         // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *SINGLE_PACKET_SMALL_BUFFER.get() }
+        yolo! { &mut *SINGLE_PACKET_SMALL_BUFFER.get() }
     }
     #[inline]
     pub fn temp_hostname() -> &'static mut [u8; 8192] {
         // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *TEMP_HOSTNAME.get() }
+        yolo! { &mut *TEMP_HOSTNAME.get() }
     }
 }
 pub use scratch::temp_hostname;
@@ -923,7 +924,7 @@ pub fn configure_http_client_with_alpn(
 ) {
     // SAFETY: caller passes a live *mut SSL for a just-opened socket; `hostname`
     // is either null or a NUL-terminated buffer that outlives this call.
-    unsafe {
+    yolo! {
         if !hostname.is_null() && *hostname != 0 {
             boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
         }
@@ -973,7 +974,7 @@ impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
 pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
     // SAFETY: same single-thread invariant as http_thread(). Every call site
     // is a per-statement reborrow (audited in r3); no two `&mut` overlap.
-    unsafe { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }
+    yolo! { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
 /// Returns the hostname to use for TLS SNI and certificate verification.
@@ -994,7 +995,7 @@ fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'
             // SSLConfig; `ffi::cstr` yields an unbound-lifetime borrow of that
             // C allocation, so `to_bytes()` already satisfies `'c` (tied to
             // `client.tls_props`) without a `(ptr,len)` round-trip.
-            let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
+            let sn_slice = yolo! { bun_core::ffi::cstr(sn) }.to_bytes();
             if !sn_slice.is_empty() {
                 return sn_slice;
             }
@@ -1379,7 +1380,7 @@ impl<'a> HTTPClient<'a> {
         // same) and matches the Zig sequencing; the callback observes the
         // post-reset (empty) buffer. Do not read this comment as asserting
         // `result.body` and `state.reset()` are disjoint.
-        let result = unsafe { self.to_result().detach_lifetime() };
+        let result = yolo! { self.to_result().detach_lifetime() };
         self.state.reset();
         if clear_proxy_tunneling {
             self.flags.proxy_tunneling = false;
@@ -1390,7 +1391,7 @@ impl<'a> HTTPClient<'a> {
     fn progress_node_mut(&mut self) -> Option<&mut bun_core::Progress::Node> {
         // SAFETY: progress_node is owned by the caller (e.g. `bun install`'s
         // Progress) and outlives this client.
-        self.progress_node.map(|mut p| unsafe { p.as_mut() })
+        self.progress_node.map(|mut p| yolo! { p.as_mut() })
     }
     /// Common `progress.activate(); set_completed_items(n); maybe_refresh()`
     /// triple used at every body-chunk boundary. Centralises the raw deref of
@@ -1403,7 +1404,7 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: `context` is a non-null backref to the owning Progress.
             // `&mut Progress` would alias the node tree (the Progress embeds
             // `root: Node`), so this stays a narrowly-scoped raw deref.
-            unsafe { (*progress.context_ptr()).maybe_refresh() };
+            yolo! { (*progress.context_ptr()).maybe_refresh() };
         }
     }
 }
@@ -1417,7 +1418,7 @@ impl<'a> HTTPClient<'a> {
 /// never overlaps a `&mut self` on the client.
 ///
 /// Centralising the SAFETY argument removes a dozen open-coded
-/// `unsafe { p.as_mut() }` derefs at call sites.
+/// `yolo! { p.as_mut() }` derefs at call sites.
 pub(crate) mod body_out {
     use super::{MutableString, NonNull};
 
@@ -1428,7 +1429,7 @@ pub(crate) mod body_out {
     #[inline]
     pub(crate) fn as_mut<'a>(mut p: NonNull<MutableString>) -> &'a mut MutableString {
         // SAFETY: see module-level invariant.
-        unsafe { p.as_mut() }
+        yolo! { p.as_mut() }
     }
     /// `Option`-lifted [`as_mut`].
     #[inline]
@@ -1464,10 +1465,10 @@ impl<'a> HTTPClient<'a> {
     ) -> bool {
         if self.flags.reject_unauthorized {
             // SAFETY: ssl_ptr is a live *mut SSL while the TLS socket is open
-            let cert_chain = unsafe { boringssl::c::SSL_get_peer_cert_chain(ssl_ptr) };
+            let cert_chain = yolo! { boringssl::c::SSL_get_peer_cert_chain(ssl_ptr) };
             if !cert_chain.is_null() {
                 // SAFETY: cert_chain is a live STACK_OF(X509) owned by the SSL session; index 0 is in bounds when non-null is returned
-                let x509 = unsafe { boringssl::c::sk_X509_value(cert_chain, 0) };
+                let x509 = yolo! { boringssl::c::sk_X509_value(cert_chain, 0) };
                 if !x509.is_null() {
                     let hostname = get_tls_hostname(self, allow_proxy_url);
 
@@ -1477,13 +1478,13 @@ impl<'a> HTTPClient<'a> {
                         // clone the relevant data
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
                         let cert_size =
-                            unsafe { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
+                            yolo! { boringssl::c::i2d_X509(x509, core::ptr::null_mut()) };
                         let mut cert = vec![0u8; usize::try_from(cert_size).expect("int cast")]
                             .into_boxed_slice();
                         let mut cert_ptr = cert.as_mut_ptr();
                         // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
                         let result_size =
-                            unsafe { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
+                            yolo! { boringssl::c::i2d_X509(x509, &raw mut cert_ptr) };
                         debug_assert!(result_size == cert_size);
 
                         self.state.certificate_info = Some(CertificateInfo {
@@ -1501,7 +1502,7 @@ impl<'a> HTTPClient<'a> {
                         // we check with native code if the cert is valid
                         // fast path
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain
-                        if boringssl::check_x509_server_identity(unsafe { &mut *x509 }, hostname) {
+                        if boringssl::check_x509_server_identity(yolo! { &mut *x509 }, hostname) {
                             return true;
                         }
                     }
@@ -1573,7 +1574,7 @@ impl<'a> HTTPClient<'a> {
                 .map(|p| p.cast())
                 .unwrap_or(core::ptr::null_mut());
             // SAFETY: ssl_ptr is a live *mut SSL for the just-opened TLS socket
-            if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
+            if !ssl_ptr.is_null() && yolo! { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
@@ -1692,7 +1693,7 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: ssl_ptr is a live *mut SSL for this socket; out-params are
             // valid stack locals. `proto[0..proto_len]` is the slice ALPN wrote
             // (borrowed from the SSL session, valid while ssl_ptr is).
-            let alpn = unsafe {
+            let alpn = yolo! {
                 boringssl::c::SSL_get0_alpn_selected(ssl_ptr, &raw mut proto, &raw mut proto_len);
                 bun_core::ffi::slice(proto, proto_len as usize)
             };
@@ -1705,7 +1706,7 @@ impl<'a> HTTPClient<'a> {
                 // SAFETY: `create` returns a freshly-boxed session with refcount 1,
                 // owned by the socket ext-data via `tag_as_h2`. The `&mut` is
                 // unique here — no other access until `attach` returns.
-                let session = unsafe { &mut *h2::ClientSession::create(ctx, tls_socket, self) };
+                let session = yolo! { &mut *h2::ClientSession::create(ctx, tls_socket, self) };
                 GenHttpContext::<true>::tag_as_h2(tls_socket, session);
                 self.resolve_pending_h2(PendingH2Resolution::H2(session));
                 session.attach(self);
@@ -2001,14 +2002,14 @@ impl<'a> HTTPClient<'a> {
         ctx: *mut GenHttpContext<IS_SSL>,
     ) -> &'c mut GenHttpContext<IS_SSL> {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *ctx }
+        yolo! { &mut *ctx }
     }
 
     pub fn set_custom_ssl_ctx(&mut self, ctx: NonNull<HttpsContext>) {
         // Intrusive-refcounted: this fn takes ownership of one strong ref by
         // bumping it here (matches http.zig:821-825). Callers do NOT pre-bump.
         // SAFETY: ctx points at a live HttpsContext.
-        let new_ref = unsafe { http_context::HTTPContextRc::<true>::init_ref(ctx.as_ptr()) };
+        let new_ref = yolo! { http_context::HTTPContextRc::<true>::init_ref(ctx.as_ptr()) };
         if let Some(old) = self.custom_ssl_ctx.replace(new_ref) {
             // Release the ref we previously held.
             old.deref();
@@ -2084,7 +2085,7 @@ impl<'a> HTTPClient<'a> {
                         // this client; lifetime is erased here only because Phase A forbids struct
                         // lifetime params. The borrow is valid for the life of `self`.
                         self.if_modified_since =
-                            unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
+                            yolo! { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
                     }
                 }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
@@ -2193,7 +2194,7 @@ impl<'a> HTTPClient<'a> {
                     format_args!("{body_len}"),
                 ) {
                     // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                    Ok(s) => unsafe { bun_ptr::detach_lifetime(s) },
+                    Ok(s) => yolo! { bun_ptr::detach_lifetime(s) },
                     Err(_) => b"0",
                 };
                 request_headers_buf[header_count] =
@@ -2213,9 +2214,9 @@ impl<'a> HTTPClient<'a> {
         // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
             method: self.method.as_str().as_bytes(),
-            path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
+            path: yolo! { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
-            headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
+            headers: yolo! { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
             bytes_read: 0,
         }
     }
@@ -3084,7 +3085,7 @@ impl<'a> HTTPClient<'a> {
             // Rebind `response` to the detached `'static` copy so it no longer
             // borrows `to_read` (lets the `to_read` reassignment below pass
             // borrowck — `RawSlice::slice` ties output to `&to_read`).
-            let response = unsafe { response.detach_lifetime() };
+            let response = yolo! { response.detach_lifetime() };
             self.state.pending_response = Some(response);
 
             let bytes_read =
@@ -3391,7 +3392,7 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
             // buffer is transferred to `owned_buf` immediately below and stored
             // alongside `href` in `HTTPResponseMetadata`.
-            let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
+            let href = bun_ptr::RawSlice::new(yolo! { builder.append_raw(self.url.href) });
             // Transfer the single backing allocation out of the builder
             // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
             let owned_buf = builder.move_to_slice();
@@ -3822,7 +3823,7 @@ impl<'a> HTTPClient<'a> {
     #[inline]
     fn parent_async_http(&mut self) -> *mut AsyncHTTP<'static> {
         // SAFETY: HTTPClient is always embedded as `client` field of AsyncHTTP
-        unsafe {
+        yolo! {
             bun_core::from_field_ptr!(AsyncHTTP<'static>, client, std::ptr::from_mut::<Self>(self))
         }
     }
@@ -4038,7 +4039,7 @@ impl<'a> HTTPClient<'a> {
         // SAFETY: body_buf.list is initialized for [0..len()) and uniquely
         // borrowed here; the offset is len() - incoming_data.len() (the
         // just-appended tail), which is in bounds.
-        let pret = unsafe {
+        let pret = yolo! {
             picohttp::phr_decode_chunked(
                 &raw mut *decoder,
                 body_buf
@@ -4116,7 +4117,7 @@ impl<'a> HTTPClient<'a> {
             // slice from the owning Vec instead so the write has Unique provenance.
             let base = self.state.response_message_buffer.list.as_mut_ptr();
             let off = incoming_data.as_ptr() as usize - base as usize;
-            unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
+            yolo! { bun_core::ffi::slice_mut(base.add(off), in_len) }
         } else {
             small[0..in_len].copy_from_slice(incoming_data);
             &mut small[0..in_len]
@@ -4128,7 +4129,7 @@ impl<'a> HTTPClient<'a> {
         // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
         // disjoint field of `self.state` (no live borrow of `self` at this
         // point — `buffer` is raw-derived or borrows `small`).
-        let pret = unsafe {
+        let pret = yolo! {
             picohttp::phr_decode_chunked(
                 &raw mut self.state.chunked_decoder,
                 buffer.as_mut_ptr().add(buffer.len().saturating_sub(in_len)),
@@ -4441,7 +4442,7 @@ impl<'a> HTTPClient<'a> {
                                 // SAFETY: self-borrow — `normalized_url_str` is moved into
                                 // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                                 let new_url: URL<'a> =
-                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
+                                    yolo! { URL::parse(&normalized_url_str).erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(
                                     strings::without_trailing_slash(new_url.origin),
                                     strings::without_trailing_slash(self.url.origin),
@@ -4501,7 +4502,7 @@ impl<'a> HTTPClient<'a> {
                                 // SAFETY: self-borrow — `normalized_url_str` is moved into
                                 // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                                 let new_url: URL<'a> =
-                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
+                                    yolo! { URL::parse(&normalized_url_str).erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(
                                     strings::without_trailing_slash(new_url.origin),
                                     strings::without_trailing_slash(self.url.origin),
@@ -4525,7 +4526,7 @@ impl<'a> HTTPClient<'a> {
                                 let new_url = new_url_.to_owned_slice();
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
+                                self.url = yolo! { URL::parse(&new_url).erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(
                                     strings::without_trailing_slash(self.url.origin),
                                     strings::without_trailing_slash(original_url.origin),

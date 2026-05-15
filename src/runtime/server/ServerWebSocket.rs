@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem;
@@ -359,11 +360,11 @@ impl ServerWebSocket {
         // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
         // SAFETY: `this` was just `heap::alloc`'d; ownership transfers to the
         // C++ JS wrapper (freed via `ServerWebSocketClass__finalize` → `finalize`).
-        let this_value = unsafe { ServerWebSocket::to_js_ptr(this, global_object) };
+        let this_value = yolo! { ServerWebSocket::to_js_ptr(this, global_object) };
         // SAFETY: just allocated; the JS wrapper holds the box but does not
         // touch the Rust fields concurrently (single JS thread). R-2: shared
         // borrow + `JsCell::set` — no `&mut Self` formed.
-        let this_ref = unsafe { &*this };
+        let this_ref = yolo! { &*this };
         this_ref
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
@@ -1528,32 +1529,32 @@ impl WebSocketHandler for ServerWebSocket {
     #[inline(always)]
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
-        unsafe { &*this }.on_open(ws)
+        yolo! { &*this }.on_open(ws)
     }
     #[inline(always)]
     unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_message(ws, message, opcode)
+        yolo! { &*this }.on_message(ws, message, opcode)
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_drain(ws)
+        yolo! { &*this }.on_drain(ws)
     }
     #[inline(always)]
     unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_ping(ws, message)
+        yolo! { &*this }.on_ping(ws, message)
     }
     #[inline(always)]
     unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_pong(ws, message)
+        yolo! { &*this }.on_pong(ws, message)
     }
     #[inline(always)]
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_close(ws, code, message)
+        yolo! { &*this }.on_close(ws, code, message)
     }
 }
 

@@ -8,6 +8,7 @@
 //! old `NewSocketHandler.configure`/`unsafeConfigure` machinery, which built
 //! the same trampolines at runtime per `us_socket_context_t`.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
@@ -193,13 +194,13 @@ where
         // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`,
         // but the slot storage may have been freed by `close` so we deref the
         // snapshot rather than re-borrowing `ext`).
-        if let Some(t) = unsafe { thunk::ext_owner(&this) } {
+        if let Some(t) = yolo! { thunk::ext_owner(&this) } {
             swallow(t.on_connect_error(wrap::<SSL>(s), code));
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         // SAFETY: `c` is a live connecting socket; ext slot holds the unique heap owner.
-        let Some(this) = (unsafe { thunk::connecting_ext_owner::<T>(c) }) else {
+        let Some(this) = (yolo! { thunk::connecting_ext_owner::<T>(c) }) else {
             return;
         };
         swallow(this.on_connect_error(NewSocketHandler::<SSL>::from_connecting(c), code));
@@ -275,22 +276,22 @@ where
     fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         let Some(this) = *ext else { return };
         // SAFETY: ext slot holds the unique heap owner; single-threaded dispatch.
-        unsafe { T::on_open(this.as_ptr(), wrap::<SSL>(s)) };
+        yolo! { T::on_open(this.as_ptr(), wrap::<SSL>(s)) };
     }
     fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_data(this.as_ptr(), wrap::<SSL>(s), data) };
+        yolo! { T::on_data(this.as_ptr(), wrap::<SSL>(s), data) };
     }
     fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_writable(this.as_ptr(), wrap::<SSL>(s)) };
+        yolo! { T::on_writable(this.as_ptr(), wrap::<SSL>(s)) };
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe {
+        yolo! {
             T::on_close(
                 this.as_ptr(),
                 wrap::<SSL>(s),
@@ -302,17 +303,17 @@ where
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_timeout(this.as_ptr(), wrap::<SSL>(s)) };
+        yolo! { T::on_timeout(this.as_ptr(), wrap::<SSL>(s)) };
     }
     fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_long_timeout(this.as_ptr(), wrap::<SSL>(s)) };
+        yolo! { T::on_long_timeout(this.as_ptr(), wrap::<SSL>(s)) };
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_end(this.as_ptr(), wrap::<SSL>(s)) };
+        yolo! { T::on_end(this.as_ptr(), wrap::<SSL>(s)) };
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close first, then notify — see `PtrHandler::on_connect_error`.
@@ -322,16 +323,16 @@ where
         us_socket_t::opaque_mut(s).close(CloseCode::failure);
         if let Some(t) = this {
             // SAFETY: see `on_open`.
-            unsafe { T::on_connect_error(t.as_ptr(), wrap::<SSL>(s), code) };
+            yolo! { T::on_connect_error(t.as_ptr(), wrap::<SSL>(s), code) };
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         // SAFETY: `c` is a live connecting socket passed by the trampoline.
-        let Some(this) = (unsafe { thunk::connecting_ext_ptr::<T>(c) }) else {
+        let Some(this) = (yolo! { thunk::connecting_ext_ptr::<T>(c) }) else {
             return;
         };
         // SAFETY: see `on_open`.
-        unsafe {
+        yolo! {
             T::on_connect_error(
                 this.as_ptr(),
                 NewSocketHandler::<SSL>::from_connecting(c),
@@ -347,7 +348,7 @@ where
     ) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_handshake(this.as_ptr(), wrap::<SSL>(s), ok as i32, err) };
+        yolo! { T::on_handshake(this.as_ptr(), wrap::<SSL>(s), ok as i32, err) };
     }
 }
 
@@ -355,28 +356,28 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
     const HAS_ON_OPEN: bool = true;
 
     unsafe fn on_open(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { Self::handle_open(this, s) }
+        yolo! { Self::handle_open(this, s) }
     }
     unsafe fn on_data(this: *mut Self, s: NewSocketHandler<SSL>, data: &[u8]) {
-        unsafe { Self::handle_data(this, s, data) }
+        yolo! { Self::handle_data(this, s, data) }
     }
     unsafe fn on_writable(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { Self::handle_writable(this, s) }
+        yolo! { Self::handle_writable(this, s) }
     }
     unsafe fn on_close(this: *mut Self, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
-        unsafe { Self::handle_close(this, s, code, reason) }
+        yolo! { Self::handle_close(this, s, code, reason) }
     }
     unsafe fn on_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { Self::handle_timeout(this, s) }
+        yolo! { Self::handle_timeout(this, s) }
     }
     unsafe fn on_long_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { Self::handle_timeout(this, s) }
+        yolo! { Self::handle_timeout(this, s) }
     }
     unsafe fn on_end(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { Self::handle_end(this, s) }
+        yolo! { Self::handle_end(this, s) }
     }
     unsafe fn on_connect_error(this: *mut Self, s: NewSocketHandler<SSL>, code: i32) {
-        unsafe { Self::handle_connect_error(this, s, code) }
+        yolo! { Self::handle_connect_error(this, s, code) }
     }
     unsafe fn on_handshake(
         this: *mut Self,
@@ -384,7 +385,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) {
-        unsafe { Self::handle_handshake(this, s, ok, err) }
+        yolo! { Self::handle_handshake(this, s, ok, err) }
     }
 }
 
@@ -392,25 +393,25 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     // Zig: no `onOpen` decl — adoption of an already-connected socket.
 
     unsafe fn on_data(this: *mut Self, _s: NewSocketHandler<SSL>, data: &[u8]) {
-        unsafe { Self::handle_data(this, data) }
+        yolo! { Self::handle_data(this, data) }
     }
     unsafe fn on_writable(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { (*this).handle_writable(s) }
+        yolo! { (*this).handle_writable(s) }
     }
     unsafe fn on_close(this: *mut Self, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
-        unsafe { (*this).handle_close(s, code, reason) }
+        yolo! { (*this).handle_close(s, code, reason) }
     }
     unsafe fn on_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { (*this).handle_timeout(s) }
+        yolo! { (*this).handle_timeout(s) }
     }
     unsafe fn on_long_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { (*this).handle_timeout(s) }
+        yolo! { (*this).handle_timeout(s) }
     }
     unsafe fn on_end(this: *mut Self, s: NewSocketHandler<SSL>) {
-        unsafe { (*this).handle_end(s) }
+        yolo! { (*this).handle_end(s) }
     }
     unsafe fn on_connect_error(this: *mut Self, s: NewSocketHandler<SSL>, code: i32) {
-        unsafe { (*this).handle_connect_error(s, code) }
+        yolo! { (*this).handle_connect_error(s, code) }
     }
     unsafe fn on_handshake(
         this: *mut Self,
@@ -418,7 +419,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) {
-        unsafe { (*this).handle_handshake(s, ok, err) }
+        yolo! { (*this).handle_handshake(s, ok, err) }
     }
 }
 
@@ -563,10 +564,10 @@ where
         // SAFETY: `owner::<Listener>()` returns the back-pointer stashed by
         // `Listener::listen`; the listener strictly outlives every accepted
         // socket and is read-only here.
-        let ns = api::Listener::on_create::<SSL>(unsafe { &*listener }, wrap::<SSL>(s));
+        let ns = api::Listener::on_create::<SSL>(yolo! { &*listener }, wrap::<SSL>(s));
         // SAFETY: `on_create` returns a freshly-boxed `NewSocket`; the `*mut`
         // `on_*` methods hold no `&mut NewSocket` across re-entrant JS calls.
-        swallow(unsafe { api::NewSocket::on_open(ns, wrap::<SSL>(s)) });
+        swallow(yolo! { api::NewSocket::on_open(ns, wrap::<SSL>(s)) });
     }
     // Accepted sockets reach the remaining events as `.bun_socket_*` once
     // on_create has restamped them; if anything fires before that, route to
@@ -577,39 +578,39 @@ where
         // `on_create`; dispatch is single-threaded so no aliasing `&mut`. The
         // `&mut` from `socket_ext_owner` is immediately converted to `*mut` so
         // no `&mut NewSocket` is held across the re-entrant `on_*` body.
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
+        if let Some(ns) = yolo! { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
             let ns: *mut api::NewSocket<SSL> = ns;
-            swallow(unsafe { api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason) });
+            swallow(yolo! { api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason) });
         }
     }
     fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
+        if let Some(ns) = yolo! { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
             let ns: *mut api::NewSocket<SSL> = ns;
-            swallow(unsafe { api::NewSocket::on_data(ns, wrap::<SSL>(s), data) });
+            swallow(yolo! { api::NewSocket::on_data(ns, wrap::<SSL>(s), data) });
         }
     }
     fn on_writable_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
+        if let Some(ns) = yolo! { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
             let ns: *mut api::NewSocket<SSL> = ns;
-            swallow(unsafe { api::NewSocket::on_writable(ns, wrap::<SSL>(s)) });
+            swallow(yolo! { api::NewSocket::on_writable(ns, wrap::<SSL>(s)) });
         }
     }
     fn on_end_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
+        if let Some(ns) = yolo! { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
             let ns: *mut api::NewSocket<SSL> = ns;
-            swallow(unsafe { api::NewSocket::on_end(ns, wrap::<SSL>(s)) });
+            swallow(yolo! { api::NewSocket::on_end(ns, wrap::<SSL>(s)) });
         }
     }
     fn on_timeout_no_ext(s: *mut us_socket_t) {
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
+        if let Some(ns) = yolo! { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
             let ns: *mut api::NewSocket<SSL> = ns;
-            swallow(unsafe { api::NewSocket::on_timeout(ns, wrap::<SSL>(s)) });
+            swallow(yolo! { api::NewSocket::on_timeout(ns, wrap::<SSL>(s)) });
         }
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
+        if let Some(ns) = yolo! { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
             let ns: *mut api::NewSocket<SSL> = ns;
-            swallow(unsafe { api::NewSocket::on_handshake(ns, wrap::<SSL>(s), ok as i32, err) });
+            swallow(yolo! { api::NewSocket::on_handshake(ns, wrap::<SSL>(s), ok as i32, err) });
         }
     }
 }
@@ -729,13 +730,13 @@ where
         us_socket_t::opaque_mut(s).close(CloseCode::failure);
         // SAFETY: snapshot of the ext slot taken before close; unique heap
         // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`).
-        if let Some(t) = unsafe { thunk::ext_owner(&this) } {
+        if let Some(t) = yolo! { thunk::ext_owner(&this) } {
             swallow(H::on_connect_error(t, wrap::<SSL>(s), code));
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
         // SAFETY: `c` is a live connecting socket; ext slot holds the unique heap owner.
-        let Some(this) = (unsafe { thunk::connecting_ext_owner::<Owner>(c) }) else {
+        let Some(this) = (yolo! { thunk::connecting_ext_owner::<Owner>(c) }) else {
             return;
         };
         swallow(H::on_connect_error(
@@ -840,7 +841,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     }
     fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {
         // SAFETY: `cs` is a live connecting socket passed by the trampoline.
-        let Some(owner) = (unsafe { thunk::connecting_ext_ptr::<c_void>(cs) }) else {
+        let Some(owner) = (yolo! { thunk::connecting_ext_ptr::<c_void>(cs) }) else {
             return;
         };
         swallow(HttpH::<SSL>::on_connect_error(

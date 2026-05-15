@@ -1,4 +1,5 @@
 #[cfg(windows)]
+use bun_yolo::yolo;
 use core::ptr;
 
 use bun_alloc::AllocError;
@@ -171,7 +172,7 @@ impl FileCopier {
                 let result: sys::Result<()> = match entry.kind {
                     EntryKind::Directory => {
                         // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
-                        if unsafe {
+                        if yolo! {
                             bun_sys::windows::CreateDirectoryExW(
                                 self.src_path.slice_z().as_ptr(),
                                 self.dest_subpath.slice_z().as_ptr(),
@@ -278,7 +279,7 @@ impl FileCopier {
                         sys::Result::Err(_) => continue,
                     };
                     // SAFETY: fchmod is safe to call with any fd + mode; errors are ignored (`_ =`).
-                    unsafe {
+                    yolo! {
                         let _ = bun_sys::c::fchmod(dest.handle().native(), stat.st_mode);
                     }
                 }

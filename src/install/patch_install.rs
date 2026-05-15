@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use core::ptr;
 
@@ -69,7 +70,7 @@ unsafe impl bun_threading::Linked for PatchTask {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -156,14 +157,14 @@ impl PatchTask {
     /// `impl Drop` body is needed. Per PORTING.md, `deinit` is never exposed as the public API;
     /// because `PatchTask` is held via raw pointer through the intrusive `next`/thread-pool
     /// queue, the named reclaim point is `unsafe fn destroy`. Cross-file callers map
-    /// `pt.deinit()` → `unsafe { PatchTask::destroy(pt) }`.
+    /// `pt.deinit()` → `yolo! { PatchTask::destroy(pt) }`.
     ///
     /// # Safety
     /// `this` must have been produced by `heap::alloc` in the `new_*` constructors below and
     /// ownership must be returned here exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // TODO: how to deinit `this.callback.calc_hash.network_task` (carried over from Zig)
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     // Safe-fn: only ever invoked by `ThreadPool` via the `callback` fn-pointer
@@ -176,7 +177,7 @@ impl PatchTask {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
-        let patch_task = unsafe { &mut *PatchTask::from_task_ptr(task) };
+        let patch_task = yolo! { &mut *PatchTask::from_task_ptr(task) };
         patch_task.run_from_thread_pool_impl();
     }
 
@@ -207,7 +208,7 @@ impl PatchTask {
         // event-loop wake atomics, neither of which alias data the main thread
         // holds an exclusive borrow on.
         let mgr = self.manager.as_ptr();
-        unsafe {
+        yolo! {
             (*mgr)
                 .patch_task_queue
                 .push(std::ptr::from_mut::<Self>(self));
@@ -350,7 +351,7 @@ impl PatchTask {
                     // resolution union's active variant is `npm` (see the
                     // `pkg_resolution_tag` switch below — Zig only reads
                     // `pkg.resolution.value.npm.version` here, line 183).
-                    let pkg_npm_version = unsafe {
+                    let pkg_npm_version = yolo! {
                         manager.lockfile.packages.items_resolution()[pkg_id as usize]
                             .value
                             .npm
@@ -751,7 +752,7 @@ impl PatchTask {
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // only touches the lock-free queue and event-loop wake atomics.
         let mgr = self.manager.as_ptr();
-        unsafe {
+        yolo! {
             (*mgr)
                 .patch_task_queue
                 .push(std::ptr::from_mut::<Self>(self));

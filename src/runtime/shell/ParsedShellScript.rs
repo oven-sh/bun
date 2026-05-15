@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem::size_of;
 use core::sync::atomic::Ordering;
@@ -262,7 +263,7 @@ fn create_parsed_shell_script_impl(
     let script_ast = {
         // SAFETY: `shargs` lives on this stack frame for the whole block; arena
         // is not moved/dropped while `out_parser`/`out_lex_result` borrow it.
-        let arena = unsafe { &*arena_ptr };
+        let arena = yolo! { &*arena_ptr };
         let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
         let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
         match Interpreter::parse(
@@ -312,7 +313,7 @@ fn create_parsed_shell_script_impl(
         marked_argument_buffer,
     );
     // SAFETY: pointer just created above; wrapper now owns it but we need one more field write.
-    unsafe { (*parsed_shell_script_ptr).this_jsvalue = JsRef::init_weak(this_jsvalue) };
+    yolo! { (*parsed_shell_script_ptr).this_jsvalue = JsRef::init_weak(this_jsvalue) };
 
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_jsvalue)

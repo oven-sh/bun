@@ -6,6 +6,7 @@
 #![cfg(windows)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::{MaybeUninit, size_of};
 use core::ptr;
@@ -3279,7 +3280,7 @@ pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Optio
     // directly. (Widening to UTF-16 would terminate after the first WCHAR's
     // 0x00 high byte and resolve nothing.)
     // SAFETY: `utf8` is NUL-terminated; `module` may be null (yields null sym).
-    let sym = unsafe { GetProcAddress(module, utf8.as_ptr().cast::<c_char>()) };
+    let sym = yolo! { GetProcAddress(module, utf8.as_ptr().cast::<c_char>()) };
     if sym.is_null() { None } else { Some(sym) }
 }
 
@@ -3301,7 +3302,7 @@ pub fn CreateHardLinkW(
     security_attributes: Option<&mut win32::SECURITY_ATTRIBUTES>,
 ) -> BOOL {
     // SAFETY: paths are NUL-terminated wide strings owned by caller
-    let rc = unsafe {
+    let rc = yolo! {
         CreateHardLinkW_raw(
             new_file_name,
             existing_file_name,
@@ -3311,9 +3312,9 @@ pub fn CreateHardLinkW(
     #[cfg(debug_assertions)]
     {
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let new_w = unsafe { bun_core::ffi::wstr_units(new_file_name) };
+        let new_w = yolo! { bun_core::ffi::wstr_units(new_file_name) };
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let existing_w = unsafe { bun_core::ffi::wstr_units(existing_file_name) };
+        let existing_w = yolo! { bun_core::ffi::wstr_units(existing_file_name) };
         bun_sys::syslog!(
             "CreateHardLinkW({}, {}) = {}",
             bun_core::fmt::utf16(new_w),
@@ -3468,7 +3469,7 @@ pub fn exe_path_w() -> &'static bun_core::WStr {
     // SAFETY: PEB ImagePathName is valid for the lifetime of the process.
     // `peb()` lives in `bun_core::windows_sys` (tier-0; needs inline asm),
     // not `bun_windows_sys`.
-    unsafe {
+    yolo! {
         let pp = (*bun_core::windows_sys::peb()).ProcessParameters;
         let image_path = core::ptr::addr_of!((*pp).ImagePathName);
         let len = ((*image_path).Length as usize) / 2;
@@ -3492,7 +3493,7 @@ pub fn user_unique_id() -> u32 {
     let mut buf: [u16; 257] = [0; 257];
     let mut size: u32 = buf.len() as u32;
     // SAFETY: buf and size are valid
-    if unsafe { externs::GetUserNameW(buf.as_mut_ptr(), &mut size) } == 0 {
+    if yolo! { externs::GetUserNameW(buf.as_mut_ptr(), &mut size) } == 0 {
         #[cfg(debug_assertions)]
         {
             let err = GetLastError();
@@ -3657,7 +3658,7 @@ pub fn GetFinalPathNameByHandle(
         win32::VolumeName::Nt => win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
     };
     // SAFETY: out_buffer valid for out_buffer.len()
-    let return_length = unsafe {
+    let return_length = yolo! {
         externs::GetFinalPathNameByHandleW(
             hFile,
             out_buffer.as_mut_ptr(),
@@ -3709,7 +3710,7 @@ const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: DWORD = 0x00000004;
 pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
     let mut module: HMODULE = ptr::null_mut();
     // SAFETY: addr cast to LPCWSTR per Win32 docs when FROM_ADDRESS flag set
-    let rc = unsafe {
+    let rc = yolo! {
         externs::GetModuleHandleExW(
             // UNCHANGED_REFCOUNT: per MSDN, GetModuleHandleExW increments the
             // module's reference count unless this flag is set. Callers only
@@ -3730,7 +3731,7 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
 
 pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
     // SAFETY: buf valid for buf.len()
-    let rc = unsafe {
+    let rc = yolo! {
         externs::GetModuleFileNameW(
             module,
             buf.as_mut_ptr(),
@@ -3826,7 +3827,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut tmp_handle: HANDLE = ptr::null_mut();
     // SAFETY: all out-params are valid
-    let mut rc = unsafe {
+    let mut rc = yolo! {
         ntdll::NtCreateFile(
             &mut tmp_handle,
             windows::SYNCHRONIZE | windows::DELETE,
@@ -3861,7 +3862,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         return err;
     }
     // SAFETY: tmp_handle is valid; closed at scope exit
-    let _close_guard = scopeguard::guard(tmp_handle, |h| unsafe {
+    let _close_guard = scopeguard::guard(tmp_handle, |h| yolo! {
         let _ = externs::CloseHandle(h);
     });
 
@@ -3879,7 +3880,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     };
 
     // SAFETY: tmp_handle and io are valid
-    rc = unsafe {
+    rc = yolo! {
         ntdll::NtSetInformationFile(
             tmp_handle,
             &mut io,
@@ -3908,7 +3909,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         };
 
         // SAFETY: tmp_handle and io are valid
-        rc = unsafe {
+        rc = yolo! {
             ntdll::NtSetInformationFile(
                 tmp_handle,
                 &mut io,
@@ -4118,7 +4119,7 @@ pub mod rescle {
     pub fn set_icon(exe_path: *const u16, icon: *const u16) -> Result<(), RescleError> {
         const _: () = assert!(cfg!(windows));
         // SAFETY: paths are NUL-terminated
-        let status = unsafe { rescle__setIcon(exe_path, icon) };
+        let status = yolo! { rescle__setIcon(exe_path, icon) };
         match status {
             0 => Ok(()),
             _ => Err(RescleError::IconEditError),
@@ -4194,7 +4195,7 @@ pub mod rescle {
             .transpose()?;
 
         // SAFETY: all pointers are NUL-terminated wide strings or null
-        let status = unsafe {
+        let status = yolo! {
             rescle__setWindowsMetadata(
                 exe_path,
                 icon_w.map_or(ptr::null(), |iw| iw.as_ptr()),
@@ -4342,7 +4343,7 @@ pub const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 pub fn is_watcher_child() -> bool {
     let mut buf: [u16; 1] = [0];
     // SAFETY: buf valid for 1 element
-    unsafe {
+    yolo! {
         kernel32_2::GetEnvironmentVariableW(WATCHER_CHILD_ENV_Z.as_ptr(), buf.as_mut_ptr(), 1) > 0
     }
 }
@@ -4357,7 +4358,7 @@ pub fn become_watcher_manager() -> ! {
     }
     windows_enable_stdio_inheritance();
     // SAFETY: null args allowed
-    let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
+    let job = yolo! { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
         // Zig (windows.zig:3696): `@tagName(GetLastError())` — print the
         // Win32 error name, not the raw DWORD.
@@ -4373,7 +4374,7 @@ pub fn become_watcher_manager() -> ! {
         | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK
         | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
     // SAFETY: job and jeli are valid
-    if unsafe {
+    if yolo! {
         externs::SetInformationJobObject(
             job,
             JobObjectExtendedLimitInformation,
@@ -4446,19 +4447,19 @@ pub fn spawn_watcher_child(
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
-    unsafe {
+    yolo! {
         let _ = externs::InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut attr_size);
     }
     let mut p: Vec<u8> = vec![0u8; attr_size];
     // SAFETY: p has attr_size bytes
-    if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
+    if yolo! { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
         == 0
     {
         return Err(bun_core::err!("Win32Error"));
     }
     let mut job_local = job;
     // SAFETY: p initialized above; job_local valid for sizeof(HANDLE)
-    if unsafe {
+    if yolo! {
         externs::UpdateProcThreadAttribute(
             p.as_mut_ptr(),
             0,
@@ -4490,7 +4491,7 @@ pub fn spawn_watcher_child(
     let _free_env = scopeguard::guard(kernelenv, |envptr| {
         if !envptr.is_null() {
             // SAFETY: envptr was returned from GetEnvironmentStringsW and is non-null
-            unsafe {
+            yolo! {
                 let _ = kernel32_2::FreeEnvironmentStringsW(envptr);
             }
         }
@@ -4499,7 +4500,7 @@ pub fn spawn_watcher_child(
     let mut size: usize = 0;
     if !kernelenv.is_null() {
         // SAFETY: env block is double-NUL terminated
-        unsafe {
+        yolo! {
             // check that env is non-empty
             if *kernelenv.add(0) != 0 || *kernelenv.add(1) != 0 {
                 // array is terminated by two nulls
@@ -4515,7 +4516,7 @@ pub fn spawn_watcher_child(
     let mut envbuf: Vec<u16> = vec![0u16; size + WATCHER_CHILD_ENV.len() + 4];
     if !kernelenv.is_null() {
         // SAFETY: kernelenv has at least `size` elements
-        unsafe {
+        yolo! {
             ptr::copy_nonoverlapping(kernelenv, envbuf.as_mut_ptr(), size);
         }
     }
@@ -4553,7 +4554,7 @@ pub fn spawn_watcher_child(
     // value, so the safe `zeroed()` constructor replaces `ptr::write_bytes`.
     *procinfo = bun_core::ffi::zeroed();
     // SAFETY: all pointers valid; envbuf double-NUL terminated
-    let rc = unsafe {
+    let rc = yolo! {
         kernel32::CreateProcessW(
             image_path_z.as_ptr(),
             externs::GetCommandLineW(),
@@ -4616,7 +4617,7 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_v
     buf.as_mut_slice()[len] = 0;
     const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x00000008;
     // SAFETY: buf NUL-terminated at [len]
-    unsafe {
+    yolo! {
         kernel32::LoadLibraryExW(buf.as_ptr(), ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH)
     }
 }
@@ -4636,7 +4637,7 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
 
     let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     // SAFETY: fd valid; info/io valid
-    let rc = unsafe {
+    let rc = yolo! {
         ntdll::NtSetInformationFile(
             fd.native(),
             &mut io,
@@ -4713,7 +4714,7 @@ pub fn move_opened_file_at(
     }
     // SAFETY: rename_info is aligned, non-null, and points into uninitialized storage we own;
     // ptr::write initializes the header without dropping prior (uninit) contents.
-    unsafe {
+    yolo! {
         ptr::write(
             rename_info,
             win32::FILE_RENAME_INFORMATION_EX {
@@ -4731,7 +4732,7 @@ pub fn move_opened_file_at(
     // SAFETY: rename_info_buf has STRUCT_BUF_LEN bytes (>= struct_len, checked above) reserved for
     // the variable-length FileName tail. addr_of_mut! on the raw pointer preserves full-buffer
     // provenance so writing new_file_name.len() u16s here stays in-bounds.
-    unsafe {
+    yolo! {
         ptr::copy_nonoverlapping(
             new_file_name.as_ptr(),
             ptr::addr_of_mut!((*rename_info).FileName).cast::<u16>(),
@@ -4739,7 +4740,7 @@ pub fn move_opened_file_at(
         );
     }
     // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
-    let rc = unsafe {
+    let rc = yolo! {
         ntdll::NtSetInformationFile(
             src_fd.native(),
             &mut io_status_block,
@@ -4895,7 +4896,7 @@ mod kernel32_2 {
         // safe: by-value `HANDLE`/`DWORD` only; bad handle → BOOL 0 +
         // GetLastError, never UB. Out-param is `&mut DWORD` (non-null, valid
         // for write). Local `safe fn` re-decls so in-crate callers drop the
-        // per-site `unsafe { }`; the `bun_windows_sys::externs` raw decls stay
+        // per-site `yolo! { }`; the `bun_windows_sys::externs` raw decls stay
         // re-exported for out-of-crate callers.
         pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
         pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
@@ -4936,7 +4937,7 @@ pub fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> 
 
 pub fn FreeEnvironmentStringsW(penv: *mut u16) {
     // SAFETY: penv from GetEnvironmentStringsW
-    let rc = unsafe { kernel32_2::FreeEnvironmentStringsW(penv) };
+    let rc = yolo! { kernel32_2::FreeEnvironmentStringsW(penv) };
     debug_assert!(rc != 0);
 }
 
@@ -4954,7 +4955,7 @@ pub fn GetEnvironmentVariableW(
     nSize: DWORD,
 ) -> Result<DWORD, GetEnvironmentVariableError> {
     // SAFETY: caller provides valid buffer
-    let rc = unsafe { kernel32_2::GetEnvironmentVariableW(lpName, lpBuffer, nSize) };
+    let rc = yolo! { kernel32_2::GetEnvironmentVariableW(lpName, lpBuffer, nSize) };
 
     if rc == 0 {
         match Win32Error::get() {
@@ -5005,7 +5006,7 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
     let mut buf = vec![0u16; 256];
     loop {
         // SAFETY: name and buf are valid for the call's duration.
-        let n = unsafe {
+        let n = yolo! {
             kernel32_2::GetEnvironmentVariableW(name.as_ptr(), buf.as_mut_ptr(), buf.len() as DWORD)
         };
         if n == 0 {

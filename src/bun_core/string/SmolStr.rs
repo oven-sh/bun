@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem;
 use core::ptr;
 
@@ -160,7 +161,7 @@ impl SmolStr {
             return &crate::bytes_of(&self.0)[..self.len() as usize];
         }
         // SAFETY: heap ptr + raw_len describe a live allocation owned by self.
-        unsafe { core::slice::from_raw_parts(self.ptr_const(), self.raw_len() as usize) }
+        yolo! { core::slice::from_raw_parts(self.ptr_const(), self.raw_len() as usize) }
     }
 
     pub fn append_char(&mut self, char: u8) -> Result<(), AllocError> {
@@ -184,7 +185,7 @@ impl SmolStr {
         }
 
         // SAFETY: ptr/len/cap were produced by a prior Vec<u8> allocation.
-        let mut baby_list = unsafe {
+        let mut baby_list = yolo! {
             Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
         };
         // Ownership of the allocation has moved into `baby_list`; neutralize self so an
@@ -217,7 +218,7 @@ impl SmolStr {
 
         // SAFETY: ptr/len/cap were produced by a prior Vec<u8> allocation; we logically
         // move ownership into `baby_list` and write the result back without dropping the old self.
-        let mut baby_list = unsafe {
+        let mut baby_list = yolo! {
             Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
         };
         // Ownership of the allocation has moved into `baby_list`; neutralize self so an
@@ -236,7 +237,7 @@ impl Drop for SmolStr {
         if !self.is_inlined() {
             // SAFETY: ptr/len/cap describe a Vec<u8> allocation we own; reconstruct to free.
             // TODO(port): verify Vec<u8> Drop frees; else dealloc via global allocator directly.
-            let list = unsafe {
+            let list = yolo! {
                 Vec::<u8>::from_raw_parts(
                     self.ptr(),
                     self.raw_len() as usize,
@@ -329,7 +330,7 @@ impl Inlined {
         // `&mut self.0`, so the resulting reference has provenance over the full u128 and
         // is uniquely borrowed for the lifetime of `&mut self` — no other reference to
         // `self.0` can exist while the returned `&mut [u8; 15]` is live.
-        unsafe { &mut *self.ptr().cast::<[u8; Self::MAX_LEN]>() }
+        yolo! { &mut *self.ptr().cast::<[u8; Self::MAX_LEN]>() }
     }
 
     #[inline]

@@ -2,6 +2,7 @@
 //! preface, HEADERS/CONTINUATION serialisation via HPACK, and DATA framing
 //! under both flow-control windows. Free functions over `&mut ClientSession`.
 
+use bun_yolo::yolo;
 use super::client_session::ClientSession;
 use super::stream::Stream;
 use super::{LOCAL_INITIAL_WINDOW_SIZE, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_HIGH_WATER};
@@ -338,7 +339,7 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
                 return;
             }
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
-            let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
+            let data = yolo! { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
             // We still hold the lock from `acquire()` above; `sb` is the sole
             // live borrow, so reborrowing `&mut sb.buffer` is a child access.
@@ -407,13 +408,13 @@ pub fn encode_header(
     // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
     // within the just-reserved capacity; bytes in `[0..len]` are initialized.
     let len = encoded.len();
-    let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
+    let buf = yolo! { bun_core::vec::allocated_bytes_mut(encoded) };
     let written = session
         .hpack
         .encode(name, value, never_index, buf, len)
         .map_err(|e| bun_core::err!(from e))?;
     // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
-    unsafe { bun_core::vec::commit_spare(encoded, written) };
+    yolo! { bun_core::vec::commit_spare(encoded, written) };
     Ok(())
 }
 

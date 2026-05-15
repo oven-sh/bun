@@ -19,6 +19,7 @@
 //! drift/monotonicity measurements on Darwin/arm64.
 
 #[allow(unused_imports)]
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 
 /// True on every target Bun ships. Kept for callers that want to gate on it.
@@ -33,7 +34,7 @@ pub fn read_counter() -> u64 {
     {
         let ret: u64;
         // SAFETY: reading CNTVCT_EL0 is side-effect-free and always valid at EL0.
-        unsafe {
+        yolo! {
             core::arch::asm!(
                 "mrs {ret}, CNTVCT_EL0",
                 ret = out(reg) ret,
@@ -47,7 +48,7 @@ pub fn read_counter() -> u64 {
         let hi: u32;
         let lo: u32;
         // SAFETY: rdtsc is side-effect-free and always valid in userspace on x86_64.
-        unsafe {
+        yolo! {
             core::arch::asm!(
                 "rdtsc",
                 out("eax") lo,
@@ -71,7 +72,7 @@ pub fn now_ns() -> u64 {
         CALIBRATE_ONCE.call_once(calibrate);
         // SAFETY: CALIBRATION is only mutated inside `CALIBRATE_ONCE.call_once(calibrate)`;
         // `Once` establishes happens-before, so this read observes the fully-initialized value.
-        let cal = unsafe { CALIBRATION.read() };
+        let cal = yolo! { CALIBRATION.read() };
         if cal.mult != 0 {
             let ticks = read_counter().wrapping_sub(cal.start_counter);
             // u64×u64→u128 widening mul + shift: 2 insns on x64 (`mul`+`shrd`),
@@ -130,7 +131,7 @@ fn calibrate() {
     let start_ns = os_monotonic_ns();
     // SAFETY: only ever invoked via `CALIBRATE_ONCE.call_once`, which guarantees
     // exclusive access during this write and happens-before for subsequent readers.
-    unsafe {
+    yolo! {
         CALIBRATION.write(Calibration {
             start_counter: read_counter(),
             start_ns,
@@ -150,7 +151,7 @@ fn read_frequency() -> u64 {
         // Architectural register; always populated.
         let ret: u64;
         // SAFETY: reading CNTFRQ_EL0 is side-effect-free and always valid at EL0.
-        unsafe {
+        yolo! {
             core::arch::asm!(
                 "mrs {ret}, CNTFRQ_EL0",
                 ret = out(reg) ret,
@@ -174,7 +175,7 @@ fn read_frequency() -> u64 {
             let mut hz: u64 = 0;
             let mut hz_len: usize = core::mem::size_of::<u64>();
             // SAFETY: NAME is NUL-terminated; oldp/oldlenp point to valid stack locals.
-            unsafe {
+            yolo! {
                 let _ = sysctlbyname(
                     NAME.as_ptr(),
                     core::ptr::from_mut::<u64>(&mut hz).cast::<c_void>(),
@@ -241,7 +242,7 @@ fn os_monotonic_ns() -> u64 {
         let mut counter: i64 = 0;
         let mut freq: i64 = 0;
         // SAFETY: out-params are valid stack locals; QPC/QPF never fail on XP+.
-        unsafe {
+        yolo! {
             bun_sys::windows::QueryPerformanceCounter(&mut counter);
             bun_sys::windows::QueryPerformanceFrequency(&mut freq);
         }
@@ -262,21 +263,21 @@ fn os_monotonic_ns() -> u64 {
             // CLOCK_MONOTONIC, not _RAW: guaranteed vDSO (no syscall). _RAW only
             // joined the vDSO in 5.3.
             // SAFETY: spec is a valid out-pointer.
-            unsafe {
+            yolo! {
                 let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut spec);
             }
         }
         #[cfg(target_os = "macos")]
         {
             // SAFETY: spec is a valid out-pointer.
-            unsafe {
+            yolo! {
                 let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut spec);
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             // SAFETY: spec is a valid out-pointer.
-            unsafe {
+            yolo! {
                 let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut spec);
             }
         }

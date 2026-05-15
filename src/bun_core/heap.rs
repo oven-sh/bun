@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! Centralized heap-pointer round-trip helpers.
 //!
 //! Zig's `bun.TrivialNew(@This())` / `bun.destroy(this)` / `bun.new(T, init)`
@@ -8,7 +9,7 @@
 //! site.
 //!
 //! These are **thin aliases** — they do not reduce per-site proof
-//! obligations (each `take`/`destroy` is still its own `unsafe { }` block).
+//! obligations (each `take`/`destroy` is still its own `yolo! { }` block).
 //! They exist for vocabulary consistency with the Zig spelling and as the
 //! shared primitive *inside* the typed shims; they are NOT the safety
 //! deliverable. The deliverable is the typed `Box<T>`-taking entry points
@@ -89,7 +90,7 @@ pub fn release<'a, T: ?Sized + 'a>(boxed: Box<T>) -> &'a mut T {
 #[inline(always)]
 pub unsafe fn take<T: ?Sized>(ptr: *mut T) -> Box<T> {
     // SAFETY: caller contract above.
-    unsafe { Box::from_raw(ptr) }
+    yolo! { Box::from_raw(ptr) }
 }
 
 /// Drop a heap allocation previously produced by [`alloc`] / [`leak`]
@@ -100,7 +101,7 @@ pub unsafe fn take<T: ?Sized>(ptr: *mut T) -> Box<T> {
 #[inline(always)]
 pub unsafe fn destroy<T: ?Sized>(ptr: *mut T) {
     // SAFETY: caller contract above.
-    drop(unsafe { Box::from_raw(ptr) });
+    drop(yolo! { Box::from_raw(ptr) });
 }
 
 /// Heap-allocate `value` and return a `NonNull<T>`. Convenience for struct

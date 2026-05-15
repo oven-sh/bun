@@ -3,6 +3,7 @@
 //! `Bun__addrinfo` request that the caller registers a callback on.
 //! Consumed by exactly one of `resolved()` or `cancel()`.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::quic::Socket;
@@ -29,7 +30,7 @@ impl PendingConnect {
     pub fn resolved(&mut self) -> Option<&mut Socket> {
         // SAFETY: C returns null or a valid `us_quic_socket_t*`; `Socket` is an
         // opaque ZST handle so `&mut` carries no aliasing assumptions.
-        unsafe { us_quic_pending_connect_resolved(self).as_mut() }
+        yolo! { us_quic_pending_connect_resolved(self).as_mut() }
     }
 
     pub fn cancel(&mut self) {

@@ -14,6 +14,7 @@
 // Self-alias so Phase-A drafts written against `bun_install::…` resolve
 // without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 extern crate bun_core as bun_str;
 extern crate bun_sha_hmac as bun_sha;
@@ -625,7 +626,7 @@ impl RunCommand {
                 // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
                 // self_exe_path / static literal), so `ptr[len] == 0` holds — same
                 // precondition Zig's `@ptrCast` relies on.
-                unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
+                yolo! { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
             };
 
             #[cfg(debug_assertions)]
@@ -720,7 +721,7 @@ impl RunCommand {
             // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
             // trailing NUL) into the offset slice; we reserve `prefix.len()` at
             // the front for the NT object prefix.
-            let len = unsafe {
+            let len = yolo! {
                 win::GetTempPathW(
                     (target_path_buffer.len() - prefix.len()) as u32,
                     target_path_buffer.as_mut_ptr().add(prefix.len()),
@@ -838,12 +839,12 @@ fn install_runner_arena() -> &'static bun_alloc::Arena {
         bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
     ONCE.call_once(|| {
         // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
+        yolo! { (*ARENA.get()).write(bun_alloc::Arena::new()) };
     });
     // SAFETY: initialized exactly once above. `configure_env_for_run` is only
     // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
     // never observed concurrently.
-    unsafe { (*ARENA.get()).assume_init_ref() }
+    yolo! { (*ARENA.get()).assume_init_ref() }
 }
 
 impl RunCommand {
@@ -876,7 +877,7 @@ impl RunCommand {
             env,
         )?);
         // SAFETY: fully written on the line above.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        let this_transpiler = yolo! { this_transpiler.assume_init_mut() };
         this_transpiler.options.env.behavior =
             bun_options_types::schema::api::DotEnvBehavior::load_all;
         this_transpiler.resolver.care_about_bin_folder = true;
@@ -1038,7 +1039,7 @@ pub fn initialize_mini_store() {
             let memory_store = bun_ast::ASTMemoryAllocator::new(&heap);
             let mini_store = bun_core::heap::into_raw(Box::new(MiniStore { heap, memory_store }));
             // SAFETY: just allocated, non-null, thread-local exclusive access
-            unsafe {
+            yolo! {
                 (*mini_store).memory_store.reset();
                 (*mini_store).memory_store.push();
             }
@@ -1049,7 +1050,7 @@ pub fn initialize_mini_store() {
             // out (no borrow of the Cell is held), so this `&mut` is the sole live reference
             // to the allocation for its entire scope — no aliasing. Mirrors Zig's
             // `threadlocal var instance: ?*MiniStore` single-owner deref.
-            let mini_store = unsafe { &mut *instance.get().unwrap() };
+            let mini_store = yolo! { &mut *instance.get().unwrap() };
             // PORT NOTE: Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
             // buffer.len() - 1` to decide whether to recycle the heap arena. The Rust
             // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena,

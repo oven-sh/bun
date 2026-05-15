@@ -1,4 +1,5 @@
 #[cfg(any(windows, target_os = "macos"))]
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ffi::{c_char, c_int};
 #[cfg(unix)]
@@ -181,7 +182,7 @@ impl Process {
     #[inline]
     pub fn ref_(&mut self) {
         // SAFETY: `self` is a live Process.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(std::ptr::from_mut(self)) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Process>::ref_(std::ptr::from_mut(self)) };
     }
 
     /// Drop one ref. Takes `*mut Self`, **not** `&mut self`: on the last ref
@@ -194,7 +195,7 @@ impl Process {
     /// `this` must point at a live `Process` with refcount ≥ 1.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
     }
 
     /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_io::EventLoopCtx`
@@ -234,7 +235,7 @@ impl Process {
         // round-tripping through `on_exit_uv`'s `data`-ptr lookup, which
         // would create a second `&mut Process` aliasing the one below.
         // SAFETY: caller contract — `this` is live and exclusively accessed.
-        let p = unsafe { &mut *this };
+        let p = yolo! { &mut *this };
         if let Poller::Uv(uv_proc) = &mut p.poller {
             if uv_proc.is_active() || !matches!(p.status, Status::Running) {
                 return;
@@ -319,9 +320,9 @@ impl Process {
         rusage: &Rusage,
     ) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _g = yolo! { bun_ptr::ScopedRef::<Process>::adopt(this) };
         // SAFETY: `_g` keeps `this` live for this block.
-        let self_ = unsafe { &mut *this };
+        let self_ = yolo! { &mut *this };
         if let Poller::WaiterThread(waiter) = &mut self_.poller {
             let ctx = event_loop_handle_to_ctx(self_.event_loop);
             waiter.unref(ctx);
@@ -335,9 +336,9 @@ impl Process {
     #[cfg(unix)]
     pub unsafe fn on_wait_pid_from_event_loop_task(this: *mut Self) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _g = yolo! { bun_ptr::ScopedRef::<Process>::adopt(this) };
         // SAFETY: `_g` keeps `this` live.
-        unsafe { (*this).wait(false) };
+        yolo! { (*this).wait(false) };
     }
 
     #[cfg(unix)]
@@ -450,11 +451,11 @@ impl Process {
                 core::ptr::NonNull::new(poll).expect("FilePoll::init returns a live hive slot"),
             );
             // SAFETY: poll is live; exclusive on this thread (event loop).
-            let fd = unsafe { &mut *poll };
+            let fd = yolo! { &mut *poll };
             fd.enable_keeping_process_alive(ctx);
 
             // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            let loop_ = yolo! { &mut *self.event_loop.platform_event_loop() };
             match fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
                 Ok(()) => {
                     self.ref_();
@@ -485,7 +486,7 @@ impl Process {
 
         if let Some(fd) = self.poller.fd_poll_mut() {
             // SAFETY: `platform_event_loop` returns the live uws loop.
-            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            let loop_ = yolo! { &mut *self.event_loop.platform_event_loop() };
             let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
             if maybe.is_ok() {
                 self.ref_();
@@ -514,13 +515,13 @@ impl Process {
         // subsequent `this.close()` (which touches `self.poller`) would then
         // use an invalidated tag.
         // SAFETY: libuv passes the live handle; only reads its POD fields.
-        let rusage = uv_getrusage(unsafe { &mut *process });
+        let rusage = uv_getrusage(yolo! { &mut *process });
         // SAFETY: raw read of POD `pid` field on the live handle.
-        let pid = unsafe { (*process).pid };
+        let pid = yolo! { (*process).pid };
         // SAFETY: `data` was set to the owning `*mut Process` before
         // `uv_spawn`; libuv never overwrites it. `process` is not
         // dereferenced again after this point.
-        let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*process).data) };
+        let this: &mut Process = yolo! { bun_ptr::callback_ctx::<Process>((*process).data) };
         let exit_code: u8 = if exit_status >= 0 {
             (exit_status as u64) as u8
         } else {
@@ -575,16 +576,16 @@ impl Process {
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
         // SAFETY: read POD `pid` first — `uv_handle` points at the inline
         // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
-        let pid = unsafe { (*uv_handle).pid };
+        let pid = yolo! { (*uv_handle).pid };
         // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
         // raw — `ScopedRef::Drop` may free the allocation, so never bind a
         // `&mut Process` whose tag would have to outlive that.
-        let this: *mut Process = unsafe { (*uv_handle).data.cast() };
+        let this: *mut Process = yolo! { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _g = yolo! { bun_ptr::ScopedRef::<Process>::adopt(this) };
         bun_sys::windows::libuv::log!("Process.onClose({})", pid);
         // SAFETY: `_g` keeps `this` live for this block.
-        unsafe {
+        yolo! {
             if matches!((*this).poller, Poller::Uv(_)) {
                 (*this).poller = Poller::Detached;
             }
@@ -888,7 +889,7 @@ impl PollerPosix {
             // SAFETY: `Fd` holds the unique handle to a live hive slot, freed
             // only via `deinit` (which consumes the variant). `&self` rules out
             // any concurrent exclusive borrow of the slot.
-            PollerPosix::Fd(poll) => Some(unsafe { poll.as_ref() }),
+            PollerPosix::Fd(poll) => Some(yolo! { poll.as_ref() }),
             _ => None,
         }
     }
@@ -903,7 +904,7 @@ impl PollerPosix {
         match self {
             // SAFETY: see `fd_poll`. `&mut self` ⇒ exclusive access to the
             // unique handle ⇒ exclusive access to the hive slot.
-            PollerPosix::Fd(poll) => Some(unsafe { poll.as_mut() }),
+            PollerPosix::Fd(poll) => Some(yolo! { poll.as_mut() }),
             _ => None,
         }
     }
@@ -1053,7 +1054,7 @@ pub mod waiter_thread_posix {
         #[inline]
         unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
             // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
+            yolo! { core::ptr::addr_of!((*item).next) }
         }
     }
 
@@ -1082,7 +1083,7 @@ pub mod waiter_thread_posix {
             // bun.destroy(self) — Box dropped here.
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
-            unsafe {
+            yolo! {
                 T::on_wait_pid_from_waiter_thread(this.subprocess, &this.result, &this.rusage)
             };
         }
@@ -1112,7 +1113,7 @@ pub mod waiter_thread_posix {
             let subprocess = self.subprocess;
             // bun.destroy(self) — Box drops at end of scope.
             // SAFETY: see ResultTask::run_from_main_thread.
-            unsafe { T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed()) };
+            yolo! { T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed()) };
         }
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
@@ -1120,7 +1121,7 @@ pub mod waiter_thread_posix {
         pub fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
             // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.
-            unsafe { bun_core::heap::take(this) }.run_from_main_thread();
+            yolo! { bun_core::heap::take(this) }.run_from_main_thread();
         }
     }
 
@@ -1160,7 +1161,7 @@ pub mod waiter_thread_posix {
             rusage: &Rusage,
         ) {
             // SAFETY: caller contract.
-            unsafe { Process::on_wait_pid_from_waiter_thread(this, result, rusage) };
+            yolo! { Process::on_wait_pid_from_waiter_thread(this, result, rusage) };
         }
     }
 
@@ -1178,7 +1179,7 @@ pub mod waiter_thread_posix {
             // `loop_` and the only code path that touches `active`; producers
             // (`append`) only touch `self.queue`. No other `&mut` to this Vec
             // can exist concurrently.
-            let active = unsafe { &mut *self.active.get() };
+            let active = yolo! { &mut *self.active.get() };
             {
                 let batch = self.queue.pop_batch();
                 active.reserve(batch.count);
@@ -1189,7 +1190,7 @@ pub mod waiter_thread_posix {
                         break;
                     }
                     // SAFETY: task was heap-allocated in append().
-                    let task = unsafe { bun_core::heap::take(task) };
+                    let task = yolo! { bun_core::heap::take(task) };
                     // PERF(port): was assume_capacity
                     active.push(task.process);
                     // task drops here (TrivialDeinit)
@@ -1206,7 +1207,7 @@ pub mod waiter_thread_posix {
                 // the matching `deref()` is in `on_wait_pid_from_waiter_thread`,
                 // so the pointee outlives this shared borrow. Single deref
                 // serves both `pid()` and `event_loop()` accessor reads.
-                let process_ref = unsafe { &*process };
+                let process_ref = yolo! { &*process };
                 let pid = T::pid(process_ref);
                 // this case shouldn't really happen
                 if pid == 0 {
@@ -1241,7 +1242,7 @@ pub mod waiter_thread_posix {
                                     task: AnyTaskWithExtraContext::default(),
                                 });
                                 // SAFETY: `out` just produced by heap::alloc.
-                                unsafe {
+                                yolo! {
                                     (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
                                         out,
                                         ResultTaskMini::<T>::run_from_main_thread_mini,
@@ -1301,7 +1302,7 @@ pub mod waiter_thread_posix {
     fn instance_ref() -> &'static WaiterThreadPosix {
         // SAFETY: see doc comment — process-lifetime singleton, fields are
         // atomic / interior-mutable / write-once-before-readers.
-        unsafe { &*INSTANCE.0.get() }
+        yolo! { &*INSTANCE.0.get() }
     }
 
     impl WaiterThreadPosix {
@@ -1327,7 +1328,7 @@ pub mod waiter_thread_posix {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
                 // SAFETY: write(2) is async-signal-safe; eventfd valid after init().
                 let n =
-                    unsafe { libc::write(instance_ref().eventfd.native(), one.as_ptr().cast(), 8) };
+                    yolo! { libc::write(instance_ref().eventfd.native(), one.as_ptr().cast(), 8) };
                 if n < 0 {
                     panic!("Failed to write to eventfd");
                 }
@@ -1342,7 +1343,7 @@ pub mod waiter_thread_posix {
             #[cfg(target_os = "linux")]
             {
                 // SAFETY: sigaction with a valid handler.
-                unsafe {
+                yolo! {
                     let mut current_mask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut current_mask);
                     libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
@@ -1381,7 +1382,7 @@ pub mod waiter_thread_posix {
                 return Err(std::io::Error::last_os_error());
             }
             // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = Fd::from_native(fd) };
+            yolo! { (*instance()).eventfd = Fd::from_native(fd) };
         }
 
         let thread = std::thread::Builder::new()
@@ -1433,12 +1434,12 @@ pub mod waiter_thread_posix {
                 }
 
                 // SAFETY: valid pollfd array.
-                let _ = unsafe { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
+                let _ = yolo! { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
             }
             #[cfg(not(target_os = "linux"))]
             {
                 // SAFETY: sigwait with a valid (empty) mask.
-                unsafe {
+                yolo! {
                     let mut mask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&mut mask);
                     let mut signal: c_int = libc::SIGCHLD;
@@ -1546,13 +1547,13 @@ impl Drop for WindowsSpawnResult {
                 // `create_zeroed_pipe`; `close_and_destroy` reclaims it via
                 // `Box::from_raw` in the close callback (or immediately if
                 // never init'd / `loop_ == null`).
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
+                yolo! { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
             }
         }
         for slot in self.extra_pipes.drain(..) {
             if let WindowsStdioResult::Buffer(pipe) = slot {
                 // SAFETY: see above.
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
+                yolo! { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
             }
         }
     }
@@ -1563,7 +1564,7 @@ impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> *mut Process {
         let process = self.process_.take().unwrap();
         // SAFETY: caller has unique ownership at this point (just spawned)
-        unsafe {
+        yolo! {
             (*process).sync = sync_;
         }
         process
@@ -1572,7 +1573,7 @@ impl WindowsSpawnResult {
     pub fn close(&mut self) {
         if let Some(proc) = self.process_.take() {
             // SAFETY: proc is a live intrusive-refcounted Process
-            unsafe {
+            yolo! {
                 (*proc).close();
                 (*proc).detach();
                 bun_ptr::ThreadSafeRefCount::<Process>::deref(proc);
@@ -1654,7 +1655,7 @@ impl Default for WindowsOptions {
             // SAFETY: `EventLoopHandle` is a `Copy` enum of raw pointers; the
             // all-zero bit pattern is discriminant 0 with a null payload —
             // valid representation, never dereferenced before assignment.
-            loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
+            loop_: yolo! { bun_core::ffi::zeroed_unchecked() },
         }
     }
 }
@@ -1691,7 +1692,7 @@ impl WindowsStdio {
             WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
                 if !pipe.is_null() {
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    unsafe { uv::Pipe::close_and_destroy(*pipe) };
+                    yolo! { uv::Pipe::close_and_destroy(*pipe) };
                     *pipe = core::ptr::null_mut();
                 }
             }
@@ -1820,12 +1821,12 @@ mod spawn_process_body {
 
         // SAFETY: all-zero is a valid uv_process_options_t
         let mut uv_process_options: uv::uv_process_options_t =
-            unsafe { bun_core::ffi::zeroed_unchecked() };
+            yolo! { bun_core::ffi::zeroed_unchecked() };
 
         uv_process_options.args = argv;
         uv_process_options.env = envp;
         // SAFETY: argv is null-terminated, argv[0] is non-null
-        uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
+        uv_process_options.file = options.argv0.unwrap_or_else(|| yolo! { *argv });
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
         // PERF(port): was stack-fallback allocator (8192)
         // `WindowsOptions::default()` leaves `loop_` zeroed (Zig: `= undefined`;
@@ -1892,7 +1893,7 @@ mod spawn_process_body {
         let mut stdio_containers: Vec<uv::uv_stdio_container_t> =
             Vec::with_capacity(3 + options.extra_fds.len());
         // SAFETY: all-zero is valid uv_stdio_container_t
-        stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe {
+        stdio_containers.resize_with(3 + options.extra_fds.len(), || yolo! {
             bun_core::ffi::zeroed_unchecked()
         });
 
@@ -1961,7 +1962,7 @@ mod spawn_process_body {
                         // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
                         // loop, `path_z` is NUL-terminated and outlives the call
                         // (sync — no callback).
-                        let rc = unsafe {
+                        let rc = yolo! {
                             uv::uv_fs_open(
                                 loop_,
                                 &mut req,
@@ -1984,7 +1985,7 @@ mod spawn_process_body {
                     WindowsStdio::Buffer(my_pipe) => {
                         // SAFETY: `my_pipe` is a non-null heap allocation from
                         // create_zeroed_pipe (heap::alloc).
-                        if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
+                        if let Some(err) = yolo! { (&mut **my_pipe).init(loop_, false) }
                             .to_error(bun_sys::Tag::uv_pipe)
                         {
                             cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2007,7 +2008,7 @@ mod spawn_process_body {
                     // checked uv→errno translator (raw codes are sparse on Windows;
                     // an unchecked `E::from_raw` would be UB for unmapped values).
                     if let Some(err) = bun_sys::Error::from_uv_rc(
-                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) },
+                        yolo! { uv::uv_pipe(&mut dup_fds, 0, 0) },
                         bun_sys::Tag::pipe,
                     ) {
                         cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2044,7 +2045,7 @@ mod spawn_process_body {
                     };
                     // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
                     // `path_z` is NUL-terminated and outlives the call (sync).
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_open(
                             loop_,
                             &mut req,
@@ -2066,7 +2067,7 @@ mod spawn_process_body {
                 }
                 WindowsStdio::Ipc(my_pipe) => {
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, true) }
+                    if let Some(err) = yolo! { (&mut **my_pipe).init(loop_, true) }
                         .to_error(bun_sys::Tag::uv_pipe)
                     {
                         cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2080,7 +2081,7 @@ mod spawn_process_body {
                 }
                 WindowsStdio::Buffer(my_pipe) => {
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
+                    if let Some(err) = yolo! { (&mut **my_pipe).init(loop_, false) }
                         .to_error(bun_sys::Tag::uv_pipe)
                     {
                         cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2117,7 +2118,7 @@ mod spawn_process_body {
         // defer if failed: process.close(); process.deref(); — handled at error sites
 
         // SAFETY: process is freshly allocated
-        unsafe {
+        yolo! {
             // SAFETY: all-zero is valid uv::Process
             (*process).poller = Poller::Uv(bun_core::ffi::zeroed_unchecked());
             // Back-pointer for `on_exit_uv` / `on_close_uv` (replaces Zig
@@ -2145,7 +2146,7 @@ mod spawn_process_body {
         };
 
         // SAFETY: process.poller was just set to Uv variant
-        let spawn_err = unsafe {
+        let spawn_err = yolo! {
             let Poller::Uv(ref mut uv_proc) = (*process).poller else {
                 unreachable!()
             };
@@ -2157,7 +2158,7 @@ mod spawn_process_body {
             cleanup_dup(true);
             cleanup_uv_files(&uv_files_to_close, loop_);
             // SAFETY: process is valid
-            unsafe {
+            yolo! {
                 (*process).close();
                 Process::deref(process);
             }
@@ -2165,7 +2166,7 @@ mod spawn_process_body {
         }
 
         // SAFETY: process is valid, poller is Uv
-        unsafe {
+        yolo! {
             let Poller::Uv(ref uv_proc) = (*process).poller else {
                 unreachable!()
             };
@@ -2219,7 +2220,7 @@ mod spawn_process_body {
                         // reconstructing the Box here is the *sole* ownership
                         // transfer — the borrowed `options` dropping later is a
                         // no-op on the raw pointer.
-                        *result_stdio = WindowsStdioResult::Buffer(unsafe {
+                        *result_stdio = WindowsStdioResult::Buffer(yolo! {
                             bun_core::heap::take(stdio.data.stream.cast::<uv::Pipe>())
                         });
                     }
@@ -2236,7 +2237,7 @@ mod spawn_process_body {
                     // PERF(port): was assume_capacity
                     // SAFETY: sole ownership transfer of the heap-allocated
                     // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
-                    result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
+                    result.extra_pipes.push(WindowsStdioResult::Buffer(yolo! {
                         bun_core::heap::take(stdio_containers[3 + i].data.stream.cast::<uv::Pipe>())
                     }));
                 }
@@ -2459,7 +2460,7 @@ mod spawn_process_body {
             ) {
                 // SAFETY: `req.data` was set to `*mut Self` in `start()`.
                 let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                    yolo! { &mut *((*req).data as *mut SyncWindowsPipeReader) };
                 let buf = Self::on_alloc(this, suggested_size);
                 // SAFETY: `buffer` is a libuv-owned out-parameter. Do NOT route
                 // through `uv_buf_t::init(&[u8])` — that reborrows the `&mut [u8]`
@@ -2467,7 +2468,7 @@ mod spawn_process_body {
                 // and libuv's subsequent write into `base[..nread]` is
                 // Stacked-Borrows UB. Construct from `as_mut_ptr()` directly so the
                 // raw pointer carries write provenance.
-                unsafe {
+                yolo! {
                     *buffer = uv::uv_buf_t {
                         len: buf.len() as uv::ULONG,
                         base: buf.as_mut_ptr(),
@@ -2481,7 +2482,7 @@ mod spawn_process_body {
             ) {
                 // SAFETY: `req.data` was set to `*mut Self` in `start()`.
                 let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                    yolo! { &mut *((*req).data as *mut SyncWindowsPipeReader) };
                 let nreads = nreads.int();
                 if nreads == 0 {
                     return;
@@ -2498,7 +2499,7 @@ mod spawn_process_body {
                 } else {
                     // SAFETY: libuv guarantees `base[..nreads]` is the slice we
                     // returned from `uv_alloc_cb`, filled to `nreads` bytes.
-                    let data = unsafe {
+                    let data = yolo! {
                         core::slice::from_raw_parts((*buffer).base.cast::<u8>(), nreads as usize)
                     };
                     Self::on_read(this, data);
@@ -2508,13 +2509,13 @@ mod spawn_process_body {
             extern "C" fn on_close(pipe: *mut uv::Pipe) {
                 // SAFETY: pipe.data was set to *mut Self in start()
                 let this: *mut SyncWindowsPipeReader =
-                    unsafe { (*pipe).get_data::<SyncWindowsPipeReader>() };
+                    yolo! { (*pipe).get_data::<SyncWindowsPipeReader>() };
                 assert!(
                     !this.is_null(),
                     "Expected SyncWindowsPipeReader to have data"
                 );
                 // SAFETY: this is valid until we destroy it below
-                let this_ref = unsafe { &mut *this };
+                let this_ref = yolo! { &mut *this };
                 let context = this_ref.context;
                 // Move ownership of the chunk allocations out *before* dropping
                 // `this`, otherwise the callback would observe freed buffers.
@@ -2532,7 +2533,7 @@ mod spawn_process_body {
                 // bun.default_allocator.destroy(this.pipe) — Box<uv::Pipe> drops with `this`
                 // bun.default_allocator.destroy(this)
                 // SAFETY: this was heap-allocated in start(); reclaim and drop
-                drop(unsafe { bun_core::heap::take(this) });
+                drop(yolo! { bun_core::heap::take(this) });
                 on_done_callback(context, tag, chunks, err);
             }
 
@@ -2544,7 +2545,7 @@ mod spawn_process_body {
                 // interleaved Box deref.
                 let this: *mut SyncWindowsPipeReader = bun_core::heap::into_raw(self);
                 // SAFETY: just allocated; sole owner.
-                unsafe {
+                yolo! {
                     (*this).pipe.set_data(this.cast());
                     (*this).pipe.ref_();
                     if let Some(err) = (*this)
@@ -2618,14 +2619,14 @@ mod spawn_process_body {
             ) {
                 // SAFETY: `this` is the heap::alloc root from spawn_windows_with_pipes;
                 // single-threaded uv loop, no overlapping borrow of SyncWindowsProcess.
-                unsafe {
+                yolo! {
                     (*this).status = Some(status);
                     (*this).waiting_count -= 1;
                 }
                 // SAFETY: `process` carries the provenance of the `&mut Process`
                 // already live in `ProcessExitHandler::call`; mutating through it
                 // re-uses that tag instead of conflicting with it.
-                unsafe {
+                yolo! {
                     (*process).detach();
                     Process::deref(process);
                 }
@@ -2638,7 +2639,7 @@ mod spawn_process_body {
                 err: bun_sys::E,
             ) {
                 // SAFETY: this is valid (back-ref from SyncWindowsPipeReader)
-                let this = unsafe { &mut *this };
+                let this = yolo! { &mut *this };
                 match tag {
                     OutFd::Stderr => this.stderr = chunks,
                     OutFd::Stdout => this.stdout = chunks,
@@ -2683,27 +2684,27 @@ mod spawn_process_body {
                 // SAFETY: sole owner during sync spawn; loop has drained, so no
                 // uv callback holds a competing `&mut Process`. Mirrors Zig defer
                 // `{ process.detach(); process.deref(); }`.
-                unsafe {
+                yolo! {
                     (*process).detach();
                     Process::deref(process);
                 }
             });
             // SAFETY: just allocated; no other borrow live yet.
-            unsafe {
+            yolo! {
                 (*process).enable_keeping_event_loop_alive();
             }
 
             // SAFETY: read-only field access between uv ticks; the uv exit
             // callback's `&mut Process` does not overlap this `&Process`.
-            while !unsafe { (*process).has_exited() } {
+            while !yolo! { (*process).has_exited() } {
                 // SAFETY: `loop_` is the live `uws::WindowsLoop*` from
                 // `EventLoopHandle::platform_event_loop`.
-                unsafe { (*loop_).run() };
+                yolo! { (*loop_).run() };
             }
 
             Ok(Ok(Result {
                 // SAFETY: process has exited; no further mutation.
-                status: unsafe { (*process).status.clone() },
+                status: yolo! { (*process).status.clone() },
                 stdout: Vec::new(),
                 stderr: Vec::new(),
             }))
@@ -2740,7 +2741,7 @@ mod spawn_process_body {
             // owner, mutable provenance from heap::alloc). Mirrors Zig:
             // `this.process.ref(); this.process.setExitHandler(this);
             //  this.process.enableKeepingEventLoopAlive();`
-            unsafe {
+            yolo! {
                 let p = &mut *(*this_ptr).process;
                 p.ref_();
                 // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
@@ -2769,7 +2770,7 @@ mod spawn_process_body {
                         on_done_callback: SyncWindowsProcess::on_reader_done,
                     });
                     // SAFETY: sole owner via `this_ptr`; no uv callback has fired yet.
-                    unsafe {
+                    yolo! {
                         (*this_ptr).waiting_count += 1;
                     }
                     // `start` consumes the Box and transfers ownership to libuv
@@ -2778,7 +2779,7 @@ mod spawn_process_body {
                         Err(err) => {
                             // SAFETY: sync spawn — `(*this_ptr).process` is the only
                             // handle and no uv callback has fired yet.
-                            unsafe {
+                            yolo! {
                                 let _ = (*(*this_ptr).process).kill(1);
                             }
                             Output::panic(format_args!(
@@ -2794,14 +2795,14 @@ mod spawn_process_body {
 
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
-            while unsafe { (*this_ptr).waiting_count } > 0 {
+            while yolo! { (*this_ptr).waiting_count } > 0 {
                 // SAFETY: `loop_` wraps a live `uws::WindowsLoop*`.
-                unsafe { (*loop_.platform_event_loop()).tick() };
+                yolo! { (*loop_.platform_event_loop()).tick() };
             }
 
             // SAFETY: loop drained (waiting_count == 0); no further uv callback
             // will touch `this_ptr`.
-            let result = unsafe {
+            let result = yolo! {
                 Result {
                     status: (*this_ptr)
                         .status
@@ -2813,7 +2814,7 @@ mod spawn_process_body {
             };
             // SAFETY: drop the ref taken above, then reclaim the SyncWindowsProcess
             // allocation. Mirrors Zig `this.process.deref(); destroy(this);`.
-            unsafe {
+            yolo! {
                 Process::deref((*this_ptr).process);
                 drop(bun_core::heap::take(this_ptr));
             }
@@ -2873,7 +2874,7 @@ mod spawn_process_body {
                 // SAFETY: `append_count_z` wrote `arg` + NUL at `[off, off+arg.len()+1)`
                 // contiguously in append order; `base` has provenance for the whole
                 // `cap`-byte buffer.
-                args.push(unsafe { base.add(off) });
+                args.push(yolo! { base.add(off) });
                 off += arg.len() + 1;
             }
             debug_assert_eq!(off, string_builder.len);
@@ -3007,7 +3008,7 @@ mod spawn_process_body {
             /// block it for the call per the standard job-control idiom.
             fn ttou_blocked(pgid: libc::pid_t) {
                 // SAFETY: signal mask manipulation
-                unsafe {
+                yolo! {
                     let mut set: libc::sigset_t = bun_core::ffi::zeroed();
                     let mut old: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut set);
@@ -3067,7 +3068,7 @@ mod spawn_process_body {
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
                 // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
+                let _ = yolo! { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
             }
             #[cfg(target_os = "linux")]
             scopeguard::defer! {
@@ -3079,7 +3080,7 @@ mod spawn_process_body {
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
                     // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
+                    let _ = yolo! { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
                 }
             }
 
@@ -3276,7 +3277,7 @@ mod spawn_process_body {
 
                     let mut poll_fds_buf: [libc::pollfd; 2] =
                     // SAFETY: zeroed pollfd is valid
-                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                    yolo! { bun_core::ffi::zeroed_unchecked() };
                     let mut poll_len: usize = 0;
                     for &fd in &out_fds_to_wait_for {
                         if fd == Fd::INVALID {
@@ -3294,7 +3295,7 @@ mod spawn_process_body {
                     }
 
                     // SAFETY: valid pollfd array
-                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
+                    let rc = yolo! { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
                     match bun_sys::get_errno(rc as isize) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
@@ -3639,7 +3640,7 @@ mod spawn_process_body {
             // one (16 words) — block via libc, build a separate kernel mask for
             // signalfd.
             // SAFETY: signal mask manipulation
-            let (chld_fd, _restore_mask): (Fd, scopeguard::ScopeGuard<libc::sigset_t, _>) = unsafe {
+            let (chld_fd, _restore_mask): (Fd, scopeguard::ScopeGuard<libc::sigset_t, _>) = yolo! {
                 let mut libc_mask: libc::sigset_t = bun_core::ffi::zeroed();
                 let mut old_mask: libc::sigset_t = bun_core::ffi::zeroed();
                 libc::sigemptyset(&raw mut libc_mask);
@@ -3698,12 +3699,12 @@ mod spawn_process_body {
             // post-script lifetime — keeps the backstop.
             if ppid > 1 {
                 // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
+                let _ = yolo! { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
             }
             scopeguard::defer! {
                 if ppid > 1 {
                     // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
+                    let _ = yolo! { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
                 }
             }
             if ppid > 1 && getppid() != ppid {
@@ -3789,7 +3790,7 @@ mod spawn_process_body {
                 }
 
                 // SAFETY: valid pollfd array
-                let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
+                let rc = yolo! { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
                 match bun_sys::get_errno(rc as isize) {
                     bun_sys::E::SUCCESS => {}
                     bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}
@@ -3838,7 +3839,7 @@ mod spawn_process_body {
                 }
                 // SAFETY: recvNonBlock writes into uninit bytes; we extend len by bytes_read.
                 // Keep the fallible `try_reserve` above — do NOT use fill_spare here.
-                let spare_slice = unsafe { bun_core::vec::spare_bytes_mut(bytes) };
+                let spare_slice = yolo! { bun_core::vec::spare_bytes_mut(bytes) };
                 match bun_sys::recv_non_block(*fd, spare_slice) {
                     Err(err) => {
                         if err.is_retry() || err.get_errno() == bun_sys::E::EPIPE {
@@ -3848,7 +3849,7 @@ mod spawn_process_body {
                     }
                     Ok(bytes_read) => {
                         // SAFETY: recv wrote `bytes_read` bytes into spare capacity
-                        unsafe { bun_core::vec::commit_spare(bytes, bytes_read) };
+                        yolo! { bun_core::vec::commit_spare(bytes, bytes_read) };
                         if bytes_read == 0 {
                             fd.close();
                             *fd = Fd::INVALID;

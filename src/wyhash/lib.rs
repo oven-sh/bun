@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //
 // `Wyhash11` is a copy of Wyhash from the zig standard library, version v0.11.0-dev.2609+5e19250a1
 // (the older 32-byte-round, 5-prime variant kept in src/wyhash/wyhash.zig).
@@ -42,12 +43,12 @@ fn read_bytes<const BYTES: u8>(data: &[u8]) -> u64 {
         2 => u64::from(u16::from_le_bytes([data[0], data[1]])),
         // SAFETY: `data.len() >= BYTES == 4` (asserted above; every caller
         // proves it). `read_unaligned` imposes no alignment requirement.
-        4 => u64::from(u32::from_le(unsafe {
+        4 => u64::from(u32::from_le(yolo! {
             core::ptr::read_unaligned(data.as_ptr() as *const u32)
         })),
         // SAFETY: `data.len() >= BYTES == 8` (asserted above; every caller
         // proves it). `read_unaligned` imposes no alignment requirement.
-        8 => u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr() as *const u64) }),
+        8 => u64::from_le(yolo! { core::ptr::read_unaligned(data.as_ptr() as *const u64) }),
         _ => unreachable!(),
     }
 }
@@ -567,7 +568,7 @@ impl Wyhash {
         debug_assert!(data.len() >= 4);
         // SAFETY: every caller passes a slice with ≥4 bytes (see comment above);
         // `read_unaligned` imposes no alignment requirement.
-        u64::from(u32::from_le(unsafe {
+        u64::from(u32::from_le(yolo! {
             core::ptr::read_unaligned(data.as_ptr() as *const u32)
         }))
     }
@@ -577,7 +578,7 @@ impl Wyhash {
         debug_assert!(data.len() >= 8);
         // SAFETY: every caller passes a slice with ≥8 bytes (see comment above);
         // `read_unaligned` imposes no alignment requirement.
-        u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr() as *const u64) })
+        u64::from_le(yolo! { core::ptr::read_unaligned(data.as_ptr() as *const u64) })
     }
 
     #[inline]
@@ -678,7 +679,7 @@ impl Wyhash {
                     // `read_unaligned` imposes no alignment requirement.
                     macro_rules! r8 {
                         ($o:literal) => {
-                            u64::from_le(unsafe {
+                            u64::from_le(yolo! {
                                 core::ptr::read_unaligned(p.add(i + $o) as *const u64)
                             })
                         };

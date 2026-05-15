@@ -1,5 +1,6 @@
 //! JSC bridge for BoringSSL error formatting. Keeps `src/boringssl/` free of JSC types.
 
+use bun_yolo::yolo;
 use bun_boringssl_sys as boring;
 use bun_jsc::{JSGlobalObject, JSValue};
 
@@ -11,7 +12,7 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     let message_buf = &mut outbuf[PREFIX.len()..];
 
     // SAFETY: message_buf is a valid writable buffer of message_buf.len() bytes.
-    unsafe {
+    yolo! {
         boring::ERR_error_string_n(
             err_code,
             message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),

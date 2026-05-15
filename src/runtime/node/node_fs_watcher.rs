@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
@@ -77,7 +78,7 @@ impl FSWatcher {
         // SAFETY: BACKREF — `ctx` is the per-thread `VirtualMachine` singleton
         // (set in `init` from `globalThis.bunVM()`); it outlives every
         // FSWatcher and all access is on the JS thread.
-        unsafe { &mut *self.ctx }
+        yolo! { &mut *self.ctx }
     }
 
     #[inline]
@@ -183,7 +184,7 @@ impl FSWatchTaskPosix {
 
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
-            let entry = unsafe { self.entries[i].assume_init_ref() };
+            let entry = yolo! { self.entries[i].assume_init_ref() };
             match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
@@ -222,7 +223,7 @@ impl FSWatchTaskPosix {
             // SAFETY: `that` is a freshly-boxed task; the concurrent queue takes
             // ownership of the `ConcurrentTask` node (and transitively the box)
             // until the JS thread drains and `heap::take`s it in `dispatch`.
-            unsafe {
+            yolo! {
                 (*that).concurrent_task.task = Task::init(that);
                 self.ctx()
                     .enqueue_task_concurrent(core::ptr::addr_of_mut!((*that).concurrent_task));
@@ -236,11 +237,11 @@ impl FSWatchTaskPosix {
     pub fn clean_entries(&mut self) {
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
-            let needs_free = unsafe { self.entries[i].assume_init_ref() }.needs_free;
+            let needs_free = yolo! { self.entries[i].assume_init_ref() }.needs_free;
             if needs_free {
                 // SAFETY: entries [0..count) were written by `append`; dropped at most once
                 // (count is reset to 0 below).
-                unsafe { self.entries[i].assume_init_drop() };
+                yolo! { self.entries[i].assume_init_drop() };
             }
         }
         self.count = 0;
@@ -261,7 +262,7 @@ impl FSWatchTaskPosix {
     /// `enqueue()`; called from the JS-thread task dispatcher only.
     pub unsafe fn deinit(this: *mut Self) {
         // SAFETY: caller contract — `this` is the live heap clone.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         this_ref.clean_entries();
         #[cfg(debug_assertions)]
         {
@@ -269,7 +270,7 @@ impl FSWatchTaskPosix {
             debug_assert!(!core::ptr::eq(this_ref.ctx().current_task.as_ptr(), this));
         }
         // SAFETY: paired with `heap::alloc` in `enqueue()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 
@@ -487,7 +488,7 @@ impl FSWatchTaskWindows {
         // above which `deref()`s the WTF string) free their payloads via Drop,
         // so dropping the Box is `event.deinit() + bun.destroy(this)`.
         // SAFETY: paired with `heap::alloc` at the enqueue site.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 
@@ -504,7 +505,7 @@ impl FSWatcher {
         // in `init`. The FSWatcher is heap-stable (`heap::into_raw`) and
         // outlives every watcher callback — it owns the `path_watcher`
         // registration, which is dropped before the FSWatcher in `finalize`.
-        unsafe { &*ctx.unwrap().cast::<FSWatcher>() }
+        yolo! { &*ctx.unwrap().cast::<FSWatcher>() }
     }
 
     pub fn on_path_update_posix(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
@@ -563,7 +564,7 @@ impl FSWatcher {
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
             // SAFETY: `this` is the live owning `&FSWatcher` (BACKREF) recovered
             // from the registered userdata; outlives every task it enqueues.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
+            ctx: Some(yolo! { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
             event,
             count: 0,
         }));
@@ -739,7 +740,7 @@ impl FSWatcher {
     pub unsafe fn init_js(this: *mut Self, listener: JSValue) {
         // SAFETY: caller contract — `this` is uniquely owned and live.
         // R-2: deref as shared; mutation goes through `Cell`/`JsCell`.
-        let this_ref = unsafe { &*this };
+        let this_ref = yolo! { &*this };
         if this_ref.persistent.get() {
             let vm_ctx = this_ref.vm_ctx();
             this_ref.poll_ref.with_mut(|r| r.ref_(vm_ctx));
@@ -748,7 +749,7 @@ impl FSWatcher {
         // SAFETY: ownership of `this` transfers to the GC wrapper here; the
         // wrapper's finalize hook is `FSWatcher::finalize` which calls
         // `heap::take(this)`.
-        let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
+        let js_this = yolo! { Self::to_js_ptr(this, &this_ref.global_this) };
         js_this.ensure_still_alive();
         this_ref.js_this.set(js_this);
         js::listener_set_cached(js_this, &this_ref.global_this, listener);
@@ -759,7 +760,7 @@ impl FSWatcher {
                 // safely abort next tick
                 this_ref.current_task.set(FSWatchTask {
                     // SAFETY: `this` is the live boxed FSWatcher; write provenance.
-                    ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this) }),
+                    ctx: Some(yolo! { bun_ptr::ParentRef::from_raw_mut(this) }),
                     ..Default::default()
                 });
                 this_ref.current_task.with_mut(|t| t.append_abort());
@@ -1060,7 +1061,7 @@ impl FSWatcher {
             // refcount and `adopt` takes ownership of that +1.
             signal: JsCell::new(
                 args.signal
-                    .map(|s| unsafe { AbortSignalRef::adopt(s.ref_()) }),
+                    .map(|s| yolo! { AbortSignalRef::adopt(s.ref_()) }),
             ),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
@@ -1074,11 +1075,11 @@ impl FSWatcher {
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         // R-2: deref as shared; mutation goes through `JsCell`.
-        let ctx_ref = unsafe { &*ctx };
+        let ctx_ref = yolo! { &*ctx };
         // SAFETY: `ctx` is the heap-stable Box address; write provenance.
         ctx_ref
             .current_task
-            .with_mut(|t| t.ctx = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) }));
+            .with_mut(|t| t.ctx = Some(yolo! { bun_ptr::ParentRef::from_raw_mut(ctx) }));
 
         ctx_ref
             .path_watcher
@@ -1104,7 +1105,7 @@ impl FSWatcher {
                     Err(err) => {
                         // SAFETY: `ctx` was produced by `heap::into_raw` above and
                         // never handed to a JS wrapper; reclaim ownership.
-                        FSWatcher::finalize(unsafe { Box::from_raw(ctx) });
+                        FSWatcher::finalize(yolo! { Box::from_raw(ctx) });
                         return Err(bun_sys::Error {
                             errno: err.errno,
                             syscall: bun_sys::Tag::watch,
@@ -1118,7 +1119,7 @@ impl FSWatcher {
             });
         // SAFETY: `ctx` is the unique heap pointer; `init_js` hands ownership to
         // the GC wrapper via `to_js_ptr`.
-        unsafe {
+        yolo! {
             FSWatcher::init_js(
                 ctx,
                 args.listener.with_async_context_if_needed(args.global_this),
@@ -1133,7 +1134,7 @@ impl FSWatcher {
                 // (ptr, close-fn) so it can fire detach without naming FSWatcher.
                 // SAFETY (callee contract): `p` is the `ctx` registered above;
                 // still live until `remove_fs_watcher_for_isolation` runs.
-                |p| unsafe { (*p.cast::<FSWatcher>()).detach() },
+                |p| yolo! { (*p.cast::<FSWatcher>()).detach() },
             );
         }
         Ok(ctx)

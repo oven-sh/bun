@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_sql::postgres::types::int_types::Short;
 use bun_sql::shared::Data;
@@ -72,7 +73,7 @@ pub fn to_js_data(global_object: &JSGlobalObject, value: Data) -> JSValue {
     let z = value.slice_z();
     // SAFETY: ZStr invariant guarantees a readable NUL terminator at `len`; Postgres
     // date payloads contain no interior NULs, satisfying CStr's contract.
-    let cstr = unsafe { bun_core::ffi::cstr(z.as_ptr()) };
+    let cstr = yolo! { bun_core::ffi::cstr(z.as_ptr()) };
     JSValue::from_date_string(global_object, cstr)
 }
 

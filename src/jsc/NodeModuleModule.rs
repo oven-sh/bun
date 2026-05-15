@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::{
     self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
     Strong, VirtualMachineRef as VirtualMachine,
@@ -96,7 +97,7 @@ fn find_path_inner(
 ) -> Option<BunString> {
     // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
     // callee fully overwrites it on both ok/err paths.
-    let mut errorable: ErrorableString = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut errorable: ErrorableString = yolo! { bun_core::ffi::zeroed_unchecked() };
     // `bun_core::String` is `Copy` — passing by value here mirrors Zig's
     // by-value struct copy with no refcount change.
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
@@ -264,7 +265,7 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
 ) {
     // PERF(port): was stack-fallback (8192 bytes) — profile in Phase B
     // SAFETY: C++ caller guarantees non-null str for the call's duration.
-    let str_slice = unsafe { &*str }.to_utf8();
+    let str_slice = yolo! { &*str }.to_utf8();
     if on_require_extension_modify(global, str_slice.slice(), loader, value).is_err() {
         bun_core::out_of_memory();
     }
@@ -277,7 +278,7 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
 ) {
     // PERF(port): was stack-fallback (8192 bytes) — profile in Phase B
     // SAFETY: C++ caller guarantees non-null str for the call's duration.
-    let str_slice = unsafe { &*str }.to_utf8();
+    let str_slice = yolo! { &*str }.to_utf8();
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
         bun_core::out_of_memory();
     }

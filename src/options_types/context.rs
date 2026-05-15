@@ -7,6 +7,7 @@
 //! `ContextData` below so call sites that write `Command::ContextData::create()`
 //! keep working.
 
+use bun_yolo::yolo;
 use crate::schema::api;
 use bun_collections::ArrayHashMap;
 
@@ -61,7 +62,7 @@ impl Default for ContextData {
     // single call from `write_context_no_parse` faulted in ~40 KB of scattered
     // `.text`. The Zig spec is `std.mem.zeroes(Context)` (one comptime blob).
     //
-    // A literal `unsafe { core::mem::zeroed() }` would match Zig but is
+    // A literal `yolo! { core::mem::zeroed() }` would match Zig but is
     // **unsound** in Rust: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
     // (validity invariant — null is immediate UB regardless of len). Instead,
     // every `Default` impl in this module is `#[inline(always)]` so the entire
@@ -122,7 +123,7 @@ impl ContextData {
         // and never invalidates it; the caller's `# Safety` contract guarantees
         // no overlapping borrow of the same `Log` (which is aliased elsewhere —
         // `&mut self` alone cannot prove exclusivity here).
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Mutable accessor for the process-lifetime CLI `Log`.
@@ -132,7 +133,7 @@ impl ContextData {
     /// the static `Cli::LOG_` storage. Other subsystems that copy the same
     /// `*mut Log` (transpiler, install) reborrow it via their own raw-pointer
     /// accessors. Centralizing the deref here removes ~20 identical
-    /// `unsafe { &mut *ctx.log }` blocks at call sites.
+    /// `yolo! { &mut *ctx.log }` blocks at call sites.
     ///
     /// Takes `&self` (not `&mut self`) because several CLI entry points hold
     /// `&Context<'_>` (= `&&mut ContextData`) and a `&mut self` receiver could
@@ -163,7 +164,7 @@ impl ContextData {
         // SAFETY: `self.log` is non-null (asserted) and points at the
         // process-static `Cli::LOG_` (`'static`); the caller's `# Safety`
         // contract guarantees no overlapping borrow of the same `Log`.
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Shared-ref counterpart of [`log_mut`] for read-only inspection
@@ -179,7 +180,7 @@ impl ContextData {
         // process-static `Cli::LOG_`; shared `&` may freely alias other
         // shared borrows. Callers of `log_mut` are obligated not to hold a
         // live `&mut Log` overlapping this.
-        unsafe { &*self.log }
+        yolo! { &*self.log }
     }
 
     /// `Arguments.parse` lives in `cli/`; forward-aliased so
@@ -337,7 +338,7 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
     let p = GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire);
     // SAFETY: pointer was published from a process-lifetime `static` in
     // single-threaded startup; treated as read-only here.
-    unsafe { p.as_ref() }
+    yolo! { p.as_ref() }
 }
 
 pub struct DebugOptions {
@@ -472,7 +473,7 @@ pub struct Reporters {
 
 impl TestOptions {
     /// Returns the erased `*mut bun_jsc::RegularExpression`. Caller (high tier)
-    /// casts back: `unsafe { &*ptr.cast::<bun_jsc::RegularExpression>() }`.
+    /// casts back: `yolo! { &*ptr.cast::<bun_jsc::RegularExpression>() }`.
     #[inline]
     pub fn test_filter_regex(&self) -> Option<core::ptr::NonNull<()>> {
         // SAFETY: erased bun_jsc::RegularExpression — see field decl.

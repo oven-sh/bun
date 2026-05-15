@@ -1,5 +1,6 @@
 //! Process information and control APIs (`globalThis.process` / `node:process`)
 
+use bun_yolo::yolo;
 use core::ffi::c_char;
 
 use bun_core::env_var::feature_flag;
@@ -149,7 +150,7 @@ mod _impl {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         let str_ = guard.as_deref().unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
-        unsafe {
+        yolo! {
             *title = BunString::clone_utf8(str_);
         }
     }
@@ -160,7 +161,7 @@ mod _impl {
         // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
         // returning. `String` is `Copy`, so read it out by value and let
         // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
-        let newvalue = bun_core::OwnedString::new(unsafe { *newvalue });
+        let newvalue = bun_core::OwnedString::new(yolo! { *newvalue });
 
         // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
         // the Zig OOM-throw path is unreachable here.
@@ -470,7 +471,7 @@ mod _impl {
                 // FileSystem singleton; the detached borrow matches the Zig
                 // semantics (`top_level_dir = top_level_dir_buf[0..len :0]`).
                 fs.top_level_dir =
-                    unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
+                    yolo! { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
 
                 let len = fs.top_level_dir.len();
                 // Ensure the path ends with a slash
@@ -479,7 +480,7 @@ mod _impl {
                     fs.top_level_dir_buf[len + 1] = 0;
                     // SAFETY: see above.
                     fs.top_level_dir =
-                        unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
+                        yolo! { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
                 }
                 // Zig has a single `bun.fs.FileSystem.instance.top_level_dir` field that
                 // both this fn writes and `GlobWalker.init` reads. The Rust port split
@@ -547,7 +548,7 @@ mod _impl {
             None
         };
         // SAFETY: buf1[len1] == 0; str2 is either null or NUL-terminated
-        unsafe {
+        yolo! {
             let _ = SetEnvironmentVariableW(buf1.as_ptr(), str2.unwrap_or(core::ptr::null()));
         }
     }

@@ -1,5 +1,6 @@
 // https://github.com/dmgk/zig-uuid
 
+use bun_yolo::yolo;
 use core::fmt;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -84,7 +85,7 @@ impl fmt::Display for UUID {
         self.print(&mut buf);
 
         // SAFETY: print_bytes only writes ASCII hex digits and '-'
-        f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })
+        f.write_str(yolo! { core::str::from_utf8_unchecked(&buf) })
     }
 }
 

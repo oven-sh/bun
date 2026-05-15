@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![allow(
     unused,
     non_snake_case,
@@ -87,7 +88,7 @@ impl JsEventLoop {
         // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
         // `jsc::EventLoop` (panics if none), so the `link_interface!` owner
         // invariant for `Self::new` is upheld for every dispatch on this handle.
-        unsafe {
+        yolo! {
             Self::new(
                 JsEventLoopKind::Jsc,
                 any_event_loop::__bun_js_event_loop_current(),

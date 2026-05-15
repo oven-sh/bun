@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_ptr::AsCtxPtr;
 
 use crate::shell::ast;
@@ -224,7 +225,7 @@ impl Pipeline {
         // inside a pipeline must not leak to siblings or the parent).
         // SAFETY: `parent_shell` is a live env owned by this pipeline's
         // parent state.
-        let duped = match unsafe {
+        let duped = match yolo! {
             (*parent_shell).dupe_for_subshell(&child_io, ShellExecEnvKind::Pipeline)
         } {
             Ok(d) => d,

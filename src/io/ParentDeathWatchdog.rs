@@ -32,6 +32,7 @@
 //! watchdog closes both gaps from Bun's side without requiring the shim to
 //! cooperate.
 
+use bun_yolo::yolo;
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -222,7 +223,7 @@ pub fn enable() {
     #[cfg(unix)]
     // SAFETY: called only on the main thread during startup, before any
     // concurrent reader exists; idempotent guard prevents double-init.
-    unsafe {
+    yolo! {
         if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
@@ -314,7 +315,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(
+        match yolo! { &mut *poll }.register(
             handle.loop_mut(),
             crate::file_poll::Pollable::Process,
             true,
@@ -569,7 +570,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: info is fully written by proc_pidinfo on success (rc == size).
-        unsafe {
+        yolo! {
             let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
             let size: c_int =
                 c_int::try_from(core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>())
@@ -630,7 +631,7 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
         // already divides the kernel's byte count by sizeof(int)); buffersize
         // is in bytes.
         // SAFETY: out is a valid buffer of out.len() pid_t's.
-        let rc = unsafe {
+        let rc = yolo! {
             bun_sys::c::proc_listchildpids(
                 parent,
                 out.as_mut_ptr().cast(),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem::offset_of;
 
@@ -75,7 +76,7 @@ pub struct Handlers {
     /// `Cell` so [`mark_active`](Self::mark_active) /
     /// [`mark_inactive`](Self::mark_inactive) can mutate through the
     /// `BackRef<Handlers>` every socket holds (see `NewSocket::get_handlers`)
-    /// without an `unsafe { &mut * }` reborrow per call site.
+    /// without an `yolo! { &mut * }` reborrow per call site.
     pub active_connections: Cell<u32>,
     pub mode: SocketMode,
     /// `JsCell` so [`resolve_promise`](Self::resolve_promise) /
@@ -157,7 +158,7 @@ impl Handlers {
         {
             // SAFETY: caller contract — `this` is live; shared reborrow scoped
             // to this block (no protector spans the later free in `exit`).
-            let h = unsafe { &*this };
+            let h = yolo! { &*this };
             h.mark_active();
             h.vm.event_loop_ref().enter();
         }
@@ -174,7 +175,7 @@ impl Handlers {
     pub fn enter_ref(h: bun_ptr::BackRef<Self>) -> Scope {
         // SAFETY: BackRef invariant — pointee live and at a stable address
         // for the holder's lifetime, so `h.as_ptr()` is dereferenceable now.
-        unsafe { Self::enter(h.as_ptr()) }
+        yolo! { Self::enter(h.as_ptr()) }
     }
 
     // corker: Corker = .{},
@@ -237,7 +238,7 @@ impl Handlers {
         // scoped to this block so no `&Handlers` protector spans the
         // `heap::take` in the client branch below.
         let (remaining, mode) = {
-            let h = unsafe { &*this };
+            let h = yolo! { &*this };
             let remaining = h.active_connections.get() - 1;
             h.active_connections.set(remaining);
             (remaining, h.mode)
@@ -252,7 +253,7 @@ impl Handlers {
                 // unchanged. Deref as shared (`&*`) — celled fields below
                 // take `&self`.
                 let listen_socket: &SocketListener =
-                    unsafe { &*bun_core::from_field_ptr!(SocketListener, handlers, this) };
+                    yolo! { &*bun_core::from_field_ptr!(SocketListener, handlers, this) };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if matches!(listen_socket.listener.get(), ListenerType::None) {
                     listen_socket
@@ -272,7 +273,7 @@ impl Handlers {
                 // SAFETY: client-mode caller contract — `this` is the
                 // `heap::alloc` allocation root; no live `&`/`&mut` borrow
                 // of it remains (all reborrows above have ended).
-                drop(unsafe { bun_core::heap::take(this) });
+                drop(yolo! { bun_core::heap::take(this) });
                 return true;
             }
         }
@@ -460,11 +461,11 @@ impl Scope {
         // contract of `Handlers::enter`). `event_loop()` returns a non-null
         // self-pointer into the VM; single JS thread, no aliasing
         // `&mut EventLoop` outlives this call.
-        unsafe { (*self.handlers).vm }.event_loop_ref().exit();
+        yolo! { (*self.handlers).vm }.event_loop_ref().exit();
         // SAFETY: `handlers` satisfies `mark_inactive`'s contract by
         // construction in `Handlers::enter` (caller passed the
         // server-embedded / client-heap-root pointer).
-        unsafe { Handlers::mark_inactive(self.handlers) }
+        yolo! { Handlers::mark_inactive(self.handlers) }
     }
 }
 

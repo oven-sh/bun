@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bstr::BStr;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
@@ -272,7 +273,7 @@ impl WorkspaceMap {
                 // SAFETY: thread-local scratch; this is the only live borrow on this
                 // thread for the remainder of this block.
                 let s: &mut [u8] =
-                    &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }[0..len];
+                    &mut yolo! { &mut *resolve_path::relative_to_common_path_buf() }[0..len];
                 path::dangerously_convert_path_to_posix_in_place::<u8>(s);
                 &*s
             };
@@ -498,7 +499,7 @@ impl WorkspaceMap {
                         // SAFETY: thread-local scratch; this is the only live borrow on
                         // this thread for the remainder of this block.
                         let s: &mut [u8] =
-                            &mut unsafe { &mut *resolve_path::relative_to_common_path_buf() }
+                            &mut yolo! { &mut *resolve_path::relative_to_common_path_buf() }
                                 [0..len];
                         path::dangerously_convert_path_to_posix_in_place::<u8>(s);
                         &*s

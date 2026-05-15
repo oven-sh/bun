@@ -22,6 +22,7 @@
 //! name and the requested column type against the reflected field's `TypeId`
 //! at compile time, so the column API is fully type-safe with no derive.
 
+use bun_yolo::yolo;
 use core::alloc::Layout;
 use core::any::TypeId;
 use core::marker::PhantomData;
@@ -91,7 +92,7 @@ macro_rules! multi_array_columns {
             /// `[COLUMN_OFFSET_PER_CAP[i]*cap ..)` byte range in the single
             /// backing allocation), so holding all of them mutably at once is
             /// sound. This is the safe replacement for the `items_raw` +
-            /// per-site `unsafe { &mut * }` pattern.
+            /// per-site `yolo! { &mut * }` pattern.
             #[allow(dead_code, non_snake_case)]
             $vis struct [<$trait Mut>] <'__mal, $($decl)*> {
                 $( pub $field: &'__mal mut [$ty], )*
@@ -169,7 +170,7 @@ macro_rules! __mal_split_mut_impl {
             // (`Reflected::<T>::COLUMN_OFFSET_PER_CAP`); `&mut self` guarantees
             // exclusive access to the whole buffer for `'_`, so materializing
             // one `&mut [F]` per column simultaneously cannot alias.
-            unsafe {
+            yolo! {
                 $struct {
                     $( $field: ::core::slice::from_raw_parts_mut(
                         self.items_raw::<{ ::core::stringify!($field) }, $ty>(),
@@ -505,7 +506,7 @@ impl<T> Slice<T> {
         };
         // SAFETY: ZST/empty → dangling is valid for any length; otherwise
         // column `fi` is `capacity` contiguous `F`s and `len <= capacity`.
-        unsafe { core::slice::from_raw_parts(p, self.len) }
+        yolo! { core::slice::from_raw_parts(p, self.len) }
     }
 
     /// Returns the mutable column slice for field `NAME` typed as `&mut [F]`.
@@ -518,7 +519,7 @@ impl<T> Slice<T> {
             self.ptrs[fi].cast::<F>()
         };
         // SAFETY: see `items`. `&mut self` enforces exclusive column access.
-        unsafe { core::slice::from_raw_parts_mut(p, self.len) }
+        yolo! { core::slice::from_raw_parts_mut(p, self.len) }
     }
 
     /// Raw column pointer for callers that need simultaneous mutable access to
@@ -559,7 +560,7 @@ impl<T> Slice<T> {
             return &mut [];
         }
         // SAFETY: column `field_index` is `len * size` bytes within the allocation.
-        unsafe { core::slice::from_raw_parts_mut(self.ptrs[field_index], self.len * size) }
+        yolo! { core::slice::from_raw_parts_mut(self.ptrs[field_index], self.len * size) }
     }
 
     /// `size_of` the `field_index`th field (declaration order).
@@ -574,7 +575,7 @@ impl<T> Slice<T> {
             "MultiArrayList::Slice::set: index out of bounds"
         );
         // SAFETY: `index < len <= capacity`; ptrs are valid columns.
-        unsafe { scatter::<T>(&self.ptrs, index, elem) };
+        yolo! { scatter::<T>(&self.ptrs, index, elem) };
     }
 
     /// Gather a `T` by per-field `ptr::read` from each column.
@@ -590,7 +591,7 @@ impl<T> Slice<T> {
             "MultiArrayList::Slice::get: index out of bounds"
         );
         // SAFETY: `index < len <= capacity`; ptrs are valid columns.
-        ManuallyDrop::new(unsafe { gather::<T>(&self.ptrs, index) })
+        ManuallyDrop::new(yolo! { gather::<T>(&self.ptrs, index) })
     }
 
     pub fn to_multi_array_list(self) -> MultiArrayList<T> {
@@ -629,7 +630,7 @@ unsafe fn scatter<T>(ptrs: &[*mut u8; MAX_FIELDS], index: usize, elem: T) {
             // SAFETY: `src + offset` points to the field within `elem`;
             // `ptrs[i] + index * size` is the column slot. Both regions are
             // `m.size` bytes and do not overlap (stack vs heap).
-            unsafe {
+            yolo! {
                 ptr::copy_nonoverlapping(src.add(m.offset), ptrs[i].add(index * m.size), m.size);
             }
         }
@@ -652,7 +653,7 @@ unsafe fn gather<T>(ptrs: &[*mut u8; MAX_FIELDS], index: usize) -> T {
         let m = Reflected::<T>::META[i];
         if m.size != 0 {
             // SAFETY: see `scatter`.
-            unsafe {
+            yolo! {
                 ptr::copy_nonoverlapping(ptrs[i].add(index * m.size), dst.add(m.offset), m.size);
             }
         }
@@ -660,7 +661,7 @@ unsafe fn gather<T>(ptrs: &[*mut u8; MAX_FIELDS], index: usize) -> T {
     }
     // SAFETY: every named field byte has been written; padding bytes remain
     // uninitialized, which is permitted for `T` (matches `ptr::read` semantics).
-    unsafe { out.assume_init() }
+    yolo! { out.assume_init() }
 }
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
@@ -742,7 +743,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             // `capacity_in_bytes(self.capacity)` bytes (or is null when
             // capacity == 0, in which case bytes[k] * 0 == 0 and add(0) is OK).
             // `add` keeps the `inbounds` GEP hint that `wrapping_add` drops.
-            p = unsafe { p.add(bytes[k] * self.capacity) };
+            p = yolo! { p.add(bytes[k] * self.capacity) };
             k += 1;
         }
         result
@@ -756,7 +757,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         }
         // SAFETY: column offset within the single allocation; always in-bounds.
         // `add` keeps the `inbounds` GEP hint that `wrapping_add` drops.
-        unsafe {
+        yolo! {
             self.bytes
                 .add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity)
         }
@@ -776,7 +777,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         };
         // SAFETY: ZST/empty → dangling is valid for any length; otherwise the
         // column holds `capacity` aligned `F`s and `len <= capacity`.
-        unsafe { core::slice::from_raw_parts(p, self.len) }
+        yolo! { core::slice::from_raw_parts(p, self.len) }
     }
 
     /// Get the mutable slice of values for field `NAME`.
@@ -789,7 +790,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             self.column_ptr_by_index(fi).cast::<F>()
         };
         // SAFETY: see `items`. `&mut self` enforces exclusive column access.
-        unsafe { core::slice::from_raw_parts_mut(p, self.len) }
+        yolo! { core::slice::from_raw_parts_mut(p, self.len) }
     }
 
     /// Raw column pointer; see [`Slice::items_raw`]. Obtaining the pointer is
@@ -894,7 +895,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             let mut i = self.len - 1;
             while i > index {
                 // SAFETY: `i` and `i-1` are < len <= capacity; column is contiguous.
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(base.add((i - 1) * size), base.add(i * size), size);
                 }
                 i -= 1;
@@ -913,7 +914,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             if size != 0 {
                 // SAFETY: `offset + other.len <= self.capacity` (caller contract);
                 // columns are contiguous and non-overlapping (distinct allocations).
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(
                         other_slice.ptr(fi),
                         this_slice.ptr(fi).add(offset * size),
@@ -941,7 +942,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             let base = slices.ptr(fi);
             // SAFETY: `index < len` and `len-1 < len <= capacity`. Regions overlap
             // exactly when `index == len-1` (src == dst), which `copy` handles.
-            unsafe {
+            yolo! {
                 ptr::copy(
                     base.add((self.len - 1) * size),
                     base.add(index * size),
@@ -969,7 +970,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             let mut i = index;
             while i < self.len - 1 {
                 // SAFETY: `i` and `i+1` are < len <= capacity.
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(base.add((i + 1) * size), base.add(i * size), size);
                 }
                 i += 1;
@@ -1011,12 +1012,12 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             let size = bytes[k];
             if size != 0 {
                 // SAFETY: both columns hold `new_len` elements; allocations distinct.
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, new_len * size);
                 }
             }
             // SAFETY: within the fresh allocation; always in-bounds.
-            dst = unsafe { dst.add(size * new_len) };
+            dst = yolo! { dst.add(size * new_len) };
         }
         self.free_allocated_bytes();
         self.bytes = other_bytes;
@@ -1051,7 +1052,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
                 // into a stack `T`; dropping it runs each field's destructor
                 // exactly once. The SoA bytes for row `i` are not read again:
                 // `len` is zeroed immediately after the loop.
-                unsafe { drop(gather::<T>(&s.ptrs, i)) };
+                yolo! { drop(gather::<T>(&s.ptrs, i)) };
             }
         }
         self.len = 0;
@@ -1100,12 +1101,12 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             let size = bytes[k];
             if size != 0 {
                 // SAFETY: both columns hold `self.len` elements; allocations distinct.
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, self.len * size);
                 }
             }
             // SAFETY: within the fresh allocation; always in-bounds.
-            dst = unsafe { dst.add(size * new_capacity) };
+            dst = yolo! { dst.add(size * new_capacity) };
         }
         self.free_allocated_bytes();
         self.bytes = new_bytes;
@@ -1127,7 +1128,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             let size = Reflected::<T>::META[fi].size;
             if size != 0 {
                 // SAFETY: both columns hold `self.len` elements; allocations distinct.
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(
                         self_slice.ptr(fi),
                         result_slice.ptr(fi),
@@ -1148,7 +1149,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
                     let base = slice.ptr(fi);
                     // SAFETY: indices are < len; columns are contiguous; a != b
                     // is guaranteed by sort impls.
-                    unsafe {
+                    yolo! {
                         ptr::swap_nonoverlapping(
                             base.add(a_index * size),
                             base.add(b_index * size),
@@ -1204,7 +1205,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         let (p, n) = self.allocated_bytes();
         if n != 0 {
             // SAFETY: `p` is the start of an allocation of `n` bytes.
-            unsafe { ptr::write_bytes(p, 0, n) };
+            yolo! { ptr::write_bytes(p, 0, n) };
         }
     }
 
@@ -1218,7 +1219,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         if let Some(layout) = layout_for::<T>(self.capacity) {
             // SAFETY: type invariant above — `self.bytes` is non-null and was
             // allocated by `self.alloc` with exactly `layout`.
-            unsafe {
+            yolo! {
                 self.alloc
                     .deallocate(ptr::NonNull::new_unchecked(self.bytes), layout)
             };
@@ -1256,7 +1257,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         if let Some(layout) = layout_for::<T>(self.capacity) {
             // SAFETY: `bytes` was allocated with exactly `layout` and is
             // freed exactly once here.
-            unsafe {
+            yolo! {
                 self.alloc
                     .deallocate(ptr::NonNull::new_unchecked(self.bytes), layout)
             };

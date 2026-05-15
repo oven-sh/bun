@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
     JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString, host_fn,
@@ -1472,22 +1473,22 @@ pub extern "C" fn Bun__Node__Path_joinWTF(
     result: *mut bun_core::String,
 ) {
     // SAFETY: caller passes valid pointers from C++.
-    let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
+    let rhs = yolo! { bun_core::ffi::slice(rhs_ptr, rhs_len) };
     let mut buf = [0u8; path_size::<u8>()];
     let mut buf2 = [0u8; path_size::<u8>()];
     // SAFETY: lhs is a valid BunString pointer.
-    let slice = unsafe { &*lhs }.to_utf8();
+    let slice = yolo! { &*lhs }.to_utf8();
     #[cfg(windows)]
     {
         let win = join_windows_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_core::String::clone_utf8(win) };
+        yolo! { *result = bun_core::String::clone_utf8(win) };
     }
     #[cfg(not(windows))]
     {
         let posix = join_posix_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_core::String::clone_utf8(posix) };
+        yolo! { *result = bun_core::String::clone_utf8(posix) };
     }
 }
 
@@ -2526,7 +2527,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
         };
         if ptr != buf.as_ptr() {
             // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
-            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
+            yolo! { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
         }
         len
     };
@@ -2674,7 +2675,7 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         };
         if ptr != buf.as_ptr() {
             // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
-            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
+            yolo! { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
         }
         len
     };
@@ -3071,7 +3072,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         macro_rules! path { () => {
             // SAFETY: (path_ptr, path_len) describes a live region inside paths[]/tmp_buf/buf2;
             // borrows are short-lived (read-only) and never held across mutation of the same range.
-            unsafe { core::slice::from_raw_parts(path_ptr, path_len) }
+            yolo! { core::slice::from_raw_parts(path_ptr, path_len) }
         }; }
         // Locals that must outlive `path` borrow:
         let cwd_len: usize;
@@ -3296,7 +3297,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                             let first_part_len = first_part_end - first_part_start;
                             buf_size += first_part_len;
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
+                            yolo! {
                                 core::ptr::copy(
                                     path_ptr.add(first_part_start),
                                     tmp_buf.as_mut_ptr().add(buf_offset),
@@ -3310,7 +3311,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                             buf_offset = buf_size;
                             buf_size += slice_len;
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
+                            yolo! {
                                 core::ptr::copy(
                                     path_ptr.add(last),
                                     tmp_buf.as_mut_ptr().add(buf_offset),
@@ -3344,7 +3345,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 
         if device_len > 0 {
             // SAFETY: (device_ptr, device_len) describes a live region in tmp_buf or device_buf.
-            let device = unsafe { bun_core::ffi::slice(device_ptr, device_len) };
+            let device = yolo! { bun_core::ffi::slice(device_ptr, device_len) };
             if resolved_device_len > 0 {
                 // Translated from the following JS code:
                 //   if (StringPrototypeToLowerCase(device) !==
@@ -3385,7 +3386,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             if slice_len > 0 {
                 // PORT NOTE: path may alias buf2 (env path branch); use ptr::copy.
                 // SAFETY: handles overlap.
-                unsafe {
+                yolo! {
                     core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);
                 }
             }
@@ -3745,7 +3746,7 @@ macro_rules! export_path_host_fn {
                 // (Body kept in sync with the non-Windows arm below — bughunt
                 // changed the target signature to take a slice but only updated
                 // one cfg arm.)
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
+                let args = yolo! { bun_core::ffi::slice(args_ptr, args_len as usize) };
                 crate::jsc::host_fn::to_js_host_call(
                     global,
                     || $target(global, is_windows, args),
@@ -3762,7 +3763,7 @@ macro_rules! export_path_host_fn {
                 // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
                 // CallFrame (the caller is `Bun__Path__*` in NodePath.cpp). The
                 // slice is borrowed for the synchronous host-call only.
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
+                let args = yolo! { bun_core::ffi::slice(args_ptr, args_len as usize) };
                 crate::jsc::host_fn::to_js_host_call(
                     global,
                     || $target(global, is_windows, args),

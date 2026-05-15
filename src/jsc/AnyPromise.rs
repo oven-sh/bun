@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::host_fn::to_js_host_call;
@@ -147,7 +148,7 @@ impl AnyPromise {
             // SAFETY: `wrap_` is `&mut Wrapper<F>` passed below; `global` is a
             // live JSGlobalObject* supplied by JSC for the duration of the
             // call (`&T` ≡ non-null `*const T` at the C ABI).
-            let wrap_ = unsafe { bun_ptr::callback_ctx::<Wrapper<F>>(wrap_) };
+            let wrap_ = yolo! { bun_ptr::callback_ctx::<Wrapper<F>>(wrap_) };
             let f = wrap_.f.take().expect("AnyPromise::wrap called twice");
             // Zig: `jsc.toJSHostCall(global, @src(), Fn, wrap_.args)` — installs the
             // host-call exception/return-value validation around the invocation.

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::mem::offset_of;
 use core::sync::atomic::Ordering;
@@ -23,7 +24,7 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =
-        unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
+        yolo! { crate::linker_context_mod::pending_part_range_prologue(task) };
 
     #[cfg(feature = "show_crash_trace")]
     // RAII: `ActionGuard` restores the previous `CURRENT_ACTION` on drop.
@@ -42,15 +43,15 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // views into the same `LinkerContext`/`Chunk` for read-only printer use —
     // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
     let result = {
-        let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+        let c_mut: &mut LinkerContext = yolo! { &mut *c_ptr };
+        let chunk_mut: &mut Chunk = yolo! { &mut *chunk_ptr };
         generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
     };
 
     // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
     // The slot write is routed through raw `addr_of_mut!` + `UnsafeCell` so it
     // never materializes `&mut Chunk` / `&mut [CompileResult]`.
-    unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
+    yolo! { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
 fn generate_compile_result_for_css_chunk_impl(
@@ -90,14 +91,14 @@ fn generate_compile_result_for_css_chunk_impl(
     // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
     // so layouts match — bridge by pointer cast.
     let symbols: &bun_ast::symbol::Map =
-        unsafe { &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>() };
+        yolo! { &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>() };
     // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &c.mangled_props;
     let parse_graph = c.parse_graph();
     // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
     // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
-    let unique_keys: &[&[u8]] = unsafe {
+    let unique_keys: &[&[u8]] = yolo! {
         bun_ptr::boxed_slices_as_borrowed(
             parse_graph
                 .input_files
@@ -145,7 +146,7 @@ fn generate_compile_result_for_css_chunk_impl(
             // SAFETY: borrows `condition_import_records` storage for the duration of the
             // `to_css_with_writer` call below; the borrowed Vec is dropped (no-op)
             // before `css_import` goes out of scope, so no double-free / dangling.
-            let import_records = unsafe {
+            let import_records = yolo! {
                 Vec::<ImportRecord>::from_borrowed_slice_dangerous(
                     css_import.condition_import_records.slice_const(),
                 )

@@ -89,6 +89,7 @@
 //                         ▼
 //                        End
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use std::io::Write as _;
@@ -194,7 +195,7 @@ impl MultiPartUpload {
     pub fn deref_(this: *mut Self) {
         // SAFETY: `this` is a live heap-allocated MultiPartUpload created via
         // heap::alloc; forwarded to the derived intrusive-rc decrement.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
+        yolo! { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 }
 
@@ -238,7 +239,7 @@ impl UploadPart {
             // SAFETY: `data.ptr` was allocated by the global allocator with capacity == allocated_size
             // (either via `to_vec().into_boxed_slice()` where len==cap, or by taking ownership of
             // StreamBuffer's backing allocation). Reconstruct and drop.
-            unsafe {
+            yolo! {
                 let ptr = (*self.data).as_ptr().cast_mut();
                 drop(Vec::from_raw_parts(
                     ptr,
@@ -254,17 +255,17 @@ impl UploadPart {
     #[inline]
     fn data(&self) -> &[u8] {
         // SAFETY: data is either a static empty slice or a live heap slice owned by this part
-        unsafe { &*self.data }
+        yolo! { &*self.data }
     }
 
     pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
+        let this = yolo! { bun_ptr::callback_ctx::<Self>(this) };
         // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
         // from `this` (Zig held both `*UploadPart` and `*MultiPartUpload` freely).
         let mut ctx_ref = this.ctx;
         // SAFETY: ctx is a live BACKREF while a part is in flight (part holds a ref on ctx)
-        let ctx = unsafe { ctx_ref.get_mut() };
+        let ctx = yolo! { ctx_ref.get_mut() };
 
         if this.state == PartState::Canceled || ctx.state == State::Finished {
             scoped_log!(
@@ -302,7 +303,7 @@ impl UploadPart {
                     // PORT NOTE: `defer this.ctx.deref()` reordered after fail()
                     let ctx_ptr = this.ctx.as_ptr();
                     // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
-                    let r = unsafe { (*ctx_ptr).fail(err) };
+                    let r = yolo! { (*ctx_ptr).fail(err) };
                     MultiPartUpload::deref_(ctx_ptr);
                     r
                 }
@@ -327,7 +328,7 @@ impl UploadPart {
                 let ctx_ptr = this.ctx.as_ptr();
                 // drain more
                 // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
-                let r = unsafe { (*ctx_ptr).drain_enqueued_parts(sent as u64) };
+                let r = yolo! { (*ctx_ptr).drain_enqueued_parts(sent as u64) };
                 MultiPartUpload::deref_(ctx_ptr);
                 r
             }
@@ -339,7 +340,7 @@ impl UploadPart {
         // from `self` (request body reads `self.data()`/`self.part_number`).
         let mut ctx_ref = self.ctx;
         // SAFETY: ctx is a live BACKREF (part holds a ref on ctx)
-        let ctx = unsafe { ctx_ref.get_mut() };
+        let ctx = yolo! { ctx_ref.get_mut() };
         let mut params_buffer = [0u8; 2048];
         let written = {
             let mut w: &mut [u8] = &mut params_buffer[..];
@@ -420,7 +421,7 @@ impl MultiPartUpload {
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
+        let this = yolo! { bun_ptr::callback_ctx::<Self>(this) };
         if this.state == State::Finished {
             return Ok(());
         }
@@ -490,7 +491,7 @@ impl MultiPartUpload {
         self.available.unset(index);
         // SAFETY: `self` is a heap-stable `MultiPartUpload` (intrusive RC); every
         // `UploadPart` holds a ref so `self` outlives the part (BackRef invariant).
-        let self_ref = unsafe { bun_ptr::BackRef::from_raw(std::ptr::from_mut::<Self>(self)) };
+        let self_ref = yolo! { bun_ptr::BackRef::from_raw(std::ptr::from_mut::<Self>(self)) };
         if self.queue.is_none() {
             // queueSize will never change and is small (max 255)
             let mut queue: Vec<UploadPart> = Vec::with_capacity(queue_size);
@@ -609,7 +610,7 @@ impl MultiPartUpload {
                 // SAFETY: `this` is the live heap `MultiPartUpload` (refcounted
                 // — `state == Finished` guards re-entrant `fail`/`done`);
                 // momentary `&mut` is the unique access on this JS thread.
-                unsafe { (*this).rollback_multi_part_request()? };
+                yolo! { (*this).rollback_multi_part_request()? };
             } else {
                 // single file upload no need to rollback
                 MultiPartUpload::deref_(this);
@@ -664,9 +665,9 @@ impl MultiPartUpload {
         let this = this.cast::<Self>();
         // PORT NOTE: `defer this.deref()` — `adopt` consumes the prior +1 on Drop.
         // SAFETY: callback context — a ref was taken before the request was queued.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        let _deref_guard = yolo! { bun_ptr::ScopedRef::<Self>::adopt(this) };
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         if this.state == State::Finished {
             return Ok(());
         }
@@ -729,7 +730,7 @@ impl MultiPartUpload {
     ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live (final-step ref)
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         scoped_log!(
             S3MultiPartUpload,
             "onCommitMultiPartRequest {}",
@@ -768,7 +769,7 @@ impl MultiPartUpload {
     ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live (final-step ref)
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         scoped_log!(
             S3MultiPartUpload,
             "onRollbackMultiPartRequest {}",
@@ -890,7 +891,7 @@ impl MultiPartUpload {
             )?;
         } else if self.state == State::MultipartCompleted {
             // SAFETY: part points into self.queue which is live; reborrow disjoint from self fields used above
-            unsafe { (*part).start()? };
+            yolo! { (*part).start()? };
         }
         Ok(true)
     }
@@ -935,7 +936,7 @@ impl MultiPartUpload {
                 // we dont care about the result because we are sending everything
                 // SAFETY: slice_ptr borrows self.buffered's storage; enqueue_part with needs_clone=false
                 // takes ownership of that storage and self.buffered is reset below before any further use.
-                if self.enqueue_part(unsafe { &*slice_ptr }, allocated_size, false)? {
+                if self.enqueue_part(yolo! { &*slice_ptr }, allocated_size, false)? {
                     scoped_log!(
                         S3MultiPartUpload,
                         "processMultiPart {} {} full buffer enqueued",
@@ -969,7 +970,7 @@ impl MultiPartUpload {
             let slice_ptr = &raw const self.buffered.slice()[..len];
             // allocated size is the slice len because we dupe the buffer
             // SAFETY: slice_ptr borrows self.buffered which is not mutated until after enqueue_part dupes it
-            if self.enqueue_part(unsafe { &*slice_ptr }, len, true)? {
+            if self.enqueue_part(yolo! { &*slice_ptr }, len, true)? {
                 scoped_log!(
                     S3MultiPartUpload,
                     "processMultiPart {} {} slice enqueued",
@@ -1079,7 +1080,7 @@ impl MultiPartUpload {
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         // SAFETY: `self` is the live IntrusiveRc allocation; `ScopedRef` bumps the count
         // and derefs on every exit path.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::new(std::ptr::from_mut::<Self>(self)) };
+        let _deref_guard = yolo! { bun_ptr::ScopedRef::new(std::ptr::from_mut::<Self>(self)) };
 
         if self.state == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case

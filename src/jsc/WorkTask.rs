@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
@@ -91,7 +92,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` was produced by heap::alloc in create_on_js_thread and
         // has not been freed.
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let mut this = yolo! { bun_core::heap::take(this) };
         this.ref_.unref(Async::js_vm_ctx());
         // drop(this) — Box freed at scope exit
     }
@@ -104,7 +105,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // field, so `from_task_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
         // `ctx` is read through the recovered backref in the same audited scope.
-        let (this, ctx) = unsafe {
+        let (this, ctx) = yolo! {
             let this = Self::from_task_ptr(task);
             (this, (*this).ctx)
         };
@@ -114,7 +115,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn run_from_js(this: *mut Self) -> Result<(), crate::JsTerminated> {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread,
         // exclusively owned by the JS thread at this point.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         let ctx = this.ctx;
         let tracker = this.async_task_tracker;
         let global_this = this.global_this.get();
@@ -126,7 +127,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
 
     pub fn schedule(this: *mut Self) {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         this.ref_.ref_(Async::js_vm_ctx());
         this.async_task_tracker.did_schedule(this.global_this.get());
         WorkPool::schedule(&raw mut this.task);
@@ -138,7 +139,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // re-initializes it in place and returns the same address. Passing
         // `this` while holding `&mut *this` is sound because `from` only stores
         // the pointer (does not dereference it).
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         let event_loop = this_ref.event_loop;
         let task = std::ptr::from_mut(
             this_ref

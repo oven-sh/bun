@@ -1,6 +1,7 @@
 #![allow(unused_imports, dead_code, unused_variables)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_short};
 use core::ptr;
 use std::ffi::{CStr, CString};
@@ -331,12 +332,12 @@ pub mod posix_spawn {
         pub fn init() -> Result<PosixSpawnAttr, Error> {
             let mut attr = core::mem::MaybeUninit::<system::posix_spawnattr_t>::uninit();
             // SAFETY: posix_spawnattr_init writes into attr on SUCCESS
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 system::posix_spawnattr_init(attr.as_mut_ptr())
             }))?;
             // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
             Ok(PosixSpawnAttr {
-                attr: unsafe { attr.assume_init() },
+                attr: yolo! { attr.assume_init() },
                 detached: false,
                 pty_slave_fd: -1,
             })
@@ -345,7 +346,7 @@ pub mod posix_spawn {
         pub fn get(&self) -> Result<u16, Error> {
             let mut flags: c_short = 0;
             // SAFETY: self.attr is a live posix_spawnattr_t
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 system::posix_spawnattr_getflags(&self.attr, &mut flags)
             }))?;
             Ok(flags as u16) // Zig: `@as(u16, @bitCast(flags))`
@@ -356,14 +357,14 @@ pub mod posix_spawn {
             // signed/unsigned is the bitcast.
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 system::posix_spawnattr_setflags(&mut self.attr, flags_s)
             }))
         }
 
         pub fn reset_signals(&mut self) -> Result<(), Error> {
             // SAFETY: self.attr is a live posix_spawnattr_t
-            if unsafe { posix_spawnattr_reset_signals(&mut self.attr) } != 0 {
+            if yolo! { posix_spawnattr_reset_signals(&mut self.attr) } != 0 {
                 return Err(err!("SystemResources"));
             }
             Ok(())
@@ -374,7 +375,7 @@ pub mod posix_spawn {
     impl Drop for PosixSpawnAttr {
         fn drop(&mut self) {
             // SAFETY: self.attr was initialized by posix_spawnattr_init
-            unsafe { system::posix_spawnattr_destroy(&mut self.attr) };
+            yolo! { system::posix_spawnattr_destroy(&mut self.attr) };
         }
     }
 
@@ -395,12 +396,12 @@ pub mod posix_spawn {
             let mut actions =
                 core::mem::MaybeUninit::<system::posix_spawn_file_actions_t>::uninit();
             // SAFETY: posix_spawn_file_actions_init writes into actions on SUCCESS
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 system::posix_spawn_file_actions_init(actions.as_mut_ptr())
             }))?;
             // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
             Ok(PosixSpawnActions {
-                actions: unsafe { actions.assume_init() },
+                actions: yolo! { actions.assume_init() },
             })
         }
 
@@ -419,7 +420,7 @@ pub mod posix_spawn {
             // Zig: `@as(c_int, @bitCast(flags))`
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 system::posix_spawn_file_actions_addopen(
                     &mut self.actions,
                     fd.native(),
@@ -432,7 +433,7 @@ pub mod posix_spawn {
 
         pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 system::posix_spawn_file_actions_addclose(&mut self.actions, fd.native())
             }))
         }
@@ -443,7 +444,7 @@ pub mod posix_spawn {
             }
 
             // SAFETY: self.actions is live
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 system::posix_spawn_file_actions_adddup2(
                     &mut self.actions,
                     fd.native(),
@@ -454,7 +455,7 @@ pub mod posix_spawn {
 
         pub fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
                     &mut self.actions,
                     fd.native(),
@@ -470,7 +471,7 @@ pub mod posix_spawn {
         // deliberately not pub
         fn chdir_z(&mut self, path: &CStr) -> Result<(), Error> {
             // SAFETY: self.actions is live; path is NUL-terminated
-            spawn_errno(errno(unsafe {
+            spawn_errno(errno(yolo! {
                 super::darwin_spawn_np::posix_spawn_file_actions_addchdir_np(
                     &mut self.actions,
                     path.as_ptr(),
@@ -483,7 +484,7 @@ pub mod posix_spawn {
     impl Drop for PosixSpawnActions {
         fn drop(&mut self) {
             // SAFETY: self.actions was initialized by posix_spawn_file_actions_init
-            unsafe { system::posix_spawn_file_actions_destroy(&mut self.actions) };
+            yolo! { system::posix_spawn_file_actions_destroy(&mut self.actions) };
         }
     }
 
@@ -516,12 +517,12 @@ pub mod posix_spawn {
 
         // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
         let rc =
-            unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
+            yolo! { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
         let _ = &mut req; // keep req alive across the call (matches Zig taking &req of a local copy)
 
         if cfg!(debug_assertions) {
             // SAFETY: argv has at least one element (the NULL terminator)
-            let arg0 = unsafe {
+            let arg0 = yolo! {
                 let p = *argv;
                 if p.is_null() {
                     &b""[..]
@@ -542,7 +543,7 @@ pub mod posix_spawn {
         }
 
         // SAFETY: argv has at least one element (the NULL terminator)
-        let arg0 = unsafe {
+        let arg0 = yolo! {
             let p = *argv;
             if p.is_null() {
                 &b""[..]
@@ -689,7 +690,7 @@ pub mod posix_spawn {
                         bun_spawn::FileActionType::Open => {
                             // SAFETY: `.Open` actions always have a non-null path
                             // backed by a CString in `act.paths` (see `open_z`).
-                            let p = unsafe { bun_core::ffi::cstr(action.path) };
+                            let p = yolo! { bun_core::ffi::cstr(action.path) };
                             if let Err(e) = posix_actions.open_z(
                                 Fd::from_native(action.fds[0]),
                                 p,
@@ -731,7 +732,7 @@ pub mod posix_spawn {
             // `libc` crate types argv/envp as `*const *mut c_char` (matching
             // the C header's non-const `char *const argv[]`); the strings are
             // never written, so the const→mut element cast is sound.
-            let rc = unsafe {
+            let rc = yolo! {
                 system::posix_spawn(
                     &mut pid,
                     path.as_ptr(),
@@ -779,7 +780,7 @@ pub mod posix_spawn {
         {
             let mut pid: pid_t = 0;
             // SAFETY: all pointers valid; argv/envp NULL-terminated
-            let rc = unsafe {
+            let rc = yolo! {
                 system::posix_spawn(
                     &mut pid,
                     path.as_ptr(),
@@ -823,7 +824,7 @@ pub mod posix_spawn {
         let mut status: PidStatus = 0;
         loop {
             // SAFETY: status is a valid out-pointer
-            let rc = unsafe {
+            let rc = yolo! {
                 system::waitpid(
                     pid,
                     &raw mut status,
@@ -862,7 +863,7 @@ pub mod posix_spawn {
         };
         loop {
             // SAFETY: status is a valid out-pointer; usage_ptr is either null or a valid *mut Rusage
-            let rc = unsafe {
+            let rc = yolo! {
                 system::wait4(
                     pid,
                     &raw mut status,

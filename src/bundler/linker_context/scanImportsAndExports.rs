@@ -11,6 +11,7 @@
 // use site through `*mut [T]`. This is the documented escape hatch in
 // `bun_collections::multi_array_list::Slice::items_raw`.
 
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_ast::Source;
@@ -68,7 +69,7 @@ macro_rules! col {
     ($p:expr) => {
         // SAFETY: see module-level note. Caller ensures no aliasing `&mut` to
         // the *same* column is live across this deref.
-        unsafe { &mut *$p }
+        yolo! { &mut *$p }
     };
 }
 
@@ -76,7 +77,7 @@ macro_rules! col {
 macro_rules! col_ref {
     ($p:expr) => {
         // SAFETY: see `col!`.
-        unsafe { &*$p }
+        yolo! { &*$p }
     };
 }
 
@@ -307,7 +308,7 @@ pub fn scan_imports_and_exports(
             // borrow into ast/meta/files and makes no `&mut this` calls, so
             // the reborrows are exclusive for the block. All five derefs share
             // the same invariant, so they are grouped under one `unsafe`.
-            let mut dependency_wrapper = unsafe {
+            let mut dependency_wrapper = yolo! {
                 DependencyWrapper {
                     flags: &mut *flags,
                     import_records: &*import_records_list,
@@ -434,7 +435,7 @@ pub fn scan_imports_and_exports(
                         // pass the element by raw `*const` so no `&mut`
                         // protector spans the `&mut this` call (the callee
                         // re-reads this same column via `self.graph.ast`).
-                        unsafe { core::ptr::addr_of!((*named_imports)[source_index]) },
+                        yolo! { core::ptr::addr_of!((*named_imports)[source_index]) },
                         &mut col!(imports_to_bind_list)[source_index],
                         source_index_.get(),
                     );
@@ -462,8 +463,8 @@ pub fn scan_imports_and_exports(
                         .graph
                         .symbols
                         .follow(col_ref!(module_refs)[source_index]);
-                    unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
-                    unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
+                    yolo! { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
+                    yolo! { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
                 {
@@ -520,7 +521,7 @@ pub fn scan_imports_and_exports(
                 ctx,
                 |ctx: &Step5Ctx<'_>, source_index: Index, i: usize| {
                     // SAFETY: see `Step5Ctx` Sync justification above.
-                    unsafe { LinkerContext::do_step5(ctx.0, source_index, i) };
+                    yolo! { LinkerContext::do_step5(ctx.0, source_index, i) };
                 },
                 &mut reachable[..],
             );
@@ -637,7 +638,7 @@ pub fn scan_imports_and_exports(
                 if r#ref.is_valid() {
                     let original_name =
                         builder.fmt(format_args!("init_{}", source.fmt_identifier()));
-                    unsafe { this.graph.symbol_mut(r#ref) }.original_name =
+                    yolo! { this.graph.symbol_mut(r#ref) }.original_name =
                         bun_ast::StoreStr::new(original_name);
                 }
             }
@@ -663,13 +664,13 @@ pub fn scan_imports_and_exports(
                 if exports_ref.is_valid() {
                     if let Some(s) = this.graph.symbols.get(exports_ref) {
                         // SAFETY: `Map::get` returns a stable `*mut Symbol`.
-                        unsafe { (*s).original_name = exports_name };
+                        yolo! { (*s).original_name = exports_name };
                     }
                 }
                 if module_ref.is_valid() {
                     if let Some(s) = this.graph.symbols.get(module_ref) {
                         // SAFETY: `Map::get` returns a stable `*mut Symbol`.
-                        unsafe { (*s).original_name = module_name };
+                        yolo! { (*s).original_name = module_name };
                     }
                 }
             }
@@ -1678,7 +1679,7 @@ mod __css_validation {
                         // valid `#[repr(u16)]` discriminant. `PropertyIdTag` lives in
                         // `bun_css` (generated) and exposes no `from_repr`; once it does,
                         // replace this transmute with that accessor.
-                        unsafe {
+                        yolo! {
                             core::mem::transmute::<u16, PropertyIdTag>(
                                 u16::try_from(property_tag).expect("int cast"),
                             )

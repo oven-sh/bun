@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::fmt;
 use core::sync::atomic::AtomicU32;
@@ -91,13 +92,13 @@ impl AnySourceProvider {
             // SAFETY: pointers originate from SourceContentPtr::from_*_provider and are
             // FFI handles whose lifetime is tied to the JSC SourceProvider; valid while
             // the ParsedSourceMap is reachable.
-            AnySourceProvider::Zig(p) => unsafe {
+            AnySourceProvider::Zig(p) => yolo! {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
-            AnySourceProvider::Bake(p) => unsafe {
+            AnySourceProvider::Bake(p) => yolo! {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
-            AnySourceProvider::DevServer(p) => unsafe {
+            AnySourceProvider::DevServer(p) => yolo! {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
         }
@@ -228,7 +229,7 @@ impl ParsedSourceMap {
     #[inline]
     pub unsafe fn ref_(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
-        unsafe { std::sync::Arc::increment_strong_count(this.cast_const()) };
+        yolo! { std::sync::Arc::increment_strong_count(this.cast_const()) };
     }
 
     /// See [`ref_`].
@@ -239,7 +240,7 @@ impl ParsedSourceMap {
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
-        unsafe { std::sync::Arc::decrement_strong_count(this.cast_const()) };
+        yolo! { std::sync::Arc::decrement_strong_count(this.cast_const()) };
     }
 
     /// Construct a `ParsedSourceMap` whose mappings are backed by an

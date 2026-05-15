@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -56,7 +57,7 @@ impl Bin {
         builder: &mut B,
     ) -> u32 {
         // SAFETY: tag determines the active union field
-        unsafe {
+        yolo! {
             match self.tag {
                 Tag::File => builder.count(self.value.file.slice(buf)),
                 Tag::NamedFile => {
@@ -91,7 +92,7 @@ impl Bin {
         }
 
         // SAFETY: tag was just checked to match the active union field
-        unsafe {
+        yolo! {
             match l.tag {
                 Tag::None => true,
                 Tag::File => l.value.file.eql(r.value.file, l_buf, r_buf),
@@ -152,7 +153,7 @@ impl Bin {
         builder: &mut B,
     ) -> Bin {
         // SAFETY: tag determines the active union field
-        unsafe {
+        yolo! {
             match self.tag {
                 Tag::None => Bin {
                     tag: Tag::None,
@@ -315,7 +316,7 @@ impl Bin {
     ) -> fmt::Result {
         debug_assert!(self.tag != Tag::None);
         // SAFETY: tag determines the active union field
-        unsafe {
+        yolo! {
             if STYLE == ToJsonStyle::SingleLine {
                 match self.tag {
                     Tag::None => {}
@@ -512,7 +513,7 @@ impl Value {
     #[inline]
     pub fn init_none() -> Value {
         // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { bun_core::ffi::zeroed_unchecked() }
+        yolo! { bun_core::ffi::zeroed_unchecked() }
     }
     #[inline]
     pub fn init_file(file: String) -> Value {
@@ -1339,7 +1340,7 @@ impl<'a> Linker<'a> {
         // both outlive `self` and are not mutated for the duration of this
         // read (mirrors Zig's aliasing `*AbsPath`).
         let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
+            strings::without_trailing_slash(yolo! { (*self.target_node_modules_path).slice() });
 
         // PORT NOTE: reshaped for borrowck — track offset instead of remain.ptr arithmetic
         let mut off: usize = 0;
@@ -1414,7 +1415,7 @@ impl<'a> Linker<'a> {
         let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
 
         // SAFETY: tag determines the active union field
-        unsafe {
+        yolo! {
             match self.bin.tag {
                 Tag::None => {}
                 Tag::File => {
@@ -1624,10 +1625,10 @@ impl<'a> Linker<'a> {
         // PORT NOTE: see `link()` — detach abs_target_buf borrow via raw ptr.
         let abs_target_buf_ptr: *const u8 = self.abs_target_buf.as_ptr();
         // SAFETY: abs_target_buf is not written between here and use.
-        let package_dir = unsafe { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };
+        let package_dir = yolo! { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };
 
         // SAFETY: tag determines the active union field
-        unsafe {
+        yolo! {
             match self.bin.tag {
                 Tag::None => {}
                 Tag::File => {

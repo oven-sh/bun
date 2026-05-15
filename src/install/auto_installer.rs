@@ -20,6 +20,7 @@
 //! `ResolutionType`'s tag-checked accessors, from-hooks copies the shared
 //! `value` union by plain assignment.
 
+use bun_yolo::yolo;
 use core::mem::{align_of, size_of};
 
 use bun_install_types::resolver_hooks as hooks;
@@ -210,7 +211,7 @@ impl hooks::AutoInstaller for PackageManager {
         let pm: *mut PackageManager = self;
         // SAFETY: `pm` derives from `&mut self`; reborrows below are disjoint
         // from `string_builder`'s borrow of `lockfile.{string_bytes,string_pool}`.
-        let lockfile: &mut lockfile::Lockfile = unsafe { &mut *(*pm).lockfile };
+        let lockfile: &mut lockfile::Lockfile = yolo! { &mut *(*pm).lockfile };
 
         let mut package = Package::default();
         let mut string_builder = crate::string_builder!(lockfile);
@@ -258,7 +259,7 @@ impl hooks::AutoInstaller for PackageManager {
             }
             // SAFETY: `pm` is the unique owner; `string_builder` borrows
             // disjoint lockfile fields.
-            let pm_ref: &mut PackageManager = unsafe { &mut *pm };
+            let pm_ref: &mut PackageManager = yolo! { &mut *pm };
             match dep.clone_in(pm_ref, source_buf, &mut string_builder) {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
@@ -335,7 +336,7 @@ impl hooks::AutoInstaller for PackageManager {
         // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
         // (asserted above).
         let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
+            yolo! { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         let r = resolution_from_hooks(resolution);
         let out = directories::path_for_resolution(self, package_id, r, path_buf)?;
         Ok(&*out)
@@ -415,7 +416,7 @@ impl hooks::AutoInstaller for PackageManager {
     ) -> Option<hooks::DependencyVersion> {
         // SAFETY: resolver passes `self.log()` which is a valid `*mut Log`;
         // null is also accepted (Zig: `?*logger.Log`).
-        let log = unsafe { log.as_mut() };
+        let log = yolo! { log.as_mut() };
         // Zig threads `pm` so `parse_with_tag` can record `npm:` aliases into
         // `pm.known_npm_aliases` (dependency.zig:905).
         dependency::parse(name, name_hash, version, sliced, log, Some(self))
@@ -431,7 +432,7 @@ impl hooks::AutoInstaller for PackageManager {
         log: *mut bun_ast::Log,
     ) -> Option<hooks::DependencyVersion> {
         // SAFETY: see `parse_dependency`.
-        let log = unsafe { log.as_mut() };
+        let log = yolo! { log.as_mut() };
         dependency::parse_with_tag(
             name,
             Some(name_hash),
@@ -482,16 +483,16 @@ pub unsafe fn __bun_resolver_init_package_manager(
 
     // SAFETY: `install` is either null or points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
-    let bun_install: Option<&crate::bun_schema::api::BunInstall> = unsafe {
+    let bun_install: Option<&crate::bun_schema::api::BunInstall> = yolo! {
         install
             .cast::<crate::bun_schema::api::BunInstall>()
             .as_ref()
     };
     // SAFETY: caller guarantees `log` / `env` are non-null process-lifetime
     // pointers (resolver `.expect`s `env_loader` before calling).
-    let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
+    let log_ref: &mut bun_ast::Log = yolo! { &mut *log };
     let env_ref: &mut bun_dotenv::Loader<'static> =
-        unsafe { &mut *env.cast::<bun_dotenv::Loader<'static>>() };
+        yolo! { &mut *env.cast::<bun_dotenv::Loader<'static>>() };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,

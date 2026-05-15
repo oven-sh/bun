@@ -24,6 +24,7 @@
 //! new handler appended. `detach()` removes a handler; the last one out tears down
 //! the OS watch.
 
+use bun_yolo::yolo;
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -145,7 +146,7 @@ impl PathWatcherManager {
         if let Err(e) = Platform::init(m) {
             // SAFETY: `m` came from `release(Box::new(..))` above and has not
             // been published — reclaim it so the failed init isn't a leak.
-            unsafe {
+            yolo! {
                 drop(bun_core::heap::take(
                     std::ptr::from_mut::<PathWatcherManager>(m),
                 ))
@@ -168,7 +169,7 @@ impl PathWatcherManager {
     /// Remove `watcher` from the dedup map. Caller holds `mutex`.
     fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) {
         // SAFETY: caller holds self.mutex; exclusive access to self.watchers.
-        let watchers = unsafe { &mut *self.watchers.get() };
+        let watchers = yolo! { &mut *self.watchers.get() };
         if let Some(i) = watchers.values().iter().position(|&w| w == watcher) {
             // Key is an owned Box<[u8]>; swap_remove_at drops it.
             watchers.swap_remove_at(i);
@@ -309,14 +310,14 @@ impl PathWatcher {
         // `manager` via the raw pointer so no `&mut PathWatcher` is asserted before
         // we hold `manager.mutex` — on macOS the CF thread may concurrently raw-read
         // the same field inside `on_fs_event` (see that fn's SAFETY note).
-        let Some(manager) = (unsafe { (*this).manager }) else {
+        let Some(manager) = (yolo! { (*this).manager }) else {
             // No manager → never registered (or already unlinked); we are sole owner.
             // SAFETY: sole owner; no other thread can reach `this`.
-            let w = unsafe { &mut *this };
+            let w = yolo! { &mut *this };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() == 0 {
                 // SAFETY: `this` was created via PathWatcher::new (heap::alloc).
-                unsafe { Self::destroy(this) };
+                yolo! { Self::destroy(this) };
             }
             return;
         };
@@ -327,7 +328,7 @@ impl PathWatcher {
         // `w` so its last use is before `unlock()` (NLL ends the borrow there) —
         // on macOS the tail below must not hold a `&mut` across `fse.deinit()`.
         {
-            let w = unsafe { &mut *this };
+            let w = yolo! { &mut *this };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
                 manager.mutex.unlock();
@@ -355,7 +356,7 @@ impl PathWatcher {
         }
         // SAFETY: `this` was created via PathWatcher::new (heap::alloc); no other thread
         // can reach it after unlink + remove_watch above.
-        unsafe { Self::destroy(this) };
+        yolo! { Self::destroy(this) };
     }
 
     /// # Safety
@@ -363,7 +364,7 @@ impl PathWatcher {
     /// references (handlers empty, removed from manager maps).
     unsafe fn destroy(this: *mut PathWatcher) {
         // handlers, platform, path all dropped by Box drop.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 
@@ -432,10 +433,10 @@ pub fn watch(
     manager.mutex.lock();
 
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
-    let watchers = unsafe { &mut *manager.watchers.get() };
+    let watchers = yolo! { &mut *manager.watchers.get() };
     if let Some(&existing) = watchers.get(key) {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+        yolo! { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
         manager.mutex.unlock();
         return Ok(existing);
     }
@@ -450,7 +451,7 @@ pub fn watch(
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
+    yolo! { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
     handle_oom(watchers.put(key, watcher));
 
     // Linux/FreeBSD: `addWatch` mutates the platform dispatch maps (wd_map/entries)
@@ -465,13 +466,13 @@ pub fn watch(
     #[cfg(not(target_os = "macos"))]
     {
         // SAFETY: watcher live under manager.mutex.
-        if let Err(err) = Platform::add_watch(manager, unsafe { &mut *watcher }) {
+        if let Err(err) = Platform::add_watch(manager, yolo! { &mut *watcher }) {
             // Still under the same lock as the map insertion, so no other thread
             // can have observed `watcher` yet — unconditional destroy is safe.
             manager.unlink_watcher_locked(watcher);
             manager.mutex.unlock();
             // SAFETY: no other thread observed watcher.
-            unsafe {
+            yolo! {
                 (*watcher).manager = None;
                 PathWatcher::destroy(watcher);
             }
@@ -489,7 +490,7 @@ pub fn watch(
 
         // SAFETY: watcher heap-allocated; reachable via dedup map but FSEvents not yet
         // scheduled so no concurrent emit.
-        if let Err(err) = Platform::add_watch(manager, unsafe { &mut *watcher }) {
+        if let Err(err) = Platform::add_watch(manager, yolo! { &mut *watcher }) {
             // `watcher` was visible in the dedup map while we were unlocked above; a
             // concurrent Worker's `fs.watch()` on the same path may have attached a
             // handler and already returned `watcher` to its caller. Only destroy if
@@ -500,7 +501,7 @@ pub fn watch(
             manager.mutex.lock();
             manager.unlink_watcher_locked(watcher);
             // SAFETY: holding manager.mutex.
-            let w = unsafe { &mut *watcher };
+            let w = yolo! { &mut *watcher };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
                 w.emit_error(err.clone());
@@ -511,7 +512,7 @@ pub fn watch(
             w.manager = None;
             manager.mutex.unlock();
             // SAFETY: last handler removed; no other thread holds watcher.
-            unsafe { PathWatcher::destroy(watcher) };
+            yolo! { PathWatcher::destroy(watcher) };
             return Err(err.without_path());
         }
         return Ok(watcher);
@@ -676,7 +677,7 @@ impl Linux {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
         use bun_sys::linux::IN;
         // SAFETY: thin wrapper over libc::inotify_init1.
-        let rc = unsafe { sys::linux::inotify_init1(IN::CLOEXEC) };
+        let rc = yolo! { sys::linux::inotify_init1(IN::CLOEXEC) };
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
@@ -686,7 +687,7 @@ impl Linux {
         let mgr_ptr = std::ptr::from_mut::<PathWatcherManager>(manager) as usize;
         match std::thread::Builder::new().spawn(move || {
             // SAFETY: manager is process-global (&'static), never freed.
-            Linux::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
+            Linux::thread_main(yolo! { &*(mgr_ptr as *const PathWatcherManager) })
         }) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
@@ -726,7 +727,7 @@ impl Linux {
         };
         let fd = manager.inotify_fd();
         // SAFETY: thin wrapper over libc::inotify_add_watch; abs_path is NUL-terminated.
-        let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
+        let rc = yolo! { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
         if rc < 0 {
             // ENOTDIR/ENOENT during a recursive walk just means we raced; skip.
             if !subpath.is_empty() {
@@ -737,7 +738,7 @@ impl Linux {
         }
         let wd: i32 = rc;
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
-        let owners = unsafe { (*plat).wd_map.entry(wd).or_default() };
+        let owners = yolo! { (*plat).wd_map.entry(wd).or_default() };
         // This wd may already have this watcher as an owner:
         //   - IN_CREATE raced the initial walk (same subpath → the reassign is a no-op)
         //   - a subdirectory was *renamed* within the tree: IN_MOVED_TO re-adds it,
@@ -787,7 +788,7 @@ impl Linux {
         let plat: *mut Linux = manager.platform.get();
         let fd = manager.inotify_fd();
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
-        let wd_map = unsafe { &mut (*plat).wd_map };
+        let wd_map = yolo! { &mut (*plat).wd_map };
         for &wd in watcher.platform.wds.iter() {
             let Some(owners) = wd_map.get_mut(&wd) else {
                 continue;
@@ -803,7 +804,7 @@ impl Linux {
             if owners.is_empty() {
                 wd_map.remove(&wd);
                 // SAFETY: thin wrapper over libc::inotify_rm_watch.
-                unsafe { sys::linux::inotify_rm_watch(fd.native(), wd) };
+                yolo! { sys::linux::inotify_rm_watch(fd.native(), wd) };
             }
         }
         watcher.platform.wds.clear();
@@ -825,7 +826,7 @@ impl Linux {
 
         while running.load(Ordering::Acquire) {
             // SAFETY: buf is valid for buf.0.len() bytes; fd is a plain c_int.
-            let rc = unsafe { sys::linux::read(fd.native(), buf.0.as_mut_ptr(), buf.0.len()) };
+            let rc = yolo! { sys::linux::read(fd.native(), buf.0.as_mut_ptr(), buf.0.len()) };
             match sys::get_errno(rc) {
                 E::SUCCESS => {}
                 E::EAGAIN | E::EINTR => continue,
@@ -838,10 +839,10 @@ impl Linux {
                     };
                     manager.mutex.lock();
                     // SAFETY: holding manager.mutex.
-                    let watchers = unsafe { &*manager.watchers.get() };
+                    let watchers = yolo! { &*manager.watchers.get() };
                     for &w in watchers.values() {
                         // SAFETY: holding manager.mutex; w is live.
-                        unsafe {
+                        yolo! {
                             (*w).emit_error(err.clone());
                             (*w).flush();
                         }
@@ -862,18 +863,18 @@ impl Linux {
             let mut i: usize = 0;
             while i < n {
                 // SAFETY: inotify guarantees whole events; buf[i..] starts at an event header.
-                let ev: &InotifyEvent = unsafe { &*buf.0.as_ptr().add(i).cast::<InotifyEvent>() };
+                let ev: &InotifyEvent = yolo! { &*buf.0.as_ptr().add(i).cast::<InotifyEvent>() };
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
 
                 // Kernel retired this wd (rm_watch, or the watched inode is gone).
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
-                    let wd_map = unsafe { &mut (*plat).wd_map };
+                    let wd_map = yolo! { &mut (*plat).wd_map };
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
                             // SAFETY: o.watcher live under manager.mutex.
-                            let w = unsafe { &mut *o.watcher };
+                            let w = yolo! { &mut *o.watcher };
                             if let Some(idx) = w.platform.wds.iter().position(|&x| x == wd) {
                                 w.platform.wds.swap_remove(idx);
                             }
@@ -884,15 +885,15 @@ impl Linux {
                 }
 
                 // SAFETY: holding manager.mutex.
-                if unsafe { (*plat).wd_map.get(&wd).is_none() } {
+                if yolo! { (*plat).wd_map.get(&wd).is_none() } {
                     continue;
                 }
 
                 let name: &[u8] = if ev.name_len > 0 {
                     // SAFETY: i was just advanced past this event's name_len bytes; offset is within buf[0..n].
-                    let name_ptr = unsafe { buf.0.as_ptr().add(i - ev.name_len as usize) };
+                    let name_ptr = yolo! { buf.0.as_ptr().add(i - ev.name_len as usize) };
                     // SAFETY: kernel NUL-pads name within name_len bytes.
-                    unsafe { bun_core::ffi::cstr(name_ptr.cast()).to_bytes() }
+                    yolo! { bun_core::ffi::cstr(name_ptr.cast()).to_bytes() }
                 } else {
                     b""
                 };
@@ -924,7 +925,7 @@ impl Linux {
                     // calls `add_one`/`walk_and_add`, which take their own `&mut wd_map`
                     // and may rehash. Extract the owner's watcher ptr and subpath bytes,
                     // then drop the map borrow before any of that runs.
-                    let (owner_watcher, owner_subpath): (*mut PathWatcher, &[u8]) = unsafe {
+                    let (owner_watcher, owner_subpath): (*mut PathWatcher, &[u8]) = yolo! {
                         let Some(owners) = (*plat).wd_map.get(&wd) else {
                             break;
                         };
@@ -949,14 +950,14 @@ impl Linux {
                     // `&mut self` receiver. `path` is a `ZBox`; its heap bytes are a
                     // separate allocation, so this mirrors the `owner_subpath`
                     // raw-ptr laundering above.
-                    let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = unsafe {
+                    let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = yolo! {
                         (
                             (*owner_watcher).is_file,
                             (*owner_watcher).recursive,
                             &*std::ptr::from_ref::<[u8]>((*owner_watcher).path.as_bytes()),
                         )
                     };
-                    let watcher = unsafe { &mut *owner_watcher };
+                    let watcher = yolo! { &mut *owner_watcher };
 
                     // Build the path relative to this owner's root.
                     let rel: &[u8] = if watcher_is_file {
@@ -1009,7 +1010,7 @@ impl Linux {
 
             for &w in touched.keys() {
                 // SAFETY: w live under manager.mutex.
-                unsafe { (*w).flush() };
+                yolo! { (*w).flush() };
             }
             manager.mutex.unlock();
         }
@@ -1050,7 +1051,7 @@ impl Drop for DarwinWatch {
         if let Some(fse) = self.fsevents.take() {
             // SAFETY: fse came from `heap::alloc` in `add_watch`; reconstitute
             // to run `FSEventsWatcher::drop` (→ `unregister_watcher`).
-            drop(unsafe { bun_core::heap::take(fse) });
+            drop(yolo! { bun_core::heap::take(fse) });
         }
     }
 }
@@ -1108,10 +1109,10 @@ impl Darwin {
         // unlinked from the dedup map, `manager` already nulled). Project only the
         // `platform.fsevents` sub-place via the raw pointer; the CF thread's
         // concurrent raw read targets the disjoint `manager` field.
-        if let Some(fse) = unsafe { (*watcher).platform.fsevents.take() } {
+        if let Some(fse) = yolo! { (*watcher).platform.fsevents.take() } {
             // SAFETY: fse came from `heap::alloc` in `add_watch`; reconstitute to
             // run `FSEventsWatcher::drop` (→ `unregister_watcher`).
-            drop(unsafe { bun_core::heap::take(fse) });
+            drop(yolo! { bun_core::heap::take(fse) });
         }
     }
 
@@ -1138,12 +1139,12 @@ impl Darwin {
         };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex; see above.
-        if unsafe { (*watcher_ptr).manager.is_none() } {
+        if yolo! { (*watcher_ptr).manager.is_none() } {
             return;
         }
         // SAFETY: holding manager.mutex with `manager` still set → detach() has not
         // yet unlinked us, so no other `&mut PathWatcher` exists for this allocation.
-        let watcher = unsafe { &mut *watcher_ptr };
+        let watcher = yolo! { &mut *watcher_ptr };
         match event {
             Event::Rename(path) => watcher.emit(EventType::Rename, &path, is_file),
             Event::Change(path) => watcher.emit(EventType::Change, &path, is_file),
@@ -1160,11 +1161,11 @@ impl Darwin {
         };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex.
-        if unsafe { (*watcher_ptr).manager.is_none() } {
+        if yolo! { (*watcher_ptr).manager.is_none() } {
             return;
         }
         // SAFETY: holding manager.mutex with `manager` still set; exclusive.
-        unsafe { (*watcher_ptr).flush() };
+        yolo! { (*watcher_ptr).flush() };
     }
 }
 
@@ -1229,7 +1230,7 @@ impl Kqueue {
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
         match std::thread::Builder::new().spawn(move || {
             // SAFETY: manager is process-global (&'static), never freed.
-            Kqueue::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
+            Kqueue::thread_main(yolo! { &*(mgr_ptr as *const PathWatcherManager) })
         }) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
@@ -1306,7 +1307,7 @@ impl Kqueue {
         kev.udata = generation as _;
         let mut changes = [kev];
         // SAFETY: thin wrapper over libc::kevent.
-        let krc = unsafe {
+        let krc = yolo! {
             kevent(
                 kq.native(),
                 changes.as_ptr(),
@@ -1332,7 +1333,7 @@ impl Kqueue {
         }
 
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
-        unsafe {
+        yolo! {
             handle_oom((*plat).entries.put(
                 fd.native() as i32,
                 KqEntry {
@@ -1351,7 +1352,7 @@ impl Kqueue {
     /// Caller holds `manager.mutex`.
     fn remove_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) {
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
-        let entries = unsafe { &mut (*manager.platform.get()).entries };
+        let entries = yolo! { &mut (*manager.platform.get()).entries };
         for &ident in watcher.platform.fds.iter() {
             if let Some((_, entry)) = entries.fetch_swap_remove(&ident) {
                 // Closing the fd auto-removes the kevent.
@@ -1372,7 +1373,7 @@ impl Kqueue {
         let mut events: [Kevent; 128] = bun_core::ffi::zeroed();
         while running.load(Ordering::Acquire) {
             // SAFETY: thin wrapper over libc::kevent.
-            let count = unsafe {
+            let count = yolo! {
                 kevent(
                     kq.native(),
                     events.as_ptr(),
@@ -1389,7 +1390,7 @@ impl Kqueue {
             manager.mutex.lock();
             // SAFETY: holding manager.mutex; exclusive access to `entries`. This loop
             // never mutates `entries`, so a shared borrow suffices.
-            let entries = unsafe { &(*plat).entries };
+            let entries = yolo! { &(*plat).entries };
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
 
             for kev in &events[..count as usize] {
@@ -1413,8 +1414,8 @@ impl Kqueue {
                 // of `watcher.path` cannot coexist with that exclusive reborrow.
                 // `path` is a `ZBox`; its heap bytes are a separate allocation.
                 let watcher_path: &[u8] =
-                    unsafe { &*((*entry.watcher).path.as_bytes() as *const [u8]) };
-                let watcher = unsafe { &mut *entry.watcher };
+                    yolo! { &*((*entry.watcher).path.as_bytes() as *const [u8]) };
+                let watcher = yolo! { &mut *entry.watcher };
 
                 let event_type: EventType = if kev.fflags
                     & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE | NOTE::LINK)
@@ -1439,7 +1440,7 @@ impl Kqueue {
 
             for &w in touched.keys() {
                 // SAFETY: w live under manager.mutex.
-                unsafe { (*w).flush() };
+                yolo! { (*w).flush() };
             }
             manager.mutex.unlock();
         }

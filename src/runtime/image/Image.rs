@@ -8,6 +8,7 @@
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, via `jsc.ConcurrentPromiseTask`.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem;
 
@@ -682,7 +683,7 @@ impl Image {
                     // bytes live in the JS heap, not in `ab`. `this_value`
                     // keeps the buffer alive for this JS-thread call — see fn
                     // doc + TODO(port) above re: borrow-into-JS-heap.
-                    unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
+                    yolo! { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
                 }),
             Source::Owned(b) => Some(b.as_slice()),
             Source::Path(_) | Source::Blob(_) => None,
@@ -721,7 +722,7 @@ impl Image {
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
                 // SAFETY: FFI call; out-params are valid pointers to locals.
-                match unsafe {
+                match yolo! {
                     JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
                 } {
                     0 => Err(PinError::Detached),
@@ -734,7 +735,7 @@ impl Image {
                         } else {
                             // SAFETY: classifier guarantees `ptr[0..len]` is
                             // valid for the duration of this call (JS thread).
-                            let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+                            let copied = yolo! { bun_core::ffi::slice(ptr, len) }.to_vec();
                             Ok(Input {
                                 copied: Some(copied),
                                 ..Default::default()
@@ -749,12 +750,12 @@ impl Image {
                     2 => {
                         if len == 0 {
                             // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            yolo! { JSC__JSValue__unpinArrayBuffer(v) };
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned for the lifetime of the task;
                             // unpinned in `then()` via `Input::release()`.
-                            let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
+                            let bytes = yolo! { bun_core::ffi::slice(ptr, len) };
                             Ok(Input {
                                 bytes: bun_ptr::RawSlice::new(bytes),
                                 pinned: v,
@@ -1128,7 +1129,7 @@ impl Image {
         // SAFETY: `raw` is freshly leaked; `schedule()` only writes the
         // intrusive `task` field into the work-pool queue. The worker thread
         // touches `ctx`/`task` only; `promise` was read above on this thread.
-        unsafe { (*raw).schedule() };
+        yolo! { (*raw).schedule() };
         Ok(promise_value)
     }
 
@@ -1265,7 +1266,7 @@ impl<'a> BlobReadChain<'a> {
             return Err(global.throw(format_args!("Image: Blob source is no longer a Blob")));
         };
         // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
-        let blob = unsafe { &mut *blob };
+        let blob = yolo! { &mut *blob };
 
         // Same Strong-ref contract as the regular pending_tasks bump — keeps
         // the wrapper (and its sourceJS slot) alive until the read settles.
@@ -1291,7 +1292,7 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        blob.read_bytes_to_handler(unsafe { &raw mut *raw }, global)
+        blob.read_bytes_to_handler(yolo! { &raw mut *raw }, global)
             .map_err(jsc::JsError::from)?;
         Ok(promise)
     }
@@ -1302,7 +1303,7 @@ impl<'a> BlobReadChain<'a> {
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
         // mutation goes through `Cell`/`JsCell`.
-        let image = unsafe { &*self.image };
+        let image = yolo! { &*self.image };
         let mut outer = self.outer;
         let kind = self.kind;
         let deliver = self.deliver;
@@ -1370,7 +1371,7 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
         // `read_bytes_to_handler` in `start()`; we are the sole consumer on
         // the JS thread. Reconstruct the Box so the body can move fields out
         // and free the allocation (mirrors Zig `bun.destroy(self)`).
-        let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
+        let boxed = yolo! { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
         boxed.on_read_bytes_impl(result);
     }
 }
@@ -1440,7 +1441,7 @@ impl Input {
         if !self.pinned.is_empty() {
             // SAFETY: JS thread; `pinned` was returned by
             // `JSC__JSValue__borrowBytesForOffThread` with mode 2.
-            unsafe { JSC__JSValue__unpinArrayBuffer(self.pinned) };
+            yolo! { JSC__JSValue__unpinArrayBuffer(self.pinned) };
         }
         self.copied = None;
     }
@@ -1500,7 +1501,7 @@ impl<'a> PipelineTask<'a> {
         let input: &[u8] = if let Some(p) = self.input.path {
             // SAFETY: `p` borrows `image.source.path`, which outlives the task
             // because `this_ref` is held Strong while pending_tasks > 0.
-            let p: &ZStr = unsafe { &*p };
+            let p: &ZStr = yolo! { &*p };
             // The path string came straight from the constructor, so treat
             // it as untrusted: open + fstat first instead of `readFrom`.
             //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
@@ -1721,7 +1722,7 @@ impl<'a> PipelineTask<'a> {
         let global = self.global;
         // SAFETY: BACKREF; JS thread; wrapper kept alive by `this_ref` Strong.
         // R-2: shared deref — mutation goes through `Cell`.
-        let image = unsafe { &*self.image };
+        let image = yolo! { &*self.image };
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `self.image.*` there would race the synchronous getters.
         match &self.result {
@@ -1745,14 +1746,14 @@ impl<'a> PipelineTask<'a> {
                 let out = mem::ManuallyDrop::new(out);
                 // SAFETY: `out.bytes` is a non-null fat pointer into a live
                 // codec allocation; valid until `out.free` runs.
-                let out_slice: &[u8] = unsafe { out.bytes.as_ref() };
+                let out_slice: &[u8] = yolo! { out.bytes.as_ref() };
                 match &mut self.deliver {
                     // The codec's own allocation is handed straight to JS with the
                     // codec's free as the finalizer — no dupe of the output.
                     Deliver::Uint8Array => {
                         // SAFETY: see `out_slice` above; mutability is for the
                         // `from_bytes` signature only — JS takes ownership.
-                        let mut_slice = unsafe {
+                        let mut_slice = yolo! {
                             core::slice::from_raw_parts_mut(
                                 out.bytes.as_ptr().cast::<u8>(),
                                 out_slice.len(),
@@ -1781,7 +1782,7 @@ impl<'a> PipelineTask<'a> {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
                         // SAFETY: explicit free in lieu of suppressed `Drop`.
-                        unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
+                        yolo! { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
                         let mut blob = Blob::init(owned, global);
                         blob.content_type
                             .set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
@@ -2035,7 +2036,7 @@ impl<'a> Drop for PipelineTask<'a> {
         // SAFETY: `image` is a BACKREF kept alive by the wrapper's Strong
         // `this_ref` while pending_tasks > 0; we are on the JS thread.
         // R-2: shared deref — mutation goes through `Cell`/`JsCell`.
-        let image = unsafe { &*self.image };
+        let image = yolo! { &*self.image };
         image.pending_tasks.set(image.pending_tasks.get() - 1);
         if image.pending_tasks.get() == 0 {
             image.this_ref.with_mut(|r| r.downgrade());

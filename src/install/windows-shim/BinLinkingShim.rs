@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! This struct is used by bun.exe to encode `.bunx` files, to be consumed
 //! by the shim 'bun_shim_impl.exe'. The latter exe does not include this code.
 //!
@@ -423,7 +424,7 @@ mod host {
 
                 // SAFETY: wbuf has at least 4 u16s (= 2 u32s) remaining per encoded_length();
                 // Zig wrote via `*align(1) u32` — use unaligned writes.
-                unsafe {
+                yolo! {
                     (wbuf.as_mut_ptr().cast::<u32>())
                         .write_unaligned(u32::try_from(self.bin_path.len() * 2).expect("int cast"));
                     (wbuf.as_mut_ptr().add(2).cast::<u32>()).write_unaligned((s.utf16_len) * 2 + 2); // include the spaces!
@@ -432,7 +433,7 @@ mod host {
             }
 
             // SAFETY: Flags is #[repr(transparent)] over u16; one u16 slot remains.
-            unsafe {
+            yolo! {
                 (wbuf.as_mut_ptr().cast::<u16>()).write_unaligned(flags.bits());
             }
             wbuf = &mut wbuf[size_of::<u16>() / size_of::<u16>()..];

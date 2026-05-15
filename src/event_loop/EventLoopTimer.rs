@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -144,7 +145,7 @@ impl EventLoopTimer {
     pub fn js_timer_epoch(&self) -> Option<u32> {
         // SAFETY: `self` is a live timer; the extern impl reads `tag` and
         // recovers the container via `offset_of`.
-        unsafe { __bun_js_timer_epoch(self.tag, self) }
+        yolo! { __bun_js_timer_epoch(self.tag, self) }
     }
 
     fn ns(&self) -> u64 {
@@ -178,7 +179,7 @@ impl EventLoopTimer {
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
     ) {
         // SAFETY: per fn contract.
-        unsafe { __bun_fire_timer(this, now, vm) };
+        yolo! { __bun_fire_timer(this, now, vm) };
     }
 }
 
@@ -285,7 +286,7 @@ macro_rules! impl_timer_owner {
                 ) -> *mut Self {
                     // SAFETY: caller contract — `t` addresses `Self.$field`
                     // with whole-`Self` provenance.
-                    unsafe { ::bun_core::from_field_ptr!(Self, $field, t) }
+                    yolo! { ::bun_core::from_field_ptr!(Self, $field, t) }
                 }
             )+
         }

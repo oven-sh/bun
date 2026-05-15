@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::ffi::c_void;
 use std::io::Write as _;
@@ -897,7 +898,7 @@ pub mod package_manifest {
             pos: &mut u64,
         ) -> Result<(), Error> {
             // SAFETY: T is Copy POD; sliceAsBytes equivalent
-            let bytes = unsafe {
+            let bytes = yolo! {
                 bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
             };
             if bytes.is_empty() {
@@ -930,7 +931,7 @@ pub mod package_manifest {
             }
             let result_bytes = &remaining[..byte_len as usize];
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
-            let result = unsafe {
+            let result = yolo! {
                 bun_core::ffi::slice(
                     result_bytes.as_ptr().cast::<T>(),
                     result_bytes.len() / core::mem::size_of::<T>(),
@@ -967,7 +968,7 @@ pub mod package_manifest {
                 // struct definition statically asserts no gap remains. Every
                 // byte of `this.pkg` is therefore initialized, so viewing it
                 // as `&[u8]` is sound.
-                let bytes = unsafe {
+                let bytes = yolo! {
                     bun_core::ffi::slice(
                         (&raw const this.pkg).cast::<u8>(),
                         core::mem::size_of::<NpmPackage>(),
@@ -1013,7 +1014,7 @@ pub mod package_manifest {
             // singleton; `get_temporary_directory` only mutates its
             // lazy-init state and is called from the install thread.
             #[cfg(windows)]
-            let tmpdir_stub = unsafe { (*crate::package_manager::get()).get_temporary_directory() };
+            let tmpdir_stub = yolo! { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
             let path_to_use_for_opening_file =
                 bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
@@ -1229,7 +1230,7 @@ pub mod package_manifest {
 
                     // SAFETY: thread-pool callback contract — `task` points to
                     // `SaveTask.task`; allocated via `heap::into_raw` in `save_async`.
-                    let save_task = unsafe { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
+                    let save_task = yolo! { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
 
                     if let Err(err) = Serializer::save(
                         &save_task.manifest,
@@ -1263,7 +1264,7 @@ pub mod package_manifest {
             }));
 
             // SAFETY: task is a valid Box-allocated SaveTask
-            let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
+            let batch = PoolBatch::from(yolo! { core::ptr::addr_of_mut!((*task).task) });
             PackageManager::get().thread_pool.schedule(batch);
         }
 
@@ -2877,7 +2878,7 @@ impl PackageManifest {
 
                             if !bundle_all_deps && bundled_deps_set.swap_remove(name_str) {
                                 // SAFETY: bundled_deps_buf sized in counting pass
-                                unsafe {
+                                yolo! {
                                     *bundled_deps_buf.as_mut_ptr().add(bundled_deps_offset) =
                                         all_extern_strings[names_base + i].hash;
                                 }
@@ -3096,7 +3097,7 @@ impl PackageManifest {
 
                 if !parsed_version.version.tag.has_pre() {
                     // SAFETY: cursor < release_versions_len by counting pass
-                    unsafe {
+                    yolo! {
                         *all_semver_versions_ptr.add(release_versions_cursor) =
                             parsed_version.version.min();
                     }
@@ -3105,7 +3106,7 @@ impl PackageManifest {
                     versioned_package_releases_start += 1;
                 } else {
                     // SAFETY: cursor in prerelease range
-                    unsafe {
+                    yolo! {
                         *all_semver_versions_ptr.add(prerelease_versions_cursor) =
                             parsed_version.version.min();
                     }
@@ -3158,7 +3159,7 @@ impl PackageManifest {
                             .sliced(string_builder.allocated_slice());
 
                         // SAFETY: dist_tag_versions_start + dist_tag_i < all_semver_versions.len()
-                        unsafe {
+                        yolo! {
                             *all_semver_versions_ptr.add(dist_tag_versions_start + dist_tag_i) =
                                 Semver::Version::parse(sliced_string).version.min();
                         }

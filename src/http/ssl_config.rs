@@ -3,6 +3,7 @@
 //! JSC-dependent constructors (from_js / from_generated / read_from_blob /
 //! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
 
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
@@ -135,7 +136,7 @@ impl SSLConfig {
             None
         } else {
             // SAFETY: see `cstr_bytes` invariant — heap-owned, NUL-terminated.
-            Some(unsafe { CStr::from_ptr(self.server_name) })
+            Some(yolo! { CStr::from_ptr(self.server_name) })
         }
     }
 
@@ -449,13 +450,13 @@ unsafe impl Sync for SSLConfig {}
 /// INVARIANT: every `CStrPtr` stored on an `SSLConfig` (or in a `CStrSlice`)
 /// was produced by `clone_string` / `dupe_z` / `bun_core::dupe_z` (the TLS
 /// option parser) — all NUL-terminate — and remains valid for as long as the
-/// owning `SSLConfig` is alive. Centralises the `unsafe { ffi::cstr(..) }`
+/// owning `SSLConfig` is alive. Centralises the `yolo! { ffi::cstr(..) }`
 /// upgrade so the SAFETY argument lives in one place.
 #[inline]
 fn cstr_bytes<'a>(p: CStrPtr) -> &'a [u8] {
     debug_assert!(!p.is_null());
     // SAFETY: see fn doc — `p` is a live, NUL-terminated, owned C string.
-    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
+    yolo! { bun_core::ffi::cstr(p) }.to_bytes()
 }
 
 fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {

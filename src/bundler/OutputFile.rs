@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::options::Loader;
@@ -218,7 +219,7 @@ impl Value {
                 extern "C" fn on_free(_ctx: *mut c_void, buffer: *mut c_void, len: usize) {
                     // SAFETY: `buffer`/`len` were produced by `heap::alloc` on a
                     // `Box<[u8]>` below; reconstructing and dropping is sound.
-                    unsafe {
+                    yolo! {
                         drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                             buffer.cast::<u8>(),
                             len,

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
@@ -188,7 +189,7 @@ impl State {
     /// Create a new TCC compilation context
     pub fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
         // SAFETY: tcc_new has no preconditions.
-        NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)
+        NonNull::new(yolo! { tcc_new() }).ok_or(bun_alloc::AllocError)
     }
 
     /// Create and initialize a new TCC compilation context
@@ -200,17 +201,17 @@ impl State {
         // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
         let guard = scopeguard::guard(state_ptr, |p| {
             // SAFETY: p was returned by tcc_new and has not yet been deleted.
-            unsafe { tcc_delete(p.as_ptr()) }
+            yolo! { tcc_delete(p.as_ptr()) }
         });
         // SAFETY: state_ptr is valid and uniquely owned for the duration of this fn.
-        let state: &mut State = unsafe { &mut *state_ptr.as_ptr() };
+        let state: &mut State = yolo! { &mut *state_ptr.as_ptr() };
 
         // setOutputType has side effects that are conditional on existing
         // options, so this must be called after setOptions
         if !VALIDATE_OPTIONS {
             if let Some(options) = config.options {
                 // SAFETY: caller guarantees `options` outlives this init call.
-                match state.set_options(unsafe { options.as_ref() }) {
+                match state.set_options(yolo! { options.as_ref() }) {
                     Ok(()) => {}
                     Err(_) => {
                         if cfg!(debug_assertions) {
@@ -228,7 +229,7 @@ impl State {
         if VALIDATE_OPTIONS {
             if let Some(options) = config.options {
                 // SAFETY: caller guarantees `options` outlives this init call.
-                state.set_options(unsafe { options.as_ref() })?;
+                state.set_options(yolo! { options.as_ref() })?;
             }
         }
 
@@ -244,13 +245,13 @@ impl State {
     /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
     pub unsafe fn destroy(s: *mut State) {
         // PORT NOTE: opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
-        unsafe { tcc_delete(s) }
+        yolo! { tcc_delete(s) }
     }
 
     /// Set `CONFIG_TCCDIR` at runtime
     pub fn set_lib_path(&mut self, path: &ZStr) {
         // SAFETY: self is a valid *mut TCCState; path is NUL-terminated.
-        unsafe { tcc_set_lib_path(self, path.as_ptr()) }
+        yolo! { tcc_set_lib_path(self, path.as_ptr()) }
     }
 
     /// Set error/warning display callback
@@ -262,7 +263,7 @@ impl State {
         // SAFETY: ErrorFunc<Context> is ABI-identical to the untyped TCCErrorFunc inner fn
         // (both `extern "C" fn(*mut _, *const c_char)`, differing only in the opaque
         // pointee type); mirrors Zig `@ptrCast(errorFunc)`.
-        let erased: TCCErrorFunc = Some(unsafe {
+        let erased: TCCErrorFunc = Some(yolo! {
             bun_ptr::cast_fn_ptr::<
                 ErrorFunc<Context>,
                 unsafe extern "C" fn(*mut c_void, *const c_char),
@@ -270,7 +271,7 @@ impl State {
         });
         let opaque = error_opaque.map_or(core::ptr::null_mut(), |p| p.cast::<c_void>());
         // SAFETY: self is a valid *mut TCCState.
-        unsafe { tcc_set_error_func(self, opaque, erased) }
+        yolo! { tcc_set_error_func(self, opaque, erased) }
     }
 
     // NOTE: get_error_func / get_error_opaque wrappers removed — the underlying
@@ -281,7 +282,7 @@ impl State {
     /// Set options as from command line (multiple supported)
     pub fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; str_ is NUL-terminated.
-        if unsafe { tcc_set_options(self, str_.as_ptr()) } != 0 {
+        if yolo! { tcc_set_options(self, str_.as_ptr()) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::InvalidOptions);
         }
@@ -293,7 +294,7 @@ impl State {
     /// Add include path
     pub fn add_include_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; pathname is NUL-terminated.
-        if unsafe { tcc_add_include_path(self, pathname.as_ptr()) } != 0 {
+        if yolo! { tcc_add_include_path(self, pathname.as_ptr()) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::InvalidIncludePath);
         }
@@ -303,7 +304,7 @@ impl State {
     /// Add in system include path
     pub fn add_sys_include_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; pathname is NUL-terminated.
-        if unsafe { tcc_add_sysinclude_path(self, pathname.as_ptr()) } != 0 {
+        if yolo! { tcc_add_sysinclude_path(self, pathname.as_ptr()) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::InvalidIncludePath);
         }
@@ -317,7 +318,7 @@ impl State {
     /// ```
     pub fn define_symbol(&mut self, sym: &ZStr, value: &ZStr) {
         // SAFETY: self is a valid *mut TCCState; sym/value are NUL-terminated.
-        unsafe { tcc_define_symbol(self, sym.as_ptr(), value.as_ptr()) }
+        yolo! { tcc_define_symbol(self, sym.as_ptr(), value.as_ptr()) }
     }
 
     /// Define multiple preprocessor symbols with integer values.
@@ -356,7 +357,7 @@ impl State {
 
             // SAFETY: self is a valid *mut TCCState; both buffer regions are NUL-terminated and
             // outlive the FFI call (tcc_define_symbol copies its arguments).
-            unsafe { tcc_define_symbol(self, sym_ptr, val_ptr) }
+            yolo! { tcc_define_symbol(self, sym_ptr, val_ptr) }
         }
     }
 
@@ -367,7 +368,7 @@ impl State {
     /// ```
     pub fn undefine_symbol(&mut self, sym: &ZStr) {
         // SAFETY: self is a valid *mut TCCState; sym is NUL-terminated.
-        unsafe { tcc_undefine_symbol(self, sym.as_ptr()) }
+        yolo! { tcc_undefine_symbol(self, sym.as_ptr()) }
     }
 
     // ======================== Compiling ========================
@@ -379,7 +380,7 @@ impl State {
     /// - Syntax/formatting error
     pub fn add_file(&mut self, filename: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; filename is NUL-terminated.
-        if unsafe { tcc_add_file(self, filename.as_ptr()) } != 0 {
+        if yolo! { tcc_add_file(self, filename.as_ptr()) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::CompileError);
         }
@@ -389,7 +390,7 @@ impl State {
     /// Compile a string containing a C source.
     pub fn compile_string(&mut self, buf: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; buf is NUL-terminated.
-        if unsafe { tcc_compile_string(self, buf.as_ptr()) } != 0 {
+        if yolo! { tcc_compile_string(self, buf.as_ptr()) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::CompileError);
         }
@@ -401,7 +402,7 @@ impl State {
     /// Set output type. MUST BE CALLED before any compilation
     pub fn set_output_type(&mut self, output_type: OutputFormat) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState.
-        if unsafe { tcc_set_output_type(self, output_type as c_int) } == -1 {
+        if yolo! { tcc_set_output_type(self, output_type as c_int) } == -1 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::InvalidOutputType);
         }
@@ -411,7 +412,7 @@ impl State {
     /// Add a library. Equivalent to `-Lpath` option
     pub fn add_library_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; pathname is NUL-terminated.
-        if unsafe { tcc_add_library_path(self, pathname.as_ptr()) } != 0 {
+        if yolo! { tcc_add_library_path(self, pathname.as_ptr()) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::InvalidLibraryPath);
         }
@@ -421,7 +422,7 @@ impl State {
     /// Add a library. The library name is the same as the argument of the `-l` option
     pub fn add_library(&mut self, libraryname: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; libraryname is NUL-terminated.
-        if unsafe { tcc_add_library(self, libraryname.as_ptr()) } != 0 {
+        if yolo! { tcc_add_library(self, libraryname.as_ptr()) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::InvalidLibraryPath);
         }
@@ -431,7 +432,7 @@ impl State {
     /// Add a symbol to the compiled program
     pub fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; name is NUL-terminated; val is an opaque address.
-        if unsafe { tcc_add_symbol(self, name.as_ptr(), val) } != 0 {
+        if yolo! { tcc_add_symbol(self, name.as_ptr(), val) } != 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::InvalidSymbol);
         }
@@ -465,7 +466,7 @@ impl State {
             // Zig: `try s.addSymbol(field.name, value);`
             // SAFETY: self is a valid *mut TCCState; buf[..=len] is NUL-terminated and outlives
             // the FFI call (tcc_add_symbol copies the name); val is an opaque address.
-            if unsafe { tcc_add_symbol(self, buf.as_ptr().cast::<c_char>(), val) } != 0 {
+            if yolo! { tcc_add_symbol(self, buf.as_ptr().cast::<c_char>(), val) } != 0 {
                 // PERF(port): @branchHint(.unlikely)
                 return Err(Error::InvalidSymbol);
             }
@@ -476,7 +477,7 @@ impl State {
     /// Output an executable, library or object file. DO NOT call `relocate` before.
     pub fn output_file(&mut self, filename: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; filename is NUL-terminated.
-        if unsafe { tcc_output_file(self, filename.as_ptr()) } == -1 {
+        if yolo! { tcc_output_file(self, filename.as_ptr()) } == -1 {
             // PERF(port): @branchHint(.unlikely)
             // TODO(port): Zig source returns `error.OutputError` here, which is NOT in the Zig
             // `Error` set (latent compile error masked by lazy analysis). See enum note above.
@@ -491,7 +492,7 @@ impl State {
         // SAFETY: self is a valid *mut TCCState; argv points to argc NUL-terminated C strings.
         // Zig signature is `[*:0]const [*:0]const u8` but the extern takes `[*c][*c]u8`; cast
         // const away to match the C ABI (tcc does not mutate argv).
-        unsafe { tcc_run(self, argc, argv as *mut *mut c_char) }
+        yolo! { tcc_run(self, argc, argv as *mut *mut c_char) }
     }
 
     /// Do all relocations (needed before using `get_symbol`)
@@ -499,7 +500,7 @@ impl State {
     /// Returns Ok on success, error on failure.
     pub fn relocate(&mut self) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState.
-        let ret = unsafe { tcc_relocate(self) };
+        let ret = yolo! { tcc_relocate(self) };
         if ret < 0 {
             // PERF(port): @branchHint(.unlikely)
             return Err(Error::RelocationError);
@@ -510,21 +511,21 @@ impl State {
     /// Return symbol value or NULL if not found
     pub fn get_symbol(&mut self, name: &ZStr) -> Option<NonNull<Symbol>> {
         // SAFETY: self is a valid *mut TCCState; name is NUL-terminated.
-        NonNull::new(unsafe { tcc_get_symbol(self, name.as_ptr()) }.cast::<Symbol>())
+        NonNull::new(yolo! { tcc_get_symbol(self, name.as_ptr()) }.cast::<Symbol>())
     }
 
     /// Return symbol value or NULL if not found
     pub fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.
-        let erased = symbol_cb.map(|f| unsafe {
+        let erased = symbol_cb.map(|f| yolo! {
             bun_ptr::cast_fn_ptr::<
                 SymbolCallback,
                 unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void),
             >(f)
         });
         // SAFETY: self is a valid *mut TCCState.
-        unsafe { tcc_list_symbols(self, ctx, erased) }
+        yolo! { tcc_list_symbols(self, ctx, erased) }
     }
 }
 

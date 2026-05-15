@@ -11,6 +11,7 @@
 //! map to ordinary `Vec` operations and the `*_shallow` variants are the ones that need
 //! special handling (they must leak/forget the removed elements).
 
+use bun_yolo::yolo;
 use core::mem;
 
 use bun_alloc::AllocError;
@@ -118,7 +119,7 @@ impl<T> ArrayListAlignedIn<T> {
     pub fn deinit_shallow(mut self) {
         // Zig: `self.#unmanaged.deinit(...)` after the deep `deinit` already consumed items.
         // SAFETY: leaking the logical elements; capacity is still freed by Vec's Drop.
-        unsafe { self.unmanaged.set_len(0) };
+        yolo! { self.unmanaged.set_len(0) };
         // `self.unmanaged` dropped here → frees capacity, drops zero items.
         // Zig also `bun.memory.deinit(&self.#allocator)` — allocator dropped, nothing to do.
     }
@@ -422,7 +423,7 @@ impl<T> ArrayListAlignedIn<T> {
             self.unmanaged.resize(new_len, init_value);
         } else {
             // SAFETY: new_len <= len; elements in [new_len, len) are leaked intentionally.
-            unsafe { self.unmanaged.set_len(new_len) };
+            yolo! { self.unmanaged.set_len(new_len) };
         }
         Ok(())
     }
@@ -437,7 +438,7 @@ impl<T> ArrayListAlignedIn<T> {
     /// This method does *not* `Drop` the removed items.
     pub fn shrink_and_free_shallow(&mut self, new_len: usize) {
         // SAFETY: caller asserts new_len <= len; leaked elements are intentionally not dropped.
-        unsafe { self.unmanaged.set_len(new_len) };
+        yolo! { self.unmanaged.set_len(new_len) };
         self.unmanaged.shrink_to_fit();
     }
 
@@ -450,7 +451,7 @@ impl<T> ArrayListAlignedIn<T> {
     /// This method does *not* `Drop` the removed items.
     pub fn shrink_retaining_capacity_shallow(&mut self, new_len: usize) {
         // SAFETY: caller asserts new_len <= len; leaked elements are intentionally not dropped.
-        unsafe { self.unmanaged.set_len(new_len) };
+        yolo! { self.unmanaged.set_len(new_len) };
     }
 
     /// This method `Drop`s all items.
@@ -463,7 +464,7 @@ impl<T> ArrayListAlignedIn<T> {
     /// This method does *not* `Drop` any items.
     pub fn clear_retaining_capacity_shallow(&mut self) {
         // SAFETY: intentionally leaking all elements.
-        unsafe { self.unmanaged.set_len(0) };
+        yolo! { self.unmanaged.set_len(0) };
     }
 
     /// This method `Drop`s all items.
@@ -475,7 +476,7 @@ impl<T> ArrayListAlignedIn<T> {
     /// This method does *not* `Drop` any items.
     pub fn clear_and_free_shallow(&mut self) {
         // SAFETY: intentionally leaking all elements before freeing capacity.
-        unsafe { self.unmanaged.set_len(0) };
+        yolo! { self.unmanaged.set_len(0) };
         self.unmanaged = Vec::new();
     }
 

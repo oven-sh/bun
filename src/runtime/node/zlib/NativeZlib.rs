@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int};
 use core::mem;
 
@@ -210,7 +211,7 @@ mod _impl {
             // is the heap::alloc pointer produced at construction. `this_value`
             // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
             // heap::take below.
-            unsafe {
+            yolo! {
                 (*this).stream.with_mut(|s| s.close());
                 drop(bun_core::heap::take(this));
             }
@@ -291,7 +292,7 @@ impl Context {
         // returns a static C string.
         match self.mode {
             NONE => unreachable!(),
-            DEFLATE | GZIP | DEFLATERAW => unsafe {
+            DEFLATE | GZIP | DEFLATERAW => yolo! {
                 self.err = c::deflateInit2_(
                     &raw mut self.state,
                     level,
@@ -303,7 +304,7 @@ impl Context {
                     c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
                 );
             },
-            INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
+            INFLATE | GUNZIP | UNZIP | INFLATERAW => yolo! {
                 self.err = c::inflateInit2_(
                     &raw mut self.state,
                     window_bits_actual,
@@ -336,10 +337,10 @@ impl Context {
         self.err = c::ReturnCode::Ok;
         // SAFETY: FFI — state is initialized; dict points into a rooted ArrayBuffer.
         match self.mode {
-            DEFLATE | DEFLATERAW => unsafe {
+            DEFLATE | DEFLATERAW => yolo! {
                 self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
-            INFLATERAW => unsafe {
+            INFLATERAW => yolo! {
                 self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
             _ => {}
@@ -355,7 +356,7 @@ impl Context {
         self.err = c::ReturnCode::Ok;
         // SAFETY: FFI — state is an initialized deflate stream.
         match self.mode {
-            DEFLATE | DEFLATERAW => unsafe {
+            DEFLATE | DEFLATERAW => yolo! {
                 self.err = c::deflateParams(&raw mut self.state, level, strategy);
             },
             _ => {}
@@ -394,10 +395,10 @@ impl Context {
         self.err = c::ReturnCode::Ok;
         // SAFETY: FFI — state is an initialized stream for the given mode.
         match self.mode {
-            DEFLATE | DEFLATERAW | GZIP => unsafe {
+            DEFLATE | DEFLATERAW | GZIP => yolo! {
                 self.err = c::deflateReset(&raw mut self.state);
             },
-            INFLATE | INFLATERAW | GUNZIP => unsafe {
+            INFLATE | INFLATERAW | GUNZIP => yolo! {
                 self.err = c::inflateReset(&raw mut self.state);
             },
             _ => {}
@@ -462,11 +463,11 @@ impl Context {
                         return self.do_work_inflate();
                     };
                     // SAFETY: avail_in > 0 was checked above, so next_in points to ≥1 byte.
-                    if unsafe { *p } == Self::GZIP_HEADER_ID1 {
+                    if yolo! { *p } == Self::GZIP_HEADER_ID1 {
                         self.gzip_id_bytes_read = 1;
                         // SAFETY: advancing within the input buffer; only dereferenced
                         // below after confirming avail_in > 1.
-                        next_expected_header_byte = Some(unsafe { p.add(1) });
+                        next_expected_header_byte = Some(yolo! { p.add(1) });
                         if self.state.avail_in == 1 {
                             // The only available byte was already read.
                             return self.do_work_inflate();
@@ -482,7 +483,7 @@ impl Context {
                     };
                     // SAFETY: either avail_in > 1 (fallthrough above) or avail_in > 0
                     // on a fresh call with gzip_id_bytes_read == 1.
-                    if unsafe { *p } == Self::GZIP_HEADER_ID2 {
+                    if yolo! { *p } == Self::GZIP_HEADER_ID2 {
                         self.gzip_id_bytes_read = 2;
                         self.mode = GUNZIP;
                     } else {
@@ -503,12 +504,12 @@ impl Context {
 
     fn do_work_deflate(&mut self) {
         // SAFETY: FFI — state is an initialized deflate stream.
-        self.err = unsafe { c::deflate(&raw mut self.state, self.flush) };
+        self.err = yolo! { c::deflate(&raw mut self.state, self.flush) };
     }
 
     fn do_work_inflate(&mut self) {
         // SAFETY: FFI — state is an initialized inflate stream.
-        self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+        self.err = yolo! { c::inflate(&raw mut self.state, self.flush) };
 
         if self.mode != c::NodeMode::INFLATERAW
             && self.err == c::ReturnCode::NeedDict
@@ -521,11 +522,11 @@ impl Context {
                 (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
             // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
-            self.err = unsafe { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
+            self.err = yolo! { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
 
             if self.err == c::ReturnCode::Ok {
                 // SAFETY: FFI — state is an initialized inflate stream.
-                self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+                self.err = yolo! { c::inflate(&raw mut self.state, self.flush) };
             } else if self.err == c::ReturnCode::DataError {
                 self.err = c::ReturnCode::NeedDict;
             }
@@ -534,13 +535,13 @@ impl Context {
             && self.mode == c::NodeMode::GUNZIP
             && self.err == c::ReturnCode::StreamEnd
             // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
-            && unsafe { *self.state.next_in } != 0
+            && yolo! { *self.state.next_in } != 0
         {
             // Bytes remain in input buffer. Perhaps this is another compressed member in the same archive, or just trailing garbage.
             // Trailing zero bytes are okay, though, since they are frequently used for padding.
             let _ = self.reset();
             // SAFETY: FFI — state was just re-initialized by reset().
-            self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+            self.err = yolo! { c::inflate(&raw mut self.state, self.flush) };
         }
     }
 
@@ -576,10 +577,10 @@ impl Context {
         let mut status = c::ReturnCode::Ok;
         // SAFETY: FFI — state is an initialized stream for the given mode.
         match self.mode {
-            DEFLATE | DEFLATERAW | GZIP => unsafe {
+            DEFLATE | DEFLATERAW | GZIP => yolo! {
                 status = c::deflateEnd(&raw mut self.state);
             },
-            INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe {
+            INFLATE | INFLATERAW | GUNZIP | UNZIP => yolo! {
                 status = c::inflateEnd(&raw mut self.state);
             },
             NONE => {}

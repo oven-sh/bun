@@ -4,6 +4,7 @@
 // the struct and all method bodies are un-gated and live at this tier.
 // ══════════════════════════════════════════════════════════════════════════
 
+use bun_yolo::yolo;
 use bun_alloc::Arena;
 use bun_collections::HashMap;
 use bun_collections::VecExt;
@@ -191,7 +192,7 @@ impl<'a> Transpiler<'a> {
         // never freed). Reads of `top_level_dir` (the dominant use) are sound
         // even concurrently with `fs_mut()` callers because that field is
         // `&'static [u8]` written once at init.
-        unsafe { &*self.fs }
+        yolo! { &*self.fs }
     }
 
     /// Mutable reborrow of the `Fs::FileSystem` singleton. The returned
@@ -205,10 +206,10 @@ impl<'a> Transpiler<'a> {
     pub fn fs_mut<'r>(&self) -> &'r mut Fs::FileSystem {
         // SAFETY: `self.fs` is the non-null process-lifetime singleton (see
         // `fs()`). The unbounded `'r` mirrors the prior open-coded
-        // `unsafe { &mut *self.fs }` — the pointee outlives any `'r` a caller
+        // `yolo! { &mut *self.fs }` — the pointee outlives any `'r` a caller
         // can name. Exclusive access is upheld by single-threaded use at each
         // call site (no two live `&mut FileSystem` overlap).
-        unsafe { &mut *self.fs }
+        yolo! { &mut *self.fs }
     }
 
     /// Shared read-only borrow of the `Log`. Use for `has_errors()` /
@@ -220,7 +221,7 @@ impl<'a> Transpiler<'a> {
         // here cannot conflict with the aliased raw copies in
         // `self.{resolver,linker,options}.log` (those are also reads or
         // serialized writes on the bundle thread).
-        unsafe { &*self.log }
+        yolo! { &*self.log }
     }
 
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
@@ -234,10 +235,10 @@ impl<'a> Transpiler<'a> {
     pub fn log_mut<'r>(&self) -> &'r mut bun_ast::Log {
         // SAFETY: `self.log` is non-null after `init` (set to the
         // caller-provided arena `Log`) and outlives `self`. The unbounded `'r`
-        // mirrors the prior open-coded `unsafe { &mut *self.log }`; the
+        // mirrors the prior open-coded `yolo! { &mut *self.log }`; the
         // aliased raw copies in `self.{resolver,linker,options}.log` are never
         // dereferenced while a `log_mut()` result is live (caller contract).
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Shared read-only borrow of the `DotEnv::Loader`. Prefer this over
@@ -250,7 +251,7 @@ impl<'a> Transpiler<'a> {
         // which live for at least `'a`. Shared access cannot conflict with the
         // raw aliases in `resolver.env_loader` (those are reads or serialized
         // writes on the same thread).
-        unsafe { &*self.env }
+        yolo! { &*self.env }
     }
 
     /// Reborrow the `DotEnv::Loader`. Returned lifetime is decoupled from
@@ -265,7 +266,7 @@ impl<'a> Transpiler<'a> {
         // which live for at least `'a`. No other live `&mut Loader` exists at
         // any call site (single-threaded; `resolver.env_loader` aliases as a
         // raw `NonNull`, never as a held `&mut`).
-        unsafe { &mut *self.env }
+        yolo! { &mut *self.env }
     }
 
     /// Per-worker / client-transpiler constructor — port of Zig's
@@ -304,7 +305,7 @@ impl<'a> Transpiler<'a> {
         // lifetime-widen to `'a`. Layout is identical (only the lifetime
         // parameter differs), so `transmute` is a no-op reinterpretation.
         // SAFETY: see fn doc.
-        let options: options::BundleOptions<'a> = unsafe {
+        let options: options::BundleOptions<'a> = yolo! {
             core::mem::transmute::<options::BundleOptions<'_>, options::BundleOptions<'a>>(
                 from.options.for_worker(),
             )
@@ -313,7 +314,7 @@ impl<'a> Transpiler<'a> {
         // SAFETY: see fn doc — `Resolver::for_worker` widens
         // `standalone_module_graph` / `env_loader` lifetimes.
         let resolver: Resolver<'a> =
-            unsafe { Resolver::for_worker(&from.resolver, log, resolver_opts) };
+            yolo! { Resolver::for_worker(&from.resolver, log, resolver_opts) };
 
         Transpiler {
             options,
@@ -755,7 +756,7 @@ impl<'a> Transpiler<'a> {
                 // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
                 // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
                 // sole `&mut` for the call.
-                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
+                let dir: &mut bun_resolver::fs::DirEntry = yolo! { &mut *dir };
 
                 // PORT NOTE: `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -1188,7 +1189,7 @@ impl<'a> Transpiler<'a> {
         Self::init_in_place(&mut slot, arena, log, opts, env_loader_)?;
         // SAFETY: `init_in_place` returned `Ok`, so every field of `slot` was
         // written exactly once.
-        Ok(unsafe { slot.assume_init() })
+        Ok(yolo! { slot.assume_init() })
     }
 
     /// In-place sibling of [`Self::init`]: builds the `Transpiler` directly into
@@ -1265,7 +1266,7 @@ impl<'a> Transpiler<'a> {
                     // SAFETY: `map` is a fresh heap allocation with no other
                     // alias; `Loader` stores it for process lifetime and is
                     // itself installed into `dot_env::INSTANCE` below.
-                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
+                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init(yolo! { &mut *map })))
                 }
             },
         };
@@ -1278,7 +1279,7 @@ impl<'a> Transpiler<'a> {
         // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
         // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
-        unsafe {
+        yolo! {
             (*env_loader).quiet = !(*log).level.at_least(bun_ast::Level::Info);
         }
 
@@ -1295,7 +1296,7 @@ impl<'a> Transpiler<'a> {
         // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton from
         // `init_file_system` above; this short `&mut *fs` is the only live
         // borrow for the duration of `from_api`.
-        let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
+        let bundle_options = options::BundleOptions::from_api(yolo! { &mut *fs }, log, opts)?;
 
         // `Resolver.opts` is the resolver-crate subset
         // (`bun_resolver::options::BundleOptions`), nominally distinct from this
@@ -1322,7 +1323,7 @@ impl<'a> Transpiler<'a> {
         // the field's `*mut Loader<'a>` (raw-pointer lifetime reinterpretation —
         // the pointee is the process-lifetime singleton or caller-supplied
         // loader, as in the original struct literal).
-        unsafe {
+        yolo! {
             core::ptr::addr_of_mut!((*p).options).write(bundle_options);
             core::ptr::addr_of_mut!((*p).log).write(log);
             core::ptr::addr_of_mut!((*p).arena).write(arena);
@@ -1470,7 +1471,7 @@ impl<'a> Transpiler<'a> {
                 // never outlive the `ParseResult`. Phase B threads a real
                 // lifetime once `bun_ast::Source.contents` becomes `Cow`.
                 let contents: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
+                    yolo! { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
@@ -1524,7 +1525,7 @@ impl<'a> Transpiler<'a> {
             // the result drops). `contents_is_recycled = true` records that
             // the bytes are externally-owned; Phase B threads `'bump`.
             let contents: &'static [u8] =
-                unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
+                yolo! { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
             match bun_ast::Source::init_recycled_file(bun_ast::PathContentsPair {
                 path: path.clone(),
                 contents,
@@ -1710,7 +1711,7 @@ impl<'a> Transpiler<'a> {
                 // `JavaScript::parse`'s `&'a Define` param — the box is never
                 // dropped while a parse is in flight (Zig held `*const Define`).
                 let define: &'a js_ast::defines::Define =
-                    unsafe { &*(&raw const *self.options.define) };
+                    yolo! { &*(&raw const *self.options.define) };
 
                 // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
                 // The resolver-side `cache::JavaScript` is a fieldless
@@ -1929,7 +1930,7 @@ fn parse_data_loader(
             }
         }
         // SAFETY: outer match arm guarantees one of the five.
-        _ => unsafe { core::hint::unreachable_unchecked() },
+        _ => yolo! { core::hint::unreachable_unchecked() },
     };
     let mut expr = bun_ast::Expr::from(value_expr);
 
@@ -2200,7 +2201,7 @@ fn parse_md_loader(
         // SAFETY: ARENA — `arena` outlives the returned
         // `ParseResult.ast` (Phase-A `Str` convention erases
         // `'bump` to `'static` for `E::String.data`).
-        Ok(h) => unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
+        Ok(h) => yolo! { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
         Err(_) => {
             let _ = log.add_error_fmt(
                 None,
@@ -2586,7 +2587,7 @@ impl<'a> Transpiler<'a> {
         // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
         // null); it is exclusively owned by this print call until T6 reclaims
         // it after `print_with_source_map` returns.
-        let module_info = module_info.map(|p| unsafe { &mut *p });
+        let module_info = module_info.map(|p| yolo! { &mut *p });
         let opts = js_printer::Options {
             bundling: false,
             runtime_imports: ast.runtime_imports.clone(),
@@ -2881,7 +2882,7 @@ impl<'a> Transpiler<'a> {
             std::mem::take(&mut self.output_files).into_boxed_slice();
         // SAFETY: see above.
         let mut final_result =
-            options::TransformResult::init(outbase, output_files, unsafe { &mut *log })?;
+            options::TransformResult::init(outbase, output_files, yolo! { &mut *log })?;
         final_result.root_dir = self.options.output_dir_handle;
         Ok(final_result)
     }
@@ -3150,7 +3151,7 @@ impl<'a> Transpiler<'a> {
         // on `StyleSheet`/`ParserOptions` (see css_parser.rs
         // TODO(port): 'bump threading).
         let alloc: &'static Arena =
-            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
+            yolo! { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
         let (mut sheet, extra) =
             match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(

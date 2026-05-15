@@ -4,6 +4,7 @@
 //! (a typed slab) and are bulk-freed by `Store::reset()`. `Expr` and
 //! `Data` carry the arena lifetime.
 
+use bun_yolo::yolo;
 use core::fmt;
 
 use crate::Loc;
@@ -2335,7 +2336,7 @@ impl Data {
                 // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
                 // POD-shaped (no `Drop`). `ptr::read` performs a bitwise copy ==
                 // Zig's `el.*` struct copy.
-                let copied = unsafe { core::ptr::read($el.as_ptr()) };
+                let copied = yolo! { core::ptr::read($el.as_ptr()) };
                 let item = bump.alloc(copied);
                 return Ok(Data::$variant(StoreRef::from_bump(item)));
             }};
@@ -3417,7 +3418,7 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // SAFETY: `str` is a live `&[u8]`, so `as_ptr()` is non-null and readable for
     // exactly `str.len()` bytes for the duration of this call; the C++ side reads
     // only (no mutation, no retention past return).
-    unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) }
+    yolo! { JSC__jsToNumber(str.as_ptr(), str.len()) }
 }
 
 // ported from: src/js_parser/ast/Expr.zig

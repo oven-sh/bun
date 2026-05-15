@@ -15,6 +15,7 @@
 //! `bun_tcc_sys::tcc` un-gates). The full TCC body is preserved in
 //! `ffi_body.rs` (``) for reference.
 
+use bun_yolo::yolo;
 use std::ffi::c_void;
 use std::io::Write as _;
 
@@ -51,7 +52,7 @@ fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Opti
     // would assert under `BUN_JSC_validateExceptionChecks=1`.
     bun_jsc::top_scope!(scope, global);
     // SAFETY: `global` is live; `key_str` borrows `key` for the call duration.
-    let v = unsafe { JSC__JSValue__getOwn(value, global, &raw const key_str) };
+    let v = yolo! { JSC__JSValue__getOwn(value, global, &raw const key_str) };
     scope.return_if_exception()?;
     if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
 }
@@ -551,7 +552,7 @@ pub(super) fn make_napi_env_if_needed<'a>(
             // SAFETY: C++ returns a non-null heap-allocated env owned by the
             // VM (lifetime ≥ DevServer/FFI lifetime).
             // TODO(port): lifetime — `'static` is a stand-in for VM lifetime.
-            return Some(unsafe { &*ZigGlobalObject__makeNapiEnvForFFI(global_this) });
+            return Some(yolo! { &*ZigGlobalObject__makeNapiEnvForFFI(global_this) });
         }
     }
     None

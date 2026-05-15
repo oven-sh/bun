@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::jsc::{JSGlobalObject, JSValue};
 
 // ─── submodules ───────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ pub fn pbkdf2<'a>(
     let digest = algorithm.md()?.cast::<boringssl::EVP_MD>();
     // SAFETY: password/salt/output are valid for the given lengths; digest is a
     // static EVP_MD singleton returned by BoringSSL above.
-    let rc = unsafe {
+    let rc = yolo! {
         boringssl::PKCS5_PBKDF2_HMAC(
             if password.is_empty() {
                 core::ptr::null()

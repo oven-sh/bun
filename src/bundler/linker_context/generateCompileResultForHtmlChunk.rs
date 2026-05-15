@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::ffi::c_void;
 use core::mem::offset_of;
@@ -53,7 +54,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // the pointer value and preserves the mutable provenance they were
     // constructed with — no `addr_of!` provenance dance needed.
     let part_range: &PendingPartRange =
-        unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
+        yolo! { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
     let worker = Worker::get(ctx.bundle());
@@ -71,7 +72,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
-    unsafe { Chunk::write_compile_result_slot(ctx.chunk.as_ptr(), i, result) };
+    yolo! { Chunk::write_compile_result_slot(ctx.chunk.as_ptr(), i, result) };
 }
 
 #[derive(Default)]
@@ -268,7 +269,7 @@ impl<'a> HTMLLoader<'a> {
         // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
         if let Some(js_chunk) = self
             .chunk
-            .get_js_chunk_for_html(unsafe { &mut *self.chunks })
+            .get_js_chunk_for_html(yolo! { &mut *self.chunks })
         {
             let mut script = Vec::new();
             write!(
@@ -288,7 +289,7 @@ impl<'a> HTMLLoader<'a> {
         // `self.chunk` is a `BackRef` (safe `Deref`).
         let chunk: &Chunk = &self.chunk;
         // SAFETY: `chunks` raw pointer valid for the link step; sole live `&mut`.
-        let chunks = unsafe { &mut *self.chunks };
+        let chunks = yolo! { &mut *self.chunks };
         if self.compile_to_standalone_html {
             // In standalone HTML mode, only put CSS in <head>; JS goes before </body>
             if let Some(css_chunk) = chunk.get_css_chunk_for_html(chunks) {
@@ -337,7 +338,7 @@ impl<'a> HTMLLoader<'a> {
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_head_tag; end is non-null from lol-html callback.
         let (this, end): (&mut Self, &mut lol::EndTag) =
-            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
+            yolo! { (&mut *opaque_this.cast::<Self>(), &mut *end) };
         if this.linker.dev_server.is_none() {
             if this.add_head_tags(end).is_err() {
                 return lol::Directive::Stop;
@@ -354,7 +355,7 @@ impl<'a> HTMLLoader<'a> {
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_body_tag; end is non-null from lol-html callback.
         let (this, end): (&mut Self, &mut lol::EndTag) =
-            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
+            yolo! { (&mut *opaque_this.cast::<Self>(), &mut *end) };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // In standalone mode, insert JS before </body> so DOM is available
@@ -378,7 +379,7 @@ impl<'a> HTMLLoader<'a> {
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_html_tag; end is non-null from lol-html callback.
         let (this, end): (&mut Self, &mut lol::EndTag) =
-            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
+            yolo! { (&mut *opaque_this.cast::<Self>(), &mut *end) };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // Fallback: if no </body> was found, insert both CSS and JS before </html>
@@ -493,7 +494,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
                         // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
                         if let Some(js_chunk) = html_loader
                             .chunk
-                            .get_js_chunk_for_html(unsafe { &mut *html_loader.chunks })
+                            .get_js_chunk_for_html(yolo! { &mut *html_loader.chunks })
                         {
                             let mut script = Vec::new();
                             write!(

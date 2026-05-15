@@ -16,6 +16,7 @@
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 
 use core::ffi::c_void;
@@ -1202,7 +1203,7 @@ impl<'a> SourceMapHandler<'a> {
             // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
             // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
             // valid, exclusive `*mut T` for as long as the handler exists.
-            unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
+            yolo! { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
         }
         SourceMapHandler {
             // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
@@ -1423,7 +1424,7 @@ impl RequireOrImportMetaCallback {
             // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
             // `ctx` outlives this `RequireOrImportMetaCallback` (same contract as the Zig
             // `*anyopaque` erasure), so the cast-back deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+            yolo! { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
         }
         Self {
             // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
@@ -2750,7 +2751,7 @@ pub mod __gated_printer {
         fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
             let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
             // SAFETY: arena/source-backed; outlives 'a (see renamer.rs SAFETY notes).
-            unsafe { &*p }
+            yolo! { &*p }
         }
 
         // Emitting a `throw` shim is a diagnostic/error path — keep it out of the
@@ -7295,7 +7296,7 @@ pub trait WriterTrait {
         let ptr = self.reserve(bytes.len() as u64)?;
         // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
         // writer's internal buffer, which is disjoint from caller-provided `bytes`.
-        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+        yolo! { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
         self.advance(bytes.len() as u64);
         Ok(())
     }
@@ -7675,13 +7676,13 @@ impl BufferWriter {
     pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
         let n = usize::try_from(count).expect("int cast");
         // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
-        Ok(unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
+        Ok(yolo! { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
     }
 
     pub fn advance_by(&mut self, count: u64) {
         let count_usize = usize::try_from(count).expect("int cast");
         // SAFETY: reserve_next reserved and the caller initialized [len..len+count).
-        unsafe { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
+        yolo! { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
     }
 
     pub fn reset(&mut self) {
@@ -7858,7 +7859,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             // (e.g. `LinkerGraph.files[i].line_offset_table`). The bitwise
             // copy aliases that storage; it is wrapped in `ManuallyDrop` and
             // never dropped, so ownership stays with the caller.
-            Some(borrowed) => unsafe { core::ptr::read(borrowed) },
+            Some(borrowed) => yolo! { core::ptr::read(borrowed) },
             None => SourceMap::line_offset_table::List::EMPTY,
         }),
         ..Default::default()
@@ -8032,7 +8033,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             if GENERATE_SOURCE_MAP {
                 // SAFETY: `p` points into `printer`, which outlives this guard;
                 // dropped exactly once here.
-                let tables = unsafe { &mut *p };
+                let tables = yolo! { &mut *p };
                 // `MultiArrayList::Drop` only frees the column buffer — it does
                 // NOT drop column elements (Zig allocated these into the arena
                 // so it didn't matter there). The per-row `columns_for_non_ascii`
@@ -8041,7 +8042,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
                     core::mem::take(v);
                 }
-                unsafe { core::mem::ManuallyDrop::drop(tables) };
+                yolo! { core::mem::ManuallyDrop::drop(tables) };
             }
         },
     );
@@ -8126,7 +8127,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .serialize(&mut srlz_res)?;
         }
         // SAFETY: caller guarantees the cache outlives the print call.
-        unsafe { &mut *cache.as_ptr() }.put(
+        yolo! { &mut *cache.as_ptr() }.put(
             printer.writer.slice(),
             source_maps_chunk
                 .as_ref()
@@ -8411,13 +8412,13 @@ pub fn print_common_js<
             if GENERATE_SOURCE_MAP {
                 // SAFETY: `p` points into `printer`, which outlives this guard;
                 // dropped exactly once here.
-                let tables = unsafe { &mut *p };
+                let tables = yolo! { &mut *p };
                 // `MultiArrayList::Drop` does not drop column elements; drain
                 // the global-heap Vec<i32>s before dropping the SoA storage.
                 for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
                     core::mem::take(v);
                 }
-                unsafe { core::mem::ManuallyDrop::drop(tables) };
+                yolo! { core::mem::ManuallyDrop::drop(tables) };
             }
         },
     );

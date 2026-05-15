@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -128,7 +129,7 @@ impl MacroContext {
 
         // SAFETY: `resolver` outlives `self` (see struct PORT NOTE); uniquely
         // accessed for the duration of this resolve call.
-        let resolver = unsafe { &mut *self.resolver };
+        let resolver = yolo! { &mut *self.resolver };
 
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
@@ -229,7 +230,7 @@ impl MacroContext {
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
         // SAFETY: `event_loop()` returns a self-pointer into `*vm`.
-        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        yolo! { (*(*vm).event_loop()).ensure_waker() };
 
         // PORT NOTE: Zig builds `Wrapper { args: ArgsTuple, ret }` and calls
         // `vm.runWithAPILock(Wrapper, &wrapper, Wrapper.call)` which is just
@@ -248,9 +249,9 @@ impl MacroContext {
             // for the duration of this closure; `bump` points into `*self`,
             // which outlives the closure and is not otherwise borrowed.
             Runner::run(
-                unsafe { &*macro_ },
+                yolo! { &*macro_ },
                 log,
-                unsafe { &*bump },
+                yolo! { &*bump },
                 function_name,
                 caller,
                 source,
@@ -288,7 +289,7 @@ pub fn __bun_macro_context_init(
     // was actually invoked, its lazily-created `bump` arena) leaks per
     // iteration. `bump` is `None` on init, so this fn itself never calls
     // `mi_heap_new()`.
-    let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
+    let transpiler = yolo! { &mut *transpiler.cast::<Transpiler<'static>>() };
     let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
@@ -305,7 +306,7 @@ pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
     // `__bun_macro_context_init` above; sole owner. Dropping the Box frees the
     // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
     // (→ `mi_heap_destroy`) on the lazily-created `bump`.
-    drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
+    drop(yolo! { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
 }
 
 #[unsafe(no_mangle)]
@@ -325,7 +326,7 @@ pub fn __bun_macro_context_call(
     );
     // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
     // lower-tier handle is uniquely borrowed for this call so no alias exists.
-    let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
+    let inner = yolo! { &mut *ctx.data.cast::<MacroContext>() };
     inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
     inner.call(
         import_record_path,
@@ -347,10 +348,10 @@ pub fn __bun_macro_context_get_remap(
     // remap table lives in `Transpiler.options` which outlives every parse, so
     // the `'static` borrow is sound for callers that drop it before the
     // `Transpiler` does (matches the Zig by-value copy of the map header).
-    let inner = unsafe { &*data.cast::<MacroContext>() };
+    let inner = yolo! { &*data.cast::<MacroContext>() };
     inner
         .get_remap(path)
-        .map(|e| unsafe { &*(e as *const js_parser::Macro::MacroRemapEntry) })
+        .map(|e| yolo! { &*(e as *const js_parser::Macro::MacroRemapEntry) })
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -452,7 +453,7 @@ impl Macro {
             })?;
 
             // SAFETY: `_vm` is the freshly-allocated per-thread VM.
-            unsafe {
+            yolo! {
                 (*_vm).enable_macro_mode();
                 (*(*_vm).event_loop()).ensure_waker();
                 (*_vm).transpiler.configure_defines()?;
@@ -461,25 +462,25 @@ impl Macro {
         };
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        unsafe {
+        yolo! {
             (*vm).enable_macro_mode();
             (*(*vm).event_loop()).ensure_waker();
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        let loaded_result = unsafe {
+        let loaded_result = yolo! {
             (*vm).load_macro_entry_point(input_specifier, function_name, specifier, hash)
         }?;
 
         // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
         // returned by `loadAndEvaluateModule`; `jsc_vm` is the live JSC VM.
-        let unwrapped = unsafe {
+        let unwrapped = yolo! {
             (*loaded_result).unwrap(&*(*vm).jsc_vm, jsc::PromiseUnwrapMode::LeaveUnhandled)
         };
         if let jsc::PromiseResult::Rejected(result) = unwrapped {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
-            unsafe {
+            yolo! {
                 (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
                 (*vm).disable_macro_mode();
             }
@@ -586,7 +587,7 @@ impl<'a> Run<'a> {
         // was obtained from the VM's macro table; `args` is a stack slice of
         // `#[repr(transparent)] i64` JSValues whose pointer is reinterpreted to
         // the C-API `JSObjectRef` (same encoded value).
-        let result = unsafe {
+        let result = yolo! {
             js::JSObjectCallAsFunctionReturnValueHoldingAPILock(
                 vm.global,
                 macro_callback,
@@ -665,7 +666,7 @@ impl<'a> Run<'a> {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                 let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                    yolo! { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -701,7 +702,7 @@ impl<'a> Run<'a> {
                         || value.as_::<BuildMessage>().is_some()
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                        let _ = unsafe {
+                        let _ = yolo! {
                             (*self.macro_.vm()).uncaught_exception(self.global, value, false)
                         };
                         return Err(MacroError::MacroFailed);
@@ -712,7 +713,7 @@ impl<'a> Run<'a> {
                     // SAFETY: `blob` (a JS cell) is pinned for the call; the
                     // shared-view/content-type slices borrow its store.
                     let (bytes, ct) =
-                        unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
+                        yolo! { ((*blob).shared_view(), (*blob).content_type_slice()) };
                     return expr_from_blob(
                         bytes,
                         self.bump,
@@ -799,7 +800,7 @@ impl<'a> Run<'a> {
                 let obj = value.get_object().expect("unreachable");
                 // SAFETY: `obj` is a live JSC heap cell; `'a` is bounded by the
                 // surrounding stack frame.
-                let obj_ref = unsafe { &*obj };
+                let obj_ref = yolo! { &*obj };
                 let mut object_iter = JSPropertyIterator::init(
                     self.global,
                     obj_ref,
@@ -1078,7 +1079,7 @@ impl Runner {
         extern "C" fn call() {
             CALL_STATE.with(|s| {
                 // SAFETY: set immediately before Bun__startMacro below; cleared after.
-                let state = unsafe { &mut *s.get().cast::<CallData<'_>>() };
+                let state = yolo! { &mut *s.get().cast::<CallData<'_>>() };
                 state.result = Run::run_async(
                     state.macro_,
                     state.log,
@@ -1111,7 +1112,7 @@ impl Runner {
         // directly — read it via raw-ptr field access (NOT the `&`-returning
         // `.global()` accessor) so the `*mut` provenance is preserved across
         // FFI.
-        unsafe {
+        yolo! {
             Bun__startMacro(
                 call as *const c_void,
                 VirtualMachine::get().as_mut().global.cast::<c_void>(),

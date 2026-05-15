@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::RefCell;
 
 use bun_alloc::Arena as Bump;
@@ -354,7 +355,7 @@ where
                     // SAFETY: `log_ptr` is the sole handle to the `Log`; the
                     // old lexer is being replaced and holds no live borrow.
                     self.lexer = js_lexer::Lexer::init_json(
-                        unsafe { &mut *log_ptr },
+                        yolo! { &mut *log_ptr },
                         source,
                         self.bump,
                         self.opts,

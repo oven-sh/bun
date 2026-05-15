@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt::Display;
 use core::marker::ConstParamTy;
 
@@ -88,7 +89,7 @@ pub fn depth_buf_uninit() -> DepthBuf {
     // SAFETY: `DepthBuf` is `[u32; N]`; every bit pattern is a valid `u32`.
     // Callers treat this as a write-only scratch buffer — no element is read
     // before being assigned by `relative_path_and_depth`.
-    unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    yolo! { core::mem::MaybeUninit::uninit().assume_init() }
 }
 
 impl Tree {
@@ -1014,10 +1015,10 @@ impl Tree {
         for i in 0..this_deps_len {
             // SAFETY: `i < this_deps_len` and `builder.list` is not mutated until after this loop
             // (see invariant above), so `this_deps_ptr[0..this_deps_len)` remains valid.
-            let dep_id: DependencyID = unsafe { *this_deps_ptr.add(i) };
+            let dep_id: DependencyID = yolo! { *this_deps_ptr.add(i) };
             // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`;
             // Zig release builds have no bounds check here.
-            let dep = unsafe { deps.get_unchecked(dep_id as usize) };
+            let dep = yolo! { deps.get_unchecked(dep_id as usize) };
             if dep.name_hash != target_name_hash {
                 continue;
             }
@@ -1128,7 +1129,7 @@ impl Tree {
                 // the only `Err(SubtreeError::DependencyLoop)` site above is
                 // gated on `AS_DEFINED`. Avoids faulting panic-format pages on
                 // the per-dependency recursion.
-                Err(_) => unsafe { core::hint::unreachable_unchecked() },
+                Err(_) => yolo! { core::hint::unreachable_unchecked() },
             };
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return Ok(id); // 1 or 2

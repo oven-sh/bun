@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::HashMap;
 use bun_core::Output;
@@ -84,10 +85,10 @@ fn start_manifest_task(
     // hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
+    yolo! { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
     // SAFETY: `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
-    let task = unsafe { &mut *net_ptr };
+    let task = yolo! { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by
     // `for_manifest` (it only writes the pool slot and `manager.log`).
     task.for_manifest(
@@ -145,7 +146,7 @@ pub fn populate_manifest_cache(
     // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
     // take *shared* projections of `lockfile` here, and the loop body never
     // mutates `lockfile.buffers` / `lockfile.packages`.
-    let lockfile = unsafe { &*core::ptr::addr_of!((*manager_ptr).lockfile) };
+    let lockfile = yolo! { &*core::ptr::addr_of!((*manager_ptr).lockfile) };
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -191,7 +192,7 @@ pub fn populate_manifest_cache(
                     bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                 // `manager_ptr` is the SRW root.
-                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                let cached = yolo! { &mut (*manager_ptr).manifests }.by_name(
                     cache_ctx,
                     scope.get(),
                     pkg_name_slice,
@@ -200,15 +201,15 @@ pub fn populate_manifest_cache(
                 );
                 if cached.is_none() {
                     start_manifest_task(
-                        unsafe { &mut *manager_ptr },
+                        yolo! { &mut *manager_ptr },
                         pkg_name_slice,
                         dep,
                         needs_extended_manifest,
                     )?;
                 }
 
-                run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
-                let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
+                run_tasks::flush_network_queue(yolo! { &mut *manager_ptr });
+                let _ = run_tasks::schedule_tasks(yolo! { &mut *manager_ptr });
             }
         }
         Packages::Ids(ids) => {
@@ -239,7 +240,7 @@ pub fn populate_manifest_cache(
                         bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
                     // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                     // `manager_ptr` is the SRW root.
-                    let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                    let cached = yolo! { &mut (*manager_ptr).manifests }.by_name(
                         cache_ctx,
                         scope.get(),
                         package_name,
@@ -248,14 +249,14 @@ pub fn populate_manifest_cache(
                     );
                     if cached.is_none() {
                         start_manifest_task(
-                            unsafe { &mut *manager_ptr },
+                            yolo! { &mut *manager_ptr },
                             package_name,
                             dep,
                             needs_extended_manifest,
                         )?;
 
-                        run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
-                        let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
+                        run_tasks::flush_network_queue(yolo! { &mut *manager_ptr });
+                        let _ = run_tasks::schedule_tasks(yolo! { &mut *manager_ptr });
                     }
                 }
             }
@@ -263,7 +264,7 @@ pub fn populate_manifest_cache(
     }
 
     // SAFETY: provenance root; no live shared borrows of `*manager_ptr` remain.
-    let manager = unsafe { &mut *manager_ptr };
+    let manager = yolo! { &mut *manager_ptr };
     run_tasks::flush_network_queue(manager);
     let _ = run_tasks::schedule_tasks(manager);
 
@@ -280,7 +281,7 @@ pub fn populate_manifest_cache(
                 // SAFETY: `closure.manager` is the raw provenance root set
                 // below; `sleep_until`/`tick_raw` hold no `&mut` across this
                 // callback, so this is the unique live borrow.
-                let manager = unsafe { &mut *closure.manager };
+                let manager = yolo! { &mut *closure.manager };
                 let log_level = manager.options.log_level;
                 // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
                 // `manager` as both receiver and ctx (aliased &mut). Zig passed
@@ -311,12 +312,12 @@ pub fn populate_manifest_cache(
         // `sleep_until` is an associated fn taking `*mut PackageManager` and
         // `tick_raw` holds no `&mut event_loop` across `is_done`, so the
         // callback's `&mut *run_closure.manager` is the unique live borrow.
-        unsafe { PackageManager::sleep_until(mgr, &mut run_closure, RunClosure::is_done) };
+        yolo! { PackageManager::sleep_until(mgr, &mut run_closure, RunClosure::is_done) };
 
         if log_level.show_progress() {
             // SAFETY: `mgr` is still the live provenance root; `sleep_until`
             // has returned so no competing borrow exists.
-            unsafe { (*mgr).end_progress_bar() };
+            yolo! { (*mgr).end_progress_bar() };
             Output::flush();
         }
 

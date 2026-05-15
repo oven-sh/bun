@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::{ArrayHashMap, StringHashMap, VecExt};
 
@@ -25,11 +26,11 @@ pub struct Scope {
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`. `StoreRef` (arena
     // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
-    // `unsafe { &*parent.as_ptr() }` at every walk site.
+    // `yolo! { &*parent.as_ptr() }` at every walk site.
     pub parent: Option<StoreRef<Scope>>,
     /// `AstVec` for the same reason as `members` above — Zig's
     /// `ArrayListUnmanaged(*Scope)` was arena-backed. Elements are `StoreRef`
-    /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
+    /// so iteration yields safe `Deref` instead of `yolo! { child.as_ref() }`.
     pub children: AstVec<StoreRef<Scope>>,
     pub members: MemberHashMap,
     /// `AstVec`: Zig `ArrayListUnmanaged(Ref)`, arena-backed.
@@ -121,7 +122,7 @@ impl Scope {
         // the same arena reset that would invalidate the source/string-table.
         // This avoids one `mi_heap_malloc` per declared identifier per scope,
         // which profiling showed as the parser's hottest slow-path allocation.
-        unsafe { self.members.get_or_put_borrowed(name) }
+        yolo! { self.members.get_or_put_borrowed(name) }
     }
 
     pub fn reset(&mut self) {

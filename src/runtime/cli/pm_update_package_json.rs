@@ -10,6 +10,7 @@
 //! here, and the crate-local body re-enters `bun_install` via the public
 //! `update_package_json_and_install_and_cli`.
 
+use bun_yolo::yolo;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Error, Global, Output, err};
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
@@ -31,7 +32,7 @@ pub fn update_package_json_and_install_catch_error(
             // `Cli::start()` before any command (including this one) is dispatched; we
             // are on the single CLI thread in the install error path and no other
             // `&mut Log` to it is live for the duration of this `print` call.
-            let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
+            let log = yolo! { (*Cli::LOG_.get()).assume_init_mut() };
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
@@ -102,9 +103,9 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 // finished reading `entry_points` before invoking `on_fetch`, and this
                 // callback never returns (`Global::exit` below), so forming fresh `&mut`
                 // here is exclusive for the remainder of the process.
-                let cli = unsafe { &mut *this.cli };
+                let cli = yolo! { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
-                let ctx = unsafe { &mut *this.ctx };
+                let ctx = yolo! { &mut *this.ctx };
 
                 update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())?;
 

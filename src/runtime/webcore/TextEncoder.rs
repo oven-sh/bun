@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_core::strings;
@@ -27,7 +28,7 @@ pub extern "C" fn TextEncoder__encode8(
     // this also means there won't be reallocations for small strings
     let mut buf = [0u8; 2048];
     // SAFETY: caller guarantees ptr[0..len] is valid Latin-1 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let slice = yolo! { core::slice::from_raw_parts(ptr, len) };
 
     if slice.len() <= buf.len() / 2 {
         let result = strings::copy_latin1_into_utf8(&mut buf, slice);
@@ -73,7 +74,7 @@ pub extern "C" fn TextEncoder__encode16(
     let mut buf = [0u8; 2048];
 
     // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let slice = yolo! { core::slice::from_raw_parts(ptr, len) };
 
     // max utf16 -> utf8 length
     if slice.len() <= buf.len() / 4 {
@@ -120,7 +121,7 @@ pub extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -
     let mut buf = [0u8; 2048];
 
     // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let slice = yolo! { core::slice::from_raw_parts(ptr, len) };
 
     // max utf16 -> utf8 length
     if slice.len() <= buf.len() / 4 {
@@ -184,7 +185,7 @@ impl<'a> RopeStringEncoder<'a> {
         // SAFETY: see fn doc — `it` is the live iterator JSC passed; `it.data`
         // is the `&mut RopeStringEncoder` stashed in `iter()`. Disjoint
         // allocations, single-threaded, exclusively accessed for `'r`.
-        unsafe {
+        yolo! {
             let it = &mut *it;
             let this = &mut *it.data_ptr().cast::<RopeStringEncoder<'a>>();
             (it, this)
@@ -196,7 +197,7 @@ impl<'a> RopeStringEncoder<'a> {
     pub extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
-        let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+        let src = yolo! { core::slice::from_raw_parts(ptr, len as usize) };
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
             &mut this.buf[this.tail..],
             src,
@@ -218,7 +219,7 @@ impl<'a> RopeStringEncoder<'a> {
     pub extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
-        let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+        let src = yolo! { core::slice::from_raw_parts(ptr, len as usize) };
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
             &mut this.buf[offset as usize..],
             src,
@@ -312,9 +313,9 @@ pub extern "C" fn TextEncoder__encodeInto16(
     buf_len: usize,
 ) -> u64 {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    let output = yolo! { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
+    let input = yolo! { core::slice::from_raw_parts(input_ptr, input_len) };
     let mut result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
     if output.len() >= 3 && (result.read == 0 || result.written == 0) {
         const REPLACEMENT_CHAR: [u8; 3] = [239, 191, 189];
@@ -338,9 +339,9 @@ pub extern "C" fn TextEncoder__encodeInto8(
     buf_len: usize,
 ) -> u64 {
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    let output = yolo! { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
+    let input = yolo! { core::slice::from_raw_parts(input_ptr, input_len) };
     let result: strings::EncodeIntoResult = strings::copy_latin1_into_utf8(output, input);
     // Zig `@bitCast([2]u32 → u64)`: field 0 (`read`) at byte offset 0, field 1 (`written`)
     // at offset 4. Compose via native-endian bytes — identical bit pattern, no `unsafe`.

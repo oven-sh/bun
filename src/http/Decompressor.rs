@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_http_types::Encoding::Encoding;
@@ -46,7 +47,7 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
     // a `&'static mut` forge — sibling `static-widen-mut` pattern, routed
     // through `detach_lifetime_mut` so the unsafe stays centralised in
     // `bun_ptr`.
-    unsafe {
+    yolo! {
         (
             bun_ptr::Interned::assume(input).as_bytes(),
             bun_ptr::detach_lifetime_mut(out),
@@ -74,7 +75,7 @@ impl Decompressor {
         if matches!(self, Decompressor::None) {
             // SAFETY: `buffer`/`body_out_str` are the request's compressed_body
             // and caller-owned output; both outlive `self` (see `seat` contract).
-            let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
+            let (input, out) = yolo! { seat(buffer, &mut body_out_str.list) };
             match encoding {
                 Encoding::Gzip | Encoding::Deflate => {
                     let reader = ZlibReaderArrayList::init_with_options_and_list_allocator(
@@ -153,12 +154,12 @@ impl Decompressor {
                 // would invalidate the just-stored `&'static mut` under stacked
                 // borrows.
                 // SAFETY: see `seat` contract — same buffer pair as initial seat.
-                let (_, out) = unsafe { seat(buffer, &mut body_out_str.list) };
+                let (_, out) = yolo! { seat(buffer, &mut body_out_str.list) };
                 reader.list_ptr = out;
                 // SAFETY: zlib writes the tail; `read_all` truncates to `total_out` before any read.
                 // `additional = 0`: the conditional reserve above already grew the buffer; `reserve(0)` is a no-op.
                 // `list_ptr.len() == initial` here (reserve does not change len), so the helper's internal `prev` matches.
-                let (next_out, avail_out) = unsafe { reader.list_ptr.reserve_expand_tail(0) };
+                let (next_out, avail_out) = yolo! { reader.list_ptr.reserve_expand_tail(0) };
                 reader.zlib.next_out = next_out;
                 reader.zlib.avail_out = avail_out as u32;
                 // we reset the total out so we can track how much we decompressed this time
@@ -167,7 +168,7 @@ impl Decompressor {
             Decompressor::Brotli(reader) => {
                 let initial = body_out_str.list.len();
                 // SAFETY: see `seat` contract — same buffer pair as initial seat.
-                let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
+                let (input, out) = yolo! { seat(buffer, &mut body_out_str.list) };
                 reader.input = input;
                 reader.total_in = 0;
                 // PORT NOTE: Zig aliased the ArrayList header; re-seat list_ptr instead.
@@ -177,7 +178,7 @@ impl Decompressor {
             Decompressor::Zstd(reader) => {
                 let initial = body_out_str.list.len();
                 // SAFETY: see `seat` contract — same buffer pair as initial seat.
-                let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
+                let (input, out) = yolo! { seat(buffer, &mut body_out_str.list) };
                 reader.input = input;
                 reader.total_in = 0;
                 // PORT NOTE: Zig aliased the ArrayList header; re-seat list_ptr instead.

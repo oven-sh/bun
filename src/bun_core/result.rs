@@ -15,6 +15,7 @@
 // Layout is `#[repr(transparent)] NonZeroU16`, so `Option<Error>` is one u16
 // and FFI/packed-struct slots that held a Zig `anyerror` keep the same width.
 
+use bun_yolo::yolo;
 use core::fmt;
 use core::num::NonZeroU16;
 use crate::RwLock;
@@ -100,18 +101,18 @@ fn intern_slow(name: &'static str) -> NonZeroU16 {
     // Re-check SEED under no lock (callers may skip the fast path).
     if let Some(i) = SEED.iter().position(|&s| s == name) {
         // SAFETY: i + 1 ∈ 1..=SEED.len() ⊂ 1..=u16::MAX.
-        return unsafe { NonZeroU16::new_unchecked((i + 1) as u16) };
+        return yolo! { NonZeroU16::new_unchecked((i + 1) as u16) };
     }
     let mut extra = EXTRA.write();
     // Double-checked: another thread may have inserted while we waited.
     if let Some(i) = extra.iter().position(|&s| s == name) {
-        return unsafe { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) };
+        return yolo! { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) };
     }
     extra.push(name);
     let code = SEED.len() + extra.len();
     debug_assert!(code <= u16::MAX as usize, "error intern table overflow");
     // SAFETY: SEED.len() ≥ 1 and extra.len() ≥ 1 ⇒ code ≥ 2.
-    unsafe { NonZeroU16::new_unchecked(code as u16) }
+    yolo! { NonZeroU16::new_unchecked(code as u16) }
 }
 
 /// Cold half of the `err!()` macro: intern `name` and publish the code into
@@ -130,9 +131,9 @@ pub fn intern_cached(slot: &core::sync::atomic::AtomicU16, name: &'static str) -
 
 impl Error {
     // ── const handles into SEED (indices are load-bearing) ────────────────
-    pub const UNEXPECTED: Self = Self(unsafe { NonZeroU16::new_unchecked(1) });
-    pub const OUT_OF_MEMORY: Self = Self(unsafe { NonZeroU16::new_unchecked(2) });
-    pub const WRITE_FAILED: Self = Self(unsafe { NonZeroU16::new_unchecked(6) });
+    pub const UNEXPECTED: Self = Self(yolo! { NonZeroU16::new_unchecked(1) });
+    pub const OUT_OF_MEMORY: Self = Self(yolo! { NonZeroU16::new_unchecked(2) });
+    pub const WRITE_FAILED: Self = Self(yolo! { NonZeroU16::new_unchecked(6) });
     /// Phase-A placeholder retained for callers not yet migrated to `err!()`.
     /// Aliases `Unexpected` so it round-trips through `name()` sensibly.
     pub const TODO: Self = Self::UNEXPECTED;
@@ -149,13 +150,13 @@ impl Error {
         // Fast path: SEED hit (covers all errno + common names) without locking.
         if let Some(i) = SEED.iter().position(|&s| s == name) {
             // SAFETY: see intern_slow.
-            return Self(unsafe { NonZeroU16::new_unchecked((i + 1) as u16) });
+            return Self(yolo! { NonZeroU16::new_unchecked((i + 1) as u16) });
         }
         // Read-locked probe of already-interned extras.
         {
             let extra = EXTRA.read();
             if let Some(i) = extra.iter().position(|&s| s == name) {
-                return Self(unsafe { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) });
+                return Self(yolo! { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) });
             }
         }
         Self(intern_slow(name))

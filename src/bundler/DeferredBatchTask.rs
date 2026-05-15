@@ -4,6 +4,7 @@
 //! It enqueues a task to be run on the JS thread which resolves the promise
 //! for every onLoad callback which called `.defer()`.
 
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use crate::BundleV2;
@@ -42,7 +43,7 @@ impl DeferredBatchTask {
         // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
         // this struct is never instantiated standalone. Lifetime erased to 'static
         // (mirrors Zig raw `*BundleV2`); callers must not outlive the owning bundle.
-        unsafe {
+        yolo! {
             &mut *bun_core::from_field_ptr!(
                 BundleV2<'static>,
                 drain_defer_task,

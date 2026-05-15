@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 #[allow(unused_imports)]
@@ -266,7 +267,7 @@ mod NativePromiseContext {
     pub fn take<T>(cell: JSValue) -> Option<&'static mut T> {
         // SAFETY: the cell carried a +1 ref on `ctx`; ownership transfers back
         // to the caller, who immediately scopes it with a deref-on-drop guard.
-        npc::take::<T>(cell).map(|p| unsafe { &mut *p.as_ptr() })
+        npc::take::<T>(cell).map(|p| yolo! { &mut *p.as_ptr() })
     }
 }
 use crate::node::types::PathLikeExt as _;
@@ -299,7 +300,7 @@ where
     fn drop(&mut self) {
         // SAFETY: pointer was live when wrapped (caller owns one ref) and
         // `deref()` itself handles the final destroy when count hits zero.
-        unsafe { (*self.0).deref() };
+        yolo! { (*self.0).deref() };
     }
 }
 
@@ -319,7 +320,7 @@ where
 ///   the borrow.
 #[inline]
 unsafe fn as_response(value: JSValue) -> Option<&'static mut Response> {
-    response::from_js(value).map(|p| unsafe { &mut *p.cast::<Response>() })
+    response::from_js(value).map(|p| yolo! { &mut *p.cast::<Response>() })
 }
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
@@ -575,7 +576,7 @@ where
         // `'r` may exceed `&self` because the server is not borrowed from
         // `*self`; it lives independently and outlives every context.
         let p = self.server.expect("infallible: server bound").as_ptr();
-        unsafe { &*p }
+        yolo! { &*p }
     }
 
     /// Mutably borrow the pooled request-body slot, if attached.
@@ -597,7 +598,7 @@ where
     fn request_body_mut<'r>(&mut self) -> Option<&'r mut Body::Value> {
         // SAFETY: see fn doc — pooled HiveRef slot live while `Some`,
         // unaliased, single-threaded.
-        self.request_body.map(|mut p| unsafe { p.as_mut() })
+        self.request_body.map(|mut p| yolo! { p.as_mut() })
     }
 
     /// Exclusive borrow of the heap [`ResponseStreamJSSink`] this context owns.
@@ -616,7 +617,7 @@ where
     fn sink_mut<'r>(&mut self) -> Option<&'r mut ResponseStreamJSSink<SSL_ENABLED, HTTP3>> {
         // SAFETY: see fn doc — heap JSSink owned by this ctx, sole live
         // mutable view, single-threaded.
-        self.sink.map(|p| unsafe { &mut *p.as_ptr() })
+        self.sink.map(|p| yolo! { &mut *p.as_ptr() })
     }
 
     /// Take the pooled request-body slot out of `self` and release the
@@ -630,7 +631,7 @@ where
             // last count. `Body::Value` reachable from `request_body` is
             // always the `.value` field of a hive slot, satisfying `unref`'s
             // container-of precondition.
-            let _ = unsafe { p.as_mut().unref() };
+            let _ = yolo! { p.as_mut().unref() };
         }
     }
 
@@ -652,7 +653,7 @@ where
             // SAFETY: BACKREF. `ServerLike::vm()` returns `&VirtualMachine`
             // but `drain_microtasks` needs `&mut`; cast through the raw
             // pointer (Zig held a `*VirtualMachine`).
-            unsafe {
+            yolo! {
                 let vm = std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut();
                 (*vm).drain_microtasks();
             }
@@ -758,7 +759,7 @@ where
 
         // SAFETY: sole `&mut Response` for this cell in scope; `value` is
         // protect()'d immediately below and stored in `response_jsvalue`.
-        let Some(response) = (unsafe { as_response(value) }) else {
+        let Some(response) = (yolo! { as_response(value) }) else {
             ctx.render_missing_invalid_response(value);
             return;
         };
@@ -894,7 +895,7 @@ where
                 .release_request_context(std::ptr::from_mut::<Self>(self).cast::<c_void>(), HTTP3);
             // SAFETY: `&mut` through the backref — the server outlives this
             // context and no other borrow of it is live here.
-            unsafe { (*server.as_ptr()).on_request_complete() };
+            yolo! { (*server.as_ptr()).on_request_complete() };
         }
     }
 
@@ -991,7 +992,7 @@ where
 
     pub fn render_missing_corked(ctx: *mut Self) {
         // SAFETY: ctx is the live RequestContext threaded through cork user-data.
-        let ctx = unsafe { &mut *ctx };
+        let ctx = yolo! { &mut *ctx };
         if let Some(resp) = ctx.resp {
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
@@ -1044,7 +1045,7 @@ where
             self.flags.set_has_written_status(true);
             if let Some(resp) = self.resp {
                 // SAFETY: FFI handle
-                unsafe {
+                yolo! {
                     resp.write_status(b"500 Internal Server Error");
                     resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 }
@@ -1086,7 +1087,7 @@ where
         Fallback::render_backend(&fallback_container, &mut bb).expect("unreachable");
         let try_end_ok = match self.resp {
             None => true,
-            Some(resp) => unsafe {
+            Some(resp) => yolo! {
                 // SAFETY: FFI handle
                 resp.try_end(&bb, bb.len(), self.should_close_connection())
             },
@@ -1118,7 +1119,7 @@ where
 
     fn drain_response_buffer_and_metadata_corked(this: *mut Self) {
         // SAFETY: this is the live RequestContext threaded through cork user-data.
-        unsafe { (*this).drain_response_buffer_and_metadata() };
+        yolo! { (*this).drain_response_buffer_and_metadata() };
     }
 
     /// Drain a partial response buffer
@@ -1154,7 +1155,7 @@ where
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
             // SAFETY: FFI handle
-            unsafe {
+            yolo! {
                 if resp.state().is_response_pending() {
                     resp.end_stream(close_connection);
                 }
@@ -1197,7 +1198,7 @@ where
     ) -> bool {
         ctx_log!("onWritableResponseBuffer");
         // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
@@ -1214,7 +1215,7 @@ where
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBufferAndMetadata");
         // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         debug_assert!(this.resp.is_some());
 
         if this.is_aborted_or_ended() {
@@ -1240,7 +1241,7 @@ where
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBuffer");
         // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
@@ -1272,7 +1273,7 @@ where
     fn req_method(r: *mut Req<SSL_ENABLED, HTTP3>) -> &'static [u8] {
         // SAFETY: r is a live uWS/lsquic request handle for the duration of
         // the request callback; both surfaces return request-owned slices.
-        unsafe {
+        yolo! {
             if HTTP3 {
                 (*r.cast::<bun_uws_sys::h3::Request>()).method()
             } else {
@@ -1284,7 +1285,7 @@ where
     #[inline]
     fn req_url(r: *mut Req<SSL_ENABLED, HTTP3>) -> &'static [u8] {
         // SAFETY: see `req_method`.
-        unsafe {
+        yolo! {
             if HTTP3 {
                 (*r.cast::<bun_uws_sys::h3::Request>()).url()
             } else {
@@ -1306,7 +1307,7 @@ where
             .or_else(|| Method::which(Self::req_method(req)))
             .unwrap_or(Method::GET);
         // SAFETY: writing to MaybeUninit slot
-        unsafe {
+        yolo! {
             this.as_mut_ptr().write(Self {
                 resp: Some(resp),
                 req: Some(req),
@@ -1342,7 +1343,7 @@ where
 
     pub fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
         // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         debug_assert!(this.resp.is_some());
         debug_assert!(this.server.is_some());
 
@@ -1373,7 +1374,7 @@ where
     pub fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
         // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         debug_assert!(this.resp.is_some());
         // An HTTP/3 stream is destroyed once both sides FIN, so this also
         // fires after a successful end(). HTTP/1 sockets persist for
@@ -1411,7 +1412,7 @@ where
         scopeguard::defer! {
             if any_js_calls.get() {
                 // SAFETY: vm is live for the request duration.
-                unsafe { (*vm).drain_microtasks() };
+                yolo! { (*vm).drain_microtasks() };
             }
         }
 
@@ -1544,7 +1545,7 @@ where
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
         // SAFETY: ctx is a *RequestContext registered with FileResponseStream
-        let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
+        let this: &mut Self = yolo! { bun_ptr::callback_ctx::<Self>(ctx) };
         this.detach_response();
         this.end_request_streaming_and_drain();
         this.deref();
@@ -1564,7 +1565,7 @@ where
     pub fn on_writable_bytes(this: *mut Self, write_offset: u64, resp: uws::AnyResponse) -> bool {
         ctx_log!("onWritableBytes");
         // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
@@ -1573,7 +1574,7 @@ where
         // Copy to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.slice()) };
+        let bytes: &[u8] = yolo! { bun_ptr::detach_lifetime(this.blob.slice()) };
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
         true
@@ -1826,7 +1827,7 @@ where
                         Some(stat_size),
                     );
                     // SAFETY: FFI handle
-                    unsafe {
+                    yolo! {
                         resp.write_header(b"content-range", cr);
                         resp.write_header(b"accept-ranges", b"bytes");
                         let close = resp.should_close_connection();
@@ -1889,7 +1890,7 @@ where
 
     pub fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         // SAFETY: this is a *RequestContext registered as lock.task
-        Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
+        Self::do_render_with_body(yolo! { bun_ptr::callback_ctx::<Self>(this) }, value, None);
     }
 
     fn render_with_blob_from_body_value(&mut self) {
@@ -1922,7 +1923,7 @@ where
         let Some(ctx) = ctx else { return };
         // SAFETY: ctx is the *mut Self stashed in `sink.ctx` by do_render_stream;
         // the sink only fires this once before any concurrent borrow of `self`.
-        Self::handle_first_stream_write(unsafe { bun_ptr::callback_ctx::<Self>(ctx) });
+        Self::handle_first_stream_write(yolo! { bun_ptr::callback_ctx::<Self>(ctx) });
     }
 
     /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
@@ -1941,7 +1942,7 @@ where
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
+        let pair = yolo! { &mut *pair };
         // PORT NOTE: reshaped for borrowck — split the two fields up front so
         // `this` and `stream` are independent borrows of `*pair`.
         let this: &mut Self = &mut *pair.this;
@@ -1982,7 +1983,7 @@ where
         let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
         this.sink = Some(response_stream_ptr);
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
-        let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
+        let response_stream = yolo! { &mut *response_stream_ptr.as_ptr() };
 
         response_stream.sink.signal = crate::webcore::sink::SinkSignal::<
             ResponseStream<SSL_ENABLED, HTTP3>,
@@ -2252,7 +2253,7 @@ where
         if self.end_request_streaming().unwrap_or(true) {
             // TODO: properly propagate exception upwards
             // SAFETY: BACKREF; see drain_microtasks() re: const→mut cast.
-            unsafe {
+            yolo! {
                 let vm = std::ptr::from_ref::<VirtualMachine>(self.server().vm()).cast_mut();
                 (*vm).drain_microtasks();
             }
@@ -2287,7 +2288,7 @@ where
 
         if let Some(resp) = self.resp.take() {
             // SAFETY: FFI handle
-            unsafe {
+            yolo! {
                 if self.flags.is_waiting_for_request_body() {
                     self.flags.set_is_waiting_for_request_body(false);
                     resp.clear_on_data();
@@ -2317,7 +2318,7 @@ where
         pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
         // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
+        let pair = yolo! { &mut *pair };
         let this = &mut *pair.this;
         this.render_metadata();
 
@@ -2335,7 +2336,7 @@ where
         this: *mut c_void,
     ) -> Result<(), jsc::JsTerminated> {
         // SAFETY: this is the *mut Self registered with stat().
-        Self::on_s3_size_resolved(result, unsafe { bun_ptr::callback_ctx::<Self>(this) });
+        Self::on_s3_size_resolved(result, yolo! { bun_ptr::callback_ctx::<Self>(this) });
         Ok(())
     }
 
@@ -2361,7 +2362,7 @@ where
         pair: *mut HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
         // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
+        let pair = yolo! { &mut *pair };
         let this = &mut *pair.this;
         let response = &mut *pair.response;
         if this.resp.is_none() {
@@ -2399,7 +2400,7 @@ where
                     let transfer_encoding_str = transfer_encoding.to_slice_clone();
                     this.render_metadata();
                     // SAFETY: FFI handle
-                    unsafe {
+                    yolo! {
                         resp.write_header(b"transfer-encoding", transfer_encoding_str.slice())
                     };
                     this.end_without_body(this.should_close_connection());
@@ -2430,7 +2431,7 @@ where
                 this.render_metadata();
 
                 // SAFETY: FFI handle
-                unsafe {
+                yolo! {
                     if size == crate::webcore::blob::MAX_SIZE {
                         resp.write_header_int(b"content-length", 0);
                     } else {
@@ -2478,7 +2479,7 @@ where
 
                 blob.resolve_size();
                 // SAFETY: FFI handle
-                unsafe {
+                yolo! {
                     if blob.size.get() == crate::webcore::blob::MAX_SIZE {
                         resp.write_header_int(b"content-length", 0);
                     } else {
@@ -2549,7 +2550,7 @@ where
         // SAFETY: sole `&mut Response` for this cell in scope;
         // `response_value` is rooted via ensure_still_alive() / protect()
         // below for the duration of the borrow.
-        if let Some(response) = unsafe { as_response(response_value) } {
+        if let Some(response) = yolo! { as_response(response_value) } {
             ctx.response_jsvalue = response_value;
             ctx.response_jsvalue.ensure_still_alive();
             ctx.flags.set_response_protected(false);
@@ -2616,7 +2617,7 @@ where
                     // SAFETY: sole `&mut Response` for this cell in scope;
                     // `fulfilled_value` is rooted via ensure_still_alive() /
                     // protect() below for the duration of the borrow.
-                    let Some(response) = (unsafe { as_response(fulfilled_value) }) else {
+                    let Some(response) = (yolo! { as_response(fulfilled_value) }) else {
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     };
@@ -2802,7 +2803,7 @@ where
                     let server = &*server;
                     let mut exception_list: jsc::ExceptionList = Vec::new();
                     // SAFETY: see drain_microtasks() re: const→mut cast.
-                    unsafe {
+                    yolo! {
                         (*std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut())
                             .run_error_handler(err, Some(&mut exception_list));
                     }
@@ -2814,7 +2815,7 @@ where
                             req.flags.set_has_written_status(true);
                             if let Some(resp) = req.resp {
                                 // SAFETY: FFI handle
-                                unsafe {
+                                yolo! {
                                     resp.write_status(b"500 Internal Server Error");
                                     resp.write_header(
                                         b"content-type",
@@ -3048,7 +3049,7 @@ where
         scopeguard::defer! {
             if stream_needs_deinit {
                 // SAFETY: stream lives on the caller's stack frame past the guard.
-                match unsafe { &mut *stream_ptr } {
+                match yolo! { &mut *stream_ptr } {
                     WebCore::streams::Result::OwnedAndDone(owned)
                     | WebCore::streams::Result::Owned(owned) => {
                         // Vec::deinit → Drop in Rust.
@@ -3101,7 +3102,7 @@ where
 
     pub fn do_render_blob_corked(this: *mut Self) {
         // SAFETY: this is the live RequestContext threaded through cork user-data.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         this.render_metadata();
         this.render_bytes();
     }
@@ -3109,7 +3110,7 @@ where
     /// `render_metadata` adapter for `run_corked_with_type` (takes `fn(*mut U)`).
     fn render_metadata_corked(this: *mut Self) {
         // SAFETY: this is the live RequestContext threaded through cork user-data.
-        unsafe { (*this).render_metadata() };
+        yolo! { (*this).render_metadata() };
     }
 
     pub fn do_render(&mut self) {
@@ -3126,11 +3127,11 @@ where
         // SAFETY: BACKREF
         let global_this = self.server().global_this();
         // SAFETY: response_weakref keeps the Response alive for this frame.
-        let owned_readable = unsafe { (*response).get_body_readable_stream(global_this) };
+        let owned_readable = yolo! { (*response).get_body_readable_stream(global_this) };
         // SAFETY: as above; body_value borrows the Response, disjoint from `self`.
         Self::do_render_with_body(
             self,
-            unsafe { (*response).get_body_value() },
+            yolo! { (*response).get_body_value() },
             owned_readable,
         );
     }
@@ -3256,7 +3257,7 @@ where
                     // SAFETY: sole `&mut Response` for this cell in scope;
                     // `result` is GC-rooted by `_keep` (EnsureStillAlive)
                     // across the render() call.
-                    } else if let Some(response) = unsafe { as_response(result) } {
+                    } else if let Some(response) = yolo! { as_response(result) } {
                         self.render(response);
                         return;
                     }
@@ -3303,7 +3304,7 @@ where
                 // SAFETY: sole `&mut Response` for this cell in scope;
                 // `fulfilled_value` is rooted via ensure_still_alive() below
                 // for the duration of the borrow.
-                let Some(response) = (unsafe { as_response(fulfilled_value) }) else {
+                let Some(response) = (yolo! { as_response(fulfilled_value) }) else {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 };
@@ -3341,7 +3342,7 @@ where
         jsc::mark_binding!();
         // SAFETY: FFI handle, just checked is_some()
         if self.resp.is_none()
-            || unsafe { self.resp.expect("infallible: resp bound").has_responded() }
+            || yolo! { self.resp.expect("infallible: resp bound").has_responded() }
         {
             return;
         }
@@ -3534,7 +3535,7 @@ where
         // copy it to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
+        let bytes: &[u8] = yolo! { bun_ptr::detach_lifetime(self.blob.slice()) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
@@ -3575,7 +3576,7 @@ where
     pub fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
         ctx_log!("onBufferedBodyChunk {} {}", chunk.len(), last);
         // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         debug_assert!(this.resp.is_some());
 
         this.flags.set_is_waiting_for_request_body(!last);
@@ -3647,7 +3648,7 @@ where
             {
                 this.request_body_buf = Vec::new();
                 // SAFETY: FFI handle
-                unsafe { this.resp.expect("infallible: resp bound").clear_on_data() };
+                yolo! { this.resp.expect("infallible: resp bound").clear_on_data() };
                 this.flags.set_is_waiting_for_request_body(false);
 
                 let _exit = vm.enter_event_loop_scope();
@@ -3784,7 +3785,7 @@ where
         readable: WebCore::ReadableStream,
     ) {
         // SAFETY: ptr is a *RequestContext
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
+        let this = yolo! { bun_ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
@@ -3792,12 +3793,12 @@ where
 
     pub fn on_start_buffering_callback(this: *mut c_void) {
         // SAFETY: this is a *RequestContext
-        unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_buffering();
+        yolo! { bun_ptr::callback_ctx::<Self>(this) }.on_start_buffering();
     }
 
     pub fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
         // SAFETY: this is a *RequestContext
-        unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
+        yolo! { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
     }
 
     pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
@@ -4003,7 +4004,7 @@ where
                 // `Transport`/`NativePromiseContextType` bounds onto this
                 // formatter impl.
                 // SAFETY: req is the live uWS request handle.
-                let url: &[u8] = unsafe {
+                let url: &[u8] = yolo! {
                     if H3 {
                         (*req.cast::<bun_uws_sys::h3::Request>()).url()
                     } else {

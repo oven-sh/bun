@@ -7,6 +7,7 @@
 )]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
 use bun_core::ZStr;
@@ -148,8 +149,8 @@ pub extern "C" fn BUN__warn__extra_ca_load_failed(
     error_msg: *const c_char,
 ) {
     // SAFETY: C++ caller passes valid NUL-terminated strings.
-    let filename = unsafe { bun_core::ffi::cstr(filename) };
-    let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
+    let filename = yolo! { bun_core::ffi::cstr(filename) };
+    let error_msg = yolo! { bun_core::ffi::cstr(error_msg) };
     bun_core::Output::warn(&format_args!(
         "ignoring extra certs from {}, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),
@@ -171,7 +172,7 @@ pub fn get_default_ciphers() -> &'static ZStr {
     // SAFETY: us_get_default_ciphers returns a static NUL-terminated string;
     // bun_core::ffi::cstr computes the length, ZStr::from_raw rebuilds the
     // length-carrying slice (excluding the NUL).
-    unsafe {
+    yolo! {
         let p = c::us_get_default_ciphers();
         let len = bun_core::ffi::cstr(p).to_bytes().len();
         ZStr::from_raw(p.cast::<u8>(), len)
@@ -256,7 +257,7 @@ pub mod ssl_wrapper {
 
     /// `Cell`-backed bitfield so the R-2 noalias-laundered self-backref (see
     /// [`SSLWrapper::r`]) can read AND write flags through a shared `&Self`
-    /// borrow — collapses the `unsafe { (*this).flags.set_X(..) }` pattern in
+    /// borrow — collapses the `yolo! { (*this).flags.set_X(..) }` pattern in
     /// `shutdown` / `update_handshake_state` / `handle_writing` into safe
     /// `Self::r(this).flags.set_X(..)` field-projection calls. The wrapper
     /// is single-JS-thread (`!Sync` already via `NonNull<SSL>`), so `Cell`
@@ -410,12 +411,12 @@ pub mod ssl_wrapper {
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
             // SAFETY: ctx is a valid non-null SSL_CTX*; SSL_new returns null on OOM.
-            let ssl = NonNull::new(unsafe { boring_sys::SSL_new(ctx.as_ptr()) })
+            let ssl = NonNull::new(yolo! { boring_sys::SSL_new(ctx.as_ptr()) })
                 .ok_or(InitError::OutOfMemory)?;
             // errdefer BoringSSL.SSL_free(ssl) — FFI cleanup on early return
             let ssl_guard = scopeguard::guard(ssl, |ssl| {
                 // SAFETY: ssl was created by SSL_new above and is solely owned by this guard until disarmed.
-                unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
+                yolo! { boring_sys::SSL_free(ssl.as_ptr()) };
             });
 
             // OpenSSL enables TLS renegotiation by default and accepts
@@ -426,7 +427,7 @@ pub mod ssl_wrapper {
             // keep the same behavior. See:
             // https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#TLS-renegotiation
             // SAFETY: ssl is valid for the duration of this block; all calls are simple property setters.
-            unsafe {
+            yolo! {
                 if is_client {
                     // Set the renegotiation mode to explicit so that we can
                     // renegotiate on the client side if needed (better
@@ -483,21 +484,21 @@ pub mod ssl_wrapper {
                 }
             }
             // SAFETY: BIO_s_mem returns a static method table; BIO_new returns null on OOM.
-            let input = NonNull::new(unsafe { boring_sys::BIO_new(boring_sys::BIO_s_mem()) })
+            let input = NonNull::new(yolo! { boring_sys::BIO_new(boring_sys::BIO_s_mem()) })
                 .ok_or(InitError::OutOfMemory)?;
             // errdefer _ = BoringSSL.BIO_free(input)
             let input_guard = scopeguard::guard(input, |bio| {
                 // SAFETY: bio was created by BIO_new above and not yet transferred to SSL_set_bio.
-                unsafe {
+                yolo! {
                     let _ = boring_sys::BIO_free(bio.as_ptr());
                 }
             });
             // SAFETY: same as above.
-            let output = NonNull::new(unsafe { boring_sys::BIO_new(boring_sys::BIO_s_mem()) })
+            let output = NonNull::new(yolo! { boring_sys::BIO_new(boring_sys::BIO_s_mem()) })
                 .ok_or(InitError::OutOfMemory)?;
             // Set the EOF return value to -1 so that we can detect when the BIO is empty using BIO_ctrl_pending
             // SAFETY: input/output are valid BIOs we just created; ssl is valid.
-            unsafe {
+            yolo! {
                 let _ = boring_sys::BIO_set_mem_eof_return(input.as_ptr(), -1);
                 let _ = boring_sys::BIO_set_mem_eof_return(output.as_ptr(), -1);
                 // Set the input and output BIOs
@@ -539,7 +540,7 @@ pub mod ssl_wrapper {
             // sufficient on the error path.
             let ctx_guard = scopeguard::guard(ssl_ctx, |c| {
                 // SAFETY: ssl_ctx ref was just created by create_ssl_context and not yet adopted by init_with_ctx.
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
+                yolo! { boring_sys::SSL_CTX_free(c.as_ptr()) };
             });
             let this = Self::init_with_ctx(ssl_ctx, is_client, handlers)?;
             let _ = scopeguard::ScopeGuard::into_inner(ctx_guard);
@@ -605,7 +606,7 @@ pub mod ssl_wrapper {
             // shutdown process if fast_shutdown = false, we can assume that
             // the other side will complete the 2-step shutdown ASAP.
             // SAFETY: ssl is a live SSL* owned by self.
-            let ret = unsafe { boring_sys::SSL_shutdown(ssl.as_ptr()) };
+            let ret = yolo! { boring_sys::SSL_shutdown(ssl.as_ptr()) };
             // when doing a fast shutdown we don't need to wait for the peer to send a shutdown so we just call SSL_shutdown again
             if fast_shutdown {
                 // This allows for a more rapid shutdown process if the
@@ -624,7 +625,7 @@ pub mod ssl_wrapper {
                 // full shutdown process must be performed to ensure
                 // synchronisation.
                 // SAFETY: ssl is still valid.
-                unsafe {
+                yolo! {
                     let _ = boring_sys::SSL_shutdown(ssl.as_ptr());
                 }
                 Self::r(this).flags.set_received_ssl_shutdown(true);
@@ -646,7 +647,7 @@ pub mod ssl_wrapper {
             Self::r(this).flags.set_sent_ssl_shutdown(ret >= 0);
             if ret < 0 {
                 // SAFETY: ssl is still valid.
-                let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), ret) };
+                let err = yolo! { boring_sys::SSL_get_error(ssl.as_ptr(), ret) };
                 boring_sys::ERR_clear_error();
 
                 if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL {
@@ -666,7 +667,7 @@ pub mod ssl_wrapper {
             let Some(ssl) = self.ssl else { return 0 };
             // SAFETY: ssl is a live SSL*; SSL_get_wbio returns the BIO bound in init_with_ctx.
             let pending =
-                unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) };
+                yolo! { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) };
             if pending > 0 {
                 return usize::try_from(pending).expect("int cast");
             }
@@ -677,7 +678,7 @@ pub mod ssl_wrapper {
         pub fn has_pending_data(&self) -> bool {
             let Some(ssl) = self.ssl else { return false };
             // SAFETY: ssl is a live SSL*; rbio/wbio bound in init_with_ctx.
-            unsafe {
+            yolo! {
                 boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) > 0
                     || boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_rbio(ssl.as_ptr())) > 0
             }
@@ -689,7 +690,7 @@ pub mod ssl_wrapper {
         fn has_pending_read(&self) -> bool {
             let Some(ssl) = self.ssl else { return false };
             // SAFETY: ssl is a live SSL*.
-            unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_rbio(ssl.as_ptr())) > 0 }
+            yolo! { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_rbio(ssl.as_ptr())) > 0 }
         }
 
         /// We sent or received a shutdown (closing or closed)
@@ -718,12 +719,12 @@ pub mod ssl_wrapper {
             let Some(ssl) = self.ssl else { return };
 
             // SAFETY: ssl is a live SSL*; rbio bound in init_with_ctx.
-            let Some(input) = NonNull::new(unsafe { boring_sys::SSL_get_rbio(ssl.as_ptr()) })
+            let Some(input) = NonNull::new(yolo! { boring_sys::SSL_get_rbio(ssl.as_ptr()) })
             else {
                 return;
             };
             // SAFETY: input is a valid BIO*; data is a valid &[u8] for len bytes.
-            let written = unsafe {
+            let written = yolo! {
                 boring_sys::BIO_write(
                     input.as_ptr(),
                     data.as_ptr().cast::<c_void>(),
@@ -752,7 +753,7 @@ pub mod ssl_wrapper {
                 return Ok(0);
             }
             // SAFETY: ssl is a live SSL*; data is a valid &[u8] for len bytes.
-            let written = unsafe {
+            let written = yolo! {
                 boring_sys::SSL_write(
                     ssl.as_ptr(),
                     data.as_ptr().cast::<c_void>(),
@@ -761,7 +762,7 @@ pub mod ssl_wrapper {
             };
             if written <= 0 {
                 // SAFETY: ssl is still valid.
-                let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), written) };
+                let err = yolo! { boring_sys::SSL_get_error(ssl.as_ptr(), written) };
                 boring_sys::ERR_clear_error();
 
                 if err == boring_sys::SSL_ERROR_WANT_READ {
@@ -792,11 +793,11 @@ pub mod ssl_wrapper {
             self.flags.set_closed_notified(true);
             if let Some(ssl) = self.ssl.take() {
                 // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
-                unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
+                yolo! { boring_sys::SSL_free(ssl.as_ptr()) };
             }
             if let Some(ctx) = self.ctx.take() {
                 // SAFETY: ctx ref was adopted in init/init_with_ctx; SSL_CTX_free decrements the C refcount and frees the SSL context and all the certificates when it hits zero.
-                unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
+                yolo! { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
             }
         }
 
@@ -842,7 +843,7 @@ pub mod ssl_wrapper {
                 return us_bun_verify_error_t::default();
             };
             // SAFETY: ssl is a live SSL*; uSockets helper reads the verify result off it.
-            unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
+            yolo! { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
         }
 
         /// Update the handshake state. Returns true if we can call handle_reading.
@@ -866,10 +867,10 @@ pub mod ssl_wrapper {
             };
 
             // SAFETY: ssl is a live SSL*.
-            if unsafe { boring_sys::SSL_is_init_finished(ssl.as_ptr()) } != 0 {
+            if yolo! { boring_sys::SSL_is_init_finished(ssl.as_ptr()) } != 0 {
                 // handshake already completed nothing to do here
                 // SAFETY: ssl is a live SSL*.
-                if (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
+                if (yolo! { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
                     & boring_sys::SSL_RECEIVED_SHUTDOWN)
                     != 0
                 {
@@ -892,11 +893,11 @@ pub mod ssl_wrapper {
             }
 
             // SAFETY: ssl is a live SSL*.
-            let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
+            let result = yolo! { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
 
             if result <= 0 {
                 // SAFETY: ssl is still valid.
-                let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
+                let err = yolo! { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
                 boring_sys::ERR_clear_error();
                 if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                     // Remotely-Initiated Shutdown
@@ -950,7 +951,7 @@ pub mod ssl_wrapper {
             if self.flags.handshake_state() == HandshakeState::HandshakeRenegotiationPending
                 && (self.ssl.is_none()
                     // SAFETY: ssl is Some and live in this branch.
-                    || unsafe { boring_sys::SSL_is_init_finished(self.ssl.unwrap().as_ptr()) } != 0)
+                    || yolo! { boring_sys::SSL_is_init_finished(self.ssl.unwrap().as_ptr()) } != 0)
             {
                 // renegotiation ended successfully call on_handshake
                 self.flags
@@ -971,7 +972,7 @@ pub mod ssl_wrapper {
 
                 let available = &mut buffer[read..];
                 // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
-                let just_read = unsafe {
+                let just_read = yolo! {
                     boring_sys::SSL_read(
                         ssl.as_ptr(),
                         available.as_mut_ptr().cast::<c_void>(),
@@ -981,7 +982,7 @@ pub mod ssl_wrapper {
                 log!("just read {}", just_read);
                 if just_read <= 0 {
                     // SAFETY: ssl is still valid.
-                    let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
+                    let err = yolo! { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
                     boring_sys::ERR_clear_error();
 
                     if err != boring_sys::SSL_ERROR_WANT_READ
@@ -991,7 +992,7 @@ pub mod ssl_wrapper {
                             self.flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
                             // SAFETY: ssl is still valid.
-                            if unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } == 0 {
+                            if yolo! { boring_sys::SSL_renegotiate(ssl.as_ptr()) } == 0 {
                                 self.flags
                                     .set_handshake_state(HandshakeState::HandshakeCompleted);
                                 // we failed to renegotiate
@@ -1084,13 +1085,13 @@ pub mod ssl_wrapper {
             loop {
                 let Some(ssl) = Self::r(this).ssl else { return };
                 // SAFETY: ssl is a live SSL*; wbio bound in init_with_ctx.
-                let Some(output) = NonNull::new(unsafe { boring_sys::SSL_get_wbio(ssl.as_ptr()) })
+                let Some(output) = NonNull::new(yolo! { boring_sys::SSL_get_wbio(ssl.as_ptr()) })
                 else {
                     return;
                 };
                 let available = &mut buffer[read..];
                 // SAFETY: output is a valid BIO*; available is a valid mutable slice.
-                let just_read = unsafe {
+                let just_read = yolo! {
                     boring_sys::BIO_read(
                         output.as_ptr(),
                         available.as_mut_ptr().cast::<c_void>(),

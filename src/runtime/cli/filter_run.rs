@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -78,7 +79,7 @@ impl<'a> ProcessHandle<'a> {
         // (matches Zig's free aliasing of `*State` alongside `*ProcessHandle`).
         let mut state_ref = self.state;
         // SAFETY: state backref is valid for the lifetime of the run loop (State outlives all handles).
-        let state = unsafe { state_ref.get_mut() };
+        let state = yolo! { state_ref.get_mut() };
         state.remaining_scripts += 1;
         let handle = self;
 
@@ -103,7 +104,7 @@ impl<'a> ProcessHandle<'a> {
             // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
             let env_ptr = state.env;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
-            let env = unsafe { &mut *env_ptr };
+            let env = yolo! { &mut *env_ptr };
             // PORT NOTE: copy to owned — `original_path` borrows env.map which is
             // mutated by put() below (Zig aliased freely).
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
@@ -113,10 +114,10 @@ impl<'a> ProcessHandle<'a> {
             // whole block so `?` early-returns also restore.
             scopeguard::defer! {
                 // SAFETY: env_ptr valid for the run loop lifetime (see above).
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
+                let _ = yolo! { (*env_ptr).map.put(b"PATH", &original_path) };
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            let envp = yolo! { (*env_ptr).map.create_null_delimited_env_map()? };
             break 'brk spawn::spawn_process(
                 &handle.options,
                 argv.as_ptr(),
@@ -173,10 +174,10 @@ impl<'a> ProcessHandle<'a> {
         });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // sole owner until reaped, owner backref set before reap callback can fire.
-        let process = unsafe { &mut *process };
+        let process = yolo! { &mut *process };
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
-        process.set_exit_handler(unsafe {
+        process.set_exit_handler(yolo! {
             bun_spawn::ProcessExit::new(
                 bun_spawn::ProcessExitKind::FilterRunHandle,
                 std::ptr::from_mut::<ProcessHandle<'a>>(handle),
@@ -200,7 +201,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = has_more;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
-        let state = unsafe { state_ref.get_mut() };
+        let state = yolo! { state_ref.get_mut() };
         let _ = state.read_chunk(self, chunk);
         true
     }
@@ -227,7 +228,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = proc;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
-        let state = unsafe { state_ref.get_mut() };
+        let state = yolo! { state_ref.get_mut() };
         let _ = state.process_exit(self);
     }
 
@@ -237,7 +238,7 @@ impl<'a> ProcessHandle<'a> {
 
     pub fn loop_(&self) -> *mut bun_io::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-        bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
+        bun_io::uws_to_native(yolo! { (*self.state.event_loop).loop_ })
     }
 }
 
@@ -351,7 +352,7 @@ impl<'a> State<'a> {
         if !self.aborted {
             for &dependent in &handle.dependents {
                 // SAFETY: dependent points into self.handles, valid for the run loop lifetime.
-                let dependent = unsafe { &mut *dependent };
+                let dependent = yolo! { &mut *dependent };
                 dependent.remaining_dependencies -= 1;
                 if dependent.remaining_dependencies == 0 {
                     if dependent.start().is_err() {
@@ -469,7 +470,7 @@ impl<'a> State<'a> {
         // PORT NOTE: reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             // SAFETY: idx in bounds; we need disjoint access to handles[idx] and draw_buf.
-            let handle = unsafe { &*(&raw const self.handles[idx]) };
+            let handle = yolo! { &*(&raw const self.handles[idx]) };
             // TODO(port): borrowck — self.handles[idx] borrowed while self.draw_buf is &mut.
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
             let elide_lines = if is_abort {
@@ -595,7 +596,7 @@ impl<'a> State<'a> {
                 // if we get an error here we simply ignore it
                 // SAFETY: proc.ptr is a live `*mut Process` (set in start(); leaked
                 // until program exit per on_process_exit note).
-                let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
+                let _ = yolo! { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
             }
         }
     }
@@ -660,7 +661,7 @@ impl AbortHandler {
             act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
             act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
             // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
-            unsafe {
+            yolo! {
                 libc::sigemptyset(&raw mut act.sa_mask);
                 libc::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
             }
@@ -740,7 +741,7 @@ pub fn run_scripts_with_filter(
     // Find package.json at workspace root
     let mut root_buf = bun_paths::PathBuffer::uninit();
     let resolve_root = FilterArg::get_candidate_package_patterns(
-        unsafe { ctx.log_mut() },
+        yolo! { ctx.log_mut() },
         &mut patterns,
         fsinstance.top_level_dir,
         &mut root_buf,
@@ -753,7 +754,7 @@ pub fn run_scripts_with_filter(
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
-    let mut this_transpiler = unsafe { this_transpiler.assume_init() };
+    let mut this_transpiler = yolo! { this_transpiler.assume_init() };
 
     let mut package_json_iter = FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
     // defer package_json_iter.deinit() — handled by Drop
@@ -886,7 +887,7 @@ pub fn run_scripts_with_filter(
     let env_ptr: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
-        Some(unsafe { &mut *env_ptr }),
+        Some(yolo! { &mut *env_ptr }),
         None,
     );
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
@@ -900,7 +901,7 @@ pub fn run_scripts_with_filter(
         {
             RunCommand::find_shell(
                 // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
-                unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
+                yolo! { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
                 fsinstance.top_level_dir,
             )
             .ok_or(bun_core::err!("MissingShell"))?
@@ -949,7 +950,7 @@ pub fn run_scripts_with_filter(
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
     let state_ptr: bun_ptr::BackRef<State> =
-        unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
+        yolo! { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
@@ -1015,7 +1016,7 @@ pub fn run_scripts_with_filter(
             if let Some(pkgs) = map.get(&**name) {
                 for &dep in pkgs {
                     // SAFETY: dep points into state.handles which is stable for the run.
-                    unsafe { (*dep).dependents.push(std::ptr::from_mut(handle)) };
+                    yolo! { (*dep).dependents.push(std::ptr::from_mut(handle)) };
                     handle.remaining_dependencies += 1;
                 }
             }
@@ -1070,7 +1071,7 @@ pub fn run_scripts_with_filter(
             state.abort();
         }
         // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
+        yolo! { (*event_loop).tick_once(&raw const state as *mut c_void) };
     }
 
     let status = state.finalize();
@@ -1083,7 +1084,7 @@ fn has_cycle(current: &mut ProcessHandle) -> bool {
     current.visiting = true;
     for &dep in &current.dependents {
         // SAFETY: dep points into state.handles, valid for the run loop lifetime.
-        let dep = unsafe { &mut *dep };
+        let dep = yolo! { &mut *dep };
         if dep.visiting {
             return true;
         } else if !dep.visited {

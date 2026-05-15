@@ -2,6 +2,7 @@
 //! from `HTTPClient.buildRequest` and drain the request body (inline bytes or
 //! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rs`.
 
+use bun_yolo::yolo;
 use bun_core::err;
 use bun_core::strings;
 use bun_uws::quic;
@@ -73,7 +74,7 @@ pub fn write_request(
     // SAFETY: capacity for `request.headers.len() + 4` was reserved above; slots
     // 0..4 are fully written below (the four pseudo-headers) before `headers`
     // is read by `send_headers`. quic::Header has no Drop.
-    unsafe { headers.set_len(4) };
+    yolo! { headers.set_len(4) };
     for h in request.headers {
         if let Some(class) = Qpack::classify(h.name()) {
             match class {

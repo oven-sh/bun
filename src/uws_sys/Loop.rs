@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_longlong, c_uint, c_void};
 
 use crate::InternalLoopData;
@@ -73,12 +74,12 @@ pub trait LoopHandler {
 impl PosixLoop {
     pub fn uncork(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_res_clear_corked_socket(self) };
+        yolo! { c::uws_res_clear_corked_socket(self) };
     }
 
     pub fn update_date(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
+        yolo! { c::uws_loop_date_header_timer_update(self) };
     }
 
     pub fn iteration_number(&self) -> u64 {
@@ -184,12 +185,12 @@ impl PosixLoop {
             return;
         }
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_quic_loop_flush_if_pending(self) };
+        yolo! { c::us_quic_loop_flush_if_pending(self) };
     }
 
     pub fn create<H: LoopHandler>() -> *mut Loop {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
-        let p = unsafe {
+        let p = yolo! {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
         assert!(!p.is_null(), "us_create_loop returned null");
@@ -199,7 +200,7 @@ impl PosixLoop {
 
     pub fn wakeup(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(self) };
+        yolo! { c::us_wakeup_loop(self) };
     }
 
     #[inline]
@@ -209,18 +210,18 @@ impl PosixLoop {
 
     pub fn tick(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run_bun_tick(self, core::ptr::null()) };
+        yolo! { c::us_loop_run_bun_tick(self, core::ptr::null()) };
     }
 
     pub fn tick_without_idle(&mut self) {
         let timespec = Timespec { sec: 0, nsec: 0 };
         // SAFETY: self is a valid loop pointer; &timespec lives for the call
-        unsafe { c::us_loop_run_bun_tick(self, &raw const timespec) };
+        yolo! { c::us_loop_run_bun_tick(self, &raw const timespec) };
     }
 
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
         // SAFETY: self is a valid loop pointer
-        unsafe {
+        yolo! {
             c::us_loop_run_bun_tick(
                 self,
                 timespec.map_or(core::ptr::null(), |t| std::ptr::from_ref(t)),
@@ -235,7 +236,7 @@ impl PosixLoop {
     /// `us_socket_t` (libc-allocated) shows up as an LSAN leak.
     pub fn drain_closed_sockets(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_free_closed_sockets(self) };
+        yolo! { c::us_internal_free_closed_sockets(self) };
     }
 
     /// `us_socket_group_close_all()` on every group currently linked to this
@@ -243,7 +244,7 @@ impl PosixLoop {
     /// list doesn't enumerate. Returns whether any group was linked.
     pub fn close_all_groups(&mut self) -> bool {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_close_all_groups(self) != 0 }
+        yolo! { c::us_loop_close_all_groups(self) != 0 }
     }
 
     // TODO(port): Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
@@ -256,7 +257,7 @@ impl PosixLoop {
         defer_callback: unsafe extern "C" fn(*mut c_void),
     ) {
         // SAFETY: self is a valid loop pointer; user_data lifetime is caller's responsibility
-        unsafe { c::uws_loop_defer(self, user_data, defer_callback) };
+        yolo! { c::uws_loop_defer(self, user_data, defer_callback) };
     }
 
     // TODO(port): same trampoline-synthesis limitation as `next_tick` — callers pass the
@@ -276,7 +277,7 @@ impl PosixLoop {
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
+        yolo! { c::uws_loop_addPostHandler(this, ctx, callback) };
         Handler {
             loop_: this,
             ctx,
@@ -293,7 +294,7 @@ impl PosixLoop {
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
+        yolo! { c::uws_loop_addPreHandler(this, ctx, callback) };
         Handler {
             loop_: this,
             ctx,
@@ -303,7 +304,7 @@ impl PosixLoop {
 
     pub fn run(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        yolo! { c::us_loop_run(self) };
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {
@@ -319,7 +320,7 @@ impl PosixLoop {
     /// yet freed.
     pub unsafe fn destroy(this: *mut PosixLoop) {
         // SAFETY: `this` was returned by us_create_loop/uws_get_loop and not yet freed
-        unsafe { c::us_loop_free(this) };
+        yolo! { c::us_loop_free(this) };
     }
 }
 
@@ -340,7 +341,7 @@ impl Handler {
         // SAFETY: `loop_` is the original C-allocated raw pointer (from
         // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
         // that outlives this Handler and permits mutation; callback was previously registered.
-        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
+        yolo! { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
     }
 
     pub fn remove_pre(&self) {
@@ -349,7 +350,7 @@ impl Handler {
         // SAFETY: `loop_` is the original C-allocated raw pointer (from
         // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
         // that outlives this Handler and permits mutation; callback was previously registered.
-        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
+        yolo! { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
     }
 }
 
@@ -374,13 +375,13 @@ impl WindowsLoop {
 
     pub fn uncork(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_res_clear_corked_socket(self) };
+        yolo! { c::uws_res_clear_corked_socket(self) };
     }
 
     pub fn get() -> *mut WindowsLoop {
         // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
         // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
-        unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
+        yolo! { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
     }
 
     pub fn iteration_number(&self) -> u64 {
@@ -391,14 +392,14 @@ impl WindowsLoop {
     ///
     /// `uv_loop` is a back-reference set once by C `us_create_loop` and never
     /// reassigned for the `WindowsLoop`'s lifetime, so projecting `&uv::Loop`
-    /// from `&self` is sound. Consolidates the `unsafe { (*self.uv_loop).… }`
+    /// from `&self` is sound. Consolidates the `yolo! { (*self.uv_loop).… }`
     /// pattern (one `unsafe`, N safe callers).
     #[inline]
     pub fn uv(&self) -> &uv::Loop {
         // SAFETY: `uv_loop` is non-null after `us_create_loop` and remains
         // valid for the entire lifetime of `*self`; `&self` bounds the
         // returned borrow so it cannot outlive the wrapper.
-        unsafe { &*self.uv_loop }
+        yolo! { &*self.uv_loop }
     }
 
     /// Exclusive borrow of the backing libuv loop. Used only for the
@@ -411,7 +412,7 @@ impl WindowsLoop {
         // SAFETY: see `uv()` for liveness; `&mut self` is the sole Rust
         // borrow path to the wrapper, and the only mutation performed via
         // this accessor is the `active_handles` counter.
-        unsafe { &mut *self.uv_loop }
+        yolo! { &mut *self.uv_loop }
     }
 
     pub fn add_active(&mut self, val: u32) {
@@ -428,7 +429,7 @@ impl WindowsLoop {
 
     pub fn wakeup(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(self) };
+        yolo! { c::us_wakeup_loop(self) };
     }
 
     #[inline]
@@ -438,12 +439,12 @@ impl WindowsLoop {
 
     pub fn tick_with_timeout(&mut self, _: Option<&Timespec>) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        yolo! { c::us_loop_run(self) };
     }
 
     pub fn tick_without_idle(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_pump(self) };
+        yolo! { c::us_loop_pump(self) };
     }
 
     pub fn drain_quic_if_necessary(&mut self) {
@@ -451,12 +452,12 @@ impl WindowsLoop {
             return;
         }
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_quic_loop_flush_if_pending(self) };
+        yolo! { c::us_quic_loop_flush_if_pending(self) };
     }
 
     pub fn create<H: LoopHandler>() -> *mut WindowsLoop {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
-        let p = unsafe {
+        let p = yolo! {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
         assert!(!p.is_null(), "us_create_loop returned null");
@@ -466,7 +467,7 @@ impl WindowsLoop {
 
     pub fn run(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        yolo! { c::us_loop_run(self) };
     }
 
     // TODO: remove these two aliases
@@ -498,12 +499,12 @@ impl WindowsLoop {
 
     pub fn drain_closed_sockets(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_free_closed_sockets(self) };
+        yolo! { c::us_internal_free_closed_sockets(self) };
     }
 
     pub fn close_all_groups(&mut self) -> bool {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_close_all_groups(self) != 0 }
+        yolo! { c::us_loop_close_all_groups(self) != 0 }
     }
 
     // TODO(port): see PosixLoop::next_tick — same trampoline-synthesis limitation.
@@ -513,12 +514,12 @@ impl WindowsLoop {
         defer_callback: unsafe extern "C" fn(*mut c_void),
     ) {
         // SAFETY: self is a valid loop pointer; user_data lifetime is caller's responsibility
-        unsafe { c::uws_loop_defer(self, user_data, defer_callback) };
+        yolo! { c::uws_loop_defer(self, user_data, defer_callback) };
     }
 
     pub fn update_date(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
+        yolo! { c::uws_loop_date_header_timer_update(self) };
     }
 
     /// # Safety
@@ -526,7 +527,7 @@ impl WindowsLoop {
     /// and not yet freed.
     pub unsafe fn destroy(this: *mut WindowsLoop) {
         // SAFETY: `this` was returned by us_create_loop/uws_get_loop_with_native and not yet freed
-        unsafe { c::us_loop_free(this) };
+        yolo! { c::us_loop_free(this) };
     }
 
     // TODO(port): see PosixLoop::add_post_handler — same trampoline-synthesis limitation.
@@ -543,7 +544,7 @@ impl WindowsLoop {
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
+        yolo! { c::uws_loop_addPostHandler(this, ctx, callback) };
         Handler {
             loop_: this,
             ctx,
@@ -560,7 +561,7 @@ impl WindowsLoop {
         callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
+        yolo! { c::uws_loop_addPreHandler(this, ctx, callback) };
         Handler {
             loop_: this,
             ctx,

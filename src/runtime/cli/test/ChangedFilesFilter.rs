@@ -10,6 +10,7 @@
 //!
 //! Only those test entry points are returned.
 
+use bun_yolo::yolo;
 use bun_bundler::mal_prelude::*;
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::{c_char, c_int};
@@ -343,7 +344,7 @@ pub fn init_watch_trigger() {
             // pick Rust equivalents (likely bun_core::time::milli_timestamp() ^ libc::getpid())
             // SAFETY: getpid is always safe.
             let seed: u64 =
-                bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
+                bun_core::time::milli_timestamp() as u64 ^ yolo! { libc::getpid() } as u64;
             let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
             // TODO(port): Zig used DefaultPrng (xoshiro256++); wyhash-of-seed is a placeholder
             let tmpdir = RealFS::tmpdir_path();
@@ -367,7 +368,7 @@ pub fn init_watch_trigger() {
             // `std.os.environ`; it simply won't be visible to code that
             // iterates the startup-captured slice in this process.
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
-            unsafe {
+            yolo! {
                 setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
             }
             fresh

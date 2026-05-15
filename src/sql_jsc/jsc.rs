@@ -17,6 +17,7 @@
 #![allow(unused_variables, non_snake_case, dead_code, unused_imports)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
@@ -119,7 +120,7 @@ fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     outbuf[..PREFIX.len()].copy_from_slice(PREFIX);
     let message_buf = &mut outbuf[PREFIX.len()..];
     // SAFETY: `message_buf` is a valid writable buffer of `message_buf.len()` bytes.
-    unsafe {
+    yolo! {
         bun_boringssl_sys::ERR_error_string_n(
             err_code,
             message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
@@ -332,20 +333,20 @@ impl VirtualMachineSqlExt for VirtualMachine {
     fn sql_state(&mut self) -> &mut RareData {
         // SAFETY: hook returns `&mut runtime_state().sql_rare`; non-null on
         // the JS thread once `init_runtime_state` has run.
-        unsafe { &mut *(hooks().sql_rare)(self) }
+        yolo! { &mut *(hooks().sql_rare)(self) }
     }
     #[inline]
     fn timer(&mut self) -> &mut TimerHeap {
         // SAFETY: hook returns `&mut runtime_state().timer`; non-null after
         // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
         // `*mut c_void` so callers stay typed.
-        unsafe { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
+        yolo! { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
     }
     #[inline]
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
         // SAFETY: hook returns `&mut runtime_state().ssl_ctx_cache`; non-null
         // after `init_runtime_state`.
-        unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
+        yolo! { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
     }
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
@@ -380,7 +381,7 @@ impl EventLoopSqlExt for EventLoop {
     fn entered(&mut self) -> EventLoopGuard {
         // SAFETY: self is the live VM-owned event loop; the guard holds the
         // raw pointer so no &mut is held across re-entrant JS.
-        unsafe { EventLoop::enter_scope(self) }
+        yolo! { EventLoop::enter_scope(self) }
     }
 }
 
@@ -411,12 +412,12 @@ impl TimerHeap {
     pub fn insert(&mut self, t: &mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
         // intrusive heap node owned by the caller.
-        unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
+        yolo! { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
     }
     pub fn remove(&mut self, t: &mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
         // inserted by the caller.
-        unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
+        yolo! { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
     }
 }
 
@@ -496,7 +497,7 @@ pub mod api {
                 if let Some(p) = self.0.take() {
                     // SAFETY: `p` was returned by `ssl_config_from_js` and not
                     // yet freed (Option::take guarantees single drop).
-                    unsafe { (hooks().ssl_config_free)(p.as_ptr()) }
+                    yolo! { (hooks().ssl_config_free)(p.as_ptr()) }
                 }
             }
         }
@@ -510,7 +511,7 @@ pub mod api {
                     None => core::ptr::null(),
                     // SAFETY: live boxed SSLConfig; hook returns a borrow into
                     // its `Option<CString>` field, valid for `self`'s lifetime.
-                    Some(p) => unsafe { (hooks().ssl_config_server_name)(p.as_ptr()) },
+                    Some(p) => yolo! { (hooks().ssl_config_server_name)(p.as_ptr()) },
                 }
             }
 
@@ -520,7 +521,7 @@ pub mod api {
                 match self.0 {
                     None => 0,
                     // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
+                    Some(p) => yolo! { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
                 }
             }
 
@@ -533,7 +534,7 @@ pub mod api {
                 value: JSValue,
             ) -> JsResult<Option<Self>> {
                 // SAFETY: hook contract — may run JS getters / throw.
-                let p = unsafe { (hooks().ssl_config_from_js)(global, value) };
+                let p = yolo! { (hooks().ssl_config_from_js)(global, value) };
                 if global.has_exception() {
                     debug_assert!(p.is_null());
                     return Err(JsError::Thrown);
@@ -556,7 +557,7 @@ pub mod api {
                         opts
                     }
                     // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
+                    Some(p) => yolo! { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
                 }
             }
         }
@@ -584,19 +585,19 @@ pub mod webcore {
         pub fn needs_to_read_file(&self) -> bool {
             // SAFETY: `self` is a live `*const bun_runtime::webcore::Blob`
             // (codegen m_ctx payload).
-            unsafe { (hooks().blob_needs_to_read_file)(self._p.get() as *const c_void) }
+            yolo! { (hooks().blob_needs_to_read_file)(self._p.get() as *const c_void) }
         }
         pub fn shared_view(&self) -> &[u8] {
             let mut len: usize = 0;
             // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
             // borrow the Blob's store, which is immutable for its lifetime.
             let ptr =
-                unsafe { (hooks().blob_shared_view)(self._p.get() as *const c_void, &raw mut len) };
+                yolo! { (hooks().blob_shared_view)(self._p.get() as *const c_void, &raw mut len) };
             if ptr.is_null() || len == 0 {
                 return &[];
             }
             // SAFETY: hook guarantees `ptr[..len]` valid while the Blob lives.
-            unsafe { core::slice::from_raw_parts(ptr, len) }
+            yolo! { core::slice::from_raw_parts(ptr, len) }
         }
     }
     impl super::JsClass for Blob {
@@ -945,7 +946,7 @@ pub fn marked_argument_buffer_run<Ctx>(
 ) {
     // SAFETY: both fn-pointer params are `extern "C" fn(thin_ptr, thin_ptr)`,
     // so the transmute is ABI-identical (same arity, same per-arg repr).
-    let f = unsafe {
+    let f = yolo! {
         bun_ptr::cast_fn_ptr::<
             extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer),
             extern "C" fn(*mut c_void, *mut c_void),
@@ -967,7 +968,7 @@ impl SslCtxCache {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
         let p =
-            unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), &opts, err) };
+            yolo! { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), &opts, err) };
         if p.is_null() { None } else { Some(p) }
     }
 }

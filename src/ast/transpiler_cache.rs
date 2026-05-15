@@ -10,6 +10,7 @@
 //! owns `entry` and the on-disk encode/decode (`Metadata` / `Entry` live in
 //! `bun_bundler::cache` and are stored here type-erased as `*mut ()`).
 
+use bun_yolo::yolo;
 use crate::{ExportsKind, Source};
 
 pub struct RuntimeTranspilerCache {
@@ -71,7 +72,7 @@ impl RuntimeTranspilerCache {
         // dispatch at every call site (`get`/`put`: `&mut self`-derived with
         // write provenance; `is_disabled`: `&self`-derived, impl ignores
         // `this`). See `link_interface!` `new()` contract.
-        unsafe { TranspilerCacheImpl::new(kind, this) }
+        yolo! { TranspilerCacheImpl::new(kind, this) }
     }
 
     #[inline]

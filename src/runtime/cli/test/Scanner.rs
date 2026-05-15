@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::collections::VecDeque;
 
 use bun_alloc::AllocError;
@@ -74,7 +75,7 @@ impl<'a> DirEntryIterator for ScannerDirIter<'a> {
         // SAFETY: `self.0` is `&mut Scanner` for the duration of
         // `read_directory_with_iterator`; no other live `&mut` alias exists
         // while the resolver walks entries (Zig: `iterator.next(entry, fd)`).
-        unsafe { (*self.0).next(entry, fd) }
+        yolo! { (*self.0).next(entry, fd) }
     }
 }
 
@@ -92,7 +93,7 @@ impl<'a> Scanner<'a> {
             options: &transpiler.options,
             // SAFETY: `Transpiler.fs` is the process-singleton `*mut FileSystem`
             // (Zig `*FileSystem`); it outlives the scanner.
-            fs: unsafe { &*transpiler.fs },
+            fs: yolo! { &*transpiler.fs },
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
             scan_dir_buf: PathBuffer::uninit(),
@@ -120,7 +121,7 @@ impl<'a> Scanner<'a> {
         // function — read_dir_with_name/next() only touch open_dir_buf — so the
         // bytes at [0, path_len) remain valid while `path` is live.
         let path: &[u8] =
-            unsafe { core::slice::from_raw_parts(self.scan_dir_buf.0.as_ptr(), path_len) };
+            yolo! { core::slice::from_raw_parts(self.scan_dir_buf.0.as_ptr(), path_len) };
 
         let root = self
             .read_dir_with_name(path, None)
@@ -171,14 +172,14 @@ impl<'a> Scanner<'a> {
                 entry_ptrs.sort_by(|a, b| {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    let an = unsafe { (**a).base_lowercase() };
-                    let bn = unsafe { (**b).base_lowercase() };
+                    let an = yolo! { (**a).base_lowercase() };
+                    let bn = yolo! { (**b).base_lowercase() };
                     an.cmp(bn)
                 });
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr }, fd);
+                    self.next(yolo! { &mut *entry_ptr }, fd);
                 }
             }
         }
@@ -195,7 +196,7 @@ impl<'a> Scanner<'a> {
                 self.open_dir_buf[path2_len] = 0;
                 let name_len = entry.name.slice().len();
                 // SAFETY: open_dir_buf[path2_len] == 0 written immediately above
-                let path_z = unsafe {
+                let path_z = yolo! {
                     ZStr::from_raw(
                         self.open_dir_buf.as_ptr().add(path2_len - name_len),
                         name_len,
@@ -256,7 +257,7 @@ impl<'a> Scanner<'a> {
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
-        unsafe { &mut *real_fs }.read_directory_with_iterator(
+        yolo! { &mut *real_fs }.read_directory_with_iterator(
             name,
             handle.map(|d| d.fd),
             0,
@@ -401,7 +402,7 @@ impl<'a> Scanner<'a> {
                     // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
                     // no Drop; Zig copied it by value. Upstream type lacks
                     // Clone/Copy, so bitwise-copy here to match Zig semantics.
-                    name: unsafe { core::ptr::read(&raw const entry.base_) },
+                    name: yolo! { core::ptr::read(&raw const entry.base_) },
                     dir_path: entry.dir,
                 });
             }

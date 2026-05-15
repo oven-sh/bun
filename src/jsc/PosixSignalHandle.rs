@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 
 use crate::event_loop::EventLoop;
@@ -60,7 +61,7 @@ impl PosixSignalHandle {
 
         if let Some(vm) = VirtualMachine::get_main_thread_vm() {
             // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
-            unsafe { (*(*vm).event_loop()).wakeup() };
+            yolo! { (*(*vm).event_loop()).wakeup() };
         }
 
         true
@@ -117,7 +118,7 @@ pub extern "C" fn Bun__onPosixSignal(number: i32) {
         // SAFETY: `vm` and its event loop are process-lifetime; raw place
         // projection reads only the `signal_handler` slot (no `&EventLoop`
         // formed — the main thread may hold `&mut EventLoop` concurrently).
-        let handler = unsafe { (*(*vm).event_loop()).signal_handler };
+        let handler = yolo! { (*(*vm).event_loop()).signal_handler };
         if let Some(handler) = handler {
             // `BackRef::deref` is the centralised set-once-NonNull proof; the
             // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
@@ -159,7 +160,7 @@ pub extern "C" fn Bun__ensureSignalHandler() {
     {
         if let Some(vm) = VirtualMachine::get_main_thread_vm() {
             // SAFETY: `vm` and its event loop are process-lifetime.
-            let this = unsafe { &mut *(*vm).event_loop() };
+            let this = yolo! { &mut *(*vm).event_loop() };
             if this.signal_handler.is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
                 this.signal_handler =

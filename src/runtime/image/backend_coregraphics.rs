@@ -7,6 +7,7 @@
 //! file just allocates the RGBA/output buffers in the global allocator and
 //! maps the C status codes back onto `codecs::Error`.
 
+use bun_yolo::yolo;
 use super::codecs;
 
 /// Zig: `pub const BackendError = codecs.Error || error{BackendUnavailable};`
@@ -108,7 +109,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     // Phase 1: dimensions only (out=null) so we can allocate in the global
     // allocator like every other decode path.
     // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
-    match unsafe {
+    match yolo! {
         bun_coregraphics_decode(
             bytes.as_ptr(),
             bytes.len(),
@@ -127,7 +128,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
     // SAFETY: out has exactly w*h*4 bytes; shim writes that many.
-    match unsafe {
+    match yolo! {
         bun_coregraphics_decode(
             bytes.as_ptr(),
             bytes.len(),
@@ -162,7 +163,7 @@ pub fn encode(
     let mut len: usize = 0;
     // Phase 1: encode into a thread-local CFData inside the shim, return size.
     // SAFETY: rgba is valid; out=null signals "size probe" to the shim.
-    match unsafe {
+    match yolo! {
         bun_coregraphics_encode(
             rgba.as_ptr(),
             width,
@@ -180,7 +181,7 @@ pub fn encode(
     let mut out = vec![0u8; len];
     // Phase 2: copy out and release the CFData.
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
-    match unsafe {
+    match yolo! {
         bun_coregraphics_encode(
             rgba.as_ptr(),
             width,
@@ -246,7 +247,7 @@ pub fn scale(
     // PERF(port): Zig used uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; (dw as usize) * (dh as usize) * 4];
     // SAFETY: src has sw*sh*4 bytes (caller invariant); out has dw*dh*4 bytes.
-    if unsafe { bun_coregraphics_scale(src.as_ptr(), sw, sh, out.as_mut_ptr(), dw, dh) } != CG_OK {
+    if yolo! { bun_coregraphics_scale(src.as_ptr(), sw, sh, out.as_mut_ptr(), dw, dh) } != CG_OK {
         return Err(BackendError::BackendUnavailable);
     }
     Ok(out)
@@ -256,7 +257,7 @@ pub fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, Back
     // PERF(port): Zig used uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
-    if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
+    if yolo! { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
     {
         return Err(BackendError::BackendUnavailable);
     }
@@ -267,7 +268,7 @@ pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Bac
     // PERF(port): Zig used uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
-    if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
+    if yolo! { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
         != CG_OK
     {
         return Err(BackendError::BackendUnavailable);
@@ -291,7 +292,7 @@ unsafe extern "C" {
 pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=0 → shim fills len with required byte count.
-    if unsafe { bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 0) } != CG_OK {
+    if yolo! { bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 0) } != CG_OK {
         return Err(BackendError::BackendUnavailable);
     }
     if len == 0 {
@@ -300,7 +301,7 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     // PERF(port): Zig used uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; len];
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
-    if unsafe { bun_coregraphics_clipboard(out.as_mut_ptr(), &raw mut len, 0) } != CG_OK {
+    if yolo! { bun_coregraphics_clipboard(out.as_mut_ptr(), &raw mut len, 0) } != CG_OK {
         return Err(BackendError::BackendUnavailable);
     }
     out.truncate(len);
@@ -310,7 +311,7 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
 pub fn has_clipboard_image() -> bool {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=1 → shim only checks for image presence.
-    unsafe {
+    yolo! {
         bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 1) == CG_OK && len > 0
     }
 }
@@ -322,7 +323,7 @@ unsafe extern "C" {
 // Zig: `pub const clipboardChangeCount = bun_coregraphics_clipboard_change_count;`
 pub fn clipboard_change_count() -> i64 {
     // SAFETY: pure getter, no preconditions.
-    unsafe { bun_coregraphics_clipboard_change_count() }
+    yolo! { bun_coregraphics_clipboard_change_count() }
 }
 
 // ported from: src/runtime/image/backend_coregraphics.zig

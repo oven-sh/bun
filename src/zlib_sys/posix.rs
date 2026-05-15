@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types, non_snake_case)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int};
 
 pub use crate::shared::{
@@ -45,7 +46,7 @@ unsafe extern "C" {
 #[inline]
 pub unsafe fn deflate_init(strm: z_streamp, level: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` points to a valid z_stream; zlib reads version/size to ABI-check
-    unsafe {
+    yolo! {
         deflateInit_(
             strm,
             level,
@@ -57,7 +58,7 @@ pub unsafe fn deflate_init(strm: z_streamp, level: c_int) -> ReturnCode {
 #[inline]
 pub unsafe fn inflate_init(strm: z_streamp) -> ReturnCode {
     // SAFETY: caller guarantees `strm` points to a valid z_stream
-    unsafe {
+    yolo! {
         inflateInit_(
             strm,
             zlibVersion(),
@@ -75,7 +76,7 @@ pub unsafe fn deflate_init2(
     strategy: c_int,
 ) -> ReturnCode {
     // SAFETY: caller guarantees `strm` points to a valid z_stream
-    unsafe {
+    yolo! {
         deflateInit2_(
             strm,
             level,
@@ -91,7 +92,7 @@ pub unsafe fn deflate_init2(
 #[inline]
 pub unsafe fn inflate_init2(strm: z_streamp, window_bits: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` points to a valid z_stream
-    unsafe {
+    yolo! {
         inflateInit2_(
             strm,
             window_bits,
@@ -107,7 +108,7 @@ pub unsafe fn inflate_back_init(
     window: *mut u8,
 ) -> ReturnCode {
     // SAFETY: caller guarantees `strm` and `window` are valid for zlib's lifetime requirements
-    unsafe {
+    yolo! {
         inflateBackInit_(
             strm,
             window_bits,

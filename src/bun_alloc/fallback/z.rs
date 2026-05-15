@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr;
 
@@ -30,7 +31,7 @@ impl Z {
     ) -> Option<*mut u8> {
         let result = c_allocator.raw_alloc(len, alignment, return_address)?;
         // SAFETY: `result` points to a fresh allocation of at least `len` bytes.
-        unsafe { ptr::write_bytes(result, 0, len) };
+        yolo! { ptr::write_bytes(result, 0, len) };
         Some(result)
     }
 
@@ -53,7 +54,7 @@ impl Z {
         if new_len > old_len {
             // SAFETY: `raw_resize` succeeded in-place, so `buf.ptr[old_len..new_len]`
             // is now valid uninitialized memory owned by this allocation.
-            unsafe { ptr::write_bytes(buf.as_mut_ptr().add(old_len), 0, new_len - old_len) };
+            yolo! { ptr::write_bytes(buf.as_mut_ptr().add(old_len), 0, new_len - old_len) };
         }
         true
     }

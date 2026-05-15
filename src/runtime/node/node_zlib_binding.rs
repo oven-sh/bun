@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
@@ -184,7 +185,7 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let slice_u8 = data.slice();
     // SAFETY: `crc32` is a pure FFI hash over `(ptr, len)`; `slice_u8` is valid
     // for the call (borrowed from `data`, which lives to end of scope).
-    let crc = unsafe {
+    let crc = yolo! {
         bun_zlib::crc32(
             bun_zlib::uLong::from(value),
             slice_u8.as_ptr(),
@@ -241,7 +242,7 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
         // (set in each impl's `init()`); both indices are in-bounds and the
         // backing buffer is kept alive by `this._writeState` /
         // `_handle[owner_symbol]`.
-        let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
+        let (r1, r0) = yolo! { (&mut *write_result.add(1), &mut *write_result) };
         self.stream().with_mut(|s| s.update_write_result(r1, r0));
     }
 
@@ -443,7 +444,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // (`CompressionStreamImpl::from_task`). The task field is a
         // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
         // `offset_of!(T, task)` is the value's offset.
-        let this: *mut T = unsafe { T::from_task(task) };
+        let this: *mut T = yolo! { T::from_task(task) };
         Self::async_job_run(this);
     }
 
@@ -469,7 +470,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
         // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
         // until `run_from_js_thread` runs and calls `deref()`.
-        unsafe {
+        yolo! {
             (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
         }
     }
@@ -505,7 +506,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
             // payload and is not accessed after this call.
-            unsafe { T::deref(this_ptr) };
+            yolo! { T::deref(this_ptr) };
             return;
         };
 
@@ -514,7 +515,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         if !Self::check_error(&this, global, this_value) {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: see above.
-            unsafe { T::deref(this_ptr) };
+            yolo! { T::deref(this_ptr) };
             return;
         }
 
@@ -536,7 +537,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.poll_ref().with_mut(|p| p.unref(vm));
         // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
         // and is not accessed after this call.
-        unsafe { T::deref(this_ptr) };
+        yolo! { T::deref(this_ptr) };
     }
 
     pub fn write_sync(
@@ -681,7 +682,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // synchronously inside a host-fn invoked through that wrapper), so the
         // `(&T as *const T).cast_mut()` provenance is sufficient — only the
         // `Cell<u32>` refcount is touched.
-        unsafe { T::deref((this as *const T).cast_mut()) };
+        yolo! { T::deref((this as *const T).cast_mut()) };
 
         Ok(JSValue::UNDEFINED)
     }
@@ -782,7 +783,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let msg_bytes: &[u8] = if err_.msg.is_null() {
             b""
         } else {
-            unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
+            yolo! { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
         let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
         let msg_value = match msg_str.transfer_to_js(global_this) {
@@ -793,7 +794,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let code_bytes: &[u8] = if err_.code.is_null() {
             b""
         } else {
-            unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
+            yolo! { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
         let mut code_str =
             BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
@@ -829,7 +830,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // Refcounted: release the JS wrapper's +1; allocation may outlive this
         // call if other refs remain, so hand ownership back to the raw refcount.
         // SAFETY: `this` was the unique GC-owned m_ctx; `deref` frees on count==0.
-        unsafe { T::deref(Box::into_raw(this)) };
+        yolo! { T::deref(Box::into_raw(this)) };
     }
 }
 
@@ -1000,7 +1001,7 @@ macro_rules! __impl_compression_stream {
                 // SAFETY: `task` points at the `task` field of a live `Self`
                 // (Zig `@fieldParentPtr("task", task)`); `from_field_ptr!`
                 // computes the byte offset via `offset_of!(Self, task)`.
-                unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
+                yolo! { ::bun_core::from_field_ptr!(Self, task, task) }
             }
 
             // All three `Native*` structs `#[derive(bun_ptr::CellRefCounted)]`
@@ -1012,7 +1013,7 @@ macro_rules! __impl_compression_stream {
                 // SAFETY: forwarded trait contract — `this` is live; the
                 // derived `CellRefCounted::deref` routes zero to the per-type
                 // `destroy` (≡ Zig `bun.ptr.RefCount(.., deinit, .{})`).
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+                yolo! { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
 
             #[inline] fn write_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {

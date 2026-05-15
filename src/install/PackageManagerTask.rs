@@ -1,6 +1,7 @@
 //! Schedule long-running callbacks for a task
 //! Slow stuff is broken into tasks, each can run independently without locks
 
+use bun_yolo::yolo;
 use core::mem::ManuallyDrop;
 
 use bun_ast::{Loc, Log};
@@ -59,8 +60,8 @@ pub fn uninit() -> Task<'static> {
         // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
         // valid storage and is never read before the caller overwrites it.
         tag: Tag::PackageManifest,
-        request: unsafe { bun_core::ffi::zeroed_unchecked() },
-        data: unsafe { bun_core::ffi::zeroed_unchecked() },
+        request: yolo! { bun_core::ffi::zeroed_unchecked() },
+        data: yolo! { bun_core::ffi::zeroed_unchecked() },
         // Every Zig caller passes `logger.Log.init(allocator)` for this field.
         // `Log` contains `Vec<Msg>` (NonNull invariant) so it cannot be
         // `mem::zeroed()`; and struct-update `..Task::uninit()` *drops* the
@@ -87,7 +88,7 @@ unsafe impl<'a> bun_threading::Linked for Task<'a> {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -115,7 +116,7 @@ impl Id {
         hasher.update(package_name);
         hasher.update(b"@");
         // SAFETY: reading raw bytes of a POD value for hashing (matches Zig `std.mem.asBytes`)
-        hasher.update(unsafe {
+        hasher.update(yolo! {
             bun_core::ffi::slice(
                 (&raw const package_version).cast::<u8>(),
                 core::mem::size_of::<semver::Version>(),
@@ -193,19 +194,19 @@ impl<'a> Task<'a> {
     pub fn data_extract(&self) -> &ExtractData {
         debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
         // SAFETY: tag-guarded; `ManuallyDrop` deref.
-        unsafe { &*self.data.extract }
+        yolo! { &*self.data.extract }
     }
     #[inline]
     pub fn data_extract_mut(&mut self) -> &mut ExtractData {
         debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
         // SAFETY: tag-guarded; `&mut self` exclusive.
-        unsafe { &mut *self.data.extract }
+        yolo! { &mut *self.data.extract }
     }
     #[inline]
     pub fn data_git_clone(&self) -> Fd {
         debug_assert!(self.tag == Tag::GitClone);
         // SAFETY: tag-guarded; `Fd` is `Copy`.
-        unsafe { *self.data.git_clone }
+        yolo! { *self.data.git_clone }
     }
 }
 
@@ -215,9 +216,9 @@ impl<'a> Task<'a> {
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
-        let this: *mut Task<'a> = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        let this: *mut Task<'a> = yolo! { bun_core::from_field_ptr!(Task, threadpool_task, task) };
         // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task<'a> = unsafe { &mut *this };
+        let this: &mut Task<'a> = yolo! { &mut *this };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
         // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
         // shared-read sites below; `manager` is kept as a raw `*mut` for the
@@ -239,7 +240,7 @@ impl<'a> Task<'a> {
             match this.tag {
                 Tag::PackageManifest => {
                     // SAFETY: tag == PackageManifest discriminates the union
-                    let manifest = unsafe { &mut *this.request.package_manifest };
+                    let manifest = yolo! { &mut *this.request.package_manifest };
 
                     // PORT NOTE: split-borrow `manifest.network` so the mutable
                     // `response_buffer` borrow doesn't overlap the immutable
@@ -281,7 +282,7 @@ impl<'a> Task<'a> {
                         ..
                     } = &network.callback
                     else {
-                        unsafe { core::hint::unreachable_unchecked() }
+                        yolo! { core::hint::unreachable_unchecked() }
                     };
                     let loaded_manifest = loaded_manifest.clone();
                     let is_extended_manifest = *is_extended_manifest;
@@ -305,7 +306,7 @@ impl<'a> Task<'a> {
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
                         // boundary only (callee touches `cache_directory_` /
                         // `temporary_directory` lazily; same race as Zig spec).
-                        unsafe { &mut *manager },
+                        yolo! { &mut *manager },
                         is_extended_manifest,
                     ) {
                         Ok(v) => v,
@@ -359,7 +360,7 @@ impl<'a> Task<'a> {
                     // chunk before streaming could commit.
 
                     // SAFETY: tag == Extract discriminates the union
-                    let extract = unsafe { &mut *this.request.extract };
+                    let extract = yolo! { &mut *this.request.extract };
                     // Zig: `defer buffer.deinit()` — take ownership so the
                     // tarball body drops on every exit of this arm.
                     let mut buffer = core::mem::take(&mut extract.network.response_buffer);
@@ -384,7 +385,7 @@ impl<'a> Task<'a> {
                 }
                 Tag::GitClone => {
                     // SAFETY: tag == GitClone discriminates the union
-                    let req = unsafe { &mut *this.request.git_clone };
+                    let req = yolo! { &mut *this.request.git_clone };
                     let name = req.name.slice();
                     let url = req.url.slice();
                     let mut attempt: u8 = 1;
@@ -395,7 +396,7 @@ impl<'a> Task<'a> {
                                 req.env,
                                 &mut this.log,
                                 // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                unsafe { &mut *manager }.get_cache_directory(),
+                                yolo! { &mut *manager }.get_cache_directory(),
                                 this.id,
                                 name,
                                 https,
@@ -435,7 +436,7 @@ impl<'a> Task<'a> {
                                     req.env,
                                     &mut this.log,
                                     // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                    unsafe { &mut *manager }.get_cache_directory(),
+                                    yolo! { &mut *manager }.get_cache_directory(),
                                     this.id,
                                     name,
                                     ssh,
@@ -465,12 +466,12 @@ impl<'a> Task<'a> {
                 }
                 Tag::GitCheckout => {
                     // SAFETY: tag == GitCheckout discriminates the union
-                    let git_checkout = unsafe { &mut *this.request.git_checkout };
+                    let git_checkout = yolo! { &mut *this.request.git_checkout };
                     let data = match Repository::checkout(
                         git_checkout.env,
                         &mut this.log,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                        unsafe { &mut *manager }.get_cache_directory(),
+                        yolo! { &mut *manager }.get_cache_directory(),
                         bun_sys::Dir::from_fd(git_checkout.repo_dir),
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),
@@ -500,7 +501,7 @@ impl<'a> Task<'a> {
                     // other dependencies.
 
                     // SAFETY: tag == LocalTarball discriminates the union
-                    let req = unsafe { &mut *this.request.local_tarball };
+                    let req = yolo! { &mut *this.request.local_tarball };
                     let tarball_path = req.tarball_path.slice();
                     let normalize = req.normalize;
 
@@ -539,7 +540,7 @@ impl<'a> Task<'a> {
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
-                    unsafe { core::hint::unreachable_unchecked() }
+                    yolo! { core::hint::unreachable_unchecked() }
                 };
                 if apply.logger.errors > 0 {
                     // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
@@ -555,7 +556,7 @@ impl<'a> Task<'a> {
         // through); erasing to `'static` matches Zig's lifetime-less queue.
         // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
         // shared raw deref — no `&mut PackageManager` is formed.
-        unsafe {
+        yolo! {
             (*core::ptr::addr_of!((*manager).resolve_tasks))
                 .push(std::ptr::from_mut::<Task<'a>>(this).cast::<Task<'static>>());
             PackageManager::wake_raw(manager);

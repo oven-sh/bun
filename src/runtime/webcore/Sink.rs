@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::api::bun_subprocess::Subprocess;
@@ -58,7 +59,7 @@ impl<'a> Sink<'a> {
         // sentinel vtable whose entries unconditionally panic — this keeps the value
         // well-formed at all times and turns any accidental dispatch (the bug Zig's
         // `undefined` would have hidden) into a loud, deterministic crash.
-        unsafe {
+        yolo! {
             Sink {
                 ptr: &mut *(0xaaaa_aaaa_usize as *mut ()),
                 vtable: VTable::PENDING,
@@ -163,7 +164,7 @@ macro_rules! impl_sink_handler {
 pub fn init_with_type<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
     Sink {
         // SAFETY: type-erased borrow; recovered as *mut T in vtable thunks below.
-        ptr: unsafe { &mut *std::ptr::from_mut::<T>(handler).cast::<()>() },
+        ptr: yolo! { &mut *std::ptr::from_mut::<T>(handler).cast::<()>() },
         vtable: VTable::wrap::<T>(),
         status: Status::Ready,
         used: false,
@@ -354,29 +355,29 @@ impl VTable {
             data: streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: `this` was erased from `&mut W` in init_with_type.
-            unsafe { &mut *this.cast::<W>() }.write(data)
+            yolo! { &mut *this.cast::<W>() }.write(data)
         }
         fn on_connect<W: SinkHandler>(this: *mut (), signal: Signal) -> sys::Result<()> {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.connect(signal)
+            yolo! { &mut *this.cast::<W>() }.connect(signal)
         }
         fn on_write_latin1<W: SinkHandler>(
             this: *mut (),
             data: streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_latin1(data)
+            yolo! { &mut *this.cast::<W>() }.write_latin1(data)
         }
         fn on_write_utf16<W: SinkHandler>(
             this: *mut (),
             data: streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_utf16(data)
+            yolo! { &mut *this.cast::<W>() }.write_utf16(data)
         }
         fn on_end<W: SinkHandler>(this: *mut (), err: Option<SysError>) -> sys::Result<()> {
             // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.end(err)
+            yolo! { &mut *this.cast::<W>() }.end(err)
         }
 
         VTable {
@@ -841,7 +842,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
                 .throw(global, format_args!("Expected {}", T::NAME))),
             // SAFETY: codegen returns a non-null `*mut JSSink<T>` for live
             // wrappers; see fn doc for the `'a` justification.
-            ptr => Ok(unsafe { &mut *(ptr as *mut JSSink<T>) }),
+            ptr => Ok(yolo! { &mut *(ptr as *mut JSSink<T>) }),
         }
     }
 
@@ -860,7 +861,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         let mut this: Box<core::mem::MaybeUninit<T>> = Box::new(core::mem::MaybeUninit::uninit());
         T::construct(&mut *this);
         // SAFETY: JsSinkType::construct fully initializes `*this` (contract).
-        let this: Box<T> = unsafe { this.assume_init() };
+        let this: Box<T> = yolo! { this.assume_init() };
         let value = T::create_object_extern(global, bun_core::heap::into_raw(this).cast(), 0);
         Ok(value)
     }
@@ -1229,7 +1230,7 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         // SAFETY: caller (C++) guarantees a valid non-Detached tag points at a live
         // Subprocess.
         let subprocess: &mut Subprocess<'_> =
-            unsafe { &mut *(ptr.as_uintptr() as usize as *mut Subprocess<'_>) };
+            yolo! { &mut *(ptr.as_uintptr() as usize as *mut Subprocess<'_>) };
         subprocess.on_stdin_destroyed();
         return;
     }

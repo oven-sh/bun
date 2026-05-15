@@ -26,6 +26,7 @@
 //   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //   SOFTWARE.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -359,7 +360,7 @@ impl Task {
     #[inline]
     unsafe fn from_node(node: *mut Node) -> *mut Task {
         // SAFETY: caller guarantees `node` points to the `node` field of a `Task`.
-        unsafe { bun_core::from_field_ptr!(Task, node, node) }
+        yolo! { bun_core::from_field_ptr!(Task, node, node) }
     }
 
     /// Project `NonNull<Task>` → `NonNull<Node>` for the intrusive `node` field.
@@ -386,16 +387,16 @@ impl Batch {
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
         // SAFETY: `len` is only read here for the fast-path zero check; the
         // atomic load mirrors Zig's `@atomicLoad(usize, &this.len, .monotonic)`.
-        let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
+        let len = yolo! { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
         if len == 0 {
             return None;
         }
         let task = self.head.unwrap();
         // SAFETY: head is non-null per the unwrap above; tasks form an intrusive list.
-        let next = unsafe { (*Task::node_of(task).as_ptr()).next };
+        let next = yolo! { (*Task::node_of(task).as_ptr()).next };
         if !next.is_null() {
             // SAFETY: next points to the `node` field of the following Task.
-            self.head = NonNull::new(unsafe { Task::from_node(next) });
+            self.head = NonNull::new(yolo! { Task::from_node(next) });
         } else {
             if task != self.tail.unwrap() {
                 unreachable!();
@@ -434,7 +435,7 @@ impl Batch {
                 .head
                 .map_or(ptr::null_mut(), |h| Task::node_of(h).as_ptr());
             // SAFETY: self.len != 0 implies tail is Some; intrusive list link assignment.
-            unsafe { (*tail_node.as_ptr()).next = new_next };
+            yolo! { (*tail_node.as_ptr()).next = new_next };
             self.tail = batch.tail;
             self.len += batch.len;
         }
@@ -456,7 +457,7 @@ where
     #[inline]
     unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize) {
         // SAFETY: caller guarantees `value` is a live `V`; `V: Copy` so deref is a copy.
-        (self.0)(ctx, unsafe { *value }, i);
+        (self.0)(ctx, yolo! { *value }, i);
     }
 }
 
@@ -536,14 +537,14 @@ impl ThreadPool {
         unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
             // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
             let runner_task =
-                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
+                yolo! { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
             let i = runner_task.i;
             let wctx = runner_task.ctx.get();
             // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
             // every task finishes); each task owns a distinct index `i`.
-            let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
+            let value: *mut V = yolo! { &raw mut (*wctx.values)[i] };
             // SAFETY: `value` is live and exclusively owned by this task per the index.
-            unsafe { wctx.run_fn.call(&wctx.ctx, value, i) };
+            yolo! { wctx.run_fn.call(&wctx.ctx, value, i) };
         }
 
         let wait_context = WaitContext {
@@ -634,7 +635,7 @@ impl ThreadPool {
         };
         if !current.is_null() {
             // SAFETY: current is the calling thread's own Thread; exclusive access.
-            unsafe {
+            yolo! {
                 if (*current).run_buffer.push(&mut list).is_err() {
                     (*current).run_queue.push(list);
                 }
@@ -774,7 +775,7 @@ impl ThreadPool {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread (matches Zig `thread.detach()`).
                 }
-                Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
+                Err(_) => return yolo! { Self::unregister(self, ptr::null_mut()) },
             }
             sync = new_sync;
         }
@@ -834,7 +835,7 @@ impl ThreadPool {
                                     // detach by dropping
                                 }
                                 Err(_) => {
-                                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                                    return yolo! { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
                             // if (self.name.len > 0) thread.setName(self.name) catch {};
@@ -955,7 +956,7 @@ impl ThreadPool {
         let mut threads = self.threads.load(Ordering::Relaxed);
         loop {
             // SAFETY: thread is the calling worker's own stack-local Thread.
-            unsafe { (*thread).next = threads };
+            yolo! { (*thread).next = threads };
             match self.threads.compare_exchange_weak(
                 threads,
                 thread,
@@ -982,13 +983,13 @@ impl ThreadPool {
         };
         // SAFETY: `pool` is live until at least the `join_event.notify()` below
         // wakes the joiner.
-        let sync = unsafe { (*pool).sync.fetch_sub(one_spawned, Ordering::Release) };
+        let sync = yolo! { (*pool).sync.fetch_sub(one_spawned, Ordering::Release) };
         debug_assert!(sync.spawned() > 0);
 
         // The last thread to exit must wake up the thread pool join()er
         // who will start the chain to shutdown all the threads.
         if sync.state() == SyncState::Shutdown && sync.spawned() == 1 {
-            unsafe { (*pool).join_event.notify() };
+            yolo! { (*pool).join_event.notify() };
         }
         // ── `*pool` may be invalid past this point. ──
 
@@ -1098,7 +1099,7 @@ impl Drop for ThreadRegistration {
         // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
         // `BackRef`) because the pool may be freed by the joiner before it
         // returns — see `unregister`'s doc.
-        unsafe { ThreadPool::unregister(self.pool.as_ptr(), self.thread) };
+        yolo! { ThreadPool::unregister(self.pool.as_ptr(), self.thread) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1178,7 +1179,7 @@ impl Thread {
             };
             // SAFETY: `counter_buf[len] == 0` (set just below for len>0; the literal
             // for the fallback is NUL-terminated), and the buffer outlives the call.
-            let named: &bun_core::ZStr = unsafe {
+            let named: &bun_core::ZStr = yolo! {
                 if len > 0 {
                     counter_buf[len] = 0;
                     bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
@@ -1213,7 +1214,7 @@ impl Thread {
         // pointee outlives this fn. Hoist a single shared ref for the hot loop.
         let pool: &ThreadPool = thread_pool.get();
         // SAFETY: self_ptr is our stack-local Thread.
-        let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
+        let _registration = yolo! { ThreadRegistration::new(pool, self_ptr) };
 
         let stats = stats_enabled();
         let mut is_waking = false;
@@ -1230,17 +1231,17 @@ impl Thread {
             }
 
             // SAFETY: self_ptr is our own stack-local Thread.
-            while let Some(result) = unsafe { (*self_ptr).pop(pool) } {
+            while let Some(result) = yolo! { (*self_ptr).pop(pool) } {
                 if result.pushed || is_waking {
                     pool.notify(is_waking);
                 }
                 is_waking = false;
 
                 // SAFETY: result.node points to the `node` field of a Task.
-                let task = unsafe { Task::from_node(result.node.as_ptr()) };
+                let task = yolo! { Task::from_node(result.node.as_ptr()) };
                 let task_start = if stats { now_ns() } else { 0 };
                 // SAFETY: task is a live scheduled Task; callback contract is `unsafe fn(*mut Task)`.
-                unsafe { ((*task).callback)(task) };
+                yolo! { ((*task).callback)(task) };
                 if stats {
                     pool.stats
                         .busy_ns
@@ -1252,7 +1253,7 @@ impl Thread {
 
             Output::flush();
             // SAFETY: self_ptr is our own stack-local Thread.
-            unsafe { (*self_ptr).drain_idle_events() };
+            yolo! { (*self_ptr).drain_idle_events() };
         }
     }
 
@@ -1262,8 +1263,8 @@ impl Thread {
         };
         while let Some(node) = consumer.pop() {
             // SAFETY: node points to the `node` field of a Task.
-            let task = unsafe { Task::from_node(node) };
-            unsafe { ((*task).callback)(task) };
+            let task = yolo! { Task::from_node(node) };
+            yolo! { ((*task).callback)(task) };
         }
     }
 
@@ -1307,11 +1308,11 @@ impl Thread {
                 t
             };
             // SAFETY: target is a registered Thread in the lock-free stack.
-            self.target = unsafe { (*target).next };
+            self.target = yolo! { (*target).next };
 
             // Try to steal from their queue first to avoid contention (the target steal's from queue last).
             // SAFETY: target is a registered Thread in the lock-free stack, alive until join().
-            if let Some(stole) = self.run_buffer.consume(unsafe { &(*target).run_queue }) {
+            if let Some(stole) = self.run_buffer.consume(yolo! { &(*target).run_queue }) {
                 return Some(stole);
             }
 
@@ -1324,7 +1325,7 @@ impl Thread {
 
             // Steal from the buffer of a remote thread as a last resort
             // SAFETY: target is a registered Thread in the lock-free stack, alive until join().
-            if let Some(stole) = self.run_buffer.steal(unsafe { &(*target).run_buffer }) {
+            if let Some(stole) = self.run_buffer.steal(yolo! { &(*target).run_buffer }) {
                 return Some(stole);
             }
 
@@ -1515,7 +1516,7 @@ pub mod node {
             loop {
                 // Attach the list to the stack (pt. 1)
                 // SAFETY: list.tail points to a Node owned by the caller.
-                unsafe {
+                yolo! {
                     (*list.tail.as_ptr()).next = (stack & Self::PTR_MASK) as *mut Node;
                 }
 
@@ -1616,7 +1617,7 @@ pub mod node {
             if !self.cache.is_null() {
                 let node = self.cache;
                 // SAFETY: node is a Node from the consumer chain we exclusively own.
-                self.cache = unsafe { (*node).next };
+                self.cache = yolo! { (*node).next };
                 return Some(node);
             }
 
@@ -1637,7 +1638,7 @@ pub mod node {
 
             let node = (stack & Queue::PTR_MASK) as *mut Node;
             // SAFETY: node is the head of the pushed stack we just acquired.
-            self.cache = unsafe { (*node).next };
+            self.cache = yolo! { (*node).next };
             Some(node)
         }
     }
@@ -1725,7 +1726,7 @@ pub mod node {
                         }
                         let node = nodes;
                         // SAFETY: node is part of the caller-provided list.
-                        nodes = unsafe { (*node).next };
+                        nodes = yolo! { (*node).next };
 
                         // Array written atomically with weakest ordering since it could be getting atomically read by steal().
                         // PORT NOTE: Zig .unordered → Relaxed (Rust has no Unordered).
@@ -1765,7 +1766,7 @@ pub mod node {
                             let prev = self.array_raw((head as usize) % CAPACITY);
                             head = head.wrapping_add(1);
                             // SAFETY: prev/next are nodes we just claimed from our own buffer.
-                            unsafe {
+                            yolo! {
                                 (*prev).next = self.array_raw((head as usize) % CAPACITY);
                             }
                             migrate -= 1;
@@ -1774,14 +1775,14 @@ pub mod node {
                         // Append the list that was supposed to be pushed to the end of the migrated Nodes
                         let last = self.array_raw((head.wrapping_sub(1) as usize) % CAPACITY);
                         // SAFETY: last is the last migrated node; list.head/tail are caller-owned.
-                        unsafe {
+                        yolo! {
                             (*last).next = list.head.as_ptr();
                             (*list.tail.as_ptr()).next = ptr::null_mut();
                         }
 
                         // Return the migrated nodes + the original list as overflowed
                         // SAFETY: first is non-null (migrate >= 1 originally).
-                        list.head = unsafe { NonNull::new_unchecked(first) };
+                        list.head = yolo! { NonNull::new_unchecked(first) };
                         return Err(BufferPushError::Overflow);
                     }
                 }
@@ -1812,7 +1813,7 @@ pub mod node {
                     Ok(_) => {
                         let node = self.array_raw((head as usize) % CAPACITY);
                         // SAFETY: node was stored non-null in push().
-                        return Some(unsafe { NonNull::new_unchecked(node) });
+                        return Some(yolo! { NonNull::new_unchecked(node) });
                     }
                 }
             }
@@ -1864,7 +1865,7 @@ pub mod node {
             }
             Some(Stole {
                 // SAFETY: node is non-null (from queue.pop or array slot we wrote).
-                node: unsafe { NonNull::new_unchecked(node) },
+                node: yolo! { NonNull::new_unchecked(node) },
                 pushed: pushed > 0,
             })
         }
@@ -1932,7 +1933,7 @@ pub mod node {
                         }
                         return Some(Stole {
                             // SAFETY: node was stored non-null by the target's push().
-                            node: unsafe { NonNull::new_unchecked(node) },
+                            node: yolo! { NonNull::new_unchecked(node) },
                             pushed: pushed > 0,
                         });
                     }

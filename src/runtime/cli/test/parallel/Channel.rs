@@ -15,6 +15,7 @@
 //! self-pointer. `Drop` assumes no write is in flight — true for both call
 //! sites (start() errdefer and reap_worker after the peer has exited).
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::offset_of;
@@ -86,7 +87,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // SAFETY: `self` is always embedded at `Owner::OFFSET` inside an
         // `Owner` that outlives all callbacks (see module doc). Mirrors Zig
         // `@alignCast(@fieldParentPtr(owner_field, self))`.
-        unsafe { &mut *Owner::from_field_ptr(std::ptr::from_mut(self)) }
+        yolo! { &mut *Owner::from_field_ptr(std::ptr::from_mut(self)) }
     }
 }
 
@@ -127,7 +128,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         let rd: *mut bun_jsc::rare_data::RareData = vm.rare_data();
         // SAFETY: `rd` points into `vm`'s boxed RareData, which outlives this
         // call; the accessor only reads `vm.uws_loop()` (a separate field).
-        let g = unsafe { (*rd).test_parallel_ipc_group(vm) };
+        let g = yolo! { (*rd).test_parallel_ipc_group(vm) };
         // First Owner to call wins the vtable; coordinator and worker run in
         // separate processes so there's never more than one Owner type sharing
         // this group.
@@ -216,14 +217,14 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     e.name().escape_ascii(),
                 ));
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
+                yolo! { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
                 return false;
             }
             let pipe = bun_core::heap::into_raw(pipe);
             if !self.adopt_pipe(vm, pipe) {
                 // Caller still owns `pipe` on adopt_pipe failure (Zig spec).
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                unsafe { uv::Pipe::close_and_destroy(pipe) };
+                yolo! { uv::Pipe::close_and_destroy(pipe) };
                 return false;
             }
             return true;
@@ -264,7 +265,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // `read_start_ctx`, which stashes `self` in `handle.data`.
         // SAFETY: `pipe` is a live, init'ed `Box<Pipe>` allocation owned by the
         // caller; we only borrow it to start reading.
-        let rc = unsafe { (*pipe).read_start_ctx::<Self>(core::ptr::from_mut(self)) };
+        let rc = yolo! { (*pipe).read_start_ctx::<Self>(core::ptr::from_mut(self)) };
         if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
             Output::debug_warn(format_args!(
                 "Channel.adoptPipe: readStart failed: {}",
@@ -276,7 +277,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
         // SAFETY: `pipe` was Box-allocated by the caller (`bun.new(uv.Pipe)` /
         // `bun_core::heap::into_raw`); on success the channel takes ownership.
-        self.backend.pipe = Some(unsafe { Box::from_raw(pipe) });
+        self.backend.pipe = Some(yolo! { Box::from_raw(pipe) });
         true
     }
 
@@ -372,7 +373,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 this,
                 // SAFETY: `p` was `this: *mut Self`; libuv invokes on the loop
                 // thread with no other Rust borrow live, so `&mut *p` is unique.
-                |p, s| unsafe { WindowsHandlers::<Owner>::on_write(&mut *p, s) },
+                |p, s| yolo! { WindowsHandlers::<Owner>::on_write(&mut *p, s) },
             )
             .is_err()
         {
@@ -439,7 +440,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             if let Some(p) = self.backend.pipe.take() {
                 if !p.is_closing() {
                     // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                    unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
+                    yolo! { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
                 } else {
                     // TODO(port): Zig left the field set if already closing;
                     // with Box we cannot put it back without re-taking. Phase B
@@ -485,13 +486,13 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // `container_of` arithmetic as `owner()`. The callback never
             // touches `self.r#in` (it only reads `rd` and may write other
             // channel fields / call `send()`), so the aliasing is sound.
-            let owner_ptr: *mut Owner = unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) };
+            let owner_ptr: *mut Owner = yolo! { Owner::from_field_ptr(std::ptr::from_mut(self)) };
             let mut rd = frame::Reader {
                 p: &self.r#in[head + 5..][..len as usize],
             };
             // SAFETY: see `Channel::owner()` — `self` is embedded at
             // `Owner::OFFSET` inside an `Owner` that outlives all callbacks.
-            let owner: &mut Owner = unsafe { &mut *owner_ptr };
+            let owner: &mut Owner = yolo! { &mut *owner_ptr };
             owner.on_channel_frame(kind, &mut rd);
             head += 5usize + len as usize;
         }
@@ -514,7 +515,7 @@ impl<Owner> Drop for Channel<Owner> {
         {
             if let Some(p) = self.backend.pipe.take() {
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
+                yolo! { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
             }
             // `inflight` Vec drops automatically.
         }
@@ -571,7 +572,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
     /// callbacks (see module doc).
     #[inline(always)]
     unsafe fn chan<'a>(s: *mut uws::us_socket_t) -> &'a mut Channel<Owner> {
-        unsafe { &mut **(*s).ext::<PosixExt<Owner>>() }
+        yolo! { &mut **(*s).ext::<PosixExt<Owner>>() }
     }
 
     unsafe extern "C" fn raw_on_data(
@@ -580,15 +581,15 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         len: core::ffi::c_int,
     ) -> *mut uws::us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid for the call.
-        let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
+        let slice = yolo! { bun_core::ffi::slice(data, len as usize) };
         // SAFETY: see `chan` doc.
-        unsafe { Self::chan(s) }.ingest(slice);
+        yolo! { Self::chan(s) }.ingest(slice);
         s
     }
 
     unsafe extern "C" fn raw_on_writable(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
         // SAFETY: see `chan` doc.
-        unsafe { Self::chan(s) }.flush();
+        yolo! { Self::chan(s) }.flush();
         s
     }
 
@@ -598,7 +599,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         _reason: *mut c_void,
     ) -> *mut uws::us_socket_t {
         // SAFETY: see `chan` doc.
-        let chan = unsafe { Self::chan(s) };
+        let chan = yolo! { Self::chan(s) };
         chan.backend.socket = Socket::DETACHED;
         chan.mark_done();
         s
@@ -606,7 +607,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
 
     unsafe extern "C" fn raw_on_end(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
         // SAFETY: `s` is a live us_socket_t passed by usockets.
-        unsafe { (*s).close(bun_uws_sys::CloseCode::normal) };
+        yolo! { (*s).close(bun_uws_sys::CloseCode::normal) };
         s
     }
 }
@@ -629,7 +630,7 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         // error (where the pipe is still attached).
         if let Some(p) = self_.backend.pipe.take() {
             // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-            unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
+            yolo! { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
         }
         self_.mark_done();
     }
@@ -672,7 +673,7 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
         let _ = data;
         // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
         // `read_start_ctx`; `data` is no longer live so the retag is sound.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         if this.done {
             return;
         }

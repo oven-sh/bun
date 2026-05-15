@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
@@ -635,13 +636,13 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         }));
         // SAFETY: `result` was just heap-allocated and is not yet shared
         // (enqueue happens after this write).
-        unsafe {
+        yolo! {
             (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
         }
         // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
         // job; ownership of `result` transfers to the event loop here. `task` is
         // an intrusive field at a stable address.
-        unsafe {
+        yolo! {
             (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
                 core::ptr::addr_of_mut!((*result).task),
             ));
@@ -668,7 +669,7 @@ impl<Op: PasswordOp> PasswordResult<Op> {
         // SAFETY: `this` was produced by heap::into_raw in `run_owned` and the
         // event loop hands sole ownership to this callback. Reclaim the Box once
         // up-front so all fields drop on scope exit (no `mem::replace` dance).
-        let this = *unsafe { bun_core::heap::take(this) };
+        let this = *yolo! { bun_core::heap::take(this) };
         let PasswordResult {
             value,
             mut r#ref,
@@ -677,7 +678,7 @@ impl<Op: PasswordOp> PasswordResult<Op> {
             task: _,
         } = this;
         // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
-        let global = unsafe { &*global };
+        let global = yolo! { &*global };
         r#ref.unref(bun_io::js_vm_ctx());
         match value {
             Err(err) => {

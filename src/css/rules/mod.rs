@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate as css;
 use bun_alloc::ArenaVecExt as _;
 
@@ -221,7 +222,7 @@ pub(super) mod dc {
     /// per-variant `Property::deep_clone` body.
     ///
     /// PORT NOTE: threads the real `'bump` lifetime instead of fabricating
-    /// `'static` (PORTING.md §Forbidden: `unsafe { &*(p as *const _) }` to
+    /// `'static` (PORTING.md §Forbidden: `yolo! { &*(p as *const _) }` to
     /// extend a lifetime). Callers whose storage is still pinned to
     /// `DeclarationBlock<'static>` must fix that storage type — the lie
     /// belongs there, not here, and collapses when `CssRule<'bump, R>`
@@ -258,7 +259,7 @@ pub(super) mod dc {
     #[inline(always)]
     unsafe fn arena_static(bump: &Arena) -> &'static Arena {
         // SAFETY: see fn doc — `'bump`-erasure placeholder.
-        unsafe { &*core::ptr::from_ref(bump) }
+        yolo! { &*core::ptr::from_ref(bump) }
     }
 
     /// `'bump`-erasure adaptor for [`decl_block`]. See [`arena_static`].
@@ -268,7 +269,7 @@ pub(super) mod dc {
         bump: &Arena,
     ) -> crate::DeclarationBlock<'static> {
         // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
-        decl_block(this, unsafe { arena_static(bump) })
+        decl_block(this, yolo! { arena_static(bump) })
     }
 
     /// Empty `DeclarationBlock<'static>` — Zig spec writes `css.DeclarationBlock{}`.
@@ -280,7 +281,7 @@ pub(super) mod dc {
     #[inline]
     pub fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
         // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
-        crate::DeclarationBlock::new_in(unsafe { arena_static(bump) })
+        crate::DeclarationBlock::new_in(yolo! { arena_static(bump) })
     }
 
     /// `'bump`-erasure adaptor for `&mut DeclarationHandler<'_>`.
@@ -298,7 +299,7 @@ pub(super) mod dc {
         // Inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
         // and `DeclarationHandler<'static>` share layout; only the borrowck tag
         // on the arena handle differs. See SAFETY note above.
-        unsafe { &mut *core::ptr::from_mut(h).cast::<crate::DeclarationHandler<'static>>() }
+        yolo! { &mut *core::ptr::from_mut(h).cast::<crate::DeclarationHandler<'static>>() }
     }
 
     /// `MediaList::deep_clone` — routes to the real arena-aware impl in
@@ -424,7 +425,7 @@ pub(super) fn custom_ident_to_css(
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {
     // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
-    let v = unsafe { crate::arena_str(ident.v) };
+    let v = yolo! { crate::arena_str(ident.v) };
     // blocked_on: Printer::write_ident — css-module custom-ident scoping path
     // is gated; fall through to its unscoped tail.
 

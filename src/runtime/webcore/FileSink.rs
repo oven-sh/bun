@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::offset_of;
@@ -102,7 +103,7 @@ impl FileSinkRef {
     unsafe fn new_ref(this: *mut FileSink) -> Self {
         // SAFETY: caller contract — `this` is live; `ref_` only touches the
         // `Cell<u32>` field via shared borrow.
-        unsafe { (*this).ref_() };
+        yolo! { (*this).ref_() };
         Self(this)
     }
 
@@ -124,7 +125,7 @@ impl Drop for FileSinkRef {
     fn drop(&mut self) {
         // SAFETY: constructor contract — `self.0` is live and carries
         // write+dealloc provenance for `deref`'s potential `deinit`.
-        unsafe { FileSink::deref(self.0) };
+        yolo! { FileSink::deref(self.0) };
     }
 }
 
@@ -170,9 +171,9 @@ pub extern "C" fn FileSink__assertLive(ptr: *const c_void) {
     // SAFETY: probe-only — reads `magic` at its repr(Rust) offset. Worst case
     // (non-FileSink ptr ≥ sizeof(FileSink) bytes from a page edge) is the very
     // bug we're catching; the panic that follows is the intended outcome.
-    let magic = unsafe { (*ptr.cast::<FileSink>()).magic.get() };
+    let magic = yolo! { (*ptr.cast::<FileSink>()).magic.get() };
     if magic != FILESINK_LIVE {
-        let head: [u8; 64] = unsafe { core::ptr::read_unaligned(ptr.cast::<[u8; 64]>()) };
+        let head: [u8; 64] = yolo! { core::ptr::read_unaligned(ptr.cast::<[u8; 64]>()) };
         // Full diagnostic to stderr first — `rust_panic_hook` formats into a
         // 1024-byte `BoundedArray` whose `write_str` is all-or-nothing, so a
         // long payload would emerge as an empty `panic:` line in CI. Keep the
@@ -312,7 +313,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>` (= ThisSink); the
     // first field is `sink: FileSink`, so `&(*this_ptr).sink` recovers the
     // wrapped `*FileSink` (Zig: `@ptrCast(@alignCast(JSSink.fromJS(...) orelse return))`).
-    let this: &FileSink = unsafe { &(*this_ptr).sink };
+    let this: &FileSink = yolo! { &(*this_ptr).sink };
 
     #[cfg(not(windows))]
     {
@@ -333,7 +334,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
                         // SAFETY: `pipe` is a live `Box<uv::Pipe>` owned by `writer.source`;
                         // `uv_pipe_t` is `#[repr(C)]` with `uv_stream_t` as its first field
                         // (libuv handle subtyping), so the pointer cast is valid (Zig: `@ptrCast(pipe)`).
-                        let rc = unsafe {
+                        let rc = yolo! {
                             uv::uv_stream_set_blocking(
                                 (&mut **pipe) as *mut uv::Pipe as *mut uv::uv_stream_t,
                                 1,
@@ -347,7 +348,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
                         // SAFETY: `tty` is a live `NonNull<uv_tty_t>` (heap or static stdin tty);
                         // `uv_tty_t` embeds `uv_stream_t` as its first field, so the cast is the
                         // libuv handle-subtype downcast (Zig: `@ptrCast(tty)`).
-                        let rc = unsafe {
+                        let rc = yolo! {
                             uv::uv_stream_set_blocking(tty.as_ptr().cast::<uv::uv_stream_t>(), 1)
                         };
                         if rc == uv::ReturnCode::ZERO {
@@ -385,7 +386,7 @@ impl FileSink {
     /// provenance over the allocation.
     pub unsafe fn on_attached_process_exit(this: *mut FileSink, status: &SpawnStatus) {
         bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
-        unsafe {
+        yolo! {
             // `writer.close()` below re-enters `onClose` which releases the
             // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
             // which may drop the JS wrapper's ref. Hold a local ref so `this`
@@ -440,7 +441,7 @@ impl FileSink {
     /// may re-enter JS / drop refs / free `this` on the last `deref`; the body
     /// reborrows `(*this).field` per-statement only.
     unsafe fn run_pending(this: *mut FileSink) {
-        unsafe {
+        yolo! {
             let _guard = FileSinkRef::new_ref(this);
 
             (*this).run_pending_later.has.set(false);
@@ -463,7 +464,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_write(this: *mut FileSink, amount: usize, status: WriteStatus) {
         bun_core::scoped_log!(FileSink, "onWrite({}, {})", amount, status as u8);
-        unsafe {
+        yolo! {
             // `runPending()` below drains microtasks and may drop the JS wrapper's
             // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
             // releases the keep-alive ref. Hold a local ref so `this` stays valid
@@ -540,7 +541,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
-        unsafe {
+        yolo! {
             if (*this).pending.get().state == streams::PendingState::Pending {
                 (*this)
                     .pending
@@ -579,7 +580,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
-        unsafe { (*this).signal.with_mut(|s| s.ready(None, None)) };
+        yolo! { (*this).signal.with_mut(|s| s.ready(None, None)) };
     }
 
     /// # Safety
@@ -588,7 +589,7 @@ impl FileSink {
     /// at the end may free `this`.
     pub unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
-        unsafe {
+        yolo! {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
@@ -618,7 +619,7 @@ impl FileSink {
     /// pointer (= `this`), so this must be that pointer; it must not be used
     /// afterwards.
     unsafe fn clear_keep_alive_ref(this: *mut FileSink) {
-        unsafe {
+        yolo! {
             if (*this).must_be_kept_alive_until_eof.get() {
                 (*this).must_be_kept_alive_until_eof.set(false);
                 FileSink::deref(this);
@@ -640,7 +641,7 @@ impl FileSink {
             // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
             // Zig's `HandleMixin.fd` maps INVALID_HANDLE_VALUE → `bun.invalid_fd`
             // and otherwise tags kind=system via `.fromNative`.
-            fd: Cell::new(match unsafe { (*pipe).fd() } {
+            fd: Cell::new(match yolo! { (*pipe).fd() } {
                 h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
                 h => Fd::from_system(h),
             }),
@@ -648,7 +649,7 @@ impl FileSink {
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe {
+        yolo! {
             (*this).writer.get_mut().set_pipe(pipe);
             (*this).writer.get_mut().set_parent(this);
         }
@@ -669,7 +670,7 @@ impl FileSink {
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe {
+        yolo! {
             (*this).writer.get_mut().set_parent(this);
         }
         this
@@ -677,7 +678,7 @@ impl FileSink {
 
     pub fn setup(&self, options: &Options) -> sys::Result<()> {
         // SAFETY(JsCell): `Strong::has` is a read-only GC-root probe.
-        if unsafe { self.readable_stream.get_mut() }.has() {
+        if yolo! { self.readable_stream.get_mut() }.has() {
             // Already started.
             return sys::Result::Ok(());
         }
@@ -843,7 +844,7 @@ impl FileSink {
         }
         // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
         // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
+        Some(yolo! { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
     pub fn connect(&self, signal: streams::Signal) {
@@ -927,7 +928,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)): live,
     /// with write+dealloc provenance over the allocation.
     pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
-        unsafe {
+        yolo! {
             if (*this).done.get() || !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
@@ -1018,7 +1019,7 @@ impl FileSink {
                 // type's bytes are actually here. DO NOT deref any other field.
                 // SAFETY: `self` is at minimum a valid-for-read 64-byte region
                 // (mimalloc never hands out <64B for a 520B alloc class).
-                let head = unsafe {
+                let head = yolo! {
                     core::slice::from_raw_parts(
                         (self as *const Self).cast::<u8>(),
                         64,
@@ -1173,7 +1174,7 @@ impl FileSink {
         self.js_sink_ref.with_mut(|r| r.deinit());
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.
-        unsafe { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
+        yolo! { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
     }
 
     /// Protect the JS wrapper object from GC collection while an async operation is pending.
@@ -1196,7 +1197,7 @@ impl FileSink {
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe {
+        yolo! {
             (*this).writer.get_mut().set_parent(this);
         }
         this
@@ -1210,7 +1211,7 @@ impl FileSink {
             // SAFETY: `construct` is only called from JSSink codegen on a thread
             // that already has a Bun VM; `get()` panics otherwise.
             event_loop_handle: EventLoopHandle::init(
-                unsafe { (*bun_jsc::VirtualMachineRef::get()).event_loop() }.cast::<()>(),
+                yolo! { (*bun_jsc::VirtualMachineRef::get()).event_loop() }.cast::<()>(),
             ),
             ..FileSink::default_fields()
         };
@@ -1292,7 +1293,7 @@ impl FileSink {
     unsafe fn deinit(this: *mut FileSink) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         // SAFETY: caller contract — `this` is valid and uniquely owned.
-        let self_ = unsafe { &mut *this };
+        let self_ = yolo! { &mut *this };
         // #53265 probe v5: record the freeing call stack BEFORE poisoning, so a
         // later finalize-on-stale-m_sinkPtr can name the over-deref site (the
         // GC-sweep stack at finalize time is uninformative). See `FREED_AT`.
@@ -1335,7 +1336,7 @@ impl FileSink {
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);
         }
         // SAFETY: `this` was produced by `heap::alloc` in the constructors.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
@@ -1394,10 +1395,10 @@ impl FileSink {
 
                 // SAFETY(JsCell): `WritablePending::promise` allocates a JSPromise
                 // (may GC) but does not invoke any FileSink host-fn synchronously.
-                let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                let promise_result = yolo! { self.pending.get_mut() }.promise(global_this);
 
                 // SAFETY: `WritablePending::promise()` never returns null.
-                sys::Result::Ok(unsafe { (*promise_result).to_js() })
+                sys::Result::Ok(yolo! { (*promise_result).to_js() })
             }
             WriteResult::Wrote(written) => {
                 self.writer.with_mut(|w| w.end());
@@ -1482,7 +1483,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     }
     fn signal(&mut self) -> Option<&mut streams::Signal> {
         // SAFETY(JsCell): trait receiver is `&mut self`; sole borrow.
-        Some(unsafe { self.signal.get_mut() })
+        Some(yolo! { self.signal.get_mut() })
     }
     fn done(&self) -> bool {
         self.done.get()
@@ -1590,18 +1591,18 @@ impl FlushPendingTask {
         // live FileSink (the task was enqueued from `run_pending_later()` which
         // took a ref on the parent). `Cell::replace` reads-then-clears in one
         // step so only a single raw deref is needed.
-        let had = unsafe { (*flush_pending).has.replace(false) };
+        let had = yolo! { (*flush_pending).has.replace(false) };
         // SAFETY: `flush_pending` is the `run_pending_later` field of a `FileSink`.
         let this: *mut FileSink =
-            unsafe { bun_core::from_field_ptr!(FileSink, run_pending_later, flush_pending) };
+            yolo! { bun_core::from_field_ptr!(FileSink, run_pending_later, flush_pending) };
         // SAFETY: balances the `ref_()` taken in `run_pending_later()` when
         // this task was enqueued; `this` is live for at least that ref.
-        let _guard = unsafe { FileSinkRef::adopt(this) };
+        let _guard = yolo! { FileSinkRef::adopt(this) };
         if had {
             // SAFETY: `this` is the canonical `*mut FileSink` recovered via
             // `from_field_ptr!` from the embedded `run_pending_later` task;
             // `_guard` keeps it live for the call.
-            unsafe { FileSink::run_pending(this) };
+            yolo! { FileSink::run_pending(this) };
         }
     }
 }
@@ -1637,9 +1638,9 @@ fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
-    let _guard = unsafe { FileSinkRef::adopt(this) };
+    let _guard = yolo! { FileSinkRef::adopt(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_resolve_stream(global_this) };
+    yolo! { (*this).handle_resolve_stream(global_this) };
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1650,9 +1651,9 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     let err = args[0];
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
-    let _guard = unsafe { FileSinkRef::adopt(this) };
+    let _guard = yolo! { FileSinkRef::adopt(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_reject_stream(global_this, err) };
+    yolo! { (*this).handle_reject_stream(global_this, err) };
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1664,7 +1665,7 @@ impl FileSink {
     ) -> JSValue {
         self.signal.set(SinkSignal::init(JSValue::ZERO));
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
+        let _guard = yolo! { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
@@ -1681,7 +1682,7 @@ impl FileSink {
         // const-asserts on `Signal` in streams.rs), so FFI may write the
         // JSValue bits back through this `void**`.
         let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
+            yolo! { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
         // Zig parity (FileSink.zig:801-802): only the transient `_guard` above
         // — NO per-wrapper +1 for the controller. df4f2c44 added a `ref_()`
         // here under the (false) premise that Zig refs per-wrapper; it does
@@ -1711,7 +1712,7 @@ impl FileSink {
                     bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
                 };
                 // SAFETY: `as_any_promise` returned non-null.
-                match unsafe { (*js_promise).status() } {
+                match yolo! { (*js_promise).status() } {
                     bun_jsc::js_promise::Status::Pending => {
                         self.writer
                             .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
@@ -1734,7 +1735,7 @@ impl FileSink {
                     bun_jsc::js_promise::Status::Rejected => {
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
-                        let result = unsafe { (*js_promise).result(global_this.vm()) };
+                        let result = yolo! { (*js_promise).result(global_this.vm()) };
                         self.handle_reject_stream(global_this, result);
                     }
                 }

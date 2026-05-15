@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
 use core::marker::{PhantomData, PhantomPinned};
@@ -178,7 +179,7 @@ impl JSGlobalObject {
         let mut dt = GregorianDateTime::default();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
         // stack locals (`dt` fields) and remain valid for the duration of the call.
-        unsafe {
+        yolo! {
             crate::cpp::raw::Bun__msToGregorianDateTime(
                 self as *const JSGlobalObject as *mut JSGlobalObject,
                 ms,
@@ -430,7 +431,7 @@ impl JSGlobalObject {
             let mut buf = [0u8; 256];
             // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;
             // ERR_error_string_n NUL-terminates within `len` bytes.
-            unsafe {
+            yolo! {
                 bun_boringssl::c::ERR_error_string_n(
                     err,
                     buf.as_mut_ptr().cast::<c_char>(),
@@ -926,7 +927,7 @@ impl JSGlobalObject {
     ) -> JsResult<JSValue> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
-        crate::from_js_host_call(self, || unsafe {
+        crate::from_js_host_call(self, || yolo! {
             JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), message)
         })
     }
@@ -1422,7 +1423,7 @@ impl JSGlobalObject {
 
         // SAFETY: caller passes the live VM under construction; event_loop()
         // returns a raw self-pointer that we mutate once to install the waker.
-        unsafe { (*(*v).event_loop()).ensure_waker() };
+        yolo! { (*(*v).event_loop()).ensure_waker() };
         // C++ creates and returns a non-null global object; `console`/`worker_ptr`
         // are opaque round-trip pointers C++ stores into the new global.
         let global = Zig__GlobalObject__create(
@@ -1578,9 +1579,9 @@ pub extern "C" fn Zig__GlobalObject__resolve(
     // SAFETY: C++ passes valid non-null pointers. `BunString` is `Copy`, so
     // `*specifier` / `*source` is the bitwise load Zig spells as `specifier.*`
     // — no refcount bump (the caller still owns the ref).
-    let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
+    let (global, specifier, source) = yolo! { (&*global, *specifier, *source) };
     // SAFETY: C++ passes valid non-null pointers.
-    let (res, query) = unsafe { (&mut *res, &mut *query) };
+    let (res, query) = yolo! { (&mut *res, &mut *query) };
     match VirtualMachine::resolve(res, global, specifier, source, Some(query), true) {
         Ok(()) => {}
         Err(_) => {
@@ -1596,7 +1597,7 @@ pub extern "C" fn Zig__GlobalObject__reportUncaughtException(
 ) -> JSValue {
     crate::mark_binding();
     // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
+    yolo! { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
 }
 
 // Safe wrapper used internally (matches Zig's pub fn).

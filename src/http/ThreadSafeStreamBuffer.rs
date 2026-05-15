@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_io::StreamBuffer;
@@ -25,7 +26,7 @@ impl Callback {
             // SAFETY: fn(*mut T) and fn(*mut c_void) have identical ABI; the
             // Zig side uses @ptrCast on a comptime fn param. `context` is only
             // ever passed back to this callback, which knows its real type.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(callback) },
+            callback: yolo! { bun_ptr::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(callback) },
             context: context.cast::<c_void>(),
         }
     }
@@ -67,17 +68,17 @@ impl ThreadSafeStreamBuffer {
     #[inline]
     pub(crate) fn from_attached<'a>(mut p: core::ptr::NonNull<Self>) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
-        unsafe { p.as_mut() }
+        yolo! { p.as_mut() }
     }
 
     pub fn ref_(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) };
     }
 
     pub fn deref(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     pub fn acquire(&mut self) -> &mut StreamBuffer {

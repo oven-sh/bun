@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 /// Zig: `packed struct(u32) { reference_count: u31, finalized: bool }`
@@ -90,7 +91,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
 
     pub fn init_ref(req: &mut T) -> Self {
         // SAFETY: `req` is a valid &mut T, so the allocation is live.
-        let d = unsafe { &mut *T::weak_ptr_data(req) };
+        let d = yolo! { &mut *T::weak_ptr_data(req) };
         debug_assert!(!d.finalized());
         d.set_reference_count(d.reference_count() + 1);
         Self {
@@ -102,14 +103,14 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         if let Some(value) = self.raw_ptr {
             // SAFETY: `raw_ptr` was set by `init_ref` and not yet released;
             // the allocation outlives all `WeakPtr`s by construction.
-            unsafe { self.deref_internal(value) };
+            yolo! { self.deref_internal(value) };
         }
     }
 
     pub fn get(&mut self) -> Option<&mut T> {
         if let Some(value) = self.raw_ptr {
             // SAFETY: allocation is live while any WeakPtr holds it (see above).
-            unsafe {
+            yolo! {
                 if !(*T::weak_ptr_data(value.as_ptr())).finalized() {
                     return Some(&mut *value.as_ptr());
                 }
@@ -125,7 +126,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
     unsafe fn deref_internal(&mut self, value: NonNull<T>) {
         // SAFETY: caller guarantees `value` points to a live allocation;
         // projecting to the embedded `WeakPtrData` field.
-        let weak_data = unsafe { &mut *T::weak_ptr_data(value.as_ptr()) };
+        let weak_data = yolo! { &mut *T::weak_ptr_data(value.as_ptr()) };
         self.raw_ptr = None;
         let count = weak_data.reference_count() - 1;
         weak_data.set_reference_count(count);
@@ -134,7 +135,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
             // `bun.new(T, ...)` (i.e. `Box::new` + `heap::alloc`).
             // SAFETY: this is the last reference and the owner has finalized,
             // so we hold the only pointer to a `Box`-allocated `T`.
-            drop(unsafe { bun_core::heap::take(value.as_ptr()) });
+            drop(yolo! { bun_core::heap::take(value.as_ptr()) });
         }
     }
 }

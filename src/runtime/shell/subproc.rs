@@ -1,5 +1,6 @@
 // const IPC = @import("../jsc/ipc.zig");
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use core::mem::offset_of;
 use std::sync::Arc;
@@ -111,7 +112,7 @@ mod __pipe_reader_thread_confined {
 unsafe fn buffer_mut(buf: &RefPtr<StaticPipeWriter>) -> &mut StaticPipeWriter {
     // SAFETY: caller contract — single-threaded shell; `RefPtr` data is live
     // while the handle exists.
-    unsafe { &mut *buf.as_ptr() }
+    yolo! { &mut *buf.as_ptr() }
 }
 
 /// Local helper: `ReadState` → tag-name string for logs.
@@ -153,7 +154,7 @@ impl FileSinkPtr {
     #[inline]
     unsafe fn adopt(ptr: *mut FileSink) -> Self {
         // SAFETY: caller contract — `ptr` is non-null.
-        Self(unsafe { core::ptr::NonNull::new_unchecked(ptr) })
+        Self(yolo! { core::ptr::NonNull::new_unchecked(ptr) })
     }
 
     #[inline]
@@ -169,7 +170,7 @@ impl FileSinkPtr {
     #[inline]
     pub unsafe fn as_mut(&self) -> &mut FileSink {
         // SAFETY: caller contract.
-        unsafe { &mut *self.0.as_ptr() }
+        yolo! { &mut *self.0.as_ptr() }
     }
 }
 
@@ -179,7 +180,7 @@ impl core::ops::Deref for FileSinkPtr {
     fn deref(&self) -> &FileSink {
         // SAFETY: `adopt` contract — `self.0` is a live `FileSink` from
         // `FileSink::create*`; the held intrusive ref keeps it alive for `'_`.
-        unsafe { self.0.as_ref() }
+        yolo! { self.0.as_ref() }
     }
 }
 
@@ -189,7 +190,7 @@ impl core::ops::DerefMut for FileSinkPtr {
         // SAFETY: `adopt` contract — `self.0` is live; `&mut self` is exclusive
         // on this owning handle (FileSinkPtr is non-`Copy`, single-threaded
         // shell), so no other `&`/`&mut` to the `FileSink` overlaps.
-        unsafe { self.0.as_mut() }
+        yolo! { self.0.as_mut() }
     }
 }
 
@@ -198,7 +199,7 @@ impl Drop for FileSinkPtr {
     fn drop(&mut self) {
         // SAFETY: `adopt` contract — `self.0` is live with one owned intrusive
         // ref; `FileSink::deref` (CellRefCounted derive) frees on zero.
-        unsafe { FileSink::deref(self.0.as_ptr()) };
+        yolo! { FileSink::deref(self.0.as_ptr()) };
     }
 }
 
@@ -259,7 +260,7 @@ impl CmdHandle {
         // the widen is centralised in `bun_ptr` and grep-able. The `'static` is
         // a lie scoped to the (3) callers, all of which drop the borrow before
         // `free_node` recycles the slot.
-        unsafe { bun_ptr::detach_lifetime_mut(self.interp.assume_mut().as_cmd_mut(self.id)) }
+        yolo! { bun_ptr::detach_lifetime_mut(self.interp.assume_mut().as_cmd_mut(self.id)) }
     }
 }
 
@@ -323,7 +324,7 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
         bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
-        unsafe { (*this).on_close_io(kind) }
+        yolo! { (*this).on_close_io(kind) }
     }
 }
 
@@ -345,7 +346,7 @@ impl ShellSubprocess {
     #[inline]
     pub fn proc(&self) -> &mut Process {
         // SAFETY: see doc comment.
-        unsafe { &mut *self.process }
+        yolo! { &mut *self.process }
     }
 
     pub fn on_static_pipe_writer_done(&mut self) {
@@ -356,7 +357,7 @@ impl ShellSubprocess {
         );
         // SAFETY: cmd_parent backref resolves to the owning Cmd which outlives
         // the subprocess (freed only in `Cmd::deinit` after all stdio closes).
-        unsafe { self.cmd_parent.cmd_mut() }.buffered_input_close();
+        yolo! { self.cmd_parent.cmd_mut() }.buffered_input_close();
     }
 
     pub fn get_io(&mut self, out_kind: OutKind) -> &mut Readable {
@@ -417,7 +418,7 @@ impl ShellSubprocess {
         }
         // SAFETY: `process` was produced by `to_process` (heap::alloc) and is
         // live until the deref below drops the last strong ref.
-        unsafe {
+        yolo! {
             (*process).set_exit_handler_default();
             (*process).close();
             // Spec: `this.process.deref()` — release the intrusive ref taken
@@ -483,7 +484,7 @@ impl ShellSubprocess {
                     if let Writable::Buffer(buffer) = &mut self.stdin {
                         // SAFETY: single-threaded; no other borrow of the
                         // payload is live across this temporary `&mut`.
-                        unsafe { buffer_mut(buffer) }.source.detach();
+                        yolo! { buffer_mut(buffer) }.source.detach();
                     }
                     self.stdin = Writable::Ignore;
                 }
@@ -506,7 +507,7 @@ impl ShellSubprocess {
                     // SAFETY: `pp` projects from the Arc allocation's NonNull;
                     // raw place read of the discriminant + raw-ptr write
                     // through `take_done_buffer` (see its doc).
-                    let buf = unsafe {
+                    let buf = yolo! {
                         if matches!(&(*pp).state, PipeReaderState::Done(_)) {
                             Some(PipeReader::take_done_buffer(pp))
                         } else {
@@ -542,7 +543,7 @@ impl ShellSubprocess {
         {
             // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
             // uniquely owned here; reclaim and tear down.
-            let mut subproc = unsafe { bun_core::heap::take(this) };
+            let mut subproc = yolo! { bun_core::heap::take(this) };
             for r in [&mut subproc.stdout, &mut subproc.stderr] {
                 if let Readable::Pipe(pipe) = r {
                     // `start()` failed before any reader callback registered,
@@ -552,7 +553,7 @@ impl ShellSubprocess {
                     // transition if a future change bumped the strong count.
                     debug_assert_eq!(Arc::strong_count(pipe), 1);
                     // SAFETY: single-threaded shell; no other borrow live.
-                    let p = unsafe { &mut *Arc::as_ptr(pipe).cast_mut() };
+                    let p = yolo! { &mut *Arc::as_ptr(pipe).cast_mut() };
                     if matches!(p.state, PipeReaderState::Pending) {
                         p.state = PipeReaderState::Err(None);
                     }
@@ -768,7 +769,7 @@ impl ShellSubprocess {
         // ended before the call). Written *before* any callback below
         // (`watch`/`start`/`read_all`) so re-entrant `Cmd` callbacks see a
         // populated `exec.subproc.child`.
-        unsafe { *out_subproc = subprocess };
+        yolo! { *out_subproc = subprocess };
 
         let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
             Ok(w) => w,
@@ -802,7 +803,7 @@ impl ShellSubprocess {
         // SAFETY: `subprocess` points to uninitialised memory of the right
         // size/align (Box::new_uninit). `ptr::write` populates it without
         // dropping garbage.
-        unsafe {
+        yolo! {
             subprocess.write(Subprocess {
                 event_loop,
                 process: spawn_result.to_process(event_loop, IS_SYNC),
@@ -823,12 +824,12 @@ impl ShellSubprocess {
         // teardown). `MaybeUninit<T>` and `T` share layout, so the cast is
         // sound.
         // SAFETY: fully initialised by the `write` above.
-        let _ = bun_core::heap::into_raw(unsafe { slot.assume_init() });
+        let _ = bun_core::heap::into_raw(yolo! { slot.assume_init() });
         // SAFETY: subprocess was just allocated and is uniquely owned here.
-        let subproc = unsafe { &mut *subprocess };
+        let subproc = yolo! { &mut *subprocess };
         // SAFETY: `subprocess` is the just-allocated `ShellSubprocess`; the
         // owning `Cmd` outlives the `Process` exit callback.
-        subproc.proc().set_exit_handler(unsafe {
+        subproc.proc().set_exit_handler(yolo! {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess)
         });
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
@@ -849,17 +850,17 @@ impl ShellSubprocess {
             // that borrow ends; rooting in the allocation's provenance keeps
             // it valid for the box's lifetime.
             // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
-            let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
+            let stdin_ptr: *mut Writable = yolo! { &raw mut (*subprocess).stdin };
             // SAFETY: reborrow as a child of `stdin_ptr` so it does not
             // invalidate the sibling we store in `signal`.
-            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
+            if let Writable::Pipe(pipe) = yolo! { &mut *stdin_ptr } {
                 // SAFETY: shell is single-threaded; the FileSink allocation is
                 // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
                 // the Subprocess owns both and `Writable::on_close` is the only
                 // path that drops the FileSinkPtr. `init_with_type` is
                 // `unsafe fn` (caller asserts the handler outlives the
                 // `Signal`).
-                pipe.signal.set(unsafe {
+                pipe.signal.set(yolo! {
                     webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr)
                 });
             }
@@ -875,7 +876,7 @@ impl ShellSubprocess {
 
         if let Writable::Buffer(buffer) = &mut subproc.stdin {
             // SAFETY: single-threaded; `subproc` uniquely owned here.
-            if let Err(err) = unsafe { buffer_mut(buffer) }.start() {
+            if let Err(err) = yolo! { buffer_mut(buffer) }.start() {
                 let sys_err = err.to_shell_system_error();
                 let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
@@ -937,7 +938,7 @@ impl ShellSubprocess {
             // SAFETY: cmd_parent backref outlives subprocess; resolved
             // through the node arena so it survives `Vec<Node>` reallocation.
             // `&mut self` is dead by NLL before `on_exit` re-enters interp.
-            let cmd = unsafe { handle.cmd_mut() };
+            let cmd = yolo! { handle.cmd_mut() };
             if cmd.exit_code.is_none() {
                 cmd.on_exit(code.into());
             }
@@ -989,7 +990,7 @@ impl Writable {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
-                unsafe { buffer_mut(buffer) }.update_ref(add);
+                yolo! { buffer_mut(buffer) }.update_ref(add);
             }
             _ => {}
         }
@@ -1048,14 +1049,14 @@ impl Writable {
 
                         // SAFETY: `create_with_pipe` returns a freshly-boxed
                         // non-null FileSink with refcount 1; sole reference.
-                        match unsafe {
+                        match yolo! {
                             (*pipe_ptr).writer.with_mut(|w| w.start_with_current_pipe())
                         } {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
                                 // SAFETY: pipe_ptr is live with refcount 1;
                                 // deref frees it (Zig: `pipe.deref()`).
-                                unsafe { FileSink::deref(pipe_ptr) };
+                                yolo! { FileSink::deref(pipe_ptr) };
                                 return Err(WritableInitError::UnexpectedCreatingStdin);
                             }
                         }
@@ -1066,7 +1067,7 @@ impl Writable {
 
                         // SAFETY: `create_with_pipe` returns non-null with one
                         // owned ref; `adopt` takes it over.
-                        return Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }));
+                        return Ok(Writable::Pipe(yolo! { FileSinkPtr::adopt(pipe_ptr) }));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -1081,7 +1082,7 @@ impl Writable {
                     // SAFETY: `old` is Blob (matched above) and ManuallyDrop
                     // prevents its Drop from running, so this is the sole move.
                     let blob = match &*old {
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
+                        Stdio::Blob(b) => yolo! { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
@@ -1138,7 +1139,7 @@ impl Writable {
                     // SAFETY: `old` is Blob (matched above) and ManuallyDrop
                     // prevents its Drop from running, so this is the sole move.
                     let blob = match &*old {
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
+                        Stdio::Blob(b) => yolo! { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
                     Ok(Writable::Buffer(StaticPipeWriter::create(
@@ -1202,7 +1203,7 @@ impl Writable {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
-                unsafe { buffer_mut(buffer) }.update_ref(false);
+                yolo! { buffer_mut(buffer) }.update_ref(false);
                 // Spec: `this.buffer.deref()` but does NOT reassign `this.*` —
                 // the variant tag is left as `.buffer`. RefPtr's Drop (on
                 // Subprocess teardown) handles the final deref.
@@ -1227,7 +1228,7 @@ impl Writable {
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
-                unsafe { buffer_mut(buffer) }.close();
+                yolo! { buffer_mut(buffer) }.close();
             }
             Writable::Ignore => {}
             Writable::Inherit => {}
@@ -1266,7 +1267,7 @@ impl Readable {
             // during `spawn` the `Arc<PipeReader>` is uniquely held (the
             // reader callback is registered by `start` itself), so no other
             // `&PipeReader` can exist for this scope.
-            let p = unsafe { &mut *p };
+            let p = yolo! { &mut *p };
             p.start(process, event_loop)?;
             if eager {
                 p.read_all();
@@ -1280,7 +1281,7 @@ impl Readable {
             // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; Windows
             // `BufferedReader::update_ref` needs `&mut` to touch the libuv
             // `Source` ref/unref. `update_ref` does not re-enter shell code.
-            unsafe { &mut *arc_as_mut_ptr(pipe) }.update_ref(true);
+            yolo! { &mut *arc_as_mut_ptr(pipe) }.update_ref(true);
         }
     }
 
@@ -1288,7 +1289,7 @@ impl Readable {
         if let Readable::Pipe(pipe) = self {
             // SAFETY: see `arc_as_mut_ptr` — single-threaded shell;
             // `update_ref` does not re-enter shell code.
-            unsafe { &mut *arc_as_mut_ptr(pipe) }.update_ref(false);
+            yolo! { &mut *arc_as_mut_ptr(pipe) }.update_ref(false);
         }
     }
 
@@ -1412,7 +1413,7 @@ impl Readable {
                 // `PipeReader::close` only touches `self.reader` and does
                 // not re-enter `Cmd`/interpreter code that would deref the
                 // sibling `Arc` clone.
-                unsafe { &mut *arc_as_mut_ptr(pipe) }.close();
+                yolo! { &mut *arc_as_mut_ptr(pipe) }.close();
             }
             _ => {}
         }
@@ -1564,7 +1565,7 @@ impl<'a> SpawnArgs<'a> {
             // SAFETY: `event_loop.env()` returns the long-lived `*mut Loader`
             // owned by the VM (valid for the lifetime of the spawn args), and
             // `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string constant.
-            path: unsafe {
+            path: yolo! {
                 if let Some(p) = (*event_loop.env()).get(b"PATH") {
                     p
                 } else if cfg!(unix) {
@@ -1844,12 +1845,12 @@ impl CapturedWriter {
             // SAFETY: `parent_mut` recovers the embedding `PipeReader` via
             // `container_of`; raw-ptr form per `try_signal_done_to_cmd`
             // contract (no `&mut PipeReader` held across the Cmd re-entry).
-            return unsafe { PipeReader::try_signal_done_to_cmd(self.parent_mut()) };
+            return yolo! { PipeReader::try_signal_done_to_cmd(self.parent_mut()) };
         } else if self.written >= self.parent().buffered_output.len()
             && !matches!(self.parent().state, PipeReaderState::Pending)
         {
             // SAFETY: as above.
-            return unsafe { PipeReader::try_signal_done_to_cmd(self.parent_mut()) };
+            return yolo! { PipeReader::try_signal_done_to_cmd(self.parent_mut()) };
         }
         Yield::Suspended
     }
@@ -1868,7 +1869,7 @@ impl CapturedWriter {
         );
         // SAFETY: `parent_mut` returns the raw embedding `*mut PipeReader`;
         // dereference for the duration of the call (no `&mut self` aliases live).
-        unsafe { &mut *self.parent_mut() }.on_captured_writer_done();
+        yolo! { &mut *self.parent_mut() }.on_captured_writer_done();
     }
 }
 
@@ -1893,7 +1894,7 @@ impl PipeReader {
         // can't follow it. Arc only yields `&Self`; write through the
         // allocation pointer (single-threaded shell, no live `&`/`&mut` here).
         // SAFETY: see `arc_as_mut_ptr` rationale; field is a plain `Option<*mut _>`.
-        unsafe { (*arc_as_mut_ptr(&self)).process = None };
+        yolo! { (*arc_as_mut_ptr(&self)).process = None };
         // Dropping `self` releases the strong ref (Zig `this.deref()`).
     }
 
@@ -1916,7 +1917,7 @@ impl PipeReader {
         // SAFETY: `self` is the unique embedded `PipeReader` reached via
         // `CapturedWriter::parent_mut`; raw-ptr form avoids holding a
         // `&mut PipeReader` protector across the re-entrant Cmd call inside.
-        let y = unsafe { Self::try_signal_done_to_cmd(core::ptr::from_mut(self)) };
+        let y = yolo! { Self::try_signal_done_to_cmd(core::ptr::from_mut(self)) };
         Self::run_yield_with(interp, y);
     }
 
@@ -1941,7 +1942,7 @@ impl PipeReader {
         }
         // SAFETY: interp outlives every PipeReader (it owns the Cmd that
         // spawned the subprocess holding this reader). Single-threaded.
-        y.run(unsafe { &*interp });
+        y.run(yolo! { &*interp });
     }
 
     pub fn create(
@@ -1970,7 +1971,7 @@ impl PipeReader {
         let this_ptr: *mut PipeReader = Arc::as_ptr(&arc).cast_mut();
         // SAFETY: `arc` is uniquely held; no other `&`/`&mut` to the payload
         // exists. Single-threaded shell.
-        let this = unsafe { &mut *this_ptr };
+        let this = yolo! { &mut *this_ptr };
         log!(
             "PipeReader(0x{:x}, {}) create()",
             this_ptr as usize,
@@ -2051,7 +2052,7 @@ impl PipeReader {
 
     pub fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
         // SAFETY: ptr was registered via reader.set_parent(self).
-        let this: &mut PipeReader = unsafe { bun_ptr::callback_ctx::<PipeReader>(ptr) };
+        let this: &mut PipeReader = yolo! { bun_ptr::callback_ctx::<PipeReader>(ptr) };
         this.buffered_output.append(chunk);
         log!(
             "PipeReader(0x{:x}, {}) onReadChunk(chunk_len={}, has_more={})",
@@ -2098,7 +2099,7 @@ impl PipeReader {
     #[inline]
     unsafe fn guard_from_raw(this: *mut Self) -> Arc<Self> {
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             Arc::increment_strong_count(this.cast_const());
             Arc::from_raw(this.cast_const())
         }
@@ -2121,17 +2122,17 @@ impl PipeReader {
         // → `Cmd::buffered_output_close` → `close_io` may overwrite the
         // `Readable::Pipe` slot, and the trampoline must not re-read `*me`.
         // SAFETY: see `arc_as_mut_ptr`; raw read, no borrow held.
-        let interp = unsafe { (*me).interp };
+        let interp = yolo! { (*me).interp };
         // SAFETY: see `arc_as_mut_ptr` + `try_signal_done_to_cmd` contract —
         // raw `*mut`, no `&mut PipeReader` protector across the Cmd re-entry.
-        let y = unsafe { Self::try_signal_done_to_cmd(me) };
+        let y = yolo! { Self::try_signal_done_to_cmd(me) };
         Self::run_yield_with(interp, y);
         if let Some(process) = guard.process {
             // SAFETY: `process` is the heap-allocated `ShellSubprocess` (stable
             // address), freed only by `Cmd::deinit` after every PipeReader has
             // signalled done (this call). `on_close_io` drops the
             // `Readable::Pipe` Arc — `guard` keeps `self` live past that.
-            let proc = unsafe { &mut *process };
+            let proc = yolo! { &mut *process };
             let kind = guard.kind(proc);
             proc.on_close_io(kind);
         }
@@ -2145,7 +2146,7 @@ impl PipeReader {
     /// `Arc::deref` inside `on_close_io` would alias it.
     pub unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: caller contract.
-        let guard = unsafe { Self::guard_from_raw(this) };
+        let guard = yolo! { Self::guard_from_raw(this) };
         log!(
             "onReaderDone(0x{:x}, {})",
             this as usize,
@@ -2154,7 +2155,7 @@ impl PipeReader {
         {
             // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the
             // `state` write ends before `finish_after_state_set` re-enters.
-            let me = unsafe { &mut *arc_as_mut_ptr(&guard) };
+            let me = yolo! { &mut *arc_as_mut_ptr(&guard) };
             let owned = me.to_owned_slice();
             me.state = PipeReaderState::Done(owned);
             // Spec subproc.zig:1245 — `onReaderDone` (only) waits for the
@@ -2183,7 +2184,7 @@ impl PipeReader {
         // SAFETY: caller contract — short-lived shared borrow for the
         // read-only `is_done()` / log; no Cmd re-entry yet.
         let (done, out_type, process) = {
-            let me = unsafe { &*this };
+            let me = yolo! { &*this };
             (me.is_done(), me.out_type, me.process)
         };
         if !done {
@@ -2203,11 +2204,11 @@ impl PipeReader {
             // address) freed only by `Cmd::deinit`, which runs strictly after
             // every PipeReader has signalled done. `cmd_mut` resolves through
             // the node arena (see `CmdHandle`).
-            let cmd = unsafe { (*proc).cmd_parent.cmd_mut() };
+            let cmd = yolo! { (*proc).cmd_parent.cmd_mut() };
             // SAFETY: caller contract — `&mut *this` for the field rewrites;
             // ends at the closing brace, *before* the `cmd` call below.
             let e: Option<SystemError> = {
-                let me = unsafe { &mut *this };
+                let me = yolo! { &mut *this };
                 if let Some(e) = me.captured_writer.err.take() {
                     // Transfer ownership of the error out of captured_writer so
                     // PipeReader.deinit doesn't deref the same SystemError twice.
@@ -2307,7 +2308,7 @@ impl PipeReader {
         // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the `state`
         // swap. No `Arc::deref(&this)` overlaps.
         match core::mem::replace(
-            unsafe { &mut (*me).state },
+            yolo! { &mut (*me).state },
             PipeReaderState::Done(Box::default()),
         ) {
             PipeReaderState::Pending => {
@@ -2317,14 +2318,14 @@ impl PipeReader {
                 // `&mut`), so the pointer escaped into the stream stays
                 // valid past `this`'s drop — `from_pipe` takes its own ref.
                 let stream =
-                    ReadableStream::from_pipe(global_object, me, unsafe { &mut (*me).reader })?;
+                    ReadableStream::from_pipe(global_object, me, yolo! { &mut (*me).reader })?;
                 // SAFETY: as above; field write only.
-                unsafe { (*me).state = PipeReaderState::Done(Box::default()) };
+                yolo! { (*me).state = PipeReaderState::Done(Box::default()) };
                 Ok(stream)
             }
             PipeReaderState::Done(bytes) => {
                 // SAFETY: as above; field write only.
-                unsafe { (*me).state = PipeReaderState::Done(Box::default()) };
+                yolo! { (*me).state = PipeReaderState::Done(Box::default()) };
                 ReadableStream::from_owned_slice(global_object, bytes.into_vec(), 0)
             }
             PipeReaderState::Err(_err) => {
@@ -2361,11 +2362,11 @@ impl PipeReader {
     pub unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
         log!("PipeReader(0x{:x}) onReaderError {:?}", this as usize, err);
         // SAFETY: caller contract.
-        let guard = unsafe { Self::guard_from_raw(this) };
+        let guard = yolo! { Self::guard_from_raw(this) };
         {
             // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the
             // `state` write ends before `finish_after_state_set` re-enters.
-            let me = unsafe { &mut *arc_as_mut_ptr(&guard) };
+            let me = yolo! { &mut *arc_as_mut_ptr(&guard) };
             if let PipeReaderState::Done(buf) =
                 core::mem::replace(&mut me.state, PipeReaderState::Err(None))
             {
@@ -2419,7 +2420,7 @@ impl PipeReader {
         // `ptr::replace` reads/writes through the raw field pointer without
         // materializing a `&mut Self` (on_reader_done may still hold one on the
         // caller's stack via the BufferedReader parent backref).
-        let old = unsafe {
+        let old = yolo! {
             core::ptr::replace(
                 core::ptr::addr_of_mut!((*this).state),
                 PipeReaderState::Done(Box::default()),

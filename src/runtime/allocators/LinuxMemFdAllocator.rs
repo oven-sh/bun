@@ -15,6 +15,7 @@
 //! the virtual memory. So we should only really use this for large blobs of
 //! data that we expect to be cloned multiple times. Such as Blob in FormData.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -49,9 +50,9 @@ impl LinuxMemFdAllocator {
     /// Refcount hit 0; `this` came from `heap::alloc` in `IntrusiveArc::new`.
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: sole owner — close fd before reclaiming the Box.
-        unsafe { (*this).fd.close() };
+        yolo! { (*this).fd.close() };
         // SAFETY: sole owner; reconstruct the Box so the allocation is freed.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 
@@ -73,7 +74,7 @@ impl LinuxMemFdAllocator {
     pub fn ref_(&self) {
         // SAFETY: `self` is a live `Self`; `ThreadSafeRefCount::ref_` only
         // touches the interior-mutable atomic `ref_count` field.
-        unsafe {
+        yolo! {
             bun_ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut())
         };
     }
@@ -94,7 +95,7 @@ impl LinuxMemFdAllocator {
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and Box-allocated; forwards
         // to the intrusive refcount which runs `destructor` on zero.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     /// Zig: `.{ .ptr = self, .vtable = AllocatorInterface.VTable }`
@@ -163,8 +164,8 @@ impl LinuxMemFdAllocator {
             let flags_mut = (flags & !MAP_TYPE) | libc::MAP_SHARED;
 
             // SAFETY: `this` is live per caller contract; we only read scalar fields.
-            let self_size = unsafe { (*this).size };
-            let self_fd = unsafe { (*this).fd };
+            let self_size = yolo! { (*this).size };
+            let self_fd = yolo! { (*this).fd };
 
             let map_len = size.min(self_size);
             match sys::mmap(
@@ -181,7 +182,7 @@ impl LinuxMemFdAllocator {
                     // SAFETY: `slice_ptr[0..map_len]` is the mmap'd region; `Self::allocator(this)`
                     // is the vtable whose `free` will `munmap` exactly that region and then
                     // `deref` `this`. `len <= map_len` (cap) by construction.
-                    Ok(unsafe {
+                    Ok(yolo! {
                         BlobStoreBytes::from_raw_parts(
                             slice_ptr,
                             len as crate::webcore::blob::SizeType,
@@ -294,7 +295,7 @@ impl LinuxMemFdAllocator {
 
             // SAFETY: `memfd` is the `heap::alloc` pointer
             // (full provenance) with one live ref — required by `Self::alloc`.
-            match unsafe {
+            match yolo! {
                 Self::alloc(
                     memfd,
                     bytes.len(),
@@ -306,7 +307,7 @@ impl LinuxMemFdAllocator {
                 Err(err) => {
                     // SAFETY: we still own the +1 from `into_raw()`; release it
                     // (closes the fd and frees the Box on hitting zero).
-                    unsafe { Self::deref(memfd) };
+                    yolo! { Self::deref(memfd) };
                     Err(err)
                 }
             }
@@ -360,7 +361,7 @@ mod allocator_interface {
         }
         // SAFETY: caller contract — `this` is the Box-allocated `*mut Self` and
         // we hold one ref. No live `&Self` exists (we never materialized one).
-        unsafe { LinuxMemFdAllocator::deref(this) };
+        yolo! { LinuxMemFdAllocator::deref(this) };
     }
 
     /// `std.mem.Allocator.VTable{ .alloc = noAlloc, .resize = noResize, .remap = noRemap, .free }`

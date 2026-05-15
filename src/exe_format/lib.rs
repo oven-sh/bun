@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![allow(
     unused,
     non_snake_case,
@@ -32,7 +33,7 @@ pub(crate) fn read_struct<T: Copy>(bytes: &[u8]) -> T {
     // SAFETY: T is a #[repr(C)] POD header struct; all bit patterns are valid;
     // bytes.len() >= size_of::<T>() asserted above. read_unaligned tolerates
     // arbitrary alignment of the source slice.
-    unsafe { core::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) }
+    yolo! { core::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) }
 }
 
 /// Write a `#[repr(C)]` POD struct `T` to the start of `bytes`. See
@@ -42,7 +43,7 @@ pub(crate) fn write_struct<T: Copy>(bytes: &mut [u8], value: &T) {
     debug_assert!(bytes.len() >= core::mem::size_of::<T>());
     // SAFETY: T is #[repr(C)] POD; bytes.len() >= size_of::<T>() asserted
     // above; write_unaligned tolerates arbitrary alignment of dest.
-    unsafe { core::ptr::write_unaligned(bytes.as_mut_ptr().cast::<T>(), *value) }
+    yolo! { core::ptr::write_unaligned(bytes.as_mut_ptr().cast::<T>(), *value) }
 }
 
 /// Round `value` up to the next multiple of `alignment`.

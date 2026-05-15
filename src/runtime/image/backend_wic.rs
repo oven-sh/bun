@@ -34,6 +34,7 @@
 #![cfg(windows)]
 #![allow(non_snake_case, non_upper_case_globals)]
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{CStr, c_int, c_uint, c_void};
 use core::ptr;
@@ -132,7 +133,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         .ok_or(BackendUnavailable)?;
     let mut conv: *mut IWICBitmapSource = ptr::null_mut();
     // SAFETY: convert_fn resolved from windowscodecs.dll; frame is non-null.
-    if unsafe { convert_fn(&GUID_WICPixelFormat32bppRGBA, frame.as_ptr(), &mut conv) } < 0 {
+    if yolo! { convert_fn(&GUID_WICPixelFormat32bppRGBA, frame.as_ptr(), &mut conv) } < 0 {
         return Err(DecodeFailed);
     }
     let conv = ComPtr::new(conv).ok_or(DecodeFailed)?;
@@ -194,7 +195,7 @@ pub fn encode(
 
     let mut stream: *mut IUnknown = ptr::null_mut();
     // SAFETY: out-param is valid; null hglobal = let COM allocate.
-    if unsafe { CreateStreamOnHGlobal(ptr::null_mut(), 1, &mut stream) } < 0 {
+    if yolo! { CreateStreamOnHGlobal(ptr::null_mut(), 1, &mut stream) } < 0 {
         return Err(BackendUnavailable);
     }
     let stream = ComPtr::new(stream).ok_or(BackendUnavailable)?;
@@ -224,7 +225,7 @@ pub fn encode(
     // BackendUnavailable → UnsupportedOnPlatform instead of risking the
     // wrong container.
     // SAFETY: props may be null (shim must tolerate); name is static NUL-terminated UTF-16.
-    let _ = unsafe {
+    let _ = yolo! {
         bun_wic_propbag_write_f32(
             props as *mut c_void,
             bun_core::wstr!("ImageQuality").as_ptr(),
@@ -237,7 +238,7 @@ pub fn encode(
         WICHeifCompressionHEVC
     };
     // SAFETY: same as above.
-    if unsafe {
+    if yolo! {
         bun_wic_propbag_write_u8(
             props as *mut c_void,
             bun_core::wstr!("HeifCompressionMethod").as_ptr(),
@@ -292,7 +293,7 @@ pub fn encode(
             .ok_or(BackendUnavailable)?;
         let mut conv: *mut IWICBitmapSource = ptr::null_mut();
         // SAFETY: convert_fn resolved; src is non-null; pf is the codec's chosen format.
-        if unsafe { convert_fn(&pf, src.as_ptr(), &mut conv) } < 0 {
+        if yolo! { convert_fn(&pf, src.as_ptr(), &mut conv) } < 0 {
             return Err(EncodeFailed);
         }
         let conv = ComPtr::new(conv).ok_or(EncodeFailed)?;
@@ -321,21 +322,21 @@ pub fn encode(
 
     let mut hg: *mut c_void = ptr::null_mut();
     // SAFETY: stream is non-null.
-    if unsafe { GetHGlobalFromStream(stream.as_ptr(), &mut hg) } < 0 || hg.is_null() {
+    if yolo! { GetHGlobalFromStream(stream.as_ptr(), &mut hg) } < 0 || hg.is_null() {
         return Err(EncodeFailed);
     }
     // SAFETY: hg is non-null.
-    let ptr_ = unsafe { GlobalLock(hg) };
+    let ptr_ = yolo! { GlobalLock(hg) };
     if ptr_.is_null() {
         return Err(EncodeFailed);
     }
     let ptr_ = ptr_ as *const u8;
     scopeguard::defer! {
         // SAFETY: hg is a locked HGLOBAL.
-        let _ = unsafe { GlobalUnlock(hg) };
+        let _ = yolo! { GlobalUnlock(hg) };
     }
     // SAFETY: ptr_ points to `pos` valid bytes inside the locked HGLOBAL.
-    let slice = unsafe { bun_core::ffi::slice(ptr_, usize::try_from(pos).expect("int cast")) };
+    let slice = yolo! { bun_core::ffi::slice(ptr_, usize::try_from(pos).expect("int cast")) };
     Ok(slice.to_vec())
 }
 
@@ -415,14 +416,14 @@ fn release<T>(p: *mut T) {
         let unk = p as *mut IUnknown;
         // SAFETY: every COM interface vtable begins with IUnknownVTable;
         // p was returned by a COM creation call and not yet released.
-        unsafe {
+        yolo! {
             let _ = ((*(*unk).vt).Release)(unk);
         }
     }
 }
 
 /// Non-null COM interface pointer. Exists solely to move the per-call-site
-/// `unsafe { ((*(*p).vt).Method)(p, ..) }` vtable dance into one place per
+/// `yolo! { ((*(*p).vt).Method)(p, ..) }` vtable dance into one place per
 /// method, so `decode`/`encode` read as straight-line safe code.
 ///
 /// Not an owning smart pointer — release is still explicit via
@@ -473,7 +474,7 @@ impl ComPtr<IWICImagingFactory> {
     #[inline]
     fn create_stream(self) -> Option<ComPtr<IWICStream>> {
         let mut out = ptr::null_mut();
-        let hr = unsafe { ((*(*self.as_ptr()).vt).CreateStream)(self.as_ptr(), &mut out) };
+        let hr = yolo! { ((*(*self.as_ptr()).vt).CreateStream)(self.as_ptr(), &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
     }
     #[inline]
@@ -483,7 +484,7 @@ impl ComPtr<IWICImagingFactory> {
         opts: u32,
     ) -> Option<ComPtr<IWICBitmapDecoder>> {
         let mut out = ptr::null_mut();
-        let hr = unsafe {
+        let hr = yolo! {
             ((*(*self.as_ptr()).vt).CreateDecoderFromStream)(
                 self.as_ptr(),
                 stream,
@@ -497,7 +498,7 @@ impl ComPtr<IWICImagingFactory> {
     #[inline]
     fn create_encoder(self, container: *const GUID) -> Option<ComPtr<IWICBitmapEncoder>> {
         let mut out = ptr::null_mut();
-        let hr = unsafe {
+        let hr = yolo! {
             ((*(*self.as_ptr()).vt).CreateEncoder)(self.as_ptr(), container, ptr::null(), &mut out)
         };
         if hr < 0 { None } else { ComPtr::new(out) }
@@ -513,7 +514,7 @@ impl ComPtr<IWICImagingFactory> {
         buf: *const u8,
     ) -> Option<ComPtr<IWICBitmapSource>> {
         let mut out = ptr::null_mut();
-        let hr = unsafe {
+        let hr = yolo! {
             ((*(*self.as_ptr()).vt).CreateBitmapFromMemory)(
                 self.as_ptr(),
                 width,
@@ -532,7 +533,7 @@ impl ComPtr<IWICImagingFactory> {
 impl ComPtr<IWICStream> {
     #[inline]
     fn initialize_from_memory(self, buf: *const u8, len: u32) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).InitializeFromMemory)(self.as_ptr(), buf, len) }
+        yolo! { ((*(*self.as_ptr()).vt).InitializeFromMemory)(self.as_ptr(), buf, len) }
     }
 }
 
@@ -540,7 +541,7 @@ impl ComPtr<IWICBitmapDecoder> {
     #[inline]
     fn get_frame(self, index: u32) -> Option<ComPtr<IWICBitmapSource>> {
         let mut out = ptr::null_mut();
-        let hr = unsafe { ((*(*self.as_ptr()).vt).GetFrame)(self.as_ptr(), index, &mut out) };
+        let hr = yolo! { ((*(*self.as_ptr()).vt).GetFrame)(self.as_ptr(), index, &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
     }
 }
@@ -548,24 +549,24 @@ impl ComPtr<IWICBitmapDecoder> {
 impl ComPtr<IWICBitmapSource> {
     #[inline]
     fn get_size(self, w: &mut u32, h: &mut u32) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).GetSize)(self.as_ptr(), w, h) }
+        yolo! { ((*(*self.as_ptr()).vt).GetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
     fn copy_pixels(self, rc: *const c_void, stride: u32, size: u32, out: *mut u8) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).CopyPixels)(self.as_ptr(), rc, stride, size, out) }
+        yolo! { ((*(*self.as_ptr()).vt).CopyPixels)(self.as_ptr(), rc, stride, size, out) }
     }
 }
 
 impl ComPtr<IWICBitmapEncoder> {
     #[inline]
     fn initialize(self, stream: *mut IUnknown, cache: u32) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), stream, cache) }
+        yolo! { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), stream, cache) }
     }
     #[inline]
     fn create_new_frame(self) -> Option<(ComPtr<IWICBitmapFrameEncode>, *mut IUnknown)> {
         let mut frame = ptr::null_mut();
         let mut props = ptr::null_mut();
-        let hr = unsafe {
+        let hr = yolo! {
             ((*(*self.as_ptr()).vt).CreateNewFrame)(self.as_ptr(), &mut frame, &mut props)
         };
         if hr < 0 {
@@ -575,41 +576,41 @@ impl ComPtr<IWICBitmapEncoder> {
     }
     #[inline]
     fn commit(self) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
+        yolo! { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
 
 impl ComPtr<IWICBitmapFrameEncode> {
     #[inline]
     fn initialize(self, props: *mut IUnknown) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), props) }
+        yolo! { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), props) }
     }
     #[inline]
     fn set_size(self, w: u32, h: u32) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).SetSize)(self.as_ptr(), w, h) }
+        yolo! { ((*(*self.as_ptr()).vt).SetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
     fn set_pixel_format(self, pf: &mut GUID) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).SetPixelFormat)(self.as_ptr(), pf) }
+        yolo! { ((*(*self.as_ptr()).vt).SetPixelFormat)(self.as_ptr(), pf) }
     }
     #[inline]
     fn write_pixels(self, lines: u32, stride: u32, size: u32, buf: *const u8) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).WritePixels)(self.as_ptr(), lines, stride, size, buf) }
+        yolo! { ((*(*self.as_ptr()).vt).WritePixels)(self.as_ptr(), lines, stride, size, buf) }
     }
     #[inline]
     fn write_source(self, src: ComPtr<IWICBitmapSource>, rc: *const c_void) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).WriteSource)(self.as_ptr(), src.as_ptr(), rc) }
+        yolo! { ((*(*self.as_ptr()).vt).WriteSource)(self.as_ptr(), src.as_ptr(), rc) }
     }
     #[inline]
     fn commit(self) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
+        yolo! { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
 
 impl ComPtr<IStream> {
     #[inline]
     fn seek(self, dlib_move: i64, origin: u32, new_pos: &mut u64) -> HRESULT {
-        unsafe { ((*(*self.as_ptr()).vt).Seek)(self.as_ptr(), dlib_move, origin, new_pos) }
+        yolo! { ((*(*self.as_ptr()).vt).Seek)(self.as_ptr(), dlib_move, origin, new_pos) }
     }
 }
 
@@ -894,7 +895,7 @@ fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
     if !COM_INITIALISED.get() {
         // S_OK or S_FALSE (already initialised) are both fine.
         // SAFETY: COINIT_MULTITHREADED with null reserved is the documented form.
-        if unsafe { CoInitializeEx(ptr::null_mut(), COINIT_MULTITHREADED) } < 0 {
+        if yolo! { CoInitializeEx(ptr::null_mut(), COINIT_MULTITHREADED) } < 0 {
             return Err(BackendUnavailable);
         }
         COM_INITIALISED.set(true);
@@ -908,7 +909,7 @@ fn load_factory() {
     // Resolve the one flat C export first; if windowscodecs.dll isn't present
     // we never attempt CoCreateInstance and the whole backend stays disabled.
     // SAFETY: literal C string; LoadLibraryA is safe to call from any thread.
-    let dll = unsafe { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) };
+    let dll = yolo! { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) };
     if dll.is_null() {
         return;
     }
@@ -920,11 +921,11 @@ fn load_factory() {
     };
     // SAFETY: sym is the export of WICConvertBitmapSource — fn-ptr transmute.
     let _ = wicConvertBitmapSource
-        .set(unsafe { core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym) });
+        .set(yolo! { core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym) });
 
     let mut out: *mut c_void = ptr::null_mut();
     // SAFETY: GUIDs are static; out is a valid out-param.
-    if unsafe {
+    if yolo! {
         CoCreateInstance(
             &CLSID_WICImagingFactory,
             ptr::null_mut(),
@@ -977,22 +978,22 @@ const NAMED_FORMATS: [&CStr; 4] = [c"PNG", c"image/png", c"JFIF", c"image/webp"]
 
 pub fn clipboard_change_count() -> i64 {
     // SAFETY: GetClipboardSequenceNumber has no preconditions.
-    unsafe { GetClipboardSequenceNumber() as i64 }
+    yolo! { GetClipboardSequenceNumber() as i64 }
 }
 
 pub fn has_clipboard_image() -> bool {
     // IsClipboardFormatAvailable doesn't require OpenClipboard.
     // SAFETY: no preconditions.
-    if unsafe { IsClipboardFormatAvailable(CF_DIBV5) } != 0
-        || unsafe { IsClipboardFormatAvailable(CF_DIB) } != 0
+    if yolo! { IsClipboardFormatAvailable(CF_DIBV5) } != 0
+        || yolo! { IsClipboardFormatAvailable(CF_DIB) } != 0
     {
         return true;
     }
     for name in NAMED_FORMATS {
         // SAFETY: name is a static NUL-terminated C string.
-        let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
+        let id = yolo! { RegisterClipboardFormatA(name.as_ptr()) };
         // SAFETY: no preconditions.
-        if id != 0 && unsafe { IsClipboardFormatAvailable(id) } != 0 {
+        if id != 0 && yolo! { IsClipboardFormatAvailable(id) } != 0 {
             return true;
         }
     }
@@ -1003,21 +1004,21 @@ pub fn has_clipboard_image() -> bool {
 pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     // hwnd=null associates the open with the current task; fine for read-only.
     // SAFETY: null hwnd is documented as valid.
-    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
+    if yolo! { OpenClipboard(ptr::null_mut()) } == 0 {
         return Err(BackendUnavailable);
     }
     scopeguard::defer! {
         // SAFETY: clipboard is open.
-        let _ = unsafe { CloseClipboard() };
+        let _ = yolo! { CloseClipboard() };
     }
 
     // 1. Registered file-format chunks — copy verbatim.
     for name in NAMED_FORMATS {
         // SAFETY: name is a static NUL-terminated C string.
-        let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
+        let id = yolo! { RegisterClipboardFormatA(name.as_ptr()) };
         if id != 0 {
             // SAFETY: clipboard is open.
-            let h = unsafe { GetClipboardData(id) };
+            let h = yolo! { GetClipboardData(id) };
             if !h.is_null() {
                 if let Some(b) = dup_global::<0>(h)? {
                     return Ok(Some(b));
@@ -1032,7 +1033,7 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     //    the format, not panic the process (Windows ships ReleaseSafe).
     for cf in [CF_DIBV5, CF_DIB] {
         // SAFETY: clipboard is open.
-        let h = unsafe { GetClipboardData(cf) };
+        let h = yolo! { GetClipboardData(cf) };
         if h.is_null() {
             continue;
         }
@@ -1080,24 +1081,24 @@ fn dup_global<const PREFIX: usize>(
     h: *mut c_void,
 ) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
     // SAFETY: h is a non-null HGLOBAL from GetClipboardData.
-    let size = unsafe { GlobalSize(h) };
+    let size = yolo! { GlobalSize(h) };
     if size == 0 {
         return Ok(None);
     }
     // SAFETY: h is a non-null HGLOBAL.
-    let ptr_ = unsafe { GlobalLock(h) };
+    let ptr_ = yolo! { GlobalLock(h) };
     if ptr_.is_null() {
         return Ok(None);
     }
     let ptr_ = ptr_ as *const u8;
     scopeguard::defer! {
         // SAFETY: h is locked.
-        let _ = unsafe { GlobalUnlock(h) };
+        let _ = yolo! { GlobalUnlock(h) };
     }
     // PERF(port): was uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; PREFIX + size];
     // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
-    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
+    out[PREFIX..].copy_from_slice(yolo! { bun_core::ffi::slice(ptr_, size) });
     Ok(Some(out))
 }
 

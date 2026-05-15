@@ -1,6 +1,7 @@
 //! Node-API (N-API) implementation.
 //! Port of src/napi/napi.zig.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, Ordering};
@@ -59,18 +60,18 @@ impl JSValueNapiExt for JSValue {
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
         // SAFETY: FFI; may run JS (getters on Proxy etc.). Zig: `fromJSHostCallGeneric` →
         // check_slow (open scope before call, then `returnIfException`).
-        bun_jsc::call_check_slow!(global, || unsafe {
+        bun_jsc::call_check_slow!(global, || yolo! {
             JSC__JSValue__isStrictEqual(self, other, global.as_mut_ptr())
         })
     }
     #[inline]
     fn is_async_context_frame(self) -> bool {
         // SAFETY: trivial FFI.
-        unsafe { Bun__JSValue__isAsyncContextFrame(self) }
+        yolo! { Bun__JSValue__isAsyncContextFrame(self) }
     }
     fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue> {
         // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
-        bun_jsc::call_zero_is_throw!(global, || unsafe {
+        bun_jsc::call_zero_is_throw!(global, || yolo! {
             JSBuffer__bufferFromLength(global.as_mut_ptr(), len as i64)
         })
     }
@@ -141,14 +142,14 @@ unsafe extern "C" {
 impl NapiEnv {
     pub fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
-        unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
+        yolo! { &*NapiEnv__globalObject(self.as_mut_ptr()) }
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
     /// accessed by napi_get_last_error_info
     pub fn set_last_error(self_: Option<&Self>, err: NapiStatus) -> napi_status {
         // SAFETY: napi_set_last_error accepts null env.
-        unsafe { napi_set_last_error(self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()), err) }
+        yolo! { napi_set_last_error(self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()), err) }
     }
 
     /// Convenience wrapper for set_last_error(.ok)
@@ -174,20 +175,20 @@ impl NapiEnv {
     /// Assert that we're not currently performing garbage collection
     pub fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
+        yolo! { napi_internal_check_gc(self.as_mut_ptr()) };
     }
 
     /// Return the Node-API version number declared by the module we are running code from
     pub fn get_version(&self) -> u32 {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { napi_internal_get_version(self.as_mut_ptr()) }
+        yolo! { napi_internal_get_version(self.as_mut_ptr()) }
     }
 
     pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
         let mut exception = JSValue::ZERO;
         // SAFETY: out-param is a valid stack location; interior mutability via
         // `as_mut_ptr` permits C++ to clear the pending exception.
-        if unsafe { NapiEnv__getAndClearPendingException(self.as_mut_ptr(), &raw mut exception) } {
+        if yolo! { NapiEnv__getAndClearPendingException(self.as_mut_ptr(), &raw mut exception) } {
             return Some(exception);
         }
         None
@@ -198,10 +199,10 @@ impl NapiEnv {
 pub mod napi_env_external_shared_descriptor {
     use super::*;
     pub unsafe fn ref_(env: *mut NapiEnv) {
-        unsafe { NapiEnv__ref(env) }
+        yolo! { NapiEnv__ref(env) }
     }
     pub unsafe fn deref(env: *mut NapiEnv) {
-        unsafe { NapiEnv__deref(env) }
+        yolo! { NapiEnv__deref(env) }
     }
 }
 
@@ -210,11 +211,11 @@ pub mod napi_env_external_shared_descriptor {
 unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` is a valid C++-owned napi_env.
-        unsafe { NapiEnv__ref(this) }
+        yolo! { NapiEnv__ref(this) }
     }
     unsafe fn ext_deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is a valid C++-owned napi_env.
-        unsafe { NapiEnv__deref(this) }
+        yolo! { NapiEnv__deref(this) }
     }
 }
 
@@ -279,14 +280,14 @@ impl NapiHandleScope {
     /// unsafe (i.e. inside a finalizer)
     pub fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
         // SAFETY: env is valid; C++ mutates env's scope stack (interior mutability).
-        unsafe { NapiHandleScope__open(env.as_mut_ptr(), escapable) }
+        yolo! { NapiHandleScope__open(env.as_mut_ptr(), escapable) }
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
     pub fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
         // SAFETY: NapiHandleScope__close handles null `current`.
-        unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }
+        yolo! { NapiHandleScope__close(env.as_mut_ptr(), self_) }
     }
 
     /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
@@ -294,7 +295,7 @@ impl NapiHandleScope {
     /// native module doesn't keep it visible on the stack.
     pub fn append(env: &NapiEnv, value: JSValue) {
         // SAFETY: env is valid; C++ appends to the current scope (interior mutability).
-        unsafe { NapiHandleScope__append(env.as_mut_ptr(), value.encoded()) }
+        yolo! { NapiHandleScope__append(env.as_mut_ptr(), value.encoded()) }
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
@@ -303,7 +304,7 @@ impl NapiHandleScope {
     pub fn escape(&self, value: JSValue) -> Result<(), EscapeError> {
         // SAFETY: self is a valid handle scope; C++ writes the escape slot
         // (interior mutability via `as_mut_ptr`).
-        if !unsafe { NapiHandleScope__escape(self.as_mut_ptr(), value.encoded()) } {
+        if !yolo! { NapiHandleScope__escape(self.as_mut_ptr(), value.encoded()) } {
             return Err(EscapeError::EscapeCalledTwice);
         }
         Ok(())
@@ -362,7 +363,7 @@ impl napi_value {
 
     pub fn get(&self) -> JSValue {
         // SAFETY: napi_value stores the same 64-bit encoding as JSValue.
-        unsafe { JSValue::from_encoded(self.0 as usize) }
+        yolo! { JSValue::from_encoded(self.0 as usize) }
     }
 
     pub fn create(env: &NapiEnv, val: JSValue) -> napi_value {
@@ -546,7 +547,7 @@ pub struct napi_type_tag {
 macro_rules! get_env {
     ($env:expr) => {
         // SAFETY: caller passes raw napi_env; we treat non-null as &NapiEnv borrow.
-        match unsafe { $env.as_ref() } {
+        match yolo! { $env.as_ref() } {
             Some(e) => e,
             None => return env_is_null(),
         }
@@ -556,7 +557,7 @@ macro_rules! get_env {
 macro_rules! get_out {
     ($env:expr, $ptr:expr) => {
         // SAFETY: caller passes raw out pointer; we treat non-null as &mut borrow.
-        match unsafe { $ptr.as_mut() } {
+        match yolo! { $ptr.as_mut() } {
             Some(r) => r,
             None => return $env.invalid_arg(),
         }
@@ -582,7 +583,7 @@ macro_rules! get_out {
 pub(crate) fn write_out<T>(p: *mut T, v: T) {
     // SAFETY: see doc comment — `p` is either null (skipped) or a valid,
     // exclusively-owned out-param per the N-API contract.
-    if let Some(r) = unsafe { p.as_mut() } {
+    if let Some(r) = yolo! { p.as_mut() } {
         *r = v;
     }
 }
@@ -738,12 +739,12 @@ pub extern "C" fn napi_create_string_latin1(
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
+                break 'brk yolo! { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
                 // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
+                break 'brk yolo! { bun_core::ffi::slice(str_, length) };
             }
         }
 
@@ -795,12 +796,12 @@ pub extern "C" fn napi_create_string_utf8(
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
+                break 'brk yolo! { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
                 // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
+                break 'brk yolo! { bun_core::ffi::slice(str_, length) };
             }
         }
 
@@ -837,12 +838,12 @@ pub extern "C" fn napi_create_string_utf16(
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
                 // Port of `bun.strings.span(c.char16_t, str, 0)` — scan to NUL u16.
-                break 'brk unsafe { bun_core::ffi::wstr_units(str_) };
+                break 'brk yolo! { bun_core::ffi::wstr_units(str_) };
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
                 // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
+                break 'brk yolo! { bun_core::ffi::slice(str_, length) };
             }
         }
 
@@ -984,7 +985,7 @@ pub extern "C" fn napi_get_prototype(
 
     result.set(
         env,
-        JSValue::c(unsafe { JSObjectGetPrototype(env.to_js().as_ptr(), object.as_object_ref()) }),
+        JSValue::c(yolo! { JSObjectGetPrototype(env.to_js().as_ptr(), object.as_object_ref()) }),
     );
     env.ok()
 }
@@ -1218,7 +1219,7 @@ pub extern "C" fn napi_async_init(
     // SAFETY: async_ctx is a valid out-pointer per N-API contract. We store the
     // original `*mut NapiEnv` (preserving write provenance) rather than deriving
     // it from the `&NapiEnv` borrow.
-    unsafe { *async_ctx = env_.cast::<c_void>() };
+    yolo! { *async_ctx = env_.cast::<c_void>() };
     env.ok()
 }
 
@@ -1258,7 +1259,7 @@ pub extern "C" fn napi_make_callback(
     let args_slice: &[JSValue] = if arg_count > 0 && !args.is_null() {
         // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; caller guarantees
         // [args, args+arg_count) is valid.
-        unsafe { bun_core::ffi::slice(args.cast::<JSValue>(), arg_count) }
+        yolo! { bun_core::ffi::slice(args.cast::<JSValue>(), arg_count) }
     } else {
         &[]
     };
@@ -1269,7 +1270,7 @@ pub extern "C" fn napi_make_callback(
         Err(err) => env.to_js().take_exception(err),
     };
 
-    if let Some(result) = unsafe { maybe_result.as_mut() } {
+    if let Some(result) = yolo! { maybe_result.as_mut() } {
         result.set(env, res);
     }
 
@@ -1290,7 +1291,7 @@ fn not_implemented_yet(name: &'static str) {
     ONCE.call_once(|| {
         // SAFETY: VirtualMachine::get() returns the current thread's VM (non-null);
         // `log` is set during init.
-        let should_warn = unsafe {
+        let should_warn = yolo! {
             VirtualMachine::get().as_mut()
                 .log
                 .map_or(true, |l| l.as_ref().level.at_least(bun_ast::Level::Warn))
@@ -1347,7 +1348,7 @@ pub extern "C" fn napi_escape_handle(
     env.check_gc();
     let result = get_out!(env, result_);
     // SAFETY: scope_ is a raw NAPI handle; non-null is treated as &NapiHandleScope.
-    let Some(scope) = (unsafe { scope_.as_ref() }) else {
+    let Some(scope) = (yolo! { scope_.as_ref() }) else {
         return env.invalid_arg();
     };
     if scope.escape(escapee.get()).is_err() {
@@ -1415,7 +1416,7 @@ pub extern "C" fn napi_is_error(
     env.check_gc();
     let value = value_.get();
     // SAFETY: result is a valid out-pointer per N-API contract.
-    unsafe { *result = value.is_any_error() };
+    yolo! { *result = value.is_any_error() };
     env.ok()
 }
 
@@ -1507,7 +1508,7 @@ pub extern "C" fn napi_get_typedarray_info(
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
-    if let Some(ty) = unsafe { maybe_type.as_mut() } {
+    if let Some(ty) = yolo! { maybe_type.as_mut() } {
         // Zig: `array_buffer.typed_array_type.toTypedArrayType().toNapi()`. The Rust
         // `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
         // straight to `napi_typedarray_type`.
@@ -1522,10 +1523,10 @@ pub extern "C" fn napi_get_typedarray_info(
     write_out(maybe_data, array_buffer.ptr);
     write_out(maybe_length, array_buffer.len);
 
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
+    if let Some(arraybuffer) = yolo! { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
             env,
-            JSValue::c(unsafe {
+            JSValue::c(yolo! {
                 JSObjectGetTypedArrayBuffer(
                     env.to_js().as_ptr(),
                     typedarray.as_object_ref(),
@@ -1584,10 +1585,10 @@ pub extern "C" fn napi_get_dataview_info(
     };
     write_out(maybe_bytelength, array_buffer.byte_len);
     write_out(maybe_data, array_buffer.ptr);
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
+    if let Some(arraybuffer) = yolo! { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
             env,
-            JSValue::c(unsafe {
+            JSValue::c(yolo! {
                 JSObjectGetTypedArrayBuffer(
                     env.to_js().as_ptr(),
                     dataview.as_object_ref(),
@@ -1627,7 +1628,7 @@ pub extern "C" fn napi_create_promise(
     let strong_ptr = bun_core::heap::into_raw(strong);
     *deferred = strong_ptr;
     // SAFETY: strong_ptr was just created from heap::alloc and is non-null.
-    let prom_value = unsafe { (*strong_ptr).get() }.as_value(env.to_js());
+    let prom_value = yolo! { (*strong_ptr).get() }.as_value(env.to_js());
     promise.set(env, prom_value);
     env.ok()
 }
@@ -1641,11 +1642,11 @@ pub extern "C" fn napi_resolve_deferred(
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
     let env = get_env!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    let deferred_box = unsafe { bun_core::heap::take(deferred) };
+    let deferred_box = yolo! { bun_core::heap::take(deferred) };
     // `deferred_box` drops at scope exit (deinit + free).
     let resolution = resolution_.get();
     // SAFETY: `deferred_box` holds a live JSPromise strong ref.
-    let prom = unsafe { deferred_box.get() };
+    let prom = yolo! { deferred_box.get() };
     if prom.resolve(env.to_js(), resolution).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
@@ -1661,10 +1662,10 @@ pub extern "C" fn napi_reject_deferred(
     bun_output::scoped_log!(napi, "napi_reject_deferred");
     let env = get_env!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    let deferred_box = unsafe { bun_core::heap::take(deferred) };
+    let deferred_box = yolo! { bun_core::heap::take(deferred) };
     let rejection = rejection_.get();
     // SAFETY: `deferred_box` holds a live JSPromise strong ref.
-    let prom = unsafe { deferred_box.get() };
+    let prom = yolo! { deferred_box.get() };
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
@@ -1716,7 +1717,7 @@ pub extern "C" fn napi_create_date(
     let mut args = [JSValue::js_number(time).as_object_ref()];
     result.set(
         env,
-        JSValue::c(unsafe {
+        JSValue::c(yolo! {
             JSObjectMakeDate(env.to_js().as_ptr(), 1, args.as_mut_ptr(), TODO_EXCEPTION)
         }),
     );
@@ -1855,12 +1856,12 @@ impl napi_async_work {
             concurrent_task: ConcurrentTask::default(),
             global: GlobalRef::from(global),
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
-            env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
+            env: yolo! { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
             // SAFETY: bun_vm() never null for a Bun-owned global.
             // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
             // stable address) and outlives every napi_async_work.
-            event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
+            event_loop: yolo! { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1872,7 +1873,7 @@ impl napi_async_work {
     pub fn destroy(this: *mut napi_async_work) {
         // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn schedule(&mut self) {
@@ -1886,7 +1887,7 @@ impl napi_async_work {
 
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to napi_async_work.task.
-        let this = unsafe { &mut *napi_async_work::from_task_ptr(task) };
+        let this = yolo! { &mut *napi_async_work::from_task_ptr(task) };
         this.run();
     }
 
@@ -1943,7 +1944,7 @@ impl napi_async_work {
 
         let env = self.env.get();
         // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
-        let env_ref = unsafe { &*env };
+        let env_ref = yolo! { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
         let status: NapiStatus =
@@ -1956,7 +1957,7 @@ impl napi_async_work {
         complete(env, status as napi_status, self.data);
 
         // SAFETY: env is valid for the duration of this call.
-        let env_ref = unsafe { &*env };
+        let env_ref = yolo! { &*env };
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
             let _ = vm.uncaught_exception(global, exception, false);
         } else if global.has_exception() {
@@ -2049,10 +2050,10 @@ fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     }
 
     if len == NAPI_AUTO_LENGTH {
-        return unsafe { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes();
+        return yolo! { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes();
     }
 
-    unsafe { bun_core::ffi::slice(ptr, len) }
+    yolo! { bun_core::ffi::slice(ptr, len) }
 }
 
 #[unsafe(no_mangle)]
@@ -2116,7 +2117,7 @@ pub extern "C" fn napi_create_buffer_copy(
     if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
         if length > 0 {
             // SAFETY: caller guarantees `data` points to at least `length` bytes.
-            let src = unsafe { bun_core::ffi::slice(data, length) };
+            let src = yolo! { bun_core::ffi::slice(data, length) };
             array_buf.slice_mut()[..length].copy_from_slice(src);
         }
         write_out(
@@ -2224,7 +2225,7 @@ pub extern "C" fn napi_delete_async_work(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = (yolo! { work_.as_mut() }) else {
         return env.invalid_arg();
     };
     if cfg!(debug_assertions) {
@@ -2241,7 +2242,7 @@ pub extern "C" fn napi_queue_async_work(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = (yolo! { work_.as_mut() }) else {
         return env.invalid_arg();
     };
     if cfg!(debug_assertions) {
@@ -2258,7 +2259,7 @@ pub extern "C" fn napi_cancel_async_work(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = (yolo! { work_.as_mut() }) else {
         return env.invalid_arg();
     };
     if cfg!(debug_assertions) {
@@ -2348,13 +2349,13 @@ unsafe extern "C" {
 
 extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
     // SAFETY: data is the napi_env we registered below.
-    unsafe { napi_internal_cleanup_env_cpp(data as napi_env) };
+    yolo! { napi_internal_cleanup_env_cpp(data as napi_env) };
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null (Zig used `.?`).
-    let env = unsafe { &*env_ };
+    let env = yolo! { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
         env_.cast::<c_void>(),
@@ -2396,12 +2397,12 @@ impl Finalizer {
     pub fn run(&mut self) {
         let env = self.env.get();
         // SAFETY: env is valid for the duration of this call.
-        let env_ref = unsafe { &*env };
+        let env_ref = yolo! { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
         (self.fun)(env, self.data, self.hint);
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
-        unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
+        yolo! { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         if let Some(exception) = env_ref.to_js().try_take_exception() {
             let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
@@ -2440,13 +2441,13 @@ pub extern "C" fn napi_internal_enqueue_finalizer(
 ) {
     let Some(fun) = fun else { return };
     // SAFETY: env may be null per Zig's `orelse return`.
-    let Some(env_ref) = (unsafe { env.as_ref() }) else {
+    let Some(env_ref) = (yolo! { env.as_ref() }) else {
         return;
     };
     let this = Finalizer {
         fun,
         // SAFETY: env_ref points to a live C++-owned napi_env.
-        env: unsafe { NapiEnvRef::clone_from_raw(env_ref.as_mut_ptr()) },
+        env: yolo! { NapiEnvRef::clone_from_raw(env_ref.as_mut_ptr()) },
         data,
         hint,
     };
@@ -2554,11 +2555,11 @@ impl ThreadSafeFunction {
     // 2. We need to finalize the ThreadSafeFunction.
     pub fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
-        let self_ = unsafe { &mut *this };
+        let self_ = yolo! { &mut *this };
         if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
             // Finalize the ThreadSafeFunction.
             // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
-            unsafe { ThreadSafeFunction::destroy(this) };
+            yolo! { ThreadSafeFunction::destroy(this) };
             return;
         }
 
@@ -2627,7 +2628,7 @@ impl ThreadSafeFunction {
                     self.poll_ref.disable();
                     let self_ptr: *mut Self = self;
                     // SAFETY: event_loop is the live JS-thread loop; single JS thread.
-                    unsafe { self.event_loop.get_mut() }.enqueue_task(Task::init(self_ptr));
+                    yolo! { self.event_loop.get_mut() }.enqueue_task(Task::init(self_ptr));
                 }
             }
             _ => {
@@ -2692,10 +2693,10 @@ impl ThreadSafeFunction {
         if !is_first {
             // SAFETY: event_loop is the live JS-thread loop; single JS thread.
             // SAFETY: event_loop is the live JS-thread loop; single JS thread.
-            unsafe { self.event_loop.get_mut() }.drain_microtasks()?;
+            yolo! { self.event_loop.get_mut() }.drain_microtasks()?;
         }
         // SAFETY: env is valid while the TSF is live.
-        let global_object = unsafe { &*env }.to_js();
+        let global_object = yolo! { &*env }.to_js();
 
         let _dispatch = self.tracker.dispatch(global_object);
 
@@ -2716,7 +2717,7 @@ impl ThreadSafeFunction {
             } => {
                 let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
 
-                let env_ref = unsafe { &*env };
+                let env_ref = yolo! { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
                 napi_threadsafe_function_call_js(
                     env,
@@ -2781,7 +2782,7 @@ impl ThreadSafeFunction {
     /// and not aliased; caller transfers ownership.
     pub unsafe fn destroy(this: *mut ThreadSafeFunction) {
         // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
-        let self_ = unsafe { &mut *this };
+        let self_ = yolo! { &mut *this };
         self_.unref();
 
         if let Some(fun) = self_.finalizer_fun {
@@ -2802,7 +2803,7 @@ impl ThreadSafeFunction {
 
         // callback.deinit() and queue.deinit() run via Drop.
         // SAFETY: `this` was allocated by heap::alloc in `new`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn ref_(&mut self) {
@@ -2902,9 +2903,9 @@ pub extern "C" fn napi_create_threadsafe_function(
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
         // SAFETY: `event_loop()` is the live JS-thread loop (non-null, stable
         // address) and outlives every threadsafe function.
-        event_loop: unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) },
+        event_loop: yolo! { bun_ptr::BackRef::from_raw(vm.event_loop()) },
         // SAFETY: env is a live C++-owned napi_env.
-        env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
+        env: yolo! { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
         callback,
         ctx: context,
         queue: TsfnQueue::init(max_queue_size),
@@ -2922,7 +2923,7 @@ pub extern "C" fn napi_create_threadsafe_function(
     });
 
     // SAFETY: function is non-null (just allocated).
-    let function_ref = unsafe { &mut *function };
+    let function_ref = yolo! { &mut *function };
 
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function_ref.ref_();
@@ -2939,7 +2940,7 @@ pub extern "C" fn napi_get_threadsafe_function_context(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_threadsafe_function_context");
     // SAFETY: func and result are non-null per N-API contract.
-    unsafe { *result = (*func).ctx };
+    yolo! { *result = (*func).ctx };
     NapiStatus::ok as napi_status
 }
 
@@ -2951,14 +2952,14 @@ pub extern "C" fn napi_call_threadsafe_function(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_call_threadsafe_function");
     // SAFETY: func is non-null per N-API contract.
-    unsafe { &mut *func }.enqueue(data, is_blocking == NAPI_TSFN_BLOCKING)
+    yolo! { &mut *func }.enqueue(data, is_blocking == NAPI_TSFN_BLOCKING)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) -> napi_status {
     bun_output::scoped_log!(napi, "napi_acquire_threadsafe_function");
     // SAFETY: func is non-null per N-API contract.
-    unsafe { &mut *func }.acquire()
+    yolo! { &mut *func }.acquire()
 }
 
 #[unsafe(no_mangle)]
@@ -2968,7 +2969,7 @@ pub extern "C" fn napi_release_threadsafe_function(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_release_threadsafe_function");
     // SAFETY: func is non-null per N-API contract.
-    unsafe { &mut *func }.release(mode, false)
+    yolo! { &mut *func }.release(mode, false)
 }
 
 #[unsafe(no_mangle)]
@@ -2979,10 +2980,10 @@ pub extern "C" fn napi_unref_threadsafe_function(
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
+    let func = yolo! { &mut *func };
     // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
     debug_assert!(core::ptr::eq(
-        unsafe { (*func.event_loop).global.unwrap().as_ptr() },
+        yolo! { (*func.event_loop).global.unwrap().as_ptr() },
         env.to_js()
     ));
     func.unref();
@@ -2997,10 +2998,10 @@ pub extern "C" fn napi_ref_threadsafe_function(
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
+    let func = yolo! { &mut *func };
     // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
     debug_assert!(core::ptr::eq(
-        unsafe { (*func.event_loop).global.unwrap().as_ptr() },
+        yolo! { (*func.event_loop).global.unwrap().as_ptr() },
         env.to_js()
     ));
     func.ref_();
@@ -4307,7 +4308,7 @@ impl NapiFinalizerTask {
 
     pub fn schedule(self: Box<Self>) {
         // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
+        let global_this = yolo! { &*self.finalizer.env.get() }.to_js();
 
         // Inline of `JSGlobalObject::try_bun_vm` (the full impl lives in the
         // gated `JSGlobalObject.rs`): the VM pointer is fetched unconditionally
@@ -4339,7 +4340,7 @@ impl NapiFinalizerTask {
 
     pub fn run_on_js_thread(this: *mut NapiFinalizerTask) {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
-        let mut this_box = unsafe { bun_core::heap::take(this) };
+        let mut this_box = yolo! { bun_core::heap::take(this) };
         this_box.finalizer.run();
         // finalizer.deinit() runs via Drop on NapiEnvRef when this_box drops.
     }

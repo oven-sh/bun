@@ -26,6 +26,7 @@
 //! The DeferredTaskQueue is drained after the microtask queue, but before other tasks are executed. This avoids re-entrancy
 //! issues with the event loop.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -88,7 +89,7 @@ impl DeferredTaskQueue {
             // callback contract (Zig `Type.onAutoFlush`) is that `task` may be
             // invoked with exactly that pointer until it returns `false` or is
             // explicitly unregistered.
-            if !unsafe { task(nn.as_ptr()) } {
+            if !yolo! { task(nn.as_ptr()) } {
                 self.map.swap_remove(&key);
                 last = self.map.len();
             } else {

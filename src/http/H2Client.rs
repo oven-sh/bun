@@ -8,6 +8,7 @@
 //! same `picohttp.Response` / `handleResponseBody` machinery the HTTP/1.1
 //! path uses, so redirects, decompression and the result callback are shared.
 
+use bun_yolo::yolo;
 use core::sync::atomic::AtomicI32;
 
 /// Advertised as SETTINGS_INITIAL_WINDOW_SIZE; replenished via WINDOW_UPDATE
@@ -140,7 +141,7 @@ pub(crate) mod bridge {
             // `buildRequest` (returns slices into module-static storage) and
             // lets `ClientSession::attach` re-borrow `client` while the
             // `Request` is still live. Same pattern as lib.rs `on_writable`.
-            unsafe { self.build_request(body_len).detach_lifetime() }
+            yolo! { self.build_request(body_len).detach_lifetime() }
         }
     }
 

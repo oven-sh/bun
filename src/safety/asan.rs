@@ -1,5 +1,6 @@
 //! https://github.com/llvm/llvm-project/blob/main/compiler-rt/include/sanitizer/asan_interface.h
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 
 // TODO(port): confirm cfg name — Zig's `bun.Environment.enable_asan` is a build-time bool;
@@ -27,37 +28,37 @@ mod c {
     pub fn poison(ptr: *const c_void, size: usize) {
         // SAFETY: ASAN runtime is linked when this cfg is active; ptr/size describe a region
         // owned by the caller (same precondition as the Zig wrapper).
-        unsafe { __asan_poison_memory_region(ptr, size) }
+        yolo! { __asan_poison_memory_region(ptr, size) }
     }
     #[inline]
     pub fn unpoison(ptr: *const c_void, size: usize) {
         // SAFETY: see `poison`.
-        unsafe { __asan_unpoison_memory_region(ptr, size) }
+        yolo! { __asan_unpoison_memory_region(ptr, size) }
     }
     #[inline]
     pub fn is_poisoned(ptr: *const c_void) -> bool {
         // SAFETY: ASAN runtime is linked; reads shadow memory only.
-        unsafe { __asan_address_is_poisoned(ptr) }
+        yolo! { __asan_address_is_poisoned(ptr) }
     }
     #[inline]
     pub fn describe(ptr: *const c_void) {
         // SAFETY: ASAN runtime is linked; diagnostic-only, prints to stderr.
-        unsafe { __asan_describe_address(ptr) }
+        yolo! { __asan_describe_address(ptr) }
     }
     #[inline]
     pub fn update_allocation_context(ptr: *const c_void) -> c_int {
         // SAFETY: ASAN runtime is linked.
-        unsafe { __asan_update_allocation_context(ptr) }
+        yolo! { __asan_update_allocation_context(ptr) }
     }
     #[inline]
     pub fn register_root_region(ptr: *const c_void, size: usize) {
         // SAFETY: LSAN runtime is linked alongside ASAN.
-        unsafe { __lsan_register_root_region(ptr, size) }
+        yolo! { __lsan_register_root_region(ptr, size) }
     }
     #[inline]
     pub fn unregister_root_region(ptr: *const c_void, size: usize) {
         // SAFETY: must match a prior register_root_region with identical args (caller invariant).
-        unsafe { __lsan_unregister_root_region(ptr, size) }
+        yolo! { __lsan_unregister_root_region(ptr, size) }
     }
 }
 

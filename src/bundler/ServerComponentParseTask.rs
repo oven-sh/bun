@@ -2,6 +2,7 @@
 //! running through the js_parser. It emits a ParseTask.Result and joins
 //! with the same logic that it runs though.
 
+use bun_yolo::yolo;
 use core::mem::offset_of;
 use std::fmt::Write as _;
 
@@ -72,7 +73,7 @@ pub struct ClientEntryWrapper {
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
     // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
-    let task: &mut ServerComponentParseTask = unsafe {
+    let task: &mut ServerComponentParseTask = yolo! {
         &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
     };
 

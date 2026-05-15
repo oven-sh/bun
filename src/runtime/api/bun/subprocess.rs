@@ -1,6 +1,7 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -91,7 +92,7 @@ impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
-        unsafe { (*this).on_close_io(kind) }
+        yolo! { (*this).on_close_io(kind) }
     }
 }
 
@@ -246,7 +247,7 @@ impl<'a> Subprocess<'a> {
         // (interior-mutability) so callers don't need `&mut Subprocess`;
         // `Process` lives in a separate allocation (BackRef) so the returned
         // `&mut` never aliases `*self`. Single JS-mutator thread.
-        unsafe { &mut *self.process.as_ptr() }
+        yolo! { &mut *self.process.as_ptr() }
     }
 
     /// Borrow the stored JSC global. Zig stores `*jsc.JSGlobalObject` raw; the
@@ -278,7 +279,7 @@ impl<'a> Subprocess<'a> {
     pub fn ref_(&self) {
         // SAFETY: `&self` → live `*const Self`; `RefCount::ref_` only touches
         // the intrusive counter via `addr_of_mut!`.
-        unsafe { RefCount::<Self>::ref_(self.as_ctx_ptr()) }
+        yolo! { RefCount::<Self>::ref_(self.as_ctx_ptr()) }
     }
     /// Intrusive `deref()` — Zig's `pub const deref = ref_count.deref`.
     /// May free `self`; do not use `self` after calling.
@@ -287,7 +288,7 @@ impl<'a> Subprocess<'a> {
         // SAFETY: `&self` → live `*const Self`; destructor handles the Box.
         // R-2: `&self` so callers can `defer self.deref()` without holding a
         // unique borrow across re-entrant JS.
-        unsafe { RefCount::<Self>::deref(self.as_ctx_ptr()) }
+        yolo! { RefCount::<Self>::deref(self.as_ctx_ptr()) }
     }
 }
 
@@ -355,7 +356,7 @@ impl Subprocess<'_> {
 pub extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
     // SAFETY: ctx was registered as `*mut Subprocess` when the listener was
     // attached; AbortSignal guarantees it is live for the callback.
-    unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
+    yolo! { Subprocess::on_abort_signal_c(ctx, reason) }
 }
 
 bun_spawn::link_impl_ProcessExit! {
@@ -919,7 +920,7 @@ impl Subprocess<'_> {
         // only. `process` is the raw `*mut Process` threaded from the vtable
         // thunk so the auto-killer's `(*process).deref()` keeps mutable
         // provenance (no `&Process → *mut` round-trip).
-        unsafe { (*jsc_vm).on_subprocess_exit(process) };
+        yolo! { (*jsc_vm).on_subprocess_exit(process) };
 
         #[cfg(windows)]
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
@@ -1035,7 +1036,7 @@ impl Subprocess<'_> {
             // free `this`, so no `&mut FileSink` is materialized at the boundary.
             // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
             // provenance, held live by the `Writable::Pipe`/cache +1.
-            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), &status) };
+            yolo! { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), &status) };
 
             if must_deref {
                 self.deref();
@@ -1047,14 +1048,14 @@ impl Subprocess<'_> {
         // SAFETY: `jsc_vm` is the live VM; `event_loop()` returns its owned EventLoop.
         // Kept as raw `*mut` so the enter guard and the body can both call
         // `&mut`-taking methods without tripping borrowck.
-        let event_loop = unsafe { (*jsc_vm).event_loop() };
+        let event_loop = yolo! { (*jsc_vm).event_loop() };
 
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.
                     let _exit_guard =
-                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+                        yolo! { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1120,7 +1121,7 @@ impl Subprocess<'_> {
                     }
 
                     // SAFETY: event_loop points into the live VM.
-                    unsafe { (*event_loop).run_callback(callback, global_this, this_value, &args) };
+                    yolo! { (*event_loop).run_callback(callback, global_this, this_value, &args) };
                 }
             }
         }
@@ -1248,7 +1249,7 @@ impl Subprocess<'_> {
         // no code path reads `this.process` after this (finalize runs once).
         // SAFETY: `process` is the live Box-backed Process; deref() frees it
         // when its own ThreadSafeRefCount reaches zero.
-        unsafe { Process::deref(this.process.as_ptr()) };
+        yolo! { Process::deref(this.process.as_ptr()) };
 
         if this.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(this.event_loop_timer.as_ptr());
@@ -1348,7 +1349,7 @@ impl Subprocess<'_> {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
                         let event_loop = global_this.bun_vm().as_mut().event_loop();
-                        unsafe {
+                        yolo! {
                             (*event_loop).run_callback(
                                 cb,
                                 global_this,
@@ -1388,7 +1389,7 @@ impl Subprocess<'_> {
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
                 let event_loop = global_this.bun_vm().as_mut().event_loop();
-                unsafe {
+                yolo! {
                     (*event_loop).run_callback(
                         callback,
                         global_this,
@@ -1405,7 +1406,7 @@ impl Subprocess<'_> {
         // SAFETY: single JS-mutator thread; the SendQueue is inline in the
         // `JsCell` and callers do not hold the borrow across JS re-entry that
         // touches `ipc_data` itself.
-        unsafe { self.ipc_data.get_mut() }.as_mut()
+        yolo! { self.ipc_data.get_mut() }.as_mut()
     }
 
     pub fn get_global_this(&self) -> Option<&JSGlobalObject> {
@@ -1456,7 +1457,7 @@ pub fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Sou
 pub extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe) {
     // safely free the pipes
     // SAFETY: pipe was heap-allocated when created; we are the close callback owner.
-    drop(unsafe { bun_core::heap::take(this) });
+    drop(yolo! { bun_core::heap::take(this) });
 }
 
 pub mod testing_apis {
@@ -1482,7 +1483,7 @@ pub mod testing_apis {
         };
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
-        let subprocess = unsafe { &*subprocess_ptr };
+        let subprocess = yolo! { &*subprocess_ptr };
         let kind_str = kind_value.to_bun_string(global_this)?;
         // defer kind_str.deref() — bun_core::String Drop handles deref.
 

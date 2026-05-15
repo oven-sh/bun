@@ -1,4 +1,5 @@
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::fmt;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;
@@ -392,7 +393,7 @@ pub mod generate_header {
                 // this previously used "kern.osrelease", which was the darwin xnu kernel version
                 // That is less useful than "kern.osproductversion", which is the macOS version
                 // SAFETY: FFI call; buffer and len are valid for `len` bytes.
-                let rc = unsafe {
+                let rc = yolo! {
                     libc::sysctlbyname(
                         c"kern.osproductversion".as_ptr(),
                         name.as_mut_ptr().cast(),

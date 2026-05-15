@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use std::ffi::CStr;
 
@@ -242,7 +243,7 @@ pub fn get_servername(
         return Ok(JSValue::UNDEFINED);
     }
     // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
-    let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
+    let slice = yolo! { bun_core::ffi::cstr(servername) }.to_bytes();
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
@@ -286,7 +287,7 @@ pub fn set_servername(
         }
         let host_z = bun_core::ZBox::from_bytes(host);
         // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-        unsafe { ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+        yolo! { ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
     }
 
     Ok(JSValue::UNDEFINED)
@@ -339,7 +340,7 @@ pub fn get_tls_version(
         return Ok(JSValue::NULL);
     }
     // SAFETY: SSL_get_version returns a static NUL-terminated C string.
-    let slice = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
+    let slice = yolo! { bun_core::ffi::cstr(version) }.to_bytes();
     if slice.is_empty() {
         return Ok(JSValue::NULL);
     }
@@ -410,7 +411,7 @@ pub fn get_peer_certificate(
             let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
             if !cert.is_null() {
                 // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
-                let _guard = scopeguard::guard(cert, |c| unsafe { boringssl::X509_free(c) });
+                let _guard = scopeguard::guard(cert, |c| yolo! { boringssl::X509_free(c) });
                 return X509::to_js(boringssl::X509::opaque_mut(cert), global);
             }
         }
@@ -434,7 +435,7 @@ pub fn get_peer_certificate(
     let _guard = scopeguard::guard(cert, |c| {
         if !c.is_null() {
             // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
-            unsafe { boringssl::X509_free(c) };
+            yolo! { boringssl::X509_free(c) };
         }
     });
 
@@ -486,7 +487,7 @@ pub fn get_tls_finished_message(
     // Thus, we use a dummy byte.
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
-    let size = unsafe {
+    let size = yolo! {
         ffi::SSL_get_finished(
             ssl_ptr,
             dummy.as_mut_ptr().cast::<c_void>(),
@@ -502,7 +503,7 @@ pub fn get_tls_finished_message(
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { ffi::SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size) };
+    let result_size = yolo! { ffi::SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }
@@ -576,7 +577,7 @@ pub fn get_shared_sigalgs(
                 let sn_str = ffi::OBJ_nid2sn(sign_nid);
                 if !sn_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    sig_with_md = unsafe { bun_core::ffi::cstr(sn_str) }.to_bytes();
+                    sig_with_md = yolo! { bun_core::ffi::cstr(sn_str) }.to_bytes();
                 } else {
                     sig_with_md = b"UNDEF";
                 }
@@ -586,7 +587,7 @@ pub fn get_shared_sigalgs(
         let hash_str = ffi::OBJ_nid2sn(hash_nid);
         if !hash_str.is_null() {
             // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-            let hash_slice = unsafe { bun_core::ffi::cstr(hash_str) }.to_bytes();
+            let hash_slice = yolo! { bun_core::ffi::cstr(hash_str) }.to_bytes();
             let mut buffer: Vec<u8> = Vec::with_capacity(sig_with_md.len() + hash_slice.len() + 1);
             buffer.extend_from_slice(sig_with_md);
             buffer.push(b'+');
@@ -630,7 +631,7 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
         result.put(global, b"name", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
-        let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+        let s = yolo! { bun_core::ffi::cstr(name) }.to_bytes();
         result.put(global, b"name", ZigString::from_utf8(s).to_js(global));
     }
 
@@ -639,7 +640,7 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
         result.put(global, b"standardName", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_standard_name returns a static NUL-terminated C string.
-        let s = unsafe { bun_core::ffi::cstr(standard_name) }.to_bytes();
+        let s = yolo! { bun_core::ffi::cstr(standard_name) }.to_bytes();
         result.put(
             global,
             b"standardName",
@@ -652,7 +653,7 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
         result.put(global, b"version", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
-        let s = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
+        let s = yolo! { bun_core::ffi::cstr(version) }.to_bytes();
         result.put(global, b"version", ZigString::from_utf8(s).to_js(global));
     }
 
@@ -674,7 +675,7 @@ pub fn get_tls_peer_finished_message(
     // Thus, we use a dummy byte.
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
-    let size = unsafe {
+    let size = yolo! {
         ffi::SSL_get_peer_finished(
             ssl_ptr,
             dummy.as_mut_ptr().cast::<c_void>(),
@@ -690,7 +691,7 @@ pub fn get_tls_peer_finished_message(
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { ffi::SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size) };
+    let result_size = yolo! { ffi::SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }
@@ -741,7 +742,7 @@ pub fn export_keying_material(
             let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
             // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context_slice are valid for the lengths passed.
-            let result = unsafe {
+            let result = yolo! {
                 ffi::SSL_export_keying_material(
                     ssl_ptr,
                     buffer_ptr,
@@ -771,7 +772,7 @@ pub fn export_keying_material(
         let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
         // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice are valid for the lengths passed; context is null with use_context=0.
-        let result = unsafe {
+        let result = yolo! {
             ffi::SSL_export_keying_material(
                 ssl_ptr,
                 buffer_ptr,
@@ -812,7 +813,7 @@ pub fn get_ephemeral_key_info(
     // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
     // wich will result in a empty object
     // let mut raw_key: *mut boringssl::EVP_PKEY = core::ptr::null_mut();
-    // if unsafe { boringssl::SSL_get_server_tmp_key(ssl_ptr, &mut raw_key) } == 0 {
+    // if yolo! { boringssl::SSL_get_server_tmp_key(ssl_ptr, &mut raw_key) } == 0 {
     //     return Ok(result);
     // }
     let raw_key: *mut ffi::EVP_PKEY = ffi::SSL_get_privatekey(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -841,7 +842,7 @@ pub fn get_ephemeral_key_info(
                 let nid_str = ffi::OBJ_nid2sn(nid);
                 if !nid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    curve_name = unsafe { bun_core::ffi::cstr(nid_str) }.to_bytes();
+                    curve_name = yolo! { bun_core::ffi::cstr(nid_str) }.to_bytes();
                 } else {
                     curve_name = b"";
                 }
@@ -849,7 +850,7 @@ pub fn get_ephemeral_key_info(
                 let kid_str = ffi::OBJ_nid2sn(kid);
                 if !kid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    curve_name = unsafe { bun_core::ffi::cstr(kid_str) }.to_bytes();
+                    curve_name = yolo! { bun_core::ffi::cstr(kid_str) }.to_bytes();
                 } else {
                     curve_name = b"";
                 }
@@ -885,7 +886,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     }
 
     // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
-    let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
+    let slice = yolo! { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
     if strings::eql(slice, b"h2") {
         return BunString::static_("h2").to_js(global);
     }
@@ -904,7 +905,7 @@ pub fn get_session(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> 
         return Ok(JSValue::UNDEFINED);
     }
     // SAFETY: session is a non-null *mut SSL_SESSION; null out-param requests only the encoded size.
-    let size = unsafe { ffi::i2d_SSL_SESSION(session, core::ptr::null_mut()) };
+    let size = yolo! { ffi::i2d_SSL_SESSION(session, core::ptr::null_mut()) };
     if size <= 0 {
         return Ok(JSValue::UNDEFINED);
     }
@@ -914,7 +915,7 @@ pub fn get_session(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> 
     let mut buffer_ptr: *mut u8 = buffer.as_array_buffer(global).unwrap().ptr;
 
     // SAFETY: session is a non-null *mut SSL_SESSION; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { ffi::i2d_SSL_SESSION(session, &raw mut buffer_ptr) };
+    let result_size = yolo! { ffi::i2d_SSL_SESSION(session, &raw mut buffer_ptr) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }
@@ -942,7 +943,7 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
         };
         let mut tmp: *const u8 = session_slice.as_ptr();
         // SAFETY: tmp/session_slice.len() describe a valid readable buffer borrowed from `sb` for the duration of this call.
-        let session = unsafe {
+        let session = yolo! {
             ffi::d2i_SSL_SESSION(
                 core::ptr::null_mut(),
                 &raw mut tmp,
@@ -955,7 +956,7 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
         // SSL_set_session takes its own reference ("the caller retains ownership of |session|"),
         // so we must release the one returned by d2i_SSL_SESSION on every path.
         // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
-        let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
+        let _guard = scopeguard::guard(session, |s| yolo! { ffi::SSL_SESSION_free(s) });
         if ffi::SSL_set_session(
             boringssl::SSL::opaque_ref(ssl_ptr),
             ffi::SSL_SESSION::opaque_ref(session),
@@ -997,7 +998,7 @@ pub fn get_tls_ticket(
     }
 
     // SAFETY: SSL_SESSION_get0_ticket guarantees `ticket` points to `length` bytes owned by the session.
-    let slice = unsafe { bun_core::ffi::slice(ticket, length) };
+    let slice = yolo! { bun_core::ffi::slice(ticket, length) };
     jsc::ArrayBuffer::create_buffer(global, slice)
 }
 
@@ -1112,7 +1113,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         let reason_ptr = boringssl::ERR_reason_error_string(ssl_error);
         if !reason_ptr.is_null() {
             // SAFETY: ERR_reason_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { bun_core::ffi::cstr(reason_ptr) }.to_bytes();
+            let reason = yolo! { bun_core::ffi::cstr(reason_ptr) }.to_bytes();
             if reason.is_empty() {
                 break;
             }
@@ -1123,7 +1124,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         let func_ptr = boringssl::ERR_func_error_string(ssl_error);
         if !func_ptr.is_null() {
             // SAFETY: ERR_func_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { bun_core::ffi::cstr(func_ptr) }.to_bytes();
+            let reason = yolo! { bun_core::ffi::cstr(func_ptr) }.to_bytes();
             if !reason.is_empty() {
                 const VIA: &[u8] = b" via ";
                 output_buf[written..written + VIA.len()].copy_from_slice(VIA);
@@ -1136,7 +1137,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         let lib_ptr = boringssl::ERR_lib_error_string(ssl_error);
         if !lib_ptr.is_null() {
             // SAFETY: ERR_lib_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { bun_core::ffi::cstr(lib_ptr) }.to_bytes();
+            let reason = yolo! { bun_core::ffi::cstr(lib_ptr) }.to_bytes();
             if !reason.is_empty() {
                 output_buf[written] = b' ';
                 written += 1;

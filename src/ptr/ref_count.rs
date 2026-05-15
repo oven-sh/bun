@@ -6,6 +6,7 @@
 //! as mixins; in Rust this becomes a pair of (embedded struct + trait the host
 //! type implements). See `RefCounted` / `ThreadSafeRefCounted`.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::marker::PhantomData;
@@ -111,7 +112,7 @@ pub trait ThreadSafeRefCounted: Sized {
         // Default: the allocation came from `heap::alloc` / `Box::into_raw`;
         // reclaim and drop. Override for pooled / arena-backed types.
         // SAFETY: caller contract — sole owner of a Box-allocated `Self`.
-        drop(unsafe { Box::from_raw(this) });
+        drop(yolo! { Box::from_raw(this) });
     }
 }
 
@@ -142,7 +143,7 @@ pub trait AnyRefCounted: Sized {
         Self::DestructorCtx: Default,
     {
         // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { Self::rc_deref_with_context(this, Default::default()) }
+        yolo! { Self::rc_deref_with_context(this, Default::default()) }
     }
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -183,9 +184,9 @@ where
     let ptr: *mut T = Box::into_raw(boxed);
     // SAFETY: `ptr` was just leaked from `Box`; ref_count >= 1 (the JS
     // wrapper's +1). No `&mut T` is formed — `before` sees only `&T`.
-    before(unsafe { &*ptr });
+    before(yolo! { &*ptr });
     // SAFETY: `ptr` is still live (the +1 has not yet been released).
-    unsafe { T::rc_deref(ptr) };
+    yolo! { T::rc_deref(ptr) };
 }
 
 /// [`finalize_js_box`] with no pre-release work — just hands ownership back to
@@ -198,7 +199,7 @@ where
 {
     let ptr: *mut T = Box::into_raw(boxed);
     // SAFETY: `ptr` was just leaked from `Box`; ref_count >= 1.
-    unsafe { T::rc_deref(ptr) };
+    yolo! { T::rc_deref(ptr) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -219,11 +220,11 @@ where
 /// impl RefCounted for Thing {
 ///     type DestructorCtx = ();
 ///     unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
-///         unsafe { &raw mut (*this).ref_count }
+///         yolo! { &raw mut (*this).ref_count }
 ///     }
 ///     unsafe fn destructor(this: *mut Self, _: ()) {
-///         println!("deinit {}", unsafe { (*this).other_field });
-///         drop(unsafe { heap::take(this) });
+///         println!("deinit {}", yolo! { (*this).other_field });
+///         drop(yolo! { heap::take(this) });
 ///     }
 /// }
 /// ```
@@ -264,7 +265,7 @@ impl<T: RefCounted> RefCount<T> {
     /// `self_` must point to a live `T`.
     pub unsafe fn ref_(self_: *mut T) {
         // SAFETY: caller contract
-        let count = unsafe { &*T::get_ref_count(self_) };
+        let count = yolo! { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
         {
             count.debug.assert_valid();
@@ -294,14 +295,14 @@ impl<T: RefCounted> RefCount<T> {
         T: RefCounted<DestructorCtx = ()>,
     {
         // SAFETY: caller contract
-        unsafe { Self::deref_with_context(self_, ()) }
+        yolo! { Self::deref_with_context(self_, ()) }
     }
 
     /// # Safety
     /// `self_` must point to a live `T`.
     pub unsafe fn deref_with_context(self_: *mut T, ctx: T::DestructorCtx) {
         // SAFETY: caller contract
-        let count = unsafe { &*T::get_ref_count(self_) };
+        let count = yolo! { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
         {
             count.debug.assert_valid(); // Likely double deref.
@@ -323,10 +324,10 @@ impl<T: RefCounted> RefCount<T> {
             #[cfg(debug_assertions)]
             {
                 // SAFETY: count is &*get_ref_count(self_); we need &mut for deinit
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
+                yolo! { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
             }
             // SAFETY: raw_count == 0, sole owner
-            unsafe { T::destructor(self_, ctx) };
+            yolo! { T::destructor(self_, ctx) };
         }
     }
 
@@ -337,7 +338,7 @@ impl<T: RefCounted> RefCount<T> {
         T: AnyRefCounted,
     {
         // SAFETY: caller contract
-        unsafe { RefPtr::init_ref(self_) }
+        yolo! { RefPtr::init_ref(self_) }
     }
 
     // utility functions
@@ -355,7 +356,7 @@ impl<T: RefCounted> RefCount<T> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: self is the `ref_count` field of a live T
-            let ptr: *mut T = unsafe {
+            let ptr: *mut T = yolo! {
                 bun_core::container_of::<T, Self>(
                     std::ptr::from_mut(self),
                     offset_of_ref_count::<T, Self>(),
@@ -405,24 +406,24 @@ impl<T: RefCounted> AnyRefCounted for T {
 
     unsafe fn rc_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { RefCount::<T>::ref_(this) }
+        yolo! { RefCount::<T>::ref_(this) }
     }
     unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx) {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { RefCount::<T>::deref_with_context(this, ctx) }
+        yolo! { RefCount::<T>::deref_with_context(this, ctx) }
     }
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { (*T::get_ref_count(this.cast_mut())).has_one_ref() }
+        yolo! { (*T::get_ref_count(this.cast_mut())).has_one_ref() }
     }
     unsafe fn rc_assert_no_refs(this: *const Self) {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { (*T::get_ref_count(this.cast_mut())).assert_no_refs() }
+        yolo! { (*T::get_ref_count(this.cast_mut())).assert_no_refs() }
     }
     #[cfg(debug_assertions)]
     unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { &raw mut (*T::get_ref_count(this)).debug }
+        yolo! { &raw mut (*T::get_ref_count(this)).debug }
     }
 }
 
@@ -468,7 +469,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     /// `self_` must point to a live `T`.
     pub unsafe fn ref_(self_: *mut T) {
         // SAFETY: caller contract
-        let count = unsafe { &*T::get_ref_count(self_) };
+        let count = yolo! { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
         count.debug.assert_valid();
         let old_count = count.raw_count.fetch_add(1, Ordering::SeqCst);
@@ -486,7 +487,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     /// `self_` must point to a live `T`.
     pub unsafe fn deref(self_: *mut T) {
         // SAFETY: caller contract
-        let count = unsafe { &*T::get_ref_count(self_) };
+        let count = yolo! { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
         count.debug.assert_valid();
         let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
@@ -502,10 +503,10 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             #[cfg(debug_assertions)]
             {
                 // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
+                yolo! { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
             }
             // SAFETY: last ref dropped
-            unsafe { T::destructor(self_) };
+            yolo! { T::destructor(self_) };
         }
     }
 
@@ -521,7 +522,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     /// `self_` must point to a live `T`.
     pub unsafe fn release(self_: *mut T) -> bool {
         // SAFETY: caller contract
-        let count = unsafe { &*T::get_ref_count(self_) };
+        let count = yolo! { &*T::get_ref_count(self_) };
         #[cfg(debug_assertions)]
         count.debug.assert_valid();
         let old_count = count.raw_count.fetch_sub(1, Ordering::SeqCst);
@@ -537,7 +538,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             #[cfg(debug_assertions)]
             {
                 // SAFETY: we hold the last ref; exclusive access
-                unsafe { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
+                yolo! { (*T::get_ref_count(self_)).debug.deinit(return_address()) };
             }
             true
         } else {
@@ -553,11 +554,11 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     {
         #[cfg(debug_assertions)]
         // SAFETY: caller contract — `self_` points to a live T
-        unsafe {
+        yolo! {
             (*T::get_ref_count(self_)).debug.assert_valid();
         }
         // SAFETY: caller contract
-        unsafe { RefPtr::init_ref(self_) }
+        yolo! { RefPtr::init_ref(self_) }
     }
 
     // utility functions
@@ -576,7 +577,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: self is the `ref_count` field of a live T
-            let ptr: *mut T = unsafe {
+            let ptr: *mut T = yolo! {
                 bun_core::container_of::<T, Self>(
                     std::ptr::from_mut(self),
                     offset_of_ref_count_ts::<T, Self>(),
@@ -679,7 +680,7 @@ pub unsafe trait CellRefCounted: Sized {
     #[inline]
     unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — sole owner of a Box-allocated `Self`.
-        drop(unsafe { Box::from_raw(this) });
+        drop(yolo! { Box::from_raw(this) });
     }
 
     /// Increment the intrusive refcount.
@@ -705,12 +706,12 @@ pub unsafe trait CellRefCounted: Sized {
         // SAFETY: caller contract — `this` is live. Project to the `Cell<u32>`
         // only via `ref_count_raw` (no `&Self` formed), so this is sound even
         // when a `&mut` on a sibling field is live in a parent frame.
-        let rc = unsafe { Self::ref_count_raw(this) };
+        let rc = yolo! { Self::ref_count_raw(this) };
         let n = rc.get() - 1;
         rc.set(n);
         if n == 0 {
             // SAFETY: refcount reached zero; no other holders.
-            unsafe { Self::destroy(this) };
+            yolo! { Self::destroy(this) };
         }
     }
 }
@@ -800,11 +801,11 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// `raw_ptr` must point to a live `T`.
     pub unsafe fn init_ref(raw_ptr: *mut T) -> Self {
         // SAFETY: caller contract
-        unsafe { T::rc_ref(raw_ptr) };
+        yolo! { T::rc_ref(raw_ptr) };
         // PORT NOTE: Zig re-asserted `is_ref_count == unique_symbol` here;
         // the `T: AnyRefCounted` bound is that assertion.
         // SAFETY: caller contract
-        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
+        yolo! { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
     // NOTE: would be nice to use a const for deref dispatch, but keep two
@@ -823,10 +824,10 @@ impl<T: AnyRefCounted> RefPtr<T> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: data is live (we hold a ref)
-            unsafe { (*T::rc_debug_data(self.as_ptr())).release(self.debug, return_address()) };
+            yolo! { (*T::rc_debug_data(self.as_ptr())).release(self.debug, return_address()) };
         }
         // SAFETY: data is live (we hold a ref)
-        unsafe { T::rc_deref_with_context(self.as_ptr(), ctx) };
+        yolo! { T::rc_deref_with_context(self.as_ptr(), ctx) };
         // make UAF fail faster (ideally integrate this with ASAN)
         // PORT NOTE: Zig did `@constCast(self).data = undefined`. In Rust we
         // cannot mutate through `&self` without UnsafeCell; and `RefPtr` is
@@ -836,13 +837,13 @@ impl<T: AnyRefCounted> RefPtr<T> {
 
     pub fn dupe_ref(&self) -> Self {
         // SAFETY: data is live (we hold a ref)
-        unsafe { Self::init_ref(self.as_ptr()) }
+        yolo! { Self::init_ref(self.as_ptr()) }
     }
 
     /// Allocate a new object, returning a RefPtr to it.
     pub fn new(init_data: T) -> Self {
         // SAFETY: freshly boxed, ref_count == 1
-        unsafe { Self::adopt_ref(bun_core::heap::into_raw(Box::new(init_data))) }
+        yolo! { Self::adopt_ref(bun_core::heap::into_raw(Box::new(init_data))) }
     }
 
     /// Initialize a newly allocated pointer, returning a RefPtr to it.
@@ -854,12 +855,12 @@ impl<T: AnyRefCounted> RefPtr<T> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: caller contract
-            debug_assert!(unsafe { T::rc_has_one_ref(raw_ptr) });
+            debug_assert!(yolo! { T::rc_has_one_ref(raw_ptr) });
             // SAFETY: caller contract
-            unsafe { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
+            yolo! { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
         }
         // SAFETY: caller contract
-        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
+        yolo! { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
     /// Wrap a raw pointer whose ref is being transferred to this RefPtr
@@ -877,7 +878,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     #[inline]
     pub unsafe fn from_raw(raw_ptr: *mut T) -> Self {
         // SAFETY: forwarded caller contract
-        unsafe { Self::take_ref(raw_ptr) }
+        yolo! { Self::take_ref(raw_ptr) }
     }
 
     /// Std-conventional alias for [`leak`]. Extract the raw pointer, giving up
@@ -913,7 +914,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
         // pointee is live for the borrow. Single-threaded `RefCount` hosts are
         // !Send/!Sync so no concurrent mutation; thread-safe hosts coordinate
         // their own interior mutability.
-        unsafe { self.data.as_ref() }
+        yolo! { self.data.as_ref() }
     }
 
     /// Wrap a raw pointer whose ref is being transferred to this RefPtr
@@ -928,10 +929,10 @@ impl<T: AnyRefCounted> RefPtr<T> {
         #[cfg(debug_assertions)]
         {
             // SAFETY: caller contract
-            unsafe { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
+            yolo! { (*T::rc_debug_data(raw_ptr)).assert_valid_dyn() };
         }
         // SAFETY: caller contract
-        unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
+        yolo! { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
     /// Extract the raw pointer, giving up ownership WITHOUT decrementing
@@ -944,7 +945,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
         {
             // mark debug tracking as released without actually derefing
             // SAFETY: data is live (we hold a ref)
-            unsafe { (*T::rc_debug_data(ptr)).release(self.debug, return_address()) };
+            yolo! { (*T::rc_debug_data(ptr)).release(self.debug, return_address()) };
         }
         // PORT NOTE: Zig set `self.data = undefined`; taking `self` by value
         // here makes the RefPtr unusable, which is the same intent.
@@ -957,10 +958,10 @@ impl<T: AnyRefCounted> RefPtr<T> {
         let _ = ret_addr;
         Self {
             // SAFETY: caller contract — raw_ptr is non-null and live
-            data: unsafe { NonNull::new_unchecked(raw_ptr) },
+            data: yolo! { NonNull::new_unchecked(raw_ptr) },
             #[cfg(debug_assertions)]
             // SAFETY: caller contract
-            debug: unsafe { (*T::rc_debug_data(raw_ptr)).acquire(ret_addr) },
+            debug: yolo! { (*T::rc_debug_data(raw_ptr)).acquire(ret_addr) },
         }
     }
 }
@@ -1010,9 +1011,9 @@ where
     #[inline]
     pub unsafe fn new(ptr: *mut T) -> Self {
         // SAFETY: caller contract — `ptr` is live.
-        unsafe { T::rc_ref(ptr) };
+        yolo! { T::rc_ref(ptr) };
         // SAFETY: caller contract — `ptr` is non-null.
-        Self(unsafe { NonNull::new_unchecked(ptr) })
+        Self(yolo! { NonNull::new_unchecked(ptr) })
     }
 
     /// Adopt an already-held ref: does **not** bump on construction, but still
@@ -1026,7 +1027,7 @@ where
     #[inline]
     pub unsafe fn adopt(ptr: *mut T) -> Self {
         // SAFETY: caller contract — `ptr` is non-null and live.
-        Self(unsafe { NonNull::new_unchecked(ptr) })
+        Self(yolo! { NonNull::new_unchecked(ptr) })
     }
 }
 
@@ -1037,7 +1038,7 @@ where
     #[inline]
     fn drop(&mut self) {
         // SAFETY: `new` took a ref, so the pointee is live until this deref.
-        unsafe { T::rc_deref(self.0.as_ptr()) };
+        yolo! { T::rc_deref(self.0.as_ptr()) };
     }
 }
 
@@ -1279,7 +1280,7 @@ fn generic_dump(
 // TODO(port): callers that passed non-ref-counted T must simply not call this.
 pub fn maybe_assert_no_refs<T: AnyRefCounted>(ptr: &T) {
     // SAFETY: `ptr` is a live reference to T
-    unsafe { T::rc_assert_no_refs(std::ptr::from_ref::<T>(ptr)) }
+    yolo! { T::rc_assert_no_refs(std::ptr::from_ref::<T>(ptr)) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

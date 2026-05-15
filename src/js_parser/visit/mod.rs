@@ -7,6 +7,7 @@ pub mod visit_binary;
 pub mod visit_expr;
 pub mod visit_stmt;
 
+use bun_yolo::yolo;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
@@ -251,7 +252,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         'outer: while i < len {
             // SAFETY: i < len; we need disjoint borrows of decls[i] (read/mutate)
             // and decls[j] (write at end). j <= i always holds.
-            let decl: &mut G::Decl = unsafe { &mut *decls.as_mut_ptr().add(i) };
+            let decl: &mut G::Decl = yolo! { &mut *decls.as_mut_ptr().add(i) };
             i += 1;
 
             self.visit_binding(decl.binding, None);
@@ -426,7 +427,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Derive both pointers from a single `as_mut_ptr()` so the src `*const`
                 // shares provenance with dst (Stacked Borrows: a separate `as_ptr()`
                 // SharedRO tag would be popped by the later `as_mut_ptr()` Unique).
-                unsafe {
+                yolo! {
                     let base = decls.as_mut_ptr();
                     core::ptr::copy_nonoverlapping(base.add(i - 1), base.add(j), 1);
                 }
@@ -473,7 +474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // output_properties[end] = output_properties[query.i]
                                     // SAFETY: both indices < object.properties.len; G::Property
                                     // has no Drop; src/dst may alias when end == query.i.
-                                    unsafe {
+                                    yolo! {
                                         let props_ptr = object.properties.slice_mut().as_mut_ptr();
                                         core::ptr::copy(
                                             props_ptr.add(query.i as usize),
@@ -1093,7 +1094,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // arena bytes).
                         for i in 0..old_props_len {
                             // SAFETY: in-bounds; arena-owned; no Drop on Property.
-                            unsafe {
+                            yolo! {
                                 class_body.push(core::ptr::read(old_props.as_ptr().add(i)));
                             }
                         }
@@ -1401,7 +1402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             data.func.name = None;
                             // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags) but
                             // lacks `derive(Copy)`; bitwise read matches Zig struct copy.
-                            let func = unsafe { core::ptr::read(&raw const data.func) };
+                            let func = yolo! { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
                                 Some(p.new_expr(E::Function { func }, stmt.loc));
                         }
@@ -1718,7 +1719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // are mimalloc so `appendSlice` just reallocs in place.
                                 for d in local.decls.slice() {
                                     // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                    prev_local.decls.push(unsafe { core::ptr::read(d) });
+                                    prev_local.decls.push(yolo! { core::ptr::read(d) });
                                 }
                                 continue;
                             }

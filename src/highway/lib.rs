@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
@@ -69,7 +70,7 @@ pub fn scan_char_frequency(text: &[u8], freqs: &mut [i32; 64], delta: i32) {
     }
 
     // SAFETY: text.ptr/len are a valid readable range; freqs is a valid 64-elem writable array.
-    unsafe {
+    yolo! {
         highway_char_frequency(text.as_ptr(), text.len(), freqs.as_mut_ptr(), delta);
     }
 }
@@ -81,7 +82,7 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     }
 
     // SAFETY: haystack.ptr/len are a valid readable range.
-    let result = unsafe { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
+    let result = yolo! { highway_index_of_char(haystack.as_ptr(), haystack.len(), needle) };
 
     if result == haystack.len() {
         return None;
@@ -102,7 +103,7 @@ pub fn index_of_interesting_character_in_string_literal(
     }
 
     // SAFETY: slice.ptr/len are a valid readable range.
-    let result = unsafe {
+    let result = yolo! {
         highway_index_of_interesting_character_in_string_literal(
             slice.as_ptr(),
             slice.len(),
@@ -123,7 +124,7 @@ pub fn index_of_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> {
 
     // SAFETY: haystack.ptr/len are a valid readable range (len > 0 asserted above).
     let result =
-        unsafe { highway_index_of_newline_or_non_ascii(haystack.as_ptr(), haystack.len()) };
+        yolo! { highway_index_of_newline_or_non_ascii(haystack.as_ptr(), haystack.len()) };
 
     if result == haystack.len() {
         return None;
@@ -150,7 +151,7 @@ pub fn contains_newline_or_non_ascii_or_quote(text: &[u8]) -> bool {
     }
 
     // SAFETY: text.ptr/len are a valid readable range.
-    unsafe { highway_contains_newline_or_non_ascii_or_quote(text.as_ptr(), text.len()) }
+    yolo! { highway_contains_newline_or_non_ascii_or_quote(text.as_ptr(), text.len()) }
 }
 
 /// Finds the first character that needs escaping in a JavaScript string
@@ -164,7 +165,7 @@ pub fn index_of_needs_escape_for_javascript_string(slice: &[u8], quote_char: u8)
     }
 
     // SAFETY: slice.ptr/len are a valid readable range.
-    let result = unsafe {
+    let result = yolo! {
         highway_index_of_needs_escape_for_javascript_string(slice.as_ptr(), slice.len(), quote_char)
     };
 
@@ -200,7 +201,7 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     }
 
     // SAFETY: haystack and chars ptr/len are valid readable ranges.
-    let result = unsafe {
+    let result = yolo! {
         highway_index_of_any_char(
             haystack.as_ptr(),
             haystack.len(),
@@ -236,7 +237,7 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
     // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
     // (caller contract matches Zig: output.len >= input.len()).
-    unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
+    yolo! { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
 /// Apply a WebSocket mask to data using SIMD acceleration
@@ -248,7 +249,7 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
     }
 
     // SAFETY: mask is 4 bytes; input.ptr/len readable; output.ptr writable for input.len() bytes.
-    unsafe {
+    yolo! {
         highway_fill_with_skip_mask(
             mask.as_ptr(),
             4,
@@ -276,7 +277,7 @@ pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: boo
     // SAFETY: mask is 4 readable bytes; `buf` is exclusively borrowed so its
     // range is both readable and writable for `buf.len()` bytes. The FFI
     // kernel tolerates `output == input` (load-xor-store per element).
-    unsafe {
+    yolo! {
         highway_fill_with_skip_mask(
             mask.as_ptr(),
             4,
@@ -301,7 +302,7 @@ pub fn index_of_newline_or_non_ascii_or_hash_or_at(haystack: &[u8]) -> Option<us
     }
 
     // SAFETY: haystack.ptr/len are a valid readable range.
-    let result = unsafe {
+    let result = yolo! {
         highway_index_of_newline_or_non_ascii_or_hash_or_at(haystack.as_ptr(), haystack.len())
     };
 
@@ -322,7 +323,7 @@ pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> 
     }
 
     // SAFETY: haystack.ptr/len are a valid readable range.
-    let result = unsafe {
+    let result = yolo! {
         highway_index_of_space_or_newline_or_non_ascii(haystack.as_ptr(), haystack.len())
     };
 

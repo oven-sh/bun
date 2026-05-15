@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr;
 use core::slice;
 
@@ -117,7 +118,7 @@ impl Array {
         // a `Vec<SQLDataCell>` into these fields). Genuine FFI: ptr/len/cap are
         // thin C fields read directly by C++ (SQLClient.cpp), so this cannot be
         // a `Vec` field without breaking ABI.
-        unsafe { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
+        yolo! { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
     }
 
     pub fn allocated_slice(&mut self) -> &mut [SQLDataCell] {
@@ -130,7 +131,7 @@ impl Array {
         // just `[..len]` — carries a valid `Tag` discriminant. Genuine FFI:
         // ptr/len/cap are thin C fields read directly by C++ (SQLClient.cpp),
         // so this cannot be a `Vec` without breaking ABI.
-        unsafe { slice::from_raw_parts_mut(self.ptr, self.cap as usize) }
+        yolo! { slice::from_raw_parts_mut(self.ptr, self.cap as usize) }
     }
 
     pub fn deinit(&mut self) {
@@ -146,7 +147,7 @@ impl Array {
         // `ArrayList.items.ptr` (DataCell.zig:461), i.e. a Vec-shaped allocation
         // from the global (mimalloc) allocator. Reconstruct and drop.
         // Elements were already deinit'd by the caller; SQLDataCell has no Drop.
-        unsafe { drop(Vec::from_raw_parts(p, 0, cap)) };
+        yolo! { drop(Vec::from_raw_parts(p, 0, cap)) };
     }
 }
 
@@ -206,13 +207,13 @@ impl SQLDataCell {
                 // reading either yields the same pointer). When non-null it
                 // points to a live WTF::StringImpl; `as_ref` folds the
                 // null-check and deref into one site.
-                if let Some(p) = unsafe { self.value.string.as_ref() } {
+                if let Some(p) = yolo! { self.value.string.as_ref() } {
                     p.deref();
                 }
             }
             Tag::Bytea => {
                 // SAFETY: tag == Bytea ⇒ `bytea` is the active union field.
-                let bytea = unsafe { self.value.bytea };
+                let bytea = yolo! { self.value.bytea };
                 if bytea[1] == 0 {
                     return;
                 }
@@ -223,11 +224,11 @@ impl SQLDataCell {
                 // SAFETY: bytea[0]/bytea[1] are ptr/len of a buffer allocated
                 // via the global allocator (Zig: bun.default_allocator).
                 // TODO(port): verify allocation size == len (Zig free() uses slice.len).
-                unsafe { drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len))) };
+                yolo! { drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len))) };
             }
             Tag::Array => {
                 // SAFETY: tag == Array ⇒ `array` is the active union field.
-                let array = unsafe { &mut self.value.array };
+                let array = yolo! { &mut self.value.array };
                 for cell in array.slice() {
                     cell.deinit();
                 }
@@ -235,7 +236,7 @@ impl SQLDataCell {
             }
             Tag::TypedArray => {
                 // SAFETY: tag == TypedArray ⇒ `typed_array` is active.
-                let ta = unsafe { self.value.typed_array };
+                let ta = yolo! { self.value.typed_array };
                 if !ta.head_ptr.is_null() && ta.byte_len != 0 {
                     // Build the fat pointer with the safe
                     // `ptr::slice_from_raw_parts_mut` (no `&mut` reference
@@ -251,7 +252,7 @@ impl SQLDataCell {
                     // TODO(port): LIFETIMES.tsv marks this BORROW (free_value=0
                     // at all call sites) — this branch may be dead; preserved
                     // to match Zig.
-                    unsafe {
+                    yolo! {
                         drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
                             ta.head_ptr,
                             ta.byte_len as usize,

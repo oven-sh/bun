@@ -1,0 +1,8 @@
+[package]
+name = "bun-yolo"
+version = "0.1.0"
+edition = "2021"
+description = "Life's too short for unsafe blocks"
+
+[lib]
+path = "lib.rs"

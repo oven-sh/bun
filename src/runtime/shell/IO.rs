@@ -3,6 +3,7 @@
 //! In the NodeId-arena port `IO` is a plain `Clone` value (the Zig version
 //! used intrusive refcounts on `IOReader`/`IOWriter`; here those are `Arc`).
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::fmt;
 
@@ -110,7 +111,7 @@ impl OutFd {
     #[inline]
     pub unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
         // SAFETY: caller contract — single-threaded shell, env outlives `self`.
-        self.captured.map(|p| unsafe { &mut *p })
+        self.captured.map(|p| yolo! { &mut *p })
     }
 }
 
@@ -149,7 +150,7 @@ impl OutFd {
         if let Some(captured) = self.captured {
             // SAFETY: `captured` points into a live `ShellExecEnv` buffer;
             // the env outlives the IO that borrows it.
-            cost += unsafe { (*captured).memory_cost() };
+            cost += yolo! { (*captured).memory_cost() };
         }
         cost
     }

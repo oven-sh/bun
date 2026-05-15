@@ -11,6 +11,7 @@
 //! rule on a foreign type), so they're provided via the [`SSLConfigFromJs`]
 //! extension trait. Import that trait to call `SSLConfig::from_js(..)`.
 
+use bun_yolo::yolo;
 use core::ffi::c_char;
 
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -218,7 +219,7 @@ impl SSLConfigFromJs for SSLConfig {
             jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
                 // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
                 // owned by the GenVal for the duration of `generated`.
-                let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
+                let buffer: jsc::ArrayBuffer = yolo! { (*val.get()).as_array_buffer() };
                 dupe_z(buffer.byte_slice())
             }
         };
@@ -317,12 +318,12 @@ fn handle_file(
             // SAFETY: GenVal::get() yields a non-null pointer valid for the
             // lifetime of `generated`; we narrow it to `&mut` for the call.
             jsc::generated::SSLConfigFile::Buffer(val) => {
-                SingleFile::Buffer(unsafe { &mut *val.get() })
+                SingleFile::Buffer(yolo! { &mut *val.get() })
             }
             // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
             // pointer, layout-identical to `crate::webcore::Blob`.
             jsc::generated::SSLConfigFile::File(val) => {
-                SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
+                SingleFile::File(yolo! { &mut *val.get().cast::<crate::webcore::Blob>() })
             }
             jsc::generated::SSLConfigFile::Array(list) => {
                 return handle_file_array(global, list.items());
@@ -357,12 +358,12 @@ fn handle_file_array(
                 // SAFETY: see `handle_file` above — non-null GenVal pointers
                 // valid for the lifetime of `generated`.
                 jsc::generated::SSLConfigSingleFile::Buffer(val) => {
-                    SingleFile::Buffer(unsafe { &mut *val.get() })
+                    SingleFile::Buffer(yolo! { &mut *val.get() })
                 }
                 // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
                 // to `crate::webcore::Blob`.
                 jsc::generated::SSLConfigSingleFile::File(val) => {
-                    SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
+                    SingleFile::File(yolo! { &mut *val.get().cast::<crate::webcore::Blob>() })
                 }
             },
         )?);
@@ -439,7 +440,7 @@ pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_confi
     // (via `Option<Box<_>>` FFI niche) in `Bun__WebSocket__parseSSLConfig` and
     // the caller transfers ownership back. `bun_http::SSLConfig::drop` runs
     // `deinit()`.
-    drop(unsafe { bun_core::heap::take(config) });
+    drop(yolo! { bun_core::heap::take(config) });
 }
 
 // ported from: src/runtime/socket/SSLConfig.zig

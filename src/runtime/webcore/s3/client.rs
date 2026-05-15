@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -318,7 +319,7 @@ pub fn list_objects(
         poll_ref: bun_io::KeepAlive::init(),
     }));
     // SAFETY: just allocated, non-null
-    let task = unsafe { &mut *task_ptr };
+    let task = yolo! { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
@@ -333,11 +334,11 @@ pub fn list_objects(
     // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
     // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
     // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let url = bun_url::URL::parse(yolo! { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
     let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+        yolo! { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(unsafe {
+        Some(bun_url::URL::parse(yolo! {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
     } else {
@@ -348,7 +349,7 @@ pub fn list_objects(
     // dispatch on the JS thread, no other `&`/`&mut VirtualMachine` is live for
     // this call's duration.
     let mut vm_ref = task.vm.expect("vm set at task creation");
-    let vm = unsafe { vm_ref.get_mut() };
+    let vm = yolo! { vm_ref.get_mut() };
 
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
@@ -374,7 +375,7 @@ pub fn list_objects(
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
+    yolo! { task.http.assume_init_mut() }.schedule(&mut batch);
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
@@ -442,7 +443,7 @@ pub fn writable_stream(
             let event_loop = global.bun_vm().as_mut().event_loop();
             // SAFETY: event_loop is initialised for the lifetime of the VM.
             // RAII: `enter()` now, `exit()` on drop (Zig: `defer event_loop.exit()`).
-            let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+            let _exit_guard = yolo! { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
                     if sink.flush_promise.has_value() {
@@ -475,13 +476,13 @@ pub fn writable_stream(
     // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
-        wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
+        wrapper_callback(result, yolo! { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
     fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the NetworkSink set as callback_context.
         let _ = NetworkSink::on_writable(
-            unsafe { &mut *task },
-            unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) },
+            yolo! { &mut *task },
+            yolo! { bun_ptr::callback_ctx::<NetworkSink>(ctx) },
             flushed,
         );
     }
@@ -531,7 +532,7 @@ pub fn writable_stream(
         callback_context: core::ptr::null_mut(), // assigned below
     }));
     // SAFETY: freshly heap-allocated; exclusive access here.
-    let task = unsafe { &mut *task_ptr };
+    let task = yolo! { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
@@ -550,7 +551,7 @@ pub fn writable_stream(
 
     // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
     // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
-    let sink = unsafe { &mut *response_stream };
+    let sink = yolo! { &mut *response_stream };
     sink.signal = SinkSignal::<NetworkSink>::init(JSValue::ZERO);
 
     // explicitly set it to a dead pointer
@@ -593,11 +594,11 @@ impl S3UploadStreamWrapper {
     /// SAFETY: `this` must be a live Box-allocated `Self` (created via heap::alloc).
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: caller contract above.
-        let rc = unsafe { (*this).ref_count.get() } - 1;
-        unsafe { (*this).ref_count.set(rc) };
+        let rc = yolo! { (*this).ref_count.get() } - 1;
+        yolo! { (*this).ref_count.set(rc) };
         if rc == 0 {
             // SAFETY: ref_count hit zero; reconstitute the Box to run Drop and free.
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
     }
 
@@ -605,7 +606,7 @@ impl S3UploadStreamWrapper {
         bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
         if let Some(sink) = self.sink.take() {
             // SAFETY: sink is a live Box-allocated ResumableSink; deref_ releases our ref.
-            unsafe { ResumableS3UploadSink::deref_(sink) };
+            yolo! { ResumableS3UploadSink::deref_(sink) };
         }
     }
 
@@ -621,7 +622,7 @@ impl S3UploadStreamWrapper {
     #[allow(clippy::mut_from_ref)]
     fn task_mut<'r>(&self) -> &'r mut MultiPartUpload {
         // SAFETY: see doc comment — counted ref keeps pointee live; sole writer.
-        unsafe { &mut *self.task }
+        yolo! { &mut *self.task }
     }
 
     pub fn on_writable(task: &mut MultiPartUpload, self_: &mut Self, _: u64) {
@@ -638,7 +639,7 @@ impl S3UploadStreamWrapper {
         // we have more space in the queue, drain it
         if let Some(sink) = self_.sink {
             // SAFETY: sink is live while held in `self_.sink`.
-            unsafe { (*sink).drain() };
+            yolo! { (*sink).drain() };
         }
     }
 
@@ -654,7 +655,7 @@ impl S3UploadStreamWrapper {
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
             // SAFETY: s points to self which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
+            yolo! { Self::deref_(s) }
         });
         if let Some(js_err) = err {
             if self.end_promise.has_value() && !js_err.is_empty_or_undefined_or_null() {
@@ -682,7 +683,7 @@ impl S3UploadStreamWrapper {
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
             // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
+            yolo! { Self::deref_(s) }
         });
         match &result {
             S3UploadResult::Success => {
@@ -698,9 +699,9 @@ impl S3UploadStreamWrapper {
                     // sink in progress, cancel it (will call writeEndRequest for cleanup and will reject the endPromise)
                     let js_err = s3_error_to_js(err, &self_.global, Some(self_.path.slice()));
                     // SAFETY: sink is a live Box-allocated ResumableSink.
-                    unsafe { (*sink).cancel(js_err) };
+                    yolo! { (*sink).cancel(js_err) };
                     // SAFETY: deref_ releases our ref (associated fn — raw-ptr receiver).
-                    unsafe { ResumableS3UploadSink::deref_(sink) };
+                    yolo! { ResumableS3UploadSink::deref_(sink) };
                 } else if self_.end_promise.has_value() {
                     let js_err = s3_error_to_js(err, &self_.global, Some(self_.path.slice()));
                     self_.end_promise.reject(&self_.global, Ok(js_err))?;
@@ -847,15 +848,15 @@ pub fn upload_stream(
     // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
     fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
-        S3UploadStreamWrapper::resolve(result, unsafe {
+        S3UploadStreamWrapper::resolve(result, yolo! {
             bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx)
         })
     }
     fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the wrapper set as callback_context.
         S3UploadStreamWrapper::on_writable(
-            unsafe { &mut *task },
-            unsafe { bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx) },
+            yolo! { &mut *task },
+            yolo! { bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx) },
             flushed,
         );
     }
@@ -905,7 +906,7 @@ pub fn upload_stream(
         callback_context: core::ptr::null_mut(), // assigned below
     }));
     // SAFETY: freshly heap-allocated; exclusive access here.
-    let task = unsafe { &mut *task_ptr };
+    let task = yolo! { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
@@ -921,7 +922,7 @@ pub fn upload_stream(
             global: global_static,
         }));
     // SAFETY: freshly heap-allocated; exclusive access here.
-    let ctx = unsafe { &mut *ctx_ptr };
+    let ctx = yolo! { &mut *ctx_ptr };
     // +1 because the ctx refs the sink
     ctx.sink = Some(ResumableSink::init_exact_refs(
         &global_static,
@@ -1053,16 +1054,16 @@ pub fn download_stream(
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
     // (freed via heap::take in S3HttpDownloadStreamingTask::http_callback).
-    let task = unsafe { &mut *task_ptr };
+    let task = yolo! { &mut *task_ptr };
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
     // SAFETY (lifetime extension): `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let url = bun_url::URL::parse(yolo! { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
     let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+        yolo! { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(unsafe {
+        Some(bun_url::URL::parse(yolo! {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
     } else {
@@ -1098,7 +1099,7 @@ pub fn download_stream(
         },
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    let http = unsafe { task.http.assume_init_mut() };
+    let http = yolo! { task.http.assume_init_mut() };
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
@@ -1140,7 +1141,7 @@ pub fn readable_stream(
                 if !has_more {
                     // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
                     // reconstituting and dropping the Box runs Drop::drop and frees the allocation
-                    drop(unsafe { bun_core::heap::take(s) });
+                    drop(yolo! { bun_core::heap::take(s) });
                 }
             });
 
@@ -1192,7 +1193,7 @@ pub fn readable_stream(
 
         fn on_stream_cancelled(ctx: Option<*mut c_void>) {
             // SAFETY: ctx points to a S3DownloadStreamWrapper allocated in readable_stream
-            let self_: &mut Self = unsafe { &mut *ctx.unwrap().cast::<Self>() };
+            let self_: &mut Self = yolo! { &mut *ctx.unwrap().cast::<Self>() };
             // Release the Strong ref so the ReadableStream can be GC'd.
             // The download may still be in progress, but the callback will
             // see readable_stream_ref.get() return null and skip data delivery.
@@ -1208,7 +1209,7 @@ pub fn readable_stream(
             opaque_self: *mut c_void,
         ) {
             // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
-            let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
+            let self_: &mut Self = yolo! { bun_ptr::callback_ctx::<Self>(opaque_self) };
             let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
         }
     }
@@ -1234,7 +1235,7 @@ pub fn readable_stream(
             ..Default::default()
         });
     // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
-    let reader_mut = unsafe { &mut *reader };
+    let reader_mut = yolo! { &mut *reader };
 
     reader_mut.context.setup();
     let readable_value = reader_mut.to_readable_stream(global_this)?;

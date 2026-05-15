@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
@@ -152,7 +153,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             // port lands. Kept as-is here to avoid an untestable change.
             // SAFETY: see TODO — this is technically invalid_value UB on
             // Windows; the field is overwritten before any read.
-            waker: unsafe { bun_core::ffi::zeroed_unchecked() },
+            waker: yolo! { bun_core::ffi::zeroed_unchecked() },
             queue: UnboundedQueue::new(),
             generation: 0,
             ready_event: ResetEvent::default(),
@@ -180,12 +181,12 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
                 // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
                 // from other threads is sound.
-                unsafe { Self::thread_main(ptr.0) }
+                yolo! { Self::thread_main(ptr.0) }
             })?;
         // SAFETY: field projection via raw ptr — the spawned thread is concurrently
         // writing `waker`, so we must not hold `&Self`/`&mut Self` here. `ready_event`
         // itself is a sync primitive safe to wait on from this thread.
-        unsafe { (*instance).ready_event.wait() };
+        yolo! { (*instance).ready_event.wait() };
         Ok(thread)
     }
 
@@ -200,8 +201,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
         // safe to call concurrently with `wait(&self)` in `thread_main` and with
         // other `enqueue` callers.
-        unsafe { (*instance).queue.push(completion) };
-        unsafe { (*instance).waker.wake() };
+        yolo! { (*instance).queue.push(completion) };
+        yolo! { (*instance).waker.wake() };
     }
 
     unsafe fn thread_main(instance: *mut Self) {
@@ -209,14 +210,14 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
         // releases any thread that could call `enqueue` (which reads `waker`).
-        unsafe {
+        yolo! {
             core::ptr::addr_of_mut!((*instance).waker)
                 .write(Async::Waker::init().unwrap_or_else(|_| panic!("Failed to create waker")));
         }
 
         // Unblock the calling thread so it can continue.
         // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
-        unsafe { (*instance).ready_event.set() };
+        yolo! { (*instance).ready_event.set() };
 
         // PORT NOTE: libuv Timer lives on stack for the lifetime of this never-returning fn.
         // It MUST be declared at function scope (not inside the `#[cfg(windows)] { ... }`
@@ -232,7 +233,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
             // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
             // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
-            timer.init(unsafe { (*instance).waker.uv_loop() });
+            timer.init(yolo! { (*instance).waker.uv_loop() });
             timer.start(u64::MAX, u64::MAX, Some(timer_callback));
         }
 
@@ -241,15 +242,15 @@ impl<C: CompletionStruct> BundleThread<C> {
             loop {
                 // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
                 // `enqueue` is the lock-free queue's intended use.
-                let completion = unsafe { (*instance).queue.pop() };
+                let completion = yolo! { (*instance).queue.pop() };
                 if completion.is_null() {
                     break;
                 }
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
                 // until complete_on_bundle_thread() signals completion.
-                let completion = unsafe { &mut *completion };
+                let completion = yolo! { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
+                let generation = yolo! { (*instance).generation };
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process (matching Zig's
                 // `@panic`). No `catch_unwind` — there is nothing to catch.
@@ -263,19 +264,19 @@ impl<C: CompletionStruct> BundleThread<C> {
                 has_bundled = true;
             }
             // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
+            yolo! {
                 let g = core::ptr::addr_of_mut!((*instance).generation);
                 *g = (*g).saturating_add(1);
             }
 
             if has_bundled {
                 // SAFETY: `mi_collect(false)` is a thread-local heap sweep with no preconditions.
-                unsafe { bun_alloc::mimalloc::mi_collect(false) };
+                yolo! { bun_alloc::mimalloc::mi_collect(false) };
                 has_bundled = false;
             }
 
             // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue` is by design.
-            unsafe { (*instance).waker.wait() };
+            yolo! { (*instance).waker.wait() };
         }
     }
 
@@ -309,7 +310,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         let transpiler_ptr: *mut Transpiler<'_> = transpiler;
         let run = completion.init_and_run(
             // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
-            unsafe { &mut *transpiler_ptr },
+            yolo! { &mut *transpiler_ptr },
             bump,
             // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
             // the impl can hand it to `BundleV2::init` (which stores `*mut`).
@@ -327,7 +328,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
         // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
         // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
-        let _ = unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only (Zig: catch unreachable)
+        let _ = yolo! { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only (Zig: catch unreachable)
         completion.set_log(out_log);
 
         if run.is_ok() {
@@ -356,7 +357,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // thread-local). The arena bytes themselves are bulk-freed afterwards
         // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
         // global-heap* state, so there is no double free.
-        unsafe {
+        yolo! {
             core::ptr::drop_in_place(transpiler_ptr);
             core::ptr::drop_in_place(ast_memory_store as *mut bun_ast::ASTMemoryAllocator);
         }
@@ -400,13 +401,13 @@ pub mod singleton {
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
         // raw pointer directly so no `&mut` is materialized that would alias the
         // bundle thread's own access.
-        let os_thread = unsafe { BundleThread::spawn(bundle_thread) }
+        let os_thread = yolo! { BundleThread::spawn(bundle_thread) }
             .unwrap_or_else(|_| Output::panic(format_args!("Failed to spawn bun build thread")));
         // `std.Thread.detach()` — drop the JoinHandle without joining.
         drop(os_thread);
 
         // SAFETY: `into_raw` of a `Box` is never null.
-        Instance(unsafe { NonNull::new_unchecked(bundle_thread.cast::<()>()) })
+        Instance(yolo! { NonNull::new_unchecked(bundle_thread.cast::<()>()) })
     }
 
     /// Returns the raw singleton pointer. The bundle thread runs `thread_main`
@@ -430,7 +431,7 @@ pub mod singleton {
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
         // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
         // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-        unsafe { BundleThread::enqueue(get::<C>(), completion) };
+        yolo! { BundleThread::enqueue(get::<C>(), completion) };
     }
 }
 

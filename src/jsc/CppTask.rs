@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
@@ -36,7 +37,7 @@ impl CppTask {
         // than the raw FFI. Calling the raw extern left the simulated throw
         // unchecked, which then tripped `drainMicrotasks`'s scope ctor under
         // `BUN_JSC_validateExceptionChecks=1`.
-        unsafe { crate::cpp::Bun__performTask(global, std::ptr::from_mut::<CppTask>(self)) }
+        yolo! { crate::cpp::Bun__performTask(global, std::ptr::from_mut::<CppTask>(self)) }
     }
 }
 
@@ -46,7 +47,7 @@ impl EventLoopTaskNoContext {
     /// Deallocates `this`
     pub fn run(this: *mut EventLoopTaskNoContext) {
         // SAFETY: `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
-        unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
+        yolo! { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
     /// Get the VM that created this task. `VirtualMachine` is process-lifetime

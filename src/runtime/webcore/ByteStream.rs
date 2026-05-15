@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem::offset_of;
 
@@ -286,7 +287,7 @@ impl ByteStream {
             debug_assert!(self.buffer.get().is_empty());
             // SAFETY: pending_buffer is either dangling+len=0 or points into a live JS
             // Uint8Array rooted by `pending_value`.
-            let pending_buf = unsafe { &mut *self.pending_buffer.get() };
+            let pending_buf = yolo! { &mut *self.pending_buffer.get() };
             let to_copy_len = chunk.len().min(pending_buf.len());
             let pending_buffer_len = pending_buf.len();
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());

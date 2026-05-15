@@ -7,6 +7,7 @@
 //!
 //! This is only used **after** the websocket handshaking step is completed.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
@@ -187,7 +188,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.deflate = None;
         if let Some(s) = self.secure.take() {
             // SAFETY: s is a valid SSL_CTX* owned by us per field invariant
-            unsafe { boringssl::c::SSL_CTX_free(s) };
+            yolo! { boringssl::c::SSL_CTX_free(s) };
         }
         // Clean up proxy tunnel if we own one
         // Set to None FIRST to prevent re-entrancy (shutdown can trigger callbacks)
@@ -199,14 +200,14 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: `tunnel` holds a live ref. `clear_connected_web_socket`
             // is a single non-reentrant field write; the brief auto-ref `&mut`
             // is the only Rust borrow of the tunnel at this point.
-            unsafe { (*tunnel_ptr).clear_connected_web_socket() };
+            yolo! { (*tunnel_ptr).clear_connected_web_socket() };
             // SAFETY: `tunnel` holds a live ref. `shutdown` may synchronously
             // fire SSLWrapper callbacks that re-enter the tunnel allocation,
             // so call the raw-ptr overload which never holds a `&mut Self`
             // across the dispatch (see WebSocketProxyTunnel::shutdown).
-            unsafe { WebSocketProxyTunnel::shutdown(tunnel_ptr) };
+            yolo! { WebSocketProxyTunnel::shutdown(tunnel_ptr) };
             // SAFETY: `tunnel` (NonNull) held a live intrusive ref; release it.
-            unsafe { WebSocketProxyTunnel::deref(tunnel_ptr) };
+            yolo! { WebSocketProxyTunnel::deref(tunnel_ptr) };
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
             // non-tunnel path this same ref is released by handle_close()
@@ -216,7 +217,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // ref guard (see cancel/finalize).
             // SAFETY: `self: &mut Self` coerces to `*mut Self` with write
             // provenance; allocation is live (guarded by callers' ref).
-            unsafe { Self::deref(self) };
+            yolo! { Self::deref(self) };
         }
     }
 
@@ -227,10 +228,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the intrusive refcount now and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
         // SAFETY: called from C++ with a valid `heap::alloc` pointer.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; the guard's ref keeps
         // the allocation alive past every re-entrant call below.
-        let this = unsafe { &mut *this_ptr };
+        let this = yolo! { &mut *this_ptr };
 
         let had_tunnel = this.proxy_tunnel.is_some();
         this.clear_data();
@@ -261,7 +262,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code);
             // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
             // the socket/tunnel I/O ref (or by caller's guard).
-            unsafe { Self::deref(self) };
+            yolo! { Self::deref(self) };
         }
 
         Self::cancel(self);
@@ -309,13 +310,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // SAFETY: ssl_ptr is valid for the lifetime of the socket; passing
                 // null is well-defined (BoringSSL returns null).
                 let servername =
-                    unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
+                    yolo! { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
                 if !servername.is_null() {
                     // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
-                    let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
+                    let hostname = yolo! { bun_core::ffi::cstr(servername) }.to_bytes();
                     // SAFETY: ssl_ptr is non-null (connected SSL socket on the handshake path).
                     if !ssl_ptr.is_null()
-                        && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
+                        && !boringssl::check_server_identity(yolo! { &mut *ssl_ptr }, hostname)
                     {
                         self.outgoing_websocket = None;
                         ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
@@ -337,7 +338,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // For the socket.
         // SAFETY: `self: &mut Self` → `*mut Self`; this is the terminal
         // release of the socket's I/O-layer ref.
-        unsafe { Self::deref(self) };
+        yolo! { Self::deref(self) };
     }
 
     pub fn terminate(&mut self, code: ErrorCode) {
@@ -580,7 +581,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub unsafe fn handle_data(this_ptr: *mut Self, data_: &[u8]) {
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
         // with no outstanding `&`/`&mut` borrow (uWS dispatches from userdata).
-        let this = unsafe { ThisPtr::new(this_ptr) };
+        let this = yolo! { ThisPtr::new(this_ptr) };
         // after receiving close we should ignore the data
         if this.close_received {
             return;
@@ -601,7 +602,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `adopted` raw ptr (same `heap::alloc` provenance as
             // `this_ptr`); no `&mut *this_ptr` is live here, so the nested
             // call may freely form its own exclusive reborrow.
-            unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
+            yolo! { (*initial_handler.as_ptr()).handle_without_deinit() };
 
             // handle_without_deinit is supposed to clear the handler from WebSocket*
             // to prevent an infinite loop
@@ -617,7 +618,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // remainder to the `&mut self` parse loop. The reborrow ends before
         // `_guard` drops (LIFO), so `deref(this_ptr)` observes a clean stack.
         // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this thread.
-        unsafe { (*this.as_ptr()).handle_data_loop(data_) };
+        yolo! { (*this.as_ptr()).handle_data_loop(data_) };
     }
 
     fn handle_data_loop(&mut self, data_: &[u8]) {
@@ -1053,7 +1054,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `write_data()` may fire `write_encrypted(ctx)` which reborrows
             // the tunnel allocation, so call the raw-ptr overload that never
             // holds a `&mut WebSocketProxyTunnel` across the dispatch.
-            let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), bytes) } {
+            let wrote = match yolo! { WebSocketProxyTunnel::write(tunnel.as_ptr(), bytes) } {
                 Ok(w) => w,
                 Err(_) => {
                     self.terminate(ErrorCode::FailedToWrite);
@@ -1241,7 +1242,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // Use the raw-ptr `write` overload — `write_data()` may fire
                 // `write_encrypted(ctx)` which reborrows the tunnel; never
                 // hold a `&mut WebSocketProxyTunnel` across that dispatch.
-                match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), out_buf) } {
+                match yolo! { WebSocketProxyTunnel::write(tunnel.as_ptr(), out_buf) } {
                     Ok(w) => Ok(w),
                     Err(_) => Err(true),
                 }
@@ -1416,7 +1417,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         if let Some(tunnel) = &self.proxy_tunnel {
             // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
-            return unsafe { tunnel.as_ref() }.has_backpressure();
+            return yolo! { tunnel.as_ref() }.has_backpressure();
         }
         false
     }
@@ -1428,9 +1429,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = yolo! { &mut *this_ptr };
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1440,7 +1441,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let opcode = Opcode::from_raw(op);
         // SAFETY: ptr/len from C++; caller guarantees valid slice. Empty Blob
         // sends (null, 0); `ffi::slice` tolerates that shape.
-        let slice: &[u8] = unsafe { bun_core::ffi::slice(ptr, len) };
+        let slice: &[u8] = yolo! { bun_core::ffi::slice(ptr, len) };
         let bytes = Copy::Bytes(slice);
         // fast path: small frame, no backpressure, attempt to send without allocating
         let frame_size = WebsocketHeader::frame_size_including_mask(len);
@@ -1472,9 +1473,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = yolo! { &mut *this_ptr };
 
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1492,7 +1493,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Get the shared view of the blob data
             // SAFETY: `as_` returned a live `*mut Blob` owned by the JS heap;
             // the JSValue is rooted by the caller for the duration of this call.
-            let data = unsafe { (*blob).shared_view() };
+            let data = yolo! { (*blob).shared_view() };
             if data.is_empty() {
                 // Empty blob, send empty frame
                 let bytes = Copy::Bytes(&[]);
@@ -1529,12 +1530,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = yolo! { &mut *this_ptr };
 
         // SAFETY: str_ is a valid pointer from C++
-        let str = unsafe { &*str_ };
+        let str = yolo! { &*str_ };
         if !this.has_tcp() {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1598,7 +1599,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard (see cancel/handle_close).
-        unsafe { Self::deref(self) };
+        yolo! { Self::deref(self) };
     }
 
     fn dispatch_close(&mut self, code: u16, reason: &mut bun_core::String) {
@@ -1610,7 +1611,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         CppWebSocket::opaque_ref(out.as_ptr()).did_close(code, reason);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard.
-        unsafe { Self::deref(self) };
+        yolo! { Self::deref(self) };
     }
 
     pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
@@ -1621,16 +1622,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = yolo! { &mut *this_ptr };
 
         if !this.has_tcp() {
             return;
         }
         let mut close_reason_buf = [0u8; 128];
         // SAFETY: reason is null or a valid *const ZigString from C++
-        if let Some(str) = unsafe { reason.as_ref() } {
+        if let Some(str) = yolo! { reason.as_ref() } {
             'inner: {
                 // Zig: FixedBufferAllocator + allocPrint("{f}", .{str}) — the
                 // `{f}` formatter writes the string in UTF-8 regardless of
@@ -1669,7 +1670,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let wrote_len = cursor.position() as usize;
                 // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
                 let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
-                this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
+                this.send_close_with_body(code, Some(yolo! { &mut *buf_ptr }), wrote_len);
                 return;
             }
         }
@@ -1730,7 +1731,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
         // SAFETY: ws was just allocated via heap::alloc
-        let ws_ref = unsafe { &mut *ws };
+        let ws_ref = yolo! { &mut *ws };
 
         if let Some(params) = deflate_params {
             match WebSocketDeflate::init(*params, vm.rare_data()) {
@@ -1753,7 +1754,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // reads `vm.uws_loop()` / `vm.event_loop_handle` and never touches
             // `vm.rare_data`, so the shared `&VirtualMachine` argument cannot
             // observe or invalidate the `&mut RareData` receiver.
-            unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
+            yolo! { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
         };
         if !Socket::<SSL>::adopt_group(
             tcp,
@@ -1767,11 +1768,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: `owner == ws` is a valid live allocation; raw-ptr field
             // write avoids materializing a second `&mut` that would alias
             // `ws_ref` above (Zig's `@field(owner, "tcp") = ...` equivalent).
-            |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(sock) },
+            |owner, sock| yolo! { core::ptr::addr_of_mut!((*owner).tcp).write(sock) },
         ) {
             // SAFETY: `ws` is the `heap::alloc` allocation just created
             // above; sole owner on this failure path.
-            unsafe { Self::deref(ws) };
+            yolo! { Self::deref(ws) };
             return core::ptr::null_mut();
         }
 
@@ -1786,7 +1787,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `InitialDataHandler.deinit` frees it with `bun.default_allocator.free`.
             // The Rust global allocator is also mimalloc, so `heap::take`
             // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
-            let buffered_slice: Box<[u8]> = unsafe {
+            let buffered_slice: Box<[u8]> = yolo! {
                 bun_core::heap::take(core::slice::from_raw_parts_mut(
                     buffered_data,
                     buffered_data_len,
@@ -1800,7 +1801,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);
                 // it outlives the handler — `handle_without_deinit` drops the
                 // ref before C++ can finalize.
-                ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
+                ws: NonNull::new(outgoing).map(|p| yolo! { CppWebSocketRef::new(p) }),
             }));
 
             // Use a higher-priority callback for the initial onData handler
@@ -1837,7 +1838,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let tunnel_owned: NonNull<WebSocketProxyTunnel> = {
             let p = tunnel_ptr.cast::<WebSocketProxyTunnel>();
             // SAFETY: caller passes a live tunnel pointer (extern-C contract).
-            unsafe { (*p).ref_() };
+            yolo! { (*p).ref_() };
             NonNull::new(p).expect("extern-C contract: tunnel_ptr is non-null")
         };
 
@@ -1885,7 +1886,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
         // SAFETY: ws was just allocated via heap::alloc
-        let ws_ref = unsafe { &mut *ws };
+        let ws_ref = yolo! { &mut *ws };
 
         if let Some(params) = deflate_params {
             match WebSocketDeflate::init(*params, vm.rare_data()) {
@@ -1901,7 +1902,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if buffered_data_len > 0 {
             // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
             // directly so it is freed (not leaked) when the handler drops.
-            let buffered_slice: Box<[u8]> = unsafe {
+            let buffered_slice: Box<[u8]> = yolo! {
                 bun_core::heap::take(core::slice::from_raw_parts_mut(
                     buffered_data,
                     buffered_data_len,
@@ -1913,7 +1914,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);
                 // it outlives the handler — `handle_without_deinit` drops the
                 // ref before C++ can finalize.
-                ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
+                ws: NonNull::new(outgoing).map(|p| yolo! { CppWebSocketRef::new(p) }),
             }));
             // PORT NOTE: `queue_microtask_callback` takes an erased
             // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
@@ -1939,7 +1940,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
         // SAFETY: forwarded — see `handle_data`'s contract.
-        unsafe { Self::handle_data(this_ptr, data) };
+        yolo! { Self::handle_data(this_ptr, data) };
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
@@ -1952,7 +1953,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
         // (the tunnel calls through its raw `connected_websocket` backref).
-        let this = unsafe { ThisPtr::new(this_ptr) };
+        let this = yolo! { ThisPtr::new(this_ptr) };
         if this.close_received {
             return;
         }
@@ -1966,7 +1967,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
         // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
-        let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
+        let _ = yolo! { (*this.as_ptr()).send_buffer_out() };
     }
 
     pub extern "C" fn finalize(this_ptr: *mut Self) {
@@ -1977,9 +1978,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
         // bumps the intrusive refcount and derefs on Drop (after `this`'s last
         // use, since `this` is declared after the guard).
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this_ptr) };
         // SAFETY: called from C++ with a valid pointer; guarded above.
-        let this = unsafe { &mut *this_ptr };
+        let this = yolo! { &mut *this_ptr };
 
         this.clear_data();
 
@@ -1988,7 +1989,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             this.outgoing_websocket = None;
             // SAFETY: `this: &mut Self` → `*mut Self`; allocation kept live by
             // the local `r#ref()` guard above.
-            unsafe { Self::deref(this) };
+            yolo! { Self::deref(this) };
         }
 
         if !this.tcp.is_closed() {
@@ -2005,18 +2006,18 @@ impl<const SSL: bool> WebSocket<SSL> {
     // self is heap-allocated via heap::alloc and crosses FFI as *mut c_void.
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: called once when ref_count hits zero
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         this_ref.clear_data();
         // deflate already dropped in clear_data; this is defensive parity with Zig
         this_ref.deflate = None;
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
         // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub extern "C" fn memory_cost(this: *const Self) -> usize {
         // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &*this };
+        let this = yolo! { &*this };
         let mut cost: usize = size_of::<Self>();
         cost += this.send_buffer.capacity();
         cost += this.receive_buffer.capacity();
@@ -2178,7 +2179,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // touch fields via raw projection only.
         // SAFETY: `adopted` is a backref to a live WebSocket (heap::alloc
         // provenance); raw field write of a `Copy`-sized `Option<NonNull<_>>`.
-        unsafe { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
+        yolo! { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
         // Zig: `defer ws.unref()` — RAII: take the owned ref so it drops at
         // scope exit. Paired with the `adopted.take()` above so the ref is
         // released exactly once even when this fn is later re-called with
@@ -2189,13 +2190,13 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // SAFETY: `ws_ptr` is live (see above); brief shared borrows for
         // `is_closed()` / `is_some()` — no `&mut` to `*ws_ptr` is live.
         let is_connected =
-            unsafe { !(*ws_ptr).tcp.is_closed() || (*ws_ptr).proxy_tunnel.is_some() };
+            yolo! { !(*ws_ptr).tcp.is_closed() || (*ws_ptr).proxy_tunnel.is_some() };
         // SAFETY: `ws_ptr` is live; raw read of a `Copy` field.
-        if unsafe { (*ws_ptr).outgoing_websocket.is_some() } && is_connected {
+        if yolo! { (*ws_ptr).outgoing_websocket.is_some() } && is_connected {
             // SAFETY: `ws_ptr` carries `heap::alloc` provenance; `handle_data`
             // takes `*mut Self` and forms its own scoped `&mut` internally. No
             // borrow of `*ws_ptr` is live in this frame across the call.
-            unsafe { WebSocket::<SSL>::handle_data(ws_ptr, &self.slice) };
+            yolo! { WebSocket::<SSL>::handle_data(ws_ptr, &self.slice) };
         }
     }
 
@@ -2204,11 +2205,11 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         let this = this.cast::<Self>();
         // SAFETY: called from microtask queue with the pointer we passed in
         // (heap::alloc in init()/init_with_tunnel()).
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         this_ref.handle_without_deinit();
         // deinit: free slice + destroy self
         // SAFETY: allocated via heap::alloc in init()/init_with_tunnel()
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 

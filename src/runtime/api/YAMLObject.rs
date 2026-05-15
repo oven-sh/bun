@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::ffi::c_void;
 
@@ -1081,8 +1082,8 @@ impl<'a> ParserCtx<'a> {
 
     pub extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
         // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let ctx = unsafe { &mut *ctx };
-        let args = unsafe { &mut *args };
+        let ctx = yolo! { &mut *ctx };
+        let args = yolo! { &mut *args };
         let root = ctx.root;
         ctx.result = match ctx.to_js(args, root) {
             Ok(v) => v,

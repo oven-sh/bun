@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_char;
 #[cfg(debug_assertions)]
 use std::io::Write as _;
@@ -50,7 +51,7 @@ mod zig_std_debug {
         #[cfg(windows)]
         {
             // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
-            unsafe {
+            yolo! {
                 core::ptr::write(context, bun_core::ffi::zeroed_unchecked());
                 bun_sys::windows::ntdll_context::RtlCaptureContext(context);
             }
@@ -76,7 +77,7 @@ mod zig_std_debug {
                     fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
                 }
                 // SAFETY: context points to a valid `ucontext_t`; getcontext(3) fills it.
-                let result = unsafe { getcontext(context) } == 0;
+                let result = yolo! { getcontext(context) } == 0;
                 // On aarch64-macos, the system getcontext doesn't write anything into the pc
                 // register slot, it only writes lr. This makes the context consistent with
                 // other aarch64 getcontext implementations which write the current lr
@@ -84,7 +85,7 @@ mod zig_std_debug {
                 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
                 {
                     // SAFETY: getcontext just initialized `*context`; mcontext is non-null.
-                    unsafe {
+                    yolo! {
                         let mctx = (*context).uc_mcontext;
                         if !mctx.is_null() {
                             (*mctx).__ss.__pc = (*mctx).__ss.__lr;
@@ -104,7 +105,7 @@ mod zig_std_debug {
         {
             let fp: usize;
             // SAFETY: reading rbp is side-effect-free.
-            unsafe {
+            yolo! {
                 core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags))
             };
             fp
@@ -113,7 +114,7 @@ mod zig_std_debug {
         {
             let fp: usize;
             // SAFETY: reading x29 (fp) is side-effect-free.
-            unsafe {
+            yolo! {
                 core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags))
             };
             fp
@@ -159,7 +160,7 @@ mod zig_std_debug {
                         let pid = match CACHED_PID.load(Ordering::Relaxed) {
                             -1 => {
                                 // SAFETY: getpid has no preconditions.
-                                let pid = unsafe { libc::getpid() };
+                                let pid = yolo! { libc::getpid() };
                                 CACHED_PID.store(pid, Ordering::Relaxed);
                                 pid
                             }
@@ -174,7 +175,7 @@ mod zig_std_debug {
                             iov_len: buf.len(),
                         };
                         // SAFETY: iovecs point to valid memory for their stated lengths.
-                        let bytes_read = unsafe {
+                        let bytes_read = yolo! {
                             libc::process_vm_readv(
                                 pid,
                                 &raw const local,
@@ -201,7 +202,7 @@ mod zig_std_debug {
                             &path_buf[..n]
                         };
                         // SAFETY: path is NUL-terminated.
-                        let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY) };
+                        let fd = yolo! { libc::open(path.as_ptr().cast(), libc::O_RDONLY) };
                         if fd < 0 {
                             self.mem = -2;
                             break;
@@ -210,7 +211,7 @@ mod zig_std_debug {
                     }
                     fd => {
                         // SAFETY: fd is a valid open file descriptor; buf is writable.
-                        let n = unsafe {
+                        let n = yolo! {
                             libc::pread(
                                 fd,
                                 buf.as_mut_ptr().cast(),
@@ -226,7 +227,7 @@ mod zig_std_debug {
                 return false;
             }
             // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
-            unsafe {
+            yolo! {
                 core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
             }
             true
@@ -247,7 +248,7 @@ mod zig_std_debug {
             #[cfg(target_os = "linux")]
             if self.mem >= 0 {
                 // SAFETY: self.mem is a valid fd we opened.
-                unsafe { libc::close(self.mem) };
+                yolo! { libc::close(self.mem) };
             }
         }
     }
@@ -285,10 +286,10 @@ mod zig_std_debug {
                     dwLength: usize,
                 ) -> usize;
             }
-            let mut mbi: MemoryBasicInformation = unsafe { core::mem::zeroed() };
+            let mut mbi: MemoryBasicInformation = yolo! { core::mem::zeroed() };
             // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
             // only inspects the address-space mapping at `aligned_address`.
-            let rc = unsafe {
+            let rc = yolo! {
                 VirtualQuery(
                     aligned_address as *const c_void,
                     &mut mbi,
@@ -307,7 +308,7 @@ mod zig_std_debug {
         {
             // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
             let rc =
-                unsafe { libc::msync(aligned_address as *mut c_void, page_size, libc::MS_ASYNC) };
+                yolo! { libc::msync(aligned_address as *mut c_void, page_size, libc::MS_ASYNC) };
             if rc != 0 {
                 return bun_sys::last_errno() != libc::ENOMEM;
             }
@@ -372,7 +373,7 @@ mod zig_std_debug {
             #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
             {
                 // SAFETY: caller passes a `getcontext`-initialized ucontext; mcontext is non-null.
-                let fp = unsafe { (*(*context).uc_mcontext).__ss.__fp } as usize;
+                let fp = yolo! { (*(*context).uc_mcontext).__ss.__fp } as usize;
                 return Ok(Self::init(first_address, Some(fp)));
             }
             #[allow(unreachable_code)]
@@ -504,7 +505,7 @@ mod tty {
             // written, excluding NUL); not-found also returns 0; any non-empty
             // value returns >=1 (either chars written, or required size if it
             // didn't fit). So `rc != 0` ⇔ "exists and non-empty".
-            let rc = unsafe {
+            let rc = yolo! {
                 GetEnvironmentVariableW(name_w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
             };
             return rc != 0;
@@ -512,9 +513,9 @@ mod tty {
         #[cfg(not(windows))]
         {
             // SAFETY: getenv only reads; name is a valid NUL-terminated C string.
-            let val = unsafe { libc::getenv(name.as_ptr()) };
+            let val = yolo! { libc::getenv(name.as_ptr()) };
             // SAFETY: getenv returns either NULL or a valid NUL-terminated C string.
-            !val.is_null() && unsafe { *val } != 0
+            !val.is_null() && yolo! { *val } != 0
         }
     }
 
@@ -583,7 +584,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
 
     let debug_info: &mut SelfInfo = match get_self_debug_info() {
         // SAFETY: lazy debug-only singleton; lldb stopped-process, sole `&mut`.
-        Ok(di) => unsafe { &mut *di },
+        Ok(di) => yolo! { &mut *di },
         Err(err) => {
             if write!(
                 w,
@@ -607,7 +608,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let tty_config = tty::detect_config_stdout();
 
     // SAFETY: Zig used `= undefined`; getcontext fully initializes.
-    let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut context: ThreadContext = yolo! { bun_core::ffi::zeroed_unchecked() };
     let has_context = get_context(&mut context);
 
     #[allow(unused_mut)]
@@ -692,7 +693,7 @@ fn print_source_at_address(
     // SAFETY: fp is a raw frame pointer from the stack iterator; only dereferenced when
     // do_llint holds (i.e. address is inside the JSC LLInt range, so fp is a JSC CallFrame).
     // Single audited backref-deref hoisted for both LLInt branches below.
-    let frame: Option<&CallFrame> = do_llint.then(|| unsafe { &*(fp as *const CallFrame) });
+    let frame: Option<&CallFrame> = do_llint.then(|| yolo! { &*(fp as *const CallFrame) });
     if let Some(frame) = frame {
         // VM singleton is process-lifetime; `global` is set before any
         // JS frame can be on the stack to inspect.

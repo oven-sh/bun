@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -87,7 +88,7 @@ pub fn dump_order(this: &Execution) -> JsResult<()> {
             while let Some(entry_ptr) = current_entry {
                 // SAFETY: linked-list nodes are owned by the Execution and remain valid for the
                 // duration of this read-only dump (Zig: ?*ExecutionEntry walked via .next).
-                let entry = unsafe { entry_ptr.as_ref() };
+                let entry = yolo! { entry_ptr.as_ref() };
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
                     bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)")),

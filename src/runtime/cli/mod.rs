@@ -8,6 +8,7 @@
 //!
 //! (Phase-A draft `cli_body.rs` has been folded in and deleted.)
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 
 use bun_core::strings;
@@ -463,7 +464,7 @@ pub fn cli_arena() -> &'static bun_alloc::Arena {
     // single-threaded startup, before `Command::start` runs and therefore
     // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
     // Read-only for the rest of the process lifetime.
-    unsafe { (*CLI_ARENA.get()).assume_init_ref() }
+    yolo! { (*CLI_ARENA.get()).assume_init_ref() }
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
@@ -487,7 +488,7 @@ pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
     // `Box` pointer-value moves), so the returned slice stays valid `'static`.
     let (ptr, len) = (b.as_ptr(), b.len());
     ADOPTED.lock().unwrap().push(b);
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+    yolo! { core::slice::from_raw_parts(ptr, len) }
 }
 
 /// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
@@ -539,7 +540,7 @@ impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader 
 impl colon_list_type::ColonListValue for &'static [u8] {
     fn resolve_value(input: &[u8]) -> Result<Self, bun_core::Error> {
         // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
-        Ok(unsafe { bun_ptr::detach_lifetime(input) })
+        Ok(yolo! { bun_ptr::detach_lifetime(input) })
     }
 }
 
@@ -579,17 +580,17 @@ pub mod cli {
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
-        unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
+        yolo! { (*LOG_.get()).write(bun_ast::Log::init()) };
         // Init the process-lifetime CLI arena here (not via `LazyLock` on first
         // use) — see `super::CLI_ARENA`. The write happens before any worker
         // thread is spawned and before `Command::start` (the first
         // `cli_arena()` caller), so a plain `RacyCell` is sound.
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
-        unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
+        yolo! { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // TODO(b2-blocked): MainPanicHandler wiring.
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
-        let log = unsafe { (*LOG_.get()).assume_init_mut() };
+        let log = yolo! { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
             // Spec cli.zig:21 — print accumulated diagnostics BEFORE the
             // generic `handle_root_error` "An internal error occurred (..)"
@@ -863,7 +864,7 @@ pub mod command {
     pub fn get() -> Context<'static> {
         // SAFETY: only called after `create_context_data` published the ctx
         // during single-threaded startup; callers treat the result as read-mostly.
-        unsafe { &mut *bun_options_types::context::global_ptr() }
+        yolo! { &mut *bun_options_types::context::global_ptr() }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1150,7 +1151,7 @@ pub mod command {
         // then the two non-default fields are patched on the live storage —
         // avoids the second `Default` temporary (and its drop) that the
         // `..Default::default()` struct-update form would build on the stack.
-        unsafe {
+        yolo! {
             let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
             ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
             ctx.start_time = bun_core::start_time();
@@ -1183,7 +1184,7 @@ pub mod command {
     ) -> Result<&'static mut ContextData, bun_core::Error> {
         // SAFETY: single-threaded CLI startup — no other thread exists yet.
         // `CMD` is read by crash-reporter / debug logging only.
-        unsafe { CMD.write(Some(cmd)) };
+        yolo! { CMD.write(Some(cmd)) };
 
         let ctx = write_context_no_parse(log);
 
@@ -1402,7 +1403,7 @@ pub mod command {
     ) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
-        let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        let graph: &mut bun_standalone_graph::Graph = yolo! { &mut *graph };
         let mut offset_for_passthrough: usize = 0;
 
         let ctx: &mut ContextData = 'brk: {
@@ -1436,7 +1437,7 @@ pub mod command {
                 // This prevents user arguments like --version/--help from being intercepted
                 // by Bun's argument parser (they should be passed through to user code).
                 // SAFETY: single-threaded startup; `full_argv` is process-static.
-                unsafe {
+                yolo! {
                     bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
                 }
 
@@ -1445,7 +1446,7 @@ pub mod command {
 
                 // Restore full argv so passthrough calculation works correctly
                 // SAFETY: single-threaded startup.
-                unsafe { bun::set_argv(full_argv) };
+                yolo! { bun::set_argv(full_argv) };
 
                 break 'brk result;
             }
@@ -1979,7 +1980,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
 
         let entry = ctx.args.entry_points[0].clone();
-        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
+        Printer::print(yolo! { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
     }
 
     #[cold]

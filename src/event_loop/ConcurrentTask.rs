@@ -8,6 +8,7 @@
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
+use bun_yolo::yolo;
 use crate::ManagedTask;
 // TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
 use bun_threading::unbounded_queue::{Link, Linked};
@@ -265,7 +266,7 @@ impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
             // SAFETY: matches Zig `task: Task = undefined` — caller must set before use.
-            task: unsafe { bun_core::ffi::zeroed_unchecked() },
+            task: yolo! { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
             auto_delete: false,
         }
@@ -295,7 +296,7 @@ unsafe impl Linked for ConcurrentTask {
     unsafe fn link(item: *mut Self) -> *const Link<Self> {
         // SAFETY: caller (UnboundedQueue) guarantees `item` is valid; we only
         // form a raw pointer to the field, no intermediate `&`/`&mut`.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 pub type Queue = UnboundedQueue<ConcurrentTask>;
@@ -321,7 +322,7 @@ impl ConcurrentTask {
     #[inline]
     pub unsafe fn destroy(this: *mut ConcurrentTask) {
         // SAFETY: caller contract above.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn create(task: Task) -> *mut ConcurrentTask {

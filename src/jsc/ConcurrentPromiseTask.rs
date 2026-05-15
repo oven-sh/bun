@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
@@ -87,10 +88,10 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // `create_on_js_thread`; the WorkPool calls back with exactly that
         // field, so `from_task_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
-        let this = unsafe { Self::from_task_ptr(task) };
+        let this = yolo! { Self::from_task_ptr(task) };
         // SAFETY: `this` is alive for the duration of the thread-pool callback;
         // exclusively owned by the work pool at this point.
-        unsafe { (*this).ctx.run() };
+        yolo! { (*this).ctx.run() };
         Self::on_finish(this);
     }
 
@@ -112,7 +113,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // re-initializes it in place and returns the same address. Passing
         // `this` while holding `&mut *this` is sound because `from` only stores
         // the pointer (does not dereference it).
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         let event_loop = this_ref.event_loop;
         let task = std::ptr::from_mut(
             this_ref
@@ -130,7 +131,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     pub unsafe fn destroy(this: *mut Self) {
         // `promise.deinit()` is handled by `JSPromiseStrong: Drop`.
         // SAFETY: caller contract above.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 

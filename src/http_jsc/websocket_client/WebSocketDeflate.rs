@@ -1,5 +1,6 @@
 //! Manages the DEFLATE compression and decompression streams for a WebSocket connection.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_int;
 
@@ -89,11 +90,11 @@ impl Drop for RareData {
     fn drop(&mut self) {
         if let Some(c) = self.libdeflate_compressor.get() {
             // SAFETY: allocated by libdeflate_alloc_compressor, freed exactly once here.
-            unsafe { libdeflate_sys::Compressor::destroy(c) };
+            yolo! { libdeflate_sys::Compressor::destroy(c) };
         }
         if let Some(d) = self.libdeflate_decompressor.get() {
             // SAFETY: allocated by libdeflate_alloc_decompressor, freed exactly once here.
-            unsafe { libdeflate_sys::Decompressor::destroy(d) };
+            yolo! { libdeflate_sys::Decompressor::destroy(d) };
         }
         // Zig: bun.destroy(this) — handled by Box<RareData> drop at the owner.
     }
@@ -176,7 +177,7 @@ impl PerMessageDeflate {
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
         // SAFETY: compress_stream is a zeroed #[repr(C)] z_stream; &mut points to a valid
         // z_stream for the duration of the call; zlibVersion() returns a valid C string.
-        let compress_err = unsafe {
+        let compress_err = yolo! {
             zlib::deflateInit2_(
                 &raw mut self_.compress_stream,
                 Z_DEFAULT_COMPRESSION,                           // level
@@ -197,7 +198,7 @@ impl PerMessageDeflate {
         // Initialize decompressor (inflate)
         // SAFETY: decompress_stream is a zeroed #[repr(C)] z_stream; &mut points to a valid
         // z_stream for the duration of the call; zlibVersion() returns a valid C string.
-        let decompress_err = unsafe {
+        let decompress_err = yolo! {
             zlib::inflateInit2_(
                 &raw mut self_.decompress_stream,
                 -(self_.params.server_max_window_bits as c_int), // windowBits
@@ -229,7 +230,7 @@ impl PerMessageDeflate {
         if Self::can_use_libdeflate(in_buf.len()) {
             // SAFETY: `decompressor()` returns a live *mut Decompressor allocated
             // on first use and freed in Drop.
-            let result = unsafe { &mut *self.rare_data.decompressor() }.decompress_to_vec(
+            let result = yolo! { &mut *self.rare_data.decompressor() }.decompress_to_vec(
                 in_buf,
                 out,
                 libdeflate_sys::Encoding::Deflate,
@@ -255,7 +256,7 @@ impl PerMessageDeflate {
             // SAFETY: `stream` was initialized by inflateInit2_ in init();
             // next_in is valid for avail_in bytes (in_with_trailer kept alive on
             // stack); next_out is valid for spare.len() bytes (spare capacity of `out`).
-            let res = unsafe {
+            let res = yolo! {
                 bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
                     stream.next_out = spare.as_mut_ptr();
                     stream.avail_out = spare.len() as u32;
@@ -287,7 +288,7 @@ impl PerMessageDeflate {
 
         if self.params.server_no_context_takeover == 1 {
             // SAFETY: decompress_stream was initialized by inflateInit2_ in init().
-            unsafe { zlib::inflateReset(&raw mut self.decompress_stream) };
+            yolo! { zlib::inflateReset(&raw mut self.decompress_stream) };
         }
 
         Ok(())
@@ -302,7 +303,7 @@ impl PerMessageDeflate {
             // SAFETY: `stream` was initialized by deflateInit2_ in init();
             // next_in is valid for avail_in bytes (in_buf borrowed for this call);
             // next_out is valid for spare.len() bytes (spare capacity of `out`).
-            let res = unsafe {
+            let res = yolo! {
                 bun_core::vec::fill_spare(out, COMPRESSION_BUFFER_SIZE, |spare| {
                     stream.next_out = spare.as_mut_ptr();
                     stream.avail_out = spare.len() as u32;
@@ -327,7 +328,7 @@ impl PerMessageDeflate {
 
         if self.params.client_no_context_takeover == 1 {
             // SAFETY: compress_stream was initialized by deflateInit2_ in init().
-            unsafe { zlib::deflateReset(&raw mut self.compress_stream) };
+            yolo! { zlib::deflateReset(&raw mut self.compress_stream) };
         }
 
         Ok(())
@@ -339,7 +340,7 @@ impl Drop for PerMessageDeflate {
         // SAFETY: streams were initialized by deflateInit2_/inflateInit2_ in init()
         // (or are zeroed on the init() error path, in which case *End is a defined
         // no-op returning Z_STREAM_ERROR). Called exactly once via Drop.
-        unsafe {
+        yolo! {
             zlib::deflateEnd(&raw mut self.compress_stream);
             zlib::inflateEnd(&raw mut self.decompress_stream);
         }

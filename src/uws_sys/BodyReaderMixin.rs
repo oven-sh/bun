@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::marker::PhantomData;
 use core::mem;
 
@@ -133,7 +134,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         // SAFETY: type invariant — see doc comment above. `IntrusiveField::OFFSET`
         // is `offset_of!(Wrap, <field>)`, so the result is in-bounds and inherits
         // `wrap`'s provenance over the whole allocation.
-        unsafe { &mut *Wrap::field_of(wrap) }
+        yolo! { &mut *Wrap::field_of(wrap) }
     }
 
     fn on_data_generic<R: BodyResponse>(wrap: *mut Wrap, r: &mut R, chunk: &[u8], last: bool) {
@@ -156,7 +157,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         // SAFETY: wrap is the original heap-allocated pointer; the temporary
         // &mut to the mixin field above has ended, so on_error receives sole
         // ownership of the allocation and may heap::take it.
-        unsafe { Wrap::on_error(wrap) };
+        yolo! { Wrap::on_error(wrap) };
     }
 
     fn on_data(
@@ -181,12 +182,12 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                 // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
                 // Consider try_reserve in Phase B if graceful 500 on OOM is required.
                 body.extend_from_slice(chunk);
-                unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
+                yolo! { Wrap::on_body(wrap, body.as_slice(), resp)? };
             } else {
                 if chunk.len() > MAX_BODY_SIZE {
                     return Err(bun_core::err!(RequestBodyTooLarge));
                 }
-                unsafe { Wrap::on_body(wrap, chunk, resp)? };
+                yolo! { Wrap::on_body(wrap, chunk, resp)? };
             }
             // `body` drops here (was `defer body.deinit()` in Zig)
             Ok(())
@@ -213,7 +214,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
 
         // SAFETY: wrap is the original heap-allocated pointer; the &mut to
         // mixin.body above has ended; on_error may heap::take it.
-        unsafe { Wrap::on_error(wrap) };
+        yolo! { Wrap::on_error(wrap) };
     }
 
     fn on_invalid(wrap: *mut Wrap, r: AnyResponse) {
@@ -230,7 +231,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
 
         // SAFETY: wrap is the original heap-allocated pointer; the &mut to
         // mixin.body above has ended; on_error may heap::take it.
-        unsafe { Wrap::on_error(wrap) };
+        yolo! { Wrap::on_error(wrap) };
     }
 }
 

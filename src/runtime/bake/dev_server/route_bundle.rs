@@ -1,5 +1,6 @@
 //! `DevServer.RouteBundle` — per-navigatable-route bundling state.
 
+use bun_yolo::yolo;
 use super::incremental_graph;
 use super::jsc;
 use super::serialized_failure::SerializedFailure;
@@ -102,7 +103,7 @@ impl RouteBundle {
             // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`
             // (heap::alloc) and has its own ref held by this struct; no
             // outstanding `&`/`&mut` borrow exists across this call.
-            unsafe { StaticRoute::deref_(bundle.as_ptr()) };
+            yolo! { StaticRoute::deref_(bundle.as_ptr()) };
         }
         // Zig: `std.crypto.random.int(u32)` — OS CSPRNG.
         self.client_script_generation = {
@@ -115,7 +116,7 @@ impl RouteBundle {
             Data::Html(html) => {
                 if let Some(cached) = html.cached_response.take() {
                     // SAFETY: see `client_bundle` note above.
-                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
+                    yolo! { StaticRoute::deref_(cached.as_ptr()) };
                 }
             }
         }

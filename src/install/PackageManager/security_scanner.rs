@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::{ByteVecExt, VecExt};
 use std::collections::VecDeque;
@@ -959,7 +960,7 @@ fn attempt_security_scan_with_retry(
     // borrow held by the subprocess; `sleep_until` + `tick_raw` hold no
     // `&mut PackageManager` across `scanner_is_done`.
     let mgr: *mut PackageManager = scanner.manager;
-    unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
+    yolo! { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
     scanner.handle_results(
         &mut package_paths,
@@ -1016,7 +1017,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
         // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).
         // `finish_spawn` holds no Rust borrow on `self.json_writer` across `start()`
         // (it clones the `Rc` first), so this `&mut` is unique for the call.
-        unsafe { (*this).on_close_io(kind) };
+        yolo! { (*this).on_close_io(kind) };
     }
 }
 
@@ -1034,7 +1035,7 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
             // `to_process`; we hold one ref. `detach()` clears the exit handler
             // so a late callback won't touch a dangling `self`, then `deref()`
             // drops our ref (may free if last).
-            unsafe {
+            yolo! {
                 (*p).detach();
                 ThreadSafeRefCount::<Process>::deref(p);
             }
@@ -1183,7 +1184,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
-        let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
+        let pipe_rc = yolo! { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
         // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
         // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
         // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
@@ -1225,16 +1226,16 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut pipe = scopeguard::guard(pipe_ptr, |p| {
             // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
             // schedules uv_close + frees the allocation.
-            unsafe { uv::Pipe::close_and_destroy(p) };
+            yolo! { uv::Pipe::close_and_destroy(p) };
         });
         // `self.loop_()` already projects to the libuv `uv_loop_t*` on
         // Windows (see the `.uv_loop` projection in `loop_()`); pass through.
         let uv_loop = self.loop_();
         // SAFETY: *pipe was just heap-allocated above and is non-null.
-        if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
+        if let Some(e) = yolo! { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
             return Err(e.into());
         }
-        if let Some(e) = unsafe { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
+        if let Some(e) = yolo! { (**pipe).open(fds.1.unwrap().uv()) }.to_error(bun_sys::Tag::open)
         {
             return Err(e.into());
         }
@@ -1289,7 +1290,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             // SAFETY: `pipe_ptr` is the same allocation produced by
             // heap::alloc above and has not been freed; ownership transfers
             // here exactly once.
-            StdioResult::Buffer(unsafe { bun_core::heap::take(pipe_ptr) })
+            StdioResult::Buffer(yolo! { bun_core::heap::take(pipe_ptr) })
         })?;
 
         // Success: pipe ownership now lives in StaticPipeWriter; disarm the
@@ -1350,7 +1351,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SAFETY: `process` is the freshly-allocated intrusive `*mut Process`
         // (refcount == 1, owned by us); `parent` was just derived from
         // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
-        unsafe {
+        yolo! {
             (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
             (*parent).process = Some(process);
         }
@@ -1367,7 +1368,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // held across `start()` — `on_close_io` may `.take()` the field.
         let writer_local = writer.dupe_ref();
         // SAFETY: see `parent` note above.
-        unsafe { (*parent).json_writer = Some(writer) };
+        yolo! { (*parent).json_writer = Some(writer) };
 
         // errdefer if (this.json_writer) |w| { w.source.detach(); w.deref(); this.json_writer = null; }
         // PORT NOTE: guard mirrors the Zig errdefer over the FIELD (not a local),
@@ -1377,16 +1378,16 @@ impl<'a> SecurityScanSubprocess<'a> {
         let guard = scopeguard::guard(parent, |parent| {
             // SAFETY: `parent` points at the live `self` of `finish_spawn`; the
             // guard only fires on early return inside this fn.
-            if let Some(w) = unsafe { (*parent).json_writer.take() } {
+            if let Some(w) = yolo! { (*parent).json_writer.take() } {
                 // SAFETY: `w` holds the field's ref; sole live access path.
-                unsafe { (*w.as_ptr()).source.detach() };
+                yolo! { (*w.as_ptr()).source.detach() };
                 w.deref();
             }
         });
 
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
-        match unsafe { (*writer_local.as_ptr()).start() } {
+        match yolo! { (*writer_local.as_ptr()).start() } {
             Err(e) => {
                 writer_local.deref();
                 Output::err_generic(
@@ -1402,7 +1403,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SAFETY: `process` is live (we hold a ref); reached via the local raw
         // ptr per the single-provenance note. `watch_or_reap` may re-enter
         // `on_process_exit` synchronously (already-exited child).
-        match unsafe { (*process).watch_or_reap() } {
+        match yolo! { (*process).watch_or_reap() } {
             Err(_) => return Err(err!("ProcessWatchFailed")),
             Ok(_) => {}
         }
@@ -1415,7 +1416,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         if let Some(writer) = self.json_writer.take() {
             // SAFETY: `writer` holds the field's intrusive ref; sole access path
             // (single-threaded event loop callback).
-            unsafe { (*writer.as_ptr()).source.detach() };
+            yolo! { (*writer.as_ptr()).source.detach() };
             writer.deref();
             self.remaining_fds -= 1;
         }

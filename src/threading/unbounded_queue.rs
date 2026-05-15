@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::hint;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -115,22 +116,22 @@ unsafe impl<T: Linked> Node for T {
     #[inline]
     unsafe fn get_next(item: *mut Self) -> *mut Self {
         // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.load(Ordering::Relaxed) }
+        yolo! { (*T::link(item)).0.load(Ordering::Relaxed) }
     }
     #[inline]
     unsafe fn set_next(item: *mut Self, p: *mut Self) {
         // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.store(p, Ordering::Relaxed) }
+        yolo! { (*T::link(item)).0.store(p, Ordering::Relaxed) }
     }
     #[inline]
     unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
         // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.load(ordering) }
+        yolo! { (*T::link(item)).0.load(ordering) }
     }
     #[inline]
     unsafe fn atomic_store_next(item: *mut Self, p: *mut Self, ordering: Ordering) {
         // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
-        unsafe { (*T::link(item)).0.store(p, ordering) }
+        yolo! { (*T::link(item)).0.store(p, ordering) }
     }
 }
 
@@ -163,7 +164,7 @@ impl<T: Node> BatchIterator<T> {
         debug_assert!(!front.is_null()); // Zig: `orelse unreachable`
         // SAFETY: `front` is non-null (count > 0 invariant) and points to a
         // live node previously linked into this batch by `pop_batch`.
-        self.batch.front = unsafe { T::get_next(front) };
+        self.batch.front = yolo! { T::get_next(front) };
         self.batch.count -= 1;
         front
     }
@@ -242,13 +243,13 @@ impl<T: Node> UnboundedQueue<T> {
 
     pub fn push_batch(&self, first: *mut T, last: *mut T) {
         // SAFETY: caller guarantees `last` is a valid live node (Zig `*T` is non-null).
-        unsafe { T::set_next(last, ptr::null_mut()) };
+        yolo! { T::set_next(last, ptr::null_mut()) };
         if cfg!(debug_assertions) {
             let mut item = first;
             loop {
                 // SAFETY: `item` is reachable from `first` via the link chain,
                 // all of which the caller guarantees are valid.
-                let next_item = unsafe { T::get_next(item) };
+                let next_item = yolo! { T::get_next(item) };
                 if next_item.is_null() {
                     break;
                 }
@@ -260,7 +261,7 @@ impl<T: Node> UnboundedQueue<T> {
         if !old_back.is_null() {
             // SAFETY: `old_back` was the previous tail, still live (its `next`
             // is null and no consumer has popped past it yet — see `pop`).
-            unsafe { T::atomic_store_next(old_back, first, Ordering::Release) };
+            yolo! { T::atomic_store_next(old_back, first, Ordering::Release) };
         } else {
             self.front.0.store(first, Ordering::Release);
         }
@@ -273,7 +274,7 @@ impl<T: Node> UnboundedQueue<T> {
         }
         let next_item = loop {
             // SAFETY: `first` is non-null (checked above / from failed CAS below).
-            let next_ptr = unsafe { T::atomic_load_next(first, Ordering::Acquire) };
+            let next_ptr = yolo! { T::atomic_load_next(first, Ordering::Acquire) };
             match self.front.0.compare_exchange_weak(
                 first,
                 next_ptr,
@@ -317,7 +318,7 @@ impl<T: Node> UnboundedQueue<T> {
         let new_first = loop {
             // Wait for push/push_batch to set `next`.
             // SAFETY: `first` is the node we just popped; still valid until we return it.
-            let n = unsafe { T::atomic_load_next(first, Ordering::Acquire) };
+            let n = yolo! { T::atomic_load_next(first, Ordering::Acquire) };
             if !n.is_null() {
                 break n;
             }
@@ -350,7 +351,7 @@ impl<T: Node> UnboundedQueue<T> {
                 // Wait for push/push_batch to set `next`.
                 // SAFETY: `next_item` is on the chain from `first` to `last`; producer
                 // guarantees it stays valid until consumer observes its `next`.
-                let n = unsafe { T::atomic_load_next(next_item, Ordering::Acquire) };
+                let n = yolo! { T::atomic_load_next(next_item, Ordering::Acquire) };
                 if !n.is_null() {
                     break n;
                 }

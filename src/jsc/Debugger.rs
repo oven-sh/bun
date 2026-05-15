@@ -7,6 +7,7 @@
 //! (`bun_runtime::test_runner`) — a forward-dep cycle — so it dispatches
 //! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
+use bun_yolo::yolo;
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
@@ -115,7 +116,7 @@ impl BunFrontendDevServerAgent {
         if let Some(handle) = self.handle_mut() {
             // SAFETY: `trigger_files` is a valid contiguous slice for the call;
             // `(ptr, len)` pair derived from it.
-            unsafe {
+            yolo! {
                 ffi::InspectorBunFrontendDevServerAgent__notifyBundleStart(
                     handle,
                     dev_server_id.get(),
@@ -449,12 +450,12 @@ impl Debugger {
             if wait == Wait::Shortly {
                 let uv_loop = this.uv_loop();
                 // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
-                unsafe { uv::uv_update_time(uv_loop) };
+                yolo! { uv::uv_update_time(uv_loop) };
                 // Spec: `bun.handleOom(allocator.create(Timer))` + zero-init.
                 let timer: *mut uv::Timer =
                     bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed()));
                 // SAFETY: `timer` freshly allocated; `uv_loop` valid.
-                unsafe { (*timer).init(uv_loop) };
+                yolo! { (*timer).init(uv_loop) };
 
                 extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
                     // SAFETY: `vm` is the per-thread singleton; called on the
@@ -465,7 +466,7 @@ impl Debugger {
                     }
                     // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
                     // at offset 0); `deinit_timer` matches `uv_close_cb`.
-                    unsafe {
+                    yolo! {
                         uv::uv_close(handle.cast(), Some(deinit_timer));
                     }
                 }
@@ -473,10 +474,10 @@ impl Debugger {
                     // SAFETY: `handle` is the `Box<Timer>` allocated above
                     // (cast through `uv_handle_t` at offset 0); this is the
                     // sole owner reclaiming it after `uv_close` completes.
-                    drop(unsafe { bun_core::heap::take(handle.cast::<uv::Timer>()) });
+                    drop(yolo! { bun_core::heap::take(handle.cast::<uv::Timer>()) });
                 }
                 // SAFETY: `timer` initialized above.
-                unsafe {
+                yolo! {
                     (*timer).start(
                         WAIT_FOR_CONNECTION_DELAY_MS as u64,
                         0,
@@ -699,7 +700,7 @@ impl Debugger {
         // wait-loop) and reuse the raw pointer for the cross-thread `wakeup()`
         // calls below. `wakeup()` takes `&self` and is the documented
         // thread-safe path (event_loop.rs:779).
-        let other_loop: *mut crate::event_loop::EventLoop = unsafe { (*other_vm).event_loop() };
+        let other_loop: *mut crate::event_loop::EventLoop = yolo! { (*other_vm).event_loop() };
         let global: &JSGlobalObject = this.global();
 
         // PORT NOTE: copy the four scalars we need from the parent VM's
@@ -710,7 +711,7 @@ impl Debugger {
         // SAFETY: `other_vm` live; short-lived shared borrow of `debugger`
         // ends before any other access to `*other_vm`.
         let (ctx_id, is_connect, from_env, path_or_port) =
-            match unsafe { (*other_vm).debugger.as_deref() } {
+            match yolo! { (*other_vm).debugger.as_deref() } {
                 Some(d) => (
                     d.script_execution_context_id,
                     d.mode == Mode::Connect,
@@ -754,14 +755,14 @@ impl Debugger {
 
         // SAFETY: `other_loop` is the parent VM's event loop, live for process
         // lifetime; `wakeup()` takes `&self` and is thread-safe.
-        unsafe { (*other_loop).wakeup() };
+        yolo! { (*other_loop).wakeup() };
         // Spec re-reads `this.eventLoop()` here (zig:219) rather than reusing
         // the cached `loop` — `vm.event_loop` may have flipped between
         // `regular_event_loop` and `macro_event_loop` inside the re-entrant JS
         // above. `event_loop_mut()` re-reads the slot on every call.
         this.event_loop_mut().tick();
         // SAFETY: see above.
-        unsafe { (*other_loop).wakeup() };
+        yolo! { (*other_loop).wakeup() };
 
         loop {
             // Each call forms a fresh short-lived `&`/`&mut` (via the safe
@@ -1025,7 +1026,7 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `agent` is a live C++ handle (just stored above).
-            unsafe { (hooks.retroactively_report_discovered_tests)(agent) };
+            yolo! { (hooks.retroactively_report_discovered_tests)(agent) };
         }
     }
 }

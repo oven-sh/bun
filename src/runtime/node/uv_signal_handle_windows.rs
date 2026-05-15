@@ -3,6 +3,7 @@
 //! the VM's libuv loop; the rest of `sys/windows/` is JSC-free.
 
 #[cfg(windows)]
+use bun_yolo::yolo;
 use core::ffi::c_int;
 
 #[cfg(windows)]
@@ -23,24 +24,24 @@ pub extern "C" fn Bun__UVSignalHandle__init(
 
     // SAFETY: `signal` is a freshly heap-allocated, properly aligned uv_signal_t and
     // `uv_loop()` returns the VM's live libuv loop.
-    let mut rc = unsafe { libuv::uv_signal_init(global.bun_vm().uv_loop(), signal) };
+    let mut rc = yolo! { libuv::uv_signal_init(global.bun_vm().uv_loop(), signal) };
     if rc.errno().is_some() {
         // SAFETY: `signal` was just allocated via heap::into_raw above and never handed out.
-        drop(unsafe { bun_core::heap::take(signal) });
+        drop(yolo! { bun_core::heap::take(signal) });
         return core::ptr::null_mut();
     }
 
     // SAFETY: `signal` was successfully initialized by uv_signal_init above.
-    rc = unsafe { libuv::uv_signal_start(signal, Some(callback), signal_num) };
+    rc = yolo! { libuv::uv_signal_start(signal, Some(callback), signal_num) };
     if rc.errno().is_some() {
         // SAFETY: `signal` is an initialized handle; uv_close will invoke the cb once
         // the handle is fully closed, at which point we free the allocation.
-        unsafe { libuv::uv_close(signal.cast(), Some(free_with_default_allocator)) };
+        yolo! { libuv::uv_close(signal.cast(), Some(free_with_default_allocator)) };
         return core::ptr::null_mut();
     }
 
     // SAFETY: `signal` is an active, initialized handle.
-    unsafe { libuv::uv_unref(signal.cast()) };
+    yolo! { libuv::uv_unref(signal.cast()) };
 
     signal
 }
@@ -51,7 +52,7 @@ extern "C" fn free_with_default_allocator(handle: *mut libuv::uv_handle_t) {
     // libuv's `uv_close_cb` pointer type.
     // SAFETY: `handle` was allocated via heap::into_raw(Box<uv_signal_t>) in
     // Bun__UVSignalHandle__init; uv_close guarantees the handle is no longer in use.
-    drop(unsafe { bun_core::heap::take(handle.cast::<libuv::uv_signal_t>()) });
+    drop(yolo! { bun_core::heap::take(handle.cast::<libuv::uv_signal_t>()) });
 }
 
 // C++ declaration (`BunProcess.cpp:1177`):
@@ -65,9 +66,9 @@ pub extern "C" fn Bun__UVSignalHandle__close(
     signal: *mut libuv::uv_signal_t,
 ) -> *mut libuv::uv_signal_t {
     // SAFETY: `signal` is a live handle previously returned by Bun__UVSignalHandle__init.
-    let _ = unsafe { libuv::uv_signal_stop(signal) };
+    let _ = yolo! { libuv::uv_signal_stop(signal) };
     // SAFETY: `signal` is an initialized handle; the close cb frees the backing allocation.
-    unsafe { libuv::uv_close(signal.cast(), Some(free_with_default_allocator)) };
+    yolo! { libuv::uv_close(signal.cast(), Some(free_with_default_allocator)) };
     core::ptr::null_mut()
 }
 

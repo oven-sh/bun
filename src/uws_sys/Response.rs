@@ -10,6 +10,7 @@
 //! - Offers safe casting between Rust and C representations
 //! - Maintains zero-cost abstractions over the underlying µWebSockets API
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -76,7 +77,7 @@ impl<const SSL: bool> Response<SSL> {
     fn as_raw(&mut self) -> &mut c::uws_res {
         // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
         // ZSTs over the same C++ object; the borrow reborrows `&mut self`.
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<c::uws_res>() }
+        yolo! { &mut *std::ptr::from_mut::<Self>(self).cast::<c::uws_res>() }
     }
 
     #[inline]
@@ -86,7 +87,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn end(&mut self, data: &[u8], close_connection: bool) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
+        yolo! {
             c::uws_res_end(
                 Self::ssl_flag(),
                 self.downcast(),
@@ -99,7 +100,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn try_end(&mut self, data: &[u8], total: usize, close_: bool) -> bool {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
+        yolo! {
             c::uws_res_try_end(
                 Self::ssl_flag(),
                 self.downcast(),
@@ -130,7 +131,7 @@ impl<const SSL: bool> Response<SSL> {
     pub fn state(&self) -> State {
         // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
         // ZSTs (both `UnsafeCell<[u8; 0]>`); the reborrow is a no-op cast.
-        c::uws_res_state(Self::ssl_flag() as c_int, unsafe {
+        c::uws_res_state(Self::ssl_flag() as c_int, yolo! {
             &*std::ptr::from_ref::<Self>(self).cast::<c::uws_res>()
         })
     }
@@ -161,7 +162,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
+        yolo! {
             c::uws_res_write_status(
                 Self::ssl_flag(),
                 self.downcast(),
@@ -173,7 +174,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn write_header(&mut self, key: &[u8], value: &[u8]) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
+        yolo! {
             c::uws_res_write_header(
                 Self::ssl_flag(),
                 self.downcast(),
@@ -187,7 +188,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn write_header_int(&mut self, key: &[u8], value: u64) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
+        yolo! {
             c::uws_res_write_header_int(
                 Self::ssl_flag(),
                 self.downcast(),
@@ -226,7 +227,7 @@ impl<const SSL: bool> Response<SSL> {
     pub fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        match unsafe {
+        match yolo! {
             c::uws_res_write(
                 Self::ssl_flag(),
                 self.downcast(),
@@ -294,7 +295,7 @@ impl<const SSL: bool> Response<SSL> {
         let size = c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.as_raw(), &mut buf);
         if size > 0 {
             // SAFETY: uws populated `buf` with `size` bytes valid while the response lives.
-            Some(unsafe { bun_core::ffi::slice(buf, size) })
+            Some(yolo! { bun_core::ffi::slice(buf, size) })
         } else {
             None
         }
@@ -314,7 +315,7 @@ impl<const SSL: bool> Response<SSL> {
             // borrows uWS-owned memory valid while the response lives.
             Some(SocketAddress {
                 // SAFETY: uws populated ip_ptr/ip_len with bytes valid while the response lives.
-                ip: unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
+                ip: yolo! { bun_core::ffi::slice(ip_ptr, ip_len) },
                 port,
                 is_ipv6,
             })
@@ -350,7 +351,7 @@ impl<const SSL: bool> Response<SSL> {
             }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
             // is a ZST handler (asserted in `thunk::zst`).
-            unsafe {
+            yolo! {
                 thunk::zst::<H>()(
                     data.cast::<U>(),
                     amount,
@@ -393,7 +394,7 @@ impl<const SSL: bool> Response<SSL> {
             }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
             // is a ZST handler (asserted in `thunk::zst`).
-            unsafe {
+            yolo! {
                 thunk::zst::<H>()(
                     user_data.cast::<U>(),
                     thunk::handle_mut(Response::<SSL>::cast_res(this)),
@@ -428,7 +429,7 @@ impl<const SSL: bool> Response<SSL> {
             }
             // SAFETY: uWS callback contract — `this` is live for the call, `H`
             // is a ZST handler (asserted in `thunk::zst`).
-            unsafe {
+            yolo! {
                 thunk::zst::<H>()(
                     user_data.cast::<U>(),
                     thunk::handle_mut(Response::<SSL>::cast_res(this)),
@@ -472,7 +473,7 @@ impl<const SSL: bool> Response<SSL> {
             }
             // SAFETY: uWS callback contract — `this` live, `chunk_ptr[..len]`
             // valid for the call, `H` is a ZST handler (asserted in `thunk::zst`).
-            unsafe {
+            yolo! {
                 thunk::zst::<H>()(
                     user_data.cast::<U>(),
                     thunk::handle_mut(Response::<SSL>::cast_res(this)),
@@ -502,7 +503,7 @@ impl<const SSL: bool> Response<SSL> {
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
         extern "C" fn handle<F: FnOnce()>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack `ManuallyDrop<F>` valid for this synchronous call.
-            let f = unsafe { core::ptr::read(user_data.cast::<F>()) };
+            let f = yolo! { core::ptr::read(user_data.cast::<F>()) };
             // PERF(port): was @call(.always_inline)
             f();
         }
@@ -524,7 +525,7 @@ impl<const SSL: bool> Response<SSL> {
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
         extern "C" fn handle<U>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
-            let ctx = unsafe { &*user_data.cast::<Ctx<U>>() };
+            let ctx = yolo! { &*user_data.cast::<Ctx<U>>() };
             // PERF(port): was @call(.always_inline)
             (ctx.0)(ctx.1);
         }
@@ -547,7 +548,7 @@ impl<const SSL: bool> Response<SSL> {
         ctx: Option<&mut WebSocketUpgradeContext>,
     ) -> *mut Socket {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
+        yolo! {
             c::uws_res_upgrade(
                 Self::ssl_flag(),
                 self.downcast(),

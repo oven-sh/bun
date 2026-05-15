@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_core::MutableString;
@@ -332,7 +333,7 @@ impl S3HttpSimpleTask {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract. Dropping
         // `this` at scope exit replaces Zig's `defer this.deinit()`.
-        let mut this = unsafe { bun_core::heap::take(this) };
+        let mut this = yolo! { bun_core::heap::take(this) };
 
         if !this.result.is_success() {
             this.error_with_body(ErrorType::Failure)?;
@@ -434,11 +435,11 @@ impl S3HttpSimpleTask {
     ) {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
         // HTTP thread until enqueued back to the JS thread below.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         let is_done = !result.has_more;
         // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`, which
         // lives for the task's lifetime — extending to `'static` here is sound for self-reference.
-        this.result = unsafe { result.detach_lifetime() };
+        this.result = yolo! { result.detach_lifetime() };
         // PORT NOTE: Zig does `this.http = async_http.*` (bitwise struct overwrite, no destructor
         // on either side). `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
         // `EntryList`s), so a plain Rust `=` here would (a) drop the old `this.http`, freeing heap
@@ -449,7 +450,7 @@ impl S3HttpSimpleTask {
         // side must free only its outer allocation (TrivialDeinit), mirroring AsyncHTTP.zig.
         // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
         // `this.http` was previously initialised in `execute_simple_s3_request`.
-        unsafe { core::ptr::write(this.http.as_mut_ptr(), core::ptr::read(async_http)) };
+        yolo! { core::ptr::write(this.http.as_mut_ptr(), core::ptr::read(async_http)) };
         // PORT NOTE: Zig's `this.response_buffer = async_http.response_buffer.*` is a no-op
         // bitwise self-copy (`async_http.response_buffer == &this.response_buffer`). In Rust the
         // equivalent `=` would drop the live Vec before re-installing a stale bitwise duplicate
@@ -491,7 +492,7 @@ impl Drop for S3HttpSimpleTask {
         // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
         // Zig's `deinit` calls only `http.clearData()` and never runs a full AsyncHTTP destructor,
         // so we intentionally do NOT `assume_init_drop` here.
-        unsafe { self.http.assume_init_mut() }.clear_data();
+        yolo! { self.http.assume_init_mut() }.clear_data();
     }
 }
 
@@ -612,7 +613,7 @@ pub fn execute_simple_s3_request(
         poll_ref: KeepAlive::init(),
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; exclusive access here.
-    let task = unsafe { &mut *task_ptr };
+    let task = yolo! { &mut *task_ptr };
     task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
         bun_io::AllocatorType::Js,
     ));
@@ -628,9 +629,9 @@ pub fn execute_simple_s3_request(
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
     // passed raw slices with the same ownership contract.
-    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let url = URL::parse(yolo! { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
     let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
+        yolo! { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     // SAFETY (lifetime extension): unlike the borrows above, `body` is NOT stored in the task —
     // it is caller-owned (e.g. multipart upload part data / multipart_upload_list). The Zig source
     // (.zig:431) passes the caller's slice directly with the same implicit contract: every call
@@ -638,9 +639,9 @@ pub fn execute_simple_s3_request(
     // lifetime-extension pattern, retained verbatim to match Zig semantics.
     // TODO(port): take body as `*const [u8]` in AsyncHTTP::init (or store an owned copy on the
     // task) to drop the `'static` pretence.
-    let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(options.body) };
+    let body: &'static [u8] = yolo! { bun_ptr::detach_lifetime(options.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(URL::parse(unsafe {
+        Some(URL::parse(yolo! {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
     } else {
@@ -672,7 +673,7 @@ pub fn execute_simple_s3_request(
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
+    yolo! { task.http.assume_init_mut() }.schedule(&mut batch);
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

@@ -3,6 +3,7 @@
 //! ** you must also increment the `expected_version` in RuntimeTranspilerCache **
 //! ** IMPORTANT **
 
+use bun_yolo::yolo;
 use bun_ast::ImportRecord;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
 use bun_core::Output;
@@ -379,7 +380,7 @@ pub mod Runtime {
             // NOTE on the field) — the caller that populated it guarantees the
             // pointee is unique to this parse and outlives `Features`; Zig held
             // `*RuntimeTranspilerCache` and mutated freely.
-            self.runtime_transpiler_cache.map(|p| unsafe { &mut *p })
+            self.runtime_transpiler_cache.map(|p| yolo! { &mut *p })
         }
 
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
@@ -609,7 +610,7 @@ pub mod Runtime {
             let mut out = vec![0u8; enc.calc_size(bb.len())];
             let s = enc.encode(&mut out, &bb); // catch {}
             // SAFETY: STANDARD_ALPHABET_CHARS is pure ASCII; encoder output contains only those bytes.
-            f.write_str(unsafe { core::str::from_utf8_unchecked(s) })
+            f.write_str(yolo! { core::str::from_utf8_unchecked(s) })
         }
     }
 }
@@ -1160,7 +1161,7 @@ macro_rules! generated_symbol_name {
         };
         // SAFETY: `__NAME` is valid UTF-8 (a `&str` literal), '_' and the suffix
         // bytes (drawn from the lowercase-alnum CHARS table) are all ASCII.
-        const __OUT: &str = unsafe { ::core::str::from_utf8_unchecked(&__BYTES) };
+        const __OUT: &str = yolo! { ::core::str::from_utf8_unchecked(&__BYTES) };
         __OUT
     }};
 }
@@ -1591,7 +1592,7 @@ impl<'arena> ScopeOrder<'arena> {
     }
     /// Arena-backed handle to the scope. `StoreRef` has safe `Deref`/`DerefMut`,
     /// so callers read `order.scope_ref().kind` instead of open-coding
-    /// `unsafe { &*order.scope }` at every visit-pass check.
+    /// `yolo! { &*order.scope }` at every visit-pass check.
     #[inline]
     pub fn scope_ref(&self) -> js_ast::StoreRef<Scope> {
         // `scope` is always set from a live arena allocation in
@@ -2429,7 +2430,7 @@ impl ReactRefresh<'_> {
         // pointee is live and at a stable address for any `'s` not outlasting
         // that frame. The storage is disjoint from `*self`, so `&mut self`
         // calls between accessor uses do not invalidate the returned borrow.
-        self.hook_ctx_storage.map(|p| unsafe { &mut *p.as_ptr() })
+        self.hook_ctx_storage.map(|p| yolo! { &mut *p.as_ptr() })
     }
 
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42

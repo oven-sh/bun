@@ -1,5 +1,6 @@
 //! Port of `src/string/immutable/unicode.zig`.
 
+use bun_yolo::yolo;
 use crate::string::immutable::{
     self as strings, ASCII_VECTOR_SIZE, U3Fast, UNICODE_REPLACEMENT as unicode_replacement,
     eql_comptime_ignore_len as eql_ignore_len, first_non_ascii, first_non_ascii16,
@@ -30,7 +31,7 @@ crate::declare_scope!(strings, hidden);
 fn simdutf_utf16le_into_allocated(list: &mut Vec<u8>, utf16: &[u16]) -> simdutf::SIMDUTFResult {
     // SAFETY: simdutf only writes into the allocated output buffer; on
     // non-SURROGATE it wrote `result.count` bytes starting at offset 0.
-    unsafe {
+    yolo! {
         let result = simdutf::convert::utf16::to::utf8::with_errors::le(
             utf16,
             crate::vec::allocated_bytes_mut(list),
@@ -52,7 +53,7 @@ fn append_u8_as_u16(dst: &mut Vec<u16>, src: &[u8]) {
         return;
     }
     // SAFETY: copy_u8_into_u16 fills exactly src.len() slots.
-    copy_u8_into_u16(unsafe { crate::vec::writable_slice(dst, src.len()) }, src);
+    copy_u8_into_u16(yolo! { crate::vec::writable_slice(dst, src.len()) }, src);
 }
 
 /// Narrow-append `src` Latin-1/ASCII `u16` code units onto `dst` as bytes.
@@ -63,7 +64,7 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
         return;
     }
     // SAFETY: copy_u16_into_u8 fills exactly src.len() bytes.
-    copy_u16_into_u8(unsafe { crate::vec::writable_slice(dst, src.len()) }, src);
+    copy_u16_into_u8(yolo! { crate::vec::writable_slice(dst, src.len()) }, src);
 }
 
 // ───── canonical WTF-8 single-rune decode (Zig: unicode.zig decodeWTF8RuneT) ─────
@@ -819,7 +820,7 @@ pub(super) fn eql_utf16(self_: &[u8], other: &[u16]) -> bool {
     }
 
     // SAFETY: comparing raw bytes; `other` has `self_.len()` u16s == `self_.len()*2` bytes.
-    unsafe {
+    yolo! {
         libc::memcmp(
             self_.as_ptr().cast::<core::ffi::c_void>(),
             other.as_ptr().cast::<core::ffi::c_void>(),
@@ -1819,7 +1820,7 @@ pub fn element_length_utf8_into_utf16(utf8: &[u8]) -> usize {
         // preserved as a TODO; this branch is dead when use_simdutf is true.
         // TODO(port): dead non-simdutf path passes wrong slice type in Zig source
         // SAFETY: dead path (use_simdutf always true); preserved verbatim from Zig which passes wrong slice type
-        let replacement = utf16_codepoint(unsafe {
+        let replacement = utf16_codepoint(yolo! {
             core::slice::from_raw_parts(
                 utf8_remaining.as_ptr().cast::<u16>(),
                 utf8_remaining.len() / 2,

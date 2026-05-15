@@ -3,6 +3,7 @@
 //! builtin stores the `NodeId` of its owning Cmd and every method takes
 //! `&Interpreter`.
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_ptr::AsCtxPtr;
 use core::ffi::c_char;
@@ -374,7 +375,7 @@ impl BuiltinIO {
                 // SAFETY: caller contract — shell env outlives the Cmd node
                 // (single-threaded); `captured` points into a live
                 // `ShellExecEnv` Bufio.
-                unsafe {
+                yolo! {
                     let captured = match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
                         IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
@@ -466,7 +467,7 @@ impl Builtin {
     /// `args: Vec<Vec<u8>>`, NUL-terminated by `Cmd::transition_to_exec` and
     /// outliving this `Builtin` (the `Cmd` slot is freed only after
     /// `Builtin::done`). Localises the per-callsite
-    /// `unsafe { CStr::from_ptr(...) }` that previously appeared at every
+    /// `yolo! { CStr::from_ptr(...) }` that previously appeared at every
     /// builtin's flag/operand parser.
     ///
     /// The returned slice's lifetime is intentionally **decoupled from
@@ -481,7 +482,7 @@ impl Builtin {
         let p: *const c_char = self.args[idx];
         // SAFETY: see doc comment — `p` is a valid NUL-terminated pointer
         // into the Cmd's argv storage, live for the Builtin's lifetime.
-        unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()
+        yolo! { core::ffi::CStr::from_ptr(p) }.to_bytes()
     }
 
     /// Borrow `argv[1..][idx]` as `&ZStr` (NUL-terminated view).
@@ -493,7 +494,7 @@ impl Builtin {
     pub fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
         let p: *const c_char = self.args[idx];
         // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
-        bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
+        bun_core::ZStr::from_cstr(yolo! { core::ffi::CStr::from_ptr(p) })
     }
 
     /// Construct a `Builtin` for `kind`, install it into the owning Cmd's
@@ -546,7 +547,7 @@ impl Builtin {
     fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         // SAFETY: `node` points into the AST arena which outlives every state
         // node (see Cmd::next).
-        let node: &ast::Cmd = unsafe { &*interp.as_cmd(cmd).node };
+        let node: &ast::Cmd = yolo! { &*interp.as_cmd(cmd).node };
         let redirect = node.redirect;
 
         match &node.redirect_file {
@@ -749,7 +750,7 @@ impl Builtin {
                 {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
-                    let body = unsafe { &mut *body };
+                    let body = yolo! { &mut *body };
                     // Spec: `body.* == .Blob and !body.Blob.needsToReadFile()`.
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
@@ -849,7 +850,7 @@ impl Builtin {
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
+            let stderr = yolo! {
                 interp
                     .as_cmd_mut(cmd)
                     .base
@@ -935,7 +936,7 @@ impl Builtin {
             IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        yolo! { out.write_no_io_to(shell, buf) }
     }
 
     /// Shell exec env of the owning Cmd.

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
@@ -220,7 +221,7 @@ pub fn enqueue_tarball_for_download(
         // is reachable.
         let task: *mut NetworkTask = task;
         // SAFETY: `task` is the unique handle to a freshly-vended pool slot.
-        unsafe { (*task).schedule(&mut this.network_tarball_batch) };
+        yolo! { (*task).schedule(&mut this.network_tarball_batch) };
         if this.network_tarball_batch.len > 0 {
             let _ = this.schedule_tasks();
         }
@@ -357,7 +358,7 @@ pub fn enqueue_parse_npm_package(
 ) -> *mut ThreadPool::Task {
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
-    unsafe {
+    yolo! {
         task.write(Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
@@ -422,7 +423,7 @@ pub fn enqueue_package_for_download(
         // PORT NOTE: reshaped for borrowck — see `enqueue_tarball_for_download`.
         let task: *mut NetworkTask = task;
         // SAFETY: `task` is the unique handle to a freshly-vended pool slot.
-        unsafe { (*task).schedule(&mut this.network_tarball_batch) };
+        yolo! { (*task).schedule(&mut this.network_tarball_batch) };
         if this.network_tarball_batch.len > 0 {
             let _ = this.schedule_tasks();
         }
@@ -525,7 +526,7 @@ pub fn enqueue_dependency_to_root(
                     // SAFETY: `self.manager` is the raw provenance root set
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
-                    let manager = unsafe { &mut *self.manager };
+                    let manager = yolo! { &mut *self.manager };
                     if manager.pending_task_count() > 0 {
                         // Zig: `runTasks(void, {}, .{ .onExtract = {}, ... }, false, log_level)`
                         // — all callbacks `void`. `VoidRunTasksCallbacks` (below)
@@ -568,7 +569,7 @@ pub fn enqueue_dependency_to_root(
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
             // `Closure::is_done`, so the callback's `&mut *closure.manager`
             // is the unique live borrow.
-            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
+            yolo! { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
 
             if this.options.log_level.show_progress() {
                 this.end_progress_bar();
@@ -618,7 +619,7 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
         "Enqueue patch task: 0x{:x} {}",
         task as usize,
         // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
-        unsafe { (*task).callback.tag_name() }
+        yolo! { (*task).callback.tag_name() }
     );
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
@@ -635,10 +636,10 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
         "Enqueue patch task pre: 0x{:x} {}",
         task as usize,
         // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
-        unsafe { (*task).callback.tag_name() }
+        yolo! { (*task).callback.tag_name() }
     );
     // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
-    unsafe { (*task).pre = true };
+    yolo! { (*task).pre = true };
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
     }
@@ -954,7 +955,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                                 ResolvedPackageTask::PatchTask(patch_task) => {
                                     // SAFETY: `patch_task` is a non-null `heap::alloc`.
-                                    let cb = unsafe { &(*patch_task).callback };
+                                    let cb = yolo! { &(*patch_task).callback };
                                     if cb.is_calc_hash()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::CalcPatchHash
@@ -1040,13 +1041,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     // borrow's address; `options` is disjoint
                                     // from `manifests`.
                                     let scope: *const crate::npm::registry::Scope =
-                                        unsafe { &(*this_ptr).options }
+                                        yolo! { &(*this_ptr).options }
                                             .scope_for_package_name(name_str);
                                     // SAFETY: `manifests` projected from
                                     // `this_ptr`; `cache_ctx` was snapshotted
                                     // before `this_ptr` so the lookup holds
                                     // only this disjoint field borrow.
-                                    if let Some(manifest) = unsafe {
+                                    if let Some(manifest) = yolo! {
                                         (*this_ptr).manifests.by_name_hash_allow_expired(
                                             cache_ctx,
                                             &*scope,
@@ -1115,7 +1116,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 if let Some(new_resolve_result) =
                                                     get_or_put_resolved_package_with_find_result(
                                                         // SAFETY: see `this_ptr` note above.
-                                                        unsafe { &mut *this_ptr },
+                                                        yolo! { &mut *this_ptr },
                                                         name_hash,
                                                         name,
                                                         dependency,
@@ -1163,13 +1164,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
                                 // resets every defaulted field; `write_init` mirrors that
                                 // (callback is `= undefined` and overwritten by `for_manifest`).
-                                unsafe {
+                                yolo! {
                                     NetworkTask::write_init(network_task, task_id, this_ptr, None);
                                 }
 
                                 let scope = this.scope_for_package_name(name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
-                                unsafe {
+                                yolo! {
                                     (*network_task).for_manifest(
                                         name_str,
                                         scope,
@@ -1545,7 +1546,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             // for the enqueue callees below do not conflict.
             // SAFETY: the enqueue callees copy `url` into the filename store
             // before any `string_bytes` resize.
-            let url = unsafe {
+            let url = yolo! {
                 detach_lifetime(match &tarball.uri {
                     dependency::tarball::Uri::Local(path) => this.lockfile.str(path),
                     dependency::tarball::Uri::Remote(url) => this.lockfile.str(url),
@@ -1660,7 +1661,7 @@ fn init_extract_task(
     // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
     // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
     // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
+    yolo! {
         task.write(Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
@@ -1695,7 +1696,7 @@ pub fn enqueue_extract_npm_package(
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
     // SAFETY: init_extract_task returns a valid *mut Task
-    unsafe { &raw mut (*init_extract_task(this, tarball, network_task)).threadpool_task }
+    yolo! { &raw mut (*init_extract_task(this, tarball, network_task)).threadpool_task }
 }
 
 /// Allocate the extract Task up front so the streaming extractor can
@@ -1775,7 +1776,7 @@ fn enqueue_git_clone(
                 .unwrap();
             let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
             // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
-            let mut pt = unsafe { bun_core::heap::take(pt) };
+            let mut pt = yolo! { bun_core::heap::take(pt) };
             pt.callback.apply_mut().task_id = Some(task_id);
             Some(pt)
         } else {
@@ -1786,7 +1787,7 @@ fn enqueue_git_clone(
     };
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
     // SAFETY: `get_init` just fully initialized the slot.
-    unsafe { &raw mut (*task).threadpool_task }
+    yolo! { &raw mut (*task).threadpool_task }
 }
 
 pub fn enqueue_git_checkout(
@@ -1804,7 +1805,7 @@ pub fn enqueue_git_checkout(
     // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
     // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
     // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
+    yolo! {
         task.write(Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
@@ -1959,7 +1960,7 @@ fn enqueue_local_tarball(
     };
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
     // SAFETY: `get_init` just fully initialized the slot.
-    unsafe { &raw mut (*task).threadpool_task }
+    yolo! { &raw mut (*task).threadpool_task }
 }
 
 fn update_name_and_name_hash_from_version_replacement(
@@ -2038,8 +2039,8 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.lockfile`.
         this.to_update
             // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+            && yolo! { &*(*this_ptr).lockfile }
+                .is_root_dependency(yolo! { &mut *this_ptr }, dependency_id)
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
                 || this.updating_packages.contains(
@@ -2095,9 +2096,9 @@ fn get_or_put_resolved_package_with_find_result(
     let this_ptr: *mut PackageManager = this;
     // SAFETY: `from_npm` reads `pm` fields disjoint from `pm.lockfile` (options /
     // updating_packages); the raw split mirrors Zig's aliased `*PackageManager`.
-    let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(Package::from_npm(
-        unsafe { &mut *this_ptr },
-        unsafe { &mut *(*this_ptr).lockfile },
+    let package = yolo! { &mut *(*this_ptr).lockfile }.append_package(Package::from_npm(
+        yolo! { &mut *this_ptr },
+        yolo! { &mut *(*this_ptr).lockfile },
         this.log_mut(),
         manifest,
         find_result.version,
@@ -2115,7 +2116,7 @@ fn get_or_put_resolved_package_with_find_result(
         // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
         // `lockfile.exact_pinned` is disjoint from `package` (returned
         // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
+        yolo! { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
     }
     // PORT NOTE: Zig used `defer successFn(...)`. Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
@@ -2123,10 +2124,10 @@ fn get_or_put_resolved_package_with_find_result(
     let mut guard = scopeguard::guard((this_ptr, package.meta.id), |(this_ptr, pkg_id)| {
         // SAFETY: `this_ptr` came from the live exclusive `this` borrow; the
         // guard fires after all reborrows of `this` below have ended.
-        success_fn(unsafe { &mut *this_ptr }, dependency_id, pkg_id);
+        success_fn(yolo! { &mut *this_ptr }, dependency_id, pkg_id);
     });
     // SAFETY: see above — sole live `&mut PackageManager` until scope exit.
-    let this: &mut PackageManager = unsafe { &mut *guard.0 };
+    let this: &mut PackageManager = yolo! { &mut *guard.0 };
     // PORT NOTE: Zig `defer` (not errdefer) — scopeguard runs on ALL exits, never disarmed.
 
     // non-null if the package is in "patchedDependencies"
@@ -2418,13 +2419,13 @@ fn get_or_put_resolved_package(
             let name_str = this.lockfile.str_detached(&name);
 
             let scope = bun_ptr::BackRef::new(
-                unsafe { &(*this_ptr).options }.scope_for_package_name(name_str),
+                yolo! { &(*this_ptr).options }.scope_for_package_name(name_str),
             );
             // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
             // only that disjoint field borrow alongside the shared `options`
             // / `lockfile` projections above. `scope` points into
             // `(*this_ptr).options`, disjoint from `manifests`.
-            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests }).by_name_hash(
+            let Some(manifest) = (yolo! { &mut (*this_ptr).manifests }).by_name_hash(
                 cache_ctx,
                 scope.get(),
                 name_hash,
@@ -2570,7 +2571,7 @@ fn get_or_put_resolved_package(
                 bun_ptr::BackRef::new(manifest);
             get_or_put_resolved_package_with_find_result(
                 // SAFETY: see `this_ptr` note above.
-                unsafe { &mut *this_ptr },
+                yolo! { &mut *this_ptr },
                 name_hash,
                 name,
                 dependency,
@@ -2746,7 +2747,7 @@ fn get_or_put_resolved_package(
             // into the lockfile string buffer before any other mutation.
             // `version.tag == Symlink`.
             let link_dir =
-                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+                yolo! { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
             let symlink_path = this.lockfile.str_detached(version.symlink());
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),

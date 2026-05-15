@@ -1,6 +1,7 @@
 //! State node for a shell script. Used for the top-level script as well as
 //! command-substitution and subshell bodies.
 
+use bun_yolo::yolo;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
@@ -45,7 +46,7 @@ impl Script {
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
+            node: yolo! { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
             io,
             state: ScriptState::default(),
         }));

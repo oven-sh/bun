@@ -1,5 +1,6 @@
 //! This is the code for the object returned by Bun.listen().
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::size_of;
@@ -51,7 +52,7 @@ fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
     );
     // SAFETY: `state` is the per-thread `RuntimeState` boxed in
     // `init_runtime_state`; address-stable until VM teardown.
-    unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) }
+    yolo! { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) }
 }
 
 // `jsc.Codegen.JSListener.toJS` — route through the codegen'd wrapper so we
@@ -232,7 +233,7 @@ impl Listener {
                 // PORT NOTE: by-value move of Handlers — see the non-pipe arm below
                 // for rationale on `ptr::read` + `mem::forget`.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config to avoid double-drop.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let handlers_moved: Handlers = yolo! { core::ptr::read(&socket_config.handlers) };
                 let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
                 let default_data = socket_config.default_data;
                 let ssl_cfg_taken = socket_config.ssl.take();
@@ -251,7 +252,7 @@ impl Listener {
                     strong_self: JsCell::new(Strong::empty()),
                 }));
                 // SAFETY: just allocated, non-null, exclusive
-                let this_ref = unsafe { &mut *this };
+                let this_ref = yolo! { &mut *this };
                 if !default_data.is_empty() {
                     this_ref
                         .strong_data
@@ -286,7 +287,7 @@ impl Listener {
                         this_ref.strong_data.with_mut(|s| s.deinit());
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
-                        drop(unsafe { bun_core::heap::take(this) });
+                        drop(yolo! { bun_core::heap::take(this) });
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}",
                             bstr::BStr::new(&pipe_buf[..pipe_len])
@@ -314,7 +315,7 @@ impl Listener {
         // `deinit_excluding_handlers` + `mem::forget`.
         // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
         let handlers_moved: Handlers =
-            unsafe { core::ptr::read(&raw const socket_config.handlers) };
+            yolo! { core::ptr::read(&raw const socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
         // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
@@ -342,7 +343,7 @@ impl Listener {
             strong_self: JsCell::new(Strong::empty()),
         }));
         // SAFETY: just allocated, non-null, exclusive
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         this_ref
             .group
             .with_mut(|g| g.init(uws::Loop::get(), None, this.cast::<c_void>()));
@@ -359,10 +360,10 @@ impl Listener {
         // Disarmed via `into_inner` once ownership transfers to the JS wrapper.
         let cleanup = scopeguard::guard(this, |this| {
             // SAFETY: this is still the sole owner on the error path
-            let this_ref = unsafe { &mut *this };
+            let this_ref = yolo! { &mut *this };
             if let Some(c) = this_ref.secure_ctx {
                 // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref from create_ssl_context
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
+                yolo! { boring_sys::SSL_CTX_free(c.as_ptr()) };
             }
             // protos: Box drops automatically when Listener is dropped below
             bun_core::asan::unregister_root_region(
@@ -370,9 +371,9 @@ impl Listener {
                 size_of::<uws::SocketGroup>(),
             );
             // SAFETY: group was init'd above; not concurrently walked.
-            unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
+            yolo! { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
             // SAFETY: reclaim the Box we leaked via into_raw
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         });
 
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
@@ -420,7 +421,7 @@ impl Listener {
                 // `ZStr::as_cstr()`.
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
                 // SAFETY: `hostz` is NUL-terminated and outlives `host_cstr`.
-                let host_cstr = unsafe { core::ffi::CStr::from_ptr(hostz.as_ptr()) };
+                let host_cstr = yolo! { core::ffi::CStr::from_ptr(hostz.as_ptr()) };
                 let ls = this_ref.group.with_mut(|g| {
                     g.listen(
                         kind,
@@ -564,7 +565,7 @@ impl Listener {
         });
         // SAFETY: `NewSocket::new` returns a non-null live heap pointer
         // (refcount==1); single JS thread, no other borrow exists yet.
-        let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
+        let s = yolo! { bun_ptr::ThisPtr::new(this_socket) };
         s.ref_();
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.get().global_object;
@@ -606,7 +607,7 @@ impl Listener {
         });
         // SAFETY: `NewSocket::new` returns a non-null live heap pointer
         // (refcount==1); single JS thread, no other borrow exists yet.
-        let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
+        let s = yolo! { bun_ptr::ThisPtr::new(this_socket) };
         s.ref_();
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
@@ -615,7 +616,7 @@ impl Listener {
         }
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
-            unsafe { *ctx = this_socket.cast::<c_void>() };
+            yolo! { *ctx = this_socket.cast::<c_void>() };
         }
         if let uws::InternalSocket::Connected(s) = socket.socket {
             // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
@@ -660,7 +661,7 @@ impl Listener {
         // remove_server_name/add_server_name calls below.
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
         // SAFETY: `server_name_z` is NUL-terminated and lives to end of scope.
-        let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
+        let server_name = yolo! { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
 
         let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);
@@ -670,7 +671,7 @@ impl Listener {
         // re-parse. Bun.listen({tls}) callers may still pass a raw options dict.
         let sni_ctx: *mut boring_sys::SSL_CTX = if let Some(sc) = SecureContext::from_js(tls) {
             // SAFETY: from_js returned non-null; SecureContext is live for the call.
-            unsafe { (*sc).borrow() }
+            yolo! { (*sc).borrow() }
         } else if let Some(ssl_config) = {
             // SAFETY: per-thread VM; valid for program lifetime.
             let vm = VirtualMachine::get().as_mut();
@@ -680,7 +681,7 @@ impl Listener {
             let mut create_err = uws::create_bun_socket_error_t::none;
             // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache; only
             // touched from the JS thread so the `&mut` is unique.
-            let cache = unsafe { &mut *vm_ssl_ctx_cache() };
+            let cache = yolo! { &mut *vm_ssl_ctx_cache() };
             match cache.get_or_create(&ssl_config, &mut create_err) {
                 Some(ctx) => ctx,
                 None => {
@@ -707,7 +708,7 @@ impl Listener {
         ls_ref.remove_server_name(server_name);
         let ok = ls_ref.add_server_name(server_name, sni_ctx.cast(), core::ptr::null_mut());
         // SAFETY: FFI — drop the +1 ref we took via borrow()/get_or_create(); SNI tree up_ref'd its own
-        unsafe { boring_sys::SSL_CTX_free(sni_ctx) };
+        yolo! { boring_sys::SSL_CTX_free(sni_ctx) };
         if !ok {
             // Old entry was already removed; failing silently would leave the
             // hostname with no SNI mapping at all. Surface it.
@@ -779,7 +780,7 @@ impl Listener {
             ListenerType::NamedPipe(named_pipe) => {
                 // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
                 // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe {
+                yolo! {
                     WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
                 };
             }
@@ -802,7 +803,7 @@ impl Listener {
             ListenerType::NamedPipe(named_pipe) => {
                 // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
                 // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe {
+                yolo! {
                     WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
                 };
             }
@@ -832,7 +833,7 @@ impl Listener {
     fn deinit(this: *mut Self) {
         log!("deinit");
         // SAFETY: `this` is a Box<Listener> leaked via into_raw; sole owner here
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         this_ref.strong_self.with_mut(|s| s.deinit());
         this_ref.strong_data.with_mut(|s| s.deinit());
         this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
@@ -849,16 +850,16 @@ impl Listener {
             size_of::<uws::SocketGroup>(),
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
-        unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
+        yolo! { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
         if let Some(ctx) = this_ref.secure_ctx {
             // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
-            unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
+            yolo! { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
 
         // connection / protos: dropped by heap::take below
         // PORT NOTE: Zig `this.handlers.deinit()` — Drop on Handlers handles unprotect.
         // SAFETY: reclaim the Box allocated in listen()
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1008,14 +1009,14 @@ impl Listener {
             };
             if let Some(sc) = native_sc {
                 // SAFETY: from_js returned non-null; SecureContext is live for the call.
-                owned_ssl_ctx = NonNull::new(unsafe { (*sc).borrow() });
+                owned_ssl_ctx = NonNull::new(yolo! { (*sc).borrow() });
             }
         }
         // errdefer if (owned_ssl_ctx) |c| BoringSSL.SSL_CTX_free(c);
         let mut ssl_ctx_guard = scopeguard::guard(owned_ssl_ctx, |c| {
             if let Some(c) = c {
                 // SAFETY: FFI — c is a live SSL_CTX* with one owned ref from borrow()/get_or_create()
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
+                yolo! { boring_sys::SSL_CTX_free(c.as_ptr()) };
             }
         });
 
@@ -1066,7 +1067,7 @@ impl Listener {
 
                 // PORT NOTE: by-value move of Handlers — see `listen()` for rationale.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config below.
-                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let handlers_moved: Handlers = yolo! { core::ptr::read(&socket_config.handlers) };
                 let mut ssl_taken = socket_config.ssl.take();
                 core::mem::forget(socket_config);
 
@@ -1084,10 +1085,10 @@ impl Listener {
                 if ssl_enabled {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
                         // SAFETY: caller passes a live TLSSocket
-                        let prev = unsafe { &*prev_ptr };
+                        let prev = yolo! { &*prev_ptr };
                         if let Some(prev_handlers) = prev.handlers.get() {
                             // SAFETY: prev_handlers was heap-allocated
-                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            yolo! { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                         }
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.handlers.set(NonNull::new(handlers_ptr));
@@ -1128,7 +1129,7 @@ impl Listener {
                         })
                     };
                     // SAFETY: tls is a valid heap pointer
-                    let tls_ref = unsafe { &*tls };
+                    let tls_ref = yolo! { &*tls };
                     TLSSocket::data_set_cached(
                         tls_ref.get_this_value(global),
                         global,
@@ -1172,11 +1173,11 @@ impl Listener {
                 } else {
                     let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
                         // SAFETY: caller passes a live TCPSocket
-                        let prev = unsafe { &*prev_ptr };
+                        let prev = yolo! { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
                         if let Some(prev_handlers) = prev.handlers.get() {
                             // SAFETY: prev_handlers was heap-allocated
-                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            yolo! { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                         }
                         prev.handlers.set(NonNull::new(handlers_ptr));
                         debug_assert!(matches!(
@@ -1211,7 +1212,7 @@ impl Listener {
                         })
                     };
                     // SAFETY: tcp is a valid heap pointer
-                    let tcp_ref = unsafe { &*tcp };
+                    let tcp_ref = yolo! { &*tcp };
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(
                         tcp_ref.get_this_value(global),
@@ -1263,7 +1264,7 @@ impl Listener {
                 let mut create_err = uws::create_bun_socket_error_t::none;
                 // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache field
                 // inside the boxed `RuntimeState`; address-stable until VM teardown.
-                let cache = unsafe { &mut *vm_ssl_ctx_cache() };
+                let cache = yolo! { &mut *vm_ssl_ctx_cache() };
                 match cache.get_or_create(ssl_cfg, &mut create_err) {
                     Some(ctx) => {
                         *ssl_ctx_guard = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>());
@@ -1286,7 +1287,7 @@ impl Listener {
         // PORT NOTE: by-value move of Handlers. See `listen()` for rationale.
         // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
         let handlers_moved: Handlers =
-            unsafe { core::ptr::read(&raw const socket_config.handlers) };
+            yolo! { core::ptr::read(&raw const socket_config.handlers) };
         let allow_half_open = socket_config.allow_half_open;
         let mut ssl_taken = socket_config.ssl.take();
         core::mem::forget(socket_config);
@@ -1354,7 +1355,7 @@ impl Listener {
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
         // SAFETY: socket is non-null (Uws variant invariant).
-        let socket_ref = unsafe { &mut *socket };
+        let socket_ref = yolo! { &mut *socket };
         let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
             Ok(b) => b,
             Err(_) => return Ok(JSValue::UNDEFINED),
@@ -1414,11 +1415,11 @@ fn connect_finish<const IS_SSL: bool>(
 ) -> JsResult<JSValue> {
     let socket: *mut NewSocket<IS_SSL> = if let Some(prev_ptr) = maybe_previous {
         // SAFETY: caller passes a live NewSocket<IS_SSL>
-        let prev = unsafe { &*prev_ptr };
+        let prev = yolo! { &*prev_ptr };
         // TODO(port): `JsRef::is_not_empty` — assert non-empty wrapper.
         if let Some(prev_handlers) = prev.handlers.get() {
             // SAFETY: prev_handlers was heap-allocated
-            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+            yolo! { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
         }
         prev.handlers.set(NonNull::new(handlers_ptr));
         // TODO(port): debug_assert!(matches!(prev.socket.get().socket, InternalSocket::Detached))
@@ -1433,7 +1434,7 @@ fn connect_finish<const IS_SSL: bool>(
             .set(ssl.as_mut().and_then(|s| s.take_server_name()));
         if let Some(old) = prev.owned_ssl_ctx.get() {
             // SAFETY: FFI — old is the previous owned SSL_CTX ref on this reused socket
-            unsafe { boring_sys::SSL_CTX_free(old) };
+            yolo! { boring_sys::SSL_CTX_free(old) };
         }
         prev.owned_ssl_ctx.set(owned_ssl_ctx.map(|p| p.as_ptr()));
         prev_ptr
@@ -1459,7 +1460,7 @@ fn connect_finish<const IS_SSL: bool>(
     // Ownership moved into `socket`; disarm the errdefer.
     // (owned_ssl_ctx consumed above)
     // SAFETY: socket is a valid heap pointer
-    let socket_ref = unsafe { &*socket };
+    let socket_ref = yolo! { &*socket };
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
     // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
@@ -1495,7 +1496,7 @@ fn connect_finish<const IS_SSL: bool>(
         // SAFETY: `socket` is the live heap pointer; `socket_ref`'s `&mut` is no
         // longer used on this branch. `handle_connect_error` takes `*mut Self`
         // (noalias re-entrancy) — no `&mut NewSocket` held across its JS call.
-        unsafe {
+        yolo! {
             let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno);
             // Balance the unconditional `socket_ref.ref_()` above.
             (*socket).deref();
@@ -1527,7 +1528,7 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
         // R-2: deref as shared (`&*`) — `add_server_name` takes `&Self`.
         return Listener::add_server_name(
-            unsafe { &*this },
+            yolo! { &*this },
             global,
             arguments.ptr[1],
             arguments.ptr[2],
@@ -1607,7 +1608,7 @@ impl WindowsNamedPipeListeningContext {
     fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
         // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
         // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         let shutting_down = this_ref.vm.is_shutting_down();
         if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
             // connection dropped or vm is shutting down or we are deiniting/closing
@@ -1626,7 +1627,7 @@ impl WindowsNamedPipeListeningContext {
         let client = WindowsNamedPipeContext::create(&this_ref.global_this, socket);
 
         // SAFETY: `client` was just heap-allocated by `create()`; exclusive here.
-        let result = unsafe {
+        let result = yolo! {
             (*client)
                 .named_pipe
                 .get_accepted_by(&mut this_ref.uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
@@ -1643,7 +1644,7 @@ impl WindowsNamedPipeListeningContext {
             // timing divergence only.
             // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
             // with refcount==1; releasing the only ref schedules deinit.
-            unsafe { WindowsNamedPipeContext::deref(client) };
+            yolo! { WindowsNamedPipeContext::deref(client) };
         }
     }
 
@@ -1655,7 +1656,7 @@ impl WindowsNamedPipeListeningContext {
     /// `udp_socket.rs` / `bun_io::PipeReader`.
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
-        let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
+        let this = yolo! { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
         Self::on_client_connect(this, status);
     }
 
@@ -1664,7 +1665,7 @@ impl WindowsNamedPipeListeningContext {
     /// wraps its deref explicitly.
     extern "C" fn on_pipe_closed(pipe: *mut uv::Pipe) {
         // SAFETY: `pipe.data` was set to `this` in `close_pipe_and_deinit`.
-        let this = unsafe { (*pipe).data.cast::<WindowsNamedPipeListeningContext>() };
+        let this = yolo! { (*pipe).data.cast::<WindowsNamedPipeListeningContext>() };
         Self::deinit(this);
     }
 
@@ -1673,7 +1674,7 @@ impl WindowsNamedPipeListeningContext {
     /// already cleared by the caller).
     pub unsafe fn close_pipe_and_deinit(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live heap allocation.
-        unsafe {
+        yolo! {
             (*this).listener = None;
             (*this).uv_pipe.data = this.cast::<c_void>();
             (*this).uv_pipe.close(Self::on_pipe_closed);
@@ -1697,7 +1698,7 @@ impl WindowsNamedPipeListeningContext {
             ctx: None,
         }));
         // SAFETY: just allocated, non-null, exclusive.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
 
         // errdefer: once the uv pipe handle is registered with the loop it must be closed via
         // uv_close; before that point we can free the struct directly. `deinit()` also
@@ -1706,7 +1707,7 @@ impl WindowsNamedPipeListeningContext {
         let mut cleanup = scopeguard::guard((this, false), |(this, pipe_initialized)| {
             if pipe_initialized {
                 // SAFETY: pipe is registered with the loop; close → on_pipe_closed → deinit.
-                unsafe { Self::close_pipe_and_deinit(this) };
+                yolo! { Self::close_pipe_and_deinit(this) };
             } else {
                 Self::deinit(this);
             }
@@ -1766,7 +1767,7 @@ impl WindowsNamedPipeListeningContext {
 
     fn deinit(this: *mut Self) {
         // SAFETY: `this` is a live `heap::alloc` allocation; this is the last owner.
-        unsafe {
+        yolo! {
             (*this).listener = None;
             if let Some(ctx) = (*this).ctx.take() {
                 boring_sys::SSL_CTX_free(ctx.as_ptr());

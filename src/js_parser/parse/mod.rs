@@ -18,6 +18,7 @@ pub mod parse_stmt;
 pub mod parse_suffix;
 pub mod parse_typescript;
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::mem;
 
@@ -761,7 +762,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let estr = p.lexer.to_e_string()?;
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
-                return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
+                return Ok(yolo! { bun_collections::detach_lifetime(estr.slice8()) });
             } else {
                 // PORT NOTE: Zig used toUTF8AllocWithTypeWithoutInvalidSurrogatePairs which
                 // errors on lone surrogates. The Rust port replaces them with U+FFFD; the
@@ -1315,7 +1316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
             // SAFETY: E::String slice8() is arena-owned for 'a.
-            text: unsafe { bun_collections::detach_lifetime(path_text.slice8()) },
+            text: yolo! { bun_collections::detach_lifetime(path_text.slice8()) },
             is_macro: false,
             import_tag: bun_ast::ImportRecordTag::None,
             loader: None,

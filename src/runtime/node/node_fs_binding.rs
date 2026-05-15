@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
@@ -96,7 +97,7 @@ fn run_async<A: FsArgument>(
         Ok(a) => a,
         Err(err) => {
             // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
+            yolo! { ManuallyDrop::drop(&mut slice) };
             return Err(err);
         }
     };
@@ -104,7 +105,7 @@ fn run_async<A: FsArgument>(
     if global.has_exception() {
         drop(args);
         // SAFETY: not yet dropped; only drop site for this path.
-        unsafe { ManuallyDrop::drop(&mut slice) };
+        yolo! { ManuallyDrop::drop(&mut slice) };
         return Ok(JSValue::ZERO);
     }
 
@@ -118,7 +119,7 @@ fn run_async<A: FsArgument>(
                     );
                 drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
+                yolo! { ManuallyDrop::drop(&mut slice) };
                 return Ok(promise);
             }
         }
@@ -201,7 +202,7 @@ impl Binding {
             Ok(a) => a,
             Err(err) => {
                 // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
+                yolo! { ManuallyDrop::drop(&mut slice) };
                 return Err(err);
             }
         };
@@ -209,7 +210,7 @@ impl Binding {
         if global.has_exception() {
             drop(cp_args);
             // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
+            yolo! { ManuallyDrop::drop(&mut slice) };
             return Ok(JSValue::ZERO);
         }
 
@@ -250,7 +251,7 @@ impl Binding {
             Ok(a) => a,
             Err(err) => {
                 // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
+                yolo! { ManuallyDrop::drop(&mut slice) };
                 return Err(err);
             }
         };
@@ -258,7 +259,7 @@ impl Binding {
         if global.has_exception() {
             drop(rd_args);
             // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
+            yolo! { ManuallyDrop::drop(&mut slice) };
             return Ok(JSValue::ZERO);
         }
 

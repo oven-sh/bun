@@ -41,6 +41,7 @@
 
 #![cfg(windows)]
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::fmt::Write as _;
 use core::marker::ConstParamTy;
@@ -209,7 +210,7 @@ macro_rules! debug {
 /// the pointee is live).
 unsafe fn unicode_string_to_u16<'a>(str: &'a UNICODE_STRING) -> &'a [u16] {
     // SAFETY: discharged by caller per fn-level # Safety.
-    unsafe { bun_core::ffi::slice(str.Buffer, (str.Length / 2) as usize) }
+    yolo! { bun_core::ffi::slice(str.Buffer, (str.Length / 2) as usize) }
 }
 
 const FILE_GENERIC_READ: u32 = w::STANDARD_RIGHTS_READ
@@ -304,7 +305,7 @@ impl core::fmt::Display for FailReason {
             // SAFETY: `FAILURE_REASON_DATA` is a static `[u8; 512]`; `len ≤ 512`
             // was bounded by the producer loop, and this path is single-threaded
             // (standalone exe / just-before-exit), so the bytes are stable.
-            let arg_slice = unsafe {
+            let arg_slice = yolo! {
                 bun_core::ffi::slice(FAILURE_REASON_DATA.get().cast::<u8>().cast_const(), len)
             };
             // Zig spec writes raw bytes (`{s}`). `arg_slice` is filled by truncating
@@ -314,7 +315,7 @@ impl core::fmt::Display for FailReason {
             // SAFETY: every byte of FAILURE_REASON_DATA[..len] was written via
             // `as u7` / `& 0x7F` (see the InterpreterNotFound producer), so the
             // slice is ASCII ⊂ UTF-8.
-            let arg_str = unsafe { core::str::from_utf8_unchecked(arg_slice) };
+            let arg_str = yolo! { core::str::from_utf8_unchecked(arg_slice) };
             writer.write_str("interpreter executable \"")?;
             writer.write_str(arg_str)?;
             writer.write_str("\" not found in %PATH%\n\n")?;
@@ -351,7 +352,7 @@ impl core::fmt::Display for FailReason {
 pub fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     // SAFETY: NtWriteFile is given a valid handle and a buffer that lives for the call.
-    let rc = unsafe {
+    let rc = yolo! {
         nt::NtWriteFile(
             handle,
             core::ptr::null_mut(),
@@ -406,7 +407,7 @@ static FAILURE_REASON_LEN: core::sync::atomic::AtomicUsize =
 fn fail_and_exit_with_reason(reason: FailReason) -> ! {
     // SAFETY: TEB/PEB pointers are valid for the lifetime of the process.
     let console_handle =
-        unsafe { (*(*(*w::teb()).ProcessEnvironmentBlock).ProcessParameters).hStdError };
+        yolo! { (*(*(*w::teb()).ProcessEnvironmentBlock).ProcessParameters).hStdError };
     let mut mode: DWORD = 0;
     if k32::GetConsoleMode(console_handle, &mut mode) != 0 {
         mode |= w::ENABLE_VIRTUAL_TERMINAL_PROCESSING;
@@ -415,7 +416,7 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
 
     let mut writer = NtWriter {
         // SAFETY: TEB/PEB pointers are valid for the lifetime of the process.
-        context: unsafe { (*(*(*w::teb()).ProcessEnvironmentBlock).ProcessParameters).hStdError },
+        context: yolo! { (*(*(*w::teb()).ProcessEnvironmentBlock).ProcessParameters).hStdError },
     };
     if let Err(e) = reason.write(&mut writer) {
         if cfg!(debug_assertions) {
@@ -516,15 +517,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // peb! w.teb is a couple instructions of inline asm
     let teb: *mut w::TEB = w::teb();
     // SAFETY: TEB/PEB are valid for the process lifetime.
-    let peb = unsafe { (*teb).ProcessEnvironmentBlock };
+    let peb = yolo! { (*teb).ProcessEnvironmentBlock };
     // SAFETY: ProcessParameters is OS-owned process-global state. The Zig spec only ever reads
     // from it (`const ProcessParameters = peb.ProcessParameters`), so we keep it as a raw pointer
     // and perform raw field reads rather than materializing a long-lived `&mut` that would assert
     // exclusive access across the syscalls below (and across threads in non-standalone mode).
-    let process_parameters = unsafe { (*peb).ProcessParameters };
+    let process_parameters = yolo! { (*peb).ProcessParameters };
     // SAFETY: process_parameters is valid for the process lifetime; UNICODE_STRING is Copy.
-    let command_line = unsafe { (*process_parameters).CommandLine };
-    let image_path_name = unsafe { (*process_parameters).ImagePathName };
+    let command_line = yolo! { (*process_parameters).CommandLine };
+    let image_path_name = yolo! { (*process_parameters).ImagePathName };
 
     // these are all different views of the same data
     let image_path_b_len: usize = if IS_STANDALONE {
@@ -539,7 +540,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     };
     // SAFETY: image_path_ptr is valid for image_path_b_len bytes per UNICODE_STRING / caller contract.
     let image_path_u16: &[u16] =
-        unsafe { bun_core::ffi::slice(image_path_ptr, image_path_b_len / 2) };
+        yolo! { bun_core::ffi::slice(image_path_ptr, image_path_b_len / 2) };
     // Byte view of the same buffer — `&[u16]` → `&[u8]` is a total, panic-free
     // `bytemuck` cast (align 1, size always divides).
     let image_path_u8: &[u8] = bytemuck::cast_slice(image_path_u16);
@@ -547,7 +548,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let cmd_line_b_len = command_line.Length as usize;
     // SAFETY: CommandLine.Buffer is valid for Length bytes.
     let cmd_line_u16: &[u16] =
-        unsafe { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
+        yolo! { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
     let cmd_line_u8: &[u8] = bytemuck::cast_slice(cmd_line_u16);
 
     debug_assert!((cmd_line_u16.as_ptr() as usize) % 2 == 0); // alignment assumption
@@ -588,7 +589,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     //
     // BUF1: '\??\!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
     // SAFETY: buf1 has at least 8 bytes; we write 4 u16s (the NT prefix).
-    unsafe { buf1_u8.cast::<[u16; 4]>().write_unaligned(NT_OBJECT_PREFIX) };
+    yolo! { buf1_u8.cast::<[u16; 4]>().write_unaligned(NT_OBJECT_PREFIX) };
 
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     let suffix: &'static [u16] = if IS_STANDALONE {
@@ -607,7 +608,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     }
     let image_path_to_copy_b_len = image_path_b_len - 2 * suffix.len();
     // SAFETY: buf1 has room for nt_prefix + image_path; image_path_u8 is valid for the copy len.
-    unsafe {
+    yolo! {
         core::ptr::copy_nonoverlapping(
             image_path_u8.as_ptr(),
             buf1_u8.add(2 * NT_OBJECT_PREFIX.len()),
@@ -621,7 +622,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     if IS_STANDALONE {
         // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
         // SAFETY: writing 4 u16s ("bunx") into buf1 at the computed offset, which is in bounds.
-        unsafe {
+        yolo! {
             buf1_u8
                 .add(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3/* "exe".len */))
                 .cast::<[u16; 4]>()
@@ -640,11 +641,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         if DBG {
             debug!(
                 "NtCreateFile({})",
-                fmt16(unsafe { unicode_string_to_u16(&nt_name) })
+                fmt16(yolo! { unicode_string_to_u16(&nt_name) })
             );
             debug!(
                 "NtCreateFile({})",
-                fmt16(unsafe { unicode_string_to_u16(&nt_name) })
+                fmt16(yolo! { unicode_string_to_u16(&nt_name) })
             );
         }
         let mut attr = w::OBJECT_ATTRIBUTES {
@@ -659,14 +660,14 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // so we need the prefix here. This is an extra sanity check.
         if DBG {
             debug_assert!(
-                unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX)
+                yolo! { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX)
             );
             debug_assert!(
-                unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_core::w!(".bunx"))
+                yolo! { unicode_string_to_u16(&nt_name) }.ends_with(bun_core::w!(".bunx"))
             );
         }
         // SAFETY: all out-pointers are valid stack locations; attr is fully initialized.
-        let rc = unsafe {
+        let rc = yolo! {
             nt::NtCreateFile(
                 &mut metadata_handle,
                 FILE_GENERIC_READ,
@@ -783,13 +784,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             })
             - 1;
         // SAFETY: offset is within buf1.
-        let mut ptr: *mut u16 = unsafe { buf1_u16.add(NT_OBJECT_PREFIX.len() + left) };
+        let mut ptr: *mut u16 = yolo! { buf1_u16.add(NT_OBJECT_PREFIX.len() + left) };
         if DBG {
             debug!(
                 "left = {}, at {}, after {}",
                 left,
-                unsafe { *ptr },
-                unsafe { *ptr.add(1) }
+                yolo! { *ptr },
+                yolo! { *ptr.add(1) }
             );
         }
 
@@ -799,17 +800,17 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
         // we start our search right before the . as we know the extension is '.bunx'
         // SAFETY: ptr points into buf1 which we just wrote.
-        debug_assert!(unsafe { *ptr.add(1) } == '.' as u16);
+        debug_assert!(yolo! { *ptr.add(1) } == '.' as u16);
 
         loop {
             if DBG {
-                debug!("1 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
+                debug!("1 - {}", fmt16(yolo! { bun_core::ffi::slice(ptr, 1) }));
             }
             // SAFETY: ptr is within buf1 (left > 0 invariant below).
-            if unsafe { *ptr } == '\\' as u16 {
+            if yolo! { *ptr } == '\\' as u16 {
                 left -= 1;
                 // ptr is *mut u16, sub operates on number of ITEMS, not BYTES
-                ptr = unsafe { ptr.sub(1) };
+                ptr = yolo! { ptr.sub(1) };
                 break;
             }
             left -= 1;
@@ -819,7 +820,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
-            ptr = unsafe { ptr.sub(1) };
+            ptr = yolo! { ptr.sub(1) };
             if DBG {
                 debug_assert!((ptr as usize) >= (buf1_u16 as usize));
             }
@@ -828,26 +829,26 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // using `inline for` caused comptime issues that made the code much harder to read
         loop {
             if DBG {
-                debug!("2 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
+                debug!("2 - {}", fmt16(yolo! { bun_core::ffi::slice(ptr, 1) }));
             }
-            if unsafe { *ptr } == '\\' as u16 {
+            if yolo! { *ptr } == '\\' as u16 {
                 // ptr is at the position marked S, so move forward one *character*
-                break 'brk unsafe { ptr.add(1) };
+                break 'brk yolo! { ptr.add(1) };
             }
             left -= 1;
             if left == 0 {
                 let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
-            ptr = unsafe { ptr.sub(1) };
+            ptr = yolo! { ptr.sub(1) };
             if DBG {
                 debug_assert!((ptr as usize) >= (buf1_u16 as usize));
             }
         }
         // unreachable - the loop breaks this entire block
     };
-    debug_assert!(unsafe { *read_ptr } != '\\' as u16);
-    debug_assert!(unsafe { *read_ptr.sub(1) } == '\\' as u16);
+    debug_assert!(yolo! { *read_ptr } != '\\' as u16);
+    debug_assert!(yolo! { *read_ptr.sub(1) } == '\\' as u16);
 
     let read_max_len = BUF1_LEN * 2 - ((read_ptr as usize) - (buf1_u16 as usize));
 
@@ -870,7 +871,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // We are intentionally only reading one chunk. The metadata file is almost always going to be < 200 bytes
     // If this becomes a problem we will fix it.
     // SAFETY: read_ptr points into buf1 with read_max_len bytes available.
-    let read_status = unsafe {
+    let read_status = yolo! {
         nt::NtReadFile(
             metadata_handle,
             core::ptr::null_mut(),
@@ -898,7 +899,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // the Flags read below lands when `read_len == read_max_len` — so the read is
             // defined and `is_valid()` deterministically rejects it.
             // SAFETY: BUF1_LEN - 1 is in bounds of buf1.
-            unsafe { buf1_u16.add(BUF1_LEN - 1).write(0) };
+            yolo! { buf1_u16.add(BUF1_LEN - 1).write(0) };
             read_max_len
         }
         rc => {
@@ -920,7 +921,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // SAFETY: buf1_u16[0..total] is fully initialized in both build modes:
             // [0..4] by the unconditional NT_OBJECT_PREFIX store above, [4..read_ptr) by the
             // image-path memcpy, and [read_ptr..read_ptr+read_len) by NtReadFile.
-            fmt16(unsafe { bun_core::ffi::slice(buf1_u16, total) })
+            fmt16(yolo! { bun_core::ffi::slice(buf1_u16, total) })
         );
     }
 
@@ -940,7 +941,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // there are initialized. `Flags` is `#[repr(transparent)]` over `u16`, so the
     // type-pun half is done via the safe `from_bits` accessor; only the raw read
     // remains `unsafe`.
-    let flags: Flags = Flags::from_bits(unsafe { read_ptr.read_unaligned() });
+    let flags: Flags = Flags::from_bits(yolo! { read_ptr.read_unaligned() });
 
     if DBG {
         // Same two bytes just read above — `bits()` is the safe inverse of `from_bits`.
@@ -980,7 +981,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js"##!!!!!!!!!!'
             //           ^
             // SAFETY: index 3 is within buf1.
-            unsafe { *buf1_u16.add(3) = '"' as u16 };
+            yolo! { *buf1_u16.add(3) = '"' as u16 };
 
             // Copy user arguments in, overwriting old data. Remember that we ensured the arguments
             // this started with a space.
@@ -994,7 +995,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 read_ptr.cast::<u8>().wrapping_sub(2 * 1 /* "\x00".len */);
             if !user_arguments_u8.is_empty() {
                 // SAFETY: argument_start_ptr is within buf1 with room for user_arguments_u8.
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         user_arguments_u8.as_ptr(),
                         argument_start_ptr,
@@ -1006,7 +1007,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag#!!!!'
             //           ^ lpCommandLine                                               ^ null terminator
             // SAFETY: writing one u16 within buf1.
-            unsafe {
+            yolo! {
                 argument_start_ptr
                     .add(user_arguments_u8.len())
                     .cast::<u16>()
@@ -1014,7 +1015,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
 
             // SAFETY: buf1_u8 + 2*(4-1) is 2-byte-aligned (buf1 is u16-aligned, offset is even).
-            break 'spawn_command_line unsafe {
+            break 'spawn_command_line yolo! {
                 buf1_u8
                     .add(2 * (NT_OBJECT_PREFIX.len() - 1/* "\"".len */))
                     .cast::<u16>()
@@ -1038,7 +1039,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 .cast::<u16>();
             // SAFETY: read_ptr is within buf1; ShebangMetadataPacked is 8 bytes packed.
             let shebang_metadata: ShebangMetadataPacked =
-                unsafe { read_ptr.cast::<ShebangMetadataPacked>().read_unaligned() };
+                yolo! { read_ptr.cast::<ShebangMetadataPacked>().read_unaligned() };
 
             let shebang_arg_len_u8 = shebang_metadata.args_len_bytes;
             let shebang_bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
@@ -1096,9 +1097,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     - 2 /* "\"\x00".len */;
                 // SAFETY: buf1_u16 + 4 .. + 4 + len is within buf1; the next char is '"' (asserted in Zig via sentinel slice).
                 let launch_slice =
-                    unsafe { bun_core::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len) };
+                    yolo! { bun_core::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len) };
                 debug_assert_eq!(
-                    unsafe { *buf1_u16.add(NT_OBJECT_PREFIX.len() + len) },
+                    yolo! { *buf1_u16.add(NT_OBJECT_PREFIX.len() + len) },
                     '"' as u16
                 );
                 bun_ctx.direct_launch_with_bun_js(launch_slice);
@@ -1115,7 +1116,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 .wrapping_sub(shebang_arg_len_u8 as usize)
                 .cast::<u16>();
             // SAFETY: copying shebang_arg_len_u8 bytes from buf1 into buf2; both in bounds.
-            unsafe {
+            yolo! {
                 core::ptr::copy_nonoverlapping(
                     read_ptr.cast::<u8>(),
                     buf2_u8,
@@ -1125,7 +1126,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
             // BUF2: 'node "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
             // SAFETY: writing one u16 within buf2.
-            unsafe {
+            yolo! {
                 buf2_u8
                     .add(shebang_arg_len_u8 as usize)
                     .cast::<u16>()
@@ -1140,7 +1141,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 - (buf1_u8 as usize)
                 - 2 * (NT_OBJECT_PREFIX.len() + 1/* "\x00".len */);
             // SAFETY: slice within buf1.
-            let filename: &[u8] = unsafe {
+            let filename: &[u8] = yolo! {
                 bun_core::ffi::slice(
                     buf1_u8.add(2 * NT_OBJECT_PREFIX.len()),
                     length_of_filename_u8,
@@ -1170,7 +1171,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
 
             // SAFETY: buf2 has room for shebang_arg_len_u8 + 2 + length_of_filename_u8 bytes.
-            unsafe {
+            yolo! {
                 core::ptr::copy_nonoverlapping(
                     filename.as_ptr(),
                     buf2_u8.add(shebang_arg_len_u8 as usize + 2 * 1 /* "\"".len */),
@@ -1192,7 +1193,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             let mut write_ptr: *mut u16 = buf2_u8.wrapping_add(advance).cast::<u16>();
             // The quote was already validated above, this is just a sanity check in debug mode
             if DBG {
-                debug_assert!(unsafe { *write_ptr.sub(1) } == '"' as u16);
+                debug_assert!(yolo! { *write_ptr.sub(1) } == '"' as u16);
             }
 
             if !user_arguments_u8.is_empty() {
@@ -1203,7 +1204,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 //        |    the quote
                 //        shebang_arg_len
                 // SAFETY: write_ptr is within buf2 with room for user_arguments_u8.
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         user_arguments_u8.as_ptr(),
                         write_ptr.cast::<u8>(),
@@ -1219,7 +1220,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
             //                                                                            ^ null terminator
             // SAFETY: write_ptr is within buf2.
-            unsafe { *write_ptr = 0 };
+            yolo! { *write_ptr = 0 };
 
             break 'spawn_command_line buf2_u16;
         }
@@ -1235,13 +1236,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // Copy into the caller-provided buffer so the returned pointer outlives this stack
         // frame (covers both the buf1-backed no-shebang path and the buf2-backed shebang path).
         // SAFETY: spawn_command_line is NUL-terminated (terminator written above).
-        let len = unsafe { bun_core::ffi::wstr_units(spawn_command_line) }.len();
+        let len = yolo! { bun_core::ffi::wstr_units(spawn_command_line) }.len();
         let dst = bun_ctx
             .out_buf()
             .expect("ReadWithoutLaunch requires BunCtx::out_buf() (would otherwise return a dangling stack pointer)");
         debug_assert!(len + 1 <= BUF2_U16_LEN);
         // SAFETY: dst points to BUF2_U16_LEN u16s; src is valid for len+1 u16s.
-        unsafe { core::ptr::copy(spawn_command_line, dst, len + 1) };
+        yolo! { core::ptr::copy(spawn_command_line, dst, len + 1) };
         return LauncherRet::Read(ReadWithoutLaunchResult::CommandLine(dst, len));
     }
 
@@ -1300,7 +1301,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // The standard handles outside of standalone may be tampered with.
         // SAFETY: process_parameters is valid for the process lifetime; raw read of HANDLE.
         hStdInput: if IS_STANDALONE {
-            unsafe { (*process_parameters).hStdInput }
+            yolo! { (*process_parameters).hStdInput }
         } else {
             #[cfg(not(feature = "shim_standalone"))]
             {
@@ -1312,7 +1313,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
         },
         hStdOutput: if IS_STANDALONE {
-            unsafe { (*process_parameters).hStdOutput }
+            yolo! { (*process_parameters).hStdOutput }
         } else {
             #[cfg(not(feature = "shim_standalone"))]
             {
@@ -1324,7 +1325,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
         },
         hStdError: if IS_STANDALONE {
-            unsafe { (*process_parameters).hStdError }
+            yolo! { (*process_parameters).hStdError }
         } else {
             #[cfg(not(feature = "shim_standalone"))]
             {
@@ -1346,11 +1347,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 // SAFETY: spawn_command_line is NUL-terminated (we wrote the terminator above).
                 debug!(
                     "lpCommandLine: {}\n",
-                    fmt16(unsafe { bun_core::ffi::wstr_units(spawn_command_line) })
+                    fmt16(yolo! { bun_core::ffi::wstr_units(spawn_command_line) })
                 );
             }
             // SAFETY: all pointers are valid; spawn_command_line is NUL-terminated mutable buffer.
-            let did_process_spawn = unsafe {
+            let did_process_spawn = yolo! {
                 k32::CreateProcessW(
                     core::ptr::null(),
                     spawn_command_line,
@@ -1404,7 +1405,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     debug_assert!(flags.has_shebang());
                                     if DBG {
                                         debug_assert!(
-                                            unsafe {
+                                            yolo! {
                                                 bun_core::ffi::wstr_units(spawn_command_line)
                                             }
                                             .starts_with(bun_core::w!("node "))
@@ -1416,7 +1417,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     // lpCommandLine: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
                                     //                  ^~~ replace these three bytes with 'bun'
                                     // SAFETY: spawn_command_line[1..4] is within the buffer.
-                                    unsafe {
+                                    yolo! {
                                         let bun = bun_core::w!("bun");
                                         core::ptr::copy_nonoverlapping(
                                             bun.as_ptr(),
@@ -1427,7 +1428,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
                                     // lpCommandLine: 'nbun "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
                                     //                  ^ increment pointer by one char
-                                    spawn_command_line = unsafe { spawn_command_line.add(1) };
+                                    spawn_command_line = yolo! { spawn_command_line.add(1) };
 
                                     break 'iteration; // loop back
                                 }
@@ -1436,7 +1437,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     // This script calls for 'bun', but it was not found.
                                     if DBG {
                                         debug_assert!(
-                                            unsafe {
+                                            yolo! {
                                                 bun_core::ffi::wstr_units(spawn_command_line)
                                             }
                                             .starts_with(bun_core::w!("bun "))
@@ -1453,7 +1454,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             if attempt_number == 1 {
                                 if DBG {
                                     debug_assert!(
-                                        unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
+                                        yolo! { bun_core::ffi::wstr_units(spawn_command_line) }
                                             .starts_with(bun_core::w!("bun "))
                                     );
                                 }
@@ -1468,7 +1469,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             // SAFETY: FAILURE_REASON_DATA is a static buffer; this code path is only
                             // reached single-threaded (standalone exe or just before process exit).
                             // `spawn_command_line` is the live UTF-16 command line buffer.
-                            let len = unsafe {
+                            let len = yolo! {
                                 let data = &mut *FAILURE_REASON_DATA.get();
                                 let mut i: u32 = 0;
                                 while i < 512 && *spawn_command_line.add(i as usize) != ' ' as u16 {
@@ -1565,7 +1566,7 @@ impl FromBunRunContext {
         // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
         // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
         // the duration of the call. Borrow tied to `&self`.
-        unsafe { bun_core::ffi::slice(self.base_path, self.base_path_len) }
+        yolo! { bun_core::ffi::slice(self.base_path, self.base_path_len) }
     }
 }
 
@@ -1578,7 +1579,7 @@ impl BunCtx for &FromBunRunContext {
     }
     fn arguments(&self) -> &[u16] {
         // SAFETY: caller guarantees arguments is valid for arguments_len.
-        unsafe { bun_core::ffi::slice(self.arguments, self.arguments_len) }
+        yolo! { bun_core::ffi::slice(self.arguments, self.arguments_len) }
     }
     fn handle(&self) -> HANDLE {
         self.handle
@@ -1593,7 +1594,7 @@ impl BunCtx for &FromBunRunContext {
         // Unique provenance. It is exclusively owned for the duration of
         // `try_startup_from_bun_js` and not aliased while `launcher` runs.
         #[cfg(not(feature = "shim_standalone"))]
-        (self.direct_launch_with_bun_js)(wpath, unsafe { &mut *self.cli_context });
+        (self.direct_launch_with_bun_js)(wpath, yolo! { &mut *self.cli_context });
         #[cfg(feature = "shim_standalone")]
         {
             let _ = wpath;
@@ -1653,7 +1654,7 @@ impl FromBunShellContext {
         // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
         // from a live `[u16]` buffer it owns for the duration of the call.
         // Borrow tied to `&self`.
-        unsafe { bun_core::ffi::slice(self.base_path, self.base_path_len) }
+        yolo! { bun_core::ffi::slice(self.base_path, self.base_path_len) }
     }
 }
 
@@ -1666,7 +1667,7 @@ impl BunCtx for &FromBunShellContext {
     }
     fn arguments(&self) -> &[u16] {
         // SAFETY: caller guarantees arguments is valid for arguments_len.
-        unsafe { bun_core::ffi::slice(self.arguments, self.arguments_len) }
+        yolo! { bun_core::ffi::slice(self.arguments, self.arguments_len) }
     }
     fn handle(&self) -> HANDLE {
         self.handle

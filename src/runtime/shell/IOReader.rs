@@ -6,6 +6,7 @@
 
 #![allow(dead_code)]
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 
@@ -89,7 +90,7 @@ impl IOReader {
     pub fn deinit_on_main_thread(this: *mut IOReader) {
         // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
         // the async-deinit task.
-        unsafe { std::sync::Arc::decrement_strong_count(this) };
+        yolo! { std::sync::Arc::decrement_strong_count(this) };
     }
 }
 
@@ -97,7 +98,7 @@ impl IOReader {
     #[inline]
     fn state(&self) -> &mut State {
         // SAFETY: single-threaded; matches Zig `*IOReader` model.
-        unsafe { &mut *self.state.get() }
+        yolo! { &mut *self.state.get() }
     }
 
     #[inline]
@@ -112,7 +113,7 @@ impl IOReader {
         // while the callback runs (PipeReader.rs aliasing contract), so
         // re-deriving here would create two simultaneous `&mut` to the same
         // BufferedReader = Stacked-Borrows UB.
-        unsafe { &mut *self.reader.get() }
+        yolo! { &mut *self.reader.get() }
     }
 
     /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
@@ -166,7 +167,7 @@ impl IOReader {
         // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
         // call `&self` methods — no `&mut IOReader` is materialized from it.
         let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
-        unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
+        yolo! { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
     }
@@ -175,7 +176,7 @@ impl IOReader {
     pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: `interp` is the live owning Interpreter (it owns the IO
         // struct that holds this Arc); single-threaded.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = yolo! { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
     #[inline]

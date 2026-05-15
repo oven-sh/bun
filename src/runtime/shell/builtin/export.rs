@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::CStr;
 
 use crate::shell::EnvStr;
@@ -42,7 +43,7 @@ impl Export {
             let val = EnvStr::dupe_ref_counted(value);
             let shell = interp.as_cmd(cmd).base.shell;
             // SAFETY: shell env outlives the Cmd node.
-            unsafe { (*shell).export_env.insert(label, val) };
+            yolo! { (*shell).export_env.insert(label, val) };
             label.deref();
             val.deref();
         }

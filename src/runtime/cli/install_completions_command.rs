@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
@@ -590,7 +591,7 @@ impl InstallCompletionsCommand {
                                 .copy_from_slice(b"/.zshrc");
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
                             // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                            let filepath = unsafe {
+                            let filepath = yolo! {
                                 bun_core::ZStr::from_raw(
                                     zshrc_filepath.as_ptr(),
                                     zdot_dir.len() + b"/.zshrc".len(),
@@ -613,7 +614,7 @@ impl InstallCompletionsCommand {
                                 .copy_from_slice(b"/.zshrc");
                             zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
                             // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                            let filepath = unsafe {
+                            let filepath = yolo! {
                                 bun_core::ZStr::from_raw(
                                     zshrc_filepath.as_ptr(),
                                     zdot_dir.len() + b"/.zshrc".len(),
@@ -636,7 +637,7 @@ impl InstallCompletionsCommand {
                                 .copy_from_slice(b"/.zshenv");
                             zshrc_filepath[zdot_dir.len() + b"/.zshenv".len()] = 0;
                             // SAFETY: NUL written at zdot_dir.len() + "/.zshenv".len() above
-                            let filepath = unsafe {
+                            let filepath = yolo! {
                                 bun_core::ZStr::from_raw(
                                     zshrc_filepath.as_ptr(),
                                     zdot_dir.len() + b"/.zshenv".len(),

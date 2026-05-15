@@ -6,6 +6,7 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
+use bun_yolo::yolo;
 use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
 
 use bun_bundler::options_impl::LoaderExt as _;
@@ -39,8 +40,8 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.
         let store_ptr = store.as_ptr();
-        unsafe { (*store_ptr).mime_type = mime };
-        blob.content_type.set(std::ptr::from_ref::<[u8]>(unsafe {
+        yolo! { (*store_ptr).mime_type = mime };
+        blob.content_type.set(std::ptr::from_ref::<[u8]>(yolo! {
             (*store_ptr).mime_type.value.as_ref()
         }));
     } else {
@@ -75,7 +76,7 @@ impl SavedFile {
         let ptr = Blob::new(blob);
         // SAFETY: `ptr` is a freshly heap-allocated `*mut Blob` from
         // `Blob::new`; ownership transfers to the JS wrapper.
-        unsafe { (*ptr).to_js(global_this) }
+        yolo! { (*ptr).to_js(global_this) }
     }
 }
 

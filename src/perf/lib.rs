@@ -6,6 +6,7 @@
 //! should use `bun_perf::trace` to keep os_signpost coverage.
 #![warn(unreachable_pub)]
 #[allow(unused_imports)]
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int};
 #[allow(unused_imports)]
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -186,7 +187,7 @@ mod darwin_impl {
                 None
             } else {
                 // SAFETY: written exactly once under OS_LOG_ONCE; OSLog lives for program lifetime
-                Some(unsafe { &*ptr })
+                Some(yolo! { &*ptr })
             }
         }
     }
@@ -233,7 +234,7 @@ impl Linux {
         // `PerfEvent::as_cstr()` provides the equivalent `&'static CStr` so the C side's
         // `snprintf("C|%d|%s|%lld", ...)` reads a properly terminated string.
         // SAFETY: FFI call; pointer is 'static and NUL-terminated.
-        let _ = unsafe {
+        let _ = yolo! {
             Bun__linux_trace_emit(
                 self.event.as_cstr().as_ptr(),
                 i64::try_from(duration).expect("int cast"),

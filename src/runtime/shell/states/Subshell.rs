@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
@@ -57,7 +58,7 @@ impl Subshell {
         io: IO,
     ) -> bun_sys::Result<NodeId> {
         // SAFETY: `parent_shell` is a live env owned by the parent state.
-        let duped = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
+        let duped = yolo! { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
         Ok(Self::init(interp, duped, node, parent, io))
     }
 

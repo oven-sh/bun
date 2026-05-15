@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 // ─── non-JSC helpers (real) ───────────────────────────────────────────────
@@ -19,7 +20,7 @@ impl bun_io::Write for StructuredCloneWriter {
         // SAFETY: `ctx` and `impl_` were supplied together by the C++
         // SerializedScriptValue writer; the callback only reads `len` bytes
         // from `ptr`, both of which we derive from a single `&[u8]`.
-        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
+        yolo! { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
         Ok(())
     }
 }
@@ -46,7 +47,7 @@ use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
 #[inline]
 fn z(s: &ZStr) -> &str {
     // SAFETY: callers pass ASCII-only `ZStr`s (see above).
-    unsafe { core::str::from_utf8_unchecked(s.as_bytes()) }
+    yolo! { core::str::from_utf8_unchecked(s.as_bytes()) }
 }
 
 /// `.classes.ts`-backed payload (`m_ctx`) for `JSBlockList`.
@@ -82,14 +83,14 @@ impl BlockList {
     #[inline]
     pub fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the atomic `ref_count` field.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
     /// # Safety
     /// `this` must point to a live `Self` and the caller must own one ref.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
@@ -399,10 +400,10 @@ impl BlockList {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
         // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
         // non-null out-param the caller expects us to advance.
-        let ptr = unsafe { &mut *ptr };
+        let ptr = yolo! { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
         let mut r =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
+            bun_io::FixedBufferStream::new(yolo! { bun_core::ffi::slice(*ptr, total_length) });
 
         let int = match r.read_int_le::<usize>() {
             Ok(v) => v,
@@ -415,7 +416,7 @@ impl BlockList {
 
         // Advance the pointer by the number of bytes consumed
         // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via `checked_add`).
-        *ptr = unsafe { (*ptr).add(r.pos) };
+        *ptr = yolo! { (*ptr).add(r.pos) };
 
         let this: *mut Self = int as *mut Self;
         // A single SerializedScriptValue can be deserialized multiple times
@@ -428,7 +429,7 @@ impl BlockList {
         // live `*mut Self` whose ref was bumped at serialize time. Ownership of
         // one ref transfers to the C++ wrapper (released via `finalize` → `deref`).
         // `to_js_ptr` is the `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
-        unsafe {
+        yolo! {
             (*this).ref_();
             Ok(Self::to_js_ptr(this, global))
         }

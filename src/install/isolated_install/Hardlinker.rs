@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_alloc::AllocError;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdDirExt, FdExt};
@@ -90,7 +91,7 @@ impl Hardlinker {
                 // — otherwise E0502 on x86_64-pc-windows-msvc.
                 let len = dest_cwd.len();
                 let dest_ptr = dest_cwd.as_ptr();
-                let off = unsafe { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
+                let off = yolo! { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
                 (off, len)
             };
 

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::test_runner::jest::FileColumns as _;
 use core::cell::Cell;
 use core::fmt;
@@ -111,7 +112,7 @@ impl AsymmetricMatcherConstructorType {
         // with -1 as the sentinel).
         bun_jsc::validation_scope!(scope, global_object);
         // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
-        let result = unsafe { AsymmetricMatcherConstructorType__fromJS(global_object, value) };
+        let result = yolo! { AsymmetricMatcherConstructorType__fromJS(global_object, value) };
         scope.assert_exception_presence_matches(result == -1);
         Ok(match result {
             -1 => return Err(JsError::Thrown),
@@ -232,7 +233,7 @@ impl Expect {
                 // field is `Option<NonNull<CommandLineReporter>>` (Zig
                 // `?*CommandLineReporter`), owned by `test_command` for the
                 // process lifetime, never aliased mutably elsewhere here.
-                unsafe {
+                yolo! {
                     let s = (*reporter.as_ptr()).summary();
                     s.expectations = s.expectations.saturating_add(1);
                 }
@@ -269,7 +270,7 @@ impl Expect {
         if let Some(s) = map.get(&(matcher_name, args, not)) {
             // SAFETY: `CACHE` is process-static and entries are never removed
             // or mutated, so the `Box<str>` allocation outlives the program.
-            return unsafe { &*std::ptr::from_ref::<str>(s.as_ref()) };
+            return yolo! { &*std::ptr::from_ref::<str>(s.as_ref()) };
         }
         const RECEIVED: &str = "<d>expect(<r><red>received<r><d>).<r>";
         let s: Box<str> = if not {
@@ -281,7 +282,7 @@ impl Expect {
         let ptr = std::ptr::from_ref::<str>(s.as_ref());
         map.insert((matcher_name, args, not), s);
         // SAFETY: just inserted into process-static `CACHE`; never removed.
-        unsafe { &*ptr }
+        yolo! { &*ptr }
     }
 
     pub fn throw_pretty_matcher_error(
@@ -524,7 +525,7 @@ impl Expect {
         any_constructor_type: *mut u8,
     ) -> bool {
         // SAFETY: `from_js` returns the live `m_ctx` payload owned by `instance_value`.
-        let flags: Flags = 'flags: { unsafe {
+        let flags: Flags = 'flags: { yolo! {
             if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
                 break 'flags (*instance).flags;
             } else if let Some(instance) = ExpectAny::from_js(instance_value) {
@@ -550,15 +551,15 @@ impl Expect {
         } };
 
         // SAFETY: out_flags is a valid out-ptr provided by C++ caller
-        unsafe { *out_flags = flags.encode() };
+        yolo! { *out_flags = flags.encode() };
 
         // (note that matcher_name/matcher_args are not used because silent=true)
         // SAFETY: value is a valid in/out-ptr provided by C++ caller
-        let v = unsafe { *value };
+        let v = yolo! { *value };
         match Self::process_promise(bun_core::String::empty(), flags, global_this, v, "", "", true) {
             Ok(new) => {
                 // SAFETY: value is a valid in/out-ptr provided by C++ caller
-                unsafe { *value = new };
+                yolo! { *value = new };
                 true
             }
             Err(_) => false,
@@ -581,7 +582,7 @@ impl Expect {
         let mut curr_scope = execution_entry.base.parent;
         while let Some(scope) = curr_scope {
             // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
-            let scope = unsafe { &*scope };
+            let scope = yolo! { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
                 if !name.is_empty() {
                     length += name.len() + 1;
@@ -611,7 +612,7 @@ impl Expect {
         curr_scope = execution_entry.base.parent;
         while let Some(scope) = curr_scope {
             // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
-            let scope = unsafe { &*scope };
+            let scope = yolo! { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
                 if !name.is_empty() {
                     index -= name.len() + 1;
@@ -677,7 +678,7 @@ impl Expect {
         // SAFETY: just-created wrapper; `from_js` returns the live m_ctx payload
         // kept alive by `expect_js_value` (ensure_still_alive above).
         if let Some(expect_ptr) = Self::from_js(expect_js_value) {
-            unsafe { (*expect_ptr).post_match(global_this) };
+            yolo! { (*expect_ptr).post_match(global_this) };
         }
         Ok(expect_js_value)
     }
@@ -1347,10 +1348,10 @@ impl Expect {
         }
 
         // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_proto = unsafe { Expect__getPrototype(global_this) };
+        let expect_proto = yolo! { Expect__getPrototype(global_this) };
         let expect_constructor = <Self as bun_jsc::JsClass>::get_constructor(global_this);
         // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_static_proto = unsafe { ExpectStatic__getPrototype(global_this) };
+        let expect_static_proto = yolo! { ExpectStatic__getPrototype(global_this) };
 
         // SAFETY: already checked that args[0] is an object
         let matchers_to_register = args[0].get_object().expect("unreachable");
@@ -1395,7 +1396,7 @@ impl Expect {
                         f: *mut bun_jsc::CallFrame,
                     ) -> JSValue {
                         // SAFETY: JSC guarantees both pointers are live for the call.
-                        let (g, f) = unsafe { (&*g, &*f) };
+                        let (g, f) = yolo! { (&*g, &*f) };
                         bun_jsc::to_js_host_fn_result(g, Expect::apply_custom_matcher(g, f))
                     }
                 }
@@ -1405,7 +1406,7 @@ impl Expect {
                 // pointer-to-function-pointer — the Zig `*const jsc.JSHostFn` is itself the
                 // function-pointer type (Zig fn types aren't pointers), whereas Rust's
                 // `JSHostFn` already is, so pass it directly.
-                let wrapper_fn = unsafe {
+                let wrapper_fn = yolo! {
                     Bun__JSWrappingFunction__create(
                         global_this,
                         &raw const matcher_name,
@@ -1587,7 +1588,7 @@ impl Expect {
         // R-2: deref as shared (`&*`) — `process_promise` below may re-enter JS (await on a
         // thenable's user-defined `then`), which can call another matcher on this same
         // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
-        let expect = unsafe { &*expect_ptr };
+        let expect = yolo! { &*expect_ptr };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
@@ -1740,7 +1741,7 @@ impl Expect {
     pub fn post_match(&self, global_this: &JSGlobalObject) {
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
     }
 
     /// RAII for Zig's `defer this.postMatch(globalThis)`. The returned guard holds the
@@ -1942,7 +1943,7 @@ impl ExpectStatic {
                 return Err(global_this.throw_out_of_memory());
             };
             // SAFETY: from_js_ptr returns the live m_ctx payload owned by instance_jsvalue.
-            unsafe { (*instance).flags_cell().set(this.flags) };
+            yolo! { (*instance).flags_cell().set(this.flags) };
         }
         Ok(instance_jsvalue)
     }
@@ -2372,7 +2373,7 @@ impl ExpectAnything {
 
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
 
         Ok(anything_js_value)
     }
@@ -2400,7 +2401,7 @@ impl ExpectStringMatching {
 
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
         Ok(string_matching_js_value)
     }
 }
@@ -2441,7 +2442,7 @@ impl ExpectCloseTo {
 
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
         Ok(instance_jsvalue)
     }
 }
@@ -2469,7 +2470,7 @@ impl ExpectObjectContaining {
 
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
         Ok(instance_jsvalue)
     }
 }
@@ -2497,7 +2498,7 @@ impl ExpectStringContaining {
 
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
         Ok(string_containing_js_value)
     }
 }
@@ -2544,7 +2545,7 @@ impl ExpectAny {
 
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
 
         Ok(any_js_value)
     }
@@ -2573,7 +2574,7 @@ impl ExpectArrayContaining {
 
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        yolo! { (*vm).auto_garbage_collect() };
         Ok(array_containing_js_value)
     }
 }
@@ -2602,7 +2603,7 @@ impl ExpectCustomAsymmetricMatcher {
         // try to retrieve the ExpectStatic instance (to get the flags)
         let flags = if let Some(expect_static) = <ExpectStatic as bun_jsc::JsClass>::from_js(call_frame.this()) {
             // SAFETY: from_js returns the live m_ctx payload for this JSValue.
-            unsafe { (*expect_static).flags }
+            yolo! { (*expect_static).flags }
         } else {
             // if it's not an ExpectStatic instance, assume it was called from the Expect constructor, so use the default flags
             Flags::default()
@@ -2681,7 +2682,7 @@ impl ExpectCustomAsymmetricMatcher {
         received: JSValue,
     ) -> bool {
         // SAFETY: called from C++ with valid pointers
-        unsafe { Self::execute_impl(&*this, this_value, &*global_this, received) }.unwrap_or(false)
+        yolo! { Self::execute_impl(&*this, this_value, &*global_this, received) }.unwrap_or(false)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2795,7 +2796,7 @@ impl ExpectMatcherContext {
     #[bun_jsc::host_fn(getter)]
     pub fn get_utils(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call with valid &JSGlobalObject
-        unsafe { ExpectMatcherUtils__getSingleton(global_this) }
+        yolo! { ExpectMatcherUtils__getSingleton(global_this) }
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -3048,7 +3049,7 @@ pub mod mock {
     #[inline]
     pub fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
         // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        bun_jsc::call_zero_is_throw(global, || unsafe {
+        bun_jsc::call_zero_is_throw(global, || yolo! {
             JSMockFunction__getCalls_raw(global.as_ptr(), value)
         })
     }
@@ -3059,7 +3060,7 @@ pub mod mock {
     #[inline]
     pub fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
         // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        bun_jsc::call_zero_is_throw(global, || unsafe {
+        bun_jsc::call_zero_is_throw(global, || yolo! {
             JSMockFunction__getReturns_raw(global.as_ptr(), value)
         })
     }
@@ -3295,7 +3296,7 @@ pub mod mock {
 #[inline]
 fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> Option<JSValue> {
     // SAFETY: FFI call with valid JSValue and &JSGlobalObject
-    let matcher_fn = unsafe { Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this) };
+    let matcher_fn = yolo! { Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this) };
     if matcher_fn.is_empty() { None } else { Some(matcher_fn) }
 }
 

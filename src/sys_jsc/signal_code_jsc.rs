@@ -1,5 +1,6 @@
 //! JSC bridge for `bun.SignalCode`. Keeps `src/sys/` free of JSC types.
 
+use bun_yolo::yolo;
 use bun_sys::SignalCode;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
@@ -34,7 +35,7 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
     } else if arg.is_string() {
         // SAFETY: `is_string()` ⇒ `as_string()` returns a non-null JSString cell;
         // borrowed for `.length()` only.
-        if unsafe { &*arg.as_string() }.length() == 0 {
+        if yolo! { &*arg.as_string() }.length() == 0 {
             return Ok(SignalCode::DEFAULT);
         }
         let signal_code = arg.to_enum::<SignalCode>(global_this, "signal")?;

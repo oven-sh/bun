@@ -1,5 +1,6 @@
 //! `DevServer.Assets` — content-addressable store on `/_bun/asset/{hash}.ext`.
 
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
@@ -105,7 +106,7 @@ impl Assets {
             // SAFETY: accessing disjoint field `client_graph` via parent ptr; `assets` (self) is
             // not touched through `owner` for the duration of this borrow.
             let _ =
-                unsafe { &mut (*owner).client_graph }.insert_empty(abs_path, FileKind::Unknown)?;
+                yolo! { &mut (*owner).client_graph }.insert_empty(abs_path, FileKind::Unknown)?;
         } else {
             let entry_index = existing_entry.unwrap();
             // When there is one reference to the asset, the entry can be
@@ -115,7 +116,7 @@ impl Assets {
                 // mutated `.key`/`.value` columns directly. Rust ArrayHashMap exposes keys_mut/values_mut.
                 let prev = self.files.values()[entry_index.get_usize()];
                 // SAFETY: `prev` is a live intrusively-refcounted StaticRoute we hold one ref to.
-                unsafe { StaticRoute::deref_(prev) };
+                yolo! { StaticRoute::deref_(prev) };
 
                 self.files.keys_mut()[entry_index.get_usize()] = content_hash;
                 self.files.values_mut()[entry_index.get_usize()] = StaticRoute::init_from_any_blob(
@@ -207,7 +208,7 @@ impl Assets {
         self.refs[index.get_usize()] -= dec_count;
         if self.refs[index.get_usize()] == 0 {
             // SAFETY: value is a live intrusively-refcounted StaticRoute we hold one ref to.
-            unsafe { StaticRoute::deref_(self.files.values()[index.get_usize()]) };
+            yolo! { StaticRoute::deref_(self.files.values()[index.get_usize()]) };
             self.files.swap_remove_at(index.get_usize());
             self.refs.swap_remove(index.get_usize());
             // `swap_remove` moved the entry that was at the old last index into
@@ -258,7 +259,7 @@ impl Assets {
         cost += memory_cost_array_hash_map(&self.path_map);
         for &blob in self.files.values() {
             // SAFETY: every stored StaticRoute pointer is live while held in `files`.
-            cost += unsafe { (*blob).memory_cost() };
+            cost += yolo! { (*blob).memory_cost() };
         }
         cost += memory_cost_array_hash_map(&self.files);
         cost += memory_cost_array_list(&self.refs);
@@ -272,7 +273,7 @@ impl Drop for Assets {
         // only the manual StaticRoute derefs remain as a side effect.
         for &blob in self.files.values() {
             // SAFETY: we hold one ref to each stored StaticRoute; release it.
-            unsafe { StaticRoute::deref_(blob) };
+            yolo! { StaticRoute::deref_(blob) };
         }
     }
 }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 use core::ptr;
@@ -251,19 +252,19 @@ fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
 fn on_timeout_shim(this: *mut NodeHTTPResponse, resp: uws::AnyResponse) {
     // SAFETY: registered with `self`'s address; live while callback is armed.
     // R-2: deref as shared (`&*const`) — bodies take `&self`.
-    unsafe { (*this.cast_const()).on_timeout(resp) }
+    yolo! { (*this.cast_const()).on_timeout(resp) }
 }
 fn on_data_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
     // SAFETY: see on_timeout_shim.
-    unsafe { (*this.cast_const()).on_data(chunk, last) }
+    yolo! { (*this.cast_const()).on_data(chunk, last) }
 }
 fn on_buffer_paused_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
     // SAFETY: see on_timeout_shim.
-    unsafe { (*this.cast_const()).on_buffer_request_body_while_paused(chunk, last) }
+    yolo! { (*this.cast_const()).on_buffer_request_body_while_paused(chunk, last) }
 }
 fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) -> bool {
     // SAFETY: see on_timeout_shim.
-    unsafe { (*this.cast_const()).on_drain(off, resp) }
+    yolo! { (*this.cast_const()).on_drain(off, resp) }
 }
 
 // R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
@@ -276,7 +277,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const NodeHTTPResponse` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.
-    unsafe { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
+    yolo! { (*(ctx.cast_const().cast::<NodeHTTPResponse>())).on_auto_flush() }
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
@@ -397,7 +398,7 @@ impl NodeHTTPResponse {
         // PORT NOTE: reshaped for borrowck — extend handler lifetime past method calls.
         // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
         let ws_handler: &mut crate::server::WebSocketServerHandler =
-            unsafe { &mut *std::ptr::from_mut(ws_handler) };
+            yolo! { &mut *std::ptr::from_mut(ws_handler) };
         let socket_value = self.get_server_socket_value();
         if socket_value.is_empty() {
             return false;
@@ -1923,7 +1924,7 @@ impl NodeHTTPResponse {
         // the `*const → *mut` cast retains the original Box provenance. Once
         // Phase 1 lands the shim will pass the raw m_ctx as `&T` directly and
         // this remains the unique owner at count==0.
-        unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };
+        yolo! { drop(bun_core::heap::take(self.as_ctx_ptr())) };
     }
 
     // Intrusive refcount helpers (mirrors Zig `bun.ptr.RefCount(@This(), ...)` mixin).
@@ -1953,23 +1954,23 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     unsafe fn rc_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; touches only the
         // interior-mutable `Cell<u32>` field.
-        unsafe { (*this).ref_() }
+        yolo! { (*this).ref_() }
     }
     #[inline]
     unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
         // SAFETY: caller contract — `this` is live; `deref()` touches only
         // `Cell`/`JsCell` fields and on zero frees via `heap::take`.
-        unsafe { (*this).deref() }
+        yolo! { (*this).deref() }
     }
     #[inline]
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_count.get() == 1 }
+        yolo! { (*this).ref_count.get() == 1 }
     }
     #[inline]
     unsafe fn rc_assert_no_refs(this: *const Self) {
         // SAFETY: caller contract — `this` is live.
-        debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
+        debug_assert_eq!(yolo! { (*this).ref_count.get() }, 0);
     }
     #[cfg(debug_assertions)]
     #[inline]
@@ -1990,7 +1991,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
     node_response_ptr: *mut *mut NodeHTTPResponse,
 ) -> JSValue {
     // SAFETY: all pointers are provided by C++ NodeHTTPServer and are live for the call.
-    let has_body = unsafe { &mut *has_body };
+    let has_body = yolo! { &mut *has_body };
     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
@@ -2048,7 +2049,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
     }));
 
     // SAFETY: `response` was just allocated and leaked; we hold the only reference.
-    let response_ref = unsafe { &*response };
+    let response_ref = yolo! { &*response };
     if *has_body {
         response_ref.body_read_ref.with_mut(|r| r.r#ref(vm));
     }
@@ -2057,9 +2058,9 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
     // the +1 wrapper ref transfers to the GC (`NodeHTTPResponseClass__finalize`
     // calls `finalize` → `deref`). `to_js_ptr` is the `#[JsClass]`-generated
     // no-rebox wrapper around `NodeHTTPResponse__create`.
-    let js_this = unsafe { NodeHTTPResponse::to_js_ptr(response, global_object) };
+    let js_this = yolo! { NodeHTTPResponse::to_js_ptr(response, global_object) };
     // SAFETY: out-param provided by caller.
-    unsafe { *node_response_ptr = response };
+    yolo! { *node_response_ptr = response };
     js_this
 }
 

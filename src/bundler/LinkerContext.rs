@@ -1,5 +1,6 @@
 //! Port of src/bundler/LinkerContext.zig
 
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -107,7 +108,7 @@ pub fn bundle_generate_chunk_action(
 ) -> bun_crash_handler::Action {
     bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
         // SAFETY: `ctx`/`chunk`/`part_range` outlive the crash-trace scope this is held for.
-        ctx: unsafe {
+        ctx: yolo! {
             bun_crash_handler::BundleGenerateChunkCtx::new(
                 bun_crash_handler::BundleGenerateChunkCtxKind::Linker,
                 core::ptr::from_ref(ctx).cast_mut(),
@@ -298,7 +299,7 @@ impl<'a> LinkerContext<'a> {
         );
         // SAFETY: non-null backref into `BundleV2.graph`, valid for the link
         // step, disjoint from `*self` (= `BundleV2.linker`).
-        unsafe { &*self.parse_graph }
+        yolo! { &*self.parse_graph }
     }
 
     /// Exclusive accessor for the parse-side graph. See [`Self::parse_graph`]
@@ -313,7 +314,7 @@ impl<'a> LinkerContext<'a> {
         );
         // SAFETY: non-null backref into `BundleV2.graph`, disjoint from
         // `*self`; `&mut self` excludes other safe borrows of the linker.
-        unsafe { &mut *self.parse_graph }
+        yolo! { &mut *self.parse_graph }
     }
 
     /// Shared-read accessor for the resolver.
@@ -347,7 +348,7 @@ impl<'a> LinkerContext<'a> {
         // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
         // pushes to an MPSC queue + writes the caller-owned intrusive task
         // node, so concurrent worker completions do not alias loop state.
-        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
+        self.r#loop.map(|p| yolo! { &mut *p.as_ptr() })
     }
 
     /// Shared-read accessor for the bundler log.
@@ -361,7 +362,7 @@ impl<'a> LinkerContext<'a> {
             "LinkerContext.log accessed before load()"
         );
         // SAFETY: non-null backref valid for the link step.
-        unsafe { &*self.log }
+        yolo! { &*self.log }
     }
 
     /// Exclusive accessor for the bundler log. See [`Self::log`] for the
@@ -375,7 +376,7 @@ impl<'a> LinkerContext<'a> {
         );
         // SAFETY: non-null backref valid for the link step; `&mut self`
         // excludes other safe borrows of the linker.
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Detached mutable borrow of the bundler log for split-borrow contexts.
@@ -403,7 +404,7 @@ impl<'a> LinkerContext<'a> {
         // step, allocation-disjoint from `*self` (= `BundleV2.linker`). All
         // call sites previously open-coded the raw deref under the same
         // invariant; centralised here so the proof obligation lives once.
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Safe accessor for the underlying `bun_threading::ThreadPool` driving
@@ -440,7 +441,7 @@ impl<'a> LinkerContext<'a> {
     pub fn check_for_memory_corruption(&self) {
         // For this to work, you need mimalloc's debug build enabled.
         //    make mimalloc-debug
-        // TODO(b3): `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
+        // TODO(b3): `yolo! { (*self.parse_graph).heap.help_catch_memory_issues() }`
         // once `Graph.heap: MimallocArena`.
     }
 }
@@ -523,14 +524,14 @@ impl<'a> LinkerContext<'a> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
         // SAFETY: field-disjoint with `self` (= `(*bundle).linker`); `parse_graph`
         // is a `*mut Graph` backref so no `&mut` is materialized.
-        self.parse_graph = unsafe { core::ptr::addr_of_mut!((*bundle).graph) };
+        self.parse_graph = yolo! { core::ptr::addr_of_mut!((*bundle).graph) };
         // SAFETY: field-disjoint scalar read; `transpiler` is itself a `*mut`.
         let dyn_entry_points =
-            unsafe { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
+            yolo! { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
 
         // SAFETY: `bundle.transpiler` is a `*mut Transpiler` backref valid for
         // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
-        let transpiler = unsafe { &mut *(*bundle).transpiler };
+        let transpiler = yolo! { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
         // Mirrors Zig's pointer assignment; `transpiler.log` is the canonical
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
@@ -543,7 +544,7 @@ impl<'a> LinkerContext<'a> {
         // is sufficient.
         // SAFETY: `transpiler.resolver` is a stable field of the
         // bundle-lifetime `Transpiler`, valid for the entire link step.
-        self.resolver = Some(unsafe {
+        self.resolver = Some(yolo! {
             bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
         });
         self.cycle_detector = Vec::new();
@@ -554,7 +555,7 @@ impl<'a> LinkerContext<'a> {
         self.graph.reachable_files = reachable.to_vec();
 
         // SAFETY: parse_graph is valid backref just assigned above
-        let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
+        let sources: &[Source] = yolo! { (*self.parse_graph).input_files.items_source() };
 
         self.graph.load(
             entry_points,
@@ -562,7 +563,7 @@ impl<'a> LinkerContext<'a> {
             server_component_boundaries,
             dyn_entry_points.keys(),
             // SAFETY: parse_graph backref
-            unsafe { &(*self.parse_graph).entry_point_original_names },
+            yolo! { &(*self.parse_graph).entry_point_original_names },
         )?;
         // PERF(port): was arena bulk-free — `dynamic_import_entry_points` is
         // now a global-alloc `ArrayHashMap`; clearing drops it.
@@ -648,7 +649,7 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: erase `'a` → `'static` for the task backref. The tasks are
         // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
         // SAFETY: write provenance from `ptr::from_mut`; outlives every task.
-        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(unsafe {
+        let ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>> = Some(yolo! {
             bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext<'a>>(self).cast())
         });
         let mut batch = ThreadPoolLib::Batch::default();
@@ -707,7 +708,7 @@ impl<'a> LinkerContext<'a> {
         // we go through raw pointers and reborrow per use.
         let parse_graph: *mut Graph = self.parse_graph;
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
-        let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
+        let server_len = yolo! { (*parse_graph).html_imports.server_source_indices.len() };
         if server_len > 0 {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
 
@@ -715,15 +716,15 @@ impl<'a> LinkerContext<'a> {
                 // SAFETY: `server_source_indices` is a stable Vec; index
                 // bounded by `server_len`.
                 let html_import: u32 =
-                    unsafe { (*parse_graph).html_imports.server_source_indices.slice()[i] };
+                    yolo! { (*parse_graph).html_imports.server_source_indices.slice()[i] };
                 // SAFETY: `input_files` SoA is append-only; read-only here.
-                let path_text = unsafe {
+                let path_text = yolo! {
                     &(*parse_graph).input_files.items_source()[html_import as usize]
                         .path
                         .text
                 };
                 // SAFETY: sole `&mut` into the per-target map for this lookup.
-                let source_index: u32 = unsafe {
+                let source_index: u32 = yolo! {
                     (*parse_graph).path_to_source_index_map(Target::Browser)
                 }
                 .get(path_text)
@@ -732,7 +733,7 @@ impl<'a> LinkerContext<'a> {
                 });
 
                 // SAFETY: sole `&mut` into `html_source_indices` for this push.
-                unsafe {
+                yolo! {
                     (*parse_graph)
                         .html_imports
                         .html_source_indices
@@ -744,7 +745,7 @@ impl<'a> LinkerContext<'a> {
                 // valid for the link step. Each accessor returns `Option`;
                 // `.unwrap()` mirrors Zig's untagged-union field reads (panic
                 // on shape mismatch).
-                let original_ref = unsafe {
+                let original_ref = yolo! {
                     (*self.graph.ast.items_parts()[html_import as usize]
                         .at(1)
                         .stmts)[0]
@@ -761,7 +762,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                unsafe { self.graph.symbol_mut(original_ref) }
+                yolo! { self.graph.symbol_mut(original_ref) }
                     .link
                     .set(actual_ref);
 
@@ -793,7 +794,7 @@ impl<'a> LinkerContext<'a> {
         reachable: &[Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
         // SAFETY: forwarded; see fn-level contract.
-        unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
+        yolo! { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
         if self.options.source_maps != SourceMapOption::None {
             self.compute_data_for_source_map(reachable);
@@ -807,7 +808,7 @@ impl<'a> LinkerContext<'a> {
 
         // Validate top-level await for all files first.
         // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
-        if unsafe { (*bundle).has_any_top_level_await_modules } {
+        if yolo! { (*bundle).has_any_top_level_await_modules } {
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
             // from `*self` (= `BundleV2.linker`). The SoA column slices below
             // are physically disjoint and the underlying slabs do not
@@ -825,7 +826,7 @@ impl<'a> LinkerContext<'a> {
             // from `*self`, stable SoA slabs; the recursive `validate_tla` body
             // neither reallocates the slabs nor forms a competing `&mut` to
             // any read-only column. All seven derefs share that invariant.
-            let (tla_keywords, tla_checks, input_files, import_records_list, css_asts, flags) = unsafe {
+            let (tla_keywords, tla_checks, input_files, import_records_list, css_asts, flags) = yolo! {
                 (
                     (*parse_graph).ast.items_top_level_await_keyword(),
                     (*parse_graph).ast.items_tla_check_mut(),
@@ -894,7 +895,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         // SAFETY: scalar `u64` read of a field disjoint from `self` (= `(*bundle).linker`).
-        let mut chunks = compute_chunks(self, unsafe { (*bundle).unique_key })?;
+        let mut chunks = compute_chunks(self, yolo! { (*bundle).unique_key })?;
 
         if self.log().has_errors() {
             return Err(LinkError::BuildFailed);
@@ -947,7 +948,7 @@ impl<'a> LinkerContext<'a> {
             parts,
             distances,
             file_entry_bits,
-        ) = unsafe {
+        ) = yolo! {
             (
                 &*entry_points,
                 &*side_effects,
@@ -1025,7 +1026,7 @@ impl<'a> LinkerContext<'a> {
         // the duration of this body. ctx.c points into BundleV2.linker;
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
         // (shared), so a `&` is sufficient and avoids aliasing.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
+        let chunk: &mut Chunk = yolo! { &mut *chunk };
         let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         let worker: &mut crate::thread_pool::Worker = &mut **worker;
@@ -1052,7 +1053,7 @@ impl<'a> LinkerContext<'a> {
     pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
+        let chunk: &mut Chunk = yolo! { &mut *chunk };
         let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
@@ -1080,7 +1081,7 @@ impl<'a> LinkerContext<'a> {
         // shared `*mut LinkerContext` — pass it raw so `rename_symbols_in_chunk` can deref
         // to `&LinkerContext` (shared) without asserting whole-context exclusivity while
         // peer renamer tasks run concurrently.
-        chunk.renamer = unsafe { rename_symbols_in_chunk(ctx.c.as_mut_ptr(), chunk, &*files) }
+        chunk.renamer = yolo! { rename_symbols_in_chunk(ctx.c.as_mut_ptr(), chunk, &*files) }
             .expect("TODO: handle error");
     }
 
@@ -1403,7 +1404,7 @@ impl SourceMapDataTask {
     // pointer.
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
-        let task: &mut SourceMapDataTask = unsafe {
+        let task: &mut SourceMapDataTask = yolo! {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
         // `ParentRef<LinkerContext>` — Deref yields `&LinkerContext`; the
@@ -1421,8 +1422,8 @@ impl SourceMapDataTask {
         // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let bundle: *const BundleV2 = yolo! { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        let worker = crate::thread_pool::Worker::get(yolo! { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
         worker.unget();
@@ -1437,7 +1438,7 @@ impl SourceMapDataTask {
     // via raw per-row pointer.
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
-        let task: &mut SourceMapDataTask = unsafe {
+        let task: &mut SourceMapDataTask = yolo! {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
         // `ParentRef<LinkerContext>` — Deref yields `&LinkerContext`; the
@@ -1451,8 +1452,8 @@ impl SourceMapDataTask {
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
-        let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let bundle: *const BundleV2 = yolo! { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        let worker = crate::thread_pool::Worker::get(yolo! { &*bundle });
 
         // Use the default arena when using DevServer and the file
         // was generated. This will be preserved so that remapping
@@ -1495,7 +1496,7 @@ impl SourceMapData {
         // tasks. The write target is the per-source_index slot, addressed by
         // raw pointer — disjoint across concurrent tasks.
         // SAFETY: `add` offset is in-bounds (`source_index < files.len()`).
-        let line_offset_table: *mut SourceMap::line_offset_table::List = unsafe {
+        let line_offset_table: *mut SourceMap::line_offset_table::List = yolo! {
             this.graph
                 .files
                 .slice()
@@ -1511,7 +1512,7 @@ impl SourceMapData {
         if !loader.can_have_source_map() {
             // This is not a file which we support generating source maps for
             // SAFETY: sole writer to this slot (disjoint by source_index).
-            unsafe { *line_offset_table = Default::default() };
+            yolo! { *line_offset_table = Default::default() };
             return;
         }
 
@@ -1521,7 +1522,7 @@ impl SourceMapData {
 
         // SAFETY: sole writer to this slot (disjoint by source_index).
         let _ = alloc;
-        unsafe {
+        yolo! {
             *line_offset_table = LineOffsetTable::generate(
                 &source.contents,
                 // We don't support sourcemaps for source files with more than 2^31 lines
@@ -1543,7 +1544,7 @@ impl SourceMapData {
         // `ParentRef::Deref`) to read the SoA column base, then raw-ptr offset
         // to the per-source_index slot. Sole writer to this slot (disjoint
         // across concurrent tasks); `add` offset is in-bounds.
-        let quoted_source_contents = unsafe {
+        let quoted_source_contents = yolo! {
             &mut *this
                 .graph
                 .files
@@ -1644,13 +1645,13 @@ impl<'a> GenerateChunkCtx<'a> {
         // SAFETY: `self.c` is `&raw mut bundle.linker` set in
         // `generate_chunks_in_parallel`; container_of recovers the parent.
         // The bundle is valid for the link step.
-        unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
+        yolo! { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
     }
 
     /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
     /// deref of the `c: *mut LinkerContext` backref (set in
     /// `generate_chunks_in_parallel`); callers previously open-coded
-    /// `unsafe { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
+    /// `yolo! { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
     /// chunk, so the linker fields they write don't alias across tasks.
     #[inline]
     #[allow(clippy::mut_from_ref)]
@@ -1659,7 +1660,7 @@ impl<'a> GenerateChunkCtx<'a> {
         // chunk-generation pass; this task's chunk row is disjoint from peers'.
         // Constructed via `from_raw_mut` (write provenance) in
         // `generate_chunks_in_parallel`.
-        unsafe { self.c.assume_mut() }
+        yolo! { self.c.assume_mut() }
     }
 }
 
@@ -1708,7 +1709,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 ) {
     // SAFETY: per fn contract — `task` is the intrusive `task` field.
     let part_range: &PendingPartRange =
-        unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
+        yolo! { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
     let ctx = part_range.ctx;
     let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
     let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
@@ -1759,7 +1760,7 @@ impl<'a> LinkerContext<'a> {
         // needs to be done for JavaScript files, not CSS files.
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
             // SAFETY: parse_graph backref; exclusive access via &mut *.
-            let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+            let sources = yolo! { (*self.parse_graph).input_files.items_source_mut() };
             for part_range in js.parts_in_chunk_in_order.iter() {
                 let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
 
@@ -1808,7 +1809,7 @@ impl<'a> LinkerContext<'a> {
         {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
             // `transpiler_for_target` only reads `bundle.browser_transpiler`.
-            let bundle = unsafe {
+            let bundle = yolo! {
                 &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
             };
             &bundle
@@ -2181,7 +2182,7 @@ impl<'a> LinkerContext<'a> {
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
         // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
+        let parse_graph = yolo! { &*self.parse_graph };
 
         // PORT NOTE: `Options.arena` / `source_map_allocator` were removed in
         // the Rust port (printer uses global mimalloc + the explicit `bump`
@@ -2199,12 +2200,12 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `self.graph` columns are stable heap allocations valid for
         // the duration of this call; the printer only reads from them.
         let ts_enums: &bun_ast::ast_result::TsEnumsMap =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
-        let line_offset_table: &bun_sourcemap::line_offset_table::List = unsafe {
+            yolo! { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
+        let line_offset_table: &bun_sourcemap::line_offset_table::List = yolo! {
             &*(&raw const self.graph.files.items_line_offset_table()[source_index.get() as usize])
         };
         let mangled_props: &MangledProps =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
+            yolo! { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2274,7 +2275,7 @@ impl<'a> LinkerContext<'a> {
         // storage; dropping it would double-free).
         // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
         // the read is a bitwise copy whose result is never dropped.
-        let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
+        let printer_ast = core::mem::ManuallyDrop::new(yolo! { core::ptr::read(ast) }.to_ast());
 
         // PORT NOTE: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
         // printer struct stores it with a single lifetime), but `Renamer`'s
@@ -2284,7 +2285,7 @@ impl<'a> LinkerContext<'a> {
         // lifetime-only cast — sound because the renamer's borrowed data
         // (symbol map, source) strictly outlives this call.
         // SAFETY: lifetime-only erase; layout identical across instantiations.
-        let r: renamer::Renamer<'_, '_> = unsafe {
+        let r: renamer::Renamer<'_, '_> = yolo! {
             core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
         };
 
@@ -2356,7 +2357,7 @@ impl<'a> LinkerContext<'a> {
         let all_symbols: &[Vec<Symbol>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref; raw deref because `all_sources` is held
         // across `&mut self.mangled_props` below (split borrow).
-        let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
+        let all_sources: &[Source] = yolo! { (*self.parse_graph).input_files.items_source() };
 
         // Collect all local css names
         // PERF(port): was stack-fallback alloc
@@ -3039,7 +3040,7 @@ impl<'a> LinkerContext<'a> {
         // is monotonically grown and never freed for the link step's lifetime,
         // so the element address is stable. `'static` is a white lie matching
         // the `*mut Graph` erasure on `self.parse_graph`.
-        unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
+        yolo! { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
     }
 
     /// Spec: `LinkerContext.zig:496 scanCSSImports`.
@@ -3057,7 +3058,7 @@ impl<'a> LinkerContext<'a> {
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
         // the duration of `scanImportsAndExports`; we only test `is_none()`.
-        let css_asts = unsafe { &*css_asts };
+        let css_asts = yolo! { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {
                 // Other file is not CSS
@@ -3657,7 +3658,7 @@ impl<'a> LinkerContext<'a> {
                     {
                         // `named_import` borrows `graph.ast`; the symbol slot is a
                         // disjoint allocation, so no aliasing with this `&mut`.
-                        let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
+                        let symbol = yolo! { self.graph.symbol_mut(tracker.import_ref) };
                         symbol.import_item_status = ImportItemStatus::Missing;
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
@@ -3697,7 +3698,7 @@ impl<'a> LinkerContext<'a> {
                     // The mutated symbol slot is disjoint from the later borrows
                     // (`named_import` from graph.ast, `get_source` from parse_graph,
                     // `log_disjoint`) — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
+                    let symbol = yolo! { self.graph.symbol_mut(tracker.import_ref) };
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
@@ -3912,16 +3913,16 @@ impl<'a> LinkerContext<'a> {
         // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
         // `meta.probably_typescript_type`), so the backing `keys`/`values`
         // slices stay valid for the whole loop.
-        let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
-        let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
-        let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        let keys: *const [Ref] = yolo! { (*named_imports_ptr).keys() };
+        let values: *const [NamedImport] = yolo! { (*named_imports_ptr).values() };
+        let mut order: Vec<usize> = (0..yolo! { (&*keys).len() }).collect();
         order
-            .sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
+            .sort_by(|&a, &b| yolo! { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
 
         for &i in &order {
             // SAFETY: see above.
-            let import_ref = unsafe { (*keys)[i] };
-            let named_import = unsafe { &(*values)[i] };
+            let import_ref = yolo! { (*keys)[i] };
+            let named_import = yolo! { &(*values)[i] };
 
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
@@ -3953,7 +3954,7 @@ impl<'a> LinkerContext<'a> {
                         .expect("unreachable");
                 }
                 MatchImportKind::Namespace => {
-                    unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
+                    yolo! { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -3977,7 +3978,7 @@ impl<'a> LinkerContext<'a> {
 
                     // One-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned.
-                    unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
+                    yolo! { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -4023,7 +4024,7 @@ impl<'a> LinkerContext<'a> {
                     // The mutated symbol slot is disjoint from `source`/`r`
                     // (parse_graph), `named_import`/`alias` (arena slices), and
                     // `log_disjoint` — all separate allocations.
-                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
+                    let symbol = yolo! { self.graph.symbol_mut(import_ref) };
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias

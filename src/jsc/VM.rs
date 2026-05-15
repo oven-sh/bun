@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
@@ -12,7 +13,7 @@ use crate::{Exception, ExceptionValidationScope, JSGlobalObject, JSValue, JsErro
 // non-null `VM*` and the C++ side mutating through it does not violate Rust
 // aliasing (interior mutability; zero Rust-visible bytes). Declaring the
 // params as references and the fns as `safe fn` moves the validity proof into
-// the type signature and removes the per-call-site `unsafe { }` wrappers.
+// the type signature and removes the per-call-site `yolo! { }` wrappers.
 // `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
 // dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {

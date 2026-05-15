@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::CStr;
 
 use crate::shell::ExitCode;
@@ -111,7 +112,7 @@ impl Yes {
             let mut err = None;
             for _ in 0..4 {
                 // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-                if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
+                if let Err(e) = yolo! { stdout.write_no_io_to(shell, chunk) } {
                     err = Some(e);
                     break;
                 }
@@ -139,7 +140,7 @@ impl Yes {
         // PORT NOTE: `enqueue` ticks the event loop (Zig spec), which may
         // re-enter shell dispatch. We hold no `&mut` derived from `interp`
         // across the call; the parameter borrow itself is not re-used after.
-        unsafe { YesTask::enqueue(task) };
+        yolo! { YesTask::enqueue(task) };
         Yield::suspended()
     }
 
@@ -228,7 +229,7 @@ impl YesTask {
         // `concurrent_task` were initialised together by `Yes::start` so the
         // Js/Mini discriminants agree. `owner`/`mini` are live event-loop
         // backrefs (single-threaded shell).
-        unsafe {
+        yolo! {
             match (*this).evtloop {
                 EventLoopHandle::Js { owner } => {
                     owner.tick();
@@ -258,7 +259,7 @@ impl YesTask {
     pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live task previously passed
         // to `enqueue`; `interp` set in `Yes::start`, outlives the builtin.
-        let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
+        let (interp, cmd) = yolo! { (&*(*this).interp, (*this).cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 

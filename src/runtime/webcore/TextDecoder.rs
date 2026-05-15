@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult,
@@ -67,7 +68,7 @@ struct CodecGuard(core::ptr::NonNull<TextCodec>);
 impl Drop for CodecGuard {
     fn drop(&mut self) {
         // SAFETY: `self.0` came from `TextCodec::create` and has not been freed.
-        unsafe { TextCodec::destroy(self.0.as_ptr()) }
+        yolo! { TextCodec::destroy(self.0.as_ptr()) }
     }
 }
 impl core::ops::Deref for CodecGuard {

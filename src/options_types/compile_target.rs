@@ -4,6 +4,7 @@
 //! It uses npm to download the bun binary from the npm registry
 //! It stores the downloaded binary into the bun install cache.
 
+use bun_yolo::yolo;
 use core::fmt;
 use std::io::Write as _;
 
@@ -75,7 +76,7 @@ impl fmt::Display for Libc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(
             // SAFETY: npm_name() returns ASCII literals
-            unsafe { core::str::from_utf8_unchecked(self.npm_name()) },
+            yolo! { core::str::from_utf8_unchecked(self.npm_name()) },
         )
     }
 }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -180,7 +181,7 @@ impl S3HttpDownloadStreamingTask {
     pub fn on_response(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
-        let self_ = unsafe { &mut *this };
+        let self_ = yolo! { &mut *this };
         // lets lock and unlock the reported response buffer
         self_.mutex.lock();
         // the state is atomic let's load it once
@@ -192,7 +193,7 @@ impl S3HttpDownloadStreamingTask {
         scopeguard::defer! {
             // SAFETY: `this_ptr` was allocated via `Box::new` in `Self::new`; once
             // `has_more == false` we are the sole owner (HTTP thread will not call back again).
-            unsafe {
+            yolo! {
                 (*this_ptr).mutex.unlock();
                 if !has_more {
                     drop(bun_core::heap::take(this_ptr));
@@ -249,7 +250,7 @@ impl S3HttpDownloadStreamingTask {
             // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; Zig does a
             // plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.
             // `self.http` was previously initialised in `execute_s3_streaming_download`.
-            unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
+            yolo! { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
         wait_until_done
     }
@@ -330,9 +331,9 @@ impl S3HttpDownloadStreamingTask {
     ) {
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only
         // concurrent reference and `mutex` serializes against `on_response`.
-        let self_ = unsafe { &mut *this };
+        let self_ = yolo! { &mut *this };
         // SAFETY: `async_http` is the live HTTP-thread copy; non-null for the callback's duration.
-        let async_http = unsafe { &mut *async_http };
+        let async_http = yolo! { &mut *async_http };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
             let task = std::ptr::from_mut::<ConcurrentTask>(
@@ -360,7 +361,7 @@ impl Drop for S3HttpDownloadStreamingTask {
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
-        unsafe { self.http.assume_init_mut() }.clear_data();
+        yolo! { self.http.assume_init_mut() }.clear_data();
     }
 }
 

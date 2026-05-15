@@ -11,6 +11,7 @@
 //! so wrapper macros (`scoped_log!`, `note!`, …) can compose the template at
 //! the call site.
 
+use bun_yolo::yolo;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
@@ -305,7 +306,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                 // SAFETY: trait contract — refcount hit zero, `this` is the
                 // sole live owner of its allocation.
                 #[allow(unused_unsafe)]
-                unsafe { (#path)(this) }
+                yolo! { (#path)(this) }
             }
         }
     });
@@ -319,7 +320,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                 // SAFETY: caller contract — `this` is live. Project to the
                 // `Cell<u32>` field only; never form `&Self` (callers may hold
                 // a live `&mut` on a sibling field — Stacked Borrows).
-                unsafe { &*::core::ptr::addr_of!((*this).#field) }
+                yolo! { &*::core::ptr::addr_of!((*this).#field) }
             }
             #destroy_impl
         }
@@ -329,24 +330,24 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
             unsafe fn rc_ref(this: *mut Self) {
                 // SAFETY: caller contract — `this` is live. Raw field
                 // projection; no `&Self` is formed (see `ref_count_raw`).
-                let rc = unsafe { &*::core::ptr::addr_of!((*this).#field) };
+                let rc = yolo! { &*::core::ptr::addr_of!((*this).#field) };
                 rc.set(rc.get() + 1);
             }
             #[inline]
             unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
                 // SAFETY: caller contract — `this` is live.
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+                yolo! { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
             #[inline]
             unsafe fn rc_has_one_ref(this: *const Self) -> bool {
                 // SAFETY: caller contract — `this` is live. Raw field projection.
-                unsafe { &*::core::ptr::addr_of!((*this).#field) }.get() == 1
+                yolo! { &*::core::ptr::addr_of!((*this).#field) }.get() == 1
             }
             #[inline]
             unsafe fn rc_assert_no_refs(this: *const Self) {
                 debug_assert_eq!(
                     // SAFETY: caller contract — `this` is live. Raw field projection.
-                    unsafe { &*::core::ptr::addr_of!((*this).#field) }.get(),
+                    yolo! { &*::core::ptr::addr_of!((*this).#field) }.get(),
                     0,
                 );
             }
@@ -368,7 +369,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
             #[inline]
             pub unsafe fn deref(this: *mut Self) {
                 // SAFETY: forwarded caller contract.
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+                yolo! { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
         }
     };
@@ -493,7 +494,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             unsafe fn destructor(this: *mut Self) {
                 // SAFETY: trait contract — refcount hit zero.
                 #[allow(unused_unsafe)]
-                unsafe { (#path)(this) }
+                yolo! { (#path)(this) }
             }
         }
     });
@@ -503,7 +504,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::ThreadSafeRefCount<Self> {
                 // SAFETY: caller contract — `this` is live; project the field.
-                unsafe { &raw mut (*this).#field }
+                yolo! { &raw mut (*this).#field }
             }
             #destroy_impl
         }
@@ -512,17 +513,17 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             #[inline]
             unsafe fn rc_ref(this: *mut Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
-                unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) }
+                yolo! { ::bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) }
             }
             #[inline]
             unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
                 // SAFETY: caller contract — `this` points to a live Self.
-                unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::deref(this) }
+                yolo! { ::bun_ptr::ThreadSafeRefCount::<Self>::deref(this) }
             }
             #[inline]
             unsafe fn rc_has_one_ref(this: *const Self) -> bool {
                 // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
+                yolo! {
                     (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
                         .has_one_ref()
                 }
@@ -530,7 +531,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             #[inline]
             unsafe fn rc_assert_no_refs(this: *const Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
+                yolo! {
                     (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
                         .assert_no_refs()
                 }
@@ -539,7 +540,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             #[inline]
             unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
                 // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
+                yolo! {
                     (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this)).debug_data_ptr()
                 }
             }
@@ -631,12 +632,12 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
             // SAFETY: trait contract — refcount hit zero, `this` is the
             // sole live owner of its allocation.
             #[allow(unused_unsafe)]
-            unsafe { (#path)(this) }
+            yolo! { (#path)(this) }
         },
         None => quote! {
             // SAFETY: trait contract — refcount hit zero; allocated via
             // `heap::alloc`/`Box::into_raw`. `Drop` runs on the boxed value.
-            drop(unsafe { ::bun_core::heap::take(this) });
+            drop(yolo! { ::bun_core::heap::take(this) });
         },
     };
     let debug_name_impl = debug_name.map(|lit| {
@@ -653,7 +654,7 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
                 // SAFETY: caller contract — `this` points to a live Self.
-                unsafe { &raw mut (*this).#field }
+                yolo! { &raw mut (*this).#field }
             }
             #[inline]
             unsafe fn destructor(this: *mut Self, _ctx: ()) {

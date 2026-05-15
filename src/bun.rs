@@ -7,6 +7,7 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -280,7 +281,7 @@ pub fn platform_iovec_to_slice(iovec: &PlatformIOVec) -> &mut [u8] {
         bun_sys::windows::libuv::uv_buf_t::slice(iovec)
     }
     #[cfg(not(windows))]
-    unsafe {
+    yolo! {
         // SAFETY: iovec.base/len describe a valid mutable buffer owned by caller
         core::slice::from_raw_parts_mut(iovec.base, iovec.len as usize)
     }
@@ -347,7 +348,7 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
             data: T::default(),
         }));
         // SAFETY: s was just allocated by heap::alloc, non-null
-        unsafe {
+        yolo! {
             THREADLOCAL_BUFFERS_HEAD
                 .with(|h| h.set(Some(NonNull::new_unchecked(&mut (*s).node))));
             &mut (*s).data
@@ -361,7 +362,7 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
             data: T,
         }
         // SAFETY: node points to Storage.node (offset 0 because #[repr(C)])
-        unsafe {
+        yolo! {
             let s = bun_core::from_field_ptr!(Storage<T>, node, node);
             drop(bun_core::heap::take(s));
         }
@@ -377,7 +378,7 @@ pub fn free_all_threadlocal_buffers() {
     let mut node = THREADLOCAL_BUFFERS_HEAD.with(|h| h.take());
     while let Some(n) = node {
         // SAFETY: n is a valid intrusive node from the list
-        unsafe {
+        yolo! {
             let next = (*n.as_ptr()).next;
             ((*n.as_ptr()).free)(n.as_ptr());
             node = next;
@@ -403,7 +404,7 @@ pub unsafe fn cast<To>(value: *const c_void) -> *mut To {
 #[inline]
 pub unsafe fn len_cstr(value: *const c_char) -> usize {
     // SAFETY: caller guarantees `value` is NUL-terminated
-    unsafe { bun_core::ffi::cstr(value) }.to_bytes().len()
+    yolo! { bun_core::ffi::cstr(value) }.to_bytes().len()
 }
 
 /// Zig `bun.span(p)` — bytes of a NUL-terminated C string (excludes NUL).
@@ -535,7 +536,7 @@ pub fn unreachable_panic(args: core::fmt::Arguments<'_>) -> ! {
 pub fn is_heap_memory<T>(mem: *const T) -> bool {
     if use_mimalloc {
         // SAFETY: mi_is_in_heap_region only reads the pointer value
-        return unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(mem.cast::<c_void>()) };
+        return yolo! { bun_alloc::mimalloc::mi_is_in_heap_region(mem.cast::<c_void>()) };
     }
     false
 }
@@ -841,7 +842,7 @@ pub fn is_missing_io_uring() -> bool {
 #[inline]
 pub unsafe fn zero<T>() -> T {
     // SAFETY: caller asserts all-zero is a valid T
-    unsafe { bun_core::ffi::zeroed_unchecked() }
+    yolo! { bun_core::ffi::zeroed_unchecked() }
 }
 
 // ─── getFdPath ────────────────────────────────────────────────────────────────
@@ -921,7 +922,7 @@ pub fn get_fd_path_z<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut bun_
     let len = get_fd_path(fd, buf)?.len();
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
-    Ok(unsafe { bun_core::ZStr::from_raw_mut(buf.as_mut_ptr(), len) })
+    Ok(yolo! { bun_core::ZStr::from_raw_mut(buf.as_mut_ptr(), len) })
 }
 
 /// TODO: move to bun.sys and add a method onto FD
@@ -1123,7 +1124,7 @@ pub use bun_core::{bun_options_argc, set_bun_options_argc};
 pub fn argv() -> &'static [Box<bun_core::ZStr>] {
     // SAFETY: ARGV is initialized once in init_argv() during single-threaded
     // startup and never resized after.
-    unsafe { &*ARGV.get() }
+    yolo! { &*ARGV.get() }
 }
 
 /// Trait for arg types accepted by `append_options_env` (replaces `comptime ArgType`).
@@ -1136,19 +1137,19 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
         let mut out: Vec<Box<bun_core::ZStr>> = Vec::with_capacity(os_argv.len());
         for &p in os_argv {
             // SAFETY: os argv entries are NUL-terminated
-            let s = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
+            let s = yolo! { bun_core::ffi::cstr(p) }.to_bytes();
             out.push(bun_core::ZStr::from_bytes(s));
         }
         // SAFETY: single-threaded init
-        unsafe { *ARGV.get() = out };
+        yolo! { *ARGV.get() = out };
     }
     #[cfg(windows)]
     {
         // SAFETY: GetCommandLineW returns a valid wide string
-        let cmdline_ptr = unsafe { bun_sys::windows::GetCommandLineW() };
+        let cmdline_ptr = yolo! { bun_sys::windows::GetCommandLineW() };
         let mut length: c_int = 0;
         let argvu16_ptr =
-            unsafe { bun_sys::windows::CommandLineToArgvW(cmdline_ptr, &mut length) };
+            yolo! { bun_sys::windows::CommandLineToArgvW(cmdline_ptr, &mut length) };
         if argvu16_ptr.is_null() {
             return match bun_sys::get_errno(()) {
                 bun_sys::E::NOMEM => Err(bun_core::err!("OutOfMemory")),
@@ -1157,28 +1158,28 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
             };
         }
         let argvu16 =
-            unsafe { core::slice::from_raw_parts(argvu16_ptr, usize::try_from(length).expect("int cast")) };
+            yolo! { core::slice::from_raw_parts(argvu16_ptr, usize::try_from(length).expect("int cast")) };
         let mut out_argv: Vec<Box<bun_core::ZStr>> = Vec::with_capacity(argvu16.len());
         let mut string_builder = StringBuilder::default();
         for &argraw in argvu16 {
-            let arg = unsafe { bun_core::WStr::from_ptr(argraw) };
+            let arg = yolo! { bun_core::WStr::from_ptr(argraw) };
             string_builder.count16_z(arg);
         }
         string_builder.allocate()?;
         for &argraw in argvu16 {
-            let arg = unsafe { bun_core::WStr::from_ptr(argraw) };
+            let arg = yolo! { bun_core::WStr::from_ptr(argraw) };
             let s = string_builder
                 .append16(arg)
                 .unwrap_or_else(|| panic!("Failed to allocate memory for argv"));
             out_argv.push(s);
         }
         // SAFETY: single-threaded init
-        unsafe { *ARGV.get() = out_argv };
+        yolo! { *ARGV.get() = out_argv };
     }
 
     if let Some(opts) = bun_core::env_var::BUN_OPTIONS.get() {
         // SAFETY: single-threaded init
-        unsafe {
+        yolo! {
             let argv = &mut *ARGV.get();
             let original_len = argv.len();
             let mut argv_list = core::mem::take(argv);
@@ -1219,7 +1220,7 @@ impl<Parent, const FIELD_OFFSET: usize> LazyBool<Parent, FIELD_OFFSET> {
     pub fn get(&mut self) -> bool {
         if self.value == LazyBoolValue::Unknown {
             // SAFETY: self points to Parent.<field> at FIELD_OFFSET
-            let parent = unsafe {
+            let parent = yolo! {
                 &mut *bun_ptr::container_of::<Parent, _>(core::ptr::from_mut(self), FIELD_OFFSET)
             };
             self.value = if (self.getter)(parent) {
@@ -1233,7 +1234,7 @@ impl<Parent, const FIELD_OFFSET: usize> LazyBool<Parent, FIELD_OFFSET> {
 }
 
 // TODO(port): serializable / serializableInto — Zig field-reflection to zero
-// padding bytes. Rust `#[repr(C)]` + `unsafe { mem::zeroed() }` then field-assign
+// padding bytes. Rust `#[repr(C)]` + `yolo! { mem::zeroed() }` then field-assign
 // is the equivalent; needs a derive macro for ergonomics.
 
 /// Like std.fs.Dir.makePath except instead of infinite looping on dangling
@@ -1582,7 +1583,7 @@ pub fn assert_neql<T: PartialEq>(a: T, b: T) {
 pub fn unsafe_assert(condition: bool) {
     if !condition {
         // SAFETY: caller guarantees condition holds
-        unsafe { core::hint::unreachable_unchecked() };
+        yolo! { core::hint::unreachable_unchecked() };
     }
 }
 
@@ -1668,7 +1669,7 @@ pub fn memmove(output: &mut [u8], input: &[u8]) {
 
 pub fn get_total_memory_size() -> usize {
     // SAFETY: FFI call into bun cpp bindings, no invariants required
-    unsafe { cpp::Bun__ramSize() }
+    yolo! { cpp::Bun__ramSize() }
 }
 
 pub const bytecode_extension: &str = ".jsc";

@@ -17,6 +17,7 @@
 //! before any data); socketpair gives us a proper socket for the read path
 //! and the write path can share it.
 
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_char};
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
@@ -58,7 +59,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
-    unsafe {
+    yolo! {
         if let Some(i) = INSTANCE
             .load(core::sync::atomic::Ordering::Relaxed)
             .as_mut()
@@ -118,20 +119,20 @@ pub extern "C" fn Bun__Chrome__ensure(
             &[]
         } else {
             // SAFETY: caller guarantees extra_argv points to extra_argv_len entries.
-            unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
+            yolo! { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
         let vm = global.bun_vm_ptr();
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let user_data_dir = if user_data_dir.is_null() {
             None
         } else {
-            Some(unsafe { bun_core::ffi::cstr(user_data_dir) })
+            Some(yolo! { bun_core::ffi::cstr(user_data_dir) })
         };
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let path = if path.is_null() {
             None
         } else {
-            Some(unsafe { bun_core::ffi::cstr(path) })
+            Some(yolo! { bun_core::ffi::cstr(path) })
         };
         let fd = match spawn(
             vm,
@@ -446,7 +447,7 @@ fn spawn(
             // pid_t → u32 cast so {d} formats. Fresh dir per parent process;
             // multiple Bun.WebView instances in one process share the Chrome.
             // SAFETY: getpid is always safe.
-            let pid: u32 = unsafe { libc::getpid() } as u32;
+            let pid: u32 = yolo! { libc::getpid() } as u32;
             let mut v = Vec::new();
             write!(&mut v, "--user-data-dir=/tmp/bun-chrome-{}", pid)
                 .expect("infallible: in-memory write");
@@ -491,7 +492,7 @@ fn spawn(
         // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
         // `transpiler.env` is set during VM init and lives for VM lifetime;
         // `.map` is its `&mut Map` slot.
-        let env = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
+        let env = yolo! { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,
@@ -528,30 +529,30 @@ fn spawn(
         fds[1].close();
 
         // SAFETY: vm is valid for the call.
-        let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
+        let event_loop = EventLoopHandle::init(yolo! { (*vm).event_loop() }.cast());
         let process =
             NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess { process }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
-        unsafe {
+        yolo! {
             (*process.as_ptr())
                 .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
         }
         // SAFETY: process is live and exclusively owned here.
-        match unsafe { (*process.as_ptr()).watch() } {
+        match yolo! { (*process.as_ptr()).watch() } {
             Ok(()) => {
                 // Same weak-handle reasoning as HostProcess: parent exit →
                 // Chrome's fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit.
                 // dispatchOnExit also SIGKILLs via Bun__Chrome__kill.
                 // SAFETY: process is live and exclusively owned here.
-                unsafe { (*process.as_ptr()).disable_keeping_event_loop_alive() };
+                yolo! { (*process.as_ptr()).disable_keeping_event_loop_alive() };
             }
             Err(e) => {
                 scoped_log!(Chrome, "watch failed: {}", e);
                 // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
                 // then reclaim the Box (Zig: `bun.destroy(self)`).
-                unsafe {
+                yolo! {
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
                 }
@@ -694,7 +695,7 @@ pub extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> u
             return 0;
         }
         // SAFETY: caller guarantees out_buf points to at least out_cap writable bytes.
-        unsafe {
+        yolo! {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), out_buf, buf.len());
         }
         return buf.len();

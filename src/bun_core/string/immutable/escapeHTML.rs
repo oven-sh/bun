@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_alloc::AllocError;
 
 use crate::string::strings::{
@@ -72,7 +73,7 @@ pub const SCALAR_LENGTHS: [u8; 256] = {
 #[inline(always)]
 fn scalar_append_string(buf: *mut u8, s: &'static [u8]) -> usize {
     // SAFETY: caller guarantees `buf` has at least `s.len()` bytes writable.
-    unsafe { core::ptr::copy_nonoverlapping(s.as_ptr(), buf, s.len()) };
+    yolo! { core::ptr::copy_nonoverlapping(s.as_ptr(), buf, s.len()) };
     s.len()
 }
 
@@ -80,7 +81,7 @@ fn scalar_append_string(buf: *mut u8, s: &'static [u8]) -> usize {
 fn scalar_append(buf: *mut u8, ch: u8) -> usize {
     if SCALAR_LENGTHS[ch as usize] == 1 {
         // SAFETY: caller guarantees at least 1 byte writable.
-        unsafe { *buf = ch };
+        yolo! { *buf = ch };
         return 1;
     }
 
@@ -108,7 +109,7 @@ fn scalar_push<const LEN: usize>(chars: &[u8; LEN]) -> Escaped<u8> {
     for i in 0..LEN {
         // SAFETY: `total` was computed from SCALAR_LENGTHS so `head` never
         // overruns `output`.
-        head = unsafe { head.add(scalar_append(head, chars[i])) };
+        head = yolo! { head.add(scalar_append(head, chars[i])) };
     }
 
     Escaped::Allocated(output)

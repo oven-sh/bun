@@ -16,6 +16,7 @@
     clippy::missing_safety_doc
 )]
 
+use bun_yolo::yolo;
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
 use core::mem::MaybeUninit;
@@ -163,7 +164,7 @@ impl uv_buf_t {
             return &[];
         }
         // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
-        unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
+        yolo! { core::slice::from_raw_parts(self.base, self.len as usize) }
     }
     /// Mutable view of the buffer (Zig `uv_buf_t::slice` returned `[]u8`, which
     /// carries no exclusivity invariant — Rust `&mut [u8]` does).
@@ -181,7 +182,7 @@ impl uv_buf_t {
         if self.len == 0 || self.base.is_null() {
             return &mut [];
         }
-        unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
+        yolo! { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
     }
 }
 
@@ -289,7 +290,7 @@ pub fn uv_guess_handle(file: uv_file) -> uv_handle_type {
     if (HandleType::Unknown as c_int..=HandleType::File as c_int).contains(&raw) {
         // SAFETY: `HandleType` is `#[repr(C)]` with contiguous discriminants
         // 0..=17 and `raw` was just range-checked into that interval.
-        unsafe { mem::transmute::<c_int, HandleType>(raw) }
+        yolo! { mem::transmute::<c_int, HandleType>(raw) }
     } else {
         HandleType::Unknown
     }
@@ -422,9 +423,9 @@ impl Loop {
             // Escaping the pointer past `.with()` is intentional: the slot is
             // const-initialized POD with no TLS destructor (static-asserted
             // above), so its address is stable for the thread lifetime.
-            let ptr_ = THREADLOCAL_LOOP_DATA.with(|data| unsafe { (*data.get()).as_mut_ptr() });
+            let ptr_ = THREADLOCAL_LOOP_DATA.with(|data| yolo! { (*data.get()).as_mut_ptr() });
             // SAFETY: `ptr_` is `sizeof(Loop)` TLS storage owned by this thread.
-            if let Some(err) = unsafe { uv_loop_init(ptr_) }.raw_errno() {
+            if let Some(err) = yolo! { uv_loop_init(ptr_) }.raw_errno() {
                 panic!("Failed to initialize libuv loop: errno {err}");
             }
             slot.set(ptr_);
@@ -441,17 +442,17 @@ impl Loop {
                 return;
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
-            if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
+            if let Some(err) = yolo! { uv_loop_close(loop_) }.raw_errno() {
                 // Zig: `if (err == .BUSY)` — only EBUSY means handles are
                 // still open; walk + close them, run once to flush close
                 // callbacks, then close again (must succeed). `uv_loop_close`
                 // documents no other failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
-                    unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    let _ = unsafe { uv_run(loop_, RunMode::Default) };
+                    yolo! { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
+                    let _ = yolo! { uv_run(loop_, RunMode::Default) };
                     // NOTE the call is unconditional (Zig `bun.debugAssert`
                     // evaluates its argument in release too).
-                    let rc = unsafe { uv_loop_close(loop_) };
+                    let rc = yolo! { uv_loop_close(loop_) };
                     debug_assert_eq!(rc, ReturnCode::ZERO);
                 }
             }
@@ -505,27 +506,27 @@ impl Loop {
     pub fn stop(&mut self) {
         log!("stop");
         // SAFETY: self is a live loop.
-        unsafe { uv_stop(self) };
+        yolo! { uv_stop(self) };
     }
     #[inline]
     pub fn is_active(&self) -> bool {
         // SAFETY: self is a live loop.
-        unsafe { uv_loop_alive(self) != 0 }
+        yolo! { uv_loop_alive(self) != 0 }
     }
     #[inline]
     pub fn tick(&mut self) {
         // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
+        let _ = yolo! { uv_run(self, RunMode::Default) };
     }
     #[inline]
     pub fn run(&mut self) {
         // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
+        let _ = yolo! { uv_run(self, RunMode::Default) };
     }
     #[inline]
     pub fn tick_with_timeout(&mut self, _: i64) {
         // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::NoWait) };
+        let _ = yolo! { uv_run(self, RunMode::NoWait) };
     }
     #[inline]
     pub fn wakeup(&mut self) {
@@ -534,14 +535,14 @@ impl Loop {
     #[inline]
     pub fn dump_active_handles(&mut self, stream: *mut c_void) {
         // SAFETY: self is a live loop.
-        unsafe { uv_print_active_handles(self, stream) };
+        yolo! { uv_print_active_handles(self, stream) };
     }
 }
 
 unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle.
-    if unsafe { uv_is_closing(handle) } == 0 {
-        unsafe { uv_close(handle, None) };
+    if yolo! { uv_is_closing(handle) } == 0 {
+        yolo! { uv_close(handle, None) };
     }
 }
 
@@ -566,17 +567,17 @@ pub unsafe trait UvHandle: Sized {
     #[inline]
     fn data(&self) -> *mut c_void {
         // SAFETY: handle prefix; `data` is at offset 0.
-        unsafe { (*self.as_handle()).data }
+        yolo! { (*self.as_handle()).data }
     }
     #[inline]
     fn get_data<T>(&self) -> *mut T {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_get_data(self.as_handle()).cast() }
+        yolo! { uv_handle_get_data(self.as_handle()).cast() }
     }
     #[inline]
     fn set_data(&mut self, ptr_: *mut c_void) {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_set_data(self.as_handle_mut(), ptr_) };
+        yolo! { uv_handle_set_data(self.as_handle_mut(), ptr_) };
     }
     /// Typed `Box<T>`-taking sibling of [`set_data`] for the common case where
     /// `handle->data` owns a heap allocation freed in the close callback.
@@ -605,19 +606,19 @@ pub unsafe trait UvHandle: Sized {
         }
         self.set_data(ptr::null_mut());
         // SAFETY: caller contract — `p` came from `set_owned_data::<T>`.
-        Some(unsafe { Box::from_raw(p) })
+        Some(yolo! { Box::from_raw(p) })
     }
     #[inline]
     fn get_loop(&self) -> *mut Loop {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_get_loop(self.as_handle()) }
+        yolo! { uv_handle_get_loop(self.as_handle()) }
     }
     /// `HandleMixin::close` — `cb` receives the same pointer cast back to
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
     #[inline]
     fn close(&mut self, cb: unsafe extern "C" fn(*mut Self)) {
         // SAFETY: `Self` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
-        unsafe {
+        yolo! {
             uv_close(
                 self.as_handle_mut(),
                 Some(mem::transmute::<
@@ -630,32 +631,32 @@ pub unsafe trait UvHandle: Sized {
     #[inline]
     fn has_ref(&self) -> bool {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_has_ref(self.as_handle()) != 0 }
+        yolo! { uv_has_ref(self.as_handle()) != 0 }
     }
     #[inline]
     fn ref_(&mut self) {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_ref(self.as_handle_mut()) };
+        yolo! { uv_ref(self.as_handle_mut()) };
     }
     #[inline]
     fn unref(&mut self) {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_unref(self.as_handle_mut()) };
+        yolo! { uv_unref(self.as_handle_mut()) };
     }
     #[inline]
     fn is_closing(&self) -> bool {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_is_closing(self.as_handle()) != 0 }
+        yolo! { uv_is_closing(self.as_handle()) != 0 }
     }
     #[inline]
     fn is_closed(&self) -> bool {
         // SAFETY: handle prefix invariant.
-        uv_is_closed(unsafe { &*self.as_handle() })
+        uv_is_closed(yolo! { &*self.as_handle() })
     }
     #[inline]
     fn is_active(&self) -> bool {
         // SAFETY: handle prefix invariant.
-        unsafe { uv_is_active(self.as_handle()) != 0 }
+        yolo! { uv_is_active(self.as_handle()) != 0 }
     }
     /// `HandleMixin::fd` — returns the OS handle, or `INVALID_HANDLE_VALUE` if
     /// none. (Higher-tier crates wrap this in `bun_sys::Fd`.)
@@ -663,7 +664,7 @@ pub unsafe trait UvHandle: Sized {
     fn fd(&self) -> uv_os_fd_t {
         let mut fd_: uv_os_fd_t = INVALID_HANDLE_VALUE;
         // SAFETY: handle prefix invariant; out-param is valid.
-        let _ = unsafe { uv_fileno(self.as_handle(), &mut fd_) };
+        let _ = yolo! { uv_fileno(self.as_handle(), &mut fd_) };
         fd_
     }
 }
@@ -695,32 +696,32 @@ pub unsafe trait UvStream: UvHandle {
     #[inline]
     fn get_write_queue_size(&self) -> usize {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_stream_get_write_queue_size((self as *const Self).cast()) }
+        yolo! { uv_stream_get_write_queue_size((self as *const Self).cast()) }
     }
     #[inline]
     fn read_start(&mut self, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) -> ReturnCode {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_read_start(self.as_stream(), alloc_cb, read_cb) }
+        yolo! { uv_read_start(self.as_stream(), alloc_cb, read_cb) }
     }
     #[inline]
     fn read_stop(&mut self) {
         // SAFETY: always succeeds (uv docs).
-        let _ = unsafe { uv_read_stop(self.as_stream()) };
+        let _ = yolo! { uv_read_stop(self.as_stream()) };
     }
     #[inline]
     fn try_write(&mut self, bufs: &[uv_buf_t]) -> ReturnCode {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_try_write(self.as_stream(), bufs.as_ptr(), bufs.len() as c_uint) }
+        yolo! { uv_try_write(self.as_stream(), bufs.as_ptr(), bufs.len() as c_uint) }
     }
     #[inline]
     fn is_readable(&self) -> bool {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_is_readable((self as *const Self).cast()) != 0 }
+        yolo! { uv_is_readable((self as *const Self).cast()) != 0 }
     }
     #[inline]
     fn is_writable(&self) -> bool {
         // SAFETY: stream prefix invariant.
-        unsafe { uv_is_writable((self as *const Self).cast()) != 0 }
+        yolo! { uv_is_writable((self as *const Self).cast()) != 0 }
     }
     /// Port of `StreamMixin::readStart` (libuv.zig:3067) — high-level wrapper
     /// over `uv_read_start` that thunks Rust callbacks through a monomorphised
@@ -740,7 +741,7 @@ pub unsafe trait UvStream: UvHandle {
     fn read_start_ctx<T: StreamReader>(&mut self, context: *mut T) -> ReturnCode {
         // SAFETY: stream prefix invariant — `&mut Self` reinterprets as
         // `&mut Handle` for the leading `UV_HANDLE_FIELDS`.
-        let h: &mut Handle = unsafe { &mut *(self as *mut Self).cast::<Handle>() };
+        let h: &mut Handle = yolo! { &mut *(self as *mut Self).cast::<Handle>() };
         h.data = context.cast();
 
         unsafe extern "C" fn uv_allocb<T: StreamReader>(
@@ -750,10 +751,10 @@ pub unsafe trait UvStream: UvHandle {
         ) {
             // SAFETY: `req.data` was set to `context` above; libuv calls this
             // on the loop thread before `uv_readcb`.
-            let ctx: &mut T = unsafe { bun_core::callback_ctx::<T>((*req).data) };
+            let ctx: &mut T = yolo! { bun_core::callback_ctx::<T>((*req).data) };
             let buf = T::on_read_alloc(ctx, suggested_size);
             // SAFETY: `buffer` is libuv's out-param.
-            unsafe { *buffer = uv_buf_t::init(buf) };
+            yolo! { *buffer = uv_buf_t::init(buf) };
         }
         unsafe extern "C" fn uv_readcb<T: StreamReader>(
             req: *mut uv_stream_t,
@@ -767,27 +768,27 @@ pub unsafe trait UvStream: UvHandle {
             // first, and hand the raw pointer to `on_read` so the impl owns
             // the reborrow ordering.
             // SAFETY: `req.data` was set to `context` above.
-            let ctx: *mut T = unsafe { (*req).data.cast::<T>() };
+            let ctx: *mut T = yolo! { (*req).data.cast::<T>() };
             let n = nreads.int();
             if n == 0 {
                 return; // EAGAIN / EWOULDBLOCK
             }
             if n < 0 {
                 // SAFETY: stream prefix invariant.
-                let _ = unsafe { uv_read_stop(req) };
+                let _ = yolo! { uv_read_stop(req) };
                 // SAFETY: `ctx` is the live context stashed in `handle.data`.
-                T::on_read_error(unsafe { &mut *ctx }, n as c_int);
+                T::on_read_error(yolo! { &mut *ctx }, n as c_int);
             } else {
                 // SAFETY: `buffer` was filled by `uv_allocb` above with a
                 // slice of length `>= n`.
                 let slice =
-                    unsafe { core::slice::from_raw_parts((*buffer).base.cast::<u8>(), n as usize) };
+                    yolo! { core::slice::from_raw_parts((*buffer).base.cast::<u8>(), n as usize) };
                 // SAFETY: `ctx` is the live context stashed in `handle.data`.
-                unsafe { T::on_read(ctx, slice) };
+                yolo! { T::on_read(ctx, slice) };
             }
         }
         // SAFETY: stream prefix invariant.
-        unsafe { uv_read_start(self.as_stream(), Some(uv_allocb::<T>), Some(uv_readcb::<T>)) }
+        yolo! { uv_read_start(self.as_stream(), Some(uv_allocb::<T>), Some(uv_readcb::<T>)) }
     }
 }
 
@@ -825,17 +826,17 @@ pub unsafe trait UvReq: Sized {
     #[inline]
     fn get_data<T>(&self) -> *mut T {
         // SAFETY: req prefix invariant.
-        unsafe { uv_req_get_data((self as *const Self).cast()).cast() }
+        yolo! { uv_req_get_data((self as *const Self).cast()).cast() }
     }
     #[inline]
     fn set_data(&mut self, ptr_: *mut c_void) {
         // SAFETY: req prefix invariant.
-        unsafe { uv_req_set_data(self.as_req(), ptr_) };
+        yolo! { uv_req_set_data(self.as_req(), ptr_) };
     }
     #[inline]
     fn cancel(&mut self) {
         // SAFETY: req prefix invariant.
-        let _ = unsafe { uv_cancel(self.as_req()) };
+        let _ = yolo! { uv_cancel(self.as_req()) };
     }
 }
 unsafe impl UvReq for uv_req_t {}
@@ -944,7 +945,7 @@ impl uv_write_t {
         cb: uv_write_cb,
     ) -> ReturnCode {
         // SAFETY: caller initialized `self`; `stream` is a live stream handle.
-        unsafe { uv_write(self, stream, input, 1, cb) }
+        yolo! { uv_write(self, stream, input, 1, cb) }
     }
     /// Context-aware `uv_write` (Zig libuv.zig:1327 `uv_write_t::write` with
     /// `context: anytype, comptime onWrite`). Stores `context` in `req.data`;
@@ -984,7 +985,7 @@ impl uv_write_t {
             // — callers commonly free the `T` allocation inside the callback,
             // so materialising `&mut T` here would leave that reference
             // dangling across the dealloc (UB).
-            unsafe {
+            yolo! {
                 let cb: fn(*mut T, ReturnCode) =
                     mem::transmute::<usize, fn(*mut T, ReturnCode)>((*req).reserved[0] as usize);
                 cb((*req).data.cast::<T>(), status);
@@ -992,7 +993,7 @@ impl uv_write_t {
         }
         // SAFETY: caller guarantees `self` lives until the cb fires and
         // `stream` is a live stream handle.
-        let rc = unsafe { uv_write(self, stream, input, 1, Some(thunk::<T>)) };
+        let rc = yolo! { uv_write(self, stream, input, 1, Some(thunk::<T>)) };
         crate::__uv_log!("uv_write({}) = {}", input.len, rc.int());
         rc
     }
@@ -1187,17 +1188,17 @@ impl Pipe {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
-        unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) }
+        yolo! { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) }
     }
     #[inline]
     pub fn open(&mut self, file: uv_file) -> ReturnCode {
         // SAFETY: pipe was `init`ed.
-        unsafe { uv_pipe_open(self, file) }
+        yolo! { uv_pipe_open(self, file) }
     }
     #[inline]
     pub fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
         // SAFETY: pipe was `init`ed; libuv copies the name.
-        unsafe { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
+        yolo! { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
     }
     /// `StreamMixin::listen` (libuv.zig:3047). Caller supplies a plain
     /// `uv_connection_cb` and recovers its context from `handle.data` itself.
@@ -1210,7 +1211,7 @@ impl Pipe {
     ) -> ReturnCode {
         self.data = context;
         // SAFETY: `Pipe` is layout-prefixed with `uv_stream_t`.
-        unsafe { uv_listen(self.as_stream(), backlog, Some(on_connect)) }
+        yolo! { uv_listen(self.as_stream(), backlog, Some(on_connect)) }
     }
     /// `Pipe::listenNamedPipe` — bind + listen.
     #[inline]
@@ -1237,7 +1238,7 @@ impl Pipe {
     ) -> ReturnCode {
         self.data = context;
         // SAFETY: pipe was `init`ed; libuv copies the name.
-        unsafe {
+        yolo! {
             uv_pipe_connect2(
                 req,
                 self,
@@ -1251,12 +1252,12 @@ impl Pipe {
     #[inline]
     pub fn accept(&mut self, client: &mut Pipe) -> ReturnCode {
         // SAFETY: both pipes embed `uv_stream_t` at offset 0.
-        unsafe { uv_accept(self.as_stream(), client.as_stream()) }
+        yolo! { uv_accept(self.as_stream(), client.as_stream()) }
     }
     #[inline]
     pub fn set_pending_instances_count(&mut self, count: i32) {
         // SAFETY: pipe was `init`ed.
-        unsafe { uv_pipe_pending_instances(self, count) };
+        yolo! { uv_pipe_pending_instances(self, count) };
     }
     #[inline]
     pub fn as_stream_ptr(&mut self) -> *mut uv_stream_t {
@@ -1279,17 +1280,17 @@ impl Pipe {
     pub unsafe fn close_and_destroy(this: *mut Pipe) {
         unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
             // SAFETY: handle was Box-allocated; callback fires exactly once.
-            drop(unsafe { Box::from_raw(handle) });
+            drop(yolo! { Box::from_raw(handle) });
         }
         // SAFETY: caller contract — `this` is a live Box-allocated Pipe.
-        if unsafe { (*this).loop_.is_null() } {
+        if yolo! { (*this).loop_.is_null() } {
             // Never initialized — safe to free directly.
             // SAFETY: caller contract — Box-allocated; no `&mut` borrow held.
-            drop(unsafe { Box::from_raw(this) });
-        } else if !unsafe { (*this).is_closing() } {
+            drop(yolo! { Box::from_raw(this) });
+        } else if !yolo! { (*this).is_closing() } {
             // Initialized and not yet closing — must uv_close first.
             // SAFETY: `this` is live until the close cb fires.
-            unsafe { (*this).close(on_close_destroy) };
+            yolo! { (*this).close(on_close_destroy) };
         }
         // else: already closing — the pending close callback owns the lifetime.
     }
@@ -1353,12 +1354,12 @@ impl uv_tty_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
         // SAFETY: self is a valid `uv_tty_t`-sized allocation.
-        unsafe { uv_tty_init(loop_, self, file, 0) }
+        yolo! { uv_tty_init(loop_, self, file, 0) }
     }
     #[inline]
     pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
         // SAFETY: tty was `init`ed.
-        unsafe { uv_tty_set_mode(self, mode as uv_tty_mode_t) }
+        yolo! { uv_tty_set_mode(self, mode as uv_tty_mode_t) }
     }
 }
 
@@ -1430,21 +1431,21 @@ impl Timer {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop) {
         // SAFETY: `self` is a valid `uv_timer_t`-sized allocation.
-        if unsafe { uv_timer_init(loop_, self) } != 0 {
+        if yolo! { uv_timer_init(loop_, self) } != 0 {
             panic!("internal error: uv_timer_init failed");
         }
     }
     #[inline]
     pub fn start(&mut self, timeout: u64, repeat: u64, callback: uv_timer_cb) {
         // SAFETY: timer was `init`ed.
-        if unsafe { uv_timer_start(self, callback, timeout, repeat) } != 0 {
+        if yolo! { uv_timer_start(self, callback, timeout, repeat) } != 0 {
             panic!("internal error: uv_timer_start failed");
         }
     }
     #[inline]
     pub fn stop(&mut self) {
         // SAFETY: timer was `init`ed.
-        if unsafe { uv_timer_stop(self) } != 0 {
+        if yolo! { uv_timer_stop(self) } != 0 {
             panic!("internal error: uv_timer_stop failed");
         }
     }
@@ -1499,21 +1500,21 @@ impl uv_idle_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop) {
         // SAFETY: `self` is `#[repr(C)]` POD; all-zero is valid.
-        unsafe { ptr::write_bytes(self, 0, 1) };
+        yolo! { ptr::write_bytes(self, 0, 1) };
         // SAFETY: self is a valid `uv_idle_t`-sized allocation.
-        if unsafe { uv_idle_init(loop_, self) } != 0 {
+        if yolo! { uv_idle_init(loop_, self) } != 0 {
             panic!("internal error: uv_idle_init failed");
         }
     }
     #[inline]
     pub fn start(&mut self, cb: uv_idle_cb) {
         // SAFETY: idle was `init`ed.
-        let _ = unsafe { uv_idle_start(self, cb) };
+        let _ = yolo! { uv_idle_start(self, cb) };
     }
     #[inline]
     pub fn stop(&mut self) {
         // SAFETY: idle was `init`ed.
-        let _ = unsafe { uv_idle_stop(self) };
+        let _ = yolo! { uv_idle_stop(self) };
     }
 }
 #[repr(C)]
@@ -1535,16 +1536,16 @@ impl uv_async_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, callback: uv_async_cb) {
         // SAFETY: `self` is `#[repr(C)]` POD; all-zero is valid.
-        unsafe { ptr::write_bytes(self, 0, 1) };
+        yolo! { ptr::write_bytes(self, 0, 1) };
         // SAFETY: self is a valid `uv_async_t`-sized allocation.
-        if unsafe { uv_async_init(loop_, self, callback) } != 0 {
+        if yolo! { uv_async_init(loop_, self, callback) } != 0 {
             panic!("internal error: uv_async_init failed");
         }
     }
     #[inline]
     pub fn send(&mut self) {
         // SAFETY: async was `init`ed.
-        let _ = unsafe { uv_async_send(self) };
+        let _ = yolo! { uv_async_send(self) };
     }
 }
 
@@ -1584,17 +1585,17 @@ impl Process {
     #[inline]
     pub fn spawn(&mut self, loop_: *mut Loop, options: *const uv_process_options_t) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_process_t`-sized allocation.
-        unsafe { uv_spawn(loop_, self, options) }
+        yolo! { uv_spawn(loop_, self, options) }
     }
     #[inline]
     pub fn kill(&mut self, signum: c_int) -> ReturnCode {
         // SAFETY: process was spawned.
-        unsafe { uv_process_kill(self, signum) }
+        yolo! { uv_process_kill(self, signum) }
     }
     #[inline]
     pub fn get_pid(&self) -> c_int {
         // SAFETY: process was spawned.
-        unsafe { uv_process_get_pid(self) }
+        yolo! { uv_process_get_pid(self) }
     }
 }
 
@@ -1675,7 +1676,7 @@ impl uv_fs_event_t {
         } else {
             // SAFETY: `path` is a valid NUL-terminated C string owned by libuv
             // for the lifetime of the open handle.
-            hasher.update(unsafe { core::ffi::CStr::from_ptr(self.path) }.to_bytes());
+            hasher.update(yolo! { core::ffi::CStr::from_ptr(self.path) }.to_bytes());
         }
         hasher.update(&events.to_ne_bytes());
         hasher.update(filename);
@@ -1955,7 +1956,7 @@ impl fs_t {
     pub fn deinit(&mut self) {
         self.assert_initialized();
         // SAFETY: `self` was passed to a `uv_fs_*` call (assert above).
-        unsafe { uv_fs_req_cleanup(self) };
+        yolo! { uv_fs_req_cleanup(self) };
         self.assert_cleaned_up();
     }
     #[inline]
@@ -1991,7 +1992,7 @@ impl fs_t {
     /// SAFETY: only valid after a `uv_fs_*` call that populated the `fd` arm.
     #[inline]
     pub unsafe fn file_fd(&self) -> uv_file {
-        unsafe { self.file.fd }
+        yolo! { self.file.fd }
     }
 }
 

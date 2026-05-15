@@ -75,6 +75,7 @@ pub mod npm {
 // in `bun_jsc::regular_expression`.
 // ══════════════════════════════════════════════════════════════════════════
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use bun_alloc::{AllocError, Arena};
@@ -104,14 +105,14 @@ impl RegularExpression {
     #[inline]
     pub fn matches(&self, input: &BunString) -> bool {
         // SAFETY: self.0 was produced by `__bun_regex_compile`.
-        unsafe { __bun_regex_matches(self.0, input) }
+        yolo! { __bun_regex_matches(self.0, input) }
     }
 }
 
 impl Drop for RegularExpression {
     fn drop(&mut self) {
         // SAFETY: self.0 was produced by `__bun_regex_compile`; runs JSC destructor + free.
-        unsafe { __bun_regex_drop(self.0) }
+        yolo! { __bun_regex_drop(self.0) }
     }
 }
 
@@ -122,7 +123,7 @@ impl Drop for RegularExpression {
 #[inline]
 pub fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
     // SAFETY: link-time extern; pattern ownership transfers.
-    unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
+    yolo! { __bun_regex_compile(pattern) }.map(RegularExpression)
 }
 
 pub struct PnpmMatcher {

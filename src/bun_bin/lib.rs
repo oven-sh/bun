@@ -34,6 +34,7 @@
 #![allow(unused_imports)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int};
 
 mod phase_c_exports;
@@ -185,14 +186,14 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
     //    for the entire process.
-    unsafe { bun_core::init_argv(argc, argv) };
+    yolo! { bun_core::init_argv(argc, argv) };
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN, like main.zig's posix block.
     #[cfg(unix)]
-    unsafe {
+    yolo! {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
@@ -205,7 +206,7 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     {
         // SAFETY: mimalloc fns match the libuv allocator signatures; called
         // exactly once before any uv handle is created.
-        unsafe {
+        yolo! {
             let _ = bun_sys::windows::libuv::uv_replace_allocator(
                 Some(bun_alloc::mimalloc::mi_malloc),
                 Some(bun_alloc::mimalloc::mi_realloc),
@@ -236,7 +237,7 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
         }
         // SAFETY: BUN__GITHUB_BASELINE_URL is a NUL-terminated static; the C
         // side only reads it to print the suggested download URL.
-        unsafe {
+        yolo! {
             bun_warn_avx_missing(
                 bun_runtime::cli::upgrade_command::UpgradeCommand::BUN__GITHUB_BASELINE_URL
                     .as_ptr(),

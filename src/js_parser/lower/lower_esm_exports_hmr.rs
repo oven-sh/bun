@@ -1,5 +1,6 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe)]
 #![warn(unused_must_use)]
+use bun_yolo::yolo;
 use bun_alloc::AllocError;
 use bun_ast::import_record;
 use bun_collections::StringArrayHashMap;
@@ -219,7 +220,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // PORT NOTE: `StmtOrExpr` is not `Copy`; read by ptr to avoid moving
                     // out of the StoreRef deref.
                     // SAFETY: StoreRef points into a live arena; value is POD-shaped.
-                    let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                    let value = yolo! { core::ptr::read(&raw const st.value) }.to_expr();
                     self.export_props.push(G::Property {
                         key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                         value: Some(value),
@@ -252,7 +253,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         });
 
                         // SAFETY: as above — POD-shaped read out of arena.
-                        let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                        let value = yolo! { core::ptr::read(&raw const st.value) }.to_expr();
                         let mut decls = bun_alloc::AstAlloc::vec();
                         VecExt::append(
                             &mut decls,
@@ -502,7 +503,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     });
                     // SAFETY: src/dst non-overlapping arena allocations of correct length;
                     // ClauseItem is POD-shaped.
-                    unsafe {
+                    yolo! {
                         core::ptr::copy_nonoverlapping(
                             stmt.items.as_ptr(),
                             concat.as_mut_ptr(),

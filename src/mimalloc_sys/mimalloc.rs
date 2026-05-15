@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types, non_snake_case, clippy::missing_safety_doc)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_ulong, c_ulonglong, c_ushort, c_void};
 
 // PORT NOTE: `Option` below is the mimalloc `mi_option_t` enum (kept verbatim
@@ -112,37 +113,37 @@ impl Heap {
     #[inline]
     pub fn new() -> *mut Heap {
         // SAFETY: FFI call with no preconditions.
-        unsafe { mi_heap_new() }
+        yolo! { mi_heap_new() }
     }
 
     #[inline]
     pub fn delete(&mut self) {
         // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_delete(self) }
+        yolo! { mi_heap_delete(self) }
     }
 
     #[inline]
     pub fn malloc(&mut self, size: usize) -> *mut c_void {
         // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_malloc(self, size) }
+        yolo! { mi_heap_malloc(self, size) }
     }
 
     #[inline]
     pub fn calloc(&mut self, count: usize, size: usize) -> *mut c_void {
         // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_calloc(self, count, size) }
+        yolo! { mi_heap_calloc(self, count, size) }
     }
 
     #[inline]
     pub fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
         // SAFETY: `self` is a live `*mut Heap`; `p` is null or was allocated by this heap.
-        unsafe { mi_heap_realloc(self, p, newsize) }
+        yolo! { mi_heap_realloc(self, p, newsize) }
     }
 
     #[inline]
     pub fn is_owned(&self, p: *const c_void) -> bool {
         // SAFETY: `self` is a live `*const Heap` obtained from mimalloc.
-        unsafe { mi_heap_contains(self, p) }
+        yolo! { mi_heap_contains(self, p) }
     }
 }
 
@@ -533,7 +534,7 @@ pub fn mi_zalloc_auto_align(size: usize, align: usize) -> *mut c_void {
 #[inline(always)]
 pub unsafe fn mi_heap_malloc_auto_align(heap: *mut Heap, size: usize, align: usize) -> *mut c_void {
     // SAFETY: caller guarantees `heap` is live.
-    unsafe {
+    yolo! {
         if must_use_aligned_alloc(align) {
             mi_heap_malloc_aligned(heap, size, align)
         } else {
@@ -549,7 +550,7 @@ pub unsafe fn mi_heap_malloc_auto_align(heap: *mut Heap, size: usize, align: usi
 #[inline(always)]
 pub unsafe fn mi_heap_zalloc_auto_align(heap: *mut Heap, size: usize, align: usize) -> *mut c_void {
     // SAFETY: caller guarantees `heap` is live.
-    unsafe {
+    yolo! {
         if must_use_aligned_alloc(align) {
             mi_heap_zalloc_aligned(heap, size, align)
         } else {
@@ -572,7 +573,7 @@ pub unsafe fn mi_theap_malloc_auto_align(
     align: usize,
 ) -> *mut c_void {
     // SAFETY: caller guarantees `theap` is live for this thread.
-    unsafe {
+    yolo! {
         if must_use_aligned_alloc(align) {
             mi_theap_malloc_aligned(theap, size, align)
         } else {

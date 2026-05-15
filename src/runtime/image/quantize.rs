@@ -9,6 +9,7 @@
 //! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
 //! Floyd–Steinberg error diffusion (`dither: true`).
 
+use bun_yolo::yolo;
 use bun_alloc::AllocError;
 
 // PORT NOTE: Zig named this `Result`; renamed to avoid shadowing `core::result::Result`.
@@ -147,7 +148,7 @@ pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeRe
         for px in 0..n as usize {
             let p = &rgba[px * 4..][..4];
             // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            indices[px] = u8::try_from(unsafe {
+            indices[px] = u8::try_from(yolo! {
                 bun_image_nearest_palette(
                     palette.as_ptr(),
                     u32::from(k),
@@ -218,7 +219,7 @@ fn map_floyd_steinberg(
             }
 
             // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            let idx: u8 = u8::try_from(unsafe {
+            let idx: u8 = u8::try_from(yolo! {
                 bun_image_nearest_palette(
                     palette.as_ptr(),
                     u32::from(k),

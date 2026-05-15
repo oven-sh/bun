@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Error, Global, Output, err};
 use bun_install::package_manager_real::{
@@ -30,7 +31,7 @@ impl InstallCommand {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded
             // startup in `Cli::start()` before any command (including this
             // one) is dispatched; no other `&mut` to it is live here.
-            let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
+            let log = yolo! { (*Cli::LOG_.get()).assume_init_mut() };
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
@@ -103,9 +104,9 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 // dependency-scan completion and `on_fetch` invocation, so
                 // forming a fresh `&mut` here is exclusive for the duration of
                 // `install_with_cli`.
-                let cli = unsafe { &mut *this.cli };
+                let cli = yolo! { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
-                let ctx = unsafe { &mut *this.ctx };
+                let ctx = yolo! { &mut *this.ctx };
 
                 install_with_cli(ctx, cli.clone())?;
 
@@ -141,7 +142,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
         // still-live `ctx` parameter under stacked borrows).
         // SAFETY: `ctx_ptr` was just derived from the live `ctx: &mut
         // ContextData` parameter; `ctx` is not accessed again in this branch.
-        BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&mut fetcher))?;
+        BuildCommand::exec(yolo! { &mut *ctx_ptr }, Some(&mut fetcher))?;
         return Ok(());
     }
 
@@ -184,7 +185,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
 
     // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside
     // `PackageManager::init` (above) on this thread; only read thereafter.
-    let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+    let root_package_json_path = yolo! { ROOT_PACKAGE_JSON_PATH.read() };
     install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
 
     if manager.any_failed_to_install {

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
@@ -131,7 +132,7 @@ impl<'a> Installer<'a> {
     #[inline]
     pub fn manager(&self) -> &'a PackageManager {
         // SAFETY: BACKREF — never null; pointee outlives `'a`.
-        unsafe { &*self.manager }
+        yolo! { &*self.manager }
     }
     #[inline]
     #[allow(clippy::mut_from_ref)]
@@ -146,7 +147,7 @@ impl<'a> Installer<'a> {
         // `bun_crash_handler::cli_state::set_main_thread_id` is actually
         // wired at startup — today the sentinel is never set, so the assert
         // would fire unconditionally.
-        unsafe { &mut *self.manager }
+        yolo! { &mut *self.manager }
     }
     #[inline]
     pub fn lockfile(&self) -> &'a Lockfile {
@@ -156,7 +157,7 @@ impl<'a> Installer<'a> {
         // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
         // (Task::run), not a `&mut Lockfile`. Callers must not project into
         // `trusted_dependencies` from this `&Lockfile` across a tick.
-        unsafe { &*self.lockfile }
+        yolo! { &*self.lockfile }
     }
 
     /// Called from main thread
@@ -301,12 +302,12 @@ impl<'a> Installer<'a> {
         impl Drop for PatchTaskGuard {
             fn drop(&mut self) {
                 // SAFETY: exclusive owner; created by `heap::alloc` in `new_*`.
-                unsafe { install::PatchTask::destroy(self.0) };
+                yolo! { install::PatchTask::destroy(self.0) };
             }
         }
         let _guard = PatchTaskGuard(patch_task_ptr);
         // SAFETY: exclusive owner — see above.
-        let patch_task = unsafe { &mut *patch_task_ptr };
+        let patch_task = yolo! { &mut *patch_task_ptr };
         bun_core::handle_oom(patch_task.apply());
 
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
@@ -638,7 +639,7 @@ unsafe impl bun_threading::Linked for Task {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -795,7 +796,7 @@ impl Task {
         // lives outside the `Installer` allocation and `items_step()` is atomic.
         // This also avoids leaking the erased `'static` from
         // `*mut Installer<'static>` into a whole-struct borrow.
-        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_ptr()).store) };
+        let store: &Store = yolo! { *core::ptr::addr_of!((*self.installer.as_ptr()).store) };
         store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
@@ -831,7 +832,7 @@ impl Task {
         // BACKREF — `manager_ptr` is non-null and the `PackageManager` outlives
         // every `Task` (see top-of-fn note). Wrapped once as `ParentRef` so the
         // read-only deref sites below go through safe `Deref`/`get()` instead
-        // of per-site `unsafe { &* }`. Mutation and narrowed `addr_of_mut!`
+        // of per-site `yolo! { &* }`. Mutation and narrowed `addr_of_mut!`
         // field projections still go through the raw `manager_ptr` directly
         // (same provenance tag as `manager_ref.ptr`). Safe `From<NonNull>`
         // construction — non-null is guaranteed by the BACKREF field invariant.
@@ -975,7 +976,7 @@ impl Task {
                                             let ptr = buf.as_mut_ptr();
                                             // SAFETY: FFI — `folder_dir` is an open handle; `ptr`
                                             // points into a writable WPathBuffer of `cap` elements.
-                                            let src_path_len = unsafe {
+                                            let src_path_len = yolo! {
                                                 bun_sys::windows::GetFinalPathNameByHandleW(
                                                     folder_dir.native(),
                                                     ptr,
@@ -1120,7 +1121,7 @@ impl Task {
                     // is a data-level race the once-init guards, not an aliasing
                     // violation here because no long-lived `&mut PackageManager` exists.
                     let (cache_dir, cache_dir_path) =
-                        directories::get_cache_directory_and_abs_path(unsafe { &mut *manager_ptr });
+                        directories::get_cache_directory_and_abs_path(yolo! { &mut *manager_ptr });
 
                     let uses_global_store = installer.entry_uses_global_store(self.entry_id);
 
@@ -1714,7 +1715,7 @@ impl Task {
                                 // no `&mut PackageManager` is formed — concurrent task
                                 // threads' `&*manager_ptr` reborrows of other fields stay
                                 // valid.
-                                unsafe {
+                                yolo! {
                                     (*core::ptr::addr_of_mut!(
                                         (*manager_ptr).trusted_deps_to_add_to_package_json
                                     ))
@@ -1726,7 +1727,7 @@ impl Task {
                                 // task threads hold `&Lockfile` (and the `pkgs`/`pkg_*`
                                 // slices above borrow it) for their entire run(), and those
                                 // borrows never touch `trusted_dependencies`.
-                                let trusted = unsafe {
+                                let trusted = yolo! {
                                     &mut *core::ptr::addr_of_mut!(
                                         (*lockfile_ptr).trusted_dependencies
                                     )
@@ -1904,7 +1905,7 @@ impl Task {
                     // boxed per-entry (see `Step::RunPreinstall` above), and each Task is
                     // the unique consumer of its own `entry_id`. No other `&`/`&mut` to
                     // this allocation is live.
-                    let list = unsafe { &mut *list };
+                    let list = yolo! { &mut *list };
 
                     if list.first_index == 0 {
                         for (i, item) in list.items[1..].iter().enumerate() {
@@ -1943,7 +1944,7 @@ impl Task {
     /// Called from task thread
     pub fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
-        let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
+        let this: &mut Task = yolo! { &mut *bun_core::from_field_ptr!(Task, task, task) };
 
         let res = match this.run() {
             Ok(r) => r,
@@ -1978,7 +1979,7 @@ impl Task {
                 }
                 this.result = Result::RunScripts(list);
                 installer.task_queue.push(this);
-                unsafe { PackageManager::wake_raw(manager_ptr) };
+                yolo! { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Done => {
                 if Environment::CI_ASSERT {
@@ -1992,7 +1993,7 @@ impl Task {
                 }
                 this.result = Result::Done;
                 installer.task_queue.push(this);
-                unsafe { PackageManager::wake_raw(manager_ptr) };
+                yolo! { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Blocked => {
                 if Environment::CI_ASSERT {
@@ -2006,7 +2007,7 @@ impl Task {
                 }
                 this.result = Result::Blocked;
                 installer.task_queue.push(this);
-                unsafe { PackageManager::wake_raw(manager_ptr) };
+                yolo! { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Fail(err) => {
                 if Environment::CI_ASSERT {
@@ -2022,7 +2023,7 @@ impl Task {
                     .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
                 installer.task_queue.push(this);
-                unsafe { PackageManager::wake_raw(manager_ptr) };
+                yolo! { PackageManager::wake_raw(manager_ptr) };
             }
         }
     }

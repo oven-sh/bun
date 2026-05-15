@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 pub use crate::css_parser as css;
 pub use css::CssResult as Result;
 pub use css::PrintErr;
@@ -23,7 +24,7 @@ impl CssStringFns {
     pub fn to_css(this: &CssString, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // SAFETY: per the `CssString` invariant above, the pointee borrows the
         // parser arena which outlives the `Printer` it is being written to.
-        let s = unsafe { crate::arena_str(*this) };
+        let s = yolo! { crate::arena_str(*this) };
         dest.serialize_string(s)
     }
 }

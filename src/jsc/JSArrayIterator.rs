@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 
 pub struct JSArrayIterator<'a> {
@@ -42,7 +43,7 @@ impl<'a> JSArrayIterator<'a> {
             if Bun__JSArray__contiguousVectorIsStillValid(self.array, elements, self.len) {
                 // SAFETY: validity check above guarantees `elements[0..self.len]`
                 // still backs the array's butterfly; `i < self.len`.
-                let val = unsafe { *elements.add(i as usize) };
+                let val = yolo! { *elements.add(i as usize) };
                 return Ok(Some(if val.is_empty() {
                     JSValue::UNDEFINED
                 } else {

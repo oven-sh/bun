@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::mimalloc;
@@ -24,7 +25,7 @@ pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize
     if cfg!(debug_assertions) {
         // SAFETY: `mi_is_in_heap_region` accepts any pointer; remaining calls
         // are sound by the caller contract above.
-        unsafe {
+        yolo! {
             debug_assert!(mimalloc::mi_is_in_heap_region(ptr));
             if mimalloc::must_use_aligned_alloc(align) {
                 mimalloc::mi_free_size_aligned(ptr, size, align);
@@ -35,14 +36,14 @@ pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize
     } else {
         let _ = (size, align);
         // SAFETY: caller contract — `ptr` was allocated by mimalloc.
-        unsafe { mimalloc::mi_free(ptr) }
+        yolo! { mimalloc::mi_free(ptr) }
     }
 }
 
 pub(crate) fn mimalloc_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
     // SAFETY: Allocator vtable invariant — `buf` was allocated by mimalloc with
     // the recorded len/alignment.
-    unsafe {
+    yolo! {
         mi_free_checked(
             buf.as_mut_ptr().cast(),
             buf.len(),
@@ -61,7 +62,7 @@ impl MimallocAllocator {
         {
             if !ptr.is_null() {
                 // SAFETY: ptr is non-null and was just returned by mimalloc
-                let usable = unsafe { mimalloc::mi_malloc_usable_size(ptr) };
+                let usable = yolo! { mimalloc::mi_malloc_usable_size(ptr) };
                 if usable < len && !ptr.is_null() {
                     panic!(
                         "mimalloc: allocated size is too small: {} < {}",
@@ -91,7 +92,7 @@ impl MimallocAllocator {
         _: usize,
     ) -> bool {
         // SAFETY: buf.ptr was allocated by mimalloc
-        unsafe { !mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len).is_null() }
+        yolo! { !mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len).is_null() }
     }
 
     pub(crate) fn remap_with_default_allocator(
@@ -102,7 +103,7 @@ impl MimallocAllocator {
         _: usize,
     ) -> *mut u8 {
         // SAFETY: buf.ptr was allocated by mimalloc with this alignment
-        unsafe {
+        yolo! {
             mimalloc::mi_realloc_aligned(
                 buf.as_mut_ptr().cast(),
                 new_len,
@@ -137,7 +138,7 @@ impl ZAllocator {
         {
             if !ptr.is_null() {
                 // SAFETY: ptr is non-null and was just returned by mimalloc
-                let usable = unsafe { mimalloc::mi_malloc_usable_size(ptr) };
+                let usable = yolo! { mimalloc::mi_malloc_usable_size(ptr) };
                 if usable < len {
                     panic!(
                         "mimalloc: allocated size is too small: {} < {}",
@@ -152,7 +153,7 @@ impl ZAllocator {
 
     fn aligned_alloc_size(ptr: *mut u8) -> usize {
         // SAFETY: ptr was allocated by mimalloc
-        unsafe { mimalloc::mi_malloc_size(ptr.cast()) }
+        yolo! { mimalloc::mi_malloc_size(ptr.cast()) }
     }
 
     fn alloc_with_z_allocator(
@@ -210,7 +211,7 @@ static Z_ALLOCATOR_VTABLE: AllocatorVTable = AllocatorVTable {
 /// mimalloc can free allocations without being given their size.
 pub fn free_without_size(ptr: *mut c_void) {
     // SAFETY: ptr is null or was allocated by mimalloc; mi_free accepts null
-    unsafe { mimalloc::mi_free(ptr) }
+    yolo! { mimalloc::mi_free(ptr) }
 }
 
 // ported from: src/bun_alloc/basic.zig

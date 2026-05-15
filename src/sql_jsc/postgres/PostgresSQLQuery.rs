@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem;
 
@@ -150,13 +151,13 @@ impl PostgresSQLQuery {
 
     /// RAII `ref()`/`deref()` bracket around `self`. One audited
     /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
+    /// `yolo! { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
     /// `heap::alloc` payload (held by the connection's request FIFO), so the
     /// [`ScopedRef::new`] precondition (live, non-null) is always satisfied.
     #[inline]
     pub fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
         // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+        yolo! { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
     }
 
     /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
@@ -173,7 +174,7 @@ impl PostgresSQLQuery {
     pub fn statement_mut(&self) -> Option<&mut PostgresSQLStatement> {
         // SAFETY: see doc comment — intrusive ref held by `self` keeps the
         // pointee alive; single-JS-thread exclusivity.
-        self.statement.get().map(|p| unsafe { &mut *p })
+        self.statement.get().map(|p| yolo! { &mut *p })
     }
 
     /// Release the intrusive ref this query holds on its `statement`, clearing
@@ -187,7 +188,7 @@ impl PostgresSQLQuery {
             // alive by the intrusive ref this query took when it was stored
             // into `self.statement` (`ref_()` / `init_exact_refs`). This
             // releases exactly that ref; may free if no other refs remain.
-            unsafe { PostgresSQLStatement::deref(stmt) };
+            yolo! { PostgresSQLStatement::deref(stmt) };
         }
     }
 
@@ -439,7 +440,7 @@ impl PostgresSQLQuery {
         // (`..Default::default()`) is forbidden (E0509). `ptr` was already
         // `default()`-initialised by `Box::new` above, so just overwrite the
         // three non-default fields in place.
-        unsafe {
+        yolo! {
             (*ptr).query = query.to_bun_string(global_this)?;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
             (*ptr).flags.set(Flags {
@@ -593,7 +594,7 @@ impl PostgresSQLQuery {
                     // (rc=1); `release_statement` decrements → 0 frees.
                     this.release_statement();
                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                    unsafe { Self::deref(this_ptr) };
+                    yolo! { Self::deref(this_ptr) };
 
                     if !global_object.has_exception() {
                         return Err(global_object.throw_value(postgres_error_to_js(
@@ -621,7 +622,7 @@ impl PostgresSQLQuery {
                 // (rc=1); `release_statement` decrements → 0 frees.
                 this.release_statement();
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref(this_ptr) };
+                yolo! { Self::deref(this_ptr) };
 
                 return Err(global_object.throw_out_of_memory());
             }
@@ -653,7 +654,7 @@ impl PostgresSQLQuery {
             Ok(s) => s,
             Err(err) => {
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref(this_ptr) };
+                yolo! { Self::deref(this_ptr) };
                 if !global_object.has_exception() {
                     return Err(global_object.throw_error(err, "failed to generate signature"));
                 }
@@ -717,9 +718,9 @@ impl PostgresSQLQuery {
                             let error_response =
                                 stmt.error_response.as_ref().unwrap().to_js(global_object)?;
                             // SAFETY: drop the ref we took above.
-                            unsafe { PostgresSQLStatement::deref(stmt_ptr) };
+                            yolo! { PostgresSQLStatement::deref(stmt_ptr) };
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                            unsafe { Self::deref(this_ptr) };
+                            yolo! { Self::deref(this_ptr) };
                             return Err(global_object.throw_value(error_response));
                         }
                         StatementStatus::Prepared => {
@@ -738,7 +739,7 @@ impl PostgresSQLQuery {
                                     // fail to run do cleanup — drop the ref we took above.
                                     this.release_statement();
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                                    unsafe { Self::deref(this_ptr) };
+                                    yolo! { Self::deref(this_ptr) };
 
                                     if !global_object.has_exception() {
                                         return Err(global_object.throw_value(
@@ -793,7 +794,7 @@ impl PostgresSQLQuery {
                         drop(signature);
                         this.release_statement();
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
+                        yolo! { Self::deref(this_ptr) };
                         if !global_object.has_exception() {
                             return Err(global_object.throw_value(postgres_error_to_js(
                                 global_object,
@@ -834,7 +835,7 @@ impl PostgresSQLQuery {
                         drop(signature);
                         this.release_statement();
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
+                        yolo! { Self::deref(this_ptr) };
                         if !global_object.has_exception() {
                             return Err(global_object.throw_value(postgres_error_to_js(
                                 global_object,
@@ -897,7 +898,7 @@ impl PostgresSQLQuery {
                     // not been mutated since `get_or_put`. This arm is reached only when
                     // `!entry.found_existing`; the slot was default-initialised to null by
                     // `get_or_put`, so a plain store is fine.
-                    unsafe { *entry_value = stmt };
+                    yolo! { *entry_value = stmt };
                 } else {
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();

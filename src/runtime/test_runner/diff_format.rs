@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 
 use bun_core::Output;
@@ -117,8 +118,8 @@ pub extern "C" fn zig__renderDiff(
 ) {
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes valid UTF-8 buffers
     // of the given lengths for the duration of this call.
-    let expected = unsafe { bun_core::ffi::slice(expected_ptr.cast::<u8>(), expected_len) };
-    let received = unsafe { bun_core::ffi::slice(received_ptr.cast::<u8>(), received_len) };
+    let expected = yolo! { bun_core::ffi::slice(expected_ptr.cast::<u8>(), expected_len) };
+    let received = yolo! { bun_core::ffi::slice(received_ptr.cast::<u8>(), received_len) };
     let formatter = DiffFormatter {
         received_string: Some(received),
         expected_string: Some(expected),

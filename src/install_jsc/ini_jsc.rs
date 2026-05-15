@@ -1,6 +1,7 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
+use bun_yolo::yolo;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
@@ -105,7 +106,7 @@ impl IniTestingAPIs {
         // both outlive this call and are not aliased for its duration.
         if load_npmrc(
             &mut install,
-            unsafe { &mut *env },
+            yolo! { &mut *env },
             ZStr::from_static(b".npmrc\0"),
             &mut log,
             &source,
@@ -218,7 +219,7 @@ impl IniTestingAPIs {
         // `parser.arena.arena()`); split the borrow via raw ptr so the bump
         // outlives the `&mut parser` for the call. SAFETY: `parser.arena` is
         // not moved/dropped for the lifetime of `parser`.
-        let bump: &bun_alloc::Arena = unsafe { &*(&raw const parser.arena) };
+        let bump: &bun_alloc::Arena = yolo! { &*(&raw const parser.arena) };
         parser.parse(bump)?;
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {

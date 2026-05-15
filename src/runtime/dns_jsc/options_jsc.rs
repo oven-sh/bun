@@ -1,6 +1,7 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
 //! `address_to_js`/`addr_info_to_js_array`. The pure types stay in `src/dns/`.
 
+use bun_yolo::yolo;
 use bun_jsc::{
     ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
 };
@@ -200,7 +201,7 @@ pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<O
             }
             // SAFETY: addrinfo is a non-null *mut libc::addrinfo owned by the
             // resolver; valid for the duration of this call.
-            Some(addr_info_to_js_array(unsafe { &*addrinfo }, global)?)
+            Some(addr_info_to_js_array(yolo! { &*addrinfo }, global)?)
         }
         ResultAny::List(list) => 'brk: {
             let array = JSValue::create_empty_array(global, list.len())?;
@@ -259,7 +260,7 @@ pub fn addr_info_to_js_array(
         // SAFETY: `current` walks the getaddrinfo(3) singly-linked result list;
         // each node and its `ai_next` are valid until freeaddrinfo is called by
         // the owner (which outlives this call).
-        while let Some(this_node) = unsafe { current.as_ref() } {
+        while let Some(this_node) = yolo! { current.as_ref() } {
             if let Some(result) = GaiResult::from_addr_info(this_node) {
                 array.put_index(global, j, result_to_js(&result, global)?)?;
                 j += 1;

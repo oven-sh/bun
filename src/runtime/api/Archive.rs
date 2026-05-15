@@ -1,5 +1,6 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_char};
 use core::mem::offset_of;
 use std::ffi::CString;
@@ -285,7 +286,7 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
 /// `JSValue::as_::<Blob>()` shim — kept as a free fn so the call sites read
 /// the same as the Zig (`jsc.WebCore.Blob.fromJS(value)`). Returns a shared
 /// borrow (BACKREF: m_ctx payload kept live by the JSC cell rooted by `value`
-/// on the caller's stack) so callers don't open-code `unsafe { &*ptr }`.
+/// on the caller's stack) so callers don't open-code `yolo! { &*ptr }`.
 #[inline]
 fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
     value.as_class_ref::<Blob>()
@@ -708,14 +709,14 @@ impl<C: TaskContext> AsyncTask<C> {
         let raw = bun_core::heap::into_raw(this);
         // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
         // loop alive until `run_from_js` unrefs after the threadpool work completes.
-        unsafe { (*raw).keep_alive.ref_(bun_io::js_vm_ctx()) };
+        yolo! { (*raw).keep_alive.ref_(bun_io::js_vm_ctx()) };
         Ok(raw)
     }
 
     fn schedule(this: *mut Self) {
         // SAFETY: `this` is alive (owned by the task system) until run_from_js drops it;
         // task field is intrusive and stable since `this` is heap-allocated.
-        WorkPool::schedule(unsafe { &raw mut (*this).task });
+        WorkPool::schedule(yolo! { &raw mut (*this).task });
     }
 
     /// Read the pending promise's `JSValue` from a freshly-`create`d task.
@@ -729,7 +730,7 @@ impl<C: TaskContext> AsyncTask<C> {
     fn promise_value(this: *mut Self) -> JSValue {
         // SAFETY: see fn doc — `this` is the live, unscheduled `heap::into_raw`
         // allocation from `create()`.
-        unsafe { (*this).promise.value() }
+        yolo! { (*this).promise.value() }
     }
 
     /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
@@ -738,11 +739,11 @@ impl<C: TaskContext> AsyncTask<C> {
         // SAFETY: `work_task` points to the `task` field of an `AsyncTask<C>`
         // allocated by `create` — only ever invoked by the thread pool against
         // a task it scheduled, so provenance covers the full allocation.
-        let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
+        let this: *mut Self = yolo! { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
-        unsafe { (*this).ctx.run() };
+        yolo! { (*this).ctx.run() };
         // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
-        unsafe {
+        yolo! {
             let ct: *mut ConcurrentTask =
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit);
             (*(*this).vm).enqueue_task_concurrent(ct);
@@ -751,7 +752,7 @@ impl<C: TaskContext> AsyncTask<C> {
 
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
-        let mut owned = unsafe { bun_core::heap::take(this) };
+        let mut owned = yolo! { bun_core::heap::take(this) };
         owned.keep_alive.unref(bun_io::js_vm_ctx());
 
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
@@ -934,7 +935,7 @@ impl TaskContext for BlobContext {
                         let blob_ptr =
                             Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
                         // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                        unsafe { (*blob_ptr).to_js(global) }
+                        yolo! { (*blob_ptr).to_js(global) }
                     }
                     BlobOutputType::Bytes => {
                         // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
@@ -949,7 +950,7 @@ impl TaskContext for BlobContext {
                     let store = self.store.clone();
                     let blob_ptr = Blob::new(Blob::init_with_store(store, global));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    PromiseResult::Resolve(unsafe { (*blob_ptr).to_js(global) })
+                    PromiseResult::Resolve(yolo! { (*blob_ptr).to_js(global) })
                 }
                 BlobOutputType::Bytes => {
                     let dup = self.store.shared_view().to_vec();
@@ -1249,7 +1250,7 @@ impl TaskContext for FilesContext {
                     let blob_ptr =
                         Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    let blob = unsafe { &mut *blob_ptr };
+                    let blob = yolo! { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
                     blob.last_modified.set((entry.mtime * 1000) as f64);
@@ -1257,7 +1258,7 @@ impl TaskContext for FilesContext {
                     let name_js = blob.name.get().to_js(global)?;
                     let blob_js = blob.to_js(global);
                     // SAFETY: map_ptr came from JSMap::from_js on a live value.
-                    unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
+                    yolo! { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
                 }
 
                 Ok(PromiseResult::Resolve(map))
@@ -1342,11 +1343,11 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
         return Err(CompressError::GzipInitFailed);
     }
     // defer compressor.deinit();
-    let _guard = scopeguard::guard(compressor_ptr, |p| unsafe {
+    let _guard = scopeguard::guard(compressor_ptr, |p| yolo! {
         libdeflate::Compressor::destroy(p)
     });
     // SAFETY: alloc returned non-null; freed by `_guard` on scope exit.
-    let compressor: &mut libdeflate::Compressor = unsafe { &mut *compressor_ptr };
+    let compressor: &mut libdeflate::Compressor = yolo! { &mut *compressor_ptr };
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 

@@ -7,6 +7,7 @@
 //! (`apply_standalone_runtime_flags`, `fail_with_build_error`, the
 //! `Bun__on{Resolve,Reject}EntryPointResult` host fns).
 
+use bun_yolo::yolo;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, StandaloneModuleGraph};
@@ -55,7 +56,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 
     // SAFETY: `vm.log` is set in `init`.
     if let Some(mut p) = vm.log {
-        let _ = unsafe { p.as_mut() }.print(std::ptr::from_mut(writer));
+        let _ = yolo! { p.as_mut() }.print(std::ptr::from_mut(writer));
     }
 }
 

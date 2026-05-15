@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 
 use bun_base64::zig_base64::STANDARD_NO_PAD as base64;
@@ -236,7 +237,7 @@ impl fmt::Display for Integrity {
         let bytes = self.slice();
 
         // SAFETY: base64 alphabet is pure ASCII.
-        f.write_str(unsafe {
+        f.write_str(yolo! {
             core::str::from_utf8_unchecked(base64.encoder.encode(&mut base64_buf, bytes))
         })?;
 

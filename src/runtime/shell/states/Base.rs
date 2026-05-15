@@ -6,6 +6,7 @@
 //! `*mut ShellExecEnv` (which may be owned or borrowed — see field doc) are
 //! stored here.
 
+use bun_yolo::yolo;
 use crate::shell::interpreter::{NodeId, ShellExecEnv, StateKind};
 
 pub struct Base {
@@ -53,7 +54,7 @@ impl Base {
         // SAFETY: `shell` is set in `new()` from a live env owned either by
         // the interpreter (root) or by an ancestor node that outlives this
         // node's slot (deinit order is child→parent).
-        unsafe { &*self.shell }
+        yolo! { &*self.shell }
     }
 
     #[inline]
@@ -61,7 +62,7 @@ impl Base {
         // SAFETY: see `shell()`. Mutation is single-threaded (interpreter
         // runs on one thread) and the trampoline only holds one `&mut` at a
         // time.
-        unsafe { &mut *self.shell }
+        yolo! { &mut *self.shell }
     }
 }
 

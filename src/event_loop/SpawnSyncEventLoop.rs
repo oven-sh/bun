@@ -15,6 +15,7 @@
 //!
 //! Similar to Node.js's approach in vendor/node/src/spawn_sync.cc but adapted for Bun's architecture.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -45,7 +46,7 @@ pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 // spawnSync is per-process-spawn, not per-tick, so the cross-crate call is fine.
 // All bodies are defined as safe `pub fn` in `bun_jsc::event_loop` (the impl
 // encapsulates the erased-pointer derefs), so the declarations are `safe fn` —
-// no caller-side `unsafe { }` needed.
+// no caller-side `yolo! { }` needed.
 unsafe extern "Rust" {
     /// Heap-allocate and zero-init a `jsc::EventLoop` bound to `vm`, with
     /// `uws_loop` as its loop on Windows. Returns erased `*mut jsc::EventLoop`.
@@ -177,7 +178,7 @@ impl SpawnSyncEventLoop {
 
         // Set up the loop's internal data to point to this isolated event loop
         // SAFETY: `this` was fully written immediately above so `assume_init_mut` is sound.
-        let this = unsafe { this.assume_init_mut() };
+        let this = yolo! { this.assume_init_mut() };
         // PORT NOTE: sys-level API is `set_parent_raw(tag, ptr)`; the typed
         // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
         let (tag, ptr) = EventLoopHandle::init(this.event_loop).into_tag_ptr();
@@ -223,7 +224,7 @@ impl SpawnSyncEventLoop {
     pub fn uws_loop(&self) -> &uws::Loop {
         // SAFETY: see doc invariant above — non-null, owned for `self`'s lifetime,
         // no `&mut` alias while `&self` is held.
-        unsafe { self.uws_loop.as_ref() }
+        yolo! { self.uws_loop.as_ref() }
     }
 
     /// Unique borrow of the isolated `uws::Loop`.
@@ -241,7 +242,7 @@ impl SpawnSyncEventLoop {
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
         // entire lifetime (created in `init`, freed in `Drop`). `&mut self`
         // guarantees no other safe borrow of the loop is live.
-        unsafe { self.uws_loop.as_mut() }
+        yolo! { self.uws_loop.as_mut() }
     }
 
     /// Unique borrow of the heap-owned libuv timeout timer (Windows only).
@@ -266,14 +267,14 @@ impl SpawnSyncEventLoop {
         // SAFETY: see doc — heap-owned, valid while `Some`, `&mut self` ⇒
         // exclusive Rust access (libuv only touches the handle from inside
         // `uv_run`, never concurrently with a caller of this accessor).
-        self.uv_timer.as_mut().map(|p| unsafe { p.as_mut() })
+        self.uv_timer.as_mut().map(|p| yolo! { p.as_mut() })
     }
 }
 
 #[cfg(windows)]
 extern "C" fn on_close_uv_timer(timer: *mut libuv::Timer) {
     // SAFETY: `timer` was allocated via `heap::alloc` in `prepare_timer_on_windows`.
-    drop(unsafe { bun_core::heap::take(timer) });
+    drop(yolo! { bun_core::heap::take(timer) });
 }
 
 impl Drop for SpawnSyncEventLoop {
@@ -282,7 +283,7 @@ impl Drop for SpawnSyncEventLoop {
         {
             if let Some(timer) = self.uv_timer.take() {
                 // SAFETY: timer is a live libuv handle owned by this struct.
-                unsafe {
+                yolo! {
                     (*timer.as_ptr()).stop();
                     (*timer.as_ptr()).unref();
                     // `UvHandle::close` already does the `*mut Timer` →
@@ -295,7 +296,7 @@ impl Drop for SpawnSyncEventLoop {
         // PORT NOTE: Zig order was `event_loop.deinit()` then `uws_loop.deinit()`.
         __bun_spawn_sync_destroy_event_loop(self.event_loop);
         // SAFETY: uws_loop was returned by `us_create_loop` in `init` and not yet freed.
-        unsafe { uws::Loop::destroy(self.uws_loop.as_ptr()) };
+        yolo! { uws::Loop::destroy(self.uws_loop.as_ptr()) };
     }
 }
 
@@ -356,7 +357,7 @@ extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
     //       `&mut uws::Loop` it produced is still live around us.
     // So: touch only `(*this).did_timeout` (a `Cell`, interior-mutable), and obtain the uv loop
     // from the timer handle itself rather than routing through `*this`.
-    unsafe {
+    yolo! {
         let this: *mut SpawnSyncEventLoop = (*timer_).data.cast::<SpawnSyncEventLoop>();
         (*this).did_timeout.set(true);
         (*libuv::uv_handle_get_loop(timer_.cast())).stop();
@@ -443,11 +444,11 @@ impl SpawnSyncEventLoop {
             // copied out above), so the raw tag at `did_timeout`'s bytes survives under Stacked
             // Borrows.
             // SAFETY: `t` is a valid initialized libuv timer handle owned by `self`.
-            unsafe { (*t.as_ptr()).data = (core::ptr::from_mut(self)).cast() };
+            yolo! { (*t.as_ptr()).data = (core::ptr::from_mut(self)).cast() };
         }
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
         // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
-        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration) };
+        yolo! { (*loop_.as_ptr()).tick_with_timeout(duration) };
 
         if let Some(ts) = timeout {
             #[cfg(windows)]

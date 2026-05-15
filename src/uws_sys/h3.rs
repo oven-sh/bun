@@ -2,6 +2,7 @@
 //! comptime callers in server.zig and the `inline else` arms in AnyResponse
 //! see the same surface regardless of transport.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
@@ -26,7 +27,7 @@ impl ListenSocket {
     }
     pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         // SAFETY: self is a live FFI handle; buf ptr/len valid for write
-        let n = unsafe {
+        let n = yolo! {
             c::uws_h3_listen_socket_local_address(
                 self,
                 buf.as_mut_ptr(),
@@ -60,37 +61,37 @@ impl Request {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_url(self, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        yolo! { bun_core::ffi::slice(p, n) }
     }
     pub fn method(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_method(self, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        yolo! { bun_core::ffi::slice(p, n) }
     }
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_header(self, name.as_ptr(), name.len(), &raw mut p) };
+        let n = yolo! { c::uws_h3_req_get_header(self, name.as_ptr(), name.len(), &raw mut p) };
         if n == 0 {
             None
         } else {
             // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-            Some(unsafe { bun_core::ffi::slice(p, n) })
+            Some(yolo! { bun_core::ffi::slice(p, n) })
         }
     }
     pub fn query(&mut self, name: &[u8]) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_query(self, name.as_ptr(), name.len(), &raw mut p) };
+        let n = yolo! { c::uws_h3_req_get_query(self, name.as_ptr(), name.len(), &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        yolo! { bun_core::ffi::slice(p, n) }
     }
     pub fn parameter(&mut self, idx: u16) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_parameter(self, idx, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
-        unsafe { bun_core::ffi::slice(p, n) }
+        yolo! { bun_core::ffi::slice(p, n) }
     }
     /// Iterate all request headers.
     ///
@@ -117,7 +118,7 @@ impl Request {
         {
             // SAFETY: synchronous header iteration — `ud` is the unique `&mut Ctx`
             // we registered, (ptr,len) pairs valid for this call, `H` is a ZST.
-            unsafe {
+            yolo! {
                 let Some(ctx) = thunk::user_mut::<Ctx>(ud) else {
                     return;
                 };
@@ -137,11 +138,11 @@ bun_opaque::opaque_ffi! { pub struct Response; }
 impl Response {
     pub fn end(&mut self, data: &[u8], close_connection: bool) {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
-        unsafe { c::uws_h3_res_end(self, data.as_ptr(), data.len(), close_connection) }
+        yolo! { c::uws_h3_res_end(self, data.as_ptr(), data.len(), close_connection) }
     }
     pub fn try_end(&mut self, data: &[u8], total: usize, close_connection: bool) -> bool {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
-        unsafe { c::uws_h3_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
+        yolo! { c::uws_h3_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
     }
     pub fn end_without_body(&mut self, close_connection: bool) {
         c::uws_h3_res_end_without_body(self, close_connection)
@@ -155,7 +156,7 @@ impl Response {
     pub fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live FFI handle; data ptr valid for read; len out-ptr is a valid local
-        if unsafe { c::uws_h3_res_write(self, data.as_ptr(), &raw mut len) } {
+        if yolo! { c::uws_h3_res_write(self, data.as_ptr(), &raw mut len) } {
             WriteResult::WantMore(len)
         } else {
             WriteResult::Backpressure(len)
@@ -163,17 +164,17 @@ impl Response {
     }
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live FFI handle; status ptr/len valid for read
-        unsafe { c::uws_h3_res_write_status(self, status.as_ptr(), status.len()) }
+        yolo! { c::uws_h3_res_write_status(self, status.as_ptr(), status.len()) }
     }
     pub fn write_header(&mut self, key: &[u8], value: &[u8]) {
         // SAFETY: self is a live FFI handle; key/value ptr+len valid for read
-        unsafe {
+        yolo! {
             c::uws_h3_res_write_header(self, key.as_ptr(), key.len(), value.as_ptr(), value.len())
         }
     }
     pub fn write_header_int(&mut self, key: &[u8], value: u64) {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
-        unsafe { c::uws_h3_res_write_header_int(self, key.as_ptr(), key.len(), value) }
+        yolo! { c::uws_h3_res_write_header_int(self, key.as_ptr(), key.len(), value) }
     }
     pub fn write_mark(&mut self) {
         c::uws_h3_res_write_mark(self)
@@ -242,7 +243,7 @@ impl Response {
             return None;
         }
         // SAFETY: uws returns a pointer+len pair valid while the response is alive
-        let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
+        let ip = yolo! { bun_core::ffi::slice(ip_ptr, len) };
         // TODO(port): SocketAddress.ip is a borrowed slice in Zig; Rust field type TBD
         Some(SocketAddress { ip, port, is_ipv6 })
     }
@@ -261,7 +262,7 @@ impl Response {
             H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
+            yolo! {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return true;
                 };
@@ -284,7 +285,7 @@ impl Response {
             H: Fn(&mut UD, &mut Response) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
+            yolo! {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return;
                 };
@@ -307,7 +308,7 @@ impl Response {
             H: Fn(&mut UD, &mut Response) + Copy + 'static,
         {
             // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
+            yolo! {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return;
                 };
@@ -336,7 +337,7 @@ impl Response {
         {
             // SAFETY: uWS callback contract — `r` live, `chunk_ptr[..len]` valid,
             // `p` is the registered `*mut UD`.
-            unsafe {
+            yolo! {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return;
                 };
@@ -367,7 +368,7 @@ impl Response {
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
+            let ctx = yolo! { &*p.cast::<Ctx<UD>>() };
             // PERF(port): was @call(.always_inline)
             (ctx.0)(ctx.1);
         }
@@ -420,7 +421,7 @@ macro_rules! h3_route_methods {
 impl App {
     pub fn create(opts: BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
         // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
-        let p = unsafe { c::uws_h3_create_app(opts, idle_timeout_s) };
+        let p = yolo! { c::uws_h3_create_app(opts, idle_timeout_s) };
         if p.is_null() { None } else { Some(p) }
     }
     pub fn add_server_name_with_options(
@@ -429,7 +430,7 @@ impl App {
         opts: BunSocketContextOptions,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a live FFI handle; hostname is NUL-terminated; opts passed by value
-        if !unsafe { c::uws_h3_app_add_server_name(self, hostname.as_ptr().cast(), opts) } {
+        if !yolo! { c::uws_h3_app_add_server_name(self, hostname.as_ptr().cast(), opts) } {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())
@@ -439,7 +440,7 @@ impl App {
     /// it is freed by this call and must not be used afterwards.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract above
-        unsafe { c::uws_h3_app_destroy(this) }
+        yolo! { c::uws_h3_app_destroy(this) }
     }
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
@@ -460,7 +461,7 @@ impl App {
         {
             // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
             // `p` is the registered `*mut UD` (non-null by route registration).
-            unsafe {
+            yolo! {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return;
                 };
@@ -481,7 +482,7 @@ impl App {
             RouteKind::Any => c::uws_h3_app_any,
         };
         // SAFETY: this is a live FFI handle; pattern ptr/len valid for read; trampoline is `extern "C"`
-        unsafe {
+        yolo! {
             f(
                 this,
                 pattern.as_ptr(),
@@ -534,7 +535,7 @@ impl App {
         {
             // SAFETY: uWS callback contract — `p` is the registered `*mut UD`;
             // `ls` (when non-null) is a live listen-socket for this call.
-            unsafe {
+            yolo! {
                 let Some(ud) = thunk::user_mut::<UD>(p) else {
                     return;
                 };
@@ -542,7 +543,7 @@ impl App {
             }
         }
         // SAFETY: self is a live FFI handle; config fields valid; trampoline is `extern "C"`
-        unsafe {
+        yolo! {
             c::uws_h3_app_listen_with_config(
                 self,
                 config.host,

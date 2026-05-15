@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
@@ -79,7 +80,7 @@ impl Handler {
     pub fn active_connections_saturating_add(&self, n: usize) {
         // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
         // materializing an intermediate `&usize` (invalid_reference_casting lint).
-        unsafe {
+        yolo! {
             let p = core::ptr::addr_of!(self.active_connections).cast_mut();
             *p = (*p).saturating_add(n);
         }
@@ -90,7 +91,7 @@ impl Handler {
     pub fn active_connections_saturating_sub(&self, n: usize) {
         // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
         // materializing an intermediate `&usize` (invalid_reference_casting lint).
-        unsafe {
+        yolo! {
             let p = core::ptr::addr_of!(self.active_connections).cast_mut();
             *p = (*p).saturating_sub(n);
         }
@@ -118,7 +119,7 @@ impl Handler {
         let _ = vm;
         let mut vm_ref = self.vm;
         // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
-        let vm_mut = unsafe { vm_ref.get_mut() };
+        let vm_mut = yolo! { vm_ref.get_mut() };
         let _ = vm_mut.uncaught_exception(global_object, error_value, false);
     }
 

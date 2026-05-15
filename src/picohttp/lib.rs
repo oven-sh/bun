@@ -1,6 +1,7 @@
 #![allow(unused, non_camel_case_types, non_snake_case)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::ffi::c_int;
 use core::fmt;
 
@@ -143,7 +144,7 @@ impl Header {
         // continuation headers. `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: ptr/len originate from picohttpparser pointing into the
         // caller-provided buffer, or from StringBuilder::append.
-        unsafe { bun_core::ffi::slice(self.name_ptr, self.name_len) }
+        yolo! { bun_core::ffi::slice(self.name_ptr, self.name_len) }
     }
 
     #[inline]
@@ -151,7 +152,7 @@ impl Header {
         // Defensive: picohttpparser always points `value` into `buf` on
         // success; `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: same as name()
-        unsafe { bun_core::ffi::slice(self.value_ptr, self.value_len) }
+        yolo! { bun_core::ffi::slice(self.value_ptr, self.value_len) }
     }
 
     pub fn is_multiline(&self) -> bool {
@@ -167,8 +168,8 @@ impl Header {
         // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
         // the lifetime of the cloned `Header` (see PORT NOTE on `StringBuilder`).
-        let name = unsafe { builder.append_raw(self.name()) };
-        let value = unsafe { builder.append_raw(self.value()) };
+        let name = yolo! { builder.append_raw(self.name()) };
+        let value = yolo! { builder.append_raw(self.value()) };
         Header {
             name_ptr: name.as_ptr(),
             name_len: name.len(),
@@ -321,8 +322,8 @@ impl<'a> Request<'a> {
 
         Request {
             // SAFETY: see `Header::clone` — caller keeps `builder` alive.
-            method: unsafe { builder.append_raw(self.method) },
-            path: unsafe { builder.append_raw(self.path) },
+            method: yolo! { builder.append_raw(self.method) },
+            path: yolo! { builder.append_raw(self.path) },
             minor_version: self.minor_version,
             headers,
             bytes_read: self.bytes_read,
@@ -342,10 +343,10 @@ impl<'a> Request<'a> {
     pub unsafe fn detach_lifetime(self) -> Request<'static> {
         Request {
             // SAFETY: caller contract.
-            method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
-            path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
+            method: yolo! { &*core::ptr::from_ref::<[u8]>(self.method) },
+            path: yolo! { &*core::ptr::from_ref::<[u8]>(self.path) },
             minor_version: self.minor_version,
-            headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
+            headers: yolo! { &*core::ptr::from_ref::<[Header]>(self.headers) },
             bytes_read: self.bytes_read,
         }
     }
@@ -360,7 +361,7 @@ impl<'a> Request<'a> {
 
         // SAFETY: picohttpparser writes back into the out-params; src is
         // layout-compatible with phr_header (asserted above).
-        let rc = unsafe {
+        let rc = yolo! {
             c::phr_parse_request(
                 buf.as_ptr(),
                 buf.len(),
@@ -380,7 +381,7 @@ impl<'a> Request<'a> {
             // SAFETY: path_ptr points into buf; the byte after the path is the
             // space before "HTTP/1.x" which picohttpparser has already consumed,
             // so writing a NUL there is in-bounds. Zig casts away const here too.
-            unsafe { path_ptr.cast_mut().add(path_len).write(0) };
+            yolo! { path_ptr.cast_mut().add(path_len).write(0) };
         }
 
         match rc {
@@ -388,8 +389,8 @@ impl<'a> Request<'a> {
             -2 => Err(ParseRequestError::ShortRead),
             _ => Ok(Request {
                 // SAFETY: on success, ptr/len point into `buf`.
-                method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
-                path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
+                method: yolo! { bun_core::ffi::slice(method_ptr, method_len) },
+                path: yolo! { bun_core::ffi::slice(path_ptr, path_len) },
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
                 bytes_read: u32::try_from(rc).expect("int cast"),
@@ -563,9 +564,9 @@ impl<'a> Response<'a> {
             minor_version: self.minor_version,
             status_code: self.status_code,
             // SAFETY: caller contract.
-            status: unsafe { &*core::ptr::from_ref::<[u8]>(self.status) },
+            status: yolo! { &*core::ptr::from_ref::<[u8]>(self.status) },
             headers: HeaderList {
-                list: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
+                list: yolo! { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
             },
             bytes_read: self.bytes_read,
         }
@@ -582,7 +583,7 @@ impl<'a> Response<'a> {
     pub fn clone(&self, headers: &'a mut [Header], builder: &mut StringBuilder) -> Response<'a> {
         let mut that = *self;
         // SAFETY: see `Header::clone` — caller keeps `builder` alive.
-        that.status = unsafe { builder.append_raw(self.status) };
+        that.status = yolo! { builder.append_raw(self.status) };
 
         for (i, header) in self.headers.list.iter().enumerate() {
             headers[i] = header.clone(builder);
@@ -608,7 +609,7 @@ impl<'a> Response<'a> {
 
         // SAFETY: src is layout-compatible with phr_header (asserted above);
         // out-params are valid for write.
-        let rc = unsafe {
+        let rc = yolo! {
             c::phr_parse_response(
                 buf.as_ptr(),
                 buf.len(),
@@ -641,7 +642,7 @@ impl<'a> Response<'a> {
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 status_code: u32::try_from(status_code).expect("int cast"),
                 // SAFETY: on success, ptr/len point into `buf`.
-                status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
+                status: yolo! { bun_core::ffi::slice(status_ptr, status_len) },
                 headers: HeaderList {
                     list: &src[0..num_headers.min(src.len())],
                 },
@@ -704,7 +705,7 @@ impl<'a> Headers<'a> {
         let mut num_headers: usize = src.len();
 
         // SAFETY: src is layout-compatible with phr_header (asserted above).
-        let rc = unsafe {
+        let rc = yolo! {
             c::phr_parse_headers(
                 buf.as_ptr(),
                 buf.len(),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_uint, c_void};
 
 use crate::evp::Algorithm;
@@ -18,7 +19,7 @@ pub fn generate<'a>(
         bun_core::output::panic(format_args!("Expected BoringSSL algorithm for HMAC"));
     };
     // SAFETY: key/data are valid slices; out has EVP_MAX_MD_SIZE bytes; outlen is initialized.
-    if unsafe {
+    if yolo! {
         ffi::HMAC(
             md,
             key.as_ptr().cast::<c_void>(),

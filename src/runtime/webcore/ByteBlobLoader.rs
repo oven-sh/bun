@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use bun_collections::VecExt;
@@ -172,7 +173,7 @@ impl ByteBlobLoader {
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
             // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
             // We hold the only outstanding ref (just detached) so exclusive access is sound.
-            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
+            if let Some(blob) = yolo! { (*store.as_ptr()).to_any_blob() } {
                 drop(store); // defer store.deref()
                 return Some(blob);
             }

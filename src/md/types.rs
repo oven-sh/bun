@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 // TODO(b1): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
@@ -214,8 +215,8 @@ impl<'a> SpanDetail<'a> {
     pub unsafe fn detach_lifetime(self) -> SpanDetail<'static> {
         SpanDetail {
             // SAFETY: caller contract.
-            href: unsafe { &*core::ptr::from_ref::<[u8]>(self.href) },
-            title: unsafe { &*core::ptr::from_ref::<[u8]>(self.title) },
+            href: yolo! { &*core::ptr::from_ref::<[u8]>(self.href) },
+            title: yolo! { &*core::ptr::from_ref::<[u8]>(self.title) },
             autolink: self.autolink,
             autolink_email: self.autolink_email,
             permissive_autolink: self.permissive_autolink,

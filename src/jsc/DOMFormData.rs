@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -82,8 +83,8 @@ impl DOMFormData {
     {
         extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
             // SAFETY: `c` is the `&mut F` passed below; `str_` is valid for this call.
-            let cb = unsafe { bun_ptr::callback_ctx::<F>(c) };
-            cb(unsafe { *str_ });
+            let cb = yolo! { bun_ptr::callback_ctx::<F>(c) };
+            cb(yolo! { *str_ });
         }
 
         // `callback` lives for the duration of the call (C++ invokes the fn pointer
@@ -145,27 +146,27 @@ impl DOMFormData {
             F: FnMut(ZigString, FormDataEntry<'_, B>),
         {
             // SAFETY: ctx_ptr is the `&mut F` passed below; Zig did `ctx_ptr.?` (unwrap non-null).
-            let ctx_ = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
+            let ctx_ = yolo! { bun_ptr::callback_ctx::<F>(ctx_ptr) };
             let value = if is_blob == 0 {
                 // SAFETY: when is_blob == 0, value_ptr points to a ZigString.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
+                FormDataEntry::String(yolo! { *value_ptr.cast::<ZigString>() })
             } else {
                 FormDataEntry::File {
                     // SAFETY: when is_blob != 0, value_ptr points to a webcore
                     // Blob (`bun_runtime::webcore::Blob`) valid for the callback
                     // scope (LIFETIMES.tsv: BORROW_PARAM). Caller picks `B`.
-                    blob: unsafe { &*value_ptr.cast::<B>() },
+                    blob: yolo! { &*value_ptr.cast::<B>() },
                     filename: if filename.is_null() {
                         ZigString::EMPTY
                     } else {
                         // SAFETY: non-null filename points to a valid ZigString for this call.
-                        unsafe { *filename }
+                        yolo! { *filename }
                     },
                 }
             };
 
             // SAFETY: name_ is always a valid non-null *ZigString for the callback scope.
-            ctx_(unsafe { *name_ }, value);
+            ctx_(yolo! { *name_ }, value);
         }
 
         // TODO(port): jsc.markBinding(@src()) — debug-only binding tracker; no Rust equivalent yet.

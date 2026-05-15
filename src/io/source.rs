@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::mem::{MaybeUninit, offset_of};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -102,7 +103,7 @@ impl File {
     /// Get the File struct from an fs_t pointer using field offset.
     pub unsafe fn from_fs(fs: *mut uv::fs_t) -> *mut File {
         // SAFETY: fs points to File.fs; recover the parent via offset_of.
-        unsafe { bun_core::from_field_ptr!(File, fs, fs) }
+        yolo! { bun_core::from_field_ptr!(File, fs, fs) }
     }
 
     /// Backref-deref accessor for libuv `fs_t` completion callbacks: snapshot
@@ -122,10 +123,10 @@ impl File {
         // SAFETY: caller contract — `fs` is live; read the POD `result`/`data`
         // before forming `&mut File` so the short raw read is dead (NLL) by the
         // time the parent borrow covers the same bytes.
-        let (result, data) = unsafe { ((*fs).result, (*fs).data) };
+        let (result, data) = yolo! { ((*fs).result, (*fs).data) };
         // SAFETY: caller contract — `fs` is `File.fs`; `from_fs` container_of
         // recovers the boxed parent, which outlives `'a` (callback contract).
-        (unsafe { &mut *Self::from_fs(fs) }, result, data)
+        (yolo! { &mut *Self::from_fs(fs) }, result, data)
     }
 
     /// Returns true if ready to start a new operation.
@@ -152,7 +153,7 @@ impl File {
 
         // SAFETY: &mut self.fs is a valid uv_fs_t request; uv_req_t is its base.
         let cancel_result =
-            unsafe { uv::uv_cancel(core::ptr::from_mut::<uv::fs_t>(&mut self.fs).cast()) };
+            yolo! { uv::uv_cancel(core::ptr::from_mut::<uv::fs_t>(&mut self.fs).cast()) };
         if cancel_result == 0 {
             self.state = FileState::Canceling;
         }
@@ -199,7 +200,7 @@ impl File {
         // provenance — `on_close_complete` recovers `*mut File` via `from_fs`
         // and reads/frees bytes outside the `fs` field. `&mut self.fs` would
         // narrow provenance to the field under SB/TB and make that UB.
-        unsafe {
+        yolo! {
             let fs_ptr = core::ptr::from_mut::<File>(self).cast::<uv::fs_t>();
             uv::uv_fs_close(
                 uv::Loop::get(),
@@ -215,11 +216,11 @@ impl File {
         // Unique ownership: by the time libuv fires this callback the parent has
         // detached (fs.data == null) and no Rust `&mut File` is live; this callback
         // is the sole owner and reclaims the Box below.
-        let file = unsafe { &mut *File::from_fs(fs) };
+        let file = yolo! { &mut *File::from_fs(fs) };
         debug_assert!(file.state == FileState::Closing);
         file.fs.deinit();
         // SAFETY: file was allocated via Box::new in open_file(); reclaim and drop.
-        drop(unsafe { bun_core::heap::take(file as *mut File) });
+        drop(yolo! { bun_core::heap::take(file as *mut File) });
     }
 }
 
@@ -234,7 +235,7 @@ impl Source {
         // loop is single-threaded and `&mut Source` (or the sole `BackRef`
         // returned from `open_tty`) is the only access path, so no `&Tty`
         // overlaps this `&mut Tty`.
-        unsafe { tty.get_mut() }
+        yolo! { tty.get_mut() }
     }
 
     pub fn is_closed(&self) -> bool {
@@ -338,7 +339,7 @@ impl Source {
             // the allocation. Hand the Box to libuv via into_raw so Drop does not double-free.
             let raw = bun_core::heap::into_raw(pipe);
             // SAFETY: raw is a valid initialized uv::Pipe; ownership passes to libuv.
-            unsafe { uv::Pipe::close_and_destroy(raw) };
+            yolo! { uv::Pipe::close_and_destroy(raw) };
             return bun_sys::Result::Err(err);
         }
 
@@ -470,7 +471,7 @@ pub mod stdin_tty {
 
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
             // SAFETY: value() points to static storage sized for uv_tty_t; lock held.
-            let rc = unsafe { uv::uv_tty_init(loop_, value(), 0, 0) };
+            let rc = yolo! { uv::uv_tty_init(loop_, value(), 0, 0) };
             if let Some(err) = rc.to_error(bun_sys::Tag::open) {
                 INITIALIZED.store(false, Ordering::Relaxed);
                 return bun_sys::Result::Err(err);

@@ -7,6 +7,7 @@
 /// [gid]: bun_jsc::JSGlobalObject::script_execution_context_identifier
 pub use bun_jsc::js_global_object::ScriptExecutionContextIdentifier as Identifier;
 
+use bun_yolo::yolo;
 use crate::jsc::virtual_machine::VirtualMachine;
 
 /// Runtime-tier convenience: typed `&VirtualMachine` view of [`Identifier::bun_vm`]
@@ -19,7 +20,7 @@ impl IdentifierExt for Identifier {
     fn bun_vm_ref(self) -> Option<&'static VirtualMachine> {
         // SAFETY: the VM outlives all ScriptExecutionContexts it owns; pointer is
         // non-null when `global_object()` is `Some`.
-        self.bun_vm().map(|p| unsafe { &*p })
+        self.bun_vm().map(|p| yolo! { &*p })
     }
     fn valid(self) -> bool {
         self.global_object().is_some()

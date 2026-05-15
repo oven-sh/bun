@@ -10,6 +10,7 @@
 //! with `__c = y; continue;` for `continue :label y`. Each is marked
 //! `// PORT NOTE: labeled-switch loop`.
 
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::fmt;
 
@@ -901,11 +902,11 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     // stack frame and is the sole mutator of `whitespace_buf` while live.
     #[inline]
     fn parser(&self) -> &Parser<'a, Enc> {
-        unsafe { &*self.parser }
+        yolo! { &*self.parser }
     }
     #[inline]
     fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
-        unsafe { &mut *self.parser }
+        yolo! { &mut *self.parser }
     }
     /// Shortcut for `self.parser().input` that returns the slice with its
     /// original `'a` lifetime (decoupled from `&self`), so it can be hoisted
@@ -914,7 +915,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     // the Parser and is unaffected by any mutation this builder performs.
     #[inline]
     fn input(&self) -> &'a [Enc::Unit] {
-        unsafe { (*self.parser).input }
+        yolo! { (*self.parser).input }
     }
 
     pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
@@ -1195,7 +1196,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
     pub fn check_append(&mut self) {
         // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-        let parser = unsafe { &*self.parser };
+        let parser = yolo! { &*self.parser };
         if self.str_builder.len() == 0 {
             self.line_indent = parser.line_indent;
             self.line = parser.line;
@@ -1227,7 +1228,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         for _pos in off.cast()..end.cast() {
             let pos = Pos::from(_pos);
             // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-            let unit = unsafe { (*self.parser).input[pos.cast()] };
+            let unit = yolo! { (*self.parser).input[pos.cast()] };
             match Enc::wide(unit) {
                 0x20 | 0x09 | 0x0D | 0x0A => {
                     self.str_builder.append_source_whitespace(unit, pos)?;
@@ -1341,7 +1342,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let raw_parser: *mut Parser<'i, Enc> = self.parser;
         macro_rules! parser {
             () => {
-                unsafe { &mut *raw_parser }
+                yolo! { &mut *raw_parser }
             };
         }
 
@@ -1779,7 +1780,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                         // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`;
                         // reinterpret with the same element count for
                         // `E::String::init_utf16` (which sets `is_utf16`).
-                        let s16 = unsafe {
+                        let s16 = yolo! {
                             core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len())
                         };
                         E::String::init_utf16(s16)
@@ -3846,7 +3847,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // (Stacked Borrows: reborrowing `self` would invalidate `parser`).
         macro_rules! parser {
             () => {
-                unsafe { &mut *parser }
+                yolo! { &mut *parser }
             };
         }
         // SAFETY: ctx outlived by the &mut self this fn was entered with. Both

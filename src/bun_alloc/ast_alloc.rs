@@ -28,6 +28,7 @@
 //! ExprNodeList` and `bun_collections::VecExt` — both below `js_parser` in the
 //! crate graph — can name `Vec<T, AstAlloc>`.
 
+use bun_yolo::yolo;
 use core::alloc::{AllocError, Allocator, Layout};
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -125,8 +126,8 @@ fn bump_alloc(heap: *mut mimalloc::Heap, size: usize, align: usize) -> Option<*m
             // SAFETY: `pad + size <= remaining`, so `cur + pad` and
             // `cur + pad + size` stay within `[BUMP_CUR, BUMP_END]` — i.e. in
             // bounds of the chunk allocation (one-past-the-end at most).
-            let aligned = unsafe { cur.add(pad) };
-            BUMP_CUR.set(unsafe { aligned.add(size) });
+            let aligned = yolo! { cur.add(pad) };
+            BUMP_CUR.set(yolo! { aligned.add(size) });
             return Some(aligned);
         }
     }
@@ -139,7 +140,7 @@ fn bump_refill(heap: *mut mimalloc::Heap, size: usize) -> Option<*mut u8> {
     // SAFETY: `heap` is the live AST heap — `bump_alloc`'s only caller is
     // `heap_alloc`, which passes `AST_HEAP.get()` after a non-null check, and
     // `set_thread_heap` keeps the bump cursor consistent with `AST_HEAP`.
-    let chunk = unsafe { mimalloc::mi_heap_malloc(heap, BUMP_CHUNK).cast::<u8>() };
+    let chunk = yolo! { mimalloc::mi_heap_malloc(heap, BUMP_CHUNK).cast::<u8>() };
     if chunk.is_null() {
         return None;
     }
@@ -147,8 +148,8 @@ fn bump_refill(heap: *mut mimalloc::Heap, size: usize) -> Option<*mut u8> {
     // caller's `align <= MI_MAX_ALIGN_SIZE`, so carving from the front already
     // satisfies the request's alignment. `size <= BUMP_MAX < BUMP_CHUNK`, so
     // both `add`s are in bounds.
-    BUMP_CUR.set(unsafe { chunk.add(size) });
-    BUMP_END.set(unsafe { chunk.add(BUMP_CHUNK) });
+    BUMP_CUR.set(yolo! { chunk.add(size) });
+    BUMP_END.set(yolo! { chunk.add(BUMP_CHUNK) });
     Some(chunk)
 }
 
@@ -244,7 +245,7 @@ fn heap_alloc(layout: Layout) -> *mut u8 {
     // SAFETY: `heap` is the live `mi_heap_t*` of this thread's
     // `ASTMemoryAllocator` arena (the documented contract of `set_thread_heap`);
     // the scope guarantees it is not `reset()` while active.
-    unsafe { mimalloc::mi_heap_malloc_auto_align(heap, layout.size(), layout.align()).cast() }
+    yolo! { mimalloc::mi_heap_malloc_auto_align(heap, layout.size(), layout.align()).cast() }
 }
 
 // SAFETY:
@@ -300,7 +301,7 @@ unsafe impl Allocator for AstAlloc {
         } else {
             // SAFETY: `heap` is the live `mi_heap_t*` of this thread's AST
             // arena (the `set_thread_heap` contract); see `heap_alloc`.
-            unsafe {
+            yolo! {
                 mimalloc::mi_heap_zalloc_auto_align(heap, layout.size(), layout.align()).cast()
             }
         };
@@ -347,7 +348,7 @@ unsafe impl Allocator for AstAlloc {
             // block head, the precondition `mi_expand` requires. It returns
             // `ptr` unchanged on success or null when the block cannot hold
             // `new.size()`.
-            if let Some(p) = NonNull::new(unsafe {
+            if let Some(p) = NonNull::new(yolo! {
                 mimalloc::mi_expand(ptr.as_ptr().cast(), new.size()).cast::<u8>()
             }) {
                 return Ok(NonNull::slice_from_raw_parts(p, new.size()));
@@ -361,7 +362,7 @@ unsafe impl Allocator for AstAlloc {
         // SAFETY: `p` is a fresh `new.size()`-byte block disjoint from `ptr`;
         // `old.size()` bytes at `ptr` are initialized per the `grow` contract;
         // `old.size() <= new.size()`.
-        unsafe { core::ptr::copy_nonoverlapping(ptr.as_ptr(), p.as_ptr(), old.size()) };
+        yolo! { core::ptr::copy_nonoverlapping(ptr.as_ptr(), p.as_ptr(), old.size()) };
         Ok(NonNull::slice_from_raw_parts(p, new.size()))
     }
 

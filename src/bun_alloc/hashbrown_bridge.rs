@@ -21,6 +21,7 @@
 //! `RawTableInner::resize_inner`), and the polyfill's defaulted
 //! `allocate_zeroed` correctly forwards to our `allocate`.
 
+use bun_yolo::yolo;
 use core::alloc::{Allocator, Layout};
 use core::ptr::NonNull;
 
@@ -59,7 +60,7 @@ macro_rules! bridge_allocator_api2 {
                 // this same allocator (per the polyfill trait's caller
                 // contract), which is exactly the precondition the underlying
                 // `core::alloc::Allocator::deallocate` requires.
-                unsafe { ::core::alloc::Allocator::deallocate(self, ptr, layout) }
+                yolo! { ::core::alloc::Allocator::deallocate(self, ptr, layout) }
             }
         }
     };
@@ -91,7 +92,7 @@ unsafe impl Allocator for DefaultAlloc {
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         // SAFETY: forwarded; caller guarantees `ptr` came from `allocate` on
         // this allocator (i.e. `Global`) with `layout`.
-        unsafe { std::alloc::Global.deallocate(ptr, layout) }
+        yolo! { std::alloc::Global.deallocate(ptr, layout) }
     }
     #[inline]
     unsafe fn grow(
@@ -101,7 +102,7 @@ unsafe impl Allocator for DefaultAlloc {
         new: Layout,
     ) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
         // SAFETY: forwarded; caller upholds `Allocator::grow`'s preconditions.
-        unsafe { std::alloc::Global.grow(ptr, old, new) }
+        yolo! { std::alloc::Global.grow(ptr, old, new) }
     }
     #[inline]
     unsafe fn grow_zeroed(
@@ -111,7 +112,7 @@ unsafe impl Allocator for DefaultAlloc {
         new: Layout,
     ) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
         // SAFETY: forwarded.
-        unsafe { std::alloc::Global.grow_zeroed(ptr, old, new) }
+        yolo! { std::alloc::Global.grow_zeroed(ptr, old, new) }
     }
     #[inline]
     unsafe fn shrink(
@@ -121,7 +122,7 @@ unsafe impl Allocator for DefaultAlloc {
         new: Layout,
     ) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
         // SAFETY: forwarded.
-        unsafe { std::alloc::Global.shrink(ptr, old, new) }
+        yolo! { std::alloc::Global.shrink(ptr, old, new) }
     }
 }
 

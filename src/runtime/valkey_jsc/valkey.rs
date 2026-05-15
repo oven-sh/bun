@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 // Entry point for Valkey client
 //
@@ -369,7 +370,7 @@ impl DeferredFailure {
         // `default_allocator.create`/`destroy` pair).
         fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
-            let this = unsafe { bun_core::heap::take(ptr) };
+            let this = yolo! { bun_core::heap::take(ptr) };
             DeferredFailure::run(this).map_err(Into::into)
         }
         let managed_task =
@@ -1514,7 +1515,7 @@ impl ValkeyClient {
         // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
         // outer `&mut self` protector is never invalidated by deallocation.
         let parent = std::ptr::from_ref(self.parent()).cast_mut();
-        unsafe { JSValkeyClient::deref(parent) };
+        yolo! { JSValkeyClient::deref(parent) };
     }
 
     #[inline]
@@ -1563,7 +1564,7 @@ impl HasAutoFlusher for ValkeyClient {
         // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
         // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
         // microtasks), so no aliasing across the call.
-        unsafe { (*this).on_auto_flush() }
+        yolo! { (*this).on_auto_flush() }
     }
 }
 

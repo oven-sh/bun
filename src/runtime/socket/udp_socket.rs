@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 
@@ -142,7 +143,7 @@ extern "C" fn on_data(
 
     let global_this = udp_socket.global_this.get();
     // SAFETY: buf valid for the duration of this callback per uws contract.
-    let buf = unsafe { &mut *buf };
+    let buf = yolo! { &mut *buf };
 
     let mut i: c_int = 0;
     while i < packets {
@@ -157,18 +158,18 @@ extern "C" fn on_data(
         match peer.ss_family as c_int {
             f if f == inet::AF_INET => {
                 // SAFETY: family == AF_INET so peer is sockaddr_in.
-                let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
+                let peer4 = yolo! { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
                 // SAFETY: src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
+                hostname = yolo! {
                     bun_cares_sys::ntop(f, (&raw const peer4.addr).cast(), &mut addr_buf)
                 };
                 port = ntohs(peer4.port);
             }
             f if f == inet::AF_INET6 => {
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
-                let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
+                let peer6 = yolo! { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
                 // SAFETY: src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
-                hostname = unsafe {
+                hostname = yolo! {
                     bun_cares_sys::ntop(f, (&raw const peer6.addr).cast(), &mut addr_buf)
                 };
                 port = ntohs(peer6.port);
@@ -197,11 +198,11 @@ extern "C" fn on_data(
                 {
                     let mut buffer = [0u8; IF_NAMESIZE + 1];
                     // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
+                    if !yolo! { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
                         .is_null()
                     {
                         // SAFETY: if_indextoname wrote a NUL-terminated string.
-                        let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
+                        let name = yolo! { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
                             .to_bytes();
                         break 'blk BunString::create_format(format_args!(
                             "{}%{}",
@@ -486,7 +487,7 @@ impl UDPSocket {
     }
 
     /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
-    /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
+    /// `yolo! { &*(*socket).user().cast() }` back-ref deref shared by every
     /// `extern "C"` callback below — the user pointer was set to the
     /// heap-allocated `UDPSocket` in [`udp_socket`] via
     /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
@@ -498,7 +499,7 @@ impl UDPSocket {
         let user = uws::udp::Socket::opaque_mut(socket).user();
         // SAFETY: `user` was set to `*mut UDPSocket` at creation; non-null and
         // live for the callback's duration (back-ref invariant).
-        unsafe { &*user.cast::<UDPSocket>() }
+        yolo! { &*user.cast::<UDPSocket>() }
     }
 
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
@@ -519,7 +520,7 @@ impl UDPSocket {
         });
         // SAFETY: just allocated above; we are the sole owner. R-2: shared
         // borrow — every mutated field is `Cell`/`JsCell`.
-        let this = unsafe { &*this_ptr };
+        let this = yolo! { &*this_ptr };
 
         // errdefer { closed = true; close socket; downgrade this_value }
         // Release the strong reference so the JS wrapper can be garbage
@@ -535,7 +536,7 @@ impl UDPSocket {
             // transferred to the JS wrapper; the guard only fires on the early-return
             // error paths below, on the same stack frame, so the allocation is live.
             // R-2: shared borrow — mutation through `Cell`/`JsCell`.
-            let this = unsafe { &*ptr };
+            let this = yolo! { &*ptr };
             this.closed.set(true);
             // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
             // `on_close` (udp.c `s->on_close(s)`), which re-derives `&UDPSocket`
@@ -559,7 +560,7 @@ impl UDPSocket {
         //
         // SAFETY: `this_ptr` is a fresh `heap::into_raw` allocation (line 478);
         // ownership transfers to the C++ wrapper's `m_ctx`.
-        let this_value = unsafe { Self::to_js_ptr(this_ptr, global_this) };
+        let this_value = yolo! { Self::to_js_ptr(this_ptr, global_this) };
         this_value.ensure_still_alive();
         this.this_value
             .with_mut(|r| r.set_strong(this_value, global_this));
@@ -1143,8 +1144,8 @@ impl UDPSocket {
         extern "C" fn run(ctx: *mut Ctx<'_>, payload_roots: *mut MarkedArgumentBuffer) {
             // SAFETY: ctx points to a stack-local Ctx; payload_roots provided by
             // MarkedArgumentBuffer::run for the duration of this call.
-            let ctx = unsafe { &mut *ctx };
-            let payload_roots = unsafe { &mut *payload_roots };
+            let ctx = yolo! { &mut *ctx };
+            let payload_roots = yolo! { &mut *payload_roots };
             ctx.result =
                 UDPSocket::send_many_impl(ctx.this, ctx.global_this, ctx.callframe, payload_roots);
         }
@@ -1453,9 +1454,9 @@ impl UDPSocket {
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
         // SAFETY: storage is large enough to hold sockaddr_in.
-        let addr4 = unsafe { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in>() };
+        let addr4 = yolo! { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in>() };
         // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
-        if unsafe {
+        if yolo! {
             inet_pton(
                 inet::AF_INET as c_int,
                 address_slice.as_ptr().cast::<c_char>(),
@@ -1467,7 +1468,7 @@ impl UDPSocket {
             addr4.family = inet::AF_INET as inet::sa_family_t;
         } else {
             // SAFETY: storage is large enough to hold sockaddr_in6.
-            let addr6 = unsafe { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in6>() };
+            let addr6 = yolo! { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in6>() };
             addr6.scope_id = 0;
 
             if let Some(percent) = address_slice[..bytes_len].iter().position(|&b| b == b'%') {
@@ -1512,7 +1513,7 @@ impl UDPSocket {
                         #[cfg(not(windows))]
                         {
                             // SAFETY: address_slice is NUL-terminated; offset is in-bounds.
-                            let index = unsafe {
+                            let index = yolo! {
                                 if_nametoindex(
                                     address_slice.as_ptr().add(percent + 1).cast::<c_char>(),
                                 )
@@ -1532,7 +1533,7 @@ impl UDPSocket {
             }
 
             // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in6_addr-sized storage.
-            if unsafe {
+            if yolo! {
                 inet_pton(
                     inet::AF_INET6 as c_int,
                     address_slice.as_ptr().cast::<c_char>(),
@@ -1708,13 +1709,13 @@ impl UDPSocket {
 
     fn deinit(this: *mut Self) {
         // SAFETY: called from finalize with valid Box-allocated payload.
-        let this_ref = unsafe { &*this };
+        let this_ref = yolo! { &*this };
         debug_assert!(this_ref.closed.get() || VirtualMachine::get().is_shutting_down());
         this_ref.poll_ref.with_mut(|p| p.disable());
         // config drop handled by heap::take below.
         // this_value.deinit() handled by JsRef Drop.
         // SAFETY: allocated via heap::alloc in `new`; this is the matching free.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! Single-macro crate for the Nomicon "opaque extern type" pattern.
 //!
 //! Every C/C++ handle type that Rust only ever observes by pointer wants the
@@ -79,7 +80,7 @@ macro_rules! opaque_ffi {
             #[allow(dead_code)]
             pub unsafe fn opaque_ref_nn<'a>(p: *const Self) -> &'a Self {
                 // SAFETY: forwarded to caller.
-                unsafe { $crate::opaque_deref_nn(p) }
+                yolo! { $crate::opaque_deref_nn(p) }
             }
             /// Safe `*mut Self → &mut Self` for an opaque ZST handle. See
             /// [`bun_opaque::opaque_deref_mut`](crate::opaque_deref_mut) for
@@ -97,7 +98,7 @@ macro_rules! opaque_ffi {
             #[allow(dead_code)]
             pub unsafe fn opaque_mut_nn<'a>(p: *mut Self) -> &'a mut Self {
                 // SAFETY: forwarded to caller.
-                unsafe { $crate::opaque_deref_mut_nn(p) }
+                yolo! { $crate::opaque_deref_mut_nn(p) }
             }
             /// `&self → *mut Self` for FFI calls that take a non-const handle.
             ///
@@ -273,7 +274,7 @@ macro_rules! assert_ffi_discr {
 pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
     assert!(!p.is_null(), "opaque_deref: null FFI handle");
     // SAFETY: non-null asserted above.
-    unsafe { opaque_deref_nn(p) }
+    yolo! { opaque_deref_nn(p) }
 }
 
 /// Unchecked `*const T → &T` for a `#[repr(C)]` zero-sized, align-1 opaque FFI
@@ -305,7 +306,7 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
     // non-null `p` (caller precondition, debug-asserted) is dereferenceable
     // for zero bytes and the resulting `&T` covers no memory → cannot alias
     // any Rust-visible bytes.
-    unsafe { &*p }
+    yolo! { &*p }
 }
 
 /// Safe `*mut T → &mut T` for a `#[repr(C)]` zero-sized, align-1 opaque FFI
@@ -316,7 +317,7 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
     assert!(!p.is_null(), "opaque_deref_mut: null FFI handle");
     // SAFETY: non-null asserted above.
-    unsafe { opaque_deref_mut_nn(p) }
+    yolo! { opaque_deref_mut_nn(p) }
 }
 
 /// Unchecked `*mut T → &mut T`. See [`opaque_deref_nn`] / [`opaque_deref_mut`].
@@ -339,7 +340,7 @@ pub unsafe fn opaque_deref_mut_nn<'a, T>(p: *mut T) -> &'a mut T {
     };
     debug_assert!(!p.is_null(), "opaque_deref_mut_nn: null FFI handle");
     // SAFETY: see `opaque_deref_nn`; zero-byte `&mut` cannot alias.
-    unsafe { &mut *p }
+    yolo! { &mut *p }
 }
 
 /// `core`-only FFI slice/string primitives shared between `bun_core::ffi` and
@@ -365,7 +366,7 @@ pub mod ffi {
         debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
         let mut n = 0usize;
         // SAFETY: caller contract — non-null, NUL-terminated.
-        while unsafe { *p.add(n) } != 0 {
+        while yolo! { *p.add(n) } != 0 {
             n += 1;
         }
         n
@@ -381,7 +382,7 @@ pub mod ffi {
     #[inline(always)]
     pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {
         // SAFETY: forwarded to `wcslen`; `p[..len]` is readable per contract.
-        unsafe { core::slice::from_raw_parts(p, wcslen(p)) }
+        yolo! { core::slice::from_raw_parts(p, wcslen(p)) }
     }
 
     /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
@@ -409,7 +410,7 @@ pub mod ffi {
             &[]
         } else {
             // SAFETY: caller contract above.
-            unsafe { core::slice::from_raw_parts(ptr, len) }
+            yolo! { core::slice::from_raw_parts(ptr, len) }
         }
     }
 
@@ -425,7 +426,7 @@ pub mod ffi {
             &mut []
         } else {
             // SAFETY: caller contract above.
-            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+            yolo! { core::slice::from_raw_parts_mut(ptr, len) }
         }
     }
 }

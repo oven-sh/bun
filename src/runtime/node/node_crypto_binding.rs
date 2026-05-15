@@ -1,6 +1,7 @@
 //! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`/`timingSafeEqual`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 
 use bun_boringssl as boringssl;
@@ -128,7 +129,7 @@ macro_rules! extern_crypto_job {
             #[unsafe(export_name = concat!("Bun__", $name_str, "__schedule"))]
             pub extern "C" fn __schedule(this: &mut Job) {
                 // SAFETY: `this` is a live pointer returned by `__create`.
-                unsafe { Job::schedule(this) };
+                yolo! { Job::schedule(this) };
             }
 
             #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
@@ -265,7 +266,7 @@ pub mod random {
         fn run_task(&mut self) {
             // SAFETY: `bytes` points into an ArrayBuffer kept alive by `self.value`
             // (protected in `init`); offset+length were range-checked by callers.
-            let slice = unsafe {
+            let slice = yolo! {
                 core::slice::from_raw_parts_mut(self.bytes.add(self.offset as usize), self.length)
             };
             bun_core::csprng(slice);
@@ -908,7 +909,7 @@ mod _impl {
             let p = self.p;
             let maxmem = self.maxmem;
             // SAFETY: all pointer args are null with len 0; numeric args are plain values.
-            if unsafe {
+            if yolo! {
                 boringssl::c::EVP_PBE_validate_scrypt_params(
                     core::ptr::null(),
                     0,
@@ -943,7 +944,7 @@ mod _impl {
             }
 
             // SAFETY: password/salt/key are valid slices for the given lengths.
-            let res = unsafe {
+            let res = yolo! {
                 boringssl::c::EVP_PBE_scrypt(
                     password.as_ptr(),
                     password.len(),
@@ -996,7 +997,7 @@ mod _impl {
 
         fn run_task(&mut self) {
             // SAFETY: `result` points into the ArrayBuffer rooted by `self.buf` (set in `init`).
-            let key = unsafe { &mut *self.result };
+            let key = yolo! { &mut *self.result };
             self.run_task_impl(key);
         }
 
@@ -1010,11 +1011,11 @@ mod _impl {
                     let mut buf = [0u8; 256];
                     // SAFETY: buf is a valid 256-byte buffer; ERR_error_string_n
                     // NUL-terminates within `len` bytes and returns `buf`.
-                    unsafe {
+                    yolo! {
                         boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast(), buf.len())
                     };
                     // SAFETY: `buf` is NUL-terminated by the call above.
-                    let msg = unsafe { bun_core::ffi::cstr(buf.as_ptr().cast()) };
+                    let msg = yolo! { bun_core::ffi::cstr(buf.as_ptr().cast()) };
                     let exception = global
                         .err(
                             ErrorCode::CRYPTO_OPERATION_FAILED,
@@ -1060,7 +1061,7 @@ mod _impl {
         // SAFETY: `job` was just boxed by `create()` and is live; `ctx.promise` is
         // not touched by the off-thread `run` body, and the JS-thread completion
         // cannot run until this host fn returns.
-        Ok(unsafe { (*job).ctx.promise.value() })
+        Ok(yolo! { (*job).ctx.promise.value() })
     }
 
     #[bun_jsc::host_fn]
@@ -1165,10 +1166,10 @@ mod _impl {
         }
         // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
         let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-            unsafe { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
+            yolo! { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
         // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
         // from BoringSSL's static tables.
-        let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();
+        let from_bytes = yolo! { bun_core::ffi::cstr(maybe_from) }.to_bytes();
         bun_core::handle_oom(hashes.put(from_bytes, ()));
     }
 
@@ -1180,7 +1181,7 @@ mod _impl {
         // TODO(dylan-conway): cache the names
         // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
         // for the duration of the call.
-        unsafe {
+        yolo! {
             boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
         }
 

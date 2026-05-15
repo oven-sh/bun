@@ -1,5 +1,6 @@
 //! Port of src/shell/builtin/rm.zig
 
+use bun_yolo::yolo;
 use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
@@ -347,7 +348,7 @@ impl Rm {
                                 interp_ptr,
                             );
                             // SAFETY: freshly heap-allocated.
-                            unsafe { ShellRmTask::schedule(task) };
+                            yolo! { ShellRmTask::schedule(task) };
                         }
                     }
                     return Yield::suspended();
@@ -432,10 +433,10 @@ impl Rm {
         // both callbacks hold a pending count and the last one to run frees the
         // ShellRmTask.
         // SAFETY: `task` is a live heap-allocated allocation; main thread.
-        scopeguard::defer! { unsafe { ShellRmTask::decr_pending_and_maybe_deinit(task) }; }
+        scopeguard::defer! { yolo! { ShellRmTask::decr_pending_and_maybe_deinit(task) }; }
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
-        let task_err = unsafe { (*task).err.get_mut().take() };
+        let task_err = yolo! { (*task).err.get_mut().take() };
         // PORT NOTE: reshaped for borrowck — format the error string before
         // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
@@ -498,7 +499,7 @@ impl Rm {
         // SAFETY: `verbose` is a live DirTask posted via queue_for_write; main
         // thread, exclusive. Take the buffer up-front so the cleanup guard can
         // own the raw pointers without overlapping a borrow.
-        let (tm, has_parent, buf) = unsafe {
+        let (tm, has_parent, buf) = yolo! {
             (
                 (*verbose).task_manager,
                 !(*verbose).parent_task.is_null(),
@@ -508,7 +509,7 @@ impl Rm {
         let _guard = scopeguard::guard((tm, verbose, has_parent), |(tm, v, hp)| {
             // SAFETY: non-root DirTask is its own Box (reclaim); pending count
             // was bumped in `post_run` before `queue_for_write`.
-            unsafe {
+            yolo! {
                 if hp {
                     DirTask::deinit(v);
                 }
@@ -764,7 +765,7 @@ impl ShellRmTask {
         boxed.task.interp = interp;
         let raw = bun_core::heap::into_raw(boxed);
         // SAFETY: both freshly leaked; exclusive.
-        unsafe { (*root_task).task_manager = raw };
+        yolo! { (*root_task).task_manager = raw };
         raw
     }
 
@@ -780,7 +781,7 @@ impl ShellRmTask {
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
         // may already be running.
-        unsafe {
+        yolo! {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
@@ -795,7 +796,7 @@ impl ShellRmTask {
         // is embedded in `ShellRmTask` at `TASK_OFFSET`. `this` is a live
         // heap-allocated task; the worker thread has exclusive access to
         // `root_task` until it spawns subtasks.
-        unsafe {
+        yolo! {
             let this = task
                 .cast::<u8>()
                 .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
@@ -812,12 +813,12 @@ impl ShellRmTask {
     /// thread after return (unless a verbose pending-count keeps it alive).
     unsafe fn finish_concurrently(this: *mut ShellRmTask) {
         // SAFETY: caller contract.
-        unsafe { ShellTask::on_finish::<ShellRmTask>(this) };
+        yolo! { ShellTask::on_finish::<ShellRmTask>(this) };
     }
 
     pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
+        let cmd = yolo! { (*this).cmd };
         Rm::on_shell_rm_task_done(interp, cmd, this);
     }
 
@@ -827,7 +828,7 @@ impl ShellRmTask {
     /// `this` is a live `heap::alloc`'d task; main thread.
     pub unsafe fn decr_pending_and_maybe_deinit(this: *mut ShellRmTask) {
         // SAFETY: caller contract; paired with `heap::alloc` in `create`.
-        unsafe {
+        yolo! {
             if (*this)
                 .pending_main_callbacks
                 .fetch_sub(1, Ordering::SeqCst)
@@ -858,7 +859,7 @@ impl ShellRmTask {
             return;
         }
         // SAFETY: `parent_dir` is live for the duration of its run_from_thread_pool_impl.
-        let parent_path = unsafe { (*parent_dir).path.as_bytes() };
+        let parent_path = yolo! { (*parent_dir).path.as_bytes() };
         let new_path = self.join(&[parent_path, path], is_absolute);
         self.enqueue_no_join(parent_dir, new_path, kind_hint);
     }
@@ -871,7 +872,7 @@ impl ShellRmTask {
         // SAFETY: `parent` is live; reuse its `task_manager` (preserves the
         // original `*mut` provenance from `heap::alloc` rather than deriving
         // a writeable pointer from `&self`).
-        let task_manager = unsafe { (*parent).task_manager };
+        let task_manager = yolo! { (*parent).task_manager };
         let subtask = bun_core::heap::into_raw(Box::new(DirTask {
             task_manager,
             parent_task: parent,
@@ -890,7 +891,7 @@ impl ShellRmTask {
         }));
         // SAFETY: `parent` is live until its `subtask_count` drains to 0;
         // `subtask` is freshly heap-allocated.
-        unsafe {
+        yolo! {
             let count = (*parent).subtask_count.fetch_add(1, Ordering::Relaxed);
             debug_assert!(count > 0);
             bun_threading::work_pool::WorkPool::schedule(&raw mut (*subtask).work_task);
@@ -918,7 +919,7 @@ impl ShellRmTask {
         // the new owner, so this `&mut` is exclusive and race-free. The
         // reborrow is also disjoint from every other live borrow (`&self`,
         // `path`).
-        let entries = unsafe { &mut (*dir_task).deleted_entries };
+        let entries = yolo! { &mut (*dir_task).deleted_entries };
         if entries.is_empty() {
             // `output_count` is a `BackRef` into the boxed `Rm` ExecState.
             self.output_count.fetch_add(1, Ordering::SeqCst);
@@ -995,7 +996,7 @@ impl ShellRmTask {
         let mut buf = bun_paths::PathBuffer::uninit();
         // SAFETY: `dir_task` is live; this thread owns it. `kind_hint` /
         // `path` are read-only after construction.
-        let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
+        let (kind_hint, path) = yolo! { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
         match kind_hint {
             EntryKindHint::Idk | EntryKindHint::File => {
                 let mut vtable = RemoveFileVTable {
@@ -1026,7 +1027,7 @@ impl ShellRmTask {
         need_to_wait_out: &mut bool,
     ) -> bun_sys::Maybe<()> {
         // SAFETY: `dir_task` is live; this thread owns it.
-        let path = unsafe { (*dir_task).path.as_zstr() };
+        let path = yolo! { (*dir_task).path.as_zstr() };
         let dirfd = self.cwd;
 
         // If `-d` is specified without `-r` then we can just use `rmdirat`.
@@ -1152,7 +1153,7 @@ impl ShellRmTask {
         // SAFETY: `dir_task` is live; only this thread reads `subtask_count`
         // here (children atomically modify it). Atomics through a short-lived
         // `&DirTask` — interior mutability.
-        unsafe {
+        yolo! {
             let dt = &*dir_task;
             if dt.subtask_count.load(Ordering::SeqCst) > 1 {
                 // Record locally first: once `need_to_wait` is published a
@@ -1200,7 +1201,7 @@ impl ShellRmTask {
     fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> bun_sys::Maybe<bool> {
         let dirfd = self.cwd;
         // SAFETY: `dir_task` is live; this thread owns it.
-        let (path, is_abs) = unsafe { ((*dir_task).path.as_zstr(), (*dir_task).is_absolute) };
+        let (path, is_abs) = yolo! { ((*dir_task).path.as_zstr(), (*dir_task).is_absolute) };
         let mut state = RemoveFileParent {
             task: self,
             treat_as_dir: true,
@@ -1333,7 +1334,7 @@ impl Drop for ShellRmTask {
     fn drop(&mut self) {
         // SAFETY: `root_task` was `heap::alloc`'d in `create` and is never
         // freed by `DirTask::deinit` (root has `parent_task == null`).
-        drop(unsafe { bun_core::heap::take(self.root_task) });
+        drop(yolo! { bun_core::heap::take(self.root_task) });
     }
 }
 
@@ -1344,7 +1345,7 @@ impl DirTask {
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `work_task` is at a fixed offset within DirTask; `this` is a
         // live DirTask owned by this worker thread.
-        unsafe {
+        yolo! {
             Self::run_from_thread_pool_impl(bun_core::from_field_ptr!(DirTask, work_task, task))
         };
     }
@@ -1371,7 +1372,7 @@ impl DirTask {
         // the Rust port drops the block entirely rather than calling a
         // Windows path resolver whose only effect would be to fail the task
         // on error.
-        let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
+        let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = yolo! {
             let tm_ptr = (*this).task_manager;
             let abs = Platform::AUTO.is_absolute((*this).path.as_bytes());
             (*this).is_absolute = abs;
@@ -1382,7 +1383,7 @@ impl DirTask {
         // `root_task` lives in a separate allocation, so this borrow does not
         // overlap any DirTask and the field-level `&mut` taken inside
         // `verbose_deleted` cannot pop its tag under Stacked Borrows.
-        let tm = unsafe { &*tm_ptr };
+        let tm = yolo! { &*tm_ptr };
         let waiting = match tm.remove_entry(this, is_absolute) {
             Ok(waiting) => waiting,
             Err(err) => {
@@ -1410,7 +1411,7 @@ impl DirTask {
             // SAFETY: `waiting == false` ⇒ `need_to_wait` was never published,
             // so no other thread can have driven `delete_after_waiting_for_children`
             // / `deinit` on `this`; it is still live and owned by this worker.
-            unsafe { Self::post_run(this) };
+            yolo! { Self::post_run(this) };
         }
     }
 
@@ -1428,7 +1429,7 @@ impl DirTask {
         // `queue_for_write` re-derive from raw `*mut` (no overlap with `me`,
         // which is a `&` over atomics + Copy fields). Non-root `deinit`
         // reclaims `this`'s Box; `finish_concurrently` may free the root.
-        unsafe {
+        yolo! {
             let me = &*this;
             // This is true if the directory has subdirectories that need to be deleted.
             if me.need_to_wait.load(Ordering::SeqCst) {
@@ -1502,7 +1503,7 @@ impl DirTask {
         // and the `task_manager` read use raw place projection only.
         // `task_manager` lives in a separate allocation, so `tm: &ShellRmTask`
         // does not overlap any DirTask borrow.
-        unsafe {
+        yolo! {
             // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
             (*this)
                 .deleting_after_waiting_for_children
@@ -1538,7 +1539,7 @@ impl DirTask {
         // (pending count > 0). On the early-return path `deinit` reclaims a
         // non-root Box and `decr_pending_and_maybe_deinit` releases the
         // pending count taken in `post_run`.
-        let (me, event_loop) = unsafe {
+        let (me, event_loop) = yolo! {
             let me = &mut *this;
             if me.deleted_entries.is_empty() {
                 // Spec: deinit non-root and bail. The pending count was already
@@ -1578,7 +1579,7 @@ impl DirTask {
         // SAFETY: dispatch contract — `this` is a live DirTask posted via
         // `queue_for_write`; pending count keeps `task_manager` alive; `interp`
         // set at create.
-        let (interp, cmd) = unsafe {
+        let (interp, cmd) = yolo! {
             let tm = (*this).task_manager;
             (&*(*tm).task.interp, (*tm).cmd)
         };
@@ -1593,7 +1594,7 @@ impl DirTask {
         // The root task is owned by `ShellRmTask` (freed in its `Drop`); only
         // non-root children are reclaimed here.
         // SAFETY: caller contract.
-        unsafe {
+        yolo! {
             debug_assert!(!(*this).parent_task.is_null());
             drop(bun_core::heap::take(this));
         }

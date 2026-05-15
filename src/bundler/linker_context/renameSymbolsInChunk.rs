@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use core::cmp::Ordering;
@@ -53,7 +54,7 @@ pub unsafe fn rename_symbols_in_chunk(
     // SB a `&raw const` through `&LinkerContext` would be SharedRO and the
     // later `*mut` cast would launder it.
     // SAFETY: `c` is live for the call (fn safety doc).
-    let symbols: *mut symbol::Map = unsafe { &raw mut (*c).graph.symbols };
+    let symbols: *mut symbol::Map = yolo! { &raw mut (*c).graph.symbols };
 
     // Shared-ref view for all read-only access (`c.options`,
     // `c.graph.stable_source_indices`, `c.graph.{ast,meta}.split_raw()`).
@@ -61,7 +62,7 @@ pub unsafe fn rename_symbols_in_chunk(
     // SoA buffers live behind raw pointers inside `MultiArrayList`, so this
     // borrow does not assert immutability over the heap cells written below.
     // SAFETY: see fn safety doc — `c` is live for the call.
-    let c: &LinkerContext<'_> = unsafe { &*c };
+    let c: &LinkerContext<'_> = yolo! { &*c };
 
     // ── raw SoA column pointers (root provenance) ────────────────────────
     // `split_raw()` derives `*mut [T]` directly from the buffer base with no
@@ -90,7 +91,7 @@ pub unsafe fn rename_symbols_in_chunk(
         exports_ref_col,
         module_ref_col,
         nested_slot_counts_col,
-    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _) = unsafe {
+    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _) = yolo! {
         (
             &mut *ast.module_scope,
             &*meta.flags,
@@ -118,9 +119,9 @@ pub unsafe fn rename_symbols_in_chunk(
     let make_symbols_view = |symbols: *mut symbol::Map| -> symbol::Map {
         // SAFETY: `symbols` is the live `c.graph.symbols`; we read its inner
         // slice header to build a non-owning shallow `Vec` view.
-        let inner = unsafe { (*symbols).symbols_for_source.slice_mut() };
+        let inner = yolo! { (*symbols).symbols_for_source.slice_mut() };
         symbol::Map {
-            symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe {
+            symbols_for_source: core::mem::ManuallyDrop::into_inner(yolo! {
                 <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner)
             }),
         }
@@ -131,7 +132,7 @@ pub unsafe fn rename_symbols_in_chunk(
         renamer::compute_reserved_names_for_scope(
             &all_module_scopes[source_index as usize],
             // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
-            unsafe { &*symbols },
+            yolo! { &*symbols },
             &mut reserved_names,
         );
     }
@@ -406,7 +407,7 @@ pub unsafe fn rename_symbols_in_chunk(
                 // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
                 r.assign_names_recursive_with_number_scope(
                     root,
-                    unsafe { &**scope },
+                    yolo! { &**scope },
                     source_index,
                     &mut sorted,
                 );

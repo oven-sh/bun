@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use alloc::borrow::Cow;
 use core::ffi::{c_char, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
@@ -26,7 +27,7 @@ impl CallFrame {
         // is derived from `&self` via pointer arithmetic, so it is provably
         // non-null — use bare `from_raw_parts` to avoid a dead null-branch on
         // the hottest per-JS-call path.
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts(
                 self.as_unsafe_js_value_array().add(OFFSET_FIRST_ARGUMENT),
                 self.arguments_count() as usize,
@@ -60,13 +61,13 @@ impl CallFrame {
     /// value, but instead the value of `new.target`.
     pub fn this(&self) -> JSValue {
         // SAFETY: OFFSET_THIS_ARGUMENT is a valid slot in the JSC register file.
-        unsafe { *self.as_unsafe_js_value_array().add(OFFSET_THIS_ARGUMENT) }
+        yolo! { *self.as_unsafe_js_value_array().add(OFFSET_THIS_ARGUMENT) }
     }
 
     /// `JSValue` for the current function being called.
     pub fn callee(&self) -> JSValue {
         // SAFETY: OFFSET_CALLEE is a valid slot in the JSC register file.
-        unsafe { *self.as_unsafe_js_value_array().add(OFFSET_CALLEE) }
+        yolo! { *self.as_unsafe_js_value_array().add(OFFSET_CALLEE) }
     }
 
     /// Return a basic iterator.
@@ -126,7 +127,7 @@ impl CallFrame {
         // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
         // which accesses `.encodedValue.asBits.payload`
         // JSC stores and works with value as signed, but it is always 1 or more.
-        unsafe {
+        yolo! {
             u32::try_from(
                 (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
                     .encoded_value
@@ -187,7 +188,7 @@ impl CallFrame {
 
     pub fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
-        unsafe {
+        yolo! {
             let p = Bun__CallFrame__describeFrame(self);
             let len = bun_core::ffi::cstr(p).to_bytes().len();
             ZStr::from_raw(p.cast::<u8>(), len)
@@ -238,7 +239,7 @@ impl<const MAX: usize> Arguments<MAX> {
     pub fn init(i: usize, ptr: *const JSValue) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
         // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
+        args[0..i].copy_from_slice(yolo! { bun_core::ffi::slice(ptr, i) });
         Self { ptr: args, len: i }
     }
 
@@ -246,7 +247,7 @@ impl<const MAX: usize> Arguments<MAX> {
     pub fn init_undef(i: usize, ptr: *const JSValue) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
         // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
+        args[0..i].copy_from_slice(yolo! { bun_core::ffi::slice(ptr, i) });
         Self { ptr: args, len: i }
     }
 
@@ -355,7 +356,7 @@ impl<'a> ArgumentsSlice<'a> {
         // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64);
         // mirrors Zig @ptrCast(slice.ptr).
         let as_values =
-            unsafe { bun_core::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
+            yolo! { bun_core::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
         Self::init(vm, as_values)
     }
 

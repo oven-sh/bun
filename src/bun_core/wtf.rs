@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! `bun_core::wtf` — thin FFI wrappers over linked WTF (WebKit) utilities.
 //!
 //! Per docs/PORTING.md §Forbidden patterns, we never re-implement C/C++
@@ -25,7 +26,7 @@ unsafe extern "C" {
 #[inline]
 pub fn parse_es5_date_raw(s: &[u8]) -> f64 {
     // SAFETY: s.as_ptr() is valid for s.len() bytes.
-    unsafe { WTF__parseES5Date(s.as_ptr(), s.len()) }
+    yolo! { WTF__parseES5Date(s.as_ptr(), s.len()) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
@@ -65,7 +66,7 @@ impl ObjectURLRegistry {
         // SAFETY: `vm` comes from `JSGlobalObject::bun_vm()` which returns a
         // live, non-null `*mut VirtualMachine` for the duration of the call
         // (Zig spec passes `*jsc.VirtualMachine`).
-        let uuid = unsafe { &mut *vm }.rare_data().next_uuid();
+        let uuid = yolo! { &mut *vm }.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
         self.map.lock().insert(uuid.bytes, entry);
@@ -97,7 +98,7 @@ impl ObjectURLRegistry {
     ) -> Option<JSValue> {
         let blob = Blob::new(self.resolve_and_dupe(pathname)?);
         // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
-        Some(unsafe { (*blob).to_js(global_object) })
+        Some(yolo! { (*blob).to_js(global_object) })
     }
 
     pub fn revoke(&self, pathname: &[u8]) {

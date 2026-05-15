@@ -2,6 +2,7 @@
 //! socket, the connection-scoped HPACK tables, and a map of active `Stream`s.
 //! See `src/http/H2Client.zig` for the module-level overview.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -129,7 +130,7 @@ type SessionRefGuard = bun_ptr::ScopedRef<ClientSession>;
 #[inline(always)]
 pub(super) fn stream_mut<'a>(ptr: *mut Stream) -> &'a mut Stream {
     // SAFETY: see INVARIANT above.
-    unsafe { &mut *ptr }
+    yolo! { &mut *ptr }
 }
 
 /// Shared variant of [`stream_mut`]. Returns a [`bun_ptr::ParentRef`] so the
@@ -178,7 +179,7 @@ pub(super) fn stream_client_mut<'a>(
 #[inline(always)]
 fn drop_stream(stream: *mut Stream) {
     // SAFETY: see INVARIANT above.
-    unsafe { drop(bun_core::heap::take(stream)) };
+    yolo! { drop(bun_core::heap::take(stream)) };
 }
 
 impl ClientSession {
@@ -193,7 +194,7 @@ impl ClientSession {
     #[inline]
     fn ref_scope(&mut self) -> SessionRefGuard {
         // SAFETY: `self` is a live heap-allocated ClientSession.
-        unsafe { SessionRefGuard::new(self) }
+        yolo! { SessionRefGuard::new(self) }
     }
 
     #[inline]
@@ -770,7 +771,7 @@ impl ClientSession {
         // failure → fail_all() while connect() still holds `&mut HTTPContext`,
         // so route through the raw-ptr helper instead of forming a second
         // aliased `&mut NewHTTPContext` via autoref.
-        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, std::ptr::from_ref(self)) };
+        yolo! { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, std::ptr::from_ref(self)) };
         for client in core::mem::take(&mut self.pending_attach) {
             pending_client_mut(client).h2_fail(err);
         }
@@ -786,7 +787,7 @@ impl ClientSession {
         }
         self.streams.clear_retaining_capacity();
         // SAFETY: `self: &mut Self` carries write provenance to the Box alloc.
-        unsafe { ClientSession::deref(self) };
+        yolo! { ClientSession::deref(self) };
     }
 
     fn fail_all(&mut self, err: Error) {
@@ -877,7 +878,7 @@ impl ClientSession {
         // connect() still holds `&mut HTTPContext<true>`, so we MUST NOT
         // materialise a second `&mut NewHTTPContext` from the backref —
         // unregister_h2_raw operates via raw-ptr place projection instead.
-        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
+        yolo! { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
         if self.can_pool() && !self.socket.is_closed_or_has_error() {
             // Pool stores the live *ClientSession so a later fetch can resume
             // the multiplexed connection. SAFETY: `self` is heap-owned and
@@ -907,7 +908,7 @@ impl ClientSession {
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);
             // SAFETY: `self: &mut Self` carries write provenance to the Box alloc.
-            unsafe { ClientSession::deref(self) };
+            yolo! { ClientSession::deref(self) };
         }
     }
 

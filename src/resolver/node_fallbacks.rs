@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::fs;
 use crate::package_json::{PackageJSON, SideEffects};
 use bun_options_types::bundle_enums::ModuleType;
@@ -119,7 +120,7 @@ fn init_modules() {
     let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
     // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
     // thread observes `MODULES`/`MAP` until this returns.
-    unsafe {
+    yolo! {
         *MODULES.get() = Some(modules);
         let modules_ref: &'static [FallbackEntry] = (*MODULES.get()).as_deref().unwrap();
         for (name, pkg, path, code) in modules_ref.iter() {
@@ -140,7 +141,7 @@ fn init_modules() {
 pub fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
-    unsafe { (*MAP.get()).as_ref().unwrap() }
+    yolo! { (*MAP.get()).as_ref().unwrap() }
 }
 
 pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {

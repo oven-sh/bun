@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
@@ -164,7 +165,7 @@ impl Editor {
         for &editor in &DEFAULT_PREFERENCE_LIST {
             if let Some(path) = BIN_NAME[editor] {
                 // SAFETY: see PORT NOTE above — exclusive per-iteration reborrow.
-                if let Some(bin) = which(unsafe { &mut *buf_ptr }, path_env, cwd, path) {
+                if let Some(bin) = which(yolo! { &mut *buf_ptr }, path_env, cwd, path) {
                     *out = bin.as_bytes();
                     return Some(editor);
                 }
@@ -228,7 +229,7 @@ impl Editor {
         let buf_ptr: *mut PathBuffer = buf;
         for &editor in &DEFAULT_PREFERENCE_LIST {
             // SAFETY: exclusive per-iteration reborrow; we return immediately on hit.
-            if Self::by_path_for_editor(env, editor, unsafe { &mut *buf_ptr }, cwd, out) {
+            if Self::by_path_for_editor(env, editor, yolo! { &mut *buf_ptr }, cwd, out) {
                 return Some(editor);
             }
 
@@ -382,7 +383,7 @@ impl Editor {
                 // covers `try std.Thread.spawn`. After `into_raw`, Box's Drop guard is gone,
                 // so reclaim explicitly on the spawn-failure path.
                 // SAFETY: closure never ran, so we are still the sole owner of `spawned_ptr`.
-                drop(unsafe { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
+                drop(yolo! { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
                 bun_core::err!("ThreadSpawnFailed")
             })?;
         Ok(())
@@ -487,7 +488,7 @@ impl Default for SpawnedEditorContext {
 fn auto_close(spawned: *mut SpawnedEditorContext) {
     // SAFETY: `spawned` came from heap::alloc in `Editor::open`; this thread is the
     // sole owner and reconstitutes the Box to drop it at scope exit.
-    let spawned = unsafe { bun_core::heap::take(spawned) };
+    let spawned = yolo! { bun_core::heap::take(spawned) };
 
     Global::set_thread_name(bun_core::zstr!("Open Editor"));
 
@@ -497,7 +498,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         let (p, l) = spawned.buf[j];
         // SAFETY: pointers reference either 'static data or `spawned.file_path_buf`,
         // both of which outlive this function.
-        argv[j] = unsafe { bun_core::ffi::slice(p, l) };
+        argv[j] = yolo! { bun_core::ffi::slice(p, l) };
     }
 
     // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
@@ -642,7 +643,7 @@ impl EditorContext {
                 if Editor::by_path_for_editor(
                     env,
                     editor_,
-                    unsafe { &mut *buf_ptr },
+                    yolo! { &mut *buf_ptr },
                     Fs::FileSystem::instance().top_level_dir,
                     &mut out,
                 ) {
@@ -673,7 +674,7 @@ impl EditorContext {
             if Editor::by_path_for_editor(
                 env,
                 editor_,
-                unsafe { &mut *buf_ptr },
+                yolo! { &mut *buf_ptr },
                 Fs::FileSystem::instance().top_level_dir,
                 &mut out,
             ) {
@@ -701,7 +702,7 @@ impl EditorContext {
         // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
         if let Some(editor_) = Editor::by_fallback(
             env,
-            unsafe { &mut *buf_ptr },
+            yolo! { &mut *buf_ptr },
             Fs::FileSystem::instance().top_level_dir,
             &mut out,
         ) {

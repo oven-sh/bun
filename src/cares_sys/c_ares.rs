@@ -5,6 +5,7 @@
     clippy::missing_safety_doc
 )]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
 use core::ptr;
 
@@ -337,7 +338,7 @@ impl struct_hostent {
         hostent: *mut struct_hostent,
     ) {
         // SAFETY: ctx was passed as `*mut T` to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
@@ -354,7 +355,7 @@ impl struct_hostent {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
@@ -363,7 +364,7 @@ impl struct_hostent {
         let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: i32 = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe {
+        let result = yolo! {
             ares_parse_a_reply(
                 buffer,
                 buffer_length,
@@ -387,14 +388,14 @@ impl struct_hostent {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut start: *mut struct_hostent = ptr::null_mut();
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe { ares_parse_ns_reply(buffer, buffer_length, &raw mut start) };
+        let result = yolo! { ares_parse_ns_reply(buffer, buffer_length, &raw mut start) };
         if result != ARES_SUCCESS {
             this.on_hostent(Error::get(result), timeouts, ptr::null_mut());
             return;
@@ -410,14 +411,14 @@ impl struct_hostent {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent(Error::get(status), timeouts, ptr::null_mut());
             return;
         }
         let mut start: *mut struct_hostent = ptr::null_mut();
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe {
+        let result = yolo! {
             ares_parse_ptr_reply(
                 buffer,
                 buffer_length,
@@ -436,7 +437,7 @@ impl struct_hostent {
 
     /// FFI destroy — frees a c-ares-allocated hostent.
     pub unsafe fn destroy(this: *mut struct_hostent) {
-        unsafe { ares_free_hostent(this) };
+        yolo! { ares_free_hostent(this) };
     }
 }
 
@@ -481,7 +482,7 @@ impl hostent_with_ttls {
         // `?*hostent_with_ttls`) but that signature mismatches the C
         // `ares_host_callback` (`?*struct_hostent`). Appears unused; verify.
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
@@ -497,7 +498,7 @@ impl hostent_with_ttls {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
@@ -513,7 +514,7 @@ impl hostent_with_ttls {
         let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: c_int = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe {
+        let result = yolo! {
             ares_parse_a_reply(
                 buffer,
                 buffer_length,
@@ -544,7 +545,7 @@ impl hostent_with_ttls {
         let mut addr6ttls = [struct_ares_addr6ttl::default(); 256];
         let mut naddr6ttls: c_int = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let result = unsafe {
+        let result = yolo! {
             ares_parse_aaaa_reply(
                 buffer,
                 buffer_length,
@@ -571,7 +572,7 @@ impl hostent_with_ttls {
 impl Drop for hostent_with_ttls {
     fn drop(&mut self) {
         // SAFETY: hostent was allocated by ares_parse_*_reply (or null).
-        unsafe { ares_free_hostent(self.hostent) };
+        yolo! { ares_free_hostent(self.hostent) };
     }
 }
 
@@ -607,7 +608,7 @@ impl struct_nameinfo {
         service: *mut u8,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_nameinfo(Error::get(status), timeouts, None);
             return;
@@ -647,7 +648,7 @@ impl AddrInfo_node {
         while !node.is_null() {
             len += 1;
             // SAFETY: node is non-null per loop condition; chain owned by c-ares.
-            node = unsafe { (*node).next };
+            node = yolo! { (*node).next };
         }
         len
     }
@@ -673,7 +674,7 @@ impl AddrInfo {
             return b"";
         }
         // SAFETY: name_ is a NUL-terminated string allocated by c-ares.
-        unsafe { core::ffi::CStr::from_ptr(self.name_) }.to_bytes()
+        yolo! { core::ffi::CStr::from_ptr(self.name_) }.to_bytes()
     }
 
     #[inline]
@@ -695,13 +696,13 @@ impl AddrInfo {
         addr_info: *mut AddrInfo,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         this.on_addr_info(Error::get(status), timeouts, addr_info);
     }
 
     /// FFI destroy — frees a c-ares-allocated addrinfo chain.
     pub unsafe fn destroy(this: *mut AddrInfo) {
-        unsafe { ares_freeaddrinfo(this) };
+        yolo! { ares_freeaddrinfo(this) };
     }
 }
 
@@ -797,7 +798,7 @@ impl Channel {
         ) {
             // SAFETY: `ctx` is the `&C` registered below; `on_dns_socket_state`
             // takes `&self` (R-2) so the shared borrow is sufficient.
-            let container = unsafe { &*ctx.cast_const().cast::<C>() };
+            let container = yolo! { &*ctx.cast_const().cast::<C>() };
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
 
@@ -823,11 +824,11 @@ impl Channel {
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         if let Some(err) =
-            Error::get(unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) })
+            Error::get(yolo! { ares_init_options(&raw mut channel, &raw mut opts, optmask) })
         {
             // SAFETY: init failed before any channel was registered; we hold the
             // library_init reference taken above and no other thread is in c-ares.
-            unsafe { ares_library_cleanup() };
+            yolo! { ares_library_cleanup() };
             return Some(err);
         }
 
@@ -837,7 +838,7 @@ impl Channel {
 
     /// FFI destroy — `ares_destroy`.
     pub unsafe fn destroy(this: *mut Channel) {
-        unsafe { ares_destroy(this) };
+        yolo! { ares_destroy(this) };
     }
 
     /// See c-ares `ares_getaddrinfo` documentation (mirrored in the Zig source).
@@ -868,7 +869,7 @@ impl Channel {
             ptr::null()
         };
         // SAFETY: c-ares FFI; host/port/hints are NUL-terminated stack buffers or null; ctx outlives the channel.
-        unsafe {
+        yolo! {
             ares_getaddrinfo(
                 self,
                 host_ptr,
@@ -885,7 +886,7 @@ impl Channel {
             || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
-            unsafe {
+            yolo! {
                 T::raw_callback(
                     std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
                     ARES_EBADNAME,
@@ -901,7 +902,7 @@ impl Channel {
         let name_ptr = copy_nul_terminated(&mut name_buf, name);
 
         // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx outlives the channel.
-        unsafe {
+        yolo! {
             ares_query(
                 self,
                 name_ptr,
@@ -931,10 +932,10 @@ impl Channel {
         let mut addr = [0u8; 16];
         if !addr_ptr.is_null() {
             // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
-            if unsafe { ares_inet_pton(AF::INET, addr_ptr, addr.as_mut_ptr().cast::<c_void>()) } > 0
+            if yolo! { ares_inet_pton(AF::INET, addr_ptr, addr.as_mut_ptr().cast::<c_void>()) } > 0
             {
                 // SAFETY: c-ares FFI; addr holds a 4-byte in_addr written by ares_inet_pton; ctx outlives the channel.
-                unsafe {
+                yolo! {
                     ares_gethostbyaddr(
                         self,
                         addr.as_ptr().cast::<c_void>(),
@@ -946,12 +947,12 @@ impl Channel {
                 }
                 return;
             // SAFETY: c-ares FFI; addr_ptr is a NUL-terminated stack buffer, addr is 16-byte stack scratch.
-            } else if unsafe {
+            } else if yolo! {
                 ares_inet_pton(AF::INET6, addr_ptr, addr.as_mut_ptr().cast::<c_void>())
             } > 0
             {
                 // SAFETY: c-ares FFI; addr holds a 16-byte in6_addr written by ares_inet_pton; ctx outlives the channel.
-                unsafe {
+                yolo! {
                     ares_gethostbyaddr(
                         self,
                         addr.as_ptr().cast::<c_void>(),
@@ -965,7 +966,7 @@ impl Channel {
             }
         }
         // SAFETY: invoking the thunk directly with ENOTIMP.
-        unsafe {
+        yolo! {
             struct_hostent::host_callback_wrapper::<T>(
                 std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
                 ARES_ENOTIMP,
@@ -983,7 +984,7 @@ impl Channel {
             core::mem::size_of::<sockaddr_in6>() as ares_socklen_t
         };
         // SAFETY: c-ares FFI; sa is a valid sockaddr of size `salen`; ctx outlives the channel.
-        unsafe {
+        yolo! {
             ares_getnameinfo(
                 self,
                 std::ptr::from_ref::<sockaddr>(sa),
@@ -1010,7 +1011,7 @@ impl Channel {
 fn library_init() {
     bun_core::run_once! {{
         // SAFETY: c-ares FFI; mimalloc fn pointers have C ABI matching ares_library_init_mem's contract.
-        let rc = unsafe {
+        let rc = yolo! {
             ares_library_init_mem(
                 ARES_LIB_INIT_ALL,
                 Some(bun_alloc::mimalloc::mi_malloc),
@@ -1295,14 +1296,14 @@ pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
     buffer_length: c_int,
 ) {
     // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-    let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+    let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
     if status != ARES_SUCCESS {
         this.on_reply(Error::get(status), timeouts, ptr::null_mut());
         return;
     }
     let mut start: *mut R = ptr::null_mut();
     // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-    let result = unsafe { R::parse(buffer, buffer_length, &raw mut start) };
+    let result = yolo! { R::parse(buffer, buffer_length, &raw mut start) };
     if result != ARES_SUCCESS {
         this.on_reply(Error::get(result), timeouts, ptr::null_mut());
         return;
@@ -1322,7 +1323,7 @@ pub struct struct_ares_caa_reply {
 
 impl AresReply for struct_ares_caa_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        unsafe { ares_parse_caa_reply(abuf, alen, out) }
+        yolo! { ares_parse_caa_reply(abuf, alen, out) }
     }
 }
 
@@ -1337,7 +1338,7 @@ impl struct_ares_caa_reply {
         if self.property.is_null() {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.property, self.plength) }
+            yolo! { core::slice::from_raw_parts(self.property, self.plength) }
         }
     }
     /// Safe view of the c-ares-owned value bytes.
@@ -1348,7 +1349,7 @@ impl struct_ares_caa_reply {
         if self.value.is_null() {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.value, self.length) }
+            yolo! { core::slice::from_raw_parts(self.value, self.length) }
         }
     }
 }
@@ -1364,7 +1365,7 @@ pub struct struct_ares_srv_reply {
 
 impl AresReply for struct_ares_srv_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        unsafe { ares_parse_srv_reply(abuf, alen, out) }
+        yolo! { ares_parse_srv_reply(abuf, alen, out) }
     }
 }
 
@@ -1377,7 +1378,7 @@ pub struct struct_ares_mx_reply {
 
 impl AresReply for struct_ares_mx_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        unsafe { ares_parse_mx_reply(abuf, alen, out) }
+        yolo! { ares_parse_mx_reply(abuf, alen, out) }
     }
 }
 
@@ -1390,7 +1391,7 @@ pub struct struct_ares_txt_reply {
 
 impl AresReply for struct_ares_txt_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        unsafe { ares_parse_txt_reply(abuf, alen, out) }
+        yolo! { ares_parse_txt_reply(abuf, alen, out) }
     }
 }
 
@@ -1403,7 +1404,7 @@ impl struct_ares_txt_reply {
         if self.txt.is_null() {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
+            yolo! { core::slice::from_raw_parts(self.txt, self.length) }
         }
     }
 }
@@ -1425,7 +1426,7 @@ impl struct_ares_txt_ext {
         if self.txt.is_null() {
             &[]
         } else {
-            unsafe { core::slice::from_raw_parts(self.txt, self.length) }
+            yolo! { core::slice::from_raw_parts(self.txt, self.length) }
         }
     }
 }
@@ -1443,7 +1444,7 @@ pub struct struct_ares_naptr_reply {
 
 impl AresReply for struct_ares_naptr_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        unsafe { ares_parse_naptr_reply(abuf, alen, out) }
+        yolo! { ares_parse_naptr_reply(abuf, alen, out) }
     }
 }
 
@@ -1460,7 +1461,7 @@ pub struct struct_ares_soa_reply {
 
 impl AresReply for struct_ares_soa_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        unsafe { ares_parse_soa_reply(abuf, alen, out) }
+        yolo! { ares_parse_soa_reply(abuf, alen, out) }
     }
 }
 
@@ -1523,7 +1524,7 @@ impl struct_any_reply {
         buffer_length: c_int,
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        let this = yolo! { bun_core::callback_ctx::<T>(ctx) };
         if status != ARES_SUCCESS {
             this.on_any(Error::get(status), timeouts, None);
             return;
@@ -1559,7 +1560,7 @@ impl struct_any_reply {
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let mut result =
-            unsafe { ares_parse_mx_reply(buffer, buffer_length, &raw mut reply.mx_reply) };
+            yolo! { ares_parse_mx_reply(buffer, buffer_length, &raw mut reply.mx_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1567,7 +1568,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_ns_reply(buffer, buffer_length, &raw mut reply.ns_reply) };
+        result = yolo! { ares_parse_ns_reply(buffer, buffer_length, &raw mut reply.ns_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1575,7 +1576,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_txt_reply(buffer, buffer_length, &raw mut reply.txt_reply) };
+        result = yolo! { ares_parse_txt_reply(buffer, buffer_length, &raw mut reply.txt_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1583,7 +1584,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_srv_reply(buffer, buffer_length, &raw mut reply.srv_reply) };
+        result = yolo! { ares_parse_srv_reply(buffer, buffer_length, &raw mut reply.srv_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1591,7 +1592,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe {
+        result = yolo! {
             ares_parse_ptr_reply(
                 buffer,
                 buffer_length,
@@ -1609,7 +1610,7 @@ impl struct_any_reply {
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         result =
-            unsafe { ares_parse_naptr_reply(buffer, buffer_length, &raw mut reply.naptr_reply) };
+            yolo! { ares_parse_naptr_reply(buffer, buffer_length, &raw mut reply.naptr_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1617,7 +1618,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_soa_reply(buffer, buffer_length, &raw mut reply.soa_reply) };
+        result = yolo! { ares_parse_soa_reply(buffer, buffer_length, &raw mut reply.soa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1625,7 +1626,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_caa_reply(buffer, buffer_length, &raw mut reply.caa_reply) };
+        result = yolo! { ares_parse_caa_reply(buffer, buffer_length, &raw mut reply.caa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1645,7 +1646,7 @@ impl Drop for struct_any_reply {
         // a_reply / aaaa_reply are Box<hostent_with_ttls>; their Drop frees the
         // inner hostent via ares_free_hostent.
         // SAFETY: each field is either null or a c-ares allocation matching its free fn.
-        unsafe {
+        yolo! {
             if !self.mx_reply.is_null() {
                 ares_free_data(self.mx_reply.cast::<c_void>());
             }
@@ -2046,7 +2047,7 @@ impl Error {
         );
         // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
         // contiguous discriminants `1..=ARES_ENOSERVER`.
-        Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
+        Some(yolo! { core::mem::transmute::<i32, Error>(n as i32) })
     }
 }
 
@@ -2175,8 +2176,8 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
         let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
-        if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
+            yolo! { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+        if yolo! { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
             == 1
         {
             in_.sin_family = AF::INET as _;
@@ -2187,8 +2188,8 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
         let in6: &mut sockaddr_in6 =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
-        if unsafe {
+            yolo! { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+        if yolo! {
             ares_inet_pton(
                 AF::INET6,
                 addr_ptr,

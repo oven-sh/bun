@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 pub struct BufferVectorized;
 
 mod _impl {
@@ -18,13 +19,13 @@ mod _impl {
             encoding: Encoding,
         ) -> bool {
             // SAFETY: caller (C++) passes a valid ZigString pointer.
-            let str = unsafe { &*str };
+            let str = yolo! { &*str };
             if str.len == 0 {
                 return true;
             }
 
             // SAFETY: caller guarantees buf_ptr[0..fill_length] is a valid writable buffer.
-            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
+            let buf = yolo! { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
 
             // PORT NOTE: encoder::write_u8/write_u16 take the encoding as a const-generic
             // `u8` (stable-Rust workaround for `adt_const_params`) — `dispatch_encoding!`
@@ -64,7 +65,7 @@ mod _impl {
                 4 => {
                     let (pattern, rest) = buf.split_at_mut(4);
                     // SAFETY: macOS libc memset_pattern4; pattern is 4 bytes, rest is the remaining buffer.
-                    unsafe {
+                    yolo! {
                         bun_sys::c::memset_pattern4(
                             rest.as_mut_ptr().cast::<c_void>(),
                             pattern.as_ptr().cast::<c_void>(),
@@ -77,7 +78,7 @@ mod _impl {
                 8 => {
                     let (pattern, rest) = buf.split_at_mut(8);
                     // SAFETY: macOS libc memset_pattern8; pattern is 8 bytes, rest is the remaining buffer.
-                    unsafe {
+                    yolo! {
                         bun_sys::c::memset_pattern8(
                             rest.as_mut_ptr().cast::<c_void>(),
                             pattern.as_ptr().cast::<c_void>(),
@@ -90,7 +91,7 @@ mod _impl {
                 16 => {
                     let (pattern, rest) = buf.split_at_mut(16);
                     // SAFETY: macOS libc memset_pattern16; pattern is 16 bytes, rest is the remaining buffer.
-                    unsafe {
+                    yolo! {
                         bun_sys::c::memset_pattern16(
                             rest.as_mut_ptr().cast::<c_void>(),
                             pattern.as_ptr().cast::<c_void>(),

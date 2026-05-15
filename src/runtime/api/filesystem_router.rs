@@ -19,6 +19,7 @@ pub mod kind_enum {
     }
 }
 
+use bun_yolo::yolo;
 use bun_paths::strings;
 use core::cell::UnsafeCell;
 
@@ -81,7 +82,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
     fn fs_impl(&self) -> *mut Fs::Implementation {
         // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
+        yolo! { &raw mut (*self.0.fs()).fs }
     }
     #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
@@ -211,7 +212,7 @@ impl FileSystemRouter {
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
                 // borrow from `arena` so it can be moved below.
                 let leaked: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&bytes)) };
+                    yolo! { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&bytes)) };
                 extensions.push(&leaked[1..]);
             }
         }
@@ -227,7 +228,7 @@ impl FileSystemRouter {
             // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
             // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
             let leaked: &'static [u8] =
-                unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
+                yolo! { bun_ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
             asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
         }
         let mut log = Log::Log::new();
@@ -239,7 +240,7 @@ impl FileSystemRouter {
         // those reborrows before the guard's `Drop` runs).
         // SAFETY: `vm` is the live VM for this global; resolver outlives this
         // scope. Guard is declared after `log` so it drops (and restores) first.
-        let _restore_log = unsafe {
+        let _restore_log = yolo! {
             let vm_ptr = VirtualMachine::get_mut_ptr();
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
@@ -410,7 +411,7 @@ impl FileSystemRouter {
                     // borrow of `*entry_ptr` is live across this block.
                     let kind = {
                         let fs_impl = &mut vm.transpiler.fs_mut().fs;
-                        unsafe { &mut *entry_ptr }.kind(fs_impl, false)
+                        yolo! { &mut *entry_ptr }.kind(fs_impl, false)
                     };
                     if kind == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {
@@ -459,7 +460,7 @@ impl FileSystemRouter {
         let mut log = Log::Log::new();
         // SAFETY: `vm_ptr` is the live VM for this global; resolver outlives this
         // scope. Guard declared after `log` so it drops (and restores) first.
-        let _restore_log = unsafe {
+        let _restore_log = yolo! {
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
                 &raw mut log,
@@ -595,7 +596,7 @@ impl FileSystemRouter {
         // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
         // never dropped on any path between here and `MatchedRoute::init` taking ownership
         // (early returns above this point already dropped/replaced `path`).
-        let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
+        let path_bytes: &[u8] = yolo! { bun_ptr::detach_lifetime(path.slice()) };
         let url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
             Err(err) => {
@@ -612,7 +613,7 @@ impl FileSystemRouter {
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
         // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
         // exclusive borrow ends at the `;`.
-        let Some(route) = unsafe { this.router.get_mut() }
+        let Some(route) = yolo! { this.router.get_mut() }
             .routes
             .match_page_with_allocator(b"", &url_path, &mut params)
         else {
@@ -740,14 +741,14 @@ impl MatchedRoute {
         // SAFETY: `self.route` always points at `self.route_holder` (UnsafeCell, set in
         // `init`); the Box is never moved after construction (heap-stable), and no `&mut`
         // to `route_holder`'s contents is live concurrently with this read.
-        unsafe { &*self.route }
+        yolo! { &*self.route }
     }
 
     #[inline]
     fn params(&self) -> &route_param::List<'static> {
         // SAFETY: `route().params` always points at `self.params_list_holder` (UnsafeCell,
         // set in `init`); heap-stable Box, no concurrent `&mut` to its contents.
-        unsafe { &*self.route().params }
+        yolo! { &*self.route().params }
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -764,7 +765,7 @@ impl MatchedRoute {
     ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
         // SAFETY: `match_.params` points at the caller's stack `route_param::List`, which is
         // live for this call. Clone its contents into our own holder before re-pointing.
-        let params_list = unsafe { (*match_.params).clone() };
+        let params_list = yolo! { (*match_.params).clone() };
 
         // SAFETY (self-referential lifetime erasure): `RouterMatch<'_>` borrows two
         // backing stores —
@@ -779,7 +780,7 @@ impl MatchedRoute {
         // read through it. This is the standard Rust self-referential pattern (no
         // `Pin`/ouroboros because JsClass codegen owns the Box<Self>); it does NOT extend
         // a borrow past its allocation — ownership was transferred, not leaked.
-        let match_static: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
+        let match_static: RouterMatch<'static> = yolo! { match_.detach_lifetime() };
         // `route_param::List<'a>` = `Vec<Param<'a>>`; rebuild from raw parts to
         // erase the element lifetime (identical layout, no realloc).
         let params_list: route_param::List<'static> = {
@@ -787,7 +788,7 @@ impl MatchedRoute {
             let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
             // SAFETY: same allocation, same element layout; per the SAFETY note
             // above, every `Param`'s borrowed bytes outlive `Self`.
-            unsafe { Vec::from_raw_parts(ptr.cast::<route_param::Param<'static>>(), len, cap) }
+            yolo! { Vec::from_raw_parts(ptr.cast::<route_param::Param<'static>>(), len, cap) }
         };
 
         let mut route = Box::new(MatchedRoute {
@@ -816,7 +817,7 @@ impl MatchedRoute {
         // valid under Stacked Borrows across later `&mut MatchedRoute` accesses.
         route.route = route.route_holder.get();
         // SAFETY: sole access to `route_holder` contents at this point.
-        unsafe { (*route.route_holder.get()).params = route.params_list_holder.get() };
+        yolo! { (*route.route_holder.get()).params = route.params_list_holder.get() };
 
         Ok(route)
     }
@@ -825,7 +826,7 @@ impl MatchedRoute {
     // `MatchedRoute` is a JsClass m_ctx payload (finalize owns teardown per PORTING.md).
     fn deinit(this: *mut MatchedRoute) {
         // SAFETY: called from finalize on mutator thread.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         this_ref.query_string_map.set(None);
         this_ref.param_map.set(None);
         if this_ref.needs_deinit {
@@ -848,7 +849,7 @@ impl MatchedRoute {
         }
 
         // SAFETY: `this` was heap-allocated by codegen at construction.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]

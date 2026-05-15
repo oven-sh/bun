@@ -6,6 +6,7 @@
 //! reallocate during this step, so we cache raw column pointers and deref at
 //! each use site.
 
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::mem::{MaybeUninit, offset_of};
 
@@ -55,7 +56,7 @@ impl LinkerContext<'_> {
         // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
         // pointers inside `MultiArrayList`, so this borrow does not assert
         // immutability over the heap cells we write below.
-        let c: &LinkerContext<'_> = unsafe { &*this };
+        let c: &LinkerContext<'_> = yolo! { &*this };
 
         let id = source_index;
         if id as usize >= c.graph.meta.len() {
@@ -66,7 +67,7 @@ impl LinkerContext<'_> {
         // dispatch from `scanImportsAndExports`); `container_of` shape.
         // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
         // form `&mut BundleV2` here (concurrent tasks would alias it).
-        let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
+        let bundle_v2: &BundleV2<'_> = yolo! { &*LinkerContext::bundle_v2_ptr(this) };
         let worker = ThreadPool::Worker::get(bundle_v2);
         // Zig: `defer worker.unget()`. `Worker::get` returns the thread-local worker
         // (not RAII), so balance explicitly via scopeguard.
@@ -91,7 +92,7 @@ impl LinkerContext<'_> {
                 // (guarded above for `meta`, and `ast.len == meta.len`). The
                 // `as *mut $ty` fat→thin cast preserves the raw provenance
                 // from `split_raw()`.
-                unsafe { &mut *(($col as *mut $ty).add($i as usize)) }
+                yolo! { &mut *(($col as *mut $ty).add($i as usize)) }
             }};
         }
 
@@ -104,13 +105,13 @@ impl LinkerContext<'_> {
         let (imports_to_bind, probably_typescript_type): (
             &[RefImportData],
             &[ArrayHashMap<Ref, ()>],
-        ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
+        ) = yolo! { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
 
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
         let mut aliases = bun_alloc::ArenaVec::<&[u8]>::with_capacity_in(
-            unsafe { (*resolved_exports).count() },
+            yolo! { (*resolved_exports).count() },
             arena,
         );
 
@@ -119,7 +120,7 @@ impl LinkerContext<'_> {
 
         {
             // SAFETY: see above.
-            let mut alias_iter = unsafe { (*resolved_exports).iterator() };
+            let mut alias_iter = yolo! { (*resolved_exports).iterator() };
             'next_alias: while let Some(entry) = alias_iter.next() {
                 let export_ = entry.value_ptr;
                 let alias: &[u8] = entry.key_ptr;
@@ -184,7 +185,7 @@ impl LinkerContext<'_> {
             // `&mut` into that slot. `create_exports_for_file` writes only via
             // this param + the three per-row cells below and never re-borrows
             // those columns through `self`.
-            unsafe { &mut *resolved_exports },
+            yolo! { &mut *resolved_exports },
             imports_to_bind,
             export_aliases,
             re_exports_count,
@@ -206,7 +207,7 @@ impl LinkerContext<'_> {
         // SAFETY: `named_imports` is a stable column pointer (see above). We
         // hoist the emptiness check so the per-symbol-use inner loop skips
         // the lookup entirely for files with no imports (≈ all leaf modules).
-        let named_imports_is_empty = unsafe { (*named_imports).is_empty() };
+        let named_imports_is_empty = yolo! { (*named_imports).is_empty() };
 
         // PERF(port): hoist this file's two `top_level_symbols_to_parts`
         // sub-maps. The Zig version reaches them through
@@ -224,7 +225,7 @@ impl LinkerContext<'_> {
         let (tlsp_overlay, tlsp_ast): (
             &bun_ast::ast_result::TopLevelSymbolToParts,
             &bun_ast::ast_result::TopLevelSymbolToParts,
-        ) = unsafe {
+        ) = yolo! {
             (
                 &*(meta.top_level_symbol_to_parts_overlay
                     as *const bun_ast::ast_result::TopLevelSymbolToParts)
@@ -237,7 +238,7 @@ impl LinkerContext<'_> {
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
         // SAFETY: see above.
-        'outer: for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
+        'outer: for (part_index, part) in yolo! { (*parts_slice).iter_mut().enumerate() } {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
@@ -268,7 +269,7 @@ impl LinkerContext<'_> {
                                 // SAFETY: `properties` points into
                                 // `part.import_symbol_property_uses` which is not
                                 // mutated for the lifetime of this borrow.
-                                for (name, prop_use) in unsafe { (*properties).iter() } {
+                                for (name, prop_use) in yolo! { (*properties).iter() } {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.count_estimate += prop_use.count_estimate;
@@ -288,7 +289,7 @@ impl LinkerContext<'_> {
 
                 // Common path: this import isn't a TypeScript enum
                 // SAFETY: see above.
-                for prop_use in unsafe { (*properties).values() } {
+                for prop_use in yolo! { (*properties).values() } {
                     use_.count_estimate += prop_use.count_estimate;
                 }
             }
@@ -383,7 +384,7 @@ impl LinkerContext<'_> {
                 if !named_imports_is_empty {
                     // SAFETY: `named_imports` is a stable column pointer; this
                     // task owns row `id` exclusively (see split_raw note).
-                    if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
+                    if let Some(existing) = yolo! { (*named_imports).get_ptr_mut(&ref_) } {
                         existing.local_parts_with_uses.push(part_index_u32);
                     }
                 }
@@ -517,7 +518,7 @@ impl LinkerContext<'_> {
                     // SAFETY: `alias` borrows the worker arena which outlives the
                     // link pass; `E::String::data: &'static [u8]` is the arena
                     // erasure used throughout the AST.
-                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    E::String::init(yolo! { bun_ptr::detach_lifetime(alias) }),
                     loc,
                 )),
                 value: Some(Expr::allocate(
@@ -690,7 +691,7 @@ impl LinkerContext<'_> {
                     // just verified head == base+len); same-layout cast
                     // `[MaybeUninit<Stmt>]` → `[Stmt]`. The worker arena
                     // outlives the link pass.
-                    bun_ast::StoreSlice::new_mut(unsafe {
+                    bun_ast::StoreSlice::new_mut(yolo! {
                         &mut *(init as *mut [MaybeUninit<Stmt>] as *mut [Stmt])
                     })
                 } else {

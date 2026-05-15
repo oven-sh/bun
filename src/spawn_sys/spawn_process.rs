@@ -3,6 +3,7 @@
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
 #[cfg(target_os = "linux")]
+use bun_yolo::yolo;
 use core::ffi::CStr;
 use core::ffi::c_char;
 #[cfg(target_os = "macos")]
@@ -90,16 +91,16 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let process_pid: *mut c_void = process.process_handle;
     type WinTime = bun_sys::windows::FILETIME;
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut starttime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut starttime: WinTime = yolo! { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut exittime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut exittime: WinTime = yolo! { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut kerneltime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut kerneltime: WinTime = yolo! { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut usertime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut usertime: WinTime = yolo! { bun_core::ffi::zeroed_unchecked() };
     // We at least get process times
     // SAFETY: FFI call with valid out-pointers
-    if unsafe {
+    if yolo! {
         bun_sys::windows::GetProcessTimes(
             process_pid,
             &mut starttime,
@@ -131,7 +132,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     }
     let mut counters = IoCounters::default();
     // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
+    let _ = yolo! { GetProcessIoCounters(process_pid, &mut counters) };
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
 
@@ -556,7 +557,7 @@ impl PosixSpawnResult {
                         loop {
                             let mut status: i32 = 0;
                             // SAFETY: libc wait4
-                            let rc = unsafe {
+                            let rc = yolo! {
                                 libc::wait4(self.pid, &raw mut status, 0, core::ptr::null_mut())
                             };
                             match bun_sys::get_errno(rc as isize) {
@@ -863,7 +864,7 @@ pub fn spawn_process_posix(
                     let so_recvbuf: c_int = 1024 * 512;
                     let so_sendbuf: c_int = 1024 * 512;
                     // SAFETY: setsockopt with valid fds
-                    unsafe {
+                    yolo! {
                         if i == 0 {
                             libc::setsockopt(
                                 fds[1].native(),
@@ -983,9 +984,9 @@ pub fn spawn_process_posix(
     }
 
     // SAFETY: argv is null-terminated, argv[0] is non-null
-    let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
+    let argv0 = options.argv0.unwrap_or_else(|| yolo! { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
-    let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
+    let argv0_cstr = yolo! { bun_core::ffi::cstr(argv0) };
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {

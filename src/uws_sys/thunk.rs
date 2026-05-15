@@ -6,7 +6,7 @@
 //! `(ptr,len)` pairs into slices, then (d) call the safe Rust handler. Before
 //! this module each of `Response::on_*`, `h3::Response::on_*`,
 //! `WebSocket::Wrap::on_*`, and `uws_handlers::*Handler` open-coded those
-//! steps with three or four `unsafe {}` blocks apiece — ~300 in total.
+//! steps with three or four `yolo! {}` blocks apiece — ~300 in total.
 //!
 //! Centralising here means each invariant is documented and audited **once**:
 //!
@@ -23,6 +23,7 @@
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -75,7 +76,7 @@ pub unsafe trait OpaqueHandle: Sized {
         // checked non-null above) is dereferenceable for zero bytes; the
         // resulting `&mut` covers no memory and so cannot alias. C++ owns the
         // real object; Rust never reads/writes through it.
-        unsafe { &mut *p }
+        yolo! { &mut *p }
     }
 }
 
@@ -104,7 +105,7 @@ pub unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
         None
     } else {
         // SAFETY: per caller contract above.
-        Some(unsafe { &mut *p.cast::<U>() })
+        Some(yolo! { &mut *p.cast::<U>() })
     }
 }
 
@@ -119,7 +120,7 @@ pub unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
 pub unsafe fn handle_mut<'a, T>(p: *mut T) -> &'a mut T {
     debug_assert!(!p.is_null());
     // SAFETY: per caller contract above.
-    unsafe { &mut *p }
+    yolo! { &mut *p }
 }
 
 /// Lift a C `(ptr,len)` pair into a borrowed slice, mapping `len == 0` (and
@@ -134,7 +135,7 @@ pub unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
         &[]
     } else {
         // SAFETY: per caller contract above.
-        unsafe { core::slice::from_raw_parts(ptr, len) }
+        yolo! { core::slice::from_raw_parts(ptr, len) }
     }
 }
 
@@ -148,7 +149,7 @@ pub unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 #[inline(always)]
 pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
     // SAFETY: per caller contract above.
-    ext.map(|mut p| unsafe { p.as_mut() })
+    ext.map(|mut p| yolo! { p.as_mut() })
 }
 
 /// Read the `Option<NonNull<T>>` ext slot directly off a raw `*us_socket_t`
@@ -162,7 +163,7 @@ pub unsafe fn ext_owner<'a, T>(ext: &Option<NonNull<T>>) -> Option<&'a mut T> {
 #[inline(always)]
 pub unsafe fn socket_ext_owner<'a, T>(s: *mut us_socket_t) -> Option<&'a mut T> {
     // SAFETY: per caller contract above.
-    unsafe { ext_owner(&*(*s).ext::<Option<NonNull<T>>>()) }
+    yolo! { ext_owner(&*(*s).ext::<Option<NonNull<T>>>()) }
 }
 
 /// As [`socket_ext_owner`] but for `*us_connecting_socket_t`.
@@ -172,7 +173,7 @@ pub unsafe fn socket_ext_owner<'a, T>(s: *mut us_socket_t) -> Option<&'a mut T> 
 #[inline(always)]
 pub unsafe fn connecting_ext_owner<'a, T>(c: *mut ConnectingSocket) -> Option<&'a mut T> {
     // SAFETY: per caller contract above.
-    unsafe { ext_owner(&*(*c).ext::<Option<NonNull<T>>>()) }
+    yolo! { ext_owner(&*(*c).ext::<Option<NonNull<T>>>()) }
 }
 
 /// Read the raw `Option<NonNull<T>>` word out of a socket ext slot **without**
@@ -198,7 +199,7 @@ pub unsafe fn connecting_ext_ptr<T>(c: *mut ConnectingSocket) -> Option<NonNull<
 // uWS on the same socket while holding `&mut Owner`) that contract is uniform
 // and can be discharged once at the type level instead of at every call site.
 // `ExtSlot<T>` is that type-level discharge: choosing it as `Handler::Ext`
-// moves the proof obligation from ~30 `unsafe { ext_owner(ext) }` blocks to
+// moves the proof obligation from ~30 `yolo! { ext_owner(ext) }` blocks to
 // the one `unsafe` inside `owner_mut()`.
 
 /// Typed-safe wrapper for the `Option<NonNull<T>>` word stored in a uWS socket
@@ -215,9 +216,9 @@ pub unsafe fn connecting_ext_ptr<T>(c: *mut ConnectingSocket) -> Option<NonNull<
 /// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
 /// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
-/// [`Self::owner_mut`] sound as a *safe* fn — the one `unsafe { p.as_mut() }`
+/// [`Self::owner_mut`] sound as a *safe* fn — the one `yolo! { p.as_mut() }`
 /// inside discharges the same invariant every former
-/// `unsafe { thunk::ext_owner(ext) }` call site repeated open-coded.
+/// `yolo! { thunk::ext_owner(ext) }` call site repeated open-coded.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
 
@@ -233,7 +234,7 @@ impl<T> ExtSlot<T> {
             // unique heap owner; uWS dispatch is single-threaded and — per the
             // `Handler::Ext = ExtSlot<T>` contract — non-re-entrant on this
             // user-data, so no aliasing `&mut T` exists for `'_`.
-            Some(mut p) => Some(unsafe { p.as_mut() }),
+            Some(mut p) => Some(yolo! { p.as_mut() }),
             None => None,
         }
     }

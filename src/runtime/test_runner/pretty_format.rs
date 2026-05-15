@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::{Cell, RefCell};
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use core::ffi::c_void;
@@ -39,7 +40,7 @@ impl AsRef<[u8]> for PrettyStr {
 impl core::fmt::Display for PrettyStr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // SAFETY: pretty_fmt output is ASCII/ANSI escape bytes (valid UTF-8).
-        f.write_str(unsafe { core::str::from_utf8_unchecked(&self.0) })
+        f.write_str(yolo! { core::str::from_utf8_unchecked(&self.0) })
     }
 }
 
@@ -405,7 +406,7 @@ impl Drop for Formatter<'_> {
             // exclusively owned for this `Formatter`'s lifetime; its `data` was
             // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
             // `Map`.
-            unsafe {
+            yolo! {
                 let data = (*node.as_ptr()).data.assume_init_mut();
                 *data = core::mem::take(&mut self.map);
                 data.clear();
@@ -600,7 +601,7 @@ impl Tag {
             // SAFETY: `value` is a GlobalProxy cell (checked above); JSC C-API
             // returns the wrapped target object (never null for a live proxy).
             return Tag::get(
-                JSValue::c(unsafe { JSObjectGetProxyTarget(value.as_object_ref()) }),
+                JSValue::c(yolo! { JSObjectGetProxyTarget(value.as_object_ref()) }),
                 global_this,
             );
         }
@@ -920,7 +921,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         next_value: JSValue,
     ) {
         // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
+        let Some(ctx) = (yolo! { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -971,7 +972,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         next_value: JSValue,
     ) {
         // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
+        let Some(ctx) = (yolo! { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -1062,13 +1063,13 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         }
 
         // SAFETY: key_ is non-null per JSC contract for property iteration.
-        let key = unsafe { *key_ };
+        let key = yolo! { *key_ };
         if key.eql_comptime(b"constructor") {
             return;
         }
 
         // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
+        let Some(ctx) = (yolo! { ctx_ptr.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -1226,7 +1227,7 @@ impl<'a> Formatter<'a> {
                 // `node.data` at release time (see JestPrettyFormat::format tail),
                 // so the pooled allocation is retained across uses.
                 // SAFETY: see above.
-                unsafe {
+                yolo! {
                     let data = (*node.as_ptr()).data.assume_init_mut();
                     data.clear();
                     self.map = core::mem::take(data);
@@ -1588,7 +1589,7 @@ impl<'a> Formatter<'a> {
                                 // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
                                 // bounds-checked by `len > 0` in the enclosing branch. The C-API
                                 // takes `*mut JSGlobalObject` by convention but never mutates it.
-                                let element = JSValue::c(unsafe {
+                                let element = JSValue::c(yolo! {
                                     JSObjectGetPropertyAtIndex(
                                         std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
                                         r#ref,
@@ -1636,7 +1637,7 @@ impl<'a> Formatter<'a> {
 
                                 // SAFETY: `i < len`, `r#ref` is the live object ref. The C-API
                                 // takes `*mut JSGlobalObject` by convention but never mutates it.
-                                let element = JSValue::c(unsafe {
+                                let element = JSValue::c(yolo! {
                                     JSObjectGetPropertyAtIndex(
                                         std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
                                         r#ref,
@@ -1692,7 +1693,7 @@ impl<'a> Formatter<'a> {
                         // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
                         // `value` is on the stack (conservative scan). `write_format` does not
                         // re-enter `as_` for the same cell, so the `&mut` is unique here.
-                        let response = unsafe { &mut *response };
+                        let response = yolo! { &mut *response };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if response
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -1710,7 +1711,7 @@ impl<'a> Formatter<'a> {
                         }
                     } else if let Some(request) = value.as_::<crate::webcore::Request>() {
                         // SAFETY: see Response branch above.
-                        let request = unsafe { &mut *request };
+                        let request = yolo! { &mut *request };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if request
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
@@ -1730,7 +1731,7 @@ impl<'a> Formatter<'a> {
                     } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
                         // SAFETY: see Response branch above. `write_format` is
                         // `&self` post-R-2, so a shared borrow is sufficient.
-                        let build = unsafe { &*build };
+                        let build = yolo! { &*build };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -1748,7 +1749,7 @@ impl<'a> Formatter<'a> {
                         }
                     } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
                         // SAFETY: see Response branch above.
-                        let blob = unsafe { &mut *blob };
+                        let blob = yolo! { &mut *blob };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if blob
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -2629,7 +2630,7 @@ impl<'a> Formatter<'a> {
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
                             // SAFETY: array buffer bytes are aligned to the element type by JSC.
-                            let slice_with_type: &[$t] = unsafe {
+                            let slice_with_type: &[$t] = yolo! {
                                 core::slice::from_raw_parts(
                                     slice.as_ptr().cast::<$t>(),
                                     slice.len() / core::mem::size_of::<$t>(),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::HashMap;
 use bun_core::strings;
 use bun_core::{Output, feature_flags};
@@ -58,14 +59,14 @@ impl HmrSocket {
         // interleave `self.*` field access with `dev.*` — DevServer is a
         // separate heap allocation.
         // SAFETY: caller upholds exclusivity; BackRef invariant guarantees liveness.
-        unsafe { &mut *self.dev.as_ptr() }
+        yolo! { &mut *self.dev.as_ptr() }
     }
 
     pub fn on_open(&mut self, ws: AnyWebSocket) {
         // SAFETY: JS-thread only; sole `&mut DevServer` for this scope. Derived
         // via the BackRef accessor (lifetime-detached from `&self`) so we can
         // assign `self.underlying` below while `dev` is still live.
-        let dev = unsafe { self.dev() };
+        let dev = yolo! { self.dev() };
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);
@@ -75,7 +76,7 @@ impl HmrSocket {
         if send_status != SendStatus::Dropped {
             // Notify inspector about client connection
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
+            if let Some(agent) = yolo! { dev.inspector() } {
                 self.inspector_connection_id = agent.next_connection_id();
                 agent
                     .notify_client_connected(dev.inspector_server_id, self.inspector_connection_id);
@@ -103,7 +104,7 @@ impl HmrSocket {
                 }
                 let generation = u32::from_ne_bytes(generation_bytes);
                 let source_map_id = source_map_store::Key::init((generation as u64) << 32);
-                let dev = unsafe { self.dev() };
+                let dev = yolo! { self.dev() };
                 if dev
                     .source_maps
                     .remove_or_upgrade_weak_ref(source_map_id, RemoveOrUpgradeMode::Upgrade)
@@ -135,7 +136,7 @@ impl HmrSocket {
 
                         // on-subscribe hooks
                         if feature_flags::BAKE_DEBUGGING_FEATURES {
-                            let dev = unsafe { self.dev() };
+                            let dev = yolo! { self.dev() };
                             match field {
                                 HmrTopic::IncrementalVisualizer => {
                                     dev.emit_incremental_visualizer_events += 1;
@@ -160,7 +161,7 @@ impl HmrSocket {
                                         // SAFETY: `runtime_state()` is non-null after
                                         // `bun_runtime::init()`; JS-thread only, sole
                                         // `&mut` to `timer` in this scope.
-                                        unsafe {
+                                        yolo! {
                                             (*state).timer.update(
                                                 &raw mut dev.memory_visualizer_timer,
                                                 &next,
@@ -183,10 +184,10 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
-                let dev = unsafe { self.dev() };
+                let dev = yolo! { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-                if let Some(agent) = unsafe { dev.inspector() } {
+                if let Some(agent) = yolo! { dev.inspector() } {
                     if self.inspector_connection_id > -1 {
                         let mut pattern_str = bun_core::String::init(pattern);
                         // `defer pattern_str.deref()` → Drop on bun_core::String
@@ -215,7 +216,7 @@ impl HmrSocket {
                 self.notify_inspector_client_navigation(pattern, Some(rbi));
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
-                let dev = unsafe { self.dev() };
+                let dev = yolo! { self.dev() };
                 match &dev.testing_batch_events {
                     super::TestingBatchEvents::Disabled => {
                         if dev.current_bundle.is_some() {
@@ -281,10 +282,10 @@ impl HmrSocket {
                 };
 
                 let data = &msg[2..];
-                let dev = unsafe { self.dev() };
+                let dev = yolo! { self.dev() };
 
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-                if let Some(agent) = unsafe { dev.inspector() } {
+                if let Some(agent) = yolo! { dev.inspector() } {
                     let mut log_str = bun_core::String::init(data);
                     // `defer log_str.deref()` → Drop on bun_core::String
                     agent.notify_console_log(dev.inspector_server_id, kind as u8, &mut log_str);
@@ -321,7 +322,7 @@ impl HmrSocket {
                     ));
                     return; // no entry may happen.
                 };
-                unsafe { self.dev() }.source_maps.unref(kv.0);
+                yolo! { self.dev() }.source_maps.unref(kv.0);
             }
             _ => ws.close(),
         }
@@ -329,7 +330,7 @@ impl HmrSocket {
 
     fn on_unsubscribe(&mut self, field: HmrTopicBits) {
         if feature_flags::BAKE_DEBUGGING_FEATURES {
-            let dev = unsafe { self.dev() };
+            let dev = yolo! { self.dev() };
             if field.contains(HmrTopic::IncrementalVisualizer.as_bit()) {
                 dev.emit_incremental_visualizer_events -= 1;
             }
@@ -343,7 +344,7 @@ impl HmrSocket {
                     let state = crate::jsc_hooks::runtime_state();
                     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
                     // JS-thread only, sole `&mut` to `timer` in this scope.
-                    unsafe {
+                    yolo! {
                         (*state).timer.remove(&raw mut dev.memory_visualizer_timer);
                     }
                 }
@@ -354,16 +355,16 @@ impl HmrSocket {
     pub fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
         // SAFETY: uws guarantees the socket context pointer is valid for the
         // duration of the close callback; we consume ownership here.
-        let this = unsafe { &mut *s };
+        let this = yolo! { &mut *s };
 
         let subs = this.subscriptions;
         this.on_unsubscribe(subs);
 
-        let dev = unsafe { this.dev() };
+        let dev = yolo! { this.dev() };
         if this.inspector_connection_id > -1 {
             // Notify inspector about client disconnection
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
+            if let Some(agent) = yolo! { dev.inspector() } {
                 agent.notify_client_disconnected(
                     dev.inspector_server_id,
                     this.inspector_connection_id,
@@ -383,7 +384,7 @@ impl HmrSocket {
         debug_assert!(removed.is_some());
         // SAFETY: `s` was heap-allocated in `new()`'s caller; this is the sole
         // owner reclaiming it. Matches `s.dev.arena().destroy(s)`.
-        drop(unsafe { bun_core::heap::take(s) });
+        drop(yolo! { bun_core::heap::take(s) });
     }
 
     fn notify_inspector_client_navigation(
@@ -392,9 +393,9 @@ impl HmrSocket {
         rbi: super::route_bundle::IndexOptional,
     ) {
         if self.inspector_connection_id > -1 {
-            let dev = unsafe { self.dev() };
+            let dev = yolo! { self.dev() };
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
+            if let Some(agent) = yolo! { dev.inspector() } {
                 let mut pattern_str = bun_core::String::init(pattern);
                 // `defer pattern_str.deref()` → Drop on bun_core::String
                 agent.notify_client_navigated(

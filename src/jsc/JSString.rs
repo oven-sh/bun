@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -107,7 +108,7 @@ impl JSString {
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: *mut c_void) {
         // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`
         // points to a caller-owned `Iterator` (extern struct) passed through to C++.
-        unsafe { JSC__JSString__iterator(self, global_object, iter) }
+        yolo! { JSC__JSString__iterator(self, global_object, iter) }
     }
 
     pub fn length(&self) -> usize {

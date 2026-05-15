@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::size_of;
 use std::io::Write as _;
 
@@ -1086,7 +1087,7 @@ impl Drop for SignResult {
 #[inline]
 fn zero_sensitive(b: &mut Box<[u8]>) {
     // SAFETY: `b` is exclusively borrowed; `len` bytes are valid for writes.
-    unsafe { bun_core::secure_zero(b.as_mut_ptr(), b.len()) };
+    yolo! { bun_core::secure_zero(b.as_mut_ptr(), b.len()) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1287,7 +1288,7 @@ pub struct S3CredentialsWithOptions {
     // Self-referential views: these `?[]const u8` fields are NOT freed in Zig
     // `deinit`; they borrow into the sibling `_*_slice: ZigStringSlice` fields
     // below. `RawSlice` encodes that non-owning contract (and gives callers
-    // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
+    // `.as_deref()` instead of an open-coded `yolo! { &*p }`).
     pub content_disposition: Option<RawSlice<u8>>,
     pub content_type: Option<RawSlice<u8>>,
     pub content_encoding: Option<RawSlice<u8>>,
@@ -1382,7 +1383,7 @@ impl SignedHeaders {
             push!(b";x-amz-storage-class");
         }
         // SAFETY: n <= 256 by construction.
-        unsafe { core::slice::from_raw_parts(buf.as_ptr(), n) }
+        yolo! { core::slice::from_raw_parts(buf.as_ptr(), n) }
     }
 }
 

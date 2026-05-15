@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::size_of;
 
 // `std.macho` types ported locally (see macho_types.rs).
@@ -72,8 +73,8 @@ impl MachoFile {
             header,
             data,
             // SAFETY: all-zero is a valid segment_command_64 / section_64 (#[repr(C)] POD, no NonZero/NonNull fields)
-            segment: unsafe { bun_core::ffi::zeroed_unchecked() },
-            section: unsafe { bun_core::ffi::zeroed_unchecked() },
+            segment: yolo! { bun_core::ffi::zeroed_unchecked() },
+            section: yolo! { bun_core::ffi::zeroed_unchecked() },
         }))
     }
 
@@ -118,7 +119,7 @@ impl MachoFile {
                             let section_offset = entry.data.as_ptr() as usize - base_addr;
                             // SAFETY: sections array immediately follows segment_command_64 in the load
                             // command buffer; `nsects` entries are guaranteed by the Mach-O format.
-                            let sections: &mut [macho::section_64] = unsafe {
+                            let sections: &mut [macho::section_64] = yolo! {
                                 core::slice::from_raw_parts_mut(
                                     self.data
                                         .as_mut_ptr()
@@ -162,7 +163,7 @@ impl MachoFile {
                                     };
                                     // SAFETY: entry.data points into self.data's load-command region; we
                                     // overwrite the segment_command_64 in place (unaligned, mirroring Zig *align(1)).
-                                    unsafe {
+                                    yolo! {
                                         let entry_ptr: *mut u8 = entry.data.as_ptr().cast_mut();
                                         core::ptr::write_unaligned(
                                             entry_ptr.cast::<macho::segment_command_64>(),
@@ -214,7 +215,7 @@ impl MachoFile {
         // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
         // are written below before being read (memmove + memset cover the whole range).
         let prev_len = self.data.len();
-        unsafe {
+        yolo! {
             self.data
                 .set_len(prev_len + usize::try_from(size_diff).expect("int cast"));
         }
@@ -224,7 +225,7 @@ impl MachoFile {
         // We need to shift [...data after __BUN] forward by size_diff bytes.
         // SAFETY: source and destination overlap; ptr::copy (memmove) handles this. Ranges are
         // within self.data per the offset arithmetic above.
-        unsafe {
+        yolo! {
             let after_bun_dst = self
                 .data
                 .as_mut_ptr()
@@ -363,12 +364,12 @@ impl MachoFile {
             match cmd.cmd {
                 macho::LC::SYMTAB => {
                     // SAFETY: cmd_ptr points into self.data's load-command region; symtab_command is POD.
-                    let symtab = unsafe { &mut *cmd_ptr.cast::<macho::symtab_command>() };
+                    let symtab = yolo! { &mut *cmd_ptr.cast::<macho::symtab_command>() };
                     shift_fields!(shifter, symtab, symoff, stroff);
                 }
                 macho::LC::DYSYMTAB => {
                     // SAFETY: as above.
-                    let dysymtab = unsafe { &mut *cmd_ptr.cast::<macho::dysymtab_command>() };
+                    let dysymtab = yolo! { &mut *cmd_ptr.cast::<macho::dysymtab_command>() };
                     shift_fields!(
                         shifter,
                         dysymtab,
@@ -389,7 +390,7 @@ impl MachoFile {
                 | macho::LC::DYLD_EXPORTS_TRIE => {
                     // SAFETY: as above.
                     let linkedit_cmd =
-                        unsafe { &mut *cmd_ptr.cast::<macho::linkedit_data_command>() };
+                        yolo! { &mut *cmd_ptr.cast::<macho::linkedit_data_command>() };
                     shift_fields!(shifter, linkedit_cmd, dataoff);
 
                     // Special handling for code signature
@@ -400,7 +401,7 @@ impl MachoFile {
                 }
                 macho::LC::DYLD_INFO | macho::LC::DYLD_INFO_ONLY => {
                     // SAFETY: as above.
-                    let dyld_info = unsafe { &mut *cmd_ptr.cast::<macho::dyld_info_command>() };
+                    let dyld_info = yolo! { &mut *cmd_ptr.cast::<macho::dyld_info_command>() };
                     shift_fields!(
                         shifter,
                         dyld_info,
@@ -527,9 +528,9 @@ impl MachoSigner {
         let mut linkedit_off: usize = 0;
 
         // SAFETY: all-zero is a valid segment_command_64 (#[repr(C)] POD)
-        let mut text_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut text_seg: macho::segment_command_64 = yolo! { bun_core::ffi::zeroed_unchecked() };
         let mut linkedit_seg: macho::segment_command_64 =
-            unsafe { bun_core::ffi::zeroed_unchecked() };
+            yolo! { bun_core::ffi::zeroed_unchecked() };
 
         let mut it = macho::LoadCommandIterator::new(
             header.ncmds,
@@ -663,7 +664,7 @@ impl MachoSigner {
 
         // Setup CodeDirectory
         // SAFETY: all-zero is a valid CodeDirectory (#[repr(C)] POD)
-        let mut code_dir: CodeDirectory = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut code_dir: CodeDirectory = yolo! { bun_core::ffi::zeroed_unchecked() };
         code_dir.magic = CSMAGIC_CODEDIRECTORY.swap_bytes();
         code_dir.length = (code_dir_length as u32).swap_bytes();
         code_dir.version = 0x20400u32.swap_bytes();
@@ -687,7 +688,7 @@ impl MachoSigner {
         // Ensure space for signature
         self.data.resize(aligned_sig_off + total_sig_size, 0);
         // SAFETY: sig_off <= aligned_sig_off <= current len; spare bytes were just zeroed by resize.
-        unsafe {
+        yolo! {
             self.data.set_len(self.sig_off);
         }
         // Zero spare capacity (mirrors @memset(self.data.unusedCapacitySlice(), 0) — already zeroed
@@ -716,7 +717,7 @@ impl MachoSigner {
             let mut digest = [0u8; HASH_SIZE];
             // SAFETY: range [off..off+PAGE_SIZE] is within the original len (sig_off).
             let page =
-                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), PAGE_SIZE) };
+                yolo! { core::slice::from_raw_parts(self.data.as_ptr().add(off), PAGE_SIZE) };
             sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
             off += PAGE_SIZE;
@@ -726,7 +727,7 @@ impl MachoSigner {
             let remaining_len = end - off;
             let mut last_page = [0u8; PAGE_SIZE];
             // SAFETY: range [off..end] is within the original len.
-            unsafe {
+            yolo! {
                 core::ptr::copy_nonoverlapping(
                     self.data.as_ptr().add(off),
                     last_page.as_mut_ptr(),
@@ -749,7 +750,7 @@ impl MachoSigner {
             return Err(MachoError::OffsetOutOfRange.into());
         }
         // SAFETY: final_len is bounded by the initialized length from resize above.
-        unsafe {
+        yolo! {
             self.data.set_len(final_len);
         }
 

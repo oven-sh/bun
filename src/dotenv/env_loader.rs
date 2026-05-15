@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_char;
 use std::io::Write as _;
 use std::sync::OnceLock;
@@ -356,7 +357,7 @@ impl<'a> Loader<'a> {
         // SAFETY: see above — `s` points into a `Box<[u8]>` owned by
         // `*self.map`, which outlives `'a`.
         let extend =
-            |s: &[u8]| -> &'a [u8] { unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) } };
+            |s: &[u8]| -> &'a [u8] { yolo! { core::slice::from_raw_parts(s.as_ptr(), s.len()) } };
 
         let mut http_proxy: Option<URL<'a>> = None;
 
@@ -629,7 +630,7 @@ impl<'a> Loader<'a> {
         self.map.map.ensure_total_capacity(environ.len())?;
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
-            let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
+            let env = yolo! { bun_core::ffi::cstr(_env) }.to_bytes();
             if let Some(i) = strings::index_of_char(env, b'=') {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
@@ -1680,11 +1681,11 @@ impl StdEnvMapWrapper {
 // the raw pointer back to callers so the no-alias `&mut` proof obligation lives at the *call
 // site*, not here — manufacturing `&'static mut` inside an accessor is aliased-&mut UB the
 // moment two callers hold results simultaneously (PORTING.md §Forbidden: lifetime-extension
-// via `unsafe { &*(p as *const _) }`).
+// via `yolo! { &*(p as *const _) }`).
 pub static INSTANCE: AtomicPtr<Loader<'static>> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Read the global singleton as a raw pointer — `Some(ptr)` once `set_instance` has been called.
-/// Callers must `unsafe { &mut *ptr }` at point of use under the same single-thread CLI-init
+/// Callers must `yolo! { &mut *ptr }` at point of use under the same single-thread CLI-init
 /// invariant the Zig `var instance: ?*Loader` had (mirrors raw `*Loader` deref in Zig).
 #[inline]
 pub fn instance() -> Option<*mut Loader<'static>> {

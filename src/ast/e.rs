@@ -2,6 +2,7 @@
 //!
 //! Port of `src/js_parser/ast/E.zig`.
 
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::fmt;
 
@@ -921,13 +922,13 @@ impl Rope {
     /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
     /// the pointee is a bump allocation valid until arena reset. Centralises
     /// the one `unsafe` so the `set_rope`/`get_or_put_*`/`get_rope` walkers
-    /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
+    /// don't repeat `if !next.is_null() { yolo! { &*next } }` at every hop.
     #[inline]
     pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
         // SAFETY: `next` is either null or a bump-arena allocation valid until
         // arena reset (Zig: `?*Rope`). Read-only borrow; no `&mut` alias is
         // outstanding at any caller (the chain is fully built before walking).
-        unsafe { self.next.cast_const().as_ref() }
+        yolo! { self.next.cast_const().as_ref() }
     }
 }
 
@@ -1421,7 +1422,7 @@ impl EString {
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()`/`has_prefix_comptime()` and changing it is a
         // cross-crate refactor (see TODO above).
-        unsafe { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
+        yolo! { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
     }
     /// Const constructor for `'static` literals (Prefill globals).
     pub const fn from_static(data: &'static [u8]) -> Self {

@@ -8,6 +8,7 @@
 // with a `// TODO(b2-blocked):` pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::fmt;
 
@@ -532,7 +533,7 @@ mod draft {
 
                 // SAFETY: head points into self.out's E::Object tree, valid for the
                 // duration of parse().
-                let head_ref = unsafe { &mut *head };
+                let head_ref = yolo! { &mut *head };
 
                 if is_array {
                     if let Some(val) = head_ref.get(key) {
@@ -1080,21 +1081,21 @@ mod draft {
                     None => {
                         let rest = &key[dot_idx + 1..];
                         // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                        rope = unsafe { &mut *rope }
+                        rope = yolo! { &mut *rope }
                             .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
                 // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                rope = unsafe { &mut *rope }
+                rope = yolo! { &mut *rope }
                     .append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
                 dot_idx = next_dot_idx;
             }
 
             let _ = rope;
             // SAFETY: head was created by ropealloc.alloc above and is still live in the bump.
-            Ok(unsafe { &mut *head })
+            Ok(yolo! { &mut *head })
         }
     }
 
@@ -1352,12 +1353,12 @@ mod draft {
         let contents: &'static [u8] = source.contents.as_ref().into_str();
         // Round-trip through a raw pointer to erase both the borrow and the inner
         // lifetime; identical bit-pattern.
-        let env = unsafe { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
+        let env = yolo! { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
         let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
         // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
         // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
         // restructure Parser so the bump is passed externally or split borrows.
-        let bump: &Arena = unsafe { &*(&raw const parser.arena) };
+        let bump: &Arena = yolo! { &*(&raw const parser.arena) };
         parser.parse(bump)?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
@@ -1542,7 +1543,7 @@ mod draft {
 
         // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
         // arena pointee lives until `parser` drops at end of fn.
-        let out_obj: &E::Object = unsafe {
+        let out_obj: &E::Object = yolo! {
             &*parser
                 .out
                 .data
@@ -1848,7 +1849,7 @@ mod draft {
             ExprData::EString(s) => {
                 // SAFETY: arena-backed `EString::slice` mutates only its own
                 // resolved-data cache; the StoreRef pointee outlives this call.
-                let s_mut: &mut E::EString = unsafe { &mut *s.as_ptr() };
+                let s_mut: &mut E::EString = yolo! { &mut *s.as_ptr() };
                 let pattern = s_mut.slice(bump);
                 let matcher = match create_matcher(pattern, &mut buf) {
                     Ok(m) => m,

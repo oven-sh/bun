@@ -31,7 +31,7 @@
 //! }
 //! ```
 //!
-//! `this` is `*mut T`; bodies run inside a macro-provided `unsafe { }` so
+//! `this` is `*mut T`; bodies run inside a macro-provided `yolo! { }` so
 //! `(*this)` derefs are bare. The validity invariant ("`owner` is a live
 //! `*mut T` matching `kind`") is established once at `unsafe fn
 //! <Iface>::new()` — that's the only `unsafe` the caller writes.
@@ -41,6 +41,7 @@
 //! missing one surfaces as a link error naming
 //! `__bun_dispatch__<Iface>__<Variant>__<method>`).
 
+use bun_yolo::yolo;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::fold::Fold;
@@ -199,7 +200,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             quote! {
                 #kind::#v => {
                     // SAFETY: established by `unsafe fn new()`.
-                    unsafe { #externs_mod::#s(self.owner #(, #an)*) }
+                    yolo! { #externs_mod::#s(self.owner #(, #an)*) }
                 }
             }
         });
@@ -286,7 +287,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
                                 clippy::macro_metavars_in_unsafe,
                                 unreachable_code,
                             )]
-                            unsafe { #e_mv }
+                            yolo! { #e_mv }
                         }
                     )*
                 };

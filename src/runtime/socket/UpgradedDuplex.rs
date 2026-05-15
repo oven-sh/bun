@@ -12,6 +12,7 @@
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
 
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_uint, c_void};
 use core::ptr::NonNull;
 
@@ -102,21 +103,21 @@ impl UpgradedDuplex {
     fn on_open(this: *mut Self) {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         (this.handlers.on_open)(this.handlers.ctx);
     }
 
     fn on_data(this: *mut Self, decoded_data: &[u8]) {
         bun_output::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         (this.handlers.on_data)(this.handlers.ctx, decoded_data);
     }
 
     fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
 
         this.ssl_error = CertError {
             error_no: ssl_error.error_no,
@@ -135,7 +136,7 @@ impl UpgradedDuplex {
     fn on_close(this: *mut Self) {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         // Zig: `defer this.deinit();` — runs after the two calls below.
 
         (this.handlers.on_close)(this.handlers.ctx);
@@ -188,7 +189,7 @@ impl UpgradedDuplex {
 
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         this.reset_timeout();
 
         // Possible scenarios:
@@ -337,7 +338,7 @@ impl UpgradedDuplex {
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
-            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+            yolo! { bun_boringssl_sys::SSL_CTX_free(ctx) };
         });
         let ctx_nn =
             NonNull::new(ctx).expect("caller passes a non-null SSL_CTX* with one adopted ref");
@@ -520,7 +521,7 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = yolo! { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         if args.len >= 1 {
             let data_arg = args.ptr[0];
             if this.origin.has() {
@@ -555,7 +556,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = yolo! { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
 
         if this.wrapper.is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
@@ -572,7 +573,7 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = yolo! { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.flush();
@@ -592,7 +593,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
+        let this = yolo! { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.shutdown(true);
@@ -619,7 +620,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 #[unsafe(no_mangle)]
 pub extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
     // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe {
+    yolo! {
         (*this.cast::<UpgradedDuplex>())
             .ssl()
             .unwrap_or(core::ptr::null_mut())

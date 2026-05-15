@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::ffi::c_char;
 use core::fmt;
@@ -67,7 +68,7 @@ fn pack_bump() -> &'static bun_alloc::Arena {
     // SAFETY: `BUMP` is never dropped (thread = process lifetime in `bun pm
     // pack`), and `Arena` is `!Sync` so no cross-thread aliasing. Erase the
     // borrow to `'static` to mirror Zig's allocator-owned slices.
-    BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
+    BUMP.with(|b| yolo! { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
 }
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
@@ -88,7 +89,7 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> 
 fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_ast::Log {
     // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
     // `PackageManager::init()` (Zig: non-optional `*Log`).
-    unsafe { &mut *(*m).log }
+    yolo! { &mut *(*m).log }
 }
 /// `manager.workspace_package_json_cache` field projection via raw pointer.
 #[inline]
@@ -96,7 +97,7 @@ fn pm_workspace_cache<'a>(
     m: *mut PackageManager,
 ) -> &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache {
     // SAFETY: `m` came from `&mut PackageManager`; field disjoint from `log`.
-    unsafe { &mut (*m).workspace_package_json_cache }
+    yolo! { &mut (*m).workspace_package_json_cache }
 }
 #[inline]
 fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
@@ -234,7 +235,7 @@ impl PackCommand {
         // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed disjointly
         // (Zig passed both via the same `*PackageManager` alias).
         let load_from_disk_result = lockfile
-            .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
+            .load_from_cwd::<false>(Some(yolo! { &mut *manager_ptr }), yolo! { &mut *log_ptr });
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -1159,7 +1160,7 @@ fn add_bundled_dep(
                                 dep_subpath_buf.extend_from_slice(dep_name);
                                 dep_subpath_buf.push(0);
                                 // SAFETY: trailing NUL written above
-                                let dep_subpath: &mut ZStr = unsafe {
+                                let dep_subpath: &mut ZStr = yolo! {
                                     ZStr::from_raw_mut(
                                         dep_subpath_buf.as_mut_ptr(),
                                         dep_subpath_buf.len() - 1,
@@ -1752,7 +1753,7 @@ const fn zstr_lit(s: &'static [u8]) -> &'static ZStr {
 }
 
 /// Extension trait wrapping `*mut Archive` so existing `archive.method()` call
-/// sites compile without per-call `unsafe { &* }`.
+/// sites compile without per-call `yolo! { &* }`.
 trait ArchivePtrExt {
     fn write_set_format_pax_restricted(self) -> ArchiveResult;
     fn write_add_filter_gzip(self) -> ArchiveResult;
@@ -1881,7 +1882,7 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
     // `unbuffered_reader` slot is overwritten before any read. (Orphan rule
     // blocks an `unsafe impl Zeroable` here — both trait and generic are
     // foreign — so use the unchecked variant.)
-    let mut b: Box<BufferedFileReader> = unsafe { bun_core::boxed_zeroed_unchecked() };
+    let mut b: Box<BufferedFileReader> = yolo! { bun_core::boxed_zeroed_unchecked() };
     b.unbuffered_reader = file;
     b
 }
@@ -1963,7 +1964,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     // SAFETY: `ctx.manager` is the sole `&mut PackageManager`; CLI is
     // single-threaded and no callee retains a conflicting borrow.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let manager: &mut PackageManager = yolo! { &mut *manager_ptr };
     let log_level = manager.options.log_level;
     let bump = pack_bump();
     // PORT NOTE: `workspace_package_json_cache` and `log` are disjoint fields on
@@ -2093,7 +2094,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
     );
     // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
-    let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+    let this_transpiler = yolo! { this_transpiler.assume_init_mut() };
     // `Transpiler::env` is a process-singleton `*mut` (set by `init`); pass as
     // raw pointer so `run_package_script_foreground` can `&mut` it without
     // conflicting with our `&Transpiler` borrow.
@@ -2496,8 +2497,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
             // singletons (see `cli::command::GLOBAL_CLI_CTX`).
             // SAFETY: pointers came from `&mut` and outlive the returned value.
             return Ok(Some(Publish::Context {
-                manager: unsafe { &mut *manager_ptr },
-                command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
+                manager: yolo! { &mut *manager_ptr },
+                command_ctx: yolo! { &mut *std::ptr::from_mut(ctx.command_ctx) },
                 package_name: package_name.into(),
                 package_version: package_version.into(),
                 abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
@@ -2643,7 +2644,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         entry = archive_package_json(
             ctx,
-            unsafe { &mut *archive },
+            yolo! { &mut *archive },
             entry,
             &root_dir,
             &edited_package_json,
@@ -2721,7 +2722,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                unsafe { &mut *archive },
+                yolo! { &mut *archive },
                 entry,
                 &mut print_buf,
                 &bins,
@@ -2780,7 +2781,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                unsafe { &mut *archive },
+                yolo! { &mut *archive },
                 entry,
                 &mut print_buf,
                 &bins,
@@ -2970,8 +2971,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
         // SAFETY: see dry-run construction above — `manager`/`command_ctx` are
         // process-lifetime singletons aliased exactly as Zig's `*T` did.
         return Ok(Some(Publish::Context {
-            manager: unsafe { &mut *manager_ptr },
-            command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
+            manager: yolo! { &mut *manager_ptr },
+            command_ctx: yolo! { &mut *std::ptr::from_mut(ctx.command_ctx) },
             package_name: package_name.into(),
             package_version: package_version.into(),
             abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
@@ -3006,7 +3007,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     // for `env.map.put()` while `ctx` only holds `&Context`.
     // SAFETY: both are process-lifetime singletons; no concurrent `&mut` exists
     // while a lifecycle script runs (single-threaded CLI dispatch).
-    let command_ctx = unsafe { &mut *std::ptr::from_ref(ctx.command_ctx).cast_mut() };
+    let command_ctx = yolo! { &mut *std::ptr::from_ref(ctx.command_ctx).cast_mut() };
     let use_system_shell = command_ctx.debug.use_system_shell;
     match RunCommand::run_package_script_foreground(
         command_ctx,
@@ -3015,7 +3016,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
         abs_workspace_path,
         // SAFETY: `env` is non-null (set by `PackageManager::init` /
         // `configure_env_for_run`).
-        unsafe { &mut *env },
+        yolo! { &mut *env },
         &[],
         silent,
         use_system_shell,

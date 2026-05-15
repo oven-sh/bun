@@ -2,6 +2,7 @@
 //! For the client there is exactly one of these per HTTP-thread loop and it
 //! lives for the process; the server creates one per `Bun.serve({h3:true})`.
 
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::Loop;
@@ -91,7 +92,7 @@ impl Context {
         stream_ext: c_uint,
     ) -> Option<*mut Context> {
         // SAFETY: thin FFI forward; all args are POD, return is nullable.
-        let p = unsafe { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
+        let p = yolo! { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
         if p.is_null() { None } else { Some(p) }
     }
 
@@ -115,7 +116,7 @@ impl Context {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc: *mut PendingConnect = core::ptr::null_mut();
         // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write.
-        let rc = unsafe {
+        let rc = yolo! {
             us_quic_socket_context_connect(
                 self,
                 host.as_ptr(),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::CStr;
 
 use bun_paths::resolve_path;
@@ -195,7 +196,7 @@ impl Cp {
                             interp_ptr,
                         );
                         // SAFETY: freshly heap-allocated.
-                        unsafe { ShellCpTask::schedule(task) };
+                        yolo! { ShellCpTask::schedule(task) };
                     }
                     return Yield::suspended();
                 }
@@ -215,7 +216,7 @@ impl Cp {
         if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
+            return yolo! { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
     }
@@ -239,7 +240,7 @@ impl Cp {
                     eb.idx += 1;
                     // SAFETY: `t` is a live heap-allocated task stashed in
                     // `on_shell_cp_task_done`; not yet freed.
-                    let tref = unsafe { &*t };
+                    let tref = yolo! { &*t };
                     let ignorable = tref
                         .tgt_absolute
                         .as_ref()
@@ -256,7 +257,7 @@ impl Cp {
             match next {
                 Some((t, true)) => {
                     // SAFETY: paired with `heap::alloc` in `create()`.
-                    drop(unsafe { bun_core::heap::take(t) });
+                    drop(yolo! { bun_core::heap::take(t) });
                 }
                 Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
                 None => break,
@@ -279,7 +280,7 @@ impl Cp {
         #[cfg(windows)]
         {
             // SAFETY: `task` is a live heap-allocated task; main-thread only.
-            let tref = unsafe { &mut *task };
+            let tref = yolo! { &mut *task };
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if let Some(err) = &tref.err {
                     // Spec: cp.zig — defer the task to the ebusy phase.
@@ -319,7 +320,7 @@ impl Cp {
     /// Spec: cp.zig `printShellCpTask`.
     fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) -> Yield {
         // SAFETY: task was heap-allocated in create(); reclaim.
-        let mut task = unsafe { bun_core::heap::take(task) };
+        let mut task = yolo! { bun_core::heap::take(task) };
         // Spec: cp.zig `task.takeOutput()`. The lock is uncontended here (all
         // work-pool subtasks have finished) but the data lives inside it.
         let output = core::mem::take(&mut *task.verbose_output.lock());
@@ -501,7 +502,7 @@ impl ShellCpTask {
     pub unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
         // SAFETY: caller contract — `this` is live and exclusively owned by
         // this thread until `enqueue_to_event_loop` hands it off.
-        unsafe {
+        yolo! {
             if let Err(e) = result {
                 (*this).err = Some(ShellErr::new_sys(e));
             }
@@ -524,7 +525,7 @@ impl ShellCpTask {
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
         // may already be running.
-        unsafe {
+        yolo! {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
@@ -540,7 +541,7 @@ impl ShellCpTask {
         // is embedded in `ShellCpTask` at `TASK_OFFSET`. `this` is a live
         // heap-allocated task; the worker thread has exclusive access until
         // the bounce-back is posted.
-        unsafe {
+        yolo! {
             let this = bun_ptr::container_of::<ShellCpTask, _>(
                 task,
                 <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
@@ -562,7 +563,7 @@ impl ShellCpTask {
         // Reuse the generic `ShellTask` post-back (identical to Zig's manual
         // `concurrent_task.{js,mini}.from(...)` + enqueue).
         // SAFETY: caller contract.
-        unsafe { ShellTask::on_finish::<ShellCpTask>(this) };
+        yolo! { ShellTask::on_finish::<ShellCpTask>(this) };
     }
 
     /// Spec: cp.zig `hasTrailingSep`.
@@ -742,7 +743,7 @@ impl ShellCpTask {
                 // PORT NOTE: reshaped for borrowck — read the raw `global`
                 // field instead of `vm.global()` so the `&mut VirtualMachine`
                 // passed below doesn't overlap a `&JSGlobalObject` borrow.
-                let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };
+                let (global, vm) = yolo! { (&*(*vm_ptr).global, &mut *vm_ptr) };
                 let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
                     global,
                     args,
@@ -765,7 +766,7 @@ impl ShellCpTask {
 
     pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
+        let cmd = yolo! { (*this).cmd };
         Cp::on_shell_cp_task_done(interp, cmd, this);
     }
 }

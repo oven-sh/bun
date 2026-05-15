@@ -2,6 +2,7 @@
 //!
 //! Port of `src/js_parser/lexer.zig`.
 
+use bun_yolo::yolo;
 use core::fmt;
 
 use bun_ast as js_ast;
@@ -444,7 +445,7 @@ impl<
     type Err = Error;
     #[inline]
     fn log_mut(&mut self) -> &mut Log {
-        unsafe { self.log.as_mut() }
+        yolo! { self.log.as_mut() }
     }
     #[inline]
     fn source(&self) -> &'a Source {
@@ -491,7 +492,7 @@ lexer_impl_header! {
         // SAFETY: `self.log` was created from an `&'a mut Log` that outlives
         // `'a` (and therefore `self`). Only one `&mut Log` is materialized at a
         // time — every call site is `self.log().method(...)` with no overlap.
-        unsafe { &mut *self.log.as_ptr() }
+        yolo! { &mut *self.log.as_ptr() }
     }
 
     #[inline]
@@ -1195,7 +1196,7 @@ lexer_impl_header! {
             return -1;
         }
         // SAFETY: `self.current < len` was checked immediately above.
-        let first = unsafe { *contents.get_unchecked(self.current) };
+        let first = yolo! { *contents.get_unchecked(self.current) };
 
         self.end = self.current;
 

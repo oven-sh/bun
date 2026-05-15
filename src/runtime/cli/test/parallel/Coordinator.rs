@@ -4,6 +4,7 @@
 //! the run loop entry live in `runner.rs`; this file is the per-run state
 //! and its methods.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -92,8 +93,8 @@ impl<'a> Coordinator<'a> {
         let len = self.workers.len();
         for i in 0..len {
             // SAFETY: `i < len`; read-only inspection of `range` through *mut.
-            let v = unsafe { base.add(i) };
-            let n = unsafe { (*v).range.len() };
+            let v = yolo! { base.add(i) };
+            let n = yolo! { (*v).range.len() };
             if n > most {
                 most = n;
                 victim = Some(v);
@@ -124,7 +125,7 @@ impl<'a> Coordinator<'a> {
                     nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
                 // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
-                unsafe {
+                yolo! {
                     (*(*self.vm.event_loop()).usockets_loop()).tick_with_timeout(Some(&ts));
                 }
             } else {
@@ -147,14 +148,14 @@ impl<'a> Coordinator<'a> {
                 {
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process;
                     // FFI call; -pid targets the worker's process group.
-                    unsafe {
+                    yolo! {
                         let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
                     }
                 }
                 #[cfg(not(unix))]
                 {
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(1) };
+                    let _ = yolo! { (*p).kill(1) };
                 }
             }
         }
@@ -243,7 +244,7 @@ impl<'a> Coordinator<'a> {
             // victim has the largest *non-empty* range, so `v_ptr != w` and the
             // two `&mut Worker` are disjoint. find_steal_victim itself iterates
             // via raw pointers and never forms a `&mut Worker` for `w`'s slot.
-            let v = unsafe { &mut *v_ptr };
+            let v = yolo! { &mut *v_ptr };
             if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
@@ -275,7 +276,7 @@ impl<'a> Coordinator<'a> {
         for i in 0..n {
             // SAFETY: `i < spawned_count <= workers.len()`; access through
             // *mut so no `&mut Worker` aliases the caller's `w`.
-            unsafe {
+            yolo! {
                 let other = base.add(i);
                 if (*other).alive && (*other).inflight.is_none() {
                     (*other).shutdown();
@@ -570,23 +571,23 @@ impl<'a> Coordinator<'a> {
         for i in 0..n {
             // SAFETY: `i < spawned_count <= workers.len()`; field reads
             // through *mut so no `&mut Worker` aliases the caller's `w`.
-            let other = unsafe { base.add(i) };
-            if unsafe { !(*other).alive } {
+            let other = yolo! { base.add(i) };
+            if yolo! { !(*other).alive } {
                 continue;
             }
-            if let Some(p) = unsafe { (*other).process } {
+            if let Some(p) = yolo! { (*other).process } {
                 #[cfg(unix)]
                 {
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process;
                     // FFI call; -pid targets the worker's process group.
-                    unsafe {
+                    yolo! {
                         let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
                     }
                 }
                 #[cfg(not(unix))]
                 {
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(1) };
+                    let _ = yolo! { (*p).kill(1) };
                 }
             }
         }
@@ -609,8 +610,8 @@ impl<'a> Coordinator<'a> {
         for i in 0..len {
             // SAFETY: `i < len`; range mutation through *mut so no
             // `&mut Worker` aliases the caller's live `w`.
-            let wp = unsafe { base.add(i) };
-            while let Some(idx) = unsafe { (*wp).range.pop_front() } {
+            let wp = yolo! { base.add(i) };
+            while let Some(idx) = yolo! { (*wp).range.pop_front() } {
                 Output::pretty_error(format_args!(
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
                     // PORT NOTE: reshaped for borrowck — inline rel_path body
@@ -641,7 +642,7 @@ impl<'a> Coordinator<'a> {
     pub fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
         use bun_sys::windows;
         // SAFETY: Win32 FFI calls.
-        unsafe {
+        yolo! {
             let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null_mut());
             if job.is_null() {
                 return None;
@@ -779,7 +780,7 @@ pub mod abort_handler {
             // any read in uninstall(), single-threaded coordinator setup.
             // PORT NOTE: `&raw mut` + cast (MaybeUninit<T> is repr(transparent))
             // avoids creating &mut to a `static mut` (Rust 2024 hard error).
-            unsafe {
+            yolo! {
                 // SAFETY: POD, zero-valid — sigaction with handler=0/flags=0 is SIG_DFL.
                 let mut act: libc::sigaction = bun_core::ffi::zeroed();
                 act.sa_sigaction = posix_handler as *const () as usize;
@@ -812,7 +813,7 @@ pub mod abort_handler {
         {
             // SAFETY: PREV_* were initialized by install().
             // PORT NOTE: `&raw const` + cast avoids creating & to a `static mut`.
-            unsafe {
+            yolo! {
                 libc::sigaction(
                     libc::SIGINT,
                     PREV_INT.get().cast::<libc::sigaction>(),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
@@ -32,7 +33,7 @@ impl ListenSocket {
         // SAFETY: ListenSocket is layout-compatible with us_socket_t on the C side
         // (a listen socket IS a us_socket_t); Zig does `@ptrCast(this)`. The returned
         // borrow reborrows `&mut self` exclusively — no alias is live while it exists.
-        unsafe { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
+        yolo! { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
     }
 
     pub fn socket<const IS_SSL: bool>(
@@ -47,13 +48,13 @@ impl ListenSocket {
     /// Group accepted sockets are linked into.
     pub fn group(&mut self) -> &mut SocketGroup {
         // SAFETY: self is a valid listen socket; C returns a non-null group.
-        unsafe { &mut *us_listen_socket_group(self) }
+        yolo! { &mut *us_listen_socket_group(self) }
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
         // SAFETY: caller guarantees the ext storage was sized/aligned for T at
         // group creation time (mirrors Zig `@ptrCast(@alignCast(...))`).
-        unsafe { &mut *us_listen_socket_ext(self).cast::<T>() }
+        yolo! { &mut *us_listen_socket_ext(self).cast::<T>() }
     }
 
     pub fn fd(&mut self) -> Fd {
@@ -92,12 +93,12 @@ impl ListenSocket {
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
         // (C up-refs and stores it); `user` is an opaque caller-owned pointer
         // stored verbatim by C.
-        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
+        yolo! { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
     }
 
     pub fn remove_server_name(&mut self, hostname: &core::ffi::CStr) {
         // SAFETY: self and hostname are valid for the duration of the call.
-        unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
+        yolo! { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
     /// Returns the raw userdata pointer registered via `add_server_name` for
@@ -111,7 +112,7 @@ impl ListenSocket {
     ) -> Option<NonNull<T>> {
         // SAFETY: self and hostname valid; caller guarantees the stored userdata
         // is a *T (mirrors Zig `@ptrCast(@alignCast(...))`).
-        let p = unsafe { us_listen_socket_find_server_name_userdata(self, hostname.as_ptr()) };
+        let p = yolo! { us_listen_socket_find_server_name_userdata(self, hostname.as_ptr()) };
         NonNull::new(p.cast::<T>())
     }
 

@@ -168,6 +168,7 @@ pub mod uv_e {
     crate::__uv_e_rows!(__v);
 }
 
+use bun_yolo::yolo;
 use super::GetErrno;
 
 // raw system calls from std.os.linux.* will return usize
@@ -183,7 +184,7 @@ impl GetErrno for usize {
             0
         };
         // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
-        unsafe { core::mem::transmute::<u16, E>(int as u16) }
+        yolo! { core::mem::transmute::<u16, E>(int as u16) }
     }
 }
 

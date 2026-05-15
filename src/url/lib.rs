@@ -2,6 +2,7 @@
 #![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -118,7 +119,7 @@ pub mod whatwg {
         // to hand C++ only the leading ASCII prefix (latin1-safe).
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
         // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
-        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
+        let len = yolo! { URL__originLength(slice.as_ptr(), first_non_ascii) };
         if len == 0 {
             return None;
         }
@@ -301,12 +302,12 @@ impl<'a> URL<'a> {
         // value is bitwise unchanged; only the borrow-checker tag widens.
         // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
         // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
-        // so the dozen call sites below need no per-line `unsafe { }`.
+        // so the dozen call sites below need no per-line `yolo! { }`.
         #[inline(always)]
         unsafe fn d<'b>(s: &[u8]) -> &'b [u8] {
             // SAFETY: caller contract on `erase_lifetime` — every slice the
             // returned `URL<'b>` references outlives `'b`.
-            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+            yolo! { &*core::ptr::from_ref::<[u8]>(s) }
         }
         URL {
             hash: d(self.hash),
@@ -348,7 +349,7 @@ impl<'a> URL<'a> {
                     });
                 let ptr = start as *const u8;
                 // SAFETY: start..end is a subrange of self.href (both slices verified above)
-                return unsafe { core::slice::from_raw_parts(ptr, len) };
+                return yolo! { core::slice::from_raw_parts(ptr, len) };
             }
             return self.host;
         }
@@ -932,9 +933,9 @@ impl Clone for QueryStringMap {
         // nothing-needs-decoding fast path borrows the caller's query_string),
         // keep it as-is — both clones borrow the same external slice.
         let slice = if !self.buffer.is_empty()
-            && bun_alloc::is_slice_in_buffer(unsafe { &*self.slice }, &self.buffer)
+            && bun_alloc::is_slice_in_buffer(yolo! { &*self.slice }, &self.buffer)
         {
-            let len = unsafe { &*self.slice }.len();
+            let len = yolo! { &*self.slice }.len();
             &raw const buffer[..len]
         } else {
             self.slice
@@ -974,7 +975,7 @@ impl QueryStringMap {
     pub fn str(&self, ptr: api::StringPointer) -> &[u8] {
         // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
         // `self.buffer` or an external query_string the caller keeps alive).
-        let slice = unsafe { &*self.slice };
+        let slice = yolo! { &*self.slice };
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
     }
 

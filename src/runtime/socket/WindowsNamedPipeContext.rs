@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
@@ -58,7 +59,7 @@ pub type RefCount = bun_ptr::IntrusiveRc<WindowsNamedPipeContext>;
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from deref() when count hits zero; `this` still live until deinit_in_next_tick fires.
     // Forward the raw pointer — do NOT autoref to `&mut *this` (see `deinit_in_next_tick`).
-    unsafe { WindowsNamedPipeContext::deinit_in_next_tick(this) };
+    yolo! { WindowsNamedPipeContext::deinit_in_next_tick(this) };
 }
 
 #[repr(u8)]
@@ -153,27 +154,27 @@ impl WindowsNamedPipeContext {
     fn on_open(this: *mut Self) {
         // SAFETY: `this` is the live ctx ptr registered in `create()`; `is_open`
         // and `socket` are disjoint from the caller's `&mut named_pipe`.
-        unsafe { (*this).is_open = true };
-        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        yolo! { (*this).is_open = true };
+        let pipe = yolo! { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: `s` is kept alive by the +1 ref taken in `create()`.
         // `on_open` takes `*mut Self` (noalias re-entrancy) — no `&mut`.
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+        match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
             NewSocket::on_open(s, socket_from_named_pipe::<SSL>(pipe))
         });
     }
 
     fn on_data(this: *mut Self, decoded_data: &[u8]) {
         // SAFETY: see `on_open`.
-        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+        let pipe = yolo! { ptr::addr_of_mut!((*this).named_pipe) };
+        match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
             NewSocket::on_data(s, socket_from_named_pipe::<SSL>(pipe), decoded_data)
         });
     }
 
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
-        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+        let pipe = yolo! { ptr::addr_of_mut!((*this).named_pipe) };
+        match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
             _ = NewSocket::on_handshake(
                 s,
                 socket_from_named_pipe::<SSL>(pipe),
@@ -185,16 +186,16 @@ impl WindowsNamedPipeContext {
 
     fn on_end(this: *mut Self) {
         // SAFETY: see `on_open`.
-        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+        let pipe = yolo! { ptr::addr_of_mut!((*this).named_pipe) };
+        match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
             NewSocket::on_end(s, socket_from_named_pipe::<SSL>(pipe))
         });
     }
 
     fn on_writable(this: *mut Self) {
         // SAFETY: see `on_open`.
-        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+        let pipe = yolo! { ptr::addr_of_mut!((*this).named_pipe) };
+        match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
             NewSocket::on_writable(s, socket_from_named_pipe::<SSL>(pipe))
         });
     }
@@ -202,14 +203,14 @@ impl WindowsNamedPipeContext {
     fn on_error(this: *mut Self, err: SysError) {
         // SAFETY: see `on_open`. `is_open`/`socket` are Copy; `global_this` is a
         // disjoint field so a short-lived `&` does not touch `named_pipe`'s stack.
-        if unsafe { (*this).is_open } {
-            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| {
-                let js_err = err.to_js(unsafe { &(*this).global_this });
+        if yolo! { (*this).is_open } {
+            match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| {
+                let js_err = err.to_js(yolo! { &(*this).global_this });
                 // SAFETY: see `on_open`.
-                unsafe { (*s).handle_error(js_err) };
+                yolo! { (*s).handle_error(js_err) };
             });
         } else {
-            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
                 _ = NewSocket::handle_connect_error(s, err.errno as i32)
             });
         }
@@ -217,8 +218,8 @@ impl WindowsNamedPipeContext {
 
     fn on_timeout(this: *mut Self) {
         // SAFETY: see `on_open`.
-        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+        let pipe = yolo! { ptr::addr_of_mut!((*this).named_pipe) };
+        match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
             NewSocket::on_timeout(s, socket_from_named_pipe::<SSL>(pipe))
         });
     }
@@ -226,26 +227,26 @@ impl WindowsNamedPipeContext {
     fn on_close(this: *mut Self) {
         // SAFETY: see `on_open`. Snapshot `socket` BEFORE clearing it, then match
         // the snapshot — the macro must not read `(*this).socket` directly here.
-        let socket = unsafe { (*this).socket };
-        unsafe { (*this).socket = SocketType::None };
-        let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
+        let socket = yolo! { (*this).socket };
+        yolo! { (*this).socket = SocketType::None };
+        let pipe = yolo! { ptr::addr_of_mut!((*this).named_pipe) };
         // SAFETY: `s` held a +1 ref from `create()`; release it after dispatch.
-        match_socket!(socket, |s: NewSocket<SSL>| unsafe {
+        match_socket!(socket, |s: NewSocket<SSL>| yolo! {
             _ = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
             (*s).deref();
         });
         // SAFETY: `this` is the live ctx pointer registered in create();
         // releasing the named-pipe's ref may schedule deinit.
-        unsafe { Self::deref(this) };
+        yolo! { Self::deref(this) };
     }
 
     fn run_event(this: *mut Self) {
         // SAFETY: called from AnyTask; `this` is the live ctx pointer registered in create()
-        match unsafe { (*this).task_event } {
+        match yolo! { (*this).task_event } {
             EventState::Deinit => {
                 // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
                 // and this deferred task is the sole remaining owner. Drop runs field destructors.
-                drop(unsafe { bun_core::heap::take(this) });
+                drop(yolo! { bun_core::heap::take(this) });
             }
             EventState::None => panic!("Invalid event state"),
         }
@@ -262,14 +263,14 @@ impl WindowsNamedPipeContext {
     unsafe fn deinit_in_next_tick(this: *mut Self) {
         // SAFETY: `this` is live; `task_event`/`vm`/`task` are disjoint from
         // the caller's `&mut named_pipe`.
-        debug_assert!(unsafe { (*this).task_event } != EventState::Deinit);
-        unsafe { (*this).task_event = EventState::Deinit };
+        debug_assert!(yolo! { (*this).task_event } != EventState::Deinit);
+        yolo! { (*this).task_event = EventState::Deinit };
         // SAFETY: `vm` is the process-global VirtualMachine; `enqueue_task` mutates
         // its task queue. We hold `&'static VirtualMachine` (JSC_BORROW) so cast
         // through a raw pointer to obtain the `&mut` the upstream API requires.
-        let vm = ptr::from_ref::<VirtualMachine>(unsafe { (*this).vm }).cast_mut();
-        let task = unsafe { ptr::addr_of_mut!((*this).task) };
-        unsafe { (*vm).enqueue_task(Task::init(task)) };
+        let vm = ptr::from_ref::<VirtualMachine>(yolo! { (*this).vm }).cast_mut();
+        let task = yolo! { ptr::addr_of_mut!((*this).task) };
+        yolo! { (*vm).enqueue_task(Task::init(task)) };
     }
 
     pub fn create(
@@ -301,11 +302,11 @@ impl WindowsNamedPipeContext {
             // autoref `&Self` over the whole struct, but `WindowsNamedPipe::r#ref`
             // holds `&mut (*this).named_pipe` across this callback (same
             // Stacked-Borrows constraint as the `on_*` handlers above).
-            ref_ctx: |p| unsafe {
+            ref_ctx: |p| yolo! {
                 let rc = &*ptr::addr_of!((*p.cast::<Self>()).ref_count);
                 rc.set(rc.get() + 1);
             },
-            deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },
+            deref_ctx: |p| yolo! { Self::deref(p.cast::<Self>()) },
             on_open: |p| Self::on_open(p.cast::<Self>()),
             on_data: |p, d| Self::on_data(p.cast::<Self>(), d),
             on_handshake: |p, ok, err| Self::on_handshake(p.cast::<Self>(), ok, err),
@@ -342,7 +343,7 @@ impl WindowsNamedPipeContext {
 
         // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
         // every field exactly once before any read.
-        unsafe {
+        yolo! {
             ptr::write(
                 this,
                 WindowsNamedPipeContext {
@@ -361,7 +362,7 @@ impl WindowsNamedPipeContext {
         // Zig: `switch (socket) { .tls => |tls| tls.ref(), .tcp => |tcp| tcp.ref(), ... }`
         // — take a +1 intrusive ref so the wrapped JS socket outlives this context.
         // SAFETY: caller passes a live socket pointer; `ref_` only bumps the count.
-        match_socket!(socket, |s: NewSocket<SSL>| unsafe { (*s).ref_() });
+        match_socket!(socket, |s: NewSocket<SSL>| yolo! { (*s).ref_() });
 
         this
     }
@@ -386,20 +387,20 @@ impl WindowsNamedPipeContext {
         let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
-            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
                 _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32)
             });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
-            unsafe { Self::deref(this) };
+            yolo! { Self::deref(this) };
         });
 
         // SAFETY: `this` is live and exclusively accessed here
-        unsafe { (**guard).named_pipe.open(fd, ssl_config, owned_ctx) }?;
+        yolo! { (**guard).named_pipe.open(fd, ssl_config, owned_ctx) }?;
 
         let this = scopeguard::ScopeGuard::into_inner(guard);
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
-        Ok(unsafe { ptr::addr_of_mut!((*this).named_pipe) })
+        Ok(yolo! { ptr::addr_of_mut!((*this).named_pipe) })
     }
 
     /// See `open` for `owned_ctx` ownership.
@@ -416,16 +417,16 @@ impl WindowsNamedPipeContext {
         let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
-            match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
+            match_socket!(yolo! { (*this).socket }, |s: NewSocket<SSL>| yolo! {
                 _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32)
             });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
-            unsafe { Self::deref(this) };
+            yolo! { Self::deref(this) };
         });
 
         // SAFETY: `this` is live and exclusively accessed here
-        let named_pipe = unsafe { &mut (**guard).named_pipe };
+        let named_pipe = yolo! { &mut (**guard).named_pipe };
 
         if path[path.len() - 1] == 0 {
             // is already null terminated
@@ -446,7 +447,7 @@ impl WindowsNamedPipeContext {
 
         let this = scopeguard::ScopeGuard::into_inner(guard);
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
-        Ok(unsafe { ptr::addr_of_mut!((*this).named_pipe) })
+        Ok(yolo! { ptr::addr_of_mut!((*this).named_pipe) })
     }
 }
 
@@ -457,7 +458,7 @@ impl Drop for WindowsNamedPipeContext {
         // SAFETY: +1 ref taken in `create()`; this is the matching release.
         match_socket!(
             core::mem::replace(&mut self.socket, SocketType::None),
-            |s: NewSocket<SSL>| unsafe { (*s).deref() }
+            |s: NewSocket<SSL>| yolo! { (*s).deref() }
         );
         // `named_pipe` drops via field destructor after this.
     }

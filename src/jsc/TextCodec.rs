@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use crate::mark_binding;
@@ -43,7 +44,7 @@ impl TextCodec {
     pub fn create(encoding: &[u8]) -> Option<NonNull<TextCodec>> {
         mark_binding!();
         // SAFETY: encoding.ptr is valid for encoding.len bytes.
-        unsafe { Bun__createTextCodec(encoding.as_ptr(), encoding.len()) }
+        yolo! { Bun__createTextCodec(encoding.as_ptr(), encoding.len()) }
     }
 
     // PORT NOTE: FFI-owned opaque; constructed/destroyed across FFI, so explicit
@@ -51,7 +52,7 @@ impl TextCodec {
     pub unsafe fn destroy(this: *mut TextCodec) {
         mark_binding!();
         // SAFETY: caller guarantees `this` was returned by `create` and not yet freed.
-        unsafe { Bun__deleteTextCodec(this) }
+        yolo! { Bun__deleteTextCodec(this) }
     }
 
     pub fn decode(&mut self, data: &[u8], flush: bool, stop_on_error: bool) -> DecodeResult {
@@ -59,7 +60,7 @@ impl TextCodec {
         let mut saw_error: bool = false;
         // SAFETY: `self` is a valid live codec; `data` valid for `data.len()` bytes;
         // `saw_error` is a valid out-pointer for the duration of the call.
-        let result = unsafe {
+        let result = yolo! {
             Bun__decodeWithTextCodec(
                 self,
                 data.as_ptr(),
@@ -81,19 +82,19 @@ impl TextCodec {
     pub fn is_supported(encoding: &[u8]) -> bool {
         mark_binding!();
         // SAFETY: encoding.ptr is valid for encoding.len bytes.
-        unsafe { Bun__isEncodingSupported(encoding.as_ptr(), encoding.len()) }
+        yolo! { Bun__isEncodingSupported(encoding.as_ptr(), encoding.len()) }
     }
 
     pub fn get_canonical_encoding_name(encoding: &[u8]) -> Option<&'static [u8]> {
         mark_binding!();
         let mut len: usize = 0;
         // SAFETY: encoding.ptr is valid for encoding.len bytes; `len` is a valid out-pointer.
-        let name = unsafe {
+        let name = yolo! {
             Bun__getCanonicalEncodingName(encoding.as_ptr(), encoding.len(), &raw mut len)
         }?;
         // SAFETY: C++ returns a pointer into static encoding-name table data, valid for `len` bytes
         // and for the lifetime of the program.
-        Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })
+        Some(yolo! { bun_core::ffi::slice(name.as_ptr(), len) })
     }
 }
 

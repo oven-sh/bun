@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
 
@@ -34,7 +35,7 @@ impl ImmediateObject {
         // SAFETY: per fn contract — `this` is live; `internals` is an embedded
         // field. Do NOT form `&mut *this` (the body may `deref()` and free).
         // `run_immediate_task` takes `*mut Self` (noalias re-entrancy).
-        unsafe {
+        yolo! {
             TimerObjectInternals::run_immediate_task(core::ptr::addr_of_mut!((*this).internals), vm)
         }
     }

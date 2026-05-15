@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -267,7 +268,7 @@ impl FetchTasklet {
     #[inline]
     fn from_ctx<'a>(ctx: *mut c_void) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
-        unsafe { bun_ptr::callback_ctx::<FetchTasklet>(ctx) }
+        yolo! { bun_ptr::callback_ctx::<FetchTasklet>(ctx) }
     }
 
     /// Recover `&mut Self` from a `*mut FetchTasklet` callback arg.
@@ -282,14 +283,14 @@ impl FetchTasklet {
     #[inline]
     fn from_raw_mut<'a>(this: *mut FetchTasklet) -> &'a mut Self {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *this }
+        yolo! { &mut *this }
     }
     /// Shared variant of [`from_raw_mut`] for paths that only read atomics
     /// (`ref_count`, `is_shutting_down`) before deciding whether to upgrade.
     #[inline]
     fn from_raw_ref<'a>(this: *mut FetchTasklet) -> &'a Self {
         // SAFETY: see [`from_raw_mut`] INVARIANT.
-        unsafe { &*this }
+        yolo! { &*this }
     }
 
     /// Enqueue a concurrent task on the JS-thread event loop.
@@ -342,7 +343,7 @@ impl FetchTasklet {
     #[inline]
     fn sink_mut(&mut self) -> Option<&mut ResumableSink> {
         // SAFETY: see block comment above. JS-thread-only.
-        self.sink.map(|p| unsafe { &mut *p })
+        self.sink.map(|p| yolo! { &mut *p })
     }
 
     /// Mutable access to the request-body streaming buffer while `Some` (this
@@ -357,29 +358,29 @@ impl FetchTasklet {
         // inside `ThreadSafeStreamBuffer` serialises cross-thread `buffer`
         // access, and `callback` is main-thread-only.
         self.request_body_streaming_buffer
-            .map(|p| unsafe { &mut *p.as_ptr() })
+            .map(|p| yolo! { &mut *p.as_ptr() })
     }
 
     pub fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the interior-mutable
         // atomic counter.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
 
     pub fn deref(this: *mut FetchTasklet) {
         // SAFETY: caller holds a ref; `this` is a live heap allocation from `get()`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        yolo! { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     pub fn deref_from_thread(this: *mut FetchTasklet) {
         // SAFETY: caller holds a ref; `this` is a live heap allocation from `get()`.
-        if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
+        if !yolo! { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
         }
         let self_ = Self::from_raw_ref(this);
         if self_.javascript_vm.is_shutting_down() {
             // SAFETY: last ref; exclusive access
-            unsafe { FetchTasklet::deinit(this) };
+            yolo! { FetchTasklet::deinit(this) };
             return;
         }
         // this is really unlikely to happen, but can happen
@@ -394,7 +395,7 @@ impl FetchTasklet {
     // (cycle-broken erased error); Zig coerced `error{}!void` automatically.
     fn deinit_callback(this: *mut FetchTasklet) -> ElJsResult<()> {
         // SAFETY: enqueued with last ref; exclusive access on main thread
-        unsafe { FetchTasklet::deinit(this) };
+        yolo! { FetchTasklet::deinit(this) };
         Ok(())
     }
 
@@ -411,7 +412,7 @@ impl FetchTasklet {
             // by `js_this` and the cached `ondrain` closure (+ stream graph) can
             // be collected. `detach_js` runs no JS callbacks, so it is safe even
             // though this runs during `deinit`.
-            unsafe {
+            yolo! {
                 (*sink).detach_js();
                 ResumableFetchSink::deref_(sink);
             }
@@ -420,7 +421,7 @@ impl FetchTasklet {
             // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;
             // this side holds one of the two initial refs. Mutex guards cross-thread access
             // to `buffer`, and `callback` is only touched on the main thread (here).
-            unsafe {
+            yolo! {
                 (*buffer.as_ptr()).clear_drain_callback();
                 ThreadSafeStreamBuffer::deref(buffer.as_ptr());
             }
@@ -482,10 +483,10 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "deinit");
 
         // SAFETY: caller contract — `this` is live with ref_count == 0.
-        unsafe { (*this).ref_count.assert_no_refs() };
+        yolo! { (*this).ref_count.assert_no_refs() };
 
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
-        let mut boxed = unsafe { bun_core::heap::take(this) };
+        let mut boxed = yolo! { bun_core::heap::take(this) };
         boxed.clear_data();
         // self.http: Option<Box<AsyncHTTP>> dropped here automatically
         drop(boxed);
@@ -519,7 +520,7 @@ impl FetchTasklet {
     #[inline]
     fn current_response_mut<'a>(&self) -> Option<&'a mut Response> {
         // SAFETY: see INVARIANT above.
-        self.get_current_response().map(|r| unsafe { &mut *r })
+        self.get_current_response().map(|r| yolo! { &mut *r })
     }
 
     pub fn start_request_stream(&mut self) {
@@ -565,7 +566,7 @@ impl FetchTasklet {
             if buffer_reset.get() {
                 // SAFETY: `self` outlives this defer (it's a local in this fn) and no other
                 // borrow of scheduled_response_buffer is live at scope exit / `?` unwind.
-                unsafe { (*scheduled_buf).reset() };
+                yolo! { (*scheduled_buf).reset() };
             }
         }
 
@@ -663,7 +664,7 @@ impl FetchTasklet {
                 // done resolve body
                 let old = core::mem::replace(
                     // SAFETY: just obtained from live `response`; uniquely accessed here.
-                    unsafe { &mut *body },
+                    yolo! { &mut *body },
                     BodyValue::InternalBlob(InternalBlob {
                         bytes: scheduled_response_buffer,
                         was_string: false,
@@ -673,7 +674,7 @@ impl FetchTasklet {
                     FetchTasklet,
                     "onBodyReceived body_value length={}",
                     // SAFETY: see above.
-                    match unsafe { &*body } {
+                    match yolo! { &*body } {
                         BodyValue::InternalBlob(b) => b.bytes.len(),
                         _ => 0,
                     }
@@ -693,7 +694,7 @@ impl FetchTasklet {
                     // now; narrow back to the real `JsTerminated` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
-                    BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
+                    BodyValue::resolve(&mut old, yolo! { &mut *body }, &self.global_this, headers)
                         .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
                 }
             }
@@ -923,7 +924,7 @@ impl FetchTasklet {
         impl Holder {
             fn resolve(self_: *mut Holder) -> JsTerminatedResult<()> {
                 // SAFETY: allocated via heap::alloc below; consumed once
-                let mut self_ = unsafe { bun_core::heap::take(self_) };
+                let mut self_ = yolo! { bun_core::heap::take(self_) };
                 // resolve the promise
                 let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
@@ -937,7 +938,7 @@ impl FetchTasklet {
 
             fn reject(self_: *mut Holder) -> JsTerminatedResult<()> {
                 // SAFETY: allocated via heap::alloc below; consumed once
-                let mut self_ = unsafe { bun_core::heap::take(self_) };
+                let mut self_ = yolo! { bun_core::heap::take(self_) };
                 // reject the promise
                 let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
@@ -966,7 +967,7 @@ impl FetchTasklet {
             task: AnyTask::default(),
         }));
         // SAFETY: holder is valid until consumed by resolve/reject
-        unsafe {
+        yolo! {
             (*holder).task = AnyTask::from_typed(
                 holder,
                 if success {
@@ -990,7 +991,7 @@ impl FetchTasklet {
                 let cert = &certificate_info.cert;
                 let mut cert_ptr = cert.as_ptr();
                 // SAFETY: cert is a valid DER buffer; d2i_X509 reads up to cert.len() bytes
-                let x509 = unsafe {
+                let x509 = yolo! {
                     d2i_X509(
                         core::ptr::null_mut(),
                         &raw mut cert_ptr,
@@ -999,9 +1000,9 @@ impl FetchTasklet {
                 };
                 if !x509.is_null() {
                     let global_object = self.global_this;
-                    let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
+                    let _x509_guard = scopeguard::guard(x509, |x| yolo! { X509_free(x) });
                     // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
-                    let js_cert = match X509::to_js(unsafe { &mut *x509 }, &global_object) {
+                    let js_cert = match X509::to_js(yolo! { &mut *x509 }, &global_object) {
                         Ok(v) => v,
                         Err(e) => {
                             match e {
@@ -1496,7 +1497,7 @@ impl FetchTasklet {
         Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }),
+                headers: Some(yolo! { HeadersRef::adopt(headers) }),
                 status_code,
                 status_text: status_text.into(),
                 ..Default::default()
@@ -1660,8 +1661,8 @@ impl FetchTasklet {
                     // doesn't tie `url`'s lifetime to the `fetch_tasklet` stack binding,
                     // which is moved into `heap::alloc` below.
                     let buf_ptr: *const [u8] = &raw const *fetch_tasklet.url_proxy_buffer;
-                    url = ZigURL::parse(unsafe { &(&*buf_ptr)[0..old_url_len] });
-                    proxy = Some(ZigURL::parse(unsafe { &(&*buf_ptr)[old_url_len..] }));
+                    url = ZigURL::parse(yolo! { &(&*buf_ptr)[0..old_url_len] });
+                    proxy = Some(ZigURL::parse(yolo! { &(&*buf_ptr)[old_url_len..] }));
                     // TODO(port): self-referential borrow into url_proxy_buffer; Phase B needs raw ptr or owned URL
                 } else {
                     proxy = Some(env_proxy);
@@ -1680,7 +1681,7 @@ impl FetchTasklet {
 
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
         // SAFETY: just allocated; exclusive access until returned
-        let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
+        let fetch_tasklet = yolo! { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
         // PORT NOTE: `AsyncHTTP::init` takes several `&'static [u8]` borrows
@@ -1701,15 +1702,15 @@ impl FetchTasklet {
         // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
         // owner so the widen is grep-able until then.
         let headers_buf: &'static [u8] =
-            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
+            yolo! { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
         let request_body_slice: &'static [u8] =
-            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
+            yolo! { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
         let hostname: Option<&'static [u8]> = fetch_tasklet
             .hostname
             .as_deref()
             // SAFETY: see block note above — same `FetchTasklet` owner.
-            .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
+            .map(|s| yolo! { bun_ptr::Interned::assume(s) }.as_bytes());
         let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
         // PORT NOTE: Zig passed `fetch_options.headers.entries` by value (shallow
         // struct copy → shared backing storage). `MultiArrayList` in Rust owns its
@@ -1763,7 +1764,7 @@ impl FetchTasklet {
             let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
             // SAFETY: fresh heap allocation from `ThreadSafeStreamBuffer::new` (heap::alloc);
             // exclusively owned here until shared below.
-            unsafe {
+            yolo! {
                 (*buffer).set_drain_callback::<FetchTasklet>(
                     FetchTasklet::on_write_request_data_drain,
                     fetch_tasklet_ptr,
@@ -2032,7 +2033,7 @@ impl FetchTasklet {
             .http
             .as_mut()
             .unwrap()
-            .sync_progress_from(unsafe { &*async_http });
+            .sync_progress_from(yolo! { &*async_http });
 
         bun_output::scoped_log!(
             FetchTasklet,
@@ -2060,7 +2061,7 @@ impl FetchTasklet {
         // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
         // in `self.response_buffer` for the FetchTasklet's lifetime). Zig had
         // no lifetime here; widen `'_` → `'static` to store it.
-        task_ref.result = unsafe { result.detach_lifetime() };
+        task_ref.result = yolo! { result.detach_lifetime() };
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;
@@ -2161,7 +2162,7 @@ impl FetchTasklet {
         let this = self;
         if let Some(response) = this.native_response {
             // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
-            let body = unsafe { (*response).get_body_value() };
+            let body = yolo! { (*response).get_body_value() };
             // Three scenarios:
             //
             // 1. We are streaming, in which case we should not ignore the body.

@@ -6,6 +6,7 @@
     clippy::needless_range_loop
 )]
 #![warn(unused_must_use)]
+use bun_yolo::yolo;
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
@@ -84,7 +85,7 @@ impl<'a> ImportScanner<'a> {
                     // nothing in this match arm reallocates that list.
                     macro_rules! record {
                         () => {
-                            unsafe { &mut *record }
+                            yolo! { &mut *record }
                         };
                     }
 
@@ -242,7 +243,7 @@ impl<'a> ImportScanner<'a> {
                                     // (its fields are all POD; arena-owned, never dropped).
                                     if items_end != idx {
                                         // SAFETY: items_end < idx < len; non-overlapping.
-                                        unsafe {
+                                        yolo! {
                                             core::ptr::copy_nonoverlapping(
                                                 items.as_ptr().add(idx),
                                                 items.as_mut_ptr().add(items_end),

@@ -1,5 +1,6 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
+use bun_yolo::yolo;
 use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ffi::c_void;
 
@@ -534,7 +535,7 @@ pub mod js_bundler {
 
                     let is_last = i == (length as usize).saturating_sub(1);
                     // SAFETY: bun_plugins is a valid pointer created/stored above
-                    let mut plugin_result = unsafe {
+                    let mut plugin_result = yolo! {
                         (*bun_plugins).add_plugin(
                             function,
                             config,
@@ -1011,7 +1012,7 @@ pub mod js_bundler {
 
             if let Some(define) = config.get_own_object(global_this, "define")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
-                let define_ref = unsafe { &*define };
+                let define_ref = yolo! { &*define };
                 let mut define_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     define_ref,
@@ -1052,7 +1053,7 @@ pub mod js_bundler {
 
             if let Some(loaders) = config.get_own_object(global_this, "loader")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
-                let loaders_ref = unsafe { &*loaders };
+                let loaders_ref = yolo! { &*loaders };
                 let mut loader_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     loaders_ref,
@@ -1333,7 +1334,7 @@ pub mod js_bundler {
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
         // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-        let event_loop = unsafe { (*vm).event_loop() };
+        let event_loop = yolo! { (*vm).event_loop() };
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
@@ -1349,7 +1350,7 @@ pub mod js_bundler {
             .map_err(|_| JsError::OutOfMemory)?;
         // SAFETY: `completion` is the freshly-boxed allocation returned above;
         // sole owner on the JS thread until enqueued task runs.
-        unsafe {
+        yolo! {
             (*completion).promise = jsc::JSPromiseStrong::init(global_this);
             Ok((*completion).promise.value())
         }
@@ -1387,7 +1388,7 @@ pub mod js_bundler {
     fn bv2_mut<'a>(bv2: *mut BundleV2<'static>) -> &'a mut BundleV2<'static> {
         // SAFETY: see fn doc — live backref (owner-creates-child), single
         // JS-thread, disjoint heap from the `Resolve`/`Load` callers borrow.
-        unsafe { &mut *bv2 }
+        yolo! { &mut *bv2 }
     }
 
     /// `&mut Plugin` for the live `BundleV2` backref stored on `Resolve`/`Load`.
@@ -1402,7 +1403,7 @@ pub mod js_bundler {
     #[inline]
     fn bv2_plugin<'a>(bv2: *mut BundleV2<'static>) -> &'a mut Plugin {
         // SAFETY: see fn doc — `plugins.is_some()`, disjoint heap.
-        unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
+        yolo! { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
     // TODO(port): move to runtime_sys
@@ -1415,7 +1416,7 @@ pub mod js_bundler {
         external_value: JSValue,
     ) {
         // SAFETY: called from C++ with valid Resolve pointer
-        let resolve = unsafe { &mut *resolve };
+        let resolve = yolo! { &mut *resolve };
         if path_value.is_empty_or_undefined_or_null()
             || namespace_value.is_empty_or_undefined_or_null()
         {
@@ -1478,7 +1479,7 @@ pub mod js_bundler {
             // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
             // points at a live `AnyEventLoop` owned by the bundle thread /
             // runtime for the duration of the bundle.
-            unsafe {
+            yolo! {
                 let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
                 // SAFETY: write provenance from `ParseTask::init`; bundle outlives plugin.
                 let any_loop = ctx
@@ -1517,7 +1518,7 @@ pub mod js_bundler {
         // SAFETY: callback contract — `load` was passed as the `Context` arg to
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
         // `BundleV2` backref the mini loop's tick supplies as `ParentContext`.
-        BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
+        BundleV2::on_notify_defer_mini(yolo! { &mut *load }, yolo! { &mut *ctx });
     }
 
     // TODO(port): move to runtime_sys
@@ -1527,7 +1528,7 @@ pub mod js_bundler {
         global: *mut JSGlobalObject,
     ) -> JSValue {
         // SAFETY: called from C++ with valid pointers
-        unsafe { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
+        yolo! { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
     }
 
     // TODO(port): move to runtime_sys
@@ -1547,7 +1548,7 @@ pub mod js_bundler {
             if this.was_file {
                 // Faster path: skip the extra threadpool dispatch
                 // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
-                unsafe {
+                yolo! {
                     (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
                         bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
                             (*this.parse_task.as_ptr()).task
@@ -1806,16 +1807,16 @@ pub mod js_bundler {
         which: JSValue,
     ) {
         // SAFETY: plugin is valid opaque FFI handle; ctx is *mut Resolve or *mut Load
-        let plugin = unsafe { &mut *plugin };
+        let plugin = yolo! { &mut *plugin };
         match which.as_int32() {
             0 => {
-                let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
+                let resolve = yolo! { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
-                let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
+                let load = yolo! { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_mut(load.bv2).on_load_async(load);
@@ -1854,7 +1855,7 @@ pub use bun_bundler::options::OutputKind;
 #[unsafe(no_mangle)]
 pub fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value)
-        .map(|b| unsafe { core::ptr::addr_of_mut!((*b).blob) })
+        .map(|b| yolo! { core::ptr::addr_of_mut!((*b).blob) })
 }
 
 impl BuildArtifact {
@@ -2084,7 +2085,7 @@ impl BuildArtifact {
                     // SAFETY: `as_` returned a non-null wrapper-owned pointer;
                     // `write_format` is `&self` so a shared borrow is sound
                     // even if `sourcemap` aliases `self`.
-                    unsafe { &*sourcemap }
+                    yolo! { &*sourcemap }
                         .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
                 } else {
                     write!(

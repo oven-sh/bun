@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 
@@ -523,7 +524,7 @@ impl Map {
         // block (cf. split_at_mut).
         let old_symbol = self.get(old).unwrap();
         let new_symbol = self.get(new).unwrap();
-        unsafe {
+        yolo! {
             (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
         }
         new
@@ -549,7 +550,7 @@ impl Map {
         debug_assert!(src < self.symbols_for_source.len());
         // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
         // element is created. idx in-bounds of the inner list.
-        unsafe {
+        yolo! {
             let inner: *mut List = self.symbols_for_source.as_ptr().cast_mut().add(src);
             debug_assert!(idx < (*inner).len());
             Some((*inner).as_mut_ptr().add(idx))
@@ -576,7 +577,7 @@ impl Map {
         // API surface. `follow()` below uses checked indexing for the same
         // lookup; this site keeps the unchecked path for the printer's hot
         // inner loop, narrowed to where the guard is visible.)
-        Some(unsafe {
+        Some(yolo! {
             let inner = self.symbols_for_source.as_ptr().add(src);
             debug_assert!(idx < (*inner).len());
             &*(*inner).as_ptr().add(idx)

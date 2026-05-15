@@ -6,6 +6,7 @@
 //! `bun_uws` write/close surface stay ``-gated inside each file.
 //! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
@@ -184,7 +185,7 @@ impl AnyRoute {
             AnyRoute::File(p) => bun_ptr::BackRef::from(*p).ref_(),
             AnyRoute::Html(r) => {
                 // SAFETY: RefPtr keeps the pointee live while held in the route table.
-                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
+                yolo! { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
             }
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -192,9 +193,9 @@ impl AnyRoute {
     pub fn deref_(&self) {
         match self {
             // SAFETY: intrusive refcount; ptr was heap-allocated with rc=1.
-            AnyRoute::Static(p) => unsafe { StaticRoute::deref_(p.as_ptr()) },
+            AnyRoute::Static(p) => yolo! { StaticRoute::deref_(p.as_ptr()) },
             // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { FileRoute::deref(p.as_ptr()) },
+            AnyRoute::File(p) => yolo! { FileRoute::deref(p.as_ptr()) },
             AnyRoute::Html(r) => r.deref(),
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -320,7 +321,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
-            unsafe { ServePlugins::deref_(p.as_ptr()) };
+            yolo! { ServePlugins::deref_(p.as_ptr()) };
         }
     }
 }
@@ -382,7 +383,7 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         // SAFETY: `ctx`/`request_object` are the freshly-allocated
         // `RequestContext` slot and heap `Request` produced by
         // `prepare_js_request_context` for this frame; no other borrow is live.
-        unsafe {
+        yolo! {
             (*self.ctx).to_async(
                 std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
                 &mut *self.request_object,
@@ -421,7 +422,7 @@ impl Drop for DetachRequestOnDrop {
         // SAFETY: per `new()` contract — `self.0` is the heap allocation
         // produced by `Request::new`; kept alive by `ctx.request_weakref`
         // until `RequestContext::deinit` releases it.
-        unsafe { (*self.0).request_context.detach_request() };
+        yolo! { (*self.0).request_context.detach_request() };
     }
 }
 
@@ -631,7 +632,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `this`/`resp` are live for the duration of the uWS callback;
         // re-borrowed disjointly below to avoid stacking `&mut` across the
         // `ctx.create()` call (which stores `this` as a backref).
-        let server = unsafe { &mut *this };
+        let server = yolo! { &mut *this };
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
 
@@ -680,7 +681,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: vm backref is live for the server's lifetime; `event_loop()`
         // returns the VM-owned `*mut EventLoop` whose `debug` field outlives
         // this frame.
-        let _dbg_guard = unsafe {
+        let _dbg_guard = yolo! {
             bun_jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
                 (*(*vm_ptr).event_loop()).debug
             ))
@@ -702,10 +703,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `request_pool` points at a process-static (or
         // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
-        let ctx_slot = unsafe { (*server.request_pool).try_get() };
+        let ctx_slot = yolo! { (*server.request_pool).try_get() };
         // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
         // initializes it via `MaybeUninit::write`.
-        let ctx_uninit = unsafe {
+        let ctx_uninit = yolo! {
             &mut *ctx_slot.cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>>()
         };
         ServerRequestContext::<SSL, DEBUG>::create(
@@ -718,7 +719,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
         // SAFETY: fully initialized by `create()`.
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
-        let ctx_mut = unsafe { &mut *ctx };
+        let ctx_mut = yolo! { &mut *ctx };
 
         // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
         // (set in VM init; valid for the JS thread's lifetime).
@@ -734,13 +735,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // in `bun_jsc` which cannot name `bun_runtime` types).
         // SAFETY: vm backref live for the JS thread's lifetime.
         let body_hive = crate::webcore::body::hive_alloc(
-            unsafe { &mut *vm_ptr },
+            yolo! { &mut *vm_ptr },
             crate::webcore::body::Value::Null,
         );
         // SAFETY: hive_alloc returns a freshly-initialized hive slot
         // (`ref_count = 1`); live until refcount drops to zero.
         let body_value: *mut crate::webcore::body::Value =
-            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
+            yolo! { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx_mut.request_body = core::ptr::NonNull::new(body_value);
 
         let global = server.global_this();
@@ -751,14 +752,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
         let signal_ref =
-            unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
+            yolo! { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
         // Zig: `.body = body.ref()` — bump once so the JS Request shares the
         // same hive slot as `ctx.request_body` (streamed bytes buffered into
         // the ctx surface on `request.body`/`request.json()`). Paired with
         // `HiveRef::unref` in `Request::finalize`.
         // SAFETY: `body_hive` is live (ref_count >= 1).
         let body_for_req: core::ptr::NonNull<crate::webcore::body::HiveRef> =
-            unsafe { core::ptr::NonNull::from((*body_hive.as_ptr()).ref_()) };
+            yolo! { core::ptr::NonNull::from((*body_hive.as_ptr()).ref_()) };
         // PORT NOTE (ownership): `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
@@ -772,7 +773,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 body_for_req,
             )));
         // SAFETY: freshly allocated; uniquely owned here.
-        ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(unsafe { &mut *request_object });
+        ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(yolo! { &mut *request_object });
 
         // (H3 eager-url/header population is unreachable on this path.)
 
@@ -796,7 +797,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // that way if the client is lying about how big the body is or the client aborts
                 // we don't waste memory
                 // SAFETY: `body_value` is the freshly-initialized hive payload.
-                unsafe {
+                yolo! {
                     *body_value =
                         crate::webcore::body::Value::Locked(crate::webcore::body::PendingValue {
                             task: Some(ctx.cast::<c_void>()),
@@ -831,9 +832,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             js_request: match create_js_request {
                 // SAFETY: `request_object` is the freshly-allocated heap
                 // `Request`; ownership transfers to the JS wrapper.
-                CreateJsRequest::Yes => unsafe { (*request_object).to_js(global) },
+                CreateJsRequest::Yes => yolo! { (*request_object).to_js(global) },
                 CreateJsRequest::Bake => {
-                    match unsafe { (*request_object).to_js_for_bake(global) } {
+                    match yolo! { (*request_object).to_js_for_bake(global) } {
                         Ok(v) => v,
                         Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(_) => return None,
@@ -900,7 +901,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         args.extend_from_slice(&extra_args);
 
         // SAFETY: `this` is the live server backref for this request.
-        let server = unsafe { &*this };
+        let server = yolo! { &*this };
         let global = server.global_this();
         let response_value = match callback.call(global, server.js_value_assert_alive(), &args) {
             Ok(v) => v,
@@ -914,11 +915,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // copied everything it needs).
         // SAFETY: `request_object` is kept alive by `ctx.request_weakref` for
         // the request's lifetime.
-        let _detach_guard = is_stack.then(|| unsafe { DetachRequestOnDrop::new(request_object) });
+        let _detach_guard = is_stack.then(|| yolo! { DetachRequestOnDrop::new(request_object) });
 
         // SAFETY: `ctx` was just allocated (or saved) by this server; no other
         // borrow is live across this scope.
-        let ctx_mut = unsafe { &mut *ctx };
+        let ctx_mut = yolo! { &mut *ctx };
         let original_state = ctx_mut.defer_deinit_until_callback_completes;
         let should_deinit_context = core::cell::Cell::new(false);
         ctx_mut.defer_deinit_until_callback_completes =
@@ -926,7 +927,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_mut.on_response(server, prepared.js_request, response_value);
         // SAFETY: re-borrow after `on_response` returned (which may have run
         // arbitrary JS but cannot free `ctx` while `defer_deinit_...` is set).
-        unsafe { (*ctx).defer_deinit_until_callback_completes = original_state };
+        yolo! { (*ctx).defer_deinit_until_callback_completes = original_state };
 
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
@@ -934,13 +935,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if should_deinit_context.get() {
             // SAFETY: see above; `on_response` set the deferred flag instead of
             // freeing in-place. `ctx` is not accessed after this returns.
-            unsafe { (*ctx).deinit() };
+            yolo! { (*ctx).deinit() };
             return;
         }
 
         // SAFETY: ctx not yet freed (should_deinit_context == false).
-        if unsafe { (*ctx).should_render_missing() } {
-            unsafe { (*ctx).render_missing() };
+        if yolo! { (*ctx).should_render_missing() } {
+            yolo! { (*ctx).render_missing() };
             return;
         }
 
@@ -950,7 +951,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             SavedRequestUnion::Stack(r) => {
                 // SAFETY: `r` is the live stack `uws::Request`; `request_object`
                 // is the heap `Request` kept alive by `ctx.request_weakref`.
-                unsafe {
+                yolo! {
                     (*ctx).to_async(
                         std::ptr::from_ref::<uws::Request>(r)
                             .cast_mut()
@@ -986,28 +987,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `request_object` is the heap allocation produced by
         // `Request::new`; kept alive by `ctx.request_weakref` until
         // `RequestContext::deinit` releases it.
-        let _detach_guard = unsafe { DetachRequestOnDrop::new(request_object) };
+        let _detach_guard = yolo! { DetachRequestOnDrop::new(request_object) };
 
         // SAFETY: `ctx` was allocated by `prepare_js_request_context` for this
         // frame; no other borrow is live across this scope.
-        unsafe { (*ctx).on_response(&*this, prepared.js_request, response_value) };
+        yolo! { (*ctx).on_response(&*this, prepared.js_request, response_value) };
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
 
         // SAFETY: re-borrow after `on_response` returned (which may have run
         // arbitrary JS but cannot free `ctx` while `defer_deinit_…` is set).
-        unsafe { (*ctx).defer_deinit_until_callback_completes = None };
+        yolo! { (*ctx).defer_deinit_until_callback_completes = None };
 
         if should_deinit_context.get() {
             // SAFETY: `on_response` set the deferred flag instead of freeing
             // in-place; we own the slot now. `ctx` is not accessed after this.
-            unsafe { (*ctx).deinit() };
+            yolo! { (*ctx).deinit() };
             return;
         }
 
         // SAFETY: ctx not yet freed (should_deinit_context == false).
-        if unsafe { (*ctx).should_render_missing() } {
-            unsafe { (*ctx).render_missing() };
+        if yolo! { (*ctx).should_render_missing() } {
+            yolo! { (*ctx).render_missing() };
             return;
         }
 
@@ -1015,7 +1016,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // copied since the provided uws.Request will be re-used for future
         // requests (stack allocated).
         // SAFETY: `req`/`request_object` live for this frame; `ctx` not freed.
-        unsafe {
+        yolo! {
             (*ctx).to_async(
                 std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
                 &mut *request_object,
@@ -1042,7 +1043,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         // SAFETY: `this` is the live server backref for this request.
-        let server = unsafe { &*this };
+        let server = yolo! { &*this };
         let on_request = server
             .config
             .on_request
@@ -1071,7 +1072,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         // SAFETY: `user_route` is the live entry in `server.user_routes` whose
         // address was registered as the uws callback userdata.
-        let user_route = unsafe { &*user_route };
+        let user_route = yolo! { &*user_route };
         let server = user_route.server.cast_mut();
         let index = user_route.id;
 
@@ -1091,7 +1092,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         // SAFETY: `server` is the live backref stored in `user_route`.
-        let server_ref = unsafe { &*server };
+        let server_ref = yolo! { &*server };
         let global = server_ref.global_this();
         let server_js = server_ref.js_value_assert_alive();
         let server_request_list =
@@ -1150,7 +1151,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; only one borrow derived from it is alive at a time.
-        unsafe { (*this).on_pending_request() };
+        yolo! { (*this).on_pending_request() };
         // Read-only access goes through `BackRef` (safe `Deref`); each use
         // materialises a fresh short-lived `&Self`, so the JS-reentrant calls
         // below never see an outstanding shared borrow.
@@ -1159,7 +1160,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
         let vm = this_ref.vm_mut();
         // SAFETY: `vm.event_loop()` returns the live VM-owned `*mut EventLoop`.
-        let _dbg = unsafe {
+        let _dbg = yolo! {
             jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
                 (*(*vm).event_loop()).debug
             ))
@@ -1252,7 +1253,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
                     // SAFETY: `vm` is the process-static VirtualMachine.
-                    unsafe { (*vm).drain_microtasks() };
+                    yolo! { (*vm).drain_microtasks() };
                     status = promise.status();
                 }
 
@@ -1270,7 +1271,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         if !node_http_response.is_null() {
                             // SAFETY: out-param written by `on_request_ffi`;
                             // owned ref held until `deref()` below.
-                            let nhr = unsafe { &mut *node_http_response };
+                            let nhr = yolo! { &mut *node_http_response };
                             // Single `Cell` load for all three flag checks (no
                             // re-entry between them) — Zig reads the packed field once.
                             let nhr_flags = nhr.flags.get();
@@ -1315,7 +1316,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
                 // SAFETY: `vm` is the process-static VirtualMachine.
-                let _ = unsafe { &mut *vm }.uncaught_exception(
+                let _ = yolo! { &mut *vm }.uncaught_exception(
                     global,
                     *err,
                     matches!(http_result, HttpResult::Rejection(_)),
@@ -1323,7 +1324,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 if !node_http_response.is_null() {
                     // SAFETY: see `nhr` above.
-                    let nhr = unsafe { &mut *node_http_response };
+                    let nhr = yolo! { &mut *node_http_response };
                     let nhr_flags = nhr.flags.get();
                     if !nhr_flags.contains(NhrFlags::UPGRADED) {
                         if let Some(raw) = nhr.raw_response.get() {
@@ -1354,7 +1355,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if !node_http_response.is_null() {
             // SAFETY: see `nhr` above.
-            let nhr = unsafe { &mut *node_http_response };
+            let nhr = yolo! { &mut *node_http_response };
             let nhr_flags = nhr.flags.get();
             if !nhr_flags.contains(NhrFlags::UPGRADED) {
                 if let Some(raw) = nhr.raw_response.get() {
@@ -1367,7 +1368,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     else if !matches!(http_result, HttpResult::Pending) {
                         let this_value = nhr.get_this_value();
                         // SAFETY: `vm` is the process-static VirtualMachine.
-                        nhr.maybe_stop_reading_body(unsafe { &mut *vm }, this_value);
+                        nhr.maybe_stop_reading_body(yolo! { &mut *vm }, this_value);
                     }
                 }
             }
@@ -1378,11 +1379,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         strong_promise.deinit();
         if needs_to_drain {
             // SAFETY: `vm` is the process-static VirtualMachine.
-            unsafe { (*vm).drain_microtasks() };
+            yolo! { (*vm).drain_microtasks() };
         }
         if !is_async && !node_http_response.is_null() {
             // SAFETY: out-param ref taken in C++; synchronous path drops it.
-            unsafe { &mut *node_http_response }.deref();
+            yolo! { &mut *node_http_response }.deref();
         }
     }
 
@@ -1435,7 +1436,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); `.event_loop()` returns the VM-owned
         // `*mut EventLoop`. Single-threaded JS context, no aliasing `&mut`.
-        unsafe { (*(*self.vm_mut()).event_loop()).process_gc_timer() };
+        yolo! { (*(*self.vm_mut()).event_loop()).process_gc_timer() };
         self.pending_requests -= 1;
         self.deinit_if_we_can();
     }
@@ -1524,7 +1525,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // from `self.listener`; deref'd once to read the socket fd. `vm` is a
             // STATIC ref (see `ServerLike::vm_mut`) — non-null for the server's
             // lifetime, so the raw→`&mut` deref is sound.
-            unsafe {
+            yolo! {
                 let fd = (*listener).socket().fd();
                 (*self.vm_mut()).remove_listening_socket_for_watch_mode(fd);
             }
@@ -1560,7 +1561,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // deref) and does not borrow `self`, so it cannot overlap with the
             // `&self.config.id` borrow.
             // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
-            unsafe {
+            yolo! {
                 if let Some(hot) = (*self.vm_mut()).hot_map() {
                     hot.remove(&self.config.id);
                 }
@@ -1616,7 +1617,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `vm` is the process-static `*mut VirtualMachine` (non-null
             // for the server's lifetime); single-threaded JS context, no aliasing
             // `&mut`.
-            let vm_ref = unsafe { &mut *vm };
+            let vm_ref = yolo! { &mut *vm };
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
@@ -1664,7 +1665,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context, no aliasing `&mut`.
-        let vm = unsafe { &mut *self.vm_mut() };
+        let vm = yolo! { &mut *self.vm_mut() };
 
         if !self.flags.contains(ServerFlags::TERMINATED) {
             // App.close can cause finalizers to run.
@@ -1703,13 +1704,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener = Some(socket);
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context.
-        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
+        yolo! { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
             // SAFETY: `vm` is a STATIC ref (see `ServerLike::vm_mut`) — non-null
             // for the server's lifetime, so the raw→`&mut` deref is sound.
-            unsafe { (*self.vm_mut()).add_listening_socket_for_watch_mode(fd) };
+            yolo! { (*self.vm_mut()).add_listening_socket_for_watch_mode(fd) };
         }
     }
 
@@ -1807,7 +1808,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn deinit(this: *mut Self) {
         httplog!("deinit");
         // SAFETY: `this` was heap-allocated in `init()` and is uniquely owned here.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
 
         // This should've already been handled in stop_listening; however, when
         // the JS VM terminates, it hypothetically might not call stop_listening.
@@ -1819,16 +1820,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if Self::HAS_H3 {
             if let Some(h3a) = this_ref.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.
-                unsafe { uws_sys::h3::App::destroy(h3a) };
+                yolo! { uws_sys::h3::App::destroy(h3a) };
             }
         }
         if let Some(app) = this_ref.app.take() {
             // SAFETY: live uws App handle owned by this server.
-            unsafe { uws_sys::NewApp::<SSL>::destroy(app) };
+            yolo! { uws_sys::NewApp::<SSL>::destroy(app) };
         }
 
         // SAFETY: paired with heap::alloc in `init()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn set_using_custom_expect_handler(&mut self, value: bool) {
@@ -1890,7 +1891,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `node:http` prologue is a plain field load instead of a tag match +
         // `TaggedPointer::init`.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        unsafe {
+        yolo! {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
@@ -1902,8 +1903,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // (since-moved) stack slot. `errdefer if (dev_server) |d| d.deinit()`
         // — `Box<Self>` drop on Err frees the half-built server.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        if let Some(bake_options) = unsafe { &mut (*server).config.bake } {
-            let broadcast = unsafe {
+        if let Some(bake_options) = yolo! { &mut (*server).config.bake } {
+            let broadcast = yolo! {
                 (*server)
                     .config
                     .broadcast_console_log_from_browser_to_server_for_bake
@@ -1926,12 +1927,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Ok(d) => d,
                 Err(e) => {
                     // SAFETY: paired with heap::alloc above.
-                    drop(unsafe { bun_core::heap::take(server) });
+                    drop(yolo! { bun_core::heap::take(server) });
                     return Err(e);
                 }
             };
             // SAFETY: `server` is uniquely owned here.
-            unsafe { (*server).dev_server = Some(dev) };
+            yolo! { (*server).dev_server = Some(dev) };
         }
 
         if SSL {
@@ -2028,7 +2029,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // pinned in the server allocation and outlives every use below — the
         // BackRef invariant) so the two `&mut self.*` accesses do not overlap
         // from rustc's POV. Replaces the `Option<*mut _>` + per-site
-        // `unsafe { &*p }` pattern with one safe accessor.
+        // `yolo! { &*p }` pattern with one safe accessor.
         let websocket_ptr: Option<bun_ptr::BackRef<WebSocketServerContext>> =
             self.config.websocket.as_ref().map(bun_ptr::BackRef::new);
 
@@ -2229,7 +2230,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // from `self.dev_server` above; no other `&mut` to it
                         // is live in this loop.
                         bun_core::handle_oom(
-                            unsafe { &mut *dev }
+                            yolo! { &mut *dev }
                                 .html_router
                                 .put(&entry.path, r.as_ptr()),
                         );
@@ -2283,7 +2284,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `self.dev_server` above; `self_ptr` is the live server. The two
             // allocations are disjoint so the `&mut` borrows do not alias.
             has_dev_server_for_star_path = bun_core::handle_oom(
-                unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(unsafe { &mut *self_ptr }),
+                yolo! { &mut *dev }.set_routes::<SSL, DEBUG>(yolo! { &mut *self_ptr }),
             );
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
@@ -2448,12 +2449,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
                         let _ = global.throw(format_args!("Failed to create HTTP server"));
                     }
-                    unsafe { (*this).app = None };
+                    yolo! { (*this).app = None };
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
             };
-            unsafe { (*this).app = Some(app) };
+            yolo! { (*this).app = Some(app) };
 
             if Self::HAS_H3 && this_ref.config.h3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
@@ -2468,7 +2469,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 };
                 // SAFETY: `this` is the live boxed server; uniquely owned here.
-                unsafe {
+                yolo! {
                     (*this).h3_app = h3;
                     // Lazily materialize the ~816 KB H3 request pool now that
                     // we know an H3 listener will actually exist (Zig:
@@ -2477,7 +2478,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
 
-            route_list_value = unsafe { &mut *this }.set_routes();
+            route_list_value = yolo! { &mut *this }.set_routes();
 
             // add serverName to the SSL context using the default ssl options
             // PORT NOTE: extract raw (ptr, len) so no `&self.config` borrow
@@ -2493,7 +2494,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if let Some((name_ptr, name_len)) = server_name_raw {
                 // SAFETY: name_ptr/name_len were just extracted from the live
                 // `config.ssl_config.server_name` CString; valid + NUL-terminated.
-                let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
+                let server_name = yolo! { bun_core::ffi::cstr(name_ptr) };
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
                     .add_server_name_with_options(server_name, ssl_options)
@@ -2514,7 +2515,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                let z = yolo! { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 bun_opaque::opaque_deref_mut(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
@@ -2523,7 +2524,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 // Ensure routes are set for that domain name.
-                let _ = unsafe { &mut *this }.set_routes();
+                let _ = yolo! { &mut *this }.set_routes();
             }
 
             // SNI: per-hostname contexts
@@ -2549,9 +2550,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 };
                 // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
                 // set_routes() does not mutate config.sni so the bytes are valid.
-                let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
+                let sni_name = yolo! { bun_core::ffi::cstr(name_ptr) };
                 // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                let z = yolo! { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
 
                 if Self::HAS_H3 {
                     if let Some(h3_app) = this_ref.h3_app {
@@ -2591,7 +2592,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-                let _ = unsafe { &mut *this }.set_routes();
+                let _ = yolo! { &mut *this }.set_routes();
             }
         } else {
             app = match uws_sys::NewApp::<SSL>::create(uws_sys::BunSocketContextOptions::default())
@@ -2605,12 +2606,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return JSValue::ZERO;
                 }
             };
-            unsafe { (*this).app = Some(app) };
-            route_list_value = unsafe { &mut *this }.set_routes();
+            yolo! { (*this).app = Some(app) };
+            route_list_value = yolo! { &mut *this }.set_routes();
         }
 
         if this_ref.config.on_node_http_request.is_some() {
-            unsafe { &mut *this }.set_using_custom_expect_handler(true);
+            yolo! { &mut *this }.set_using_custom_expect_handler(true);
         }
 
         // PORT NOTE: the listen_* trampolines re-derive `&mut *this` synchronously
@@ -2677,7 +2678,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // SAFETY: app is a live uws handle owned by this server. No
                         // `&*this` is live across this call; the trampoline's
                         // `&mut *this` is the sole borrow while it runs.
-                        unsafe {
+                        yolo! {
                             (*app).listen_with_config(
                                 Some(trampoline::on_listen::<SSL, DEBUG>),
                                 this.cast::<c_void>(),
@@ -2723,7 +2724,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                     // UDP:N is taken — release TCP:N so the next
                                     // attempt gets a fresh kernel-chosen port.
                                     // Only retry if TCP actually succeeded.
-                                    if let Some(ls) = unsafe { (*this).listener.take() } {
+                                    if let Some(ls) = yolo! { (*this).listener.take() } {
                                         bun_opaque::opaque_deref_mut(ls).close();
                                         continue;
                                     }
@@ -2748,7 +2749,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             Addr::Unix { ptr, len } => {
                 if Self::HAS_H3 {
-                    if let Some(h3a) = unsafe { (*this).h3_app.take() } {
+                    if let Some(h3a) = yolo! { (*this).h3_app.take() } {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
                         // advertise it; drop the H3 listener instead of wiring
                         // an exotic transport nobody can reach.
@@ -2756,15 +2757,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             "h3: true with a unix socket — HTTP/3 listener skipped"
                         ));
                         // SAFETY: h3a is a live H3::App handle just taken from self.h3_app.
-                        unsafe { uws_sys::h3::App::destroy(h3a) };
+                        yolo! { uws_sys::h3::App::destroy(h3a) };
                     }
                 }
                 // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
                 // sentinel at `ptr[len]` holds for ZStr::from_raw.
-                let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
+                let z = yolo! { bun_core::ZStr::from_raw(ptr, len) };
                 // SAFETY: app is a live uws handle owned by this server. No
                 // `&*this` is live across this call.
-                unsafe {
+                yolo! {
                     (*app).listen_on_unix_socket(
                         trampoline::on_listen_unix::<SSL, DEBUG>,
                         this.cast::<c_void>(),
@@ -2780,7 +2781,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return JSValue::ZERO;
         }
 
-        unsafe { &mut *this }.ref_();
+        yolo! { &mut *this }.ref_();
 
         // Starting up an HTTP server is a good time to GC.
         let vm = this_ref.vm();
@@ -2832,7 +2833,7 @@ mod trampoline {
         user_data: *mut c_void,
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { bun_ptr::callback_ctx::<NewServer<SSL, DEBUG>>(user_data) };
+        let server = yolo! { bun_ptr::callback_ctx::<NewServer<SSL, DEBUG>>(user_data) };
         let socket = if socket.is_null() {
             None
         } else {
@@ -2910,7 +2911,7 @@ mod trampoline {
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
-        unsafe {
+        yolo! {
             (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_bun_info_request(
                 bun_opaque::opaque_deref_mut(req),
                 bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
@@ -2925,7 +2926,7 @@ mod trampoline {
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
-        unsafe {
+        yolo! {
             (*user_data.cast::<NewServer<SSL, DEBUG>>()).on_chrome_dev_tools_json_request(
                 bun_opaque::opaque_deref_mut(req),
                 bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
@@ -3129,7 +3130,7 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     fn release_request_context(&self, ctx: *mut c_void, is_h3: bool) {
         // SAFETY: ctx was allocated from this exact pool by `prepare_js_request_context`;
         // it is `RequestContext<Self, SSL, DEBUG, is_h3>` by construction.
-        unsafe {
+        yolo! {
             if is_h3 {
                 (*self.h3_request_pool).put(&raw mut *ctx.cast::<request_context::RequestContext<
                     Self,
@@ -3179,7 +3180,7 @@ pub struct AnyServer {
 
 impl AnyServer {
     // ─── tag-checked downcasts ───────────────────────────────────────────────
-    // Centralize the `unsafe { &*self.ptr.cast() }` pattern that the dispatch
+    // Centralize the `yolo! { &*self.ptr.cast() }` pattern that the dispatch
     // macro and `h3_alt_svc` open-coded. Each accessor debug-asserts the tag
     // so a mismatched call trips in debug builds rather than silently aliasing
     // the wrong monomorphization.
@@ -3197,28 +3198,28 @@ impl AnyServer {
         // SAFETY: `ptr` was produced by `AnyServer::from::<false, false>` and
         // is non-null while the server is alive (heap-allocated `NewServer`,
         // freed only after all `AnyServer` handles are dropped).
-        unsafe { &*self.ptr.cast::<HTTPServer>() }
+        yolo! { &*self.ptr.cast::<HTTPServer>() }
     }
 
     #[inline(always)]
     fn as_https(&self) -> &HTTPSServer {
         debug_assert!(matches!(self.tag, AnyServerTag::HTTPSServer));
         // SAFETY: tag-matched non-null `NewServer<true, false>`; see `as_http`.
-        unsafe { &*self.ptr.cast::<HTTPSServer>() }
+        yolo! { &*self.ptr.cast::<HTTPSServer>() }
     }
 
     #[inline(always)]
     fn as_debug_http(&self) -> &DebugHTTPServer {
         debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPServer));
         // SAFETY: tag-matched non-null `NewServer<false, true>`; see `as_http`.
-        unsafe { &*self.ptr.cast::<DebugHTTPServer>() }
+        yolo! { &*self.ptr.cast::<DebugHTTPServer>() }
     }
 
     #[inline(always)]
     fn as_debug_https(&self) -> &DebugHTTPSServer {
         debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPSServer));
         // SAFETY: tag-matched non-null `NewServer<true, true>`; see `as_http`.
-        unsafe { &*self.ptr.cast::<DebugHTTPSServer>() }
+        yolo! { &*self.ptr.cast::<DebugHTTPSServer>() }
     }
 }
 
@@ -3262,19 +3263,19 @@ macro_rules! any_server_dispatch_mut {
         // other reference into the same `NewServer` is live for this scope.
         match this.tag {
             AnyServerTag::HTTPServer => {
-                let $s = unsafe { &mut *this.ptr.cast::<HTTPServer>() };
+                let $s = yolo! { &mut *this.ptr.cast::<HTTPServer>() };
                 $body
             }
             AnyServerTag::HTTPSServer => {
-                let $s = unsafe { &mut *this.ptr.cast::<HTTPSServer>() };
+                let $s = yolo! { &mut *this.ptr.cast::<HTTPSServer>() };
                 $body
             }
             AnyServerTag::DebugHTTPServer => {
-                let $s = unsafe { &mut *this.ptr.cast::<DebugHTTPServer>() };
+                let $s = yolo! { &mut *this.ptr.cast::<DebugHTTPServer>() };
                 $body
             }
             AnyServerTag::DebugHTTPSServer => {
-                let $s = unsafe { &mut *this.ptr.cast::<DebugHTTPSServer>() };
+                let $s = yolo! { &mut *this.ptr.cast::<DebugHTTPSServer>() };
                 $body
             }
         }
@@ -3578,7 +3579,7 @@ pub mod http_server_agent {
         // SAFETY: `agent` is a non-null C++ InspectorHTTPServerAgent handle
         // (set via `Bun__HTTPServerAgent__setEnabled`); `vm()` is the live
         // process VM backref.
-        unsafe {
+        yolo! {
             InspectorHTTPServerAgent::notify_server_started(
                 agent.as_ptr(),
                 this.next_server_id,
@@ -3595,7 +3596,7 @@ pub mod http_server_agent {
     pub fn notify_server_stopped(this: &HTTPServerAgent, server: AnyServer) {
         let Some(agent) = this.agent else { return };
         // SAFETY: `agent` is a live C++ handle (see above).
-        unsafe {
+        yolo! {
             InspectorHTTPServerAgent::notify_server_stopped(
                 agent.as_ptr(),
                 server.inspector_server_id(),
@@ -3656,7 +3657,7 @@ pub mod http_server_agent {
         }
 
         // SAFETY: `agent` is a live C++ handle.
-        unsafe {
+        yolo! {
             InspectorHTTPServerAgent::notify_server_routes_updated(
                 agent.as_ptr(),
                 server.inspector_server_id(),
@@ -3727,7 +3728,7 @@ impl ServerAllConnectionsClosedTask {
         // SAFETY: `this` was `heap::alloc`'d in `schedule()`; reclaim
         // ownership and move out of the Box (Zig: `bun.destroy(this)` after
         // copying the fields it still needs onto the stack).
-        let this = *unsafe { bun_core::heap::take(this) };
+        let this = *yolo! { bun_core::heap::take(this) };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle — safe
         // `*const → &` via `opaque_deref` (set from the live per-VM global in
         // `schedule()`; the task is only dispatched on that VM's JS thread).

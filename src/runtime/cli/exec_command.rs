@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bstr::BStr;
 
 use bun_bundler::Transpiler;
@@ -25,12 +26,12 @@ fn exec_arena() -> &'static bun_alloc::Arena {
         bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
     ONCE.call_once(|| {
         // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
+        yolo! { (*ARENA.get()).write(bun_alloc::Arena::new()) };
     });
     // SAFETY: initialized exactly once above; `bun exec` is a single-shot CLI
     // command on the dispatch thread, so the `!Sync` Bump is never observed
     // concurrently.
-    unsafe { (*ARENA.get()).assume_init_ref() }
+    yolo! { (*ARENA.get()).assume_init_ref() }
 }
 
 impl ExecCommand {
@@ -68,7 +69,7 @@ impl ExecCommand {
         // process singleton, or freshly `heap::alloc`'d) — never null. The
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is
         // sound for the single CLI dispatch thread.
-        let env = unsafe { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };
+        let env = yolo! { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
@@ -76,7 +77,7 @@ impl ExecCommand {
         // SAFETY: `init_global` returns the thread-local singleton raw pointer;
         // reborrow `&'static mut` for the duration of the interpreter run (no
         // other live `&mut` to the same `MiniEventLoop` on this thread).
-        let mini_ref = unsafe { &mut *mini };
+        let mini_ref = yolo! { &mut *mini };
         let code = match Interpreter::init_and_run_from_source(
             ctx,
             mini_ref,

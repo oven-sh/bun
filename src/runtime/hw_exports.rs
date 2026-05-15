@@ -21,6 +21,7 @@
 //!   - `Bun__Process__send`
 //!       → `bun_jsc::virtual_machine_exports`
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::webcore::BlobExt as _;
@@ -82,7 +83,7 @@ pub fn remap_stack_frame_positions(
 ) {
     // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
     // the raw ptr because it forwards to the C++-side remapper.
-    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    yolo! { vm.remap_stack_frame_positions(frames, frames_count) };
 }
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
@@ -152,7 +153,7 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = vm.get_ipc_instance() {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data.close_socket_next_tick(true) };
+        yolo! { (*current_ipc).data.close_socket_next_tick(true) };
     }
 }
 
@@ -180,7 +181,7 @@ pub(crate) mod sql_hooks {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; `sql_rare` is
         // an embedded field with stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
+        yolo! { core::ptr::addr_of_mut!((*state).sql_rare) }
     }
     unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
         crate::jsc_hooks::timer_all().cast()
@@ -191,20 +192,20 @@ pub(crate) mod sql_hooks {
         // `All::insert` (NOT the raw `.timers` field) so the lock is taken and
         // `(*timer).state` / `in_heap` bookkeeping is updated — Zig spec is
         // `vm.timer.insert(&this.timer)`.
-        unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
+        yolo! { (*heap.cast::<crate::timer::All>()).insert(timer) };
     }
     unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
         // inserted via `timer_insert`. Route through `All::remove` so
         // `in_heap` is consulted and reset.
-        unsafe { (*heap.cast::<crate::timer::All>()).remove(timer) };
+        yolo! { (*heap.cast::<crate::timer::All>()).remove(timer) };
     }
     unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; the embedded
         // `SSLContextCache` has stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache).cast::<c_void>() }
+        yolo! { core::ptr::addr_of_mut!((*state).ssl_ctx_cache).cast::<c_void>() }
     }
     unsafe fn ssl_ctx_get_or_create(
         cache: *mut c_void,
@@ -212,7 +213,7 @@ pub(crate) mod sql_hooks {
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> *mut bun_uws::SslCtx {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
-        let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
+        let cache = yolo! { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
         cache
             .get_or_create_opts(*opts, err)
             .unwrap_or(core::ptr::null_mut())
@@ -232,31 +233,31 @@ pub(crate) mod sql_hooks {
     unsafe fn ssl_config_free(this: *mut c_void) {
         // SAFETY: `this` was produced by `heap::alloc` in
         // `ssl_config_from_js`; sql_jsc's `SSLConfig::drop` guards null/double.
-        drop(unsafe { bun_core::heap::take(this.cast::<crate::socket::SSLConfig>()) });
+        drop(yolo! { bun_core::heap::take(this.cast::<crate::socket::SSLConfig>()) });
     }
     unsafe fn ssl_config_as_usockets_client(
         this: *const c_void,
     ) -> bun_uws::us_bun_socket_context_options_t {
         // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.as_usockets_for_client_verification()
+        yolo! { &*this.cast::<crate::socket::SSLConfig>() }.as_usockets_for_client_verification()
     }
     unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
         // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
         // heap-owned C-string field, valid until `ssl_config_free`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.server_name
+        yolo! { &*this.cast::<crate::socket::SSLConfig>() }.server_name
     }
     unsafe fn ssl_config_reject_unauthorized(this: *const c_void) -> i32 {
         // SAFETY: `this` is a live boxed `SSLConfig`.
-        unsafe { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
+        yolo! { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
     }
     unsafe fn blob_needs_to_read_file(this: *const c_void) -> bool {
         // SAFETY: `this` is a live `Blob` (codegen `m_ctx` payload from
         // `Blob__fromJS`).
-        unsafe { (*this.cast::<crate::webcore::Blob>()).needs_to_read_file() }
+        yolo! { (*this.cast::<crate::webcore::Blob>()).needs_to_read_file() }
     }
     unsafe fn blob_shared_view(this: *const c_void, out_len: *mut usize) -> *const u8 {
         // SAFETY: `this` is a live `Blob`; `out_len` is a caller stack slot.
-        unsafe {
+        yolo! {
             crate::webcore::blob::Bun__Blob__sharedView(
                 this.cast::<crate::webcore::Blob>(),
                 out_len,
@@ -294,7 +295,7 @@ pub fn on_resolve_entry_point_result(
     // SAFETY: `vals[..len]` is the single stack `result`; `ctype` may be null
     // (the Zig path passes the per-VM ConsoleObject but only the writers are
     // read off it, and `null` routes to the VM's stdout/stderr default).
-    unsafe {
+    yolo! {
         bun_jsc::ConsoleObject::message_with_type_and_level(
             core::ptr::null_mut(),
             bun_jsc::ConsoleObject::MessageType::Log,
@@ -317,7 +318,7 @@ pub fn on_reject_entry_point_result(
     // SAFETY: `vals[..len]` is the single stack `result`; `ctype` may be null
     // (the Zig path passes the per-VM ConsoleObject but only the writers are
     // read off it, and `null` routes to the VM's stdout/stderr default).
-    unsafe {
+    yolo! {
         bun_jsc::ConsoleObject::message_with_type_and_level(
             core::ptr::null_mut(),
             bun_jsc::ConsoleObject::MessageType::Log,
@@ -346,8 +347,8 @@ pub extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 ) -> bool {
     // SAFETY: `arg_str` is a live `bun.String` (C++ stack local); `out` is a
     // valid out-param.
-    let s = unsafe { (*arg_str).to_utf8() };
-    unsafe { *out = bun_jsc::node_module_module::_stat(s.slice()) };
+    let s = yolo! { (*arg_str).to_utf8() };
+    yolo! { *out = bun_jsc::node_module_module::_stat(s.slice()) };
     true
 }
 
@@ -364,8 +365,8 @@ pub fn bindgen_bunobject_dispatch_braces(
     // **no** refcount bump). `bun_core::String` is `Copy` with no `Drop`, so
     // a plain deref matches that exactly; `braces` only borrows the bytes via
     // `to_utf8()` and never derefs the handle.
-    let input = unsafe { *arg_input };
-    let opts = unsafe { *arg_options };
+    let input = yolo! { *arg_input };
+    let opts = yolo! { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, || {
         crate::api::bun_object::braces(global, input, opts)
     })
@@ -379,12 +380,12 @@ pub fn bindgen_bunobject_dispatch_gc(
     out: *mut usize,
 ) -> bool {
     // SAFETY: `arg_force`/`out` are valid C++ stack locals.
-    let force = unsafe { *arg_force };
+    let force = yolo! { *arg_force };
     // Spec body (GeneratedBindings.zig:212 → BunObject.zig `gc`):
     // `vm.garbageCollect(force)` — mimalloc cleanup, then sync `runGC(true)`
     // when `force`, else `collectAsync()` + `heap.size()`.
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    unsafe { *out = global.bun_vm().as_mut().garbage_collect(force) };
+    yolo! { *out = global.bun_vm().as_mut().garbage_collect(force) };
     true
 }
 
@@ -399,11 +400,11 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
 ) -> bool {
     // SAFETY: `arg_code`/`arg_formatter`/`out` are valid C++ stack locals
     // (see GeneratedBindings.cpp call site).
-    let code = unsafe { (*arg_code).to_utf8() };
-    let formatter = unsafe { *arg_formatter };
+    let code = yolo! { (*arg_code).to_utf8() };
+    let formatter = yolo! { *arg_formatter };
     match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
         Ok(s) => {
-            unsafe { *out = s };
+            yolo! { *out = s };
             true
         }
         // OOM is the one `JsError` variant that does **not** leave a pending
@@ -427,7 +428,7 @@ pub extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
     out: *mut usize,
 ) -> bool {
     // SAFETY: `out` is a valid C++ stack local out-param.
-    unsafe { *out = crate::bake::get_deinit_count_for_testing() };
+    yolo! { *out = crate::bake::get_deinit_count_for_testing() };
     true
 }
 
@@ -443,9 +444,9 @@ pub fn bindgen_bindgen_test_dispatch_add(
 ) -> bool {
     // SAFETY: `arg_a`/`arg_b`/`out` are valid C++ stack locals (see
     // GeneratedBindings.cpp:149).
-    match bun_jsc::bindgen_test::add(global, unsafe { *arg_a }, unsafe { *arg_b }) {
+    match bun_jsc::bindgen_test::add(global, yolo! { *arg_a }, yolo! { *arg_b }) {
         Ok(v) => {
-            unsafe { *out = v };
+            yolo! { *out = v };
             true
         }
         Err(bun_jsc::JsError::OutOfMemory) => {
@@ -478,14 +479,14 @@ pub extern "C" fn bindgen_Bindgen_test_dispatchRequiredAndOptionalArg1(
 ) -> bool {
     // SAFETY: all pointers are valid C++ stack locals; `buf` fields are read
     // gated on their `_set` flags (matching `if buf.b_set buf.b_value else null`).
-    let buf = unsafe { &*buf };
+    let buf = yolo! { &*buf };
     let v = bun_jsc::bindgen_test::required_and_optional_arg(
-        unsafe { *arg_a },
+        yolo! { *arg_a },
         if buf.b_set { Some(buf.b_value) } else { None },
-        unsafe { *arg_c },
+        yolo! { *arg_c },
         if buf.d_set { Some(buf.d_value) } else { None },
     );
-    unsafe { *out = v };
+    yolo! { *out = v };
     true
 }
 
@@ -500,7 +501,7 @@ fn bindgen_out<T>(global: &JSGlobalObject, out: *mut T, r: bun_jsc::JsResult<T>)
     match r {
         Ok(v) => {
             // SAFETY: `out` is a valid C++ stack out-param.
-            unsafe { out.write(v) };
+            yolo! { out.write(v) };
             true
         }
         Err(bun_jsc::JsError::OutOfMemory) => {
@@ -522,7 +523,7 @@ pub extern "C" fn bindgen_Node_os_dispatchFreemem1(
     out: *mut u64,
 ) -> bool {
     // SAFETY: `out` is a valid C++ stack out-param. `freemem()` is infallible.
-    unsafe { *out = node_os::freemem() };
+    yolo! { *out = node_os::freemem() };
     true
 }
 
@@ -536,7 +537,7 @@ pub fn bindgen_node_os_dispatch_get_priority(
     bindgen_out(
         global,
         out,
-        node_os::get_priority(global, unsafe { *arg_pid }),
+        node_os::get_priority(global, yolo! { *arg_pid }),
     )
 }
 
@@ -569,7 +570,7 @@ pub extern "C" fn bindgen_Node_os_dispatchRelease1(
     out: *mut bun_core::String,
 ) -> bool {
     // SAFETY: `out` is a valid C++ stack out-param. `release()` is infallible.
-    unsafe { out.write(node_os::release()) };
+    yolo! { out.write(node_os::release()) };
     true
 }
 
@@ -579,7 +580,7 @@ pub extern "C" fn bindgen_Node_os_dispatchTotalmem1(
     out: *mut u64,
 ) -> bool {
     // SAFETY: `out` is a valid C++ stack out-param. `totalmem()` is infallible.
-    unsafe { *out = node_os::totalmem() };
+    yolo! { *out = node_os::totalmem() };
     true
 }
 
@@ -595,7 +596,7 @@ pub fn bindgen_node_os_dispatch_user_info(
 ) -> JSValue {
     // SAFETY: `arg_options` is a valid C++ stack local; `UserInfoOptions` is
     // `#[repr(C)]` matching the bindgen `extern struct`.
-    let options = unsafe { core::ptr::read(arg_options) };
+    let options = yolo! { core::ptr::read(arg_options) };
     bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, options))
 }
 
@@ -617,7 +618,7 @@ pub fn bindgen_node_os_dispatch_set_priority1(
     bindgen_out(
         global,
         std::ptr::from_mut::<()>(&mut ()),
-        node_os::set_priority1(global, unsafe { *arg_pid }, unsafe { *arg_priority }),
+        node_os::set_priority1(global, yolo! { *arg_pid }, yolo! { *arg_priority }),
     )
 }
 
@@ -630,7 +631,7 @@ pub fn bindgen_node_os_dispatch_set_priority2(
     bindgen_out(
         global,
         std::ptr::from_mut::<()>(&mut ()),
-        node_os::set_priority2(global, unsafe { *arg_priority }),
+        node_os::set_priority2(global, yolo! { *arg_priority }),
     )
 }
 

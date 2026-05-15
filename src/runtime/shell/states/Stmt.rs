@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
@@ -29,7 +30,7 @@ impl Stmt {
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
+            node: yolo! { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
             idx: 0,
             last_exit_code: None,
             currently_executing: None,

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use std::io::Write as _;
 
@@ -131,7 +132,7 @@ pub fn edit_trusted_dependencies(
         if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
             // this function; lifetime erased per Phase-A `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
+            trusted_dependencies = yolo! { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
     }
 
@@ -782,7 +783,7 @@ pub fn edit(
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
                 if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                     // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
-                    trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
+                    trusted_dependencies = yolo! { bun_ptr::detach_lifetime(arr.items.slice()) };
                 }
             }
         }
@@ -1104,7 +1105,7 @@ pub fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow — matches the Zig original which stores
             // `?*E.String` for this deferred-write pattern.
-            let e_string = unsafe { &mut *e_string };
+            let e_string = yolo! { &mut *e_string };
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {

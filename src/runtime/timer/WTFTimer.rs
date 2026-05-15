@@ -7,6 +7,7 @@
 //! resolves the heap through [`crate::jsc_hooks::runtime_state`] instead —
 //! the same pattern `TimerObjectInternals` uses.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -31,7 +32,7 @@ bun_opaque::opaque_ffi! {
 
 impl RunLoopTimer {
     /// Takes `NonNull` (not `&self`) so callers holding the raw FFI handle
-    /// don't need an `unsafe { as_ref() }` just to forward it — `NonNull<T>`
+    /// don't need an `yolo! { as_ref() }` just to forward it — `NonNull<T>`
     /// is ABI-identical to `*mut T` and the extern is `safe fn`.
     #[inline]
     pub fn fire(this: NonNull<RunLoopTimer>) {
@@ -61,9 +62,9 @@ bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 #[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
     // SAFETY: caller (C++) guarantees `vm` is the live VirtualMachine for this thread.
-    let el = unsafe { (*vm).event_loop() };
+    let el = yolo! { (*vm).event_loop() };
     // SAFETY: `event_loop()` returns the VM's owned EventLoop pointer.
-    unsafe { (*el).run_imminent_gc_timer() };
+    yolo! { (*el).run_imminent_gc_timer() };
 }
 
 impl WTFTimer {
@@ -80,11 +81,11 @@ impl WTFTimer {
         // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
         // short-lived `&Self` per Deref so no `&WTFTimer` spans the
         // `All::remove` raw write to `event_loop_timer`.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let t = yolo! { bun_ptr::ThisPtr::new(this) };
         if t.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             // SAFETY: `vm` is the live VM that owns this timer's heap;
             // `event_loop_timer` is an embedded field of a live allocation.
-            unsafe {
+            yolo! {
                 let state = crate::jsc_hooks::runtime_state_of(vm);
                 (*state)
                     .timer
@@ -137,7 +138,7 @@ impl WTFTimer {
         // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
         // short-lived `&Self` per Deref. Copy the `BackRef` out so the
         // subsequent `&AtomicPtr` borrow is detached from `*this`.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let t = yolo! { bun_ptr::ThisPtr::new(this) };
         let imminent_br = t.imminent;
         let imminent = imminent_br.get();
 
@@ -180,7 +181,7 @@ impl WTFTimer {
         // live allocation. May be called off the JS thread — `All::update`
         // takes its own lock. The `repeat` write is the only field write here;
         // no `&Self` from `t` is live across it.
-        unsafe {
+        yolo! {
             let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
             (*state)
                 .timer
@@ -196,7 +197,7 @@ impl WTFTimer {
         // only fresh short-lived `&Self` per Deref; `lock_guard` stores a
         // `BackRef<Mutex>` (no `&Self` held in `_g`), so the `addr_of_mut!`
         // below stays legal under Stacked Borrows.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        let t = yolo! { bun_ptr::ThisPtr::new(this) };
         let _g = t.lock.lock_guard();
 
         if t.script_execution_context_id.valid() {
@@ -217,7 +218,7 @@ impl WTFTimer {
                 // called off the JS thread — `All::remove` locks.
                 // `addr_of_mut!` through the original `*mut` preserves write
                 // provenance for the heap-node mutation inside `remove`.
-                unsafe {
+                yolo! {
                     let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
                     (*state)
                         .timer
@@ -237,8 +238,8 @@ impl WTFTimer {
         // SAFETY: per fn contract — `this` is live. Single raw write to
         // `event_loop_timer.state` precedes the `ThisPtr` borrow; subsequent
         // field reads via `t` create fresh short-lived `&Self`.
-        unsafe { (*this).event_loop_timer.state = EventLoopTimerState::FIRED };
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+        yolo! { (*this).event_loop_timer.state = EventLoopTimerState::FIRED };
+        let t = yolo! { bun_ptr::ThisPtr::new(this) };
         // Only clear imminent if this timer was the one that set it.
         let self_opaque = this.cast::<()>();
         // `imminent` is a `BackRef` into the VM's event loop, which outlives
@@ -257,10 +258,10 @@ impl WTFTimer {
     /// `this` must be the unique owner of a `heap::alloc`-produced `WTFTimer`.
     pub unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
-        unsafe { Self::cancel(this) };
+        yolo! { Self::cancel(this) };
         // SAFETY: `bun.TrivialNew` ↔ `heap::alloc`, so `heap::take` is
         // the paired free.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 
@@ -275,7 +276,7 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
     // SAFETY: `vm` is the thread-local VirtualMachine; `run_loop_timer` is
     // non-null per caller contract; `event_loop().imminent_gc_timer` lives as
     // long as the VM.
-    let this = unsafe {
+    let this = yolo! {
         let vm_ref = &*vm;
         let el = &*vm_ref.event_loop();
         Box::new(WTFTimer {
@@ -307,19 +308,19 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
 #[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
     // SAFETY: `this` was produced by WTFTimer__create and is exclusively accessed here.
-    unsafe { WTFTimer::update(this, seconds, repeat) };
+    yolo! { WTFTimer::update(this, seconds, repeat) };
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
     // SAFETY: `this` was produced by heap::alloc in WTFTimer__create; reclaiming ownership.
-    unsafe { WTFTimer::deinit(this) };
+    yolo! { WTFTimer::deinit(this) };
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
     // SAFETY: `this` is a live WTFTimer per caller contract.
-    unsafe { WTFTimer::cancel(this) };
+    yolo! { WTFTimer::cancel(this) };
 }
 
 // TODO(port): move to <area>_sys

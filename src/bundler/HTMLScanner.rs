@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
@@ -298,7 +299,7 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserDa
                     );
                     // SAFETY: `self.this` was set from `&mut T` in `run` and is
                     // valid for the lifetime of the rewriter.
-                    unsafe {
+                    yolo! {
                         (*self.this).on_tag(
                             element,
                             value.slice(),
@@ -336,7 +337,7 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for DocTagUse
     fn call(&mut self, element: &mut lol::Element) -> bool {
         // SAFETY: `self.this` was set from `&mut T` in `run` and is valid for
         // the lifetime of the rewriter.
-        unsafe {
+        yolo! {
             match self.which {
                 0 => (*self.this).on_body_tag(element),
                 1 => (*self.this).on_head_tag(element),
@@ -362,7 +363,7 @@ impl<T: HTMLProcessorHandler> lol::OutputSink for Sink<T> {
     fn write(&mut self, bytes: &[u8]) {
         // SAFETY: `self.0` was set from `&mut T` in `run` and is valid for the
         // lifetime of the rewriter.
-        unsafe { (*self.0).on_write_html(bytes) }
+        yolo! { (*self.0).on_write_html(bytes) }
     }
     fn done(&mut self) {}
 }
@@ -383,7 +384,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let _builder_guard = scopeguard::guard(builder, |b| {
             // SAFETY: `b` came from `HTMLRewriterBuilder::init()` and has not
             // been freed.
-            unsafe { lol::HTMLRewriterBuilder::destroy(b) }
+            yolo! { lol::HTMLRewriterBuilder::destroy(b) }
         });
 
         let mut selectors: BoundedArray<*mut lol::HTMLSelector, SELECTOR_CAP> =
@@ -395,7 +396,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                 for selector in selectors.slice() {
                     // SAFETY: each selector was returned by HTMLSelector::parse
                     // and has not been freed yet.
-                    unsafe { lol::HTMLSelector::destroy(*selector) };
+                    yolo! { lol::HTMLSelector::destroy(*selector) };
                 }
             },
         );
@@ -419,10 +420,10 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
             selectors.append_assume_capacity(selector);
             // SAFETY: `builder` / `selector` are live FFI handles owned by the
             // guards above.
-            unsafe { &mut *builder }
+            yolo! { &mut *builder }
                 .add_element_content_handlers(
                     // SAFETY: `selector` was just returned by `parse`.
-                    unsafe { &mut *selector },
+                    yolo! { &mut *selector },
                     Some(NonNull::from(&mut tag_user_datas[i])),
                     None::<NonNull<TagUserData<T>>>,
                     None::<NonNull<TagUserData<T>>>,
@@ -436,10 +437,10 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                 let head_selector = lol::HTMLSelector::parse(tag).map_err(lol_err)?;
                 selectors.append_assume_capacity(head_selector);
                 // SAFETY: see above.
-                unsafe { &mut *builder }
+                yolo! { &mut *builder }
                     .add_element_content_handlers(
                         // SAFETY: `head_selector` was just returned by `parse`.
-                        unsafe { &mut *head_selector },
+                        yolo! { &mut *head_selector },
                         Some(NonNull::from(&mut doc_user_datas[i])),
                         None::<NonNull<DocTagUserData<T>>>,
                         None::<NonNull<DocTagUserData<T>>>,
@@ -460,18 +461,18 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         // runs on error without a scopeguard double-borrowing `this`.
         let res: Result<(), Error> = (|| {
             // SAFETY: `builder` is a live FFI handle.
-            let rewriter = unsafe { &mut *builder }
+            let rewriter = yolo! { &mut *builder }
                 .build(lol::Encoding::UTF8, memory_settings, false, &raw mut sink)
                 .map_err(lol_err)?;
             // Zig: defer rewriter.deinit()
             let _rewriter_guard = scopeguard::guard(rewriter, |r| {
                 // SAFETY: `r` came from `build` and has not been freed.
-                unsafe { lol::HTMLRewriter::destroy(r) }
+                yolo! { lol::HTMLRewriter::destroy(r) }
             });
             // SAFETY: `rewriter` is a live FFI handle owned by `_rewriter_guard`.
-            unsafe { lol::HTMLRewriter::write(rewriter, input) }.map_err(lol_err)?;
+            yolo! { lol::HTMLRewriter::write(rewriter, input) }.map_err(lol_err)?;
             // SAFETY: same as above.
-            unsafe { lol::HTMLRewriter::end(rewriter) }.map_err(lol_err)?;
+            yolo! { lol::HTMLRewriter::end(rewriter) }.map_err(lol_err)?;
             Ok(())
         })();
 

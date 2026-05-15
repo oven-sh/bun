@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint, c_void};
 
 #[repr(C)]
@@ -76,7 +77,7 @@ impl HPACK {
         // an obligation here (in-bounds read), discharged by `src: &[u8]`. The
         // `self`/`output` preconditions are type-discharged via `&mut` in the
         // extern signature.
-        let offset = unsafe { lshpack_wrapper_decode(self, src.as_ptr(), src.len(), &mut header) };
+        let offset = yolo! { lshpack_wrapper_decode(self, src.as_ptr(), src.len(), &mut header) };
         if offset == 0 {
             return Err(HpackError::UnableToDecode);
         }
@@ -88,7 +89,7 @@ impl HPACK {
         // thread_local `shared_header_buffer` (set via lsxpack_header_prepare_decode),
         // so both pointers are provably non-null after a successful decode. Use bare
         // `from_raw_parts` to avoid a dead null-branch on the per-HTTP/2-header path.
-        let (name, value) = unsafe {
+        let (name, value) = yolo! {
             (
                 core::slice::from_raw_parts(header.name, header.name_len),
                 core::slice::from_raw_parts(header.value, header.value_len),
@@ -118,7 +119,7 @@ impl HPACK {
         // live borrowed slices so the C side's reads/writes are in-bounds. The
         // `self` precondition is type-discharged via `&mut` in the extern
         // signature; the ptr+len contracts cannot be encoded over the C ABI.
-        let offset = unsafe {
+        let offset = yolo! {
             lshpack_wrapper_encode(
                 self,
                 name.as_ptr(),
@@ -177,7 +178,7 @@ impl core::ops::Deref for HpackHandle {
     #[inline]
     fn deref(&self) -> &HPACK {
         // SAFETY: `self.0` is the unique live owner of the C allocation.
-        unsafe { self.0.as_ref() }
+        yolo! { self.0.as_ref() }
     }
 }
 
@@ -185,7 +186,7 @@ impl core::ops::DerefMut for HpackHandle {
     #[inline]
     fn deref_mut(&mut self) -> &mut HPACK {
         // SAFETY: `self.0` is the unique live owner of the C allocation.
-        unsafe { self.0.as_mut() }
+        yolo! { self.0.as_mut() }
     }
 }
 
@@ -195,7 +196,7 @@ impl Drop for HpackHandle {
         // SAFETY: `self.0` came from `lshpack_wrapper_init` (via `HPACK::init`)
         // and `HpackHandle` is its unique owner, so this is the first and only
         // teardown — runs `lshpack_{enc,dec}_cleanup` then frees.
-        unsafe { lshpack_wrapper_deinit(self.0.as_ptr()) };
+        yolo! { lshpack_wrapper_deinit(self.0.as_ptr()) };
     }
 }
 

@@ -4,6 +4,7 @@
     clippy::missing_safety_doc
 )]
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
@@ -472,31 +473,31 @@ impl Archive {
     }
     pub fn version_string() -> &'static [u8] {
         // SAFETY: archive_version_string returns a static NUL-terminated C string.
-        unsafe { bun_core::ffi::cstr(archive_version_string()) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(archive_version_string()) }.to_bytes()
     }
     pub fn version_details() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(archive_version_details()) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(archive_version_details()) }.to_bytes()
     }
     pub fn zlib_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(archive_zlib_version()) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(archive_zlib_version()) }.to_bytes()
     }
     pub fn liblzma_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(archive_liblzma_version()) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(archive_liblzma_version()) }.to_bytes()
     }
     pub fn bzlib_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(archive_bzlib_version()) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(archive_bzlib_version()) }.to_bytes()
     }
     pub fn liblz4_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(archive_liblz4_version()) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(archive_liblz4_version()) }.to_bytes()
     }
     pub fn libzstd_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(archive_libzstd_version()) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(archive_libzstd_version()) }.to_bytes()
     }
 
     pub fn error_string(&self) -> &[u8] {
@@ -505,7 +506,7 @@ impl Archive {
             return b"";
         }
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { bun_core::ffi::cstr(err_str) }.to_bytes()
+        yolo! { bun_core::ffi::cstr(err_str) }.to_bytes()
     }
 
     pub fn write_new() -> *mut Archive {
@@ -526,7 +527,7 @@ impl Archive {
 
     pub fn write_set_options(&self, opts: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
+        yolo! { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
     }
 
     pub fn write_set_format_pax_restricted(&self) -> ArchiveResult {
@@ -572,7 +573,7 @@ impl Archive {
     }
     pub fn write_add_filter_by_name(&self, name: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_by_name(self.as_mut_ptr(), name.as_ptr().cast()) }
+        yolo! { archive_write_add_filter_by_name(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
     pub fn write_add_filter_b64encode(&self) -> ArchiveResult {
         archive_write_add_filter_b64encode(self)
@@ -614,7 +615,7 @@ impl Archive {
 
     pub fn write_set_filter_option(&self, m: Option<&ZStr>, o: &ZStr, v: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe {
+        yolo! {
             archive_write_set_filter_option(
                 self.as_mut_ptr(),
                 m.map_or(core::ptr::null(), |s| s.as_ptr().cast()),
@@ -626,7 +627,7 @@ impl Archive {
 
     pub fn write_open_filename(&self, filename: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
+        yolo! { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
     }
 
     pub fn write_open_fd(&self, fd: Fd) -> ArchiveResult {
@@ -642,7 +643,7 @@ impl Archive {
         used: &mut usize,
     ) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_open_memory(self.as_mut_ptr(), buf, buf_size, used) }
+        yolo! { archive_write_open_memory(self.as_mut_ptr(), buf, buf_size, used) }
     }
 
     pub fn write_header(&self, entry: &ArchiveEntry) -> ArchiveResult {
@@ -651,7 +652,7 @@ impl Archive {
 
     pub fn write_data(&self, data: &[u8]) -> isize {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
+        yolo! { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
     }
 
     pub fn write_finish_entry(&self) -> ArchiveResult {
@@ -743,17 +744,17 @@ impl Archive {
 
     pub fn read_set_options(&self, opts: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
+        yolo! { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
     }
 
     pub fn read_open_memory(&self, buf: &[u8]) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
+        yolo! { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
     }
 
     pub fn read_next_header(&self, entry: &mut *mut ArchiveEntry) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_next_header(self.as_mut_ptr(), entry) }
+        yolo! { archive_read_next_header(self.as_mut_ptr(), entry) }
     }
     pub fn read_next_header2(&self, entry: &ArchiveEntry) -> ArchiveResult {
         archive_read_next_header2(self, entry)
@@ -763,7 +764,7 @@ impl Archive {
         let mut buff: *const c_void = core::ptr::null();
         let mut size: usize = 0;
         // SAFETY: archive_read_data_block writes buff/size/offset; pointers are valid.
-        let r = unsafe {
+        let r = yolo! {
             archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset)
         };
         if r == ArchiveResult::Eof {
@@ -788,7 +789,7 @@ impl Archive {
 
     pub fn read_data(&self, buf: &mut [u8]) -> isize {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
+        yolo! { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
     }
 
     pub fn write_zeros_to_file(sink: &ArchiveFileSink, count: usize) -> ArchiveResult {
@@ -800,7 +801,7 @@ impl Archive {
         while remaining > 0 {
             let to_write = &zero_buf[..remaining.min(zero_buf.len())];
             // SAFETY: sink.owner is valid for the vtable provider's lifetime.
-            if !unsafe { (sink.vtable.write_all)(sink.owner, to_write) } {
+            if !yolo! { (sink.vtable.write_all)(sink.owner, to_write) } {
                 return ArchiveResult::Failed;
             }
             remaining -= to_write.len();
@@ -832,7 +833,7 @@ impl Archive {
                 return block.result;
             }
             // SAFETY: block.bytes was set from archive_read_data_block; valid until next read call.
-            let data: &[u8] = unsafe { &*block.bytes };
+            let data: &[u8] = yolo! { &*block.bytes };
 
             // Track the furthest point we need to write to (for final truncation)
             final_offset =
@@ -843,7 +844,7 @@ impl Archive {
                 // Try pwrite first - it handles sparse files without needing lseek
                 if *can_use_pwrite {
                     // SAFETY: sink.owner is valid for the vtable provider's lifetime.
-                    if unsafe { (sink.vtable.pwrite_all)(sink.owner, data, block.offset) } {
+                    if yolo! { (sink.vtable.pwrite_all)(sink.owner, data, block.offset) } {
                         // pwrite doesn't update file position, but track logical position for fallback
                         actual_offset = actual_offset
                             .max(block.offset + i64::try_from(data.len()).expect("int cast"));
@@ -863,7 +864,7 @@ impl Archive {
                 'seek: {
                     if *can_use_lseek {
                         // SAFETY: sink.owner is valid for the vtable provider's lifetime.
-                        if unsafe {
+                        if yolo! {
                             (sink.vtable.set_offset)(
                                 sink.owner,
                                 u64::try_from(block.offset).expect("int cast"),
@@ -894,7 +895,7 @@ impl Archive {
             }
 
             // SAFETY: sink.owner is valid for the vtable provider's lifetime.
-            if !unsafe { (sink.vtable.write_all)(sink.owner, data) } {
+            if !yolo! { (sink.vtable.write_all)(sink.owner, data) } {
                 return ArchiveResult::Failed;
             }
             actual_offset += i64::try_from(data.len()).expect("int cast");
@@ -904,7 +905,7 @@ impl Archive {
         // This extends the file to include any trailing zeros without actually writing them
         if final_offset > actual_offset {
             // SAFETY: sink.owner is valid for the vtable provider's lifetime.
-            unsafe { (sink.vtable.ftruncate)(sink.owner, final_offset) };
+            yolo! { (sink.vtable.ftruncate)(sink.owner, final_offset) };
         }
 
         ArchiveResult::Ok
@@ -1019,22 +1020,22 @@ impl ArchiveEntry {
 
     pub fn set_pathname(&self, name: &ZStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_pathname(self.as_mut_ptr(), name.as_ptr().cast()) }
+        yolo! { archive_entry_set_pathname(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
 
     pub fn set_pathname_utf8(&self, name: &ZStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_pathname_utf8(self.as_mut_ptr(), name.as_ptr().cast()) }
+        yolo! { archive_entry_set_pathname_utf8(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
 
     pub fn copy_pathname(&self, name: &ZStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_copy_pathname(self.as_mut_ptr(), name.as_ptr().cast()) }
+        yolo! { archive_entry_copy_pathname(self.as_mut_ptr(), name.as_ptr().cast()) }
     }
 
     pub fn copy_pathname_w(&self, name: &WStr) {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_copy_pathname_w(self.as_mut_ptr(), name.as_ptr()) }
+        yolo! { archive_entry_copy_pathname_w(self.as_mut_ptr(), name.as_ptr()) }
     }
 
     pub fn set_size(&self, s: i64) {
@@ -1063,15 +1064,15 @@ impl ArchiveEntry {
 
     pub fn pathname(&self) -> &ZStr {
         // SAFETY: returns NUL-terminated string owned by the entry.
-        unsafe { ZStr::from_c_ptr(archive_entry_pathname(self)) }
+        yolo! { ZStr::from_c_ptr(archive_entry_pathname(self)) }
     }
     pub fn pathname_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { ZStr::from_c_ptr(archive_entry_pathname_utf8(self)) }
+        yolo! { ZStr::from_c_ptr(archive_entry_pathname_utf8(self)) }
     }
     pub fn pathname_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { WStr::from_ptr(archive_entry_pathname_w(self)) }
+        yolo! { WStr::from_ptr(archive_entry_pathname_w(self)) }
     }
     pub fn filetype(&self) -> Mode {
         archive_entry_filetype(self)
@@ -1084,22 +1085,22 @@ impl ArchiveEntry {
     }
     pub fn mtime(&self) -> i64 {
         // SAFETY: FFI call on valid opaque libarchive handle.
-        i64::try_from(unsafe { archive_entry_mtime(self.as_mut_ptr().cast()) }).unwrap()
+        i64::try_from(yolo! { archive_entry_mtime(self.as_mut_ptr().cast()) }).unwrap()
     }
     pub fn symlink(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { ZStr::from_c_ptr(archive_entry_symlink(self)) }
+        yolo! { ZStr::from_c_ptr(archive_entry_symlink(self)) }
     }
     pub fn symlink_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { ZStr::from_c_ptr(archive_entry_symlink_utf8(self)) }
+        yolo! { ZStr::from_c_ptr(archive_entry_symlink_utf8(self)) }
     }
     pub fn symlink_type(&self) -> SymlinkType {
         archive_entry_symlink_type(self)
     }
     pub fn symlink_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { WStr::from_ptr(archive_entry_symlink_w(self)) }
+        yolo! { WStr::from_ptr(archive_entry_symlink_w(self)) }
     }
 }
 
@@ -1146,13 +1147,13 @@ impl ArchiveIterator {
     /// sound. No FFI call here re-enters Rust to alias `self.archive`.
     #[inline]
     pub fn archive(&self) -> &Archive {
-        unsafe { &*self.archive }
+        yolo! { &*self.archive }
     }
 
     pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
         let archive = Archive::read_new();
         // SAFETY: archive_read_new() returns a non-null handle owned by libarchive.
-        let a = unsafe { &*archive };
+        let a = yolo! { &*archive };
 
         match a.read_support_format_tar() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
@@ -1257,7 +1258,7 @@ impl NextEntry {
         archive: &Archive,
     ) -> Result<IteratorResult<Box<[u8]>>, bun_alloc::AllocError> {
         // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
-        let size = unsafe { (*self.entry).size() };
+        let size = yolo! { (*self.entry).size() };
         if size < 0 {
             return Ok(IteratorResult::init_err(
                 archive.as_mut_ptr(),
@@ -2092,7 +2093,7 @@ impl GrowingBuffer {
         client_data: *mut c_void,
     ) -> c_int {
         // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open*.
-        let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+        let this = yolo! { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
         this.list.clear();
         this.had_error = false;
         0
@@ -2105,12 +2106,12 @@ impl GrowingBuffer {
         length: usize,
     ) -> la_ssize_t {
         // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open*.
-        let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+        let this = yolo! { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
         if buff.is_null() || length == 0 {
             return 0;
         }
         // SAFETY: buff[0..length] is valid for reads per libarchive contract.
-        let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
+        let data = yolo! { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
         // Vec::try_reserve + extend to mirror Zig's `appendSlice catch` OOM handling.
         if this.list.try_reserve(length).is_err() {
             this.had_error = true;

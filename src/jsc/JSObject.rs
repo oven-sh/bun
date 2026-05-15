@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::mem::ManuallyDrop;
@@ -189,7 +190,7 @@ impl JSObject {
         // `global.as_ptr()` yields the raw FFI handle — JSGlobalObject is an
         // opaque JSC cell with interior mutability on the C++ side; Rust holds
         // no `&`-derived view of any field C++ mutates.
-        unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
+        yolo! { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
     }
 
     pub fn create_with_initializer<Ctx: ObjectInitializer>(
@@ -230,7 +231,7 @@ impl JSObject {
         // Zig calls `bun.cpp.JSC__JSObject__putRecord` (`[[ZIG_EXPORT(check_slow)]]`).
         // SAFETY: pointers are valid for the duration of the call; C++ does not
         // retain them.
-        unsafe {
+        yolo! {
             crate::cpp::JSC__JSObject__putRecord(
                 self,
                 global,
@@ -276,7 +277,7 @@ impl ExternColumnIdentifier {
     pub fn string(&mut self) -> Option<&mut BunString> {
         match self.tag {
             // SAFETY: tag == 2 means `value.name` is the active union field.
-            2 => Some(unsafe { &mut *self.value.name }),
+            2 => Some(yolo! { &mut *self.value.name }),
             _ => None,
         }
     }
@@ -308,7 +309,7 @@ extern "C" fn initializer_call<Ctx: ObjectInitializer>(
     // SAFETY: `this` was produced from `&mut Ctx` in `create_with_initializer`;
     // `obj` is a live JSC pointer for the duration of the callback. `global` is
     // taken by reference at the C ABI (`&T` ≡ non-null `*const T`).
-    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, global) };
+    let result = yolo! { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, global) };
     if let Err(err) = result {
         // Mirrors `host_fn::void_from_js_error` (host_fn.zig) — OOM throws,
         // anything else asserts an exception is already pending.

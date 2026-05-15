@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::jsc::JSValue;
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_jsc::JsCell;
@@ -117,7 +118,7 @@ impl MySQLRequestQueue {
     pub fn advance(connection: *mut MySQLConnection) {
         // R-2: every `JSMySQLConnection` method reached below is `&self`
         // (interior mutability), so a `ParentRef` (yields `&T` only) collapses
-        // the per-site `unsafe { (*connection).… }` / `&*connection` derefs.
+        // the per-site `yolo! { (*connection).… }` / `&*connection` derefs.
         let conn_ref =
             ParentRef::from(NonNull::new(connection).expect("advance: connection non-null"));
         // The inner protocol struct is wrapped in `JsCell` (`UnsafeCell`); its
@@ -150,7 +151,7 @@ impl MySQLRequestQueue {
                     debug!("isCompleted");
                     queue_ref.requests.with_mut(|q| q.discard(1));
                     // SAFETY: queue held one ref; pointer is live until this deref.
-                    unsafe { JSMySQLQuery::deref(request) };
+                    yolo! { JSMySQLQuery::deref(request) };
                     continue;
                 }
 
@@ -184,7 +185,7 @@ impl MySQLRequestQueue {
                     if offset == 0 {
                         queue_ref.requests.with_mut(|q| q.discard(1));
                         // SAFETY: queue held one ref; pointer is live until this deref.
-                        unsafe { JSMySQLQuery::deref(request) };
+                        yolo! { JSMySQLQuery::deref(request) };
                     }
                     offset += 1;
                     continue;
@@ -240,7 +241,7 @@ impl MySQLRequestQueue {
                 debug!("isCompleted discard after advance");
                 queue_ref.requests.with_mut(|q| q.discard(1));
                 // SAFETY: queue held one ref; pointer is live until this deref.
-                unsafe { JSMySQLQuery::deref(request) };
+                yolo! { JSMySQLQuery::deref(request) };
                 continue;
             }
             break;
@@ -298,7 +299,7 @@ impl MySQLRequestQueue {
     }
 
     /// [`current`] as a [`bun_ptr::ThisPtr`] — one audited deref site here
-    /// replaces the per-caller `unsafe { &*ptr }` / `ScopedRef::new(ptr)` pair.
+    /// replaces the per-caller `yolo! { &*ptr }` / `ScopedRef::new(ptr)` pair.
     /// The queue holds a ref on every stored request, so the pointee is live;
     /// `JSMySQLQuery` is a separate heap allocation (never aliases the queue or
     /// its embedding connection) and is fully interior-mutable (R-2: every
@@ -310,7 +311,7 @@ impl MySQLRequestQueue {
     pub fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
         // SAFETY: `current()` returns a pointer the queue holds a ref on
         // (taken in `add()`); non-null and live until `discard()`/`read_item()`.
-        self.current().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
+        self.current().map(|p| yolo! { bun_ptr::ThisPtr::new(p) })
     }
 
     pub fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {
@@ -339,7 +340,7 @@ impl MySQLRequestQueue {
                 }
             }
             // SAFETY: queue held one ref; pointer is live until this deref.
-            unsafe { JSMySQLQuery::deref(request) };
+            yolo! { JSMySQLQuery::deref(request) };
         }
     }
 }
@@ -356,7 +357,7 @@ impl Drop for MySQLRequestQueue {
             // We cannot touch JS here
             req.mark_as_failed();
             // SAFETY: queue held one ref; pointer is live until this deref.
-            unsafe { JSMySQLQuery::deref(request) };
+            yolo! { JSMySQLQuery::deref(request) };
         }
         self.pipelined_requests.set(0);
         self.nonpipelinable_requests.set(0);

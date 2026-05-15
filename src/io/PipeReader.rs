@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
@@ -108,7 +109,7 @@ impl BufferedReaderVTable {
     fn link(&self) -> crate::BufferedReaderParentLink {
         // SAFETY: `parent` is a `*mut T` matching `kind` per `set_parent`'s
         // contract; raw-ptr passthrough, no `&mut T` materialized.
-        unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
+        yolo! { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
@@ -386,7 +387,7 @@ impl PosixBufferedReader {
             self.handle.close(
                 Some(owner),
                 // SAFETY: ctx == &mut PosixBufferedReader (this fn's `self`).
-                Some(|ctx: *mut c_void| unsafe { (*ctx.cast::<PosixBufferedReader>()).done() }),
+                Some(|ctx: *mut c_void| yolo! { (*ctx.cast::<PosixBufferedReader>()).done() }),
             );
         }
     }
@@ -641,7 +642,7 @@ impl PosixBufferedReader {
         // re-borrow). The reader struct is an inline field of its parent
         // (never freed mid-call), so `*this` stays a valid place even if
         // re-entry calls `done()`/`close()`.
-        let parent = unsafe { &mut *this };
+        let parent = yolo! { &mut *this };
         let mut received_hup = received_hup_initially;
         loop {
             let streaming = parent.vtable.is_streaming_enabled();
@@ -699,7 +700,7 @@ impl PosixBufferedReader {
                 let buf_len = {
                     // SAFETY: sys::read_nonblocking writes only initialized bytes into
                     // the prefix it reports; commit_spare exposes exactly that prefix.
-                    let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+                    let buf = yolo! { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
                     let buf_len = buf.len();
                     match sys::read_nonblocking(fd, buf) {
                         sys::Result::Ok(bytes_read) => {
@@ -710,7 +711,7 @@ impl PosixBufferedReader {
                             }
                             parent._offset += bytes_read;
                             // SAFETY: bytes_read bytes were just initialized by the syscall.
-                            unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
+                            yolo! { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
 
                             if bytes_read == 0 {
                                 parent.close_without_reporting();
@@ -831,7 +832,7 @@ impl PosixBufferedReader {
         // but a raw-ptr-derived borrow (precedent: `JSMySQLQuery::resolve`).
         // The reader struct is an inline field of its parent (never freed
         // mid-call), so `*this` stays a valid place across re-entry.
-        let parent = unsafe { &mut *this };
+        let parent = yolo! { &mut *this };
         let streaming = parent.vtable.is_streaming_enabled();
 
         if streaming {
@@ -1001,7 +1002,7 @@ impl PosixBufferedReader {
         loop {
             parent._buffer.reserve(16 * 1024);
             // SAFETY: writing into spare capacity; commit after syscall reports bytes written.
-            let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
+            let buf = yolo! { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
 
             match sys_fn(fd, buf, parent._offset) {
                 sys::Result::Ok(bytes_read) => {
@@ -1012,7 +1013,7 @@ impl PosixBufferedReader {
                     }
                     parent._offset += bytes_read;
                     // SAFETY: bytes_read bytes initialized by sys_fn.
-                    unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
+                    yolo! { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
 
                     if bytes_read == 0 {
                         parent.close_without_reporting();
@@ -1287,14 +1288,14 @@ impl WindowsBufferedReader {
         // SAFETY: `this` aliases the live `&mut self`; single JS thread. The
         // reader struct is an inline field of its parent (never freed
         // mid-call), so `*this` stays a valid place across re-entry.
-        let result = unsafe { (*this).vtable.on_read_chunk(buf, has_more) };
+        let result = yolo! { (*this).vtable.on_read_chunk(buf, has_more) };
         // Re-escape so the trailing RMW cannot reuse a spilled `self.flags`
         // from before `on_read_chunk`.
         core::hint::black_box(this);
         // Clear has_inflight_read after the callback completes to prevent
         // libuv from starting a new read while we're still processing data
         // SAFETY: `this` is still live (see above).
-        unsafe { (*this).flags.remove(WindowsFlags::HAS_INFLIGHT_READ) };
+        yolo! { (*this).flags.remove(WindowsFlags::HAS_INFLIGHT_READ) };
         result
     }
 
@@ -1326,7 +1327,7 @@ impl WindowsBufferedReader {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         self._buffer.reserve(suggested_size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
-        unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
+        yolo! { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
     }
 
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -1343,7 +1344,7 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
-        self.source = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+        self.source = Some(Source::Pipe(yolo! { bun_core::heap::take(pipe) }));
         self.start_with_current_pipe()
     }
 
@@ -1388,10 +1389,10 @@ impl WindowsBufferedReader {
         // `set_data`/`start_with_current_pipe`. libuv invokes this from the
         // event loop with no other Rust borrow of the reader live, so this is
         // the sole `&mut` to the allocation (single-owner).
-        let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>((*handle).data) };
+        let this = yolo! { bun_ptr::callback_ctx::<WindowsBufferedReader>((*handle).data) };
         let result = this.get_read_buffer_with_stable_memory_address(suggested_size);
         // SAFETY: buf is a valid out-pointer from libuv.
-        unsafe {
+        yolo! {
             *buf = uv::uv_buf_t::init(result);
         }
     }
@@ -1405,7 +1406,7 @@ impl WindowsBufferedReader {
         // SAFETY: libuv read_cb — `stream.data` was set to `*mut Self` in
         // `set_data`. Invoked from the event loop with no other Rust borrow of
         // the reader live (single-owner).
-        let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>((*stream).data) };
+        let this = yolo! { bun_ptr::callback_ctx::<WindowsBufferedReader>((*stream).data) };
 
         let nread_int = nread.int();
 
@@ -1441,8 +1442,8 @@ impl WindowsBufferedReader {
                 // SAFETY: buf is valid when nread > 0. `uv_buf_t` is `Copy` —
                 // take a local copy so `slice_mut` can borrow `&mut self`
                 // (libuv's `read_cb` hands us `*const`).
-                let mut b = unsafe { *buf };
-                let slice = unsafe { b.slice_mut() };
+                let mut b = yolo! { *buf };
+                let slice = yolo! { b.slice_mut() };
                 this.on_read(sys::Result::Ok(len), &mut slice[..len], ReadState::Progress);
             }
         }
@@ -1458,14 +1459,14 @@ impl WindowsBufferedReader {
         // `from_fs_callback` snapshots `result`/`data` then container_of's the
         // owning `&mut File`; that borrow does not overlap the later
         // `&mut WindowsBufferedReader` (distinct heap allocations).
-        let (file, result, parent_ptr) = unsafe { crate::source::File::from_fs_callback(fs) };
+        let (file, result, parent_ptr) = yolo! { crate::source::File::from_fs_callback(fs) };
         let nread_int = result.int();
         let was_canceled = nread_int == uv::UV_ECANCELED as i64;
 
         bun_sys::syslog!(
             "onFileRead({}) = {}",
             // SAFETY: `uv_fs_read` populated the `fd` arm of the `file` union.
-            Fd::from_uv(unsafe { file.fs.file_fd() }),
+            Fd::from_uv(yolo! { file.fs.file_fd() }),
             nread_int
         );
 
@@ -1484,7 +1485,7 @@ impl WindowsBufferedReader {
         // non-null path, so this is the sole live `&mut` to the reader
         // (single-owner).
         let this: &mut WindowsBufferedReader =
-            unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(parent_ptr) };
+            yolo! { bun_ptr::callback_ctx::<WindowsBufferedReader>(parent_ptr) };
 
         // Mark no longer in flight
         this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
@@ -1538,7 +1539,7 @@ impl WindowsBufferedReader {
                 if !file_raw.is_null() {
                     // SAFETY: `file_raw` points into the boxed File owned by
                     // `this.source`; live for the duration of this callback.
-                    let buf = unsafe { (*file_raw).iov.slice_mut() };
+                    let buf = yolo! { (*file_raw).iov.slice_mut() };
                     this.on_read(sys::Result::Ok(len), &mut buf[..len], ReadState::Progress);
                 } else {
                     // ops we should not hit this lets fail with EPIPE
@@ -1562,7 +1563,7 @@ impl WindowsBufferedReader {
                     };
                     if !file_raw.is_null() {
                         // SAFETY: see above; raw-ptr break for self-aliasing.
-                        let file = unsafe { &mut *file_raw };
+                        let file = yolo! { &mut *file_raw };
                         // Can only start if file is in deinitialized state
                         if file.can_start() {
                             file.fs.data = this_ptr;
@@ -1578,7 +1579,7 @@ impl WindowsBufferedReader {
                             };
                             // SAFETY: `file` is fully initialized; libuv stores
                             // the cb and fires it on the event loop.
-                            if let Some(err) = unsafe {
+                            if let Some(err) = yolo! {
                                 uv::uv_fs_read(
                                     this.vtable.loop_().cast(),
                                     &mut file.fs,
@@ -1631,7 +1632,7 @@ impl WindowsBufferedReader {
                 let file_raw: *mut crate::source::File = file.as_mut();
                 // SAFETY: `file_raw` points into the boxed File owned by
                 // `self.source`; live until `self.source` is replaced.
-                let file = unsafe { &mut *file_raw };
+                let file = yolo! { &mut *file_raw };
                 // If already reading, just set data and unpause
                 file.fs.data = self_ptr;
                 if !file.can_start() {
@@ -1651,7 +1652,7 @@ impl WindowsBufferedReader {
                 };
                 // SAFETY: file is fully initialized; libuv stores cb and fires
                 // it on the event loop.
-                if let Some(err) = unsafe {
+                if let Some(err) = yolo! {
                     uv::uv_fs_read(
                         self.vtable.loop_().cast(),
                         &mut file.fs,
@@ -1675,7 +1676,7 @@ impl WindowsBufferedReader {
             }
             _ => {
                 // SAFETY: source is a live Pipe/Tty stream handle.
-                if let Some(err) = unsafe {
+                if let Some(err) = yolo! {
                     uv::uv_read_start(
                         source.to_stream(),
                         Some(Self::on_stream_alloc),
@@ -1721,7 +1722,7 @@ impl WindowsBufferedReader {
             }
             _ => {
                 // SAFETY: stream handle is live (just matched non-File).
-                unsafe { uv::uv_read_stop(source.to_stream()) };
+                yolo! { uv::uv_read_stop(source.to_stream()) };
             }
         }
         sys::Result::Ok(())
@@ -1740,14 +1741,14 @@ impl WindowsBufferedReader {
                     let raw = bun_core::heap::into_raw(file);
                     // SAFETY: raw is a live heap File*; the pending fs callback
                     // is the sole reclaimer (heap::take in on_close_complete).
-                    unsafe { (*raw).detach() };
+                    yolo! { (*raw).detach() };
                 }
                 #[cfg(windows)]
                 Source::Pipe(pipe) => {
                     // Hand the Box off to libuv; the close cb reclaims it.
                     let raw = bun_core::heap::into_raw(pipe);
                     // SAFETY: raw is a live uv::Pipe*; on_pipe_close frees it.
-                    unsafe {
+                    yolo! {
                         (*raw).data = raw.cast::<c_void>();
                         self.flags.insert(WindowsFlags::IS_PAUSED);
                         (*raw).close(Self::on_pipe_close);
@@ -1760,7 +1761,7 @@ impl WindowsBufferedReader {
                         // Node only ever closes stdin on process exit.
                     } else {
                         // SAFETY: tty is a live heap-allocated uv_tty_t*.
-                        unsafe {
+                        yolo! {
                             (*p).data = p.cast::<c_void>();
                             (*p).close(Self::on_tty_close);
                         }
@@ -1836,7 +1837,7 @@ impl WindowsBufferedReader {
         // libuv passes the same pointer back, so `handle` *is* the boxed Pipe
         // ptr — no need to round-trip through `.data`.
         // SAFETY: pipe was Box-allocated (into_raw in close_impl); reclaim.
-        drop(unsafe { bun_core::heap::take(handle) });
+        drop(yolo! { bun_core::heap::take(handle) });
     }
 
     #[cfg(windows)]
@@ -1847,7 +1848,7 @@ impl WindowsBufferedReader {
         // `handle` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
         debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
         // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
-        drop(unsafe { bun_core::heap::take(handle) });
+        drop(yolo! { bun_core::heap::take(handle) });
     }
 
     pub fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
@@ -1874,7 +1875,7 @@ impl WindowsBufferedReader {
 
         // move cursor foward
         // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.
-        unsafe { bun_core::vec::commit_spare(&mut self._buffer, amount_result) };
+        yolo! { bun_core::vec::commit_spare(&mut self._buffer, amount_result) };
 
         let should_continue = self._on_read_chunk(slice, has_more);
 

@@ -10,6 +10,7 @@
 //! mechanical `bun_ptr::shared::*` references resolve, and documents the 1:1 method
 //! mapping for Phase-B reviewers diffing against `src/ptr/shared.zig`.
 
+use bun_yolo::yolo;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -98,8 +99,8 @@ impl Default for Options {
 /// | `s.strongCount()`           | `Rc::strong_count(&s)`                        |
 /// | `s.weakCount()`             | `Rc::weak_count(&s)`                          |
 /// | `s.leak()`                  | `Rc::into_raw(s)`                             |
-/// | `Self.adoptRawUnsafe(p)`    | `unsafe { Rc::from_raw(p) }`                  |
-/// | `Self.cloneFromRawUnsafe(p)`| `unsafe { Rc::increment_strong_count(p); Rc::from_raw(p) }` |
+/// | `Self.adoptRawUnsafe(p)`    | `yolo! { Rc::from_raw(p) }`                  |
+/// | `Self.cloneFromRawUnsafe(p)`| `yolo! { Rc::increment_strong_count(p); Rc::from_raw(p) }` |
 ///
 // PERF(port): Rc weak-count header — profile in Phase B (PORTING.md §Pointers).
 pub type Shared<T> = Rc<T>;

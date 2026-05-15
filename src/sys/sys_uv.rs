@@ -2,6 +2,7 @@
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 #![cfg(windows)]
 
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_char, c_int, c_uint};
 
 use bstr::BStr;
@@ -119,7 +120,7 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
     }
 
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe {
+    let rc = yolo! {
         uv::uv_fs_open(
             uv::Loop::get(),
             &mut *req,
@@ -147,7 +148,7 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe {
+    let rc = yolo! {
         uv::uv_fs_mkdir(
             uv::Loop::get(),
             &mut *req,
@@ -175,7 +176,7 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
     let mut req = FsReq::new();
 
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe {
+    let rc = yolo! {
         uv::uv_fs_chmod(
             uv::Loop::get(),
             &mut *req,
@@ -203,7 +204,7 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut *req, uv_fd, flags as c_int, None) };
+    let rc = yolo! { uv::uv_fs_fchmod(uv::Loop::get(), &mut *req, uv_fd, flags as c_int, None) };
 
     log!("uv fchmod({}, {}) = {}", uv_fd, flags, rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -220,7 +221,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
     // free.
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_statfs(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc = yolo! { uv::uv_fs_statfs(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv statfs({}) = {}",
@@ -238,8 +239,8 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         // on success; we read it by value (Zig used `*align(1)` → unaligned).
         // The value is copied out *before* `FsReq::drop` runs `uv_fs_req_cleanup`
         // and frees the backing allocation.
-        let p = unsafe { req.ptr_as::<StatFS>() };
-        Result::Ok(unsafe { core::ptr::read_unaligned(p) })
+        let p = yolo! { req.ptr_as::<StatFS>() };
+        Result::Ok(yolo! { core::ptr::read_unaligned(p) })
     }
 }
 
@@ -247,7 +248,7 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe {
+    let rc = yolo! {
         uv::uv_fs_chown(
             uv::Loop::get(),
             &mut *req,
@@ -278,7 +279,7 @@ pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fchown(uv::Loop::get(), &mut *req, uv_fd, uid, gid, None) };
+    let rc = yolo! { uv::uv_fs_fchown(uv::Loop::get(), &mut *req, uv_fd, uid, gid, None) };
 
     log!("uv chown({}, {}, {}) = {}", uv_fd, uid, gid, rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -292,7 +293,7 @@ pub fn rmdir(file_path: &ZStr) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_rmdir(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc = yolo! { uv::uv_fs_rmdir(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv rmdir({}) = {}",
@@ -310,7 +311,7 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_unlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc = yolo! { uv::uv_fs_unlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv unlink({}) = {}",
@@ -332,7 +333,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
     let mut req = FsReq::new();
     // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_readlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc = yolo! { uv::uv_fs_readlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
     if let Some(errno) = rc.err_enum_e() {
         log!(
@@ -344,14 +345,14 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
-        let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() } as *mut c_char;
+        let result_ptr: *mut c_char = yolo! { req.ptr_as::<c_char>() } as *mut c_char;
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(
                 Error::new(E::NOENT, Tag::readlink).with_path(file_path.as_bytes()),
             );
         };
         // SAFETY: libuv guarantees req.ptr is a NUL-terminated string on success.
-        let slice = unsafe { bun_core::ffi::cstr(result_ptr) }.to_bytes();
+        let slice = yolo! { bun_core::ffi::cstr(result_ptr) }.to_bytes();
         // Reserve one byte for the NUL sentinel below. When slice.len == buf.len
         // there is no room for it and buf[slice.len] = 0 would be out of bounds.
         if slice.len() >= buf.len() {
@@ -375,7 +376,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
         buf[0..len].copy_from_slice(slice);
         buf[len] = 0;
         // SAFETY: buf[len] == 0 written above; buf[0..len] is valid.
-        return Result::Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) });
+        return Result::Ok(yolo! { ZStr::from_raw_mut(buf.as_mut_ptr(), len) });
     }
 }
 
@@ -384,7 +385,7 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc =
-        unsafe { uv::uv_fs_rename(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
+        yolo! { uv::uv_fs_rename(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
 
     log!(
         "uv rename({}, {}) = {}",
@@ -405,7 +406,7 @@ pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc =
-        unsafe { uv::uv_fs_link(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
+        yolo! { uv::uv_fs_link(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
 
     log!(
         "uv link({}, {}) = {}",
@@ -428,7 +429,7 @@ pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe {
+    let rc = yolo! {
         uv::uv_fs_symlink(
             uv::Loop::get(),
             &mut *req,
@@ -460,7 +461,7 @@ pub fn ftruncate(fd: Fd, size: i64) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut *req, uv_fd, size, None) };
+    let rc = yolo! { uv::uv_fs_ftruncate(uv::Loop::get(), &mut *req, uv_fd, size, None) };
 
     log!("uv ftruncate({}, {}) = {}", uv_fd, size, rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -475,7 +476,7 @@ pub fn fstat(fd: Fd) -> Result<Stat> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fstat(uv::Loop::get(), &mut *req, uv_fd, None) };
+    let rc = yolo! { uv::uv_fs_fstat(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fstat({}) = {}", uv_fd, rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -491,7 +492,7 @@ pub fn fdatasync(fd: Fd) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fdatasync(uv::Loop::get(), &mut *req, uv_fd, None) };
+    let rc = yolo! { uv::uv_fs_fdatasync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fdatasync({}) = {}", uv_fd, rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -506,7 +507,7 @@ pub fn fsync(fd: Fd) -> Result<()> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fsync(uv::Loop::get(), &mut *req, uv_fd, None) };
+    let rc = yolo! { uv::uv_fs_fsync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fsync({}) = {}", uv_fd, rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -520,7 +521,7 @@ pub fn stat(path: &ZStr) -> Result<Stat> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
+    let rc = yolo! { uv::uv_fs_stat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv stat({}) = {}", BStr::new(path.as_bytes()), rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -535,7 +536,7 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
     // Zig: `defer req.deinit();`
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
+    let rc = yolo! { uv::uv_fs_lstat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv lstat({}) = {}", BStr::new(path.as_bytes()), rc.int());
     if let Some(errno) = rc.err_enum_e() {
@@ -600,7 +601,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
         // The int return value of uv_fs_read truncates req.result (ssize_t) and
         // wraps negative when bytes read > INT_MAX, so use req.result directly.
         // SAFETY: synchronous libuv fs call; req and chunk_bufs live on the stack.
-        let _ = unsafe {
+        let _ = yolo! {
             uv::uv_fs_read(
                 uv::Loop::get(),
                 &mut *req,
@@ -674,7 +675,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
         // The int return value of uv_fs_write truncates req.result (ssize_t) and
         // wraps negative when bytes written > INT_MAX, so use req.result directly.
         // SAFETY: synchronous libuv fs call; req and chunk_bufs live on the stack.
-        let _ = unsafe {
+        let _ = yolo! {
             uv::uv_fs_write(
                 uv::Loop::get(),
                 &mut *req,
@@ -804,7 +805,7 @@ pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
     // layout-identical on Windows (size/align asserted in lib.rs); the
     // fat-pointer cast preserves the original slice's (ptr, len) metadata
     // exactly instead of re-deriving it.
-    let const_bufs = unsafe { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
+    let const_bufs = yolo! { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
     pwritev(fd, const_bufs, -1)
 }
 

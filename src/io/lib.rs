@@ -104,7 +104,7 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     // `uv_loop` is initialised in C before any Rust caller can observe the
     // handle and is never mutated.
     {
-        unsafe { (*uws).uv_loop }
+        yolo! { (*uws).uv_loop }
     }
 }
 
@@ -181,7 +181,7 @@ impl EventLoopCtx {
         // event loop is single-threaded so no concurrent `&mut` exists, and
         // every crate-internal caller is a leaf op that drops the borrow
         // before returning — see block comment above.
-        unsafe { &mut *self.platform_event_loop_ptr() }
+        yolo! { &mut *self.platform_event_loop_ptr() }
     }
     /// Single backref-deref accessor for the per-thread `Store`. Same contract
     /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
@@ -196,7 +196,7 @@ impl EventLoopCtx {
         // loop is single-threaded so no concurrent `&mut Store` exists, and
         // every crate-internal caller upholds the leaf-op / decayed-slot
         // discipline above — see block comment.
-        unsafe { &mut *self.file_polls_ptr() }
+        yolo! { &mut *self.file_polls_ptr() }
     }
     /// Single nonnull-asref accessor for the per-loop pipe-read scratch
     /// buffer. Same contract as [`loop_mut`]: `pub(crate)`, the buffer is a
@@ -213,7 +213,7 @@ impl EventLoopCtx {
         // event loop is single-threaded so this is the sole live `&mut`, and
         // every crate-internal caller drops the borrow before any path that
         // could re-derive it — see doc comment above.
-        unsafe { &mut *self.pipe_read_buffer() }
+        yolo! { &mut *self.pipe_read_buffer() }
     }
     #[inline]
     pub fn loop_ref(&self) {
@@ -379,7 +379,7 @@ bun_dispatch::link_interface! {
 /// ```
 ///
 /// Each `|this, ..|` body runs inside the generated
-/// `unsafe fn(this: *mut Self, ..)` trait method, wrapped in an `unsafe {}`
+/// `unsafe fn(this: *mut Self, ..)` trait method, wrapped in an `yolo! {}`
 /// block — `this` is the raw `*mut Self` registered via `set_parent` (see the
 /// aliasing contract on [`pipe_reader::BufferedReaderParent`]). `Self` resolves
 /// to `$T` inside every body. Autoref via `(*this).method()` covers the common
@@ -433,24 +433,24 @@ macro_rules! __impl_buffered_reader_parent_body {
                     $rc_chunk: &[u8],
                     $rc_more: $crate::ReadState,
                 ) -> bool {
-                    unsafe { $rc }
+                    yolo! { $rc }
                 }
             )?
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_done($rd_this: *mut Self) {
-                unsafe { $rd }
+                yolo! { $rd }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
-                unsafe { $re }
+                yolo! { $re }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
-                unsafe { $lp }
+                yolo! { $lp }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
-                unsafe { $ev }
+                yolo! { $ev }
             }
             $(
                 #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
@@ -458,7 +458,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                     $mb_this: *mut Self,
                     $mb_buf: ::core::ptr::NonNull<$crate::max_buf::MaxBuf>,
                 ) {
-                    unsafe { $mb }
+                    yolo! { $mb }
                 }
             )?
         }
@@ -512,6 +512,7 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
 // ════════════════════════════════════════════════════════════════════════════
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::mem::offset_of;
 use core::ptr::{self, NonNull};
@@ -613,12 +614,12 @@ fn kevent_call(
     #[cfg(target_os = "freebsd")]
     {
         // SAFETY: thin wrapper over libc kevent; caller upholds invariants.
-        return unsafe { libc::kevent(kq, changes, nchanges, events, nevents, timeout) as isize };
+        return yolo! { libc::kevent(kq, changes, nchanges, events, nevents, timeout) as isize };
     }
     #[cfg(target_os = "macos")]
     {
         // SAFETY: thin wrapper over libc kevent64; caller upholds invariants.
-        return unsafe {
+        return yolo! {
             libc::kevent64(kq, changes, nchanges, events, nevents, 0, timeout) as isize
         };
     }
@@ -680,7 +681,7 @@ impl IoRequestLoop {
         // SAFETY: called exactly once via `ONCE.get_or_init`; no other access
         // until this returns. `get_unchecked` because this runs on the
         // *spawning* thread, before the IO thread `claim()`s the cell.
-        let loop_ = unsafe { (*LOOP.get_unchecked()).assume_init_mut() };
+        let loop_ = yolo! { (*LOOP.get_unchecked()).assume_init_mut() };
         *loop_ = IoRequestLoop {
             pending: RequestQueue::default(),
             waker: Waker::init().unwrap_or_else(|_| panic!("failed to initialize waker")),
@@ -712,7 +713,7 @@ impl IoRequestLoop {
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
                 epoll.u64 = std::ptr::from_mut::<IoRequestLoop>(loop_) as usize as u64;
                 // SAFETY: valid epoll fd + waker fd just created.
-                let rc = unsafe {
+                let rc = yolo! {
                     libc::epoll_ctl(
                         loop_.epoll_fd.native(),
                         linux::EPOLL_CTL_ADD,
@@ -746,7 +747,7 @@ impl IoRequestLoop {
             change.filter = libc::EVFILT_READ;
             change.flags = libc::EV_ADD | libc::EV_CLEAR;
             // SAFETY: valid kqueue fd just created; passing 1 change, 0 events.
-            let rc = unsafe {
+            let rc = yolo! {
                 libc::kevent(
                     loop_.kqueue_fd.native(),
                     core::ptr::from_ref::<KEvent>(&change),
@@ -801,7 +802,7 @@ impl IoRequestLoop {
         // regardless of the queue's internal atomics. All IO-thread-mutable
         // state lives behind `Cell` so `&self` suffices; thread-confinement
         // of those `Cell`s is debug-asserted by `ThreadCell::get()` above.
-        unsafe { (*LOOP.get()).assume_init_ref() }.tick();
+        yolo! { (*LOOP.get()).assume_init_ref() }.tick();
     }
 
     /// Enqueue `request` for the IO thread to pick up. Safe to call from any
@@ -818,7 +819,7 @@ impl IoRequestLoop {
         // a `&mut IoRequestLoop` that would alias the IO thread's `tick()`
         // borrow. `pending.push` takes `&self` (lock-free MPSC); `waker.wake`
         // is async-signal-safe by design.
-        unsafe {
+        yolo! {
             let loop_p = (*LOOP.get_unchecked()).as_mut_ptr();
             (*core::ptr::addr_of!((*loop_p).pending)).push(request);
             (*core::ptr::addr_of_mut!((*loop_p).waker)).wake();
@@ -865,7 +866,7 @@ impl IoRequestLoop {
                         break;
                     }
                     // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
+                    let request = yolo! { &mut *request_ptr };
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
@@ -924,7 +925,7 @@ impl IoRequestLoop {
             let mut events: [EventType; 256] = [bun_core::ffi::zeroed(); 256];
 
             // SAFETY: valid epoll fd; events buffer length matches.
-            let rc = unsafe {
+            let rc = yolo! {
                 libc::epoll_wait(
                     self.pollfd().native(),
                     events.as_mut_ptr(),
@@ -1015,7 +1016,7 @@ impl IoRequestLoop {
                         break;
                     }
                     // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
+                    let request = yolo! { &mut *request_ptr };
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
@@ -1086,7 +1087,7 @@ impl IoRequestLoop {
             debug_assert!(rc_len <= capacity);
             // SAFETY: kernel wrote `rc_len` valid `KEvent`s into the Vec's
             // capacity (passed as `nevents` above); `rc_len <= capacity`.
-            unsafe { events_list.set_len(rc_len) };
+            yolo! { events_list.set_len(rc_len) };
 
             for event in &events_list {
                 Poll::on_update_kqueue(*event);
@@ -1164,7 +1165,7 @@ impl Request {
     pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
         // SAFETY: `callback` is a plain pointer-sized field on `self`;
         // volatile write prevents the compiler from reordering or eliding it.
-        unsafe { core::ptr::write_volatile(&raw mut self.callback, cb) };
+        yolo! { core::ptr::write_volatile(&raw mut self.callback, cb) };
         core::sync::atomic::fence(Ordering::SeqCst);
     }
 }
@@ -1200,7 +1201,7 @@ pub unsafe trait IntrusiveIoRequest: Sized {
     #[inline(always)]
     unsafe fn from_io_request(req: *mut Request) -> *mut Self {
         // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::IO_REQUEST_OFFSET) }
+        yolo! { bun_core::container_of::<Self, _>(req, Self::IO_REQUEST_OFFSET) }
     }
 }
 
@@ -1240,7 +1241,7 @@ pub unsafe trait IntrusiveUvFs: Sized {
     #[inline(always)]
     unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
         // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
+        yolo! { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
     }
 }
 
@@ -1283,7 +1284,7 @@ unsafe impl bun_threading::Linked for Request {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -1622,7 +1623,7 @@ impl Poll {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
         // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
-        unsafe {
+        yolo! {
             libc::epoll_ctl(
                 watcher_fd.native(),
                 linux::EPOLL_CTL_DEL,
@@ -1655,7 +1656,7 @@ impl Poll {
             log!("error({}) = {}", event.ident, event.data);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.
-            unsafe {
+            yolo! {
                 __bun_io_pollable_on_io_error(
                     tag,
                     poll,
@@ -1669,7 +1670,7 @@ impl Poll {
         } else {
             log!("ready({}) = {}", event.ident, event.data);
             // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
+            yolo! { __bun_io_pollable_on_ready(tag, poll) };
         }
     }
 
@@ -1688,7 +1689,7 @@ impl Poll {
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.
             // TODO(b2-blocked): bun_sys::Tag::epoll_ctl
-            unsafe {
+            yolo! {
                 __bun_io_pollable_on_io_error(
                     tag,
                     poll,
@@ -1698,7 +1699,7 @@ impl Poll {
         } else {
             log!("ready()");
             // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
+            yolo! { __bun_io_pollable_on_ready(tag, poll) };
         }
     }
 
@@ -1752,7 +1753,7 @@ impl Poll {
         };
 
         // SAFETY: valid fds + event pointer.
-        let ctl = unsafe {
+        let ctl = yolo! {
             libc::epoll_ctl(
                 watcher_fd.native(),
                 op as c_int,
@@ -1832,12 +1833,12 @@ impl FilePollRef {
     /// callback touching its own slot) is structurally avoided by every
     /// wrapper below being a leaf accessor that does not dispatch user code.
     /// All wrapper methods are already safe `pub fn` — this private accessor
-    /// merely collapses their N identical `unsafe { self.0.as_mut() }` blocks
+    /// merely collapses their N identical `yolo! { self.0.as_mut() }` blocks
     /// into one without widening the safe-API surface.
     #[inline]
     fn inner(self) -> &'static mut FilePoll {
         // SAFETY: type invariant — see doc comment above.
-        unsafe { &mut *self.0.as_ptr() }
+        yolo! { &mut *self.0.as_ptr() }
     }
     /// SAFETY: caller must not hold another live `&mut` to this slot (the event
     /// loop is single-threaded, so the only hazard is re-entrancy through a
@@ -1875,7 +1876,7 @@ impl FilePollRef {
     fn uws_loop_mut<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a mut bun_uws_sys::Loop {
         debug_assert!(!loop_.is_null());
         // SAFETY: type invariant — see doc comment above.
-        unsafe { &mut *loop_ }
+        yolo! { &mut *loop_ }
     }
     #[inline]
     pub fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
@@ -2051,14 +2052,14 @@ pub mod waker {
             // on any 32-bit target and needs no `&mut *raw` reborrow here.
             let mut bytes: u64 = 0;
             // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::read(self.fd.native(), (&raw mut bytes).cast(), 8) };
+            let _ = yolo! { libc::read(self.fd.native(), (&raw mut bytes).cast(), 8) };
         }
 
         pub fn wake(&self) {
             // eventfd writes are always exactly 8 bytes (u64 increment).
             let bytes: u64 = 1;
             // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::write(self.fd.native(), (&raw const bytes).cast(), 8) };
+            let _ = yolo! { libc::write(self.fd.native(), (&raw const bytes).cast(), 8) };
         }
     }
 
@@ -2123,7 +2124,7 @@ pub mod waker {
             }
             let mut events = Self::ZEROED;
             // SAFETY: FFI syscall; pointers reference a stack-local array valid for the call.
-            unsafe {
+            yolo! {
                 libc::kevent64(
                     self.kq,
                     events.as_ptr(),
@@ -2150,7 +2151,7 @@ pub mod waker {
             // owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
             // SAFETY: FFI call; buf outlives the machport (owned by the returned Waker).
-            let machport = unsafe {
+            let machport = yolo! {
                 io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024)
             };
             if machport == 0 {
@@ -2220,7 +2221,7 @@ pub mod waker {
             // ever formed.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
             // non-null after `init()`.
-            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_ptr()) };
+            yolo! { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_ptr()) };
         }
 
         pub fn wake(&self) {
@@ -2230,7 +2231,7 @@ pub mod waker {
             // thread-safe C wake (`uv_async_send`) instead.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_ptr()) };
+            yolo! { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_ptr()) };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
@@ -2321,7 +2322,7 @@ pub mod closer {
             let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
             // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
             // SAFETY: closer is a freshly-boxed valid pointer.
-            unsafe {
+            yolo! {
                 (*closer).io_request.data = closer.cast::<c_void>();
                 if let Some(err) = uv::uv_fs_close(
                     loop_,
@@ -2339,9 +2340,9 @@ pub mod closer {
 
         extern "C" fn on_close(req: *mut uv::fs_t) {
             // SAFETY: req points to Closer.io_request (set in `close` above).
-            let closer: *mut Closer = unsafe { Closer::from_uv_fs(req) };
+            let closer: *mut Closer = yolo! { Closer::from_uv_fs(req) };
             // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
-            unsafe {
+            yolo! {
                 debug_assert!(closer == (*req).data.cast::<Closer>());
                 bun_sys::syslog!(
                     "uv_fs_close({}) = {}",

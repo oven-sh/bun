@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_core::{Error, Output, Timespec, TimespecMockMode, err};
 use bun_core::{OwnedString, String as BunString};
 use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
@@ -124,7 +125,7 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
     let pid: core::ffi::c_uint = bun_sys::windows::GetCurrentProcessId();
     #[cfg(not(windows))]
     // SAFETY: getpid() is always safe to call.
-    let pid: core::ffi::c_int = unsafe { libc::getpid() };
+    let pid: core::ffi::c_int = yolo! { libc::getpid() };
 
     let epoch_microseconds: u64 = u64::try_from(
         timespec

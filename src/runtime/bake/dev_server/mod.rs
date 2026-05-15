@@ -14,6 +14,7 @@
 #![allow(clippy::module_inception)]
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
+use bun_yolo::yolo;
 use core::sync::atomic::Ordering;
 
 use core::ptr::NonNull;
@@ -463,7 +464,7 @@ impl HotReloadEvent {
         // every HotReloadEvent it holds. Raw place projection (no `&DevServer`
         // intermediate) so this does not alias any live `&mut HotReloadEvent`.
         // `bun_watcher` is field-disjoint from `watcher_atomics`.
-        unsafe { (*self.owner).bun_watcher.thread_lock.assert_locked() };
+        yolo! { (*self.owner).bun_watcher.thread_lock.assert_locked() };
     }
 
     /// `HotReloadEvent.processFileList` — HotReloadEvent.zig:78.
@@ -484,7 +485,7 @@ impl HotReloadEvent {
                 // directories in a codebase, this only targets the following resolutions
                 // SAFETY: server_transpiler is initialized in DevServer::init before any
                 // HotReloadEvent can fire.
-                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
+                let _ = yolo! { dev.server_transpiler.assume_init_mut() }
                     .resolver
                     .bust_dir_cache(changed_dir);
 
@@ -508,13 +509,13 @@ impl HotReloadEvent {
                         // `specifier` points into the dep's owned `Box<[u8]>`, which is
                         // not mutated until after `resolve` returns.
                         // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        let resolved = yolo! { dev.server_transpiler.assume_init_mut() }
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                                     source_file_path.slice(),
                                 ),
-                                unsafe { &*specifier },
+                                yolo! { &*specifier },
                                 bun_ast::ImportKind::Stmt,
                             )
                             .is_ok();
@@ -657,9 +658,9 @@ impl HotReloadEvent {
         // SAFETY: caller contract — `first` is live; `owner` is a BACKREF to the
         // DevServer that owns the WatcherAtomics array containing this event;
         // DevServer outlives all HotReloadEvents it holds.
-        let dev: *mut DevServer = unsafe { (*first).owner };
+        let dev: *mut DevServer = yolo! { (*first).owner };
         // SAFETY: see above; `magic` read is non-aliasing.
-        debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
+        debug_assert!(yolo! { (*dev).magic } == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
         scopeguard::defer! {
             bun_core::scoped_log!(DevServer, "HMR Task end");
@@ -668,15 +669,15 @@ impl HotReloadEvent {
         #[cfg(debug_assertions)]
         {
             // SAFETY: `first` is live and exclusively owned by this thread.
-            debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
-            debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
+            debug_assert!(yolo! { (*first).debug_mutex.try_lock() });
+            debug_assert!(yolo! { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
         }
 
         // SAFETY: `dev` is the unique BACKREF; this fn runs on the DevServer
         // thread. No `&mut *first` is live across this borrow.
-        if unsafe { (*dev).current_bundle.is_some() } {
+        if yolo! { (*dev).current_bundle.is_some() } {
             // SAFETY: as above; `next_bundle` is disjoint from `watcher_atomics`.
-            unsafe { (*dev).next_bundle.reload_event = Some(first) };
+            yolo! { (*dev).next_bundle.reload_event = Some(first) };
             return;
         }
 
@@ -686,11 +687,11 @@ impl HotReloadEvent {
         // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
         // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
         // all disjoint from `dev.watcher_atomics.events[_]` (where `first` lives).
-        unsafe { (*first).process_file_list(&mut *dev, &mut entry_points) };
+        yolo! { (*first).process_file_list(&mut *dev, &mut entry_points) };
 
         // SAFETY: `first` is live; `timer` was set by
         // `WatcherAtomics::watcher_acquire_event` before submission.
-        let timer = unsafe { (*first).timer };
+        let timer = yolo! { (*first).timer };
 
         // PORT NOTE: raw-ptr loop because `recycle_event_from_dev_server` returns
         // a pointer into `dev.watcher_atomics.events`; re-borrow each iteration
@@ -700,9 +701,9 @@ impl HotReloadEvent {
             // SAFETY: `current` always points at a live event owned by
             // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only,
             // disjoint per the note above.
-            unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
+            yolo! { (*current).process_file_list(&mut *dev, &mut entry_points) };
             // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
-            match unsafe {
+            match yolo! {
                 (*dev)
                     .watcher_atomics
                     .recycle_event_from_dev_server(current)
@@ -712,7 +713,7 @@ impl HotReloadEvent {
                     #[cfg(debug_assertions)]
                     {
                         // SAFETY: `current` is a live event we now exclusively own.
-                        debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
+                        debug_assert!(yolo! { (*current).debug_mutex.try_lock() });
                     }
                 }
                 None => break,
@@ -720,7 +721,7 @@ impl HotReloadEvent {
         }
 
         // SAFETY: `dev` is valid; no `&mut *current` is live past this point.
-        let dev_ref = unsafe { &mut *dev };
+        let dev_ref = yolo! { &mut *dev };
 
         if entry_points.set.count() == 0 {
             return;
@@ -796,7 +797,7 @@ impl WatcherAtomics {
     ) -> Option<*mut HotReloadEvent> {
         // SAFETY: `old_event` was previously submitted to the dev server thread and is now
         // exclusively owned by it for reset.
-        unsafe { (*old_event).reset() };
+        yolo! { (*old_event).reset() };
 
         #[cfg(debug_assertions)]
         {
@@ -880,7 +881,7 @@ impl WatcherAtomics {
 
         // SAFETY: `ev` points into `self.events[index]`, which the watcher thread has exclusive
         // access to (it is neither `current_event` nor `pending_event`).
-        let ev_ref = unsafe { &mut *ev };
+        let ev_ref = yolo! { &mut *ev };
 
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
@@ -904,7 +905,7 @@ impl WatcherAtomics {
     pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
         // SAFETY: `ev` was returned by `watcher_acquire_event` and points into `self.events`;
         // the watcher thread has exclusive access until it is submitted below.
-        let ev_ref = unsafe { &mut *ev };
+        let ev_ref = yolo! { &mut *ev };
 
         ev_ref.assert_watcher_thread_locked();
 
@@ -939,7 +940,7 @@ impl WatcherAtomics {
 
         // SAFETY: `ev` points into `self.events`; both are within the same allocation.
         let ev_index: u8 =
-            u8::try_from(unsafe { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
+            u8::try_from(yolo! { ev.offset_from(self.events.as_ptr().cast_mut()) }).unwrap();
         let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
         match old_next {
             NextEvent::DONE => {
@@ -965,7 +966,7 @@ impl WatcherAtomics {
                 };
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
-                unsafe {
+                yolo! {
                     (*(&(*ev_ref.owner).vm).event_loop)
                         .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
                 }
@@ -1013,7 +1014,7 @@ impl DirectoryWatchStore {
     fn owner(&mut self) -> *mut DevServer {
         // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
         // field of a heap-allocated `DevServer` (never moved post-init).
-        unsafe {
+        yolo! {
             bun_core::from_field_ptr!(
                 DevServer,
                 directory_watchers,
@@ -1030,7 +1031,7 @@ impl DirectoryWatchStore {
         // SAFETY: `owner()` recovers the heap-allocated `DevServer`;
         // `bun_watcher` is field-disjoint from `directory_watchers`, so
         // `&mut self` and the returned borrow cover non-overlapping memory.
-        unsafe { &mut (*self.owner()).bun_watcher }
+        yolo! { &mut (*self.owner()).bun_watcher }
     }
 
     /// `DirectoryWatchStore.freeDependencyIndex` — DirectoryWatchStore.zig.
@@ -1212,7 +1213,7 @@ impl DevServer {
     #[inline]
     pub fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
         // SAFETY: `self` is the single per-process DevServer; outlives all dispatch.
-        unsafe {
+        yolo! {
             bun_bundler::dispatch::DevServerHandle::new(
                 bun_bundler::dispatch::DevServerHandleKind::Bake,
                 self,
@@ -1281,15 +1282,15 @@ impl DirectoryWatchStore {
         let dev = self.owner();
         // SAFETY: `dev` is the heap-allocated DevServer; `graph_safety_lock` is
         // disjoint from `directory_watchers`. RAII guard unlocks on drop.
-        let _g = unsafe { (*dev).graph_safety_lock.guard() };
+        let _g = yolo! { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
-                unsafe { &mut (*dev).client_graph }
+                yolo! { &mut (*dev).client_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
             Graph::Server | Graph::Ssr => {
-                unsafe { &mut (*dev).server_graph }
+                yolo! { &mut (*dev).server_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
@@ -1367,14 +1368,14 @@ impl DirectoryWatchStore {
         let watches_guard = scopeguard::guard(gop_index, move |idx| {
             // SAFETY: `watches_ptr` points into the heap-allocated DevServer; on
             // the error path no other borrow of `self.watches` is outstanding.
-            let _ = unsafe { (*watches_ptr).swap_remove_at(idx) };
+            let _ = yolo! { (*watches_ptr).swap_remove_at(idx) };
         });
 
         // Try to use an existing open directory handle
         // SAFETY: server_transpiler is initialized by Framework::init_transpiler
         // before DevServer accepts requests; `dev` is a valid *mut DevServer.
         let cache_fd: Option<bun_sys::Fd> =
-            match unsafe { (*dev).server_transpiler.assume_init_mut() }
+            match yolo! { (*dev).server_transpiler.assume_init_mut() }
                 .resolver
                 .read_dir_info(dir_name_to_watch)
             {

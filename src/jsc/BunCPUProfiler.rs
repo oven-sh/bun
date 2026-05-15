@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_int;
 use std::io::Write as _;
 
@@ -205,7 +206,7 @@ fn generate_default_filename(
     let pid = bun_sys::windows::GetCurrentProcessId();
     #[cfg(not(windows))]
     // SAFETY: getpid() is always safe to call.
-    let pid = unsafe { libc::getpid() };
+    let pid = yolo! { libc::getpid() };
 
     let epoch_microseconds: u64 = u64::try_from(
         timespec

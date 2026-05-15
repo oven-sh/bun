@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::Alignment;
@@ -19,7 +20,7 @@ impl CAllocator {
         // alignments use the aligned variant (Zig's `CAllocator` does the same).
         let align = alignment.to_byte_units();
         // SAFETY: libc malloc/aligned_alloc are sound for any nonzero size.
-        let ptr = unsafe {
+        let ptr = yolo! {
             if align <= crate::MAX_ALIGN_T {
                 libc::malloc(len)
             } else {
@@ -56,13 +57,13 @@ impl CAllocator {
         #[cfg(target_os = "macos")]
         {
             // SAFETY: `buf` was allocated by libc malloc on this platform.
-            let usable = unsafe { libc::malloc_size(buf.as_ptr().cast()) };
+            let usable = yolo! { libc::malloc_size(buf.as_ptr().cast()) };
             return new_len <= usable;
         }
         #[cfg(target_os = "linux")]
         {
             // SAFETY: `buf` was allocated by libc malloc on this platform.
-            let usable = unsafe { libc::malloc_usable_size(buf.as_mut_ptr().cast()) };
+            let usable = yolo! { libc::malloc_usable_size(buf.as_mut_ptr().cast()) };
             return new_len <= usable;
         }
         #[cfg(windows)]
@@ -75,7 +76,7 @@ impl CAllocator {
                 fn _aligned_msize(p: *mut c_void, align: usize, offset: usize) -> usize;
             }
             // SAFETY: `buf` was allocated by `raw_alloc` above on this platform.
-            let usable = unsafe {
+            let usable = yolo! {
                 if _alignment.to_byte_units() > crate::MAX_ALIGN_T {
                     _aligned_msize(buf.as_mut_ptr().cast(), _alignment.to_byte_units(), 0)
                 } else {
@@ -96,13 +97,13 @@ impl CAllocator {
         #[cfg(windows)]
         if alignment.to_byte_units() > crate::MAX_ALIGN_T {
             // SAFETY: `buf` was allocated by `_aligned_malloc` in `raw_alloc`.
-            unsafe { libc::aligned_free(buf.as_mut_ptr().cast()) };
+            yolo! { libc::aligned_free(buf.as_mut_ptr().cast()) };
             return;
         }
         #[cfg(not(windows))]
         let _ = alignment;
         // SAFETY: `buf` was allocated by libc malloc/aligned_alloc in `raw_alloc`.
-        unsafe { libc::free(buf.as_mut_ptr().cast()) }
+        yolo! { libc::free(buf.as_mut_ptr().cast()) }
     }
 }
 
@@ -114,7 +115,7 @@ pub use z::ALLOCATOR as z_allocator;
 pub fn free_without_size(ptr: *mut c_void) {
     // SAFETY: `ptr` was allocated by libc malloc/calloc/realloc (or is null, which
     // libc free accepts as a no-op) — same precondition as Zig `std.c.free`.
-    unsafe { libc::free(ptr) }
+    yolo! { libc::free(ptr) }
 }
 
 // ported from: src/bun_alloc/fallback.zig

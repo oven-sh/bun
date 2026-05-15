@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::CStr;
 
 use crate::shell::ExitCode;
@@ -121,7 +122,7 @@ impl Touch {
                     let task =
                         ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
                     // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule(task) };
+                    yolo! { ShellTask::schedule(task) };
                 }
                 Yield::suspended()
             }
@@ -145,7 +146,7 @@ impl Touch {
         if let Some(task) = pending {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e) };
+            return yolo! { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
     }
@@ -153,7 +154,7 @@ impl Touch {
     /// Spec: touch.zig `onShellTouchTaskDone`.
     pub fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellTouchTask) {
         // SAFETY: task was heap-allocated in create(); reclaim.
-        let mut task = unsafe { bun_core::heap::take(task) };
+        let mut task = yolo! { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -321,7 +322,7 @@ impl ShellTouchTask {
 
     pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
+        let cmd = yolo! { (*this).cmd };
         Touch::on_shell_touch_task_done(interp, cmd, this);
     }
 }

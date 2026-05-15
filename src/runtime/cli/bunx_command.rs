@@ -1,5 +1,6 @@
 //! Port of `src/cli/bunx_command.zig`.
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::mem::size_of;
 use std::io::Write as _;
@@ -430,7 +431,7 @@ impl BunxCommand {
                     let mut io_status_block: win::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
                     let mut info: win::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
                     // SAFETY: FFI call with valid out-params
-                    let rc = unsafe {
+                    let rc = yolo! {
                         win::ntdll::NtQueryInformationFile(
                             target_package_json_fd.native(),
                             &mut io_status_block,
@@ -539,7 +540,7 @@ impl BunxCommand {
         let mut opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
-        let ctx_log = unsafe { ctx.log_mut() };
+        let ctx_log = yolo! { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
             None,
             ctx_log,
@@ -611,7 +612,7 @@ impl BunxCommand {
             Run::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, true)?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.
-        let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
+        let this_transpiler = yolo! { this_transpiler_slot.assume_init_mut() };
 
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(
@@ -806,7 +807,7 @@ impl BunxCommand {
         // If this format changes, please update cache clearing code in package_manager_command.zig
         #[cfg(unix)]
         // SAFETY: getuid() is always safe to call (no preconditions, never fails)
-        let uid = unsafe { libc::getuid() };
+        let uid = yolo! { libc::getuid() };
         #[cfg(windows)]
         let uid = bun_sys::windows::user_unique_id();
 
@@ -835,7 +836,7 @@ impl BunxCommand {
 
         env_loader.map.put(b"PATH", &path)?;
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let fs = unsafe { &mut *this_transpiler.fs };
+        let fs = yolo! { &mut *this_transpiler.fs };
         let uid_digits = bun_core::fmt::digit_count(uid);
         let bunx_cache_dir: &[u8] =
             &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
@@ -863,7 +864,7 @@ impl BunxCommand {
             let written = buf_total - cursor.len();
             // PORT NOTE: reshaped for borrowck — re-slice from buffer
             // SAFETY: `written` bytes were just initialized above
-            unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+            yolo! { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
@@ -943,7 +944,7 @@ impl BunxCommand {
                                     bun_core::ffi::zeroed();
                                 let mut info: win::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
                                 // SAFETY: FFI call with valid out-params
-                                let rc = unsafe {
+                                let rc = yolo! {
                                     win::ntdll::NtQueryInformationFile(
                                         fd.native(),
                                         &mut io_status_block,
@@ -1035,7 +1036,7 @@ impl BunxCommand {
                                     .expect("unreachable");
                                     let written = buf_total - cursor.len();
                                     // SAFETY: `written` bytes initialized above
-                                    unsafe {
+                                    yolo! {
                                         core::slice::from_raw_parts(
                                             absolute_in_cache_dir_buf.as_ptr(),
                                             written,
@@ -1216,14 +1217,14 @@ impl BunxCommand {
                         // PORT NOTE (aliasing): do NOT call `this_transpiler.env_mut()` here —
                         // `env_loader` (line 594) is still live and is used again below at the
                         // post-install `Run::run_binary` calls. A second `env_mut()` would
-                        // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
+                        // `yolo! { &mut *self.env }` from the raw field, popping `env_loader`'s
                         // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
                         // *through* `env_loader` so the new `&mut` is a child of its tag; the
                         // child is consumed by `init_global` (converted to `NonNull`) before
                         // `env_loader` is touched again.
                         // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
                         // stacked reborrow, not a sibling alias.
-                        Some(unsafe { &mut *(env_loader as *mut _) }),
+                        Some(yolo! { &mut *(env_loader as *mut _) }),
                         None,
                     ),
                 ),
@@ -1307,7 +1308,7 @@ impl BunxCommand {
             .expect("unreachable");
             let written = buf_total - cursor.len();
             // SAFETY: `written` bytes initialized above
-            unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+            yolo! { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
         // Similar to "npx":
@@ -1360,7 +1361,7 @@ impl BunxCommand {
                         .expect("unreachable");
                         let written = buf_total - cursor.len();
                         // SAFETY: `written` bytes initialized above
-                        unsafe {
+                        yolo! {
                             core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written)
                         }
                     };

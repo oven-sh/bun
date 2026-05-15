@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -52,7 +53,7 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
         // borrow-local `'x` (`'a: 'x` is implied by `&'x mut PackageInstaller<'a>`).
         // The returned reference cannot outlive `'x`, so all inner `'a` borrows
         // remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<PackageInstaller<'x>>() }
+        yolo! { &mut *core::ptr::from_mut(ctx).cast::<PackageInstaller<'x>>() }
     }
 }
 
@@ -74,7 +75,7 @@ pub fn install_hoisted_packages(
     // SAFETY: `mgr_ptr` is freshly derived from the unique `&mut` fn param;
     // shadowing `this` with a reborrow through it makes every body access a
     // child of `mgr_ptr`, so the guard's later derefs keep provenance.
-    let this = unsafe { &mut *mgr_ptr };
+    let this = yolo! { &mut *mgr_ptr };
 
     let original_trees = core::mem::take(&mut this.lockfile.buffers.trees);
     let original_tree_dep_ids = core::mem::take(&mut this.lockfile.buffers.hoisted_dependencies);
@@ -95,10 +96,10 @@ pub fn install_hoisted_packages(
         let log: *mut bun_ast::Log = this.log;
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
+        let lockfile_ptr: *mut crate::lockfile::Lockfile = yolo! { &raw mut *(*mgr_ptr).lockfile };
         // SAFETY: `log` is the always-live logger backref (Zig: `*Log`, never
         // null); `mgr_ptr` see shadow-reborrow above.
-        unsafe {
+        yolo! {
             (*lockfile_ptr).filter(
                 &mut *log,
                 &mut *mgr_ptr,
@@ -112,7 +113,7 @@ pub fn install_hoisted_packages(
     // setup through the install loop) is a fresh child of `mgr_ptr` under
     // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
     // line-77 reborrow's tag.
-    let this = unsafe { &mut *mgr_ptr };
+    let this = yolo! { &mut *mgr_ptr };
 
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
@@ -120,7 +121,7 @@ pub fn install_hoisted_packages(
             // SAFETY: `mgr_ptr` is the provenance root for every body access to
             // `this` (see shadow-reborrow above); guard runs after all body
             // borrows have ended.
-            let this = unsafe { &mut *mgr_ptr };
+            let this = yolo! { &mut *mgr_ptr };
             this.lockfile.buffers.trees = trees;
             this.lockfile.buffers.hoisted_dependencies = dep_ids;
         },
@@ -153,7 +154,7 @@ pub fn install_hoisted_packages(
     let _end_progress = scopeguard::guard(log_level, move |log_level| {
         if log_level.show_progress() {
             // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-            let this = unsafe { &mut *mgr_ptr };
+            let this = yolo! { &mut *mgr_ptr };
             this.progress.root.end();
             this.progress = Progress::default();
         }
@@ -161,7 +162,7 @@ pub fn install_hoisted_packages(
         // this frame; clear them so `scripts_node_mut()` / `downloads_node_mut()`
         // can't observe a dangling pointer after the install pass returns.
         // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-        let this = unsafe { &mut *mgr_ptr };
+        let this = yolo! { &mut *mgr_ptr };
         this.scripts_node = None;
         this.downloads_node = None;
     });
@@ -241,7 +242,7 @@ pub fn install_hoisted_packages(
             bun_ptr::BackRef<Vec<DependencyID>>,
             bun_ptr::BackRef<Vec<crate::Dependency>>,
             bun_ptr::BackRef<Vec<u8>>,
-        ) = unsafe {
+        ) = yolo! {
             let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *(*mgr_ptr).lockfile;
             let buffers = core::ptr::addr_of_mut!((*lockfile_ptr).buffers);
             (
@@ -389,7 +390,7 @@ pub fn install_hoisted_packages(
                     tree_id: 0,
                 },
                 // SAFETY: `mgr_ptr` is the provenance root; raw place addr.
-                progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
+                progress: yolo! { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
                 summary: &mut summary,
@@ -501,7 +502,7 @@ pub fn install_hoisted_packages(
                     // SAFETY: `closure.manager` is the raw provenance root set
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
-                    let manager = unsafe { &mut *closure.manager };
+                    let manager = yolo! { &mut *closure.manager };
                     let log_level = manager.options.log_level;
                     if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                         manager,
@@ -552,7 +553,7 @@ pub fn install_hoisted_packages(
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
             // `Closure::is_done`, so the callback's `&mut *closure.manager`
             // is the unique live borrow.
-            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
+            yolo! { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
 
             if let Some(err) = closure.err {
                 return Err(err);

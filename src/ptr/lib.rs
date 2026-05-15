@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![allow(
     unused,
     non_snake_case,
@@ -96,7 +97,7 @@ pub mod meta; // small, used by other crates
 //
 // Runtime structs frequently hold a non-owning pointer back to their owner
 // (Zig: `*Parent`, `*const VirtualMachine`, `[]const u8`). Phase-A modeled
-// these as raw `*mut T` / `*const [T]` and open-coded `unsafe { &*self.field }`
+// these as raw `*mut T` / `*const [T]` and open-coded `yolo! { &*self.field }`
 // at every read site. These two wrappers centralise that pattern under the
 // `StoreRef`/`StoreSlice` contract from the parser, but for the *runtime*
 // lifetime invariant: the pointee strictly outlives the holder by construction
@@ -113,7 +114,7 @@ pub mod meta; // small, used by other crates
 /// Mirrors Zig `*T` struct fields where the pointee is the owner/parent and is
 /// guaranteed live for the holder's entire lifetime (owner-creates-child).
 /// `Copy` + `Deref` so call sites read `self.owner.method()` instead of
-/// `unsafe { &*self.owner }.method()`.
+/// `yolo! { &*self.owner }.method()`.
 #[repr(transparent)]
 pub struct BackRef<T: ?Sized>(core::ptr::NonNull<T>);
 
@@ -143,7 +144,7 @@ impl<T: ?Sized> BackRef<T> {
     #[inline]
     pub const unsafe fn from_raw(p: *mut T) -> Self {
         // SAFETY: caller contract — `p` is non-null.
-        BackRef(unsafe { core::ptr::NonNull::new_unchecked(p) })
+        BackRef(yolo! { core::ptr::NonNull::new_unchecked(p) })
     }
 
     #[inline]
@@ -164,7 +165,7 @@ impl<T: ?Sized> BackRef<T> {
         // aligned, dereferenceable. No `&mut` alias is live: owners hand out
         // `BackRef` only to children they themselves own, and child access is
         // single-threaded per the runtime's `!Send` event-loop affinity.
-        unsafe { self.0.as_ref() }
+        yolo! { self.0.as_ref() }
     }
 
     /// Mutably borrow the pointee.
@@ -178,7 +179,7 @@ impl<T: ?Sized> BackRef<T> {
     pub unsafe fn get_mut(&mut self) -> &mut T {
         // SAFETY: caller guarantees exclusivity; BackRef invariant guarantees
         // liveness/alignment.
-        unsafe { self.0.as_mut() }
+        yolo! { self.0.as_mut() }
     }
 }
 
@@ -238,14 +239,14 @@ impl<T: ?Sized> Eq for BackRef<T> {}
 pub unsafe fn detach_lifetime<'a, T>(s: &[T]) -> &'a [T] {
     // SAFETY: caller contract — `s` points to `len` initialized `T` that remain
     // live and un-aliased-exclusively for `'a`.
-    unsafe { &*core::ptr::from_ref::<[T]>(s) }
+    yolo! { &*core::ptr::from_ref::<[T]>(s) }
 }
 
 /// Detach a `&T` borrow from its borrowck lifetime (general `?Sized` form of
 /// [`detach_lifetime`]).
 ///
-/// Replaces the open-coded `unsafe { &*std::ptr::from_ref::<T>(x) }` /
-/// `unsafe { &*(&raw const x) }` lifetime-laundering idiom that the Phase-A
+/// Replaces the open-coded `yolo! { &*std::ptr::from_ref::<T>(x) }` /
+/// `yolo! { &*(&raw const x) }` lifetime-laundering idiom that the Phase-A
 /// port scattered everywhere a Zig `*const T` was held across a sibling
 /// `&mut self` reborrow (arena handles, SoA columns, self-referential views).
 /// Centralising it here makes the call sites grep-able and the safety
@@ -257,13 +258,13 @@ pub unsafe fn detach_lifetime<'a, T>(s: &[T]) -> &'a [T] {
 #[inline(always)]
 pub unsafe fn detach_lifetime_ref<'a, T: ?Sized>(r: &T) -> &'a T {
     // SAFETY: caller contract — `r` is live and shared-only for `'a`.
-    unsafe { &*core::ptr::from_ref::<T>(r) }
+    yolo! { &*core::ptr::from_ref::<T>(r) }
 }
 
 /// Detach a `&mut T` borrow from its borrowck lifetime.
 ///
 /// Mutable counterpart of [`detach_lifetime_ref`]. Replaces the open-coded
-/// `unsafe { &mut *std::ptr::from_mut::<T>(x) }` pattern. Strictly more
+/// `yolo! { &mut *std::ptr::from_mut::<T>(x) }` pattern. Strictly more
 /// dangerous than the shared form: callers must additionally guarantee
 /// **uniqueness** for `'a` (no other `&`/`&mut` to the same `T` is live).
 ///
@@ -273,7 +274,7 @@ pub unsafe fn detach_lifetime_ref<'a, T: ?Sized>(r: &T) -> &'a T {
 #[inline(always)]
 pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
     // SAFETY: caller contract — `r` is live and exclusively held for `'a`.
-    unsafe { &mut *core::ptr::from_mut::<T>(r) }
+    yolo! { &mut *core::ptr::from_mut::<T>(r) }
 }
 
 /// Marker trait for types whose `&mut self` methods launder `self` through
@@ -282,7 +283,7 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
 ///
 /// Zig has no `noalias` on `*Self`, so the original `.zig` just writes
 /// `this.*` directly; this trait is the Rust-port-only artifact that makes the
-/// equivalent reborrow sound without scattering `unsafe { &mut *this }` at
+/// equivalent reborrow sound without scattering `yolo! { &mut *this }` at
 /// every field access.
 ///
 /// # Safety (impl contract)
@@ -306,7 +307,7 @@ pub unsafe trait LaunderedSelf: Sized {
         debug_assert!(!this.is_null());
         // SAFETY: `LaunderedSelf` impl contract — `this` aliases a live
         // `&mut self` on the single JS thread; sole borrow at point of use.
-        unsafe { &mut *this }
+        yolo! { &mut *this }
     }
 }
 
@@ -342,7 +343,7 @@ pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
     // element is a valid non-null `(ptr, len)` pair, which is exactly the
     // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
-    let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
+    let view: &[&[T]] = yolo! { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
     // Fat-pointer field order (ptr-then-len) is de-facto stable but not
     // language-guaranteed; spot-check first+last in debug so an ABI flip
     // would trip here rather than silently misbehaving downstream. (Checking
@@ -362,7 +363,7 @@ pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
 // Interned — process-lifetime byte-slice proof type.
 //
 // The Phase-A port widened ~100 borrowed `&[u8]` to `&'static [u8]` via
-// open-coded `unsafe { &*ptr::from_ref(s) }`. Audit splits them into:
+// open-coded `yolo! { &*ptr::from_ref(s) }`. Audit splits them into:
 //
 //   • Population A (~80) — bytes live in a process-lifetime store
 //     (`FilenameStore` / `DirnameStore` / `BSSStringList` singleton, a
@@ -400,7 +401,7 @@ pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
 /// `Interned` exists so that the ~80 open-coded `&[u8] → &'static [u8]` widens
 /// become a safe value flowing from the store, and so that the ~24 sites whose
 /// backing **does** drop can no longer pretend to be `'static` — they must
-/// spell `unsafe { Interned::assume(..) }` and name the owner in the SAFETY
+/// spell `yolo! { Interned::assume(..) }` and name the owner in the SAFETY
 /// comment, or (correctly) switch to [`RawSlice<u8>`] / [`BackRef<T>`].
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -441,7 +442,7 @@ impl Interned {
     #[inline]
     pub const unsafe fn assume(s: &[u8]) -> Self {
         // SAFETY: caller contract — `s` is process-lifetime and immutable.
-        Interned(unsafe { &*core::ptr::from_ref::<[u8]>(s) })
+        Interned(yolo! { &*core::ptr::from_ref::<[u8]>(s) })
     }
 
     /// Recover the underlying `&'static [u8]` (for storing into legacy fields
@@ -519,8 +520,8 @@ impl core::fmt::Debug for Interned {
 //
 // uSockets / C++ FFI dispatch hands every socket-event handler a raw
 // `*mut Self` recovered from the userdata slot. The Phase-A port open-coded
-// `unsafe { (*this).field }` / `unsafe { (&*this).ref_() }` /
-// `scopeguard::guard(this, |p| unsafe { Self::deref(p) })` at ~90 call sites
+// `yolo! { (*this).field }` / `yolo! { (&*this).ref_() }` /
+// `scopeguard::guard(this, |p| yolo! { Self::deref(p) })` at ~90 call sites
 // across the websocket-client family. `ThisPtr` centralises that pattern under
 // ONE constructor SAFETY contract: wrap the raw pointer once at fn entry, then
 // read fields via `Deref` and bracket the body with `ref_guard()` (RAII
@@ -534,7 +535,7 @@ impl core::fmt::Debug for Interned {
 //     incoming `*mut Self`;
 //   • only ever vends fresh short-lived `&T` (no `DerefMut`): handlers that
 //     re-enter via the same userdata pointer would alias a held `&mut T`.
-//     Mutation goes through `as_ptr()` with a per-site `unsafe { (*p).… }`.
+//     Mutation goes through `as_ptr()` with a per-site `yolo! { (*p).… }`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Non-owning, `Copy` self-pointer for uSockets / FFI callback dispatch.
@@ -559,7 +560,7 @@ impl<T> ThisPtr<T> {
     pub unsafe fn new(p: *mut T) -> Self {
         debug_assert!(!p.is_null(), "ThisPtr::new: null callback self-pointer");
         // SAFETY: caller contract — `p` is non-null.
-        ThisPtr(unsafe { core::ptr::NonNull::new_unchecked(p) })
+        ThisPtr(yolo! { core::ptr::NonNull::new_unchecked(p) })
     }
 
     /// Recover the raw pointer (root provenance) for mutation or for forwarding
@@ -579,7 +580,7 @@ impl<T> ThisPtr<T> {
     pub fn get(&self) -> &T {
         // SAFETY: `ThisPtr::new` invariant — pointee is live, non-null,
         // aligned, and no exclusive borrow overlaps this shared one.
-        unsafe { self.0.as_ref() }
+        yolo! { self.0.as_ref() }
     }
 }
 
@@ -615,7 +616,7 @@ where
     #[inline]
     pub fn ref_guard(self) -> ScopedRef<T> {
         // SAFETY: `ThisPtr::new` invariant — `self.0` points to a live `T`.
-        unsafe { ScopedRef::new(self.0.as_ptr()) }
+        yolo! { ScopedRef::new(self.0.as_ptr()) }
     }
 }
 
@@ -632,7 +633,7 @@ unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
 //
 // Dual of [`callback_ctx`]: this is the *producer* side that stuffs `self`
 // into a `void *user_data` / `*mut T` ctx parameter; `callback_ctx` (or a
-// plain `unsafe { &*p }`) is the *consumer* side that recovers it inside the
+// plain `yolo! { &*p }`) is the *consumer* side that recovers it inside the
 // trampoline.
 //
 // The returned pointer carries **shared (read-only) provenance** — it is

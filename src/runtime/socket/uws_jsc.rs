@@ -2,6 +2,7 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
+use bun_yolo::yolo;
 use core::ffi::CStr;
 
 use bun_core::String as BunString;
@@ -53,7 +54,7 @@ pub fn create_bun_socket_error_to_js(
         // `createSSLContext(...) orelse return err.toJS()` site correct.
         create_bun_socket_error_t::none => {
             // SAFETY: ERR_get_error is thread-local queue read, always safe to call.
-            crate::crypto::boringssl_jsc::err_to_js(global_object, unsafe {
+            crate::crypto::boringssl_jsc::err_to_js(global_object, yolo! {
                 bun_boringssl_sys::ERR_get_error()
             })
         }
@@ -135,7 +136,7 @@ pub extern "C" fn us_socket_buffered_js_write(
 
     // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call;
     // borrow is dropped before any JS execution below.
-    let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
+    let mut stream_buffer = yolo! { &mut *buffer }.to_stream_buffer();
     let mut total_written: usize = 0;
 
     // PORT NOTE: Zig `defer { buffer.update(stream_buffer); buffer.wrote(total_written); }`
@@ -212,7 +213,7 @@ pub extern "C" fn us_socket_buffered_js_write(
 
     // SAFETY: caller guarantees `buffer` is valid for the call; no JS executes between here
     // and return, so no re-entrancy aliasing.
-    unsafe {
+    yolo! {
         (*buffer).update(stream_buffer);
         (*buffer).wrote(total_written);
     }

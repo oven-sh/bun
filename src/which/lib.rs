@@ -1,5 +1,6 @@
 #![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
 #![warn(unused_must_use, unreachable_pub)]
+use bun_yolo::yolo;
 use bstr::BStr;
 use bun_core::{WStr, ZStr, strings, w};
 use bun_paths::resolve_path::{PosixToWinNormalizer, posix_to_platform_in_place};
@@ -74,7 +75,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             buf[..bin.len()].copy_from_slice(bin);
             buf[bin.len()] = 0;
             // SAFETY: buf[bin.len()] == 0 written above
-            let bin_z = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), bin.len()) };
+            let bin_z = yolo! { ZStr::from_raw_mut(buf.as_mut_ptr(), bin.len()) };
             if bun_sys::is_executable_file_path(&*bin_z) {
                 return Some(&*bin_z);
             }
@@ -261,7 +262,7 @@ pub fn which_win<'a>(
         // branch can fall through without `buf` appearing borrowed.
         // SAFETY: bin_path borrow does not escape this block on the None path.
         let buf_reborrow: &'a mut WPathBuffer =
-            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
+            yolo! { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
             buf_reborrow,
             &mut *path_buf,
@@ -282,7 +283,7 @@ pub fn which_win<'a>(
         // iterations when returning a reference tied to its lifetime.
         // SAFETY: on None the borrow ends; on Some we return immediately.
         let buf_reborrow: &'a mut WPathBuffer =
-            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
+            yolo! { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
             buf_reborrow,
             &mut *path_buf,

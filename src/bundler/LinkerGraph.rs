@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::bundled_ast;
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
@@ -345,7 +346,7 @@ pub fn generate_symbol_import_and_use(
         &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
     // SAFETY: every element of `new_dependencies` is overwritten in the
     // zip-loop immediately below before any read/drop.
-    let new_dependencies = unsafe { dependencies.writable_slice(part_ids.len()) };
+    let new_dependencies = yolo! { dependencies.writable_slice(part_ids.len()) };
     debug_assert_eq!(part_ids.len(), new_dependencies.len());
     for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
         *dependency = Dependency {
@@ -367,7 +368,7 @@ impl LinkerGraph {
     /// Shared-ref view of a symbol that is known to exist (the `Ref` was
     /// produced by the symbol table itself). Thin wrapper over
     /// [`symbol::Map::get_const`]; callers previously open-coded
-    /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
+    /// `yolo! { &*graph.symbols.get(r).expect(..) }`.
     #[inline]
     pub fn symbol(&self, ref_: Ref) -> &Symbol {
         self.symbols
@@ -379,20 +380,20 @@ impl LinkerGraph {
     /// `&mut self`): the linker mutates per-symbol fields (`link`,
     /// `namespace_alias`, `import_item_status`, ...) through shared
     /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
-    /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
+    /// columns, mirroring the prior open-coded `yolo! { &mut *get(r) }`.
     ///
     /// # Safety
     /// Caller must ensure no other live `&`/`&mut` borrow aliases the same
     /// symbol slot for the returned reference's lifetime (the `&self` signature
     /// alone cannot enforce this — two calls with the same `Ref` while both
     /// results are live is UB). Mirrors the prior open-coded
-    /// `unsafe { &mut *get(r) }` call-site obligation.
+    /// `yolo! { &mut *get(r) }` call-site obligation.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
         // SAFETY: see `symbol` for liveness/validity; caller guarantees the
         // mutated slot is disjoint from any other borrow held at the call site.
-        unsafe {
+        yolo! {
             &mut *self
                 .symbols
                 .get(ref_)
@@ -504,7 +505,7 @@ impl LinkerGraph {
         self.files.zero();
         self.files_live = BitSet::init_empty(sources.len())?;
         // SAFETY: capacity reserved above; columns zeroed by `zero()`.
-        unsafe { self.files.set_len(sources.len()) };
+        yolo! { self.files.set_len(sources.len()) };
 
         // PORT NOTE: `Slice<T>` caches raw column pointers and does not borrow
         // `self.files`, so the `split_mut()` borrows (tied to the local
@@ -523,7 +524,7 @@ impl LinkerGraph {
                     + dynamic_import_entry_points.len(),
             )?;
             // SAFETY: capacity reserved; columns initialized below.
-            unsafe { self.entry_points.set_len(entry_points.len()) };
+            yolo! { self.entry_points.set_len(entry_points.len()) };
 
             // PORT NOTE: borrowck reshape — Zig held `source_indices` /
             // `path_strings` / `output_path_was_auto_generated` simultaneously
@@ -689,7 +690,7 @@ impl LinkerGraph {
                 let mut dest: symbol::List = Vec::with_capacity(n);
                 // SAFETY: `dest` has capacity `n`; `src` is `n` initialized
                 // `Symbol`s; `Symbol` is bitwise-copyable (no `Drop`).
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(src.as_ptr(), dest.as_mut_ptr(), n);
                     dest.set_len(n);
                 }

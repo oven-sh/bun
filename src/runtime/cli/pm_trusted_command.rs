@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -69,12 +70,12 @@ impl UntrustedCommand {
         // writes through `manager.lockfile`, which is the same heap allocation
         // `load_lockfile` borrows but is never dereferenced via `load_lockfile`
         // here.
-        unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
+        yolo! { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
         drop(load_lockfile);
 
         // SAFETY: `load_lockfile` dropped above; `pm_raw` is the only path to
         // the singleton for the rest of this fn (same as the original `pm`).
-        let pm: &mut PackageManager = unsafe { &mut *pm_raw };
+        let pm: &mut PackageManager = yolo! { &mut *pm_raw };
         let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
 
@@ -275,7 +276,7 @@ impl TrustCommand {
         {
             // SAFETY: `pm_raw` derived from `pm` above; `load_lockfile` is not
             // dereferenced concurrently. See `update_lockfile_if_needed`.
-            let mut slice = unsafe { (*pm_raw).lockfile.packages.slice() };
+            let mut slice = yolo! { (*pm_raw).lockfile.packages.slice() };
             for meta in slice.items_meta_mut() {
                 meta.set_has_install_script(false);
             }
@@ -297,8 +298,8 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
         // Read-only `lockfile` borrow for the discovery phase.
-        let log: *mut bun_ast::Log = unsafe { (*pm_raw).log };
-        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
+        let log: *mut bun_ast::Log = yolo! { (*pm_raw).log };
+        let lockfile: &Lockfile = yolo! { &*(*pm_raw).lockfile };
 
         let buf = lockfile.buffers.string_bytes.as_slice();
         let packages = lockfile.packages.slice();
@@ -387,7 +388,7 @@ impl TrustCommand {
 
                 // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
                 let result = package_scripts.get_list(
-                    unsafe { &mut *log },
+                    yolo! { &mut *log },
                     lockfile,
                     &mut node_modules_path,
                     alias,
@@ -455,13 +456,13 @@ impl TrustCommand {
 
         let mut scripts_node: Progress::Node;
         // SAFETY: `pm_raw` singleton; `progress` is owned inline.
-        let show_progress = unsafe { (*pm_raw).options.log_level.show_progress() };
+        let show_progress = yolo! { (*pm_raw).options.log_level.show_progress() };
 
         if show_progress {
             // SAFETY: see above; `progress.start()` returns `&mut root` which is
             // immediately consumed by `Node::start` (returns an owned `Node`
             // with raw backrefs into `pm.progress`).
-            unsafe {
+            yolo! {
                 (*pm_raw).progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
                 scripts_node = (*pm_raw)
                     .progress
@@ -483,9 +484,9 @@ impl TrustCommand {
 
                 // SAFETY: `pm_raw` singleton; reads atomics + `options`.
                 while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
-                    >= unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts }
+                    >= yolo! { (*pm_raw).options.max_concurrent_lifecycle_scripts }
                 {
-                    if unsafe { (*pm_raw).options.log_level.is_verbose() }
+                    if yolo! { (*pm_raw).options.log_level.is_verbose() }
                         && PackageManager::has_enough_time_passed_between_waiting_messages()
                     {
                         Output::pretty_errorln(format_args!(
@@ -495,13 +496,13 @@ impl TrustCommand {
                     }
 
                     // SAFETY: `pm_raw` singleton.
-                    unsafe { (*pm_raw).sleep() };
+                    yolo! { (*pm_raw).sleep() };
                 }
 
                 let output_in_foreground = false;
                 let optional = false;
                 // SAFETY: `pm_raw` singleton; `ctx` is the CLI `&mut ContextData`.
-                unsafe {
+                yolo! {
                     (*pm_raw).spawn_package_lifecycle_scripts(
                         &mut *ctx,
                         info.scripts_list.clone(),
@@ -511,31 +512,31 @@ impl TrustCommand {
                     )?;
                 }
 
-                if unsafe { (*pm_raw).options.log_level.show_progress() } {
+                if yolo! { (*pm_raw).options.log_level.show_progress() } {
                     // SAFETY: `scripts_node` initialized above when
                     // `show_progress` was true at the same `log_level`.
-                    if let Some(sn) = unsafe { (*pm_raw).scripts_node } {
+                    if let Some(sn) = yolo! { (*pm_raw).scripts_node } {
                         // SAFETY: points at our stack-local `scripts_node`.
-                        unsafe { sn.as_ptr().as_mut().unwrap().activate() };
+                        yolo! { sn.as_ptr().as_mut().unwrap().activate() };
                     }
-                    unsafe { (*pm_raw).progress.refresh() };
+                    yolo! { (*pm_raw).progress.refresh() };
                 }
             }
 
             // SAFETY: `pm_raw` singleton.
-            while unsafe {
+            while yolo! {
                 (*pm_raw)
                     .pending_lifecycle_script_tasks
                     .load(Ordering::Relaxed)
             } > 0
             {
-                unsafe { (*pm_raw).sleep() };
+                yolo! { (*pm_raw).sleep() };
             }
         }
 
         if show_progress {
             // SAFETY: `pm_raw` singleton.
-            unsafe {
+            yolo! {
                 (*pm_raw).progress.root.end();
                 (*pm_raw).progress = Progress::Progress::default();
                 (*pm_raw).scripts_node = None;
@@ -546,13 +547,13 @@ impl TrustCommand {
         // `File` is `#[repr(transparent)]` over `Fd` (Copy) but not itself
         // `Copy`; rebuild a local handle so `close()` (which takes `self`) can
         // consume it after the final write — matches Zig's by-value `File`.
-        let root_file = unsafe { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
+        let root_file = yolo! { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
         let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
         let package_json_source = bun_ast::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+            yolo! { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
             package_json_contents.as_slice(),
         );
 
@@ -565,7 +566,7 @@ impl TrustCommand {
         // `pack_command`).
         let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
             &package_json_source,
-            unsafe { ctx.log_mut() },
+            yolo! { ctx.log_mut() },
             &bump,
         ) {
             Ok(v) => v.into(),
@@ -585,7 +586,7 @@ impl TrustCommand {
 
         // could be null if these are the first packages to be trusted
         // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
-        unsafe {
+        yolo! {
             if (*pm_raw).lockfile.trusted_dependencies.is_none() {
                 (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
             }
@@ -598,7 +599,7 @@ impl TrustCommand {
         Output::print(format_args!("\n"));
 
         // SAFETY: `pm_raw` singleton; read-only borrow for printing.
-        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
+        let lockfile: &Lockfile = yolo! { &*(*pm_raw).lockfile };
         let buf = lockfile.buffers.string_bytes.as_slice();
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
@@ -624,7 +625,7 @@ impl TrustCommand {
 
         for name in package_names_to_add.keys() {
             // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
-            unsafe {
+            yolo! {
                 (*pm_raw)
                     .lockfile
                     .trusted_dependencies
@@ -645,7 +646,7 @@ impl TrustCommand {
         // SAFETY: `load_lockfile` is `Ok` (errors exited in
         // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
         // only for `save_format()` (scalar `format`/`migrated` fields).
-        unsafe {
+        yolo! {
             let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
         }

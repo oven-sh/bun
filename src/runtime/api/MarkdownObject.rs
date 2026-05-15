@@ -1,5 +1,6 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
+use bun_yolo::yolo;
 use bun_core::StackCheck;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 // PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
@@ -801,7 +802,7 @@ impl<'a> ParseRenderer<'a> {
         // outlives this renderer; the `RendererImpl` trait erases that
         // lifetime so we extend it here. The entry is popped (and the slices
         // consumed) in `leave_span_impl` before `src_text` is dropped.
-        let detail: md::SpanDetail<'static> = unsafe { detail.detach_lifetime() };
+        let detail: md::SpanDetail<'static> = yolo! { detail.detach_lifetime() };
 
         let array = JSValue::create_empty_array(self.global_object, 0)?;
         self.marked_args.append(array);
@@ -1273,7 +1274,7 @@ impl<'a> JsCallbackRenderer<'a> {
         // is dropped). The `RendererImpl` trait erases the concrete lifetime,
         // so we widen it to `'static` for storage on the stack — same pattern
         // as `ParseStackEntry` above.
-        let detail: md::SpanDetail<'static> = unsafe { detail.detach_lifetime() };
+        let detail: md::SpanDetail<'static> = yolo! { detail.detach_lifetime() };
         self.stack.push(CallbackStackEntry {
             detail,
             ..Default::default()

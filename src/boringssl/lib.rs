@@ -4,6 +4,7 @@
 #![allow(unused, static_mut_refs)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::ffi::CStr;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
@@ -142,7 +143,7 @@ std::thread_local! {
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*`.
 pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
-    AUTO_CRYPTO_BUFFER_POOL.with(|pool| unsafe {
+    AUTO_CRYPTO_BUFFER_POOL.with(|pool| yolo! {
         if pool.get().is_null() {
             pool.set(CRYPTO_BUFFER_POOL_new());
         }
@@ -153,7 +154,7 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 
 pub fn init_client() -> *mut boring::SSL {
     // SAFETY: BoringSSL FFI; single-threaded startup assumption (matches Zig).
-    unsafe {
+    yolo! {
         // Zig: `if (ctx_store != null) _ = boring.SSL_CTX_up_ref(ctx_store.?);`
         // Bump the refcount on every call after the first; the first call's
         // `SSL_CTX_new` already returns refcount = 1.
@@ -209,7 +210,7 @@ pub fn init_client() -> *mut boring::SSL {
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
     // SAFETY: mi_malloc is safe to call with any size; returns null on failure.
-    unsafe { bun_alloc::mimalloc::mi_malloc(size) }
+    yolo! { bun_alloc::mimalloc::mi_malloc(size) }
 }
 
 // BoringSSL always expects memory to be zero'd
@@ -217,7 +218,7 @@ pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
 pub extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
     // OPENSSL_memory_alloc above (i.e. mi_malloc).
-    unsafe {
+    yolo! {
         let len = bun_alloc::usable_size(ptr.cast());
         ptr::write_bytes(ptr.cast::<u8>(), 0, len);
         bun_alloc::mimalloc::mi_free(ptr);
@@ -252,7 +253,7 @@ pub fn canonicalize_ip<'a>(
     let mut af: c_int = AF_INET;
     // get the standard text representation of the IP
     // SAFETY: out_ip is NUL-terminated above; ip_std_text is large enough for any address.
-    unsafe {
+    yolo! {
         if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast()) <= 0
         {
             af = AF_INET6;
@@ -265,7 +266,7 @@ pub fn canonicalize_ip<'a>(
     }
     // out_ip will contain the null-terminated canonicalized IP
     // SAFETY: ip_std_text holds the in_addr/in6_addr written by ares_inet_pton above.
-    unsafe { c_ares::ntop(af, ip_std_text.as_ptr().cast(), &mut out_ip[..]) }
+    yolo! { c_ares::ntop(af, ip_std_text.as_ptr().cast(), &mut out_ip[..]) }
 }
 
 /// converts ASN1_OCTET_STRING to canonicalized IP string
@@ -280,7 +281,7 @@ pub fn ip2_string<'a>(
         _ => return None,
     };
     // SAFETY: ip.data points to ip.length bytes (4 or 16); out_ip is INET6_ADDRSTRLEN+1 bytes.
-    unsafe { c_ares::ntop(af, ip.data.cast(), &mut out_ip[..]) }
+    yolo! { c_ares::ntop(af, ip.data.cast(), &mut out_ip[..]) }
 }
 
 /// Matches a DNS name pattern (possibly with a leading `*.` wildcard) against
@@ -331,7 +332,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     // we check with native code if the cert is valid
     // SAFETY: x509 is a valid &mut so non-null/aligned; all boring:: fns are
     // null-safe where documented.
-    unsafe {
+    yolo! {
         let x509: *mut boring::X509 = x509;
         let index = boring::X509_get_ext_by_NID(x509, boring::NID_subject_alt_name, -1);
         if index >= 0 {
@@ -357,7 +358,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                     let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
                     let _guard = scopeguard::guard(names, |n| {
                         // SAFETY: `n` was returned by X509V3_EXT_d2i above and is non-null.
-                        unsafe { boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free) }
+                        yolo! { boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free) }
                     });
                     for i in 0..boring::sk_GENERAL_NAME_num(names) {
                         let r#gen = boring::sk_GENERAL_NAME_value(names, i);
@@ -445,7 +446,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
 pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool {
     // SAFETY: ssl_ptr is a valid &mut so non-null/aligned; sk_X509_value returns
     // a borrowed cert pointer valid for the lifetime of the chain.
-    unsafe {
+    yolo! {
         let cert_chain = boring::SSL_get_peer_cert_chain(std::ptr::from_mut(ssl_ptr));
         if !cert_chain.is_null() {
             let x509 = boring::sk_X509_value(cert_chain, 0);

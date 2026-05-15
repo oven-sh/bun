@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! This "Store" is a specialized memory allocation strategy very similar to an
 //! arena, used for allocating expression and statement nodes during JavaScript
 //! parsing and visiting. Allocations are grouped into large blocks, where each
@@ -108,7 +109,7 @@ macro_rules! new_store {
                 pub fn zero(this: *mut Block) {
                     // Avoid initializing the entire struct.
                     // SAFETY: caller passes a valid (possibly uninit-buffer) Block allocation.
-                    unsafe {
+                    yolo! {
                         addr_of_mut!((*this).bytes_used).write(0);
                         addr_of_mut!((*this).next).write(None);
                     }
@@ -136,7 +137,7 @@ macro_rules! new_store {
                     // SAFETY: `start` is in-bounds (checked above) and aligned for T
                     // (align_forward above). Buffer base alignment must be >= align_of::<T>()
                     // — see TODO(port) on Block re: LARGEST_ALIGN.
-                    Some(unsafe {
+                    Some(yolo! {
                         NonNull::new_unchecked(
                             block.buffer.as_mut_ptr().add(start).cast::<T>(),
                         )
@@ -150,7 +151,7 @@ macro_rules! new_store {
                     Block::zero(b.as_mut_ptr());
                     // SAFETY: `zero` initialized every non-buffer field; `buffer` is
                     // `[MaybeUninit<u8>; _]` and is valid uninitialized.
-                    unsafe { b.assume_init() }
+                    yolo! { b.assume_init() }
                 }
             }
 
@@ -169,7 +170,7 @@ macro_rules! new_store {
                         {
                             // Zig: `@memset(block.buffer, undefined);`
                             // SAFETY: poisoning a buffer that is being freed.
-                            unsafe {
+                            yolo! {
                                 ::core::ptr::write_bytes(
                                     block.buffer.as_mut_ptr(),
                                     0xAA,
@@ -206,7 +207,7 @@ macro_rules! new_store {
                     // SAFETY: caller contract — reconstitute the `Box<Store>`
                     // leaked in `init()`. Its `Drop` (above) walks the block
                     // chain iteratively, so no deep `Box<Block>` drop recursion.
-                    drop(unsafe { bun_core::heap::take(store) });
+                    drop(yolo! { bun_core::heap::take(store) });
                 }
 
                 pub fn reset(store: &mut Store) {
@@ -228,7 +229,7 @@ macro_rules! new_store {
                         while let Some(block) = it {
                             // Zig: `block.bytes_used = undefined; @memset(&block.buffer, undefined);`
                             // SAFETY: poisoning; buffer is MaybeUninit<u8>.
-                            unsafe {
+                            yolo! {
                                 ::core::ptr::write_bytes(
                                     block.buffer.as_mut_ptr(),
                                     0xAA,
@@ -271,7 +272,7 @@ macro_rules! new_store {
                     // SAFETY: `current` is non-null (ensured just above, or by a
                     // prior `allocate()`/`reset()`) and points into the owned
                     // `head`/`next` chain; the pointee outlives `store`.
-                    let current: &mut Block = unsafe { &mut *store.current };
+                    let current: &mut Block = yolo! { &mut *store.current };
                     if let Some(ptr) = Block::try_alloc::<T>(current) {
                         return ptr;
                     }
@@ -295,7 +296,7 @@ macro_rules! new_store {
                     // SAFETY: a freshly created/reset block always has room for
                     // at least one `T` (`assert!(LARGEST_ALIGN <= 16)` plus
                     // `BLOCK_SIZE = LARGEST_SIZE * count * 2`).
-                    Block::try_alloc::<T>(unsafe { &mut *store.current })
+                    Block::try_alloc::<T>(yolo! { &mut *store.current })
                         .unwrap_or_else(|| unreachable!())
                 }
 
@@ -304,7 +305,7 @@ macro_rules! new_store {
                     let ptr = Store::allocate::<T>(store);
                     /* scoped_log elided — debug_logs feature only */
                     // SAFETY: `allocate` returned aligned, in-bounds, exclusive storage for T.
-                    unsafe { ptr.as_ptr().write(data) };
+                    yolo! { ptr.as_ptr().write(data) };
                     ptr
                 }
 
@@ -399,7 +400,7 @@ macro_rules! thread_local_ast_store {
                 // is either null or was returned by `Backing::init()` (leaked
                 // `PreAlloc`) and remains valid until `deinit()` clears it.
                 // Single-threaded access — no other `&mut` to the slab is live.
-                unsafe { INSTANCE.get().as_mut() }
+                yolo! { INSTANCE.get().as_mut() }
             }
             #[inline]
             pub fn memory_allocator() -> *mut $crate::ASTMemoryAllocator {
@@ -462,7 +463,7 @@ macro_rules! thread_local_ast_store {
                 }
                 // SAFETY: checked non-null above; `destroy` frees the `Store`
                 // box and its lazily-allocated block chain.
-                unsafe { Backing::destroy(instance()) };
+                yolo! { Backing::destroy(instance()) };
                 INSTANCE.set(::core::ptr::null_mut());
             }
 

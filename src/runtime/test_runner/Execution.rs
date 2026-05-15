@@ -35,6 +35,7 @@
 //! ]
 //! ```
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
@@ -205,7 +206,7 @@ impl ExecutionSequence {
     fn entry_mode(&self) -> ScopeMode {
         if let Some(entry) = self.test_entry {
             // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
-            return unsafe { entry.as_ref() }.base.mode;
+            return yolo! { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
     }
@@ -321,7 +322,7 @@ impl Execution {
                 let sequence = &sequences[0];
                 if let Some(entry) = sequence.active_entry {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    let entry = unsafe { entry.as_ref() };
+                    let entry = yolo! { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
@@ -341,7 +342,7 @@ impl Execution {
 
         let buntest = self.bun_test();
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
-        unsafe { (*buntest.as_ptr()).add_result(RefDataValue::Start) };
+        yolo! { (*buntest.as_ptr()).add_result(RefDataValue::Start) };
         Ok(())
     }
 
@@ -382,7 +383,7 @@ impl Execution {
 
                 // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).
                 // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
-                debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
+                debug_assert!(yolo! { sequence_ptr.as_ref() }.active_entry.is_some());
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
@@ -398,7 +399,7 @@ impl Execution {
                 // `group` as NonNull so no `&mut ConcurrentGroup` aliases `&mut Execution`.
                 loop {
                     // SAFETY: group_ptr points into this.groups (disjoint from this.sequences).
-                    let group = unsafe { &mut *group_ptr.as_ptr() };
+                    let group = yolo! { &mut *group_ptr.as_ptr() };
                     let seq_len = group.sequence_end - group.sequence_start;
                     if group.next_sequence_index >= seq_len {
                         break;
@@ -414,7 +415,7 @@ impl Execution {
                     match sequence_status {
                         AdvanceSequenceStatus::Done => {
                             // SAFETY: see above
-                            unsafe { &mut *group_ptr.as_ptr() }.next_sequence_index += 1;
+                            yolo! { &mut *group_ptr.as_ptr() }.next_sequence_index += 1;
                             continue;
                         }
                         AdvanceSequenceStatus::Execute { timeout } => {
@@ -424,7 +425,7 @@ impl Execution {
                 }
                 // all sequences have started
                 // SAFETY: see above
-                if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
+                if yolo! { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
                     return step_group(&buntest_strong, global_this, &mut now);
                 }
                 return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
@@ -520,12 +521,12 @@ impl Execution {
 
         // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
         // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
-        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        let sequence = yolo! { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
-            let entry = unsafe { entry_ptr.as_ref() };
+            let entry = yolo! { entry_ptr.as_ref() };
             Execution::on_entry_completed(entry_ptr);
 
             sequence.executing = false;
@@ -533,7 +534,7 @@ impl Execution {
                 sequence.maybe_skip = false;
                 sequence.active_entry = match entry.failure_skip_past {
                     // SAFETY: arena-owned entry
-                    Some(failure_skip_past) => nn(unsafe { (*failure_skip_past).next }),
+                    Some(failure_skip_past) => nn(yolo! { (*failure_skip_past).next }),
                     None => None,
                 };
             } else {
@@ -580,7 +581,7 @@ impl Execution {
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
+            let group = yolo! { &mut *group_ptr.as_ptr() };
             if group.remaining_incomplete_entries == 0 {
                 debug_assert!(false); // remaining_incomplete_entries should never go below 0
                 return;
@@ -602,7 +603,7 @@ impl Execution {
     fn on_sequence_started(sequence: &mut ExecutionSequence) {
         if let Some(entry) = sequence.test_entry {
             // SAFETY: arena-owned entry
-            if unsafe { entry.as_ref() }.callback.is_none() {
+            if yolo! { entry.as_ref() }.callback.is_none() {
                 return;
             }
         }
@@ -611,7 +612,7 @@ impl Execution {
 
         if let Some(entry_ptr) = sequence.test_entry {
             // SAFETY: arena-owned entry
-            let entry = unsafe { entry_ptr.as_ref() };
+            let entry = yolo! { entry_ptr.as_ref() };
             scoped_log!(
                 jest,
                 "Running test: \"{}\"",
@@ -685,10 +686,10 @@ impl Execution {
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
                 // both `&mut BunTest` and `&mut ExecutionSequence` (Phase B: reshape callee).
                 test_command::CommandLineReporter::handle_test_completed(
-                    unsafe { &mut *buntest.as_ptr() },
+                    yolo! { &mut *buntest.as_ptr() },
                     sequence,
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    unsafe { &mut *sequence.test_entry.unwrap_or(first_entry).as_ptr() },
+                    yolo! { &mut *sequence.test_entry.unwrap_or(first_entry).as_ptr() },
                     elapsed_ns,
                 );
             }
@@ -696,7 +697,7 @@ impl Execution {
 
         if let Some(entry_ptr) = sequence.test_entry {
             // SAFETY: arena-owned entry
-            let entry = unsafe { entry_ptr.as_ref() };
+            let entry = yolo! { entry_ptr.as_ref() };
             if entry.base.test_id_for_debugger != 0 {
                 // SAFETY: VirtualMachine::get() returns the live singleton.
                 if let Some(debugger) = VirtualMachine::get().as_mut().debugger.as_mut() {
@@ -735,15 +736,15 @@ impl Execution {
             let mut current_entry = sequence.first_entry;
             while let Some(entry_ptr) = current_entry {
                 // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                let entry = unsafe { &mut *entry_ptr.as_ptr() };
+                let entry = yolo! { &mut *entry_ptr.as_ptr() };
                 // remove entries that were added in the execution phase
                 while let Some(next) = entry.next {
                     // SAFETY: arena-owned entry
-                    if unsafe { (*next).added_in_phase } != AddedInPhase::Execution {
+                    if yolo! { (*next).added_in_phase } != AddedInPhase::Execution {
                         break;
                     }
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    entry.next = unsafe { (*next).next };
+                    entry.next = yolo! { (*next).next };
                     // can't deinit the removed entry because it may still be referenced in a RefDataValue
                 }
                 entry.timespec = Timespec::EPOCH;
@@ -788,7 +789,7 @@ impl Execution {
         };
         // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
         // remainder of this function, so this is the unique live `&mut` to that element.
-        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        let sequence = yolo! { &mut *sequence_ptr.as_ptr() };
 
         sequence.maybe_skip = true;
         if sequence.active_entry != sequence.test_entry {
@@ -840,7 +841,7 @@ pub fn step_group(
         };
         {
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
+            let group = yolo! { &mut *group_ptr.as_ptr() };
             if !group.executing {
                 Execution::on_group_started(global_this);
                 group.executing = true;
@@ -858,7 +859,7 @@ pub fn step_group(
         }
 
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
-        let group = unsafe { &mut *group_ptr.as_ptr() };
+        let group = yolo! { &mut *group_ptr.as_ptr() };
         group.executing = false;
         Execution::on_group_completed(global_this);
 
@@ -901,7 +902,7 @@ fn step_group_one(
     let mut final_status = AdvanceStatus::Done;
     let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
         // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-        unsafe { reporter.as_ref() }.jest.max_concurrency as usize
+        yolo! { reporter.as_ref() }.jest.max_concurrency as usize
     } else {
         debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
         20
@@ -909,7 +910,7 @@ fn step_group_one(
     let mut active_count: usize = 0;
     // SAFETY: group points into buntest.execution.groups; read-only here.
     let len = {
-        let g = unsafe { group.as_ref() };
+        let g = yolo! { group.as_ref() };
         g.sequence_end - g.sequence_start
     };
     for sequence_index in 0..len {
@@ -975,11 +976,11 @@ fn step_sequence_one(
     // Locate the sequence by absolute index, then carry it as NonNull so it can coexist with
     // `group` (disjoint field) and with later re-borrows through `buntest_ptr` in advance_sequence.
     // SAFETY: group points into this.groups; read-only.
-    let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
+    let seq_abs = yolo! { group.as_ref() }.sequence_start + sequence_index;
     let sequence_ptr: NonNull<ExecutionSequence> = NonNull::from(&mut this.sequences[seq_abs]);
     // SAFETY: sequence_ptr points into this.sequences; this is the unique live `&mut` to that
     // element until we hand it off to advance_sequence (which takes the NonNull, not the &mut).
-    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    let sequence = yolo! { &mut *sequence_ptr.as_ptr() };
     if sequence.executing {
         let Some(active_entry_ptr) = sequence.active_entry else {
             debug_assert!(false); // sequence is executing with no active entry
@@ -988,7 +989,7 @@ fn step_sequence_one(
             }));
         };
         // SAFETY: arena-owned entry
-        let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
+        let active_entry = yolo! { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
@@ -1007,7 +1008,7 @@ fn step_sequence_one(
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
     // SAFETY: arena-owned entry
-    let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
+    let next_item = yolo! { &mut *next_item_ptr.as_ptr() };
     sequence.executing = true;
     if Some(next_item_ptr) == sequence.first_entry {
         Execution::on_sequence_started(sequence);
@@ -1040,7 +1041,7 @@ fn step_sequence_one(
             *now = Timespec::now_force_real_time();
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
-            let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+            let sequence = yolo! { &mut *sequence_ptr.as_ptr() };
             let _ = next_item.evaluate_timeout(sequence, now);
 
             // the result is available immediately; advance the sequence and run again.

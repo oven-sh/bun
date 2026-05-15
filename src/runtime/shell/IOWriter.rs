@@ -14,6 +14,7 @@
 
 #![allow(dead_code)]
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -143,7 +144,7 @@ impl Writer {
     fn tee(&self, chunk: &[u8]) {
         if let Some(bl) = self.bytelist {
             // SAFETY: see doc comment.
-            let _ = unsafe { (*bl).append_slice(chunk) };
+            let _ = yolo! { (*bl).append_slice(chunk) };
         }
     }
 }
@@ -202,7 +203,7 @@ impl IOWriter {
     pub fn deinit_on_main_thread(this: *mut IOWriter) {
         // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
         // the async-deinit task.
-        unsafe { std::sync::Arc::decrement_strong_count(this) };
+        yolo! { std::sync::Arc::decrement_strong_count(this) };
     }
 }
 
@@ -249,7 +250,7 @@ impl IOWriter {
     /// and guards via the `Yield` trampoline).
     #[inline]
     fn state(&self) -> &mut State {
-        unsafe { &mut *self.state.get() }
+        yolo! { &mut *self.state.get() }
     }
 
     /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
@@ -320,7 +321,7 @@ impl IOWriter {
     pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: `interp` is the live owning Interpreter (it owns the IO
         // struct that holds this Arc); single-threaded.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
+        self.state().interp = yolo! { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
     #[inline]
@@ -1220,7 +1221,7 @@ pub fn on_io_writer_chunk(
             // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
             // the owning ShellSubprocess until `on_close_io` runs, which only
             // happens after the writer has finished draining. Single-threaded.
-            let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
+            let cw = yolo! { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
             cw.on_iowriter_chunk(written, err)
         }
     }

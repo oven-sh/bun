@@ -5,6 +5,7 @@
 //! read the file (or use already-loaded contents), run the JS/CSS/etc. parser,
 //! and ship a `Result` back to the bundler thread.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -205,7 +206,7 @@ impl ParseTask {
     /// Shared borrow of the owning `BundleV2`. `ctx` is a BACKREF
     /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
     /// valid until `BundleV2::deinit`. Prefer this over open-coded
-    /// `unsafe { &*task.ctx }`; sites that mutate the bundle (e.g.
+    /// `yolo! { &*task.ctx }`; sites that mutate the bundle (e.g.
     /// `on_complete`) must continue to deref the raw `ctx` field directly.
     ///
     /// # Safety
@@ -220,7 +221,7 @@ impl ParseTask {
     #[inline]
     pub unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
         // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
-        unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
+        yolo! { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
     pub fn init(
@@ -235,7 +236,7 @@ impl ParseTask {
         // arena outlives the bundle pass, so deref'ing the raw pointer here to
         // borrow `name`/`version` is sound.
         let (package_name, package_version) = match resolve_result.package_json {
-            Some(pj) => unsafe {
+            Some(pj) => yolo! {
                 let pj = &*pj;
                 (
                     ast::StoreStr::new(&pj.name[..]),
@@ -246,11 +247,11 @@ impl ParseTask {
         };
         // SAFETY: caller passes a live `&mut BundleV2` coerced to `*mut`; we
         // only read `transpiler().options.target` here.
-        let known_target = unsafe { (*ctx).transpiler().options.target };
+        let known_target = yolo! { (*ctx).transpiler().options.target };
         ParseTask {
             // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
             // write provenance from the `*mut BundleV2` parameter.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
+            ctx: Some(yolo! { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
             path: resolve_result.path_pair.primary.clone(),
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -351,7 +352,7 @@ pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // ever invoked by the thread pool against a `ParseTask` it scheduled, so
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
     // CONCURRENCY note above.
-    let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, io_task, task) };
+    let parse_task = yolo! { &mut *bun_core::from_field_ptr!(ParseTask, io_task, task) };
     parse_worker::run_from_thread_pool(parse_task);
 }
 
@@ -359,7 +360,7 @@ pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 pub fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
     // `io_task_callback` for the dispatch invariant.
-    let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
+    let parse_task = yolo! { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
     parse_worker::run_from_thread_pool(parse_task);
 }
 
@@ -619,7 +620,7 @@ pub mod parse_worker {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
-        let define = unsafe { &mut (*transpiler).options.define };
+        let define = yolo! { &mut (*transpiler).options.define };
         let mut ast = JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
         );
@@ -638,7 +639,7 @@ pub mod parse_worker {
     ) -> core::result::Result<JSAst, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
-        let define = unsafe { &mut (*transpiler).options.define };
+        let define = yolo! { &mut (*transpiler).options.define };
         Ok(JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
         ))
@@ -738,7 +739,7 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
         // `options` and `resolver` are disjoint fields of `Transpiler`; reborrowing
         // `options` here does not overlap any access through `resolver` below.
-        let topts = unsafe { &mut (*transpiler).options };
+        let topts = yolo! { &mut (*transpiler).options };
 
         match loader {
             Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
@@ -786,7 +787,7 @@ pub mod parse_worker {
                 };
                 // SAFETY: `resolver` is a live `*mut Resolver` (Zig `*Resolver`);
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
-                let root: Expr = unsafe { &mut (*resolver).caches.json }
+                let root: Expr = yolo! { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode, true)?
                     .map(Into::into)
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
@@ -1026,7 +1027,7 @@ pub mod parse_worker {
                 require_args[1] = Expr::init(
                     E::Object {
                         // SAFETY: bump-owned slice; never grown via this Vec.
-                        properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
+                        properties: yolo! { G::PropertyList::from_bump_slice(object_properties) },
                         is_single_line: true,
                         ..Default::default()
                     },
@@ -1036,7 +1037,7 @@ pub mod parse_worker {
                     E::Call {
                         target: require_property,
                         // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
+                        args: yolo! { bun_ast::ExprNodeList::from_bump_slice(require_args) },
                         ..Default::default()
                     },
                     Loc { start: 0 },
@@ -1111,7 +1112,7 @@ pub mod parse_worker {
                             loc: Loc { start: 0 },
                         },
                         // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
+                        args: yolo! { bun_ast::ExprNodeList::from_bump_slice(require_args) },
                         ..Default::default()
                     },
                     Loc { start: 0 },
@@ -1398,7 +1399,7 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.readFile");
 
                 // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-                let ctx = unsafe { task.ctx() };
+                let ctx = yolo! { task.ctx() };
 
                 // Check FileMap for in-memory files first
                 if let Some(file_map) = ctx.file_map {
@@ -1466,10 +1467,10 @@ pub mod parse_worker {
                 };
                 // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
                 // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
-                let fs_ref = unsafe { &mut *(*transpiler).fs };
+                let fs_ref = yolo! { &mut *(*transpiler).fs };
                 // SAFETY: `resolver` is a live `*mut Resolver`; `caches.fs` is
                 // disjoint from `(*transpiler).fs` (a backref pointer field).
-                break 'brk match unsafe { &mut (*resolver).caches.fs }.read_file_with_allocator(
+                break 'brk match yolo! { &mut (*resolver).caches.fs }.read_file_with_allocator(
                     fs_ref,
                     file_path.text,
                     contents_dir,
@@ -1568,7 +1569,7 @@ pub mod parse_worker {
                 break 'brk false;
             }
             // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-            let ctx = unsafe { task.ctx() };
+            let ctx = yolo! { task.ctx() };
             let Some(plugin) = ctx.plugins_ref() else {
                 break 'brk false;
             };
@@ -1604,7 +1605,7 @@ pub mod parse_worker {
         };
 
         // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
-        let plugins = unsafe { ctx.task.ctx() }
+        let plugins = yolo! { ctx.task.ctx() }
             .plugins_ref()
             .expect("unreachable");
         ctx.run(plugins, from_plugin)
@@ -1736,7 +1737,7 @@ pub mod parse_worker {
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback (the only
                 // caller of this accessor), and `append` dupes before that returns.
-                return unsafe {
+                return yolo! {
                     core::slice::from_raw_parts(
                         self.source_line_text_ptr,
                         self.source_line_text_len,
@@ -1753,7 +1754,7 @@ pub mod parse_worker {
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
                 // `append` dupes the bytes into the `Log` arena before that returns.
-                return unsafe { core::slice::from_raw_parts(self.path_ptr, self.path_len) };
+                return yolo! { core::slice::from_raw_parts(self.path_ptr, self.path_len) };
             }
             b""
         }
@@ -1765,7 +1766,7 @@ pub mod parse_worker {
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
                 // `append` dupes the bytes into the `Log` arena before that returns.
-                return unsafe { core::slice::from_raw_parts(self.message_ptr, self.message_len) };
+                return yolo! { core::slice::from_raw_parts(self.message_ptr, self.message_len) };
             }
             b""
         }
@@ -1822,14 +1823,14 @@ pub mod parse_worker {
             log_options_: *mut BunLogOptions,
         ) {
             // SAFETY: called from C plugin with valid ptrs or null.
-            let Some(args) = (unsafe { args_.as_mut() }) else {
+            let Some(args) = (yolo! { args_.as_mut() }) else {
                 return;
             };
-            let Some(log_options) = (unsafe { log_options_.as_ref() }) else {
+            let Some(log_options) = (yolo! { log_options_.as_ref() }) else {
                 return;
             };
             // SAFETY: context backref valid for plugin call duration.
-            let ctx = unsafe { &mut *args.context };
+            let ctx = yolo! { &mut *args.context };
             log_options.append(ctx.log, ctx.file_path.namespace);
         }
     }
@@ -1869,10 +1870,10 @@ pub mod parse_worker {
             // SAFETY: result points to OnBeforeParseResultWrapper.result (always
             // constructed that way in `OnBeforeParsePlugin::run`).
             let wrapper =
-                unsafe { bun_core::from_field_ptr!(OnBeforeParseResultWrapper, result, result) };
+                yolo! { bun_core::from_field_ptr!(OnBeforeParseResultWrapper, result, result) };
             #[cfg(debug_assertions)]
             // SAFETY: wrapper just computed via offset_of from valid result ptr.
-            debug_assert_eq!(unsafe { (*wrapper).check }, 42069);
+            debug_assert_eq!(yolo! { (*wrapper).check }, 42069);
             wrapper
         }
     }
@@ -1888,8 +1889,8 @@ pub mod parse_worker {
         // `args` and `*args.context` are disjoint allocations (the
         // `OnBeforeParseArguments` stack local vs. the `OnBeforeParsePlugin` it
         // points back to), so holding both `&mut` is sound.
-        let args = unsafe { &mut *args };
-        let this = unsafe { &mut *args.context };
+        let args = yolo! { &mut *args };
+        let this = yolo! { &mut *args.context };
         if this.log.errors > 0
             || this.deferred_error.is_some()
             || this.should_continue_running.get() != 1
@@ -1905,7 +1906,7 @@ pub mod parse_worker {
         // later offset-walk UB. The `&mut` reborrow below is scoped to end before
         // any wrapper access so no overlapping `&mut` exists.
         {
-            let result = unsafe { &mut *result_ptr };
+            let result = yolo! { &mut *result_ptr };
             if !result.source_ptr.is_null() {
                 return 0;
             }
@@ -1950,7 +1951,7 @@ pub mod parse_worker {
             // *is* `*result_ptr`, so materializing `&mut *wrapper` here would
             // overlap the live `result` borrow above (aliased-`&mut` UB).
             let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
-            unsafe {
+            yolo! {
                 (*wrapper).original_source = source_ptr;
                 (*wrapper).original_source_len = source_len;
                 (*wrapper).original_source_fd = fd;
@@ -1970,7 +1971,7 @@ pub mod parse_worker {
         // would be aliased-`&mut` UB, and forming `&mut *this` first would shrink
         // provenance so `from_field_ptr!` in `get_wrapper` walks out of bounds.
         let wrapper = OnBeforeParseResult::get_wrapper(this);
-        unsafe {
+        yolo! {
             (*this).loader = (*wrapper).loader;
             if !(*wrapper).original_source.is_null() {
                 (*this).source_ptr = (*wrapper).original_source;
@@ -1988,7 +1989,7 @@ pub mod parse_worker {
         // Zig `@fieldParentPtr`) — `wrapper.result` aliases `*result`, so forming
         // overlapping references would be UB, and a `&mut`-derived `*mut` would
         // lack provenance over the enclosing wrapper.
-        unsafe {
+        yolo! {
             if (*this).should_continue_running.get() != 1 {
                 return 1;
             }
@@ -2211,12 +2212,12 @@ pub mod parse_worker {
         // PORT NOTE: errdefer transpiler.resetStore() — reshaped: call on the err
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
-        let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
+        let resolver: *mut Resolver = yolo! { core::ptr::addr_of_mut!((*transpiler).resolver) };
         let mut file_path = task.path.clone();
         let mut loader = task
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler`.
-            .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
+            .or_else(|| file_path.loader(yolo! { &(*transpiler).options.loaders }))
             .unwrap_or(Loader::File);
 
         let mut contents_came_from_plugin: bool = false;
@@ -2232,7 +2233,7 @@ pub mod parse_worker {
         );
         if result.is_err() {
             // SAFETY: `transpiler` is live; no other borrow of it is held here.
-            unsafe { (*transpiler).reset_store() };
+            yolo! { (*transpiler).reset_store() };
         }
         result
     }
@@ -2276,11 +2277,11 @@ pub mod parse_worker {
         // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
         // arena outlives all reads through the returned ASTs. `arena` is a
         // `*const Bump` field; the deref points outside `*worker_raw`.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
+        let bump: &'static Bump = yolo! { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
-            std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
+            std::ptr::from_mut(yolo! { (*worker_raw).transpiler_for_target(task.known_target) });
         // PORT NOTE: Zig errdefers (`transpiler.resetStore()` .zig:1123 and
         // `if (.fd) entry.deinit(arena)` .zig:1148) are reshaped into the
         // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
@@ -2292,12 +2293,12 @@ pub mod parse_worker {
         // bound *before* the possible `transpiler` reassignment below and stays
         // pointing into the original target's transpiler.
         // SAFETY: `transpiler` just derived from a live `&mut`.
-        let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
+        let resolver: *mut Resolver = yolo! { core::ptr::addr_of_mut!((*transpiler).resolver) };
         let file_path = &mut task.path;
         let loader = task
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
-            .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
+            .or_else(|| file_path.loader(yolo! { &(*transpiler).options.loaders }))
             .unwrap_or(Loader::File);
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
@@ -2316,7 +2317,7 @@ pub mod parse_worker {
         // Read the `BackRef` field via `worker_raw` (not `this`) so no
         // parent-`&mut` access pops the `transpiler`/`resolver` tag chain derived
         // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
-        let worker_ctx = unsafe { (*worker_raw).ctx };
+        let worker_ctx = yolo! { (*worker_raw).ctx };
 
         let will_close_file_descriptor = matches!(task.contents_or_fd, ContentsOrFd::Fd { .. })
             && entry.fd.is_valid()
@@ -2342,7 +2343,7 @@ pub mod parse_worker {
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
-        let topts = unsafe { &(*transpiler).options };
+        let topts = yolo! { &(*transpiler).options };
         let use_directive: UseDirective = if !is_empty && topts.server_components {
             UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
         } else {
@@ -2371,13 +2372,13 @@ pub mod parse_worker {
             // so this call's `&mut self` is a child of the same raw and does not
             // pop the SharedRW tag backing `resolver` (which still points into the
             // original target's transpiler per Zig .zig:1189).
-            transpiler = std::ptr::from_mut(unsafe {
+            transpiler = std::ptr::from_mut(yolo! {
                 (*worker_raw).transpiler_for_target(options::Target::Browser)
             });
         }
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
         // reassigned above); reborrow only the disjoint `options` field.
-        let topts = unsafe { &(*transpiler).options };
+        let topts = yolo! { &(*transpiler).options };
 
         let source = Source {
             // PORT NOTE: `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
@@ -2441,7 +2442,7 @@ pub mod parse_worker {
         // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
-        opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
+        opts.allow_unresolved = yolo! { bun_collections::detach_ref(&topts.allow_unresolved) };
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
@@ -2451,7 +2452,7 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
         // `'static` erasure: the context outlives the parse.
         opts.macro_context =
-            unsafe { Some(&mut *((*transpiler).macro_context.as_mut().unwrap() as *mut _)) };
+            yolo! { Some(&mut *((*transpiler).macro_context.as_mut().unwrap() as *mut _)) };
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
@@ -2562,7 +2563,7 @@ pub mod parse_worker {
             };
             // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
             // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
-            unsafe {
+            yolo! {
                 bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
             }
         });
@@ -2594,7 +2595,7 @@ pub mod parse_worker {
             content_hash: 0,
         };
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
-        let task_ctx = unsafe { task.ctx() };
+        let task_ctx = yolo! { task.ctx() };
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
@@ -2638,7 +2639,7 @@ pub mod parse_worker {
                     );
                 }
                 // SAFETY: `transpiler` is live; no other borrow of it is held here.
-                unsafe { (*transpiler).reset_store() };
+                yolo! { (*transpiler).reset_store() };
                 if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
                     entry.deinit();
                 }
@@ -2695,7 +2696,7 @@ pub mod parse_worker {
 
     fn run_from_thread_pool_impl(this: &mut ParseTask) {
         // SAFETY: ctx backref valid for the bundle pass (outlives this task).
-        let ctx = unsafe { this.ctx() };
+        let ctx = yolo! { this.ctx() };
         let worker: &mut crate::Worker = crate::Worker::get(ctx);
         // PORT NOTE: `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
@@ -2849,7 +2850,7 @@ pub mod parse_worker {
     fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
-        BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
+        BundleV2::on_parse_task_complete(yolo! { &mut *result }, yolo! { &mut *ctx });
         // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig).
         // Zig's `destroy` is *struct-only* (no field deinit). 954e9ccb mapped this
         // to `drop(heap::take(result))`, but that runs full Drop glue:
@@ -2862,7 +2863,7 @@ pub mod parse_worker {
         // dealloc the box without running Drop.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe {
+        yolo! {
             std::alloc::dealloc(
                 result.cast::<u8>(),
                 std::alloc::Layout::new::<Result>(),
@@ -2872,17 +2873,17 @@ pub mod parse_worker {
 
     pub fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
-        let r = unsafe { &mut *result };
+        let r = yolo! { &mut *result };
         let ctx = r.ctx;
         // SAFETY: `ctx` is a ParentRef<BundleV2> stored with write provenance
         // (`from_raw_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
-        BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
+        BundleV2::on_parse_task_complete(r, yolo! { ctx.assume_mut() });
         // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe {
+        yolo! {
             std::alloc::dealloc(
                 result.cast::<u8>(),
                 std::alloc::Layout::new::<Result>(),

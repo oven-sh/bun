@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::io::Write as _;
 
 use bstr::{BStr, ByteSlice};
@@ -117,7 +118,7 @@ impl PmVersionCommand {
             false, // JSON_WARN_DUPLICATE_KEYS
             false, // WAS_ORIGINALLY_MACRO
             true,  // GUESS_INDENTATION
-        >(&package_json_source, unsafe { ctx.log_mut() }, &json_bump)
+        >(&package_json_source, yolo! { ctx.log_mut() }, &json_bump)
         {
             Ok(r) => r,
             Err(err) => {
@@ -361,7 +362,7 @@ impl PmVersionCommand {
         let json_bump = Arena::new();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,
-            unsafe { ctx.log_mut() },
+            yolo! { ctx.log_mut() },
             &json_bump,
         ) else {
             return None;

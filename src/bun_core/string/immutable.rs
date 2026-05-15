@@ -1,6 +1,7 @@
 //! Port of `src/string/immutable.zig` — `bun.strings` namespace.
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::ffi::c_int;
 
@@ -483,7 +484,7 @@ pub mod lexer_step {
             return -1;
         }
         // SAFETY: `*current < len` was checked immediately above.
-        let first = unsafe { *contents.get_unchecked(*current) };
+        let first = yolo! { *contents.get_unchecked(*current) };
         *end = *current;
         if first < 0x80 {
             *current += 1;
@@ -525,7 +526,7 @@ pub mod lexer_step {
             // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
             // never read.
             let mut quad = [0u8; 4];
-            unsafe {
+            yolo! {
                 core::ptr::copy_nonoverlapping(
                     contents.as_ptr().add(*current),
                     quad.as_mut_ptr(),
@@ -576,7 +577,7 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     }
     // SAFETY: `&[u8]` guarantees both (ptr,len) pairs are valid for reads;
     // libc memmem only reads within those bounds.
-    let p = unsafe {
+    let p = yolo! {
         libc::memmem(
             haystack.as_ptr().cast(),
             haystack.len(),
@@ -896,7 +897,7 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
     #[cfg(target_os = "linux")]
     {
         // SAFETY: memrchr scans within [self_.ptr, self_.ptr + self_.len).
-        let start = unsafe { libc::memrchr(self_.as_ptr().cast(), char as c_int, self_.len()) };
+        let start = yolo! { libc::memrchr(self_.as_ptr().cast(), char as c_int, self_.len()) };
         if start.is_null() {
             return None;
         }
@@ -1062,21 +1063,21 @@ impl StringOrTinyString {
             1 => {
                 // SAFETY: init()/init_lower_case() wrote exactly remainder_len bytes
                 // into the start of remainder_buf; tail bytes are uninit but unread.
-                unsafe { core::slice::from_raw_parts(buf, self.meta.remainder_len() as usize) }
+                yolo! { core::slice::from_raw_parts(buf, self.meta.remainder_len() as usize) }
             }
             0 => {
                 const USZ: usize = core::mem::size_of::<usize>();
                 // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
                 let mut ptr_bytes = [0u8; USZ];
                 let mut len_bytes = [0u8; USZ];
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(buf, ptr_bytes.as_mut_ptr(), USZ);
                     core::ptr::copy_nonoverlapping(buf.add(USZ), len_bytes.as_mut_ptr(), USZ);
                 }
                 let ptr = usize::from_le_bytes(ptr_bytes) as *const u8;
                 let len = usize::from_le_bytes(len_bytes);
                 // SAFETY: ptr/len were stored from a live &[u8] in init(); caller keeps it alive.
-                unsafe { core::slice::from_raw_parts(ptr, len) }
+                yolo! { core::slice::from_raw_parts(ptr, len) }
             }
             _ => unreachable!(),
         }
@@ -1123,7 +1124,7 @@ impl StringOrTinyString {
             },
             1..=Self::MAX => {
                 // SAFETY: stringy.len() ∈ 1..=31, fits in buf; src/dst can't overlap (dst is local).
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         stringy.as_ptr(),
                         buf.as_mut_ptr() as *mut u8,
@@ -1139,7 +1140,7 @@ impl StringOrTinyString {
                 const USZ: usize = core::mem::size_of::<usize>();
                 let dst = buf.as_mut_ptr() as *mut u8;
                 // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
                         dst,
@@ -1173,7 +1174,7 @@ impl StringOrTinyString {
                 let dst = buf.as_mut_ptr() as *mut u8;
                 for (i, &c) in stringy.iter().enumerate() {
                     // SAFETY: i < stringy.len() <= 31 == MAX.
-                    unsafe { *dst.add(i) = c.to_ascii_lowercase() };
+                    yolo! { *dst.add(i) = c.to_ascii_lowercase() };
                 }
                 StringOrTinyString {
                     remainder_buf: buf,
@@ -1184,7 +1185,7 @@ impl StringOrTinyString {
                 const USZ: usize = core::mem::size_of::<usize>();
                 let dst = buf.as_mut_ptr() as *mut u8;
                 // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
                         dst,
@@ -1496,7 +1497,7 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     // Zig `eqlComptimeCheckLenU8` contract). LLVM cannot prove the latter, so
     // a checked slice would emit a real bounds check on this hot path
     // (lexer keyword/prefix matching) — keep the unchecked index.
-    unsafe { a.get_unchecked(..b.len()) == b }
+    yolo! { a.get_unchecked(..b.len()) == b }
 }
 
 fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
@@ -1625,7 +1626,7 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
 
     // SAFETY: a_str.len() >= b_str.len() by contract above; raw-pointer walk
     // mirrors Zig's word-chunked compare exactly.
-    unsafe {
+    yolo! {
         let end = b_str.as_ptr().add(len);
         let mut a = a_str.as_ptr();
         let mut b = b_str.as_ptr();
@@ -1910,7 +1911,7 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
 pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     if simdutf::validate::utf8(bytes) {
         // SAFETY: simdutf just validated `bytes` as well-formed UTF-8.
-        Some(unsafe { core::str::from_utf8_unchecked(bytes) })
+        Some(yolo! { core::str::from_utf8_unchecked(bytes) })
     } else {
         None
     }
@@ -2686,7 +2687,7 @@ pub fn is_ip_address(input: &[u8]) -> bool {
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe {
+    yolo! {
         ares_inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
             || ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
     }
@@ -2700,7 +2701,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     buf[..input.len()].copy_from_slice(input);
     let mut dst = [0u8; 28];
     // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-    unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
+    yolo! { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
 }
 
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
@@ -2897,7 +2898,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
         )
         .map_err(|_| core::fmt::Error)?;
         // SAFETY: write_pre_quoted_string emits UTF-8 (escapes + ASCII + WTF-8).
-        f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })
+        f.write_str(yolo! { core::str::from_utf8_unchecked(&buf) })
     }
 }
 
@@ -3102,7 +3103,7 @@ impl ANSIIterator {
                 return None;
             }
             // SAFETY: slice_ptr/slice_len point into the input buffer per C++ contract.
-            return Some(unsafe { core::slice::from_raw_parts(self.slice_ptr, self.slice_len) });
+            return Some(yolo! { core::slice::from_raw_parts(self.slice_ptr, self.slice_len) });
         }
         None
     }
@@ -3373,7 +3374,7 @@ pub fn to_utf16_alloc(
     // never reads from the output buffer and writes at most `out_length` code
     // units (the upper bound returned by `utf16_length_from_utf8`), so passing
     // uninitialised storage is sound. We only commit the length after success.
-    let res = unsafe {
+    let res = yolo! {
         simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
             bytes.as_ptr(),
             bytes.len(),
@@ -3383,7 +3384,7 @@ pub fn to_utf16_alloc(
     if res.is_successful() && out_length > 0 {
         // SAFETY: on success simdutf has initialised exactly `out_length` u16s
         // at the start of `out`'s allocation, and `out_length <= capacity`.
-        unsafe { out.set_len(out_length) };
+        yolo! { out.set_len(out_length) };
         if sentinel {
             out.push(0);
         }

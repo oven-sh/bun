@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
@@ -313,7 +314,7 @@ impl FileReader {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn reader(&self) -> &mut IOReader {
-        unsafe { &mut *self.reader.get() }
+        yolo! { &mut *self.reader.get() }
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
@@ -421,7 +422,7 @@ impl FileReader {
 
         if was_lazy {
             // SAFETY: see `parent()`.
-            unsafe { (*self.parent()).increment_count() };
+            yolo! { (*self.parent()).increment_count() };
             self.waiting_for_on_reader_done.set(true);
             if let Some(offset) = self.start_offset {
                 match self
@@ -444,7 +445,7 @@ impl FileReader {
                 if self.reader().flags.contains(PosixFlags::POLLABLE) && !self.reader().is_done() {
                     self.waiting_for_on_reader_done.set(true);
                     // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
+                    yolo! { (*self.parent()).increment_count() };
                 }
             }
         }
@@ -507,7 +508,7 @@ impl FileReader {
         // SAFETY: see `parent()` — `self` is the `context` field of a live
         // heap-allocated `Source`. Reading the `Copy` `global_this` via
         // `(*ptr).field` is a raw-place read, not a `&Source` borrow.
-        unsafe { (*self.parent()).global_this }.expect("NewSource.global_this set before use")
+        yolo! { (*self.parent()).global_this }.expect("NewSource.global_this set before use")
     }
 
     pub fn on_cancel(&self) {
@@ -616,7 +617,7 @@ impl FileReader {
                         in_progress[0..buf.len()].copy_from_slice(buf);
                         // SAFETY: lifetime laundering matches the field's TODO(port) note.
                         let remaining =
-                            unsafe { &mut *(&mut in_progress[buf.len()..] as *mut [u8]) };
+                            yolo! { &mut *(&mut in_progress[buf.len()..] as *mut [u8]) };
                         *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this
@@ -652,7 +653,7 @@ impl FileReader {
                     if self.buffered.get().is_empty() {
                         self.buffered.set(Vec::new()); // clearAndFree
                         // SAFETY: see `reader_buffer` decl — tight deref, no &mut held across.
-                        self.buffered.set(unsafe { mem::take(&mut *reader_buffer) }); // moveToUnmanaged
+                        self.buffered.set(yolo! { mem::take(&mut *reader_buffer) }); // moveToUnmanaged
                     }
 
                     // PORT NOTE: nested `defer buffer.clearAndFree` folded into the arms.
@@ -686,7 +687,7 @@ impl FileReader {
                     self.pending_view
                         .with_mut(|v| v[0..buf.len()].copy_from_slice(buf));
                     // SAFETY: see `reader_buffer` decl.
-                    unsafe { (*reader_buffer).clear() };
+                    yolo! { (*reader_buffer).clear() };
                     self.buffered.with_mut(|b| b.clear());
 
                     let into_array = streams::IntoArray {
@@ -705,11 +706,11 @@ impl FileReader {
                 }
 
                 // SAFETY: see `reader_buffer` decl — tight deref.
-                if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
+                if is_slice_in_vec_capacity(buf, yolo! { &*reader_buffer }) {
                     if self.reader().is_done() {
                         // SAFETY: see `reader_buffer` decl.
-                        debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
-                        let mut buffer = unsafe { mem::take(&mut *reader_buffer) };
+                        debug_assert_eq!(buf.as_ptr(), yolo! { (*reader_buffer).as_ptr() });
+                        let mut buffer = yolo! { mem::take(&mut *reader_buffer) };
                         buffer.truncate(buf.len()); // shrinkRetainingCapacity
                         self.pending.with_mut(|p| {
                             p.result =
@@ -717,7 +718,7 @@ impl FileReader {
                         });
                     } else {
                         // SAFETY: see `reader_buffer` decl.
-                        unsafe { (*reader_buffer).clear() };
+                        yolo! { (*reader_buffer).clear() };
                         self.pending.with_mut(|p| {
                             p.result = streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
                         });
@@ -759,14 +760,14 @@ impl FileReader {
         } else if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
             self.buffered.with_mut(|b| b.extend_from_slice(buf));
             // SAFETY: see `reader_buffer` decl.
-            if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
-                unsafe { (*reader_buffer).clear() };
+            if is_slice_in_vec_capacity(buf, yolo! { &*reader_buffer }) {
+                yolo! { (*reader_buffer).clear() };
             }
         }
 
         // For pipes, we have to keep pulling or the other process will block.
         // SAFETY: see `reader_buffer` decl.
-        let reader_buffer_len = unsafe { (*reader_buffer).len() };
+        let reader_buffer_len = yolo! { (*reader_buffer).len() };
         let ret = !matches!(
             self.read_inside_on_pull.get(),
             ReadDuringJSOnPullResult::Temporary(_)
@@ -979,7 +980,7 @@ impl FileReader {
         // Only close the stream if there's no buffered data left to deliver
         if self.buffered.get().is_empty() {
             // SAFETY: see `parent()`.
-            unsafe { (*self.parent()).on_close() };
+            yolo! { (*self.parent()).on_close() };
         }
         if self.waiting_for_on_reader_done.get() {
             self.waiting_for_on_reader_done.set(false);
@@ -988,7 +989,7 @@ impl FileReader {
             // Tail position — `self` (a field of `*parent`) is not accessed
             // after this call, which may free the allocation when the refcount
             // hits zero.
-            let _ = unsafe { Source::decrement_count(parent) };
+            let _ = yolo! { Source::decrement_count(parent) };
         }
     }
 
@@ -1057,7 +1058,7 @@ pub type Source = readable_stream::NewSource<FileReader>;
 // `Source` (Zig `@fieldParentPtr("context", this)`). Returns `*mut Source`
 // (NOT `&mut Source`) because `self` IS the `context` field — materializing
 // `&mut Source` would alias the live `&self` borrow. Callers deref in a tight
-// `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
+// `yolo! { (*ptr).method() }` scope and never hold `&mut Source` across other
 // `self.*` accesses.
 bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
 
@@ -1076,7 +1077,7 @@ impl readable_stream::SourceContext for FileReader {
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
         // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive
         // by `arr` (see TODO(port) note at top of file).
-        let buf = unsafe { &mut *(buf as *mut [u8]) };
+        let buf = yolo! { &mut *(buf as *mut [u8]) };
         Self::on_pull(self, buf, arr)
     }
     fn on_cancel(&mut self) {

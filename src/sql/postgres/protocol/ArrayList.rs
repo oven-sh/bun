@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use super::new_writer::{NewWriter, WriterContext};
 use crate::postgres::AnyPostgresError;
 
@@ -48,7 +49,7 @@ impl<'a> ArrayListCtx<'a> {
         // `new_mut` (write provenance); `WriterContext` is used single-threaded
         // with no overlapping `&`/`&mut` to the same Vec while the returned
         // borrow is live.
-        unsafe { self.array.get_mut() }
+        yolo! { self.array.get_mut() }
     }
 }
 

@@ -1,4 +1,5 @@
 #[allow(unused_imports)] // c_int / c_uint only used in the macOS-gated extern block
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::OnceLock;
 
@@ -111,7 +112,7 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     // SAFETY: `raw` points into a NUL-terminated buffer that is moved into the
     // 'static `ZONES` map immediately below and never freed — valid for process
     // lifetime per `Zone::init` contract.
-    let zone = unsafe { Zone::init(raw) };
+    let zone = yolo! { Zone::init(raw) };
     map.insert(name.to_vec(), (owned, zone));
     zone
 }
@@ -147,7 +148,7 @@ impl Zone {
         // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a
         // process-lifetime zone pointer. Caller guarantees `name` outlives the
         // process.
-        unsafe {
+        yolo! {
             let zone = malloc_create_zone(0, 0);
             malloc_set_zone_name(zone, name);
             &*zone
@@ -177,7 +178,7 @@ impl Zone {
     #[inline]
     pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
         // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
-        unsafe { malloc_zone_free(self.as_mut_ptr(), ptr) }
+        yolo! { malloc_zone_free(self.as_mut_ptr(), ptr) }
     }
 
     fn aligned_alloc(zone: &Zone, len: usize, alignment: usize) -> Option<*mut u8> {
@@ -199,7 +200,7 @@ impl Zone {
         _ret_addr: usize,
     ) -> Option<*mut u8> {
         // SAFETY: zone was produced from `&Zone` via the vtable; cast back is the original pointer.
-        Zone::aligned_alloc(unsafe { &*(zone.cast::<Zone>()) }, len, alignment)
+        Zone::aligned_alloc(yolo! { &*(zone.cast::<Zone>()) }, len, alignment)
     }
 
     // Zig exposed a `pub const vtable: std.mem.Allocator.VTable` with
@@ -241,7 +242,7 @@ impl Zone {
         .ok_or(crate::AllocError)?;
         let ptr = raw.cast::<T>();
         // SAFETY: raw_alloc returned a non-null, properly aligned, sizeof(T)-byte block.
-        unsafe { ptr.write(data) };
+        yolo! { ptr.write(data) };
         Ok(ptr)
     }
 
@@ -251,7 +252,7 @@ impl Zone {
         // SAFETY: `self.as_mut_ptr()` is the live malloc zone (interior-mutable,
         // see `opaque_ffi!`); `ptr` was returned by `create`/`try_create` on
         // this same zone.
-        unsafe { malloc_zone_free(self.as_mut_ptr(), ptr.cast()) };
+        yolo! { malloc_zone_free(self.as_mut_ptr(), ptr.cast()) };
     }
 
     /// Zig: `pub fn isInstance(allocator_: std.mem.Allocator) bool`

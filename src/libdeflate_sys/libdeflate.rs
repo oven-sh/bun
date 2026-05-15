@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
@@ -72,7 +73,7 @@ unsafe extern "C" {
 
 fn load_once() {
     // SAFETY: mi_malloc/mi_free are valid C-ABI allocator callbacks for libdeflate.
-    unsafe {
+    yolo! {
         libdeflate_set_memory_allocator(
             Some(bun_alloc::mimalloc::mi_malloc),
             Some(bun_alloc::mimalloc::mi_free),
@@ -102,7 +103,7 @@ impl Compressor {
     /// callbacks — libdeflate writes through their return values.
     pub unsafe fn alloc_ex(compression_level: c_int, options: Option<&Options>) -> *mut Compressor {
         // SAFETY: caller upholds the callback contract; `Option<&T>` → `*const T` is NPO-compatible.
-        unsafe {
+        yolo! {
             libdeflate_alloc_compressor_ex(
                 compression_level,
                 options.map_or(core::ptr::null(), |o| o),
@@ -114,13 +115,13 @@ impl Compressor {
     pub unsafe fn destroy(this: *mut Compressor) {
         // SAFETY: caller guarantees `this` was returned by libdeflate_alloc_compressor[_ex]
         // and is not used after this call.
-        unsafe { libdeflate_free_compressor(this) }
+        yolo! { libdeflate_free_compressor(this) }
     }
 
     /// Compresses `input` into `output` and returns the number of bytes written.
     pub fn inflate(&mut self, input: &[u8], output: &mut [u8]) -> Result {
         // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
-        let written = unsafe {
+        let written = yolo! {
             libdeflate_deflate_compress(
                 self,
                 input.as_ptr().cast::<c_void>(),
@@ -169,7 +170,7 @@ impl Compressor {
         let out_len = output.len();
         // SAFETY: self is a valid *mut Compressor; ptr/len pairs are valid for the
         // FFI contract (input read-only, output write-only for `out_len` bytes).
-        let written = unsafe {
+        let written = yolo! {
             match encoding {
                 Encoding::Deflate => {
                     libdeflate_deflate_compress(self, in_ptr, in_len, out_ptr, out_len)
@@ -193,7 +194,7 @@ impl Compressor {
     /// so callers need no retry loop.
     ///
     /// Safe replacement for the open-coded
-    /// `compress_into(out.spare_capacity_mut()) + unsafe { set_len }` pattern,
+    /// `compress_into(out.spare_capacity_mut()) + yolo! { set_len }` pattern,
     /// and for the zero-init `vec![0u8; bound]` + `truncate` form.
     pub fn compress_to_vec(
         &mut self,
@@ -205,14 +206,14 @@ impl Compressor {
         if result.status == Status::Success {
             // SAFETY: result.written ≤ spare.len() and libdeflate has
             // initialized spare[..result.written].
-            unsafe { out.set_len(out.len() + result.written) };
+            yolo! { out.set_len(out.len() + result.written) };
         }
         result
     }
 
     pub fn zlib(&mut self, input: &[u8], output: &mut [u8]) -> Result {
         // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
-        let result = unsafe {
+        let result = yolo! {
             libdeflate_zlib_compress(
                 self,
                 input.as_ptr().cast::<c_void>(),
@@ -230,7 +231,7 @@ impl Compressor {
 
     pub fn gzip(&mut self, input: &[u8], output: &mut [u8]) -> Result {
         // SAFETY: self is a valid *mut Compressor; slice ptr/len pairs are valid.
-        let result = unsafe {
+        let result = yolo! {
             libdeflate_gzip_compress(
                 self,
                 input.as_ptr().cast::<c_void>(),
@@ -261,14 +262,14 @@ impl Decompressor {
     pub unsafe fn destroy(this: *mut Decompressor) {
         // SAFETY: caller guarantees `this` was returned by libdeflate_alloc_decompressor[_ex]
         // and is not used after this call.
-        unsafe { libdeflate_free_decompressor(this) }
+        yolo! { libdeflate_free_decompressor(this) }
     }
 
     pub fn deflate(&mut self, input: &[u8], output: &mut [u8]) -> Result {
         let mut actual_in_bytes_ret: usize = input.len();
         let mut actual_out_bytes_ret: usize = output.len();
         // SAFETY: self is a valid *mut Decompressor; slice ptr/len pairs and out-params are valid.
-        let result = unsafe {
+        let result = yolo! {
             libdeflate_deflate_decompress_ex(
                 self,
                 input.as_ptr().cast::<c_void>(),
@@ -290,7 +291,7 @@ impl Decompressor {
         let mut actual_in_bytes_ret: usize = input.len();
         let mut actual_out_bytes_ret: usize = output.len();
         // SAFETY: self is a valid *mut Decompressor; slice ptr/len pairs and out-params are valid.
-        let result = unsafe {
+        let result = yolo! {
             libdeflate_zlib_decompress_ex(
                 self,
                 input.as_ptr().cast::<c_void>(),
@@ -312,7 +313,7 @@ impl Decompressor {
         let mut actual_in_bytes_ret: usize = input.len();
         let mut actual_out_bytes_ret: usize = output.len();
         // SAFETY: self is a valid *mut Decompressor; slice ptr/len pairs and out-params are valid.
-        let result = unsafe {
+        let result = yolo! {
             libdeflate_gzip_decompress_ex(
                 self,
                 input.as_ptr().cast::<c_void>(),
@@ -358,7 +359,7 @@ impl Decompressor {
         // SAFETY: self is a valid *mut Decompressor; ptr/len pairs are valid for the
         // FFI contract (input read-only, output write-only for `out_len` bytes);
         // out-params are valid `*mut usize`.
-        let status = unsafe {
+        let status = yolo! {
             match encoding {
                 Encoding::Deflate => libdeflate_deflate_decompress_ex(
                     self,
@@ -406,7 +407,7 @@ impl Decompressor {
     ///   not define `actual_out_nbytes_ret` on failure).
     ///
     /// Safe replacement for the open-coded
-    /// `decompress_into(out.spare_capacity_mut()) + unsafe { set_len }` pattern,
+    /// `decompress_into(out.spare_capacity_mut()) + yolo! { set_len }` pattern,
     /// and for the UB-adjacent `slice_mut(ptr, capacity)` form that materialized
     /// `&mut [u8]` over uninitialized bytes.
     pub fn decompress_to_vec(
@@ -419,7 +420,7 @@ impl Decompressor {
         if result.status == Status::Success {
             // SAFETY: result.written ≤ spare.len() and libdeflate has
             // initialized spare[..result.written].
-            unsafe { out.set_len(out.len() + result.written) };
+            yolo! { out.set_len(out.len() + result.written) };
         }
         result
     }

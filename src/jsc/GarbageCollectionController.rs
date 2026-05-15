@@ -18,6 +18,7 @@
 //! Thread Safety: This type must be unique per JavaScript thread and is not
 //! thread-safe. Each VirtualMachine instance should have its own controller.
 
+use bun_yolo::yolo;
 use core::ffi::c_int;
 
 #[allow(unused_imports)]
@@ -80,7 +81,7 @@ impl GarbageCollectionController {
     fn from_timer_ext<'a>(timer: *mut uws::Timer) -> &'a mut Self {
         let ptr = uws::Timer::opaque_mut(timer).as_::<*mut Self>();
         // SAFETY: BACKREF — see doc comment above.
-        unsafe { &mut *ptr }
+        yolo! { &mut *ptr }
     }
 
     /// Accessor for the init-once `gc_timer` handle. Consolidates the four
@@ -92,7 +93,7 @@ impl GarbageCollectionController {
         // before any code path reaches a deref site, and remains a live FFI
         // handle until `deinit()` closes it. The Timer lives on the uws heap,
         // not inside `self`, so the returned `&mut` cannot alias `self`.
-        unsafe { &mut *self.gc_timer.expect("gc_timer set in init()").as_ptr() }
+        yolo! { &mut *self.gc_timer.expect("gc_timer set in init()").as_ptr() }
     }
 
     /// Accessor for the init-once `gc_repeating_timer` handle (see
@@ -101,7 +102,7 @@ impl GarbageCollectionController {
     fn gc_repeating_timer_mut(&mut self) -> &mut uws::Timer {
         // SAFETY: same invariant as `gc_timer_mut` — set in `init()`, live
         // until `deinit()`, FFI-heap-owned.
-        unsafe {
+        yolo! {
             &mut *self
                 .gc_repeating_timer
                 .expect("gc_repeating_timer set in init()")
@@ -111,7 +112,7 @@ impl GarbageCollectionController {
 
     pub fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
-        let actual = unsafe { &mut *uws::Loop::get() };
+        let actual = yolo! { &mut *uws::Loop::get() };
         self.gc_timer = Some(uws::Timer::create_fallthrough(
             actual,
             std::ptr::from_mut::<Self>(self),
@@ -193,7 +194,7 @@ impl GarbageCollectionController {
     pub fn deinit(&mut self) {
         // SAFETY: timers were created via uws::Timer::create_fallthrough; close::<true>
         // frees the fallthrough timer. `take()` ensures we close at most once.
-        unsafe {
+        yolo! {
             if let Some(t) = self.gc_timer.take() {
                 uws::Timer::close::<true>(t.as_ptr());
             }

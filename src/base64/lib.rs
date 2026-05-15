@@ -1,4 +1,5 @@
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
 pub use zig_base64::STANDARD_ALPHABET_CHARS;
@@ -160,7 +161,7 @@ pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
     // TODO(port): bun.jsc.markBinding(@src()) — debug-only binding marker, no Rust equivalent yet
     // SAFETY: WTF__base64URLEncode reads `input_len` bytes from `input` and writes at most
     // `output_len` bytes to `output`; both slices are valid for those lengths.
-    unsafe { WTF__base64URLEncode(source.as_ptr(), source.len(), dest.as_mut_ptr(), dest.len()) }
+    yolo! { WTF__base64URLEncode(source.as_ptr(), source.len(), dest.as_mut_ptr(), dest.len()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -603,7 +604,7 @@ pub mod zig_base64 {
             let mut leftover_idx: Option<usize> = None;
             for (src_idx, &c) in source.iter().enumerate() {
                 // SAFETY: `c: u8` so `c as usize` is in 0..=255, and `char_to_index` is `[u8; 256]`.
-                let d = unsafe { *self.char_to_index.get_unchecked(c as usize) };
+                let d = yolo! { *self.char_to_index.get_unchecked(c as usize) };
                 if d == Self::INVALID_CHAR {
                     if self.pad_char.is_none() || c != self.pad_char.unwrap() {
                         return Err(Error::InvalidCharacter);
@@ -619,7 +620,7 @@ pub mod zig_base64 {
                     // which yields exactly the number of output bytes this loop produces; `dest_idx`
                     // therefore stays in-bounds for any input that reaches this branch.
                     debug_assert!(dest_idx < dest.len());
-                    unsafe { *dest.get_unchecked_mut(dest_idx) = (acc >> acc_len) as u8 };
+                    yolo! { *dest.get_unchecked_mut(dest_idx) = (acc >> acc_len) as u8 };
                     dest_idx += 1;
                 }
             }

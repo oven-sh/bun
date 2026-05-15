@@ -1,5 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
@@ -38,7 +39,7 @@ use bun_uws as uws;
 impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        yolo! { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
     }
 }
 pub type WeakRef = bun_ptr::WeakPtr<Request>;
@@ -67,7 +68,7 @@ const _: () = {
             // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
             // `to_js` hands it to the C++ wrapper which takes ownership (freed
             // via `RequestClass__finalize`). Same pattern as `do_clone`.
-            unsafe { Request::to_js(&*ptr, global) }
+            yolo! { Request::to_js(&*ptr, global) }
         }
         fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             js::get_constructor(global)
@@ -232,7 +233,7 @@ impl Request {
         // `&mut` does not alias `&Request`. R-2: the aliasing
         // `RequestContext.request_body` pointer is only dereferenced while no
         // other `&mut BodyValue` is live (single-threaded event-loop sequencing).
-        unsafe { &mut *self.body.as_ptr() }
+        yolo! { &mut *self.body.as_ptr() }
     }
 
     /// Zig: `this.#body.value` (immutable view).
@@ -248,7 +249,7 @@ impl Request {
         &mut self.body_hive().value
     }
 
-    /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
+    /// R-2: short-hand for `yolo! { self.headers.get_mut() }`. The
     /// single-JS-thread invariant (see `JsCell` docs) means no other
     /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
     #[inline]
@@ -256,7 +257,7 @@ impl Request {
     fn headers_mut(&self) -> &mut Option<HeadersRef> {
         // SAFETY: single-JS-thread; callers below keep the borrow short and do
         // not re-enter a path that touches `self.headers`.
-        unsafe { self.headers.get_mut() }
+        yolo! { self.headers.get_mut() }
     }
 
     // Returns if the request has headers already cached/set.
@@ -301,7 +302,7 @@ impl Request {
                             // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
                             // for as long as the readable stream exists; we only read
                             // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { &(*blob).content_type };
+                            let ct: &[u8] = yolo! { &(*blob).content_type };
                             Some(std::ptr::from_ref::<[u8]>(ct))
                         }
                         _ => None,
@@ -314,7 +315,7 @@ impl Request {
             if let Some(content_type_) = content_type {
                 // SAFETY: Blob.content_type is always a valid (possibly empty)
                 // slice pointer (see Blob field contract).
-                let content_type_ = unsafe { &*content_type_ };
+                let content_type_ = yolo! { &*content_type_ };
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
@@ -754,7 +755,7 @@ impl Request {
                 // returned `&[u8]` outlives the temporary.
                 // SAFETY: the bytes point into `self.headers`' WTF storage,
                 // which is held alive for the borrow `&self`.
-                return unsafe { bun_ptr::detach_lifetime(content_type.slice()) };
+                return yolo! { bun_ptr::detach_lifetime(content_type.slice()) };
             }
         }
 
@@ -863,7 +864,7 @@ impl Request {
             // read-write-drop round-trips the old `finalize_without_deinit()`
             // call performed here before re-dropping the (now-empty) fields.
             // SAFETY: `this` is the live Box-allocated payload.
-            drop(unsafe { Box::from_raw(this) });
+            drop(yolo! { Box::from_raw(this) });
         } else {
             // Cold path: weak_ptr_data still has outstanding refs — keep the
             // allocation alive, but release inner resources now so they aren't
@@ -1085,7 +1086,7 @@ impl Request {
                 // SAFETY: `body` was allocated with ref_count=1 at fn entry; if
                 // `req.body` was repointed (not currently done by any path here),
                 // release the original.
-                unsafe { (*body.as_ptr()).unref() };
+                yolo! { (*body.as_ptr()).unref() };
             }
         };
 
@@ -1157,7 +1158,7 @@ impl Request {
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
-                    let request = unsafe { &*request };
+                    let request = yolo! { &*request };
                     if values_to_try.len() == 1 {
                         match Request::clone_into(
                             request,
@@ -1226,7 +1227,7 @@ impl Request {
 
                 if let Some(response) = value.as_direct::<Response>() {
                     // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
-                    let response = unsafe { &mut *response };
+                    let response = yolo! { &mut *response };
                     if !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
@@ -1242,7 +1243,7 @@ impl Request {
                             match headers.clone_this(global_this) {
                                 Ok(h) => {
                                     // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                                    req.headers.set(h.map(|p| yolo! { HeadersRef::adopt(p) }));
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),
@@ -1513,7 +1514,7 @@ impl Request {
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        unsafe { &*ct_ptr },
+                        yolo! { &*ct_ptr },
                         global_this,
                     ) {
                         Ok(()) => {}
@@ -1556,7 +1557,7 @@ impl Request {
         // TODO(port): cloned is Box<Request>; to_js consumes via heap::alloc inside codegen.
         let cloned_ptr = bun_core::heap::into_raw(cloned);
         // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
-        let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
+        let js_wrapper = yolo! { (*cloned_ptr).to_js(global_this) };
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }
@@ -1573,7 +1574,7 @@ impl Request {
         let body_ = self.clone_body_value_via_cached_stream(global_this)?;
         // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
         // SAFETY: vm is the live per-thread singleton.
-        let body = body::hive_alloc(unsafe { &mut *vm }, body_);
+        let body = body::hive_alloc(yolo! { &mut *vm }, body_);
         // Last fallible call. Zig hoists `url` above this with an
         // `errdefer if (!preserve_url) url.deref()`; we instead sink the url
         // computation below it so no guard is needed at all — `BunString` is
@@ -1585,7 +1586,7 @@ impl Request {
                 // Zig: `errdefer body.unref()` — `NonNull` is `Copy`, so no
                 // RAII covers this; release the +1 we just allocated.
                 // SAFETY: `body` is a fresh +1 hive slot from `hive_alloc`.
-                unsafe { (*body.as_ptr()).unref() };
+                yolo! { (*body.as_ptr()).unref() };
                 return Err(e);
             }
         };
@@ -1609,7 +1610,7 @@ impl Request {
         // sentinel; remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
-        unsafe {
+        yolo! {
             core::ptr::write(
                 req,
                 Request {

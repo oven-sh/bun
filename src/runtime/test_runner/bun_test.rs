@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 use core::ptr::NonNull;
 use std::cell::{Cell, UnsafeCell};
@@ -31,7 +32,7 @@ pub(crate) use group_begin;
 pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
     // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
+    yolo! { &mut (*crate::jsc_hooks::runtime_state()).timer }
 }
 
 /// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
@@ -97,7 +98,7 @@ pub mod js_fns {
         let bun_test_root = &mut runner.bun_test_root;
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live per-thread VM; deref for a single field read.
-        if unsafe { (*vm).is_in_preload } && !cfg.allow_in_preload {
+        if yolo! { (*vm).is_in_preload } && !cfg.allow_in_preload {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} during preload.",
                 cfg.signature
@@ -256,17 +257,17 @@ pub mod js_fns {
 
                     // SAFETY: `get_current_and_valid_execution_sequence` returns a NonNull
                     // into `execution.sequences`; deref at point-of-use only.
-                    let sequence_ref = unsafe { sequence.as_ref() };
+                    let sequence_ref = yolo! { sequence.as_ref() };
                     let append_point: *mut ExecutionEntry = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => 'blk: {
                             let mut iter = sequence_ref.active_entry;
                             while let Some(entry) = iter {
                                 // SAFETY: intrusive linked-list nodes are valid while sequence is live
-                                let entry_ref = unsafe { entry.as_ref() };
+                                let entry_ref = yolo! { entry.as_ref() };
                                 if Some(entry) == sequence_ref.test_entry {
                                     break 'blk sequence_ref.test_entry.unwrap().as_ptr();
                                 }
-                                iter = entry_ref.next.map(|p| unsafe { core::ptr::NonNull::new_unchecked(p) });
+                                iter = entry_ref.next.map(|p| yolo! { core::ptr::NonNull::new_unchecked(p) });
                             }
                             match sequence_ref.active_entry {
                                 Some(e) => break 'blk e.as_ptr(),
@@ -287,7 +288,7 @@ pub mod js_fns {
                                 )));
                             };
                             // SAFETY: intrusive linked-list traversal
-                            unsafe {
+                            yolo! {
                                 while let Some(next_entry) = (*last_entry).next {
                                     last_entry = next_entry;
                                 }
@@ -312,7 +313,7 @@ pub mod js_fns {
                     );
                     let new_item_ptr = bun_core::heap::into_raw(new_item);
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
-                    unsafe {
+                    yolo! {
                         (*new_item_ptr).next = (*append_point).next;
                         (*append_point).next = Some(new_item_ptr);
                     }
@@ -395,7 +396,7 @@ impl BunTestCell {
     #[allow(clippy::mut_from_ref)]
     pub fn get(&self) -> &mut BunTest {
         // SAFETY: `UnsafeCell` interior; single-threaded JS VM. See contract above.
-        unsafe { &mut *self.0.get() }
+        yolo! { &mut *self.0.get() }
     }
 
     /// Raw pointer for sites that must span re-entrant `.get()` calls without
@@ -413,7 +414,7 @@ impl core::ops::Deref for BunTestCell {
     fn deref(&self) -> &BunTest {
         // SAFETY: shared read through `UnsafeCell`; single-threaded — caller
         // must not hold a live `&mut` from `.get()` concurrently.
-        unsafe { &*self.0.get() }
+        yolo! { &*self.0.get() }
     }
 }
 
@@ -490,7 +491,7 @@ impl BunTestRoot {
         // SAFETY: single-threaded; `RUNNER` outlives every BunTest. Field
         // projection via `addr_of_mut!` creates no intermediate `&mut TestRunner`.
         let stable_root: *mut BunTestRoot = Jest::runner_ptr()
-            .map(|p| unsafe { core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root) })
+            .map(|p| yolo! { core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root) })
             .unwrap_or(std::ptr::from_mut::<BunTestRoot>(self));
 
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
@@ -525,7 +526,7 @@ impl BunTestRoot {
 
     pub fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest> {
         // SAFETY: vm is the live per-thread VM (from `JSGlobalObject::bun_vm()`).
-        if unsafe { (*vm).is_in_preload } {
+        if yolo! { (*vm).is_in_preload } {
             return None;
         }
         // SAFETY: single-threaded; caller (js_fns::generic_hook) holds the only
@@ -548,11 +549,11 @@ impl BunTestRoot {
             // reporter field via raw ptr instead — `Option<NonNull<_>>` is `Copy`.
             // SAFETY: single-threaded; `active_file` keeps the cell alive; raw
             // field read creates no intermediate `&BunTest`.
-            let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
+            let reporter = yolo! { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
             if let Some(reporter) = reporter {
                 // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
                 // `last_printed_dot` is `Cell<bool>` so a `&` borrow suffices.
-                let reporter = unsafe { reporter.as_ref() };
+                let reporter = yolo! { reporter.as_ref() };
                 if reporter.reporters.dots && reporter.last_printed_dot.get() {
                     bun_core::pretty_error!("<r>\n");
                     Output::flush();
@@ -563,7 +564,7 @@ impl BunTestRoot {
                 // live. Project `current_file` through the raw global ptr instead.
                 if let Some(runner_ptr) = Jest::runner_ptr() {
                     // SAFETY: single-threaded; disjoint field from `bun_test_root`.
-                    unsafe {
+                    yolo! {
                         (*core::ptr::addr_of_mut!((*runner_ptr.as_ptr()).current_file)).print_if_needed();
                     }
                 }
@@ -639,7 +640,7 @@ impl BunTest {
             // SAFETY: BACKREF — caller passes a non-null `*mut BunTestRoot`
             // derived from the stable global runner storage; the root outlives
             // every `BunTest` it spawns.
-            bun_test_root: unsafe { bun_ptr::BackRef::from_raw(bun_test_root) },
+            bun_test_root: yolo! { bun_ptr::BackRef::from_raw(bun_test_root) },
             in_run_loop: false,
             phase: Phase::Collection,
             file_id,
@@ -723,7 +724,7 @@ impl BunTest {
         }
 
         // SAFETY: this_ptr was created by wrapping a RefDataPtr via asPromisePtr; we adopt the +1 it carried
-        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(this_ptr.as_promise_ptr::<RefData>()) };
+        let refdata: RefDataPtr = yolo! { bun_ptr::IntrusiveRc::from_raw(this_ptr.as_promise_ptr::<RefData>()) };
         // defer refdata.deref() — RefPtr<T> currently has NO Drop impl (src/ptr/ref_count.rs),
         // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
         // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
@@ -782,7 +783,7 @@ impl BunTest {
         let was_error = !value.is_empty_or_undefined_or_null();
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
-        if unsafe { (*this).called } {
+        if yolo! { (*this).called } {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
@@ -793,7 +794,7 @@ impl BunTest {
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
-        let ref_in = unsafe {
+        let ref_in = yolo! {
             (*this).called = true;
             (*this).r#ref.take()
         };
@@ -840,7 +841,7 @@ impl BunTest {
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
         let global = vm.global();
-        unsafe {
+        yolo! {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
 
@@ -856,7 +857,7 @@ impl BunTest {
         }
         if let Err(e) = Self::run(this_strong.clone(), global) {
             // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
-            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, RefDataValue::Done) };
+            yolo! { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, RefDataValue::Done) };
         }
     }
 
@@ -888,7 +889,7 @@ impl BunTest {
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
         // SAFETY: bun_vm() returns the live per-thread VM.
-        unsafe { (*vm).enqueue_task(task) };
+        yolo! { (*vm).enqueue_task(task) };
     }
 
     pub fn add_result(&mut self, result: RefDataValue) {
@@ -907,7 +908,7 @@ impl BunTest {
         // SAFETY: `this` is `UnsafeCell::get()`-derived; single-threaded JS VM;
         // each `(*this)` deref below is a short-lived reborrow that does not
         // span a re-entrant `.get()` call.
-        unsafe {
+        yolo! {
             if (*this).in_run_loop {
                 return Ok(());
             }
@@ -918,16 +919,16 @@ impl BunTest {
         let _reset = scopeguard::guard(this, |p| {
             // SAFETY: `p` is the same `UnsafeCell`-derived ptr; `this_strong`
             // keeps the allocation alive for the whole function.
-            unsafe { (*p).in_run_loop = false }
+            yolo! { (*p).in_run_loop = false }
         });
 
         let mut min_timeout = Timespec::EPOCH;
 
         // SAFETY: see block-SAFETY above. `step()` may call `.get()` internally;
         // no outer `&mut` overlaps because we only touch `*this` between calls.
-        while let Some(result) = unsafe { (*this).result_queue.read_item() } {
+        while let Some(result) = yolo! { (*this).result_queue.read_item() } {
             global_this.clear_termination_exception();
-            let step_result: StepResult = match unsafe { (*this).phase } {
+            let step_result: StepResult = match yolo! { (*this).phase } {
                 Phase::Collection => Collection::step(this_strong.clone(), global_this, result)?,
                 Phase::Execution => Execution::Execution::step(this_strong.clone(), global_this, result)?,
                 Phase::Done => StepResult::Complete,
@@ -938,16 +939,16 @@ impl BunTest {
                 }
                 StepResult::Complete => {
                     // SAFETY: short-lived reborrow; `_advance` does not re-enter `.get()`.
-                    if unsafe { (*this)._advance(global_this)? } == Advance::Exit {
+                    if yolo! { (*this)._advance(global_this)? } == Advance::Exit {
                         return Ok(());
                     }
-                    unsafe { (*this).add_result(RefDataValue::Start) };
+                    yolo! { (*this).add_result(RefDataValue::Start) };
                 }
             }
         }
 
         // SAFETY: loop done; sole `&mut` for the timer update.
-        unsafe { (*this).update_min_timeout(global_this, &min_timeout) };
+        yolo! { (*this).update_min_timeout(global_this, &min_timeout) };
         Ok(())
     }
 
@@ -993,7 +994,7 @@ impl BunTest {
         let phase_ptr: *const Phase = &raw const self.phase;
         scopeguard::defer! {
             // SAFETY: `self` outlives this guard (drops at end of this fn body).
-            bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(unsafe { *phase_ptr }));
+            bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(yolo! { *phase_ptr }));
         }
 
         match self.phase {
@@ -1003,7 +1004,7 @@ impl BunTest {
 
                 let has_filter = if let Some(reporter) = self.reporter {
                     // SAFETY: reporter outlives every BunTest (see field doc).
-                    unsafe { reporter.as_ref() }.jest.filter_regex.is_some()
+                    yolo! { reporter.as_ref() }.jest.filter_regex.is_some()
                 } else {
                     false
                 };
@@ -1015,7 +1016,7 @@ impl BunTest {
                 let mut per_file_prng: Option<bun_core::rand::DefaultPrng> = if let Some(reporter) = self.reporter {
                     'blk: {
                         // SAFETY: reporter outlives every BunTest (see field doc).
-                        let reporter = unsafe { reporter.as_ref() };
+                        let reporter = yolo! { reporter.as_ref() };
                         let Some(seed) = reporter.jest.randomize_seed else { break 'blk None };
                         let path = reporter.jest.files.items_source()[self.file_id as usize].path.text;
                         // Basename only so the hash is platform-independent (path
@@ -1095,14 +1096,14 @@ impl BunTest {
                 Ok(v) => v,
                 Err(e) => {
                     // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
-                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, cfg_data.clone()) };
+                    yolo! { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, cfg_data.clone()) };
                     JSValue::ZERO // failed to bind done callback
                 }
             };
         }
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
-        unsafe { (*this).update_min_timeout(global_this, timeout) };
+        yolo! { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
         let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
@@ -1114,7 +1115,7 @@ impl BunTest {
             Err(_) => {
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
-                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, cfg_data.clone()) };
+                yolo! { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, cfg_data.clone()) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
@@ -1128,7 +1129,7 @@ impl BunTest {
             if !result.is_empty() {
                 if let Some(promise) = result.as_promise() {
                     // SAFETY: `as_promise` returned a non-null GC-managed JSPromise.
-                    unsafe {
+                    yolo! {
                         if (*promise).status() == PromiseStatus::Rejected {
                             (*promise).set_handled();
                         }
@@ -1137,9 +1138,9 @@ impl BunTest {
             }
 
             // SAFETY: `vm` is the live per-thread VM.
-            let prev_unhandled_count = unsafe { (*vm).unhandled_error_counter };
+            let prev_unhandled_count = yolo! { (*vm).unhandled_error_counter };
             global_this.handle_rejected_promises();
-            if unsafe { (*vm).unhandled_error_counter } == prev_unhandled_count {
+            if yolo! { (*vm).unhandled_error_counter } == prev_unhandled_count {
                 break;
             }
         }
@@ -1156,14 +1157,14 @@ impl BunTest {
             if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
                 // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
                 // single-threaded JS VM, GC roots `done_callback` for this frame.
-                if unsafe { (*dcb_data).called } {
+                if yolo! { (*dcb_data).called } {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(&this_strong, cfg_data.clone());
                     let alias = NonNull::new(r.as_ptr())
                         .expect("ref_() returns a freshly-boxed RefData");
                     // SAFETY: see above. Move the sole +1 into the DoneCallback.
-                    unsafe { (*dcb_data).r#ref = Some(r) };
+                    yolo! { (*dcb_data).r#ref = Some(r) };
                     dcb_ref = Some(alias);
                 }
             } else {
@@ -1186,7 +1187,7 @@ impl BunTest {
                             // owned by `dcb_data.r#ref` (set just above; GC
                             // roots `done_callback` for this frame). Zig:
                             // `dcb_ref_value.dupe()` — bump 1→2.
-                            unsafe { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
+                            yolo! { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
                             Self::ref_(&this_strong, cfg_data.clone())
                         };
@@ -1207,7 +1208,7 @@ impl BunTest {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
-                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, cfg_data.clone()) };
+                        yolo! { (*this).on_uncaught_exception(global_this, Some(value), true, cfg_data.clone()) };
 
                         // We previously marked it as handled above.
 
@@ -1263,7 +1264,7 @@ impl BunTest {
             // SAFETY: reporter is Some (asserted by call sites that reach here);
             // `NonNull<CommandLineReporter>` carries write provenance from
             // `enter_file`'s `&mut`; single-threaded, no other borrow live.
-            unsafe {
+            yolo! {
                 (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
             }
             bun_core::pretty_errorln!(
@@ -1297,7 +1298,7 @@ impl Drop for BunTest {
 
         for entry in self.extra_execution_entries.drain(..) {
             // SAFETY: entries were heap-allocated in generic_hook; we own them
-            unsafe { drop(bun_core::heap::take(entry)); }
+            yolo! { drop(bun_core::heap::take(entry)); }
         }
         // execution, collection, result_queue: dropped automatically
         // PERF(port): was arena bulk-free (arena_allocator.deinit)
@@ -1321,7 +1322,7 @@ bun_jsc::jsc_host_abi! {
         frame: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
+        let (global, frame) = yolo! { (&*global, &*frame) };
         jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
     }
 }
@@ -1332,7 +1333,7 @@ bun_jsc::jsc_host_abi! {
         frame: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
+        let (global, frame) = yolo! { (&*global, &*frame) };
         jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
     }
 }
@@ -1394,7 +1395,7 @@ impl RefDataValue {
         // SAFETY: `the_sequence` is a NonNull into `execution.sequences`; deref
         // at point-of-use only. `active_entry` is a valid intrusive node while
         // the sequence is live.
-        unsafe { the_sequence.as_ref().active_entry.map(|p| &mut *p.as_ptr()) }
+        yolo! { the_sequence.as_ref().active_entry.map(|p| &mut *p.as_ptr()) }
     }
 }
 
@@ -1404,7 +1405,7 @@ impl fmt::Display for RefDataValue {
             RefDataValue::Start => write!(f, "start"),
             RefDataValue::Collection { active_scope } => {
                 // SAFETY: active_scope is valid for the duration of collection phase
-                let name = unsafe { &active_scope.as_ref().base.name };
+                let name = yolo! { &active_scope.as_ref().base.name };
                 match name {
                     Some(n) => write!(f, "collection: active_scope={}", bstr::BStr::new(n.as_ref())),
                     None => write!(f, "collection: active_scope=null"),
@@ -1444,7 +1445,7 @@ impl RefData {
     unsafe fn destroy(this: *mut RefData) {
         let _g = group_begin!();
         // SAFETY: caller contract — refcount hit zero.
-        unsafe {
+        yolo! {
             bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
             // buntest_weak.deinit() → Weak::drop
             drop(bun_core::heap::take(this));
@@ -1469,7 +1470,7 @@ impl RunTestsTask {
     /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
     pub fn call(this: *mut RunTestsTask) -> JsResult<()> {
         // SAFETY: `this` was produced by `heap::alloc` in `run_next_tick`.
-        let this = unsafe { bun_core::heap::take(this) };
+        let this = yolo! { bun_core::heap::take(this) };
         // defer bun.destroy(this) → Box drops at end of scope
         // defer this.weak.deinit() → Weak drops with Box
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
@@ -1623,7 +1624,7 @@ impl BaseScope {
         parent: Option<*mut DescribeScope>,
         has_callback: bool,
     ) -> BaseScope {
-        let parent_base = parent.map(|p| unsafe { &(*p).base });
+        let parent_base = parent.map(|p| yolo! { &(*p).base });
         // SAFETY: parent backref valid for construction read
         BaseScope {
             parent,
@@ -1650,7 +1651,7 @@ impl BaseScope {
         if let Some(parent) = self.parent {
             // SAFETY: parent backref valid; tree is single-threaded and parent
             // outlives child. `parent` is `*mut` (Zig: `?*DescribeScope`).
-            let parent = unsafe { &mut *parent };
+            let parent = yolo! { &mut *parent };
             if self.only != Only::No {
                 parent.mark_contains_only();
             }
@@ -1692,7 +1693,7 @@ impl DescribeScope {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
         while let Some(scope_ptr) = target {
             // SAFETY: walking parent backrefs; tree is single-threaded
-            let scope = unsafe { &mut *scope_ptr };
+            let scope = yolo! { &mut *scope_ptr };
             if scope.base.only == Only::Contains {
                 return; // already marked
             }
@@ -1706,7 +1707,7 @@ impl DescribeScope {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
         while let Some(scope_ptr) = target {
             // SAFETY: walking parent backrefs; tree is single-threaded
-            let scope = unsafe { &mut *scope_ptr };
+            let scope = yolo! { &mut *scope_ptr };
             if scope.base.has_callback {
                 return; // already marked
             }

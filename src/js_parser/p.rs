@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 // Port of src/js_parser/ast/P.zig
 //
@@ -750,7 +751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `'a` (and therefore `self`). `self.lexer.log` aliases the same
         // allocation as a `NonNull` (not `&mut`), so no long-lived Unique tag
         // exists to be invalidated by this transient reborrow.
-        unsafe { &mut *self.log.as_ptr() }
+        yolo! { &mut *self.log.as_ptr() }
     }
 
     /// Safe mutable projection of `nearest_stmt_list`.
@@ -767,7 +768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // that frame returns. It is disjoint from `*self` and from any other
         // `&mut` reachable through `self`. The `&mut self` receiver ensures no
         // concurrent caller is projecting it.
-        self.nearest_stmt_list.map(|mut p| unsafe { p.as_mut() })
+        self.nearest_stmt_list.map(|mut p| yolo! { p.as_mut() })
     }
 
     /// Shared borrow of the current scope.
@@ -3043,13 +3044,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: `ctx` was derived from the caller's live `&mut P`
                     // immediately before `Binding::to_expr`; no other `&mut P`
                     // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    let p = yolo! { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
                     p.wrap_identifier_namespace(loc, ref_)
                 });
             self.to_expr_wrapper_hoisted =
                 bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
                     // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    let p = yolo! { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
                     p.wrap_identifier_hoisting(loc, ref_)
                 });
         }
@@ -3690,7 +3691,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // lexer string-table (see `get_or_put_member_with_hash`),
                     // both of which outlive every arena-backed `Scope`. Avoids
                     // a per-argument `mi_heap_malloc` on every function body.
-                    unsafe { scope.members.put_borrowed(key, value)? };
+                    yolo! { scope.members.put_borrowed(key, value)? };
                 }
             }
         }
@@ -4217,7 +4218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // all fields are POD (`StoreStr`/`Loc`/`LocRef`).
             // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
             // original slot is overwritten or compacted below before any drop.
-            let mut item = unsafe { core::ptr::read(&raw const items_slice[i]) };
+            let mut item = yolo! { core::ptr::read(&raw const items_slice[i]) };
             let name = self.load_name_from_ref(item.name.ref_.expect("unreachable"));
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
             item.name.ref_ = Some(r#ref);
@@ -4914,7 +4915,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `Scope` — see `Scope::get_or_put_member_with_hash`.
         let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
         let scope_kind = scope.kind;
-        let entry = unsafe { scope.members.get_or_put_borrowed(name) };
+        let entry = yolo! { scope.members.get_or_put_borrowed(name) };
         if entry.found_existing {
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
@@ -5103,7 +5104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // so the lifetime extension is sound here. Round-E threads `'a` through
         // `bun_ast::ImportRecord` and removes this erasure.
         // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
-        let path: fs::Path<'static> = unsafe { path.into_static() };
+        let path: fs::Path<'static> = yolo! { path.into_static() };
         // No `impl Default for ImportRecord` (range/path/kind have no Zig defaults) —
         // spell out the optional fields with their Zig field-defaults explicitly.
         self.import_records.push(ImportRecord {
@@ -6706,7 +6707,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // borrow lifetime to satisfy `handle_identifier`'s
                 // `Option<&'a [u8]>` param.
                 let original_name: &'a [u8] =
-                    unsafe { bun_collections::detach_lifetime(original_name) };
+                    yolo! { bun_collections::detach_lifetime(original_name) };
                 return self.handle_identifier(
                     loc,
                     id,
@@ -8431,7 +8432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                     // (Borrowed-origin BabyLists, raw stmt slices) — bitwise copy
                     // matches Zig struct-assignment semantics.
-                    let mut part = unsafe { core::ptr::read(&raw const parts[idx]) };
+                    let mut part = yolo! { core::ptr::read(&raw const parts[idx]) };
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
@@ -8503,7 +8504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // SAFETY: bitwise overwrite matching Zig
                         // `parts.items[parts_end] = part;` — old slot value is not
                         // dropped (arena-owned; Zig never deinit'd it either).
-                        unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
+                        yolo! { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
                         parts_end += 1;
                     } else {
                         // Drop path: `parts[idx]` still owns this data; discard the
@@ -8526,7 +8527,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `set_len` to match Zig's no-destructor semantics.
             // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
             // (arena-/process-lifetime, same as Zig).
-            unsafe { parts.set_len(parts_end) };
+            yolo! { parts.set_len(parts_end) };
 
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
@@ -9445,7 +9446,7 @@ impl LowerUsingDeclarationsContext {
                     let items = data.items.slice();
                     exports.reserve(items.len());
                     for item in items {
-                        exports.push(unsafe { core::ptr::read(item) });
+                        exports.push(yolo! { core::ptr::read(item) });
                     }
                     continue;
                 }

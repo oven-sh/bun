@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate as css;
 use crate::CSSString;
 use crate::css_values::easing::EasingFunction;
@@ -147,7 +148,7 @@ impl Animation {
             AnimationName::None => None,
             AnimationName::Ident(ident) => Some(ident.v()),
             // SAFETY: arena-owned slice lives for the parse session.
-            AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
+            AnimationName::String(s) => Some(yolo! { crate::arena_str(*s) }),
         };
 
         if let Some(name_str) = name_str {
@@ -251,7 +252,7 @@ impl AnimationName {
             }
             (AnimationName::String(a), AnimationName::String(b)) => {
                 // SAFETY: arena-owned slices live for the parse session.
-                unsafe { bun_core::eql(&**a, &**b) }
+                yolo! { bun_core::eql(&**a, &**b) }
             }
             _ => false,
         }
@@ -267,7 +268,7 @@ impl AnimationName {
             AnimationName::String(s) => {
                 hasher.update(&2u32.to_ne_bytes());
                 // SAFETY: arena-owned slice.
-                hasher.update(unsafe { crate::arena_str(*s) });
+                hasher.update(yolo! { crate::arena_str(*s) });
             }
         }
     }
@@ -297,7 +298,7 @@ impl AnimationName {
         // outlives this parse (CSSString = &'static [u8]).
         if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
         {
-            return Ok(AnimationName::String(unsafe { &raw const *s }));
+            return Ok(AnimationName::String(yolo! { &raw const *s }));
         }
         let ident = CustomIdent::parse(input)?;
         Ok(AnimationName::Ident(ident))
@@ -314,7 +315,7 @@ impl AnimationName {
             AnimationName::None => return dest.write_str("none"),
             AnimationName::Ident(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { crate::arena_str(s.v) };
+                let name: &[u8] = yolo! { crate::arena_str(s.v) };
                 if css_module_animation_enabled {
                     // PORT NOTE: reshaped for borrowck — capture arena/source_index
                     // before borrowing dest.css_module mutably.
@@ -328,7 +329,7 @@ impl AnimationName {
             }
             AnimationName::String(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { crate::arena_str(*s) };
+                let name: &[u8] = yolo! { crate::arena_str(*s) };
                 if css_module_animation_enabled {
                     // PORT NOTE: reshaped for borrowck
                     let arena = dest.arena;

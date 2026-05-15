@@ -3,6 +3,7 @@
 //! the layering doc). This crate is a tier-0 leaf: it depends on nothing above
 //! `libuv_sys`.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -722,7 +723,7 @@ unsafe extern "system" {
 }
 /// SAFETY: `handle` must be a valid waitable kernel object.
 pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
-    let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
+    let rc = yolo! { WaitForSingleObject_raw(handle, ms) };
     if rc == WAIT_FAILED {
         Err(Win32Error::get())
     } else {
@@ -1403,7 +1404,7 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
 // winnt.h _IO_COUNTERS — out-param of GetProcessIoCounters / embedded in
 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION. All-zero is the valid initial state
 // (Win32 zero-inits before fill), so `Default` is sound and lets callers write
-// `IO_COUNTERS::default()` instead of `unsafe { zeroed_unchecked() }`.
+// `IO_COUNTERS::default()` instead of `yolo! { zeroed_unchecked() }`.
 // Zeroable impl lives in bun_core/lib.rs (orphan-rule home).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -1569,7 +1570,7 @@ pub fn teb() -> *mut TEB {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: on Windows x64 `gs:[0x30]` is the OS-maintained TEB self-
     // pointer; reading it has no side effects and is always valid.
-    unsafe {
+    yolo! {
         let p: *mut TEB;
         core::arch::asm!("mov {}, gs:[0x30]", out(reg) p, options(nostack, pure, readonly));
         p
@@ -1577,7 +1578,7 @@ pub fn teb() -> *mut TEB {
     #[cfg(target_arch = "aarch64")]
     // SAFETY: on Windows ARM64 `x18` is the reserved OS thread-block
     // pointer; reading it has no side effects and is always valid.
-    unsafe {
+    yolo! {
         let p: *mut TEB;
         core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));
         p
@@ -1595,7 +1596,7 @@ pub fn peb() -> *const PEB {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: reading `gs:[0x60]` is the documented Windows-x64 ABI for the
     // current thread's PEB pointer; no caller precondition.
-    unsafe {
+    yolo! {
         let p: *const PEB;
         core::arch::asm!("mov {}, gs:[0x60]", out(reg) p, options(nostack, pure, readonly));
         p
@@ -1603,7 +1604,7 @@ pub fn peb() -> *const PEB {
     #[cfg(target_arch = "aarch64")]
     // SAFETY: `x18` holds the TEB on Windows-arm64 by ABI; TEB+0x60 is the PEB
     // pointer field. Both are valid for the calling thread's lifetime.
-    unsafe {
+    yolo! {
         *(teb().cast::<u8>().add(0x60) as *const *const PEB)
     }
 }

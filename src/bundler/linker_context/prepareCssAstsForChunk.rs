@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::mem::offset_of;
 
@@ -55,7 +56,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // duration. We only read the two raw-pointer fields, matching Zig's
     // `*const PrepareCssAstTask`.
     let prepare_css_asts: &PrepareCssAstTask =
-        unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
+        yolo! { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
     let chunk: *mut Chunk = prepare_css_asts.chunk;
     // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
@@ -64,7 +65,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // scope the shared borrow before materializing `&mut *linker` below to
     // avoid aliasing.
     let worker = {
-        let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
+        let bundle_v2: &BundleV2 = yolo! { &*LinkerContext::bundle_v2_ptr(linker) };
         ThreadPool::Worker::get(bundle_v2)
     };
     let worker = scopeguard::guard(worker, |w| w.unget());
@@ -74,8 +75,8 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // so `&mut *chunk` is unique. `worker.arena` was initialized in
     // `Worker::create()` and points at the worker's heap arena.
     prepare_css_asts_for_chunk_impl(
-        unsafe { &mut *linker },
-        unsafe { &mut *chunk },
+        yolo! { &mut *linker },
+        yolo! { &mut *chunk },
         worker.arena(),
     );
 }
@@ -83,7 +84,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
     // across the log write below (split borrow).
-    let parse_graph = unsafe { &*c.parse_graph };
+    let parse_graph = yolo! { &*c.parse_graph };
     let asts = c.graph.ast.items_css();
 
     // Prepare CSS asts
@@ -216,7 +217,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                     // above), so the aliased heap stays singly-owned by
                                     // `entry.conditions[j]`.
                                     *import_rule.conditions_mut() =
-                                        unsafe { core::ptr::read(entry.conditions.at(j)) };
+                                        yolo! { core::ptr::read(entry.conditions.at(j)) };
                                     rules.v.push(BundlerCssRule::Import(import_rule));
                                     break 'rules rules;
                                 },
@@ -241,7 +242,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
                                     // SAFETY: read-only `&[Box<[u8]>]`→`&[&[u8]]` view; relies on
                                     // fat-pointer field-order equivalence (see fn doc).
-                                    ast_unique_key_for_additional_file: unsafe {
+                                    ast_unique_key_for_additional_file: yolo! {
                                         bun_ptr::boxed_slices_as_borrowed(
                                             parse_graph
                                                 .input_files
@@ -256,7 +257,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 // is `bun_ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
                                 // `repr(transparent)`), so layouts match — bridge by pointer cast.
-                                unsafe {
+                                yolo! {
                                     &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
                                 },
                             ) {
@@ -320,7 +321,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             );
                             // SAFETY: Zig `actual_conditions.*` — shallow struct copy.
                             *import_rule.conditions_mut() =
-                                unsafe { core::ptr::read(actual_conditions) };
+                                yolo! { core::ptr::read(actual_conditions) };
                             rules.v.push(BundlerCssRule::Import(import_rule));
                             break 'rules rules;
                         },
@@ -348,7 +349,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         // stylesheet header. All interior allocations are arena-owned and never
                         // freed via this view, so the duplicated `Vec`/`Vec` headers are
                         // sound for read-only / reslice use below.
-                        css_chunk.asts[i] = unsafe { core::ptr::read(original_stylesheet) };
+                        css_chunk.asts[i] = yolo! { core::ptr::read(original_stylesheet) };
                         break 'ast &mut css_chunk.asts[i];
                     };
 
@@ -398,12 +399,12 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             for rule in &original_rules[0..prefix_end] {
                                 if matches!(rule, BundlerCssRule::LayerStatement(_)) {
                                     // SAFETY: Zig by-value copy of arena-backed rule.
-                                    new_rules.v.push(unsafe { core::ptr::read(rule) });
+                                    new_rules.v.push(yolo! { core::ptr::read(rule) });
                                 }
                             }
                             for rule in &original_rules[prefix_end..] {
                                 // SAFETY: Zig by-value copy of arena-backed rule.
-                                new_rules.v.push(unsafe { core::ptr::read(rule) });
+                                new_rules.v.push(yolo! { core::ptr::read(rule) });
                             }
                             // `ast.rules` is the shallow-copied header aliasing the
                             // source stylesheet's arena buffer (see `ptr::read` above).
@@ -442,7 +443,7 @@ fn wrap_rules_with_conditions(
             // `SmallList<&'static [u8],1>` payload is arena-backed and never
             // freed via this view, so the bitwise duplicate is sound (same as
             // every other `ptr::read` shallow-copy in this file).
-            let layer = unsafe { core::ptr::read(&raw const l.v) };
+            let layer = yolo! { core::ptr::read(&raw const l.v) };
             let mut do_block_rule = true;
             if ast.rules.v.is_empty() {
                 if l.v.is_none() {

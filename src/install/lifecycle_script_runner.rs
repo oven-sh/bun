@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_void};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -312,7 +313,7 @@ impl<'a> InstallCtx<'a> {
     #[allow(clippy::mut_from_ref)]
     fn installer_mut(&self) -> &mut Installer<'a> {
         // SAFETY: see fn doc.
-        unsafe { &mut *self.installer }
+        yolo! { &mut *self.installer }
     }
 }
 
@@ -340,7 +341,7 @@ impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     ) -> bool {
         // SAFETY: `a`/`b` are live heap nodes owned by the intrusive heap; the
         // heap only calls `less` on nodes it has been handed via `insert`.
-        unsafe { (*a).started_at < (*b).started_at }
+        yolo! { (*a).started_at < (*b).started_at }
     }
 }
 
@@ -386,7 +387,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     #[inline]
     fn manager_mut(&self) -> &mut PackageManager {
         // SAFETY: see fn doc.
-        unsafe { &mut *self.manager.as_ptr() }
+        yolo! { &mut *self.manager.as_ptr() }
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
@@ -435,7 +436,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
         // SAFETY: `process` is the live intrusive-refcounted `*mut Process` set in
         // `spawn_next_script`; we hold a strong ref until `reset_polls`.
-        let status = unsafe { (*process).status.clone() };
+        let status = yolo! { (*process).status.clone() };
         self.handle_exit(status);
     }
 
@@ -470,7 +471,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// fields across this call (see `spawn_next_script_inner`).
     unsafe fn ensure_not_in_heap(this: *mut Self) {
         // SAFETY: caller contract — `this` is non-null and live.
-        unsafe {
+        yolo! {
             let manager: *mut PackageManager = (*this).manager.as_ptr();
             let heap = core::ptr::addr_of_mut!((*this).heap);
             // SAFETY: `manager` is non-null and outlives every subprocess (see
@@ -506,7 +507,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         bun_core::analytics::Features::LIFECYCLE_SCRIPTS.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
-        unsafe {
+        yolo! {
             if !(*this).has_incremented_alive_count {
                 (*this).has_incremented_alive_count = true;
                 // .monotonic is okay because because this value is only used by hoisted installs, which
@@ -525,10 +526,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // leave dead tags once that borrow is popped by subsequent `self` uses, and the
         // synchronous `process.on_exit` dispatch below would alias a second `&mut Self`.
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
-        let result = unsafe { Self::spawn_next_script_inner(this, next_script_index) };
+        let result = yolo! { Self::spawn_next_script_inner(this, next_script_index) };
         if result.is_err() {
             // SAFETY: as above.
-            unsafe {
+            yolo! {
                 if (*this).has_incremented_alive_count {
                     (*this).has_incremented_alive_count = false;
                     // .monotonic is okay because because this value is only used by hoisted installs.
@@ -551,7 +552,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
         // Body wrapped in one block; per-field accesses do not materialize a
         // whole-struct `&mut Self` across reentrant calls.
-        unsafe {
+        yolo! {
             let manager: *mut PackageManager = (*this).manager.as_ptr();
             let original_script = (*this).scripts.items[next_script_index as usize]
                 .as_ref()
@@ -886,7 +887,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         // SAFETY: `self` is live; the raw-ptr receiver touches only disjoint
         // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
-        unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
+        yolo! { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
 
         match status {
             Status::Exited(exit) => {
@@ -912,7 +913,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         exit.code,
                     ));
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                    unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                    yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
                     Global::exit(exit.code as u32);
                 }
@@ -965,7 +966,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             installer.start_task(ctx.entry_id);
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                            yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                             return;
                         }
                         _ => {}
@@ -981,7 +982,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         // uniquely owned here; we do not touch `self` again on the
                         // success path before `return`, so the stored backrefs derived
                         // from this pointer are not invalidated by a later reborrow.
-                        if let Err(err) = unsafe {
+                        if let Err(err) = yolo! {
                             Self::spawn_next_script(
                                 std::ptr::from_mut::<Self>(self),
                                 u8::try_from(new_script_index).expect("int cast"),
@@ -1025,7 +1026,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 // the last script finished
                 self.decrement_pending_script_tasks();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             }
             Status::Signaled(signal) => {
                 self.print_output();
@@ -1068,7 +1069,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     err,
                 ));
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
                 Global::exit(1);
             }
@@ -1104,7 +1105,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         if !process.is_null() {
             // SAFETY: `process` is the live intrusive-refcounted pointer set in
             // `spawn_next_script`; we held the only strong ref. `deref()` may free.
-            unsafe {
+            yolo! {
                 (*process).close();
                 Process::deref(process);
             }
@@ -1126,7 +1127,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: caller contract — `this` came from `heap::alloc` in `Self::new` and is
         // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
         // then frees the allocation (Zig: `this.* = undefined; bun.destroy(this);`).
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn deinit_and_delete_package(&mut self) {
@@ -1154,7 +1155,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
 
         // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+        yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
     pub fn spawn_package_scripts(
@@ -1213,7 +1214,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let first_index = lss.scripts.first_index;
         // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
-        if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
+        if let Err(err) = yolo! { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
             Output::pretty_errorln(format_args!(
                 "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
                 bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
@@ -1277,7 +1278,7 @@ impl Drop for LifecycleScriptSubprocess<'_> {
         self.reset_polls();
         // SAFETY: `self` is live for the duration of `drop`; raw-ptr receiver
         // touches only `heap`/`manager` (see `ensure_not_in_heap` doc).
-        unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
+        yolo! { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
     }
 }
 

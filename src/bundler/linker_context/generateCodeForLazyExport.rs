@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 #[allow(unused_imports)]
 use bun_collections::VecExt as _VecExt;
@@ -45,17 +46,17 @@ pub fn generate_code_for_lazy_export(
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
     // across `&mut *this.log` below (split borrow).
-    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
+    let all_sources = yolo! { &(*this.parse_graph).input_files }.items_source();
     let all_css_asts: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
-    if unsafe { (&*parts).len() } < 1 {
+    if yolo! { (&*parts).len() } < 1 {
         panic!("Internal error: expected at least one part for lazy export");
     }
 
     // SAFETY: `parts.ptr[1]` — Vec raw indexing; using index 1 here.
-    let part: &mut Part = unsafe { &mut (*parts)[1] };
+    let part: &mut Part = yolo! { &mut (*parts)[1] };
 
     // `Part.stmts: StoreSlice<Stmt>` — safe `Deref` to `&[Stmt]`.
     if part.stmts.is_empty() {
@@ -319,7 +320,7 @@ pub fn generate_code_for_lazy_export(
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
             // borrow across the `this.log` reborrow inside the Visitor below.
-            let arena: &Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(this.arena()) };
+            let arena: &Arena = yolo! { bun_ptr::detach_lifetime_ref::<Arena>(this.arena()) };
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -465,7 +466,7 @@ pub fn generate_code_for_lazy_export(
                     // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
-                        unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
+                        yolo! { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
                     let name = key_str.slice(alloc);
 
                     // TODO: support non-identifier names
@@ -523,7 +524,7 @@ pub fn generate_code_for_lazy_export(
                 // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                 // across the `&mut self` call to `generate_named_export_in_file` below.
                 let alloc: &bun_alloc::Arena =
-                    unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
+                    yolo! { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
                 let name = alloc.alloc_slice_copy(&name_buf);
 
                 let generated =

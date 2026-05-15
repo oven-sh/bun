@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::marker::{PhantomData, PhantomPinned};
 
 use bun_core::String as BunString;
@@ -60,7 +61,7 @@ impl RegularExpression {
         // `Yarr__RegularExpression__init` never returns).
         if !RegularExpression::opaque_mut(regex).is_valid() {
             // SAFETY: `regex` is a valid live Yarr handle we just allocated; consumed here.
-            unsafe { Self::destroy(regex) };
+            yolo! { Self::destroy(regex) };
             return Err(RegularExpressionError::InvalidRegExp);
         }
         // TODO(port): consider an owning wrapper with Drop instead of returning a raw *mut.
@@ -97,7 +98,7 @@ impl RegularExpression {
     #[inline]
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` is a valid live Yarr RegularExpression handle; consumed here.
-        unsafe { Yarr__RegularExpression__deinit(this) }
+        yolo! { Yarr__RegularExpression__deinit(this) }
     }
 }
 
@@ -131,7 +132,7 @@ pub fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> 
 #[unsafe(no_mangle)]
 pub fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
     // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
-    unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
+    yolo! { RegularExpression::destroy(regex.as_ptr().cast()) }
 }
 
 // ported from: src/jsc/RegularExpression.zig

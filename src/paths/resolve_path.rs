@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 
 use crate::fs as Fs;
@@ -33,7 +34,7 @@ thread_local! {
 fn tl_buf_mut<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
     // SAFETY: thread-local UnsafeCell ⇒ this thread is the sole accessor;
     // callers never re-enter while holding the borrow (see fn doc).
-    unsafe { &mut *b.get() }
+    yolo! { &mut *b.get() }
 }
 
 pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
@@ -401,7 +402,7 @@ fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuff
     // lives in a `thread_local!`, so this thread is the sole accessor; callers
     // uphold the single-live-borrow-per-thread invariant documented at the
     // thread-local declaration.
-    unsafe { &mut *p }
+    yolo! { &mut *p }
 }
 
 /// Raw pointer into the thread-local scratch buffer. Callers reborrow
@@ -1403,7 +1404,7 @@ pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]
         let len = normalized.len();
         buf[len] = 0;
         // SAFETY: buf[len] == 0 written above
-        unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
+        yolo! { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
     })
 }
 
@@ -1416,7 +1417,7 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     let len = norm.len();
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
-    unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
+    yolo! { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
 }
 
 pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(str: &[T], buf: &'a mut [T]) -> &'a mut [T] {
@@ -1549,7 +1550,7 @@ pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a Z
     debug_assert!(start_offset + len < buf_len);
     buf[start_offset + len] = 0;
     // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
+    yolo! { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
 pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a [u8] {
@@ -1632,7 +1633,7 @@ pub fn join_string_buf_wz<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]])
     debug_assert!(start_offset + len < buf_len);
     buf[start_offset + len] = 0;
     // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { WStr::from_raw(buf_base.add(start_offset), len) }
+    yolo! { WStr::from_raw(buf_base.add(start_offset), len) }
 }
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1649,7 +1650,7 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     debug_assert!(start_offset + len < buf_len);
     buf[start_offset + len] = 0;
     // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
+    yolo! { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
 pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
@@ -1774,7 +1775,7 @@ pub fn join_abs_string_buf_z<'a, P: PlatformT>(
 ) -> &'a ZStr {
     let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
     // SAFETY: IS_SENTINEL=true wrote NUL at r.len()
-    unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
+    yolo! { ZStr::from_raw(r.as_ptr(), r.len()) }
 }
 
 pub fn join_abs_string_buf_znt<'a, P: PlatformT>(
@@ -1785,12 +1786,12 @@ pub fn join_abs_string_buf_znt<'a, P: PlatformT>(
     if (matches!(P::P, Platform::AUTO | Platform::Loose | Platform::Windows)) && cfg!(windows) {
         let r = _join_abs_string_buf::<true, platform::Nt>(cwd, buf, parts);
         // SAFETY: NUL written at r.len()
-        return unsafe { ZStr::from_raw(r.as_ptr(), r.len()) };
+        return yolo! { ZStr::from_raw(r.as_ptr(), r.len()) };
     }
 
     let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
     // SAFETY: NUL written at r.len()
-    unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
+    yolo! { ZStr::from_raw(r.as_ptr(), r.len()) }
 }
 
 pub fn join_abs_string_buf_z_trailing_slash<'a, P: PlatformT>(
@@ -2549,7 +2550,7 @@ impl PosixToWinNormalizer {
                     buf[sr_len + maybe_posix_path.len() - 1] = 0;
                     let len = sr_len + maybe_posix_path.len() - 1;
                     // SAFETY: NUL at buf[len]
-                    let res = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) };
+                    let res = yolo! { ZStr::from_raw_mut(buf.as_mut_ptr(), len) };
                     debug_assert!(
                         !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
                             res.as_bytes()
@@ -2567,7 +2568,7 @@ impl PosixToWinNormalizer {
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;
         // SAFETY: NUL at buf[maybe_posix_path.len()]
-        Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), maybe_posix_path.len()) })
+        Ok(yolo! { ZStr::from_raw_mut(buf.as_mut_ptr(), maybe_posix_path.len()) })
     }
 }
 

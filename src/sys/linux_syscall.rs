@@ -21,6 +21,7 @@
 #![cfg(any(target_os = "linux", target_os = "android"))]
 #![allow(unreachable_pub)]
 
+use bun_yolo::yolo;
 use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
 use rustix::io::Errno;
 
@@ -43,7 +44,7 @@ use bun_core::ZStr;
 #[inline(always)]
 unsafe fn bfd<'a>(fd: i32) -> BorrowedFd<'a> {
     // SAFETY: forwarded — see fn doc.
-    unsafe { BorrowedFd::borrow_raw(fd) }
+    yolo! { BorrowedFd::borrow_raw(fd) }
 }
 
 /// rustix `Errno` → raw positive errno (matches `libc::E*` constants on Linux).
@@ -146,7 +147,7 @@ pub fn close(fd: i32) -> Result<(), i32> {
     // once it lands) to drop the last libc touch on this path.
     // SAFETY: raw `close(2)`; `fd` is caller-owned (or already invalid, which
     // is exactly the EBADF case we want to detect).
-    let rc = unsafe { libc::syscall(libc::SYS_close, fd) };
+    let rc = yolo! { libc::syscall(libc::SYS_close, fd) };
     if rc == 0 { Ok(()) } else { Err(errno()) }
 }
 
@@ -174,7 +175,7 @@ pub fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
 #[inline]
 pub fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
     // SAFETY: `dir` is caller-owned (or AT_FDCWD) for the call.
-    let dir = unsafe { bfd(dir) };
+    let dir = yolo! { bfd(dir) };
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
     retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
 }
@@ -206,7 +207,7 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     // SAFETY: identical layout (both are the per-arch kernel UAPI `struct stat`;
     // see doc comment + const assert). All-integer POD — every bit-pattern is
     // valid for every field, so no invalid-value hazard either way.
-    unsafe { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) }
+    yolo! { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) }
 }
 
 /// Fallback for arches where userspace `libc::stat` is *not* guaranteed
@@ -278,7 +279,7 @@ pub unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize,
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
         // `iov_base` are writable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_readv, fd.native(), vecs, n as libc::c_long) }
+        yolo! { libc::syscall(libc::SYS_readv, fd.native(), vecs, n as libc::c_long) }
     })
 }
 
@@ -292,7 +293,7 @@ pub unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
         // `iov_base` are readable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_writev, fd.native(), vecs, n as libc::c_long) }
+        yolo! { libc::syscall(libc::SYS_writev, fd.native(), vecs, n as libc::c_long) }
     })
 }
 
@@ -308,7 +309,7 @@ pub unsafe fn preadv(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> Re
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
         // `iov_base` are writable for `iov_len` bytes.
-        unsafe {
+        yolo! {
             libc::syscall(
                 libc::SYS_preadv,
                 fd.native(),
@@ -332,7 +333,7 @@ pub unsafe fn pwritev(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> R
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
         // `iov_base` are readable for `iov_len` bytes.
-        unsafe {
+        yolo! {
             libc::syscall(
                 libc::SYS_pwritev,
                 fd.native(),
@@ -367,7 +368,7 @@ pub unsafe fn pwritev(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> R
 #[inline]
 pub unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
     // SAFETY: raw `read(2)`; kernel validates `fd`/`buf`/`count`.
-    unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
+    yolo! { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
 }
 
 /// Raw `write(2)` — libc-convention return. See `read_raw` for why this
@@ -375,7 +376,7 @@ pub unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
 #[inline]
 pub unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
     // SAFETY: raw `write(2)`; kernel validates `fd`/`buf`/`count`.
-    unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
+    yolo! { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
 }
 
 /// Raw `epoll_ctl(2)` — libc-convention return.
@@ -395,7 +396,7 @@ pub unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
 pub unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::epoll_event) -> i32 {
     // SAFETY: raw `epoll_ctl(2)`; kernel validates `epfd`/`op`/`fd`; `event`
     // may be null for CTL_DEL (kernel ignores it).
-    unsafe { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
+    yolo! { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
 }
 
 /// Raw `sendfile(2)` — libc-convention return.
@@ -419,7 +420,7 @@ pub unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) 
     const SYS_SENDFILE: libc::c_long = libc::SYS_sendfile;
 
     // SAFETY: raw `sendfile(2)`; kernel validates fds; `offset` may be null.
-    unsafe { libc::syscall(SYS_SENDFILE, out_fd, in_fd, offset, count) as isize }
+    yolo! { libc::syscall(SYS_SENDFILE, out_fd, in_fd, offset, count) as isize }
 }
 
 /// Raw `copy_file_range(2)` — libc-convention return.
@@ -441,7 +442,7 @@ pub unsafe fn copy_file_range(
 ) -> isize {
     // SAFETY: raw `copy_file_range(2)`; kernel validates fds; offset ptrs may
     // be null.
-    unsafe {
+    yolo! {
         libc::syscall(
             libc::SYS_copy_file_range,
             in_,
@@ -476,7 +477,7 @@ pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
     // the kernel constant. `pidfd_open` has the same number on every arch.
     const SYS_PIDFD_OPEN: libc::c_long = 434;
     // SAFETY: raw `pidfd_open(2)`; kernel validates pid/flags.
-    let rc = unsafe { libc::syscall(SYS_PIDFD_OPEN, pid, flags) };
+    let rc = yolo! { libc::syscall(SYS_PIDFD_OPEN, pid, flags) };
     if rc < 0 {
         return Err(errno());
     }
@@ -495,7 +496,7 @@ pub unsafe fn getdents64(fd: i32, buf: *mut u8, len: usize) -> isize {
     // is what the Zig path compiles to as well.
     // PERF(port): switch to `rustix::fs::RawDir` once `WrappedIterator` is
     // reworked to consume `RawDirEntry` instead of hand-parsing bytes.
-    unsafe { libc::syscall(libc::SYS_getdents64, fd as libc::c_long, buf, len) as isize }
+    yolo! { libc::syscall(libc::SYS_getdents64, fd as libc::c_long, buf, len) as isize }
 }
 
 #[inline(always)]

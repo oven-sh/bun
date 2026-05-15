@@ -7,6 +7,7 @@
 )]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -151,7 +152,7 @@ pub fn dump_source_string_failiable(
         // SAFETY: `vm` outlives this debug-only call (BACKREF — VM owns the
         // transpiler store); only the `source_mappings` leaf field is borrowed,
         // and `SavedSourceMap::get` takes its own internal mutex.
-        if let Some(mappings) = unsafe { (*vm).source_mappings.get(specifier) } {
+        if let Some(mappings) = yolo! { (*vm).source_mappings.get(specifier) } {
             // `defer mappings.deref()` → Arc::drop.
             let mut map_path = Vec::with_capacity(base.len() + b".map".len());
             map_path.extend_from_slice(base);
@@ -264,7 +265,7 @@ impl RuntimeTranspilerStore {
         // SAFETY: `out` is `&mut MaybeUninit<Self>::as_mut_ptr()` — valid for
         // writes and properly aligned by type; each `addr_of_mut!` projects a
         // valid in-bounds field place without forming an intermediate reference.
-        unsafe {
+        yolo! {
             addr_of_mut!((*out).generation_number).write(AtomicU32::new(0));
             // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
             // intentionally left untouched (uninit is a valid value).
@@ -283,7 +284,7 @@ impl RuntimeTranspilerStore {
     ) {
         let mut batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm).jsc_vm };
+        let jsc_vm = yolo! { (*vm).jsc_vm };
         let mut iter = batch.iterator();
         let first = iter.next();
         if first.is_null() {
@@ -291,7 +292,7 @@ impl RuntimeTranspilerStore {
         }
         // we run just one job first to see if there are more
         // SAFETY: `first` is a live job popped from the intrusive queue.
-        if let Err(err) = unsafe { (*first).run_from_js_thread() } {
+        if let Err(err) = yolo! { (*first).run_from_js_thread() } {
             global.report_uncaught_exception_from_error(err);
         }
         loop {
@@ -301,11 +302,11 @@ impl RuntimeTranspilerStore {
             }
             // if there are more, we need to drain the microtasks from the previous run
             // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if unsafe { (*event_loop).drain_microtasks_with_global(global, jsc_vm) }.is_err() {
+            if yolo! { (*event_loop).drain_microtasks_with_global(global, jsc_vm) }.is_err() {
                 return;
             }
             // SAFETY: `job` is a live job popped from the intrusive queue.
-            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
+            if let Err(err) = yolo! { (*job).run_from_js_thread() } {
                 global.report_uncaught_exception_from_error(err);
             }
         }
@@ -329,7 +330,7 @@ impl RuntimeTranspilerStore {
         // SAFETY: owned_text was just allocated via heap::alloc and lives until
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
         // lifetime from raw-ptr deref coerces to `'static` for `bun_paths::fs::Path<'static>`.
-        let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
+        let owned_path = bun_paths::fs::Path::init(yolo! { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
@@ -383,11 +384,11 @@ impl RuntimeTranspilerStore {
                 "transpile({}, {}, async)",
                 bstr::BStr::new(path.text),
                 // SAFETY: job fully initialized above
-                <&'static str>::from(unsafe { (*job).loader })
+                <&'static str>::from(yolo! { (*job).loader })
             );
         }
         // SAFETY: job fully initialized above
-        unsafe { (*job).schedule() };
+        yolo! { (*job).schedule() };
         promise.cast::<c_void>()
     }
 }
@@ -439,7 +440,7 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const unbounded_queue::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -492,7 +493,7 @@ fn tls_get_or_leak<T>(
     // ever observes `p`, and every borrow returned here is scoped to one
     // `TranspilerJob::run()` activation (no `&T`/`&mut T` from a prior call
     // survives), so the `&mut` is exclusive for its actual use.
-    unsafe { &mut *p.as_ptr() }
+    yolo! { &mut *p.as_ptr() }
 }
 
 impl TranspilerJob {
@@ -517,7 +518,7 @@ impl TranspilerJob {
             // SAFETY: `text` is exactly the `&[u8]` view of the `Box<[u8]>`
             // produced by `heap::into_raw` in `transpile()`; the fat-pointer
             // cast preserves length, and this is the unique owner.
-            drop(unsafe { bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut()) });
+            drop(yolo! { bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut()) });
         }
 
         self.poll_ref.disable();
@@ -531,16 +532,16 @@ impl TranspilerJob {
         let vm = self.vm;
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
-            unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
+            yolo! { ptr::addr_of_mut!((*vm).transpiler_store) };
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
-        unsafe {
+        yolo! {
             (*transpiler_store)
                 .queue
                 .push(std::ptr::from_mut::<TranspilerJob>(self))
         };
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
         // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
-        unsafe {
+        yolo! {
             (*(*vm).event_loop())
                 .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
         }
@@ -583,7 +584,7 @@ impl TranspilerJob {
         self.reset_for_pool();
 
         // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
-        unsafe {
+        yolo! {
             (*vm)
                 .transpiler_store
                 .store
@@ -615,7 +616,7 @@ impl TranspilerJob {
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
-        let this = unsafe { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
+        let this = yolo! { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
         this.run();
     }
 
@@ -644,7 +645,7 @@ impl TranspilerJob {
         scopeguard::defer! {
             // SAFETY: `self` outlives this guard (guard drops before fn return);
             // no other &mut alias is live at drop time.
-            unsafe { (*this_ptr).dispatch_to_main_thread() };
+            yolo! { (*this_ptr).dispatch_to_main_thread() };
         }
 
         // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).
@@ -659,7 +660,7 @@ impl TranspilerJob {
         let vm: *mut VirtualMachine = self.vm;
 
         if self.generation_number
-            != unsafe {
+            != yolo! {
                 (*vm)
                     .transpiler_store
                     .generation_number
@@ -706,7 +707,7 @@ impl TranspilerJob {
             (ptr::addr_of_mut!(self.log), ptr::addr_of_mut!(log)),
             |(dst, src)| {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
-                unsafe {
+                yolo! {
                     *dst = bun_ast::Log::init();
                     (*src).clone_to_with_recycled(&mut *dst, true);
                 }
@@ -722,7 +723,7 @@ impl TranspilerJob {
         // Zig did not `deinit` the by-value copy; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
-            core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
+            core::mem::ManuallyDrop::new(yolo! { ptr::read(ptr::addr_of!((*vm).transpiler)) });
         // SAFETY (lifetime erasure): `Transpiler<'a>`'s `'a` only constrains the
         // `allocator` field (and resolver opts that share it), which we
         // immediately overwrite below via `set_arena(&arena)` to the stack-local
@@ -730,7 +731,7 @@ impl TranspilerJob {
         // drops after; the bytewise copy is never dropped (ManuallyDrop), so no
         // borrow tied to the shortened `'a` outlives the arena.
         let transpiler: &mut Transpiler<'_> =
-            unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
+            yolo! { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
         // PORT NOTE: reshaped for borrowck — Zig: transpiler.resolver.opts = transpiler.options
@@ -756,7 +757,7 @@ impl TranspilerJob {
                 // declared before this guard and so outlives it; no other
                 // borrow of `macro_context` is live at drop time (the parser's
                 // `&mut MacroContext` is scoped to the `parse` call).
-                if let Some(ctx) = unsafe { (*slot).take() } {
+                if let Some(ctx) = yolo! { (*slot).take() } {
                     ctx.deinit();
                 }
             });
@@ -781,7 +782,7 @@ impl TranspilerJob {
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` PORT NOTE.
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
-            unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
+            yolo! { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
             // The watchlist *is* mutated cross-thread (the watcher thread's
             // `flush_evictions` closes fds and `swap_remove`s), so snapshot
@@ -805,8 +806,8 @@ impl TranspilerJob {
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` PORT NOTE above.
-        let macro_remappings = if unsafe { (*vm).macro_mode }
-            || !unsafe { (*vm).has_any_macro_remappings }
+        let macro_remappings = if yolo! { (*vm).macro_mode }
+            || !yolo! { (*vm).has_any_macro_remappings }
             || is_node_override
         {
             MacroRemap::default()
@@ -844,7 +845,7 @@ impl TranspilerJob {
         let mut input_file_fd: Fd = Fd::INVALID;
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` PORT NOTE above.
-        let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
+        let (vm_main, vm_main_hash) = yolo! { ((*vm).main(), (*vm).main_hash) };
         let is_main = vm_main.len() == path.text.len()
             && vm_main_hash == hash
             && strings::eql_long(vm_main, path.text, false);
@@ -861,7 +862,7 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: fd,
-            file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
+            file_fd_ptr: Some(yolo! { &mut *ptr::addr_of_mut!(input_file_fd) }),
             file_hash: Some(hash),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
@@ -874,20 +875,20 @@ impl TranspilerJob {
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
             // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` PORT NOTE above.
-            set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
+            set_breakpoint_on_first_line: yolo! { &(*vm).debugger }
                 .as_ref()
                 .map(|d| d.set_breakpoint_on_first_line)
                 .unwrap_or(false)
                 && is_main
                 && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
-                Some(unsafe { &mut *ptr::addr_of_mut!(cache) })
+                Some(yolo! { &mut *ptr::addr_of_mut!(cache) })
             } else {
                 None
             },
             // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` PORT NOTE above.
             remove_cjs_module_wrapper: is_main
-                && unsafe { (*vm).module_loader.eval_source.is_some() },
+                && yolo! { (*vm).module_loader.eval_source.is_some() },
             module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
@@ -902,7 +903,7 @@ impl TranspilerJob {
             |(should, fd_ptr)| {
                 // SAFETY: `input_file_fd` outlives this guard (declared earlier
                 // in fn scope); no `&mut` alias is live at drop time.
-                unsafe {
+                yolo! {
                     if should.get() && (*fd_ptr).is_valid() {
                         (*fd_ptr).close();
                         *fd_ptr = Fd::INVALID;
@@ -923,7 +924,7 @@ impl TranspilerJob {
                 // earlier in fn scope); raw-ptr borrow avoids tying
                 // `parse_options`'s `'static` source lifetime to this stack slot.
                 parse_options.virtual_source =
-                    Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(src) });
+                    Some(yolo! { &*std::ptr::from_ref::<bun_ast::Source>(src) });
             }
         }
 
@@ -949,7 +950,7 @@ impl TranspilerJob {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
-                        let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                        let _ = yolo! { iw.assume_mut() }.add_file::<true>(
                             input_file_fd,
                             path.text,
                             hash,
@@ -975,7 +976,7 @@ impl TranspilerJob {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
-                    let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                    let _ = yolo! { iw.assume_mut() }.add_file::<true>(
                         input_file_fd,
                         path.text,
                         hash,
@@ -990,7 +991,7 @@ impl TranspilerJob {
         // SAFETY: leaf scalar field read; see `vm` PORT NOTE above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
         // `&VirtualMachine`.
-        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
+        let use_isolation_source_provider_cache = yolo! { (*vm).test_isolation_enabled }
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
 
@@ -998,11 +999,11 @@ impl TranspilerJob {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
             // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
             let mut entry: Box<CacheEntry> =
-                unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
+                yolo! { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
 
             // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
             // `SavedSourceMap` takes its own internal mutex.
-            let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
+            let _ = yolo! { &mut (*vm).source_mappings }.put_mappings(
                 &parse_result.source,
                 MutableString {
                     list: core::mem::take(&mut entry.sourcemap).into_vec(),
@@ -1144,7 +1145,7 @@ impl TranspilerJob {
             // SAFETY: see `vm` PORT NOTE above — `from_raw` stores `vm` as a raw
             // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
-            let mut mapper = unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
+            let mut mapper = yolo! { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
             let _writeback = scopeguard::guard(
                 (
                     std::ptr::from_mut::<BufferPrinter>(source_code_printer),
@@ -1152,7 +1153,7 @@ impl TranspilerJob {
                 ),
                 |(dst, src)| {
                     // SAFETY: both pointees outlive this scope; no aliases at drop.
-                    unsafe {
+                    yolo! {
                         *dst =
                             core::mem::replace(&mut *src, BufferPrinter::init(BufferWriter::init()))
                     };
@@ -1191,7 +1192,7 @@ impl TranspilerJob {
                 .unwrap_or_else(|| String::clone_latin1(written));
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
-            if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
+            if written.len() > 1024 * 1024 * 2 || yolo! { (*vm).smol } {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
                 *source_code_printer = BufferPrinter::init(writer);

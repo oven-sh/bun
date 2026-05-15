@@ -1,5 +1,6 @@
 //! Bun's cross-platform filesystem watcher. Runs on its own thread.
 
+use bun_yolo::yolo;
 use core::fmt;
 use std::borrow::Cow;
 
@@ -180,12 +181,12 @@ impl Watcher {
             watchlist: &WatchList,
         ) {
             // SAFETY: ctx_opaque was stored from *mut T in init()
-            let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
+            let ctx = yolo! { &mut *ctx_opaque.cast::<T>() };
             ctx.on_file_update(events, changed_files, watchlist);
         }
         fn on_error_wrapped<T: WatcherContext>(ctx_opaque: *mut (), err: sys::Error) {
             // SAFETY: ctx_opaque was stored from *mut T in init()
-            let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
+            let ctx = yolo! { &mut *ctx_opaque.cast::<T>() };
             ctx.on_watch_error(err);
         }
 
@@ -230,7 +231,7 @@ impl Watcher {
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
-        self.thread = Some(std::thread::spawn(move || unsafe {
+        self.thread = Some(std::thread::spawn(move || yolo! {
             // TODO(port): narrow error set
             let _ = Watcher::thread_main(this as *mut Watcher);
         }));
@@ -246,7 +247,7 @@ impl Watcher {
     // heap::take or an Arc to make this sound.
     pub fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
-        let me = unsafe { &mut *this };
+        let me = yolo! { &mut *this };
         if me.watchloop_handle.load() {
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
@@ -261,7 +262,7 @@ impl Watcher {
             }
             // watchlist freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init()
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
     }
 
@@ -284,7 +285,7 @@ impl Watcher {
         {
             // SAFETY: caller contract — `this` is a valid, exclusively-accessed
             // heap allocation for the duration of this scope.
-            let me = unsafe { &mut *this };
+            let me = yolo! { &mut *this };
             me.watchloop_handle.store(true);
             me.thread_lock.lock();
             Output::Source::configure_named_thread(zstr!("File Watcher"));
@@ -322,7 +323,7 @@ impl Watcher {
         // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
         // `me` above has ended). Matches Zig's `allocator.destroy(this)`.
         // TODO(port): ownership model — see shutdown()
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
         Ok(())
     }
 
@@ -459,7 +460,7 @@ impl Watcher {
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
         // SAFETY: events ptr/len valid; kqueue fd unwrapped from Some
-        let _ = unsafe {
+        let _ = yolo! {
             libc::kevent(
                 self.platform.fd.unwrap().native(),
                 events.as_ptr(),
@@ -508,7 +509,7 @@ impl Watcher {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
             // truly `'static`. Matches Zig's `else file_path` arm.
-            Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
+            Cow::Borrowed(yolo! { bun_collections::detach_lifetime(file_path) })
         };
 
         let mut item = WatchItem {
@@ -545,7 +546,7 @@ impl Watcher {
                 // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
                 // interned in `bun.fs.FileSystem` with a NUL sentinel at [len];
                 // Zig's `buf[0..file_path_.len :0]` assumed the same.
-                unsafe { ZStr::from_raw(file_path.as_ptr(), file_path.len()) }
+                yolo! { ZStr::from_raw(file_path.as_ptr(), file_path.len()) }
             };
             item.eventlist_index = self.platform.watch_path(slice)?;
         }
@@ -589,7 +590,7 @@ impl Watcher {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
             // truly `'static`. Matches Zig's `else file_path` arm.
-            Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
+            Cow::Borrowed(yolo! { bun_collections::detach_lifetime(file_path) })
         };
 
         let parent_hash =
@@ -970,7 +971,7 @@ impl Watcher {
             // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
             // and `AnyResolveWatcher::watch` only ever feeds back the paired
             // `context`; the resolver holds it for the Watcher's lifetime.
-            let this = unsafe { &mut *ctx.cast::<Watcher>() };
+            let this = yolo! { &mut *ctx.cast::<Watcher>() };
             Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
         }
         AnyResolveWatcher {

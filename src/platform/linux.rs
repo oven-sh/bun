@@ -3,6 +3,7 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_long};
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -43,7 +44,7 @@ pub fn splice(
     flags: u32,
 ) -> usize {
     // SAFETY: direct Linux syscall; arguments mirror the kernel ABI for splice(2).
-    let rc = unsafe {
+    let rc = yolo! {
         libc::syscall(
             libc::SYS_splice,
             fd_in as isize as usize,
@@ -113,7 +114,7 @@ impl RWFFlagSupport {
 /// Support for FICLONE is dependent on the filesystem driver.
 pub fn ioctl_ficlone(dest_fd: Fd, srcfd: Fd) -> usize {
     // SAFETY: direct Linux ioctl syscall; FICLONE takes the source fd as its argument.
-    let rc = unsafe {
+    let rc = yolo! {
         libc::syscall(
             libc::SYS_ioctl,
             dest_fd.native() as usize,
@@ -135,7 +136,7 @@ pub extern "C" fn sys_epoll_pwait2(
     sigmask: *const libc::sigset_t,
 ) -> isize {
     // SAFETY: direct Linux syscall; arguments mirror the kernel ABI for epoll_pwait2(2).
-    let rc = unsafe {
+    let rc = yolo! {
         libc::syscall(
             libc::SYS_epoll_pwait2,
             epfd as isize as usize,

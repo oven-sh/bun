@@ -7,6 +7,7 @@
 //! higher-tier type this crate cannot depend on, and the C++ caller only needs
 //! the symbol at link time, not a particular crate.
 
+use bun_yolo::yolo;
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, VM};
@@ -44,7 +45,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let identifiers = IdentifierArray::create(strings_lens.len());
     // SAFETY: `identifiers` is non-null (returned by `create`); destroyed exactly once at scope exit,
     // mirroring Zig's `defer identifiers.destroy()` (runs on both success and early-return paths).
-    let _identifiers_guard = scopeguard::guard(identifiers, |p| unsafe {
+    let _identifiers_guard = scopeguard::guard(identifiers, |p| yolo! {
         IdentifierArray::destroy(p);
     });
     let identifiers: *mut IdentifierArray = *_identifiers_guard;
@@ -57,7 +58,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         }
         let sub = &strings_buf[offset..offset + len];
         // SAFETY: `identifiers` is live for the scope of this fn (guard above).
-        unsafe { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
+        yolo! { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
         offset += len;
     }
 
@@ -202,7 +203,7 @@ impl VariableEnvironment {
         identifier_index: StringID,
     ) {
         // SAFETY: self is a valid &mut VariableEnvironment from C++; identifier_array is live (scopeguard).
-        unsafe { JSC__VariableEnvironment__add(self, vm, identifier_array, identifier_index) }
+        yolo! { JSC__VariableEnvironment__add(self, vm, identifier_array, identifier_index) }
     }
 }
 
@@ -222,19 +223,19 @@ impl IdentifierArray {
     #[inline]
     pub fn create(len: usize) -> *mut IdentifierArray {
         // SAFETY: FFI call; C++ side allocates.
-        unsafe { JSC__IdentifierArray__create(len) }
+        yolo! { JSC__IdentifierArray__create(len) }
     }
     /// # Safety
     /// `identifier_array` must be a pointer previously returned by `create` and not yet destroyed.
     #[inline]
     pub unsafe fn destroy(identifier_array: *mut IdentifierArray) {
-        unsafe { JSC__IdentifierArray__destroy(identifier_array) }
+        yolo! { JSC__IdentifierArray__destroy(identifier_array) }
     }
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]
     pub unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
-        unsafe { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
+        yolo! { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
     }
 }
 
@@ -350,7 +351,7 @@ impl JSModuleRecord {
         has_tla: bool,
     ) -> *mut JSModuleRecord {
         // SAFETY: all pointer args derive from valid references.
-        unsafe {
+        yolo! {
             JSC_JSModuleRecord__create(
                 global_object,
                 vm,
@@ -368,13 +369,13 @@ impl JSModuleRecord {
     #[inline]
     pub fn declared_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
         // SAFETY: `this` is a valid JSModuleRecord*.
-        unsafe { JSC_JSModuleRecord__declaredVariables(this) }
+        yolo! { JSC_JSModuleRecord__declaredVariables(this) }
     }
     #[allow(dead_code)]
     #[inline]
     pub fn lexical_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
         // SAFETY: `this` is a valid JSModuleRecord*.
-        unsafe { JSC_JSModuleRecord__lexicalVariables(this) }
+        yolo! { JSC_JSModuleRecord__lexicalVariables(this) }
     }
 }
 
@@ -449,7 +450,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         module_name: StringID,
     ) {
-        unsafe {
+        yolo! {
             JSC_JSModuleRecord__addIndirectExport(self, ia, export_name, import_name, module_name)
         }
     }
@@ -460,7 +461,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         export_name: StringID,
         local_name: StringID,
     ) {
-        unsafe { JSC_JSModuleRecord__addLocalExport(self, ia, export_name, local_name) }
+        yolo! { JSC_JSModuleRecord__addLocalExport(self, ia, export_name, local_name) }
     }
     #[inline]
     fn add_namespace_export(
@@ -469,11 +470,11 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         export_name: StringID,
         module_name: StringID,
     ) {
-        unsafe { JSC_JSModuleRecord__addNamespaceExport(self, ia, export_name, module_name) }
+        yolo! { JSC_JSModuleRecord__addNamespaceExport(self, ia, export_name, module_name) }
     }
     #[inline]
     fn add_star_export(self, ia: *mut IdentifierArray, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name) }
+        yolo! { JSC_JSModuleRecord__addStarExport(self, ia, module_name) }
     }
     #[inline]
     fn add_requested_module_null_attributes_ptr(
@@ -481,19 +482,19 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         ia: *mut IdentifierArray,
         module_name: StringID,
     ) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(self, ia, module_name) }
+        yolo! { JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(self, ia, module_name) }
     }
     #[inline]
     fn add_requested_module_java_script(self, ia: *mut IdentifierArray, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name) }
+        yolo! { JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name) }
     }
     #[inline]
     fn add_requested_module_web_assembly(self, ia: *mut IdentifierArray, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name) }
+        yolo! { JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name) }
     }
     #[inline]
     fn add_requested_module_json(self, ia: *mut IdentifierArray, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name) }
+        yolo! { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name) }
     }
     #[inline]
     fn add_requested_module_host_defined(
@@ -502,7 +503,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         host_defined_import_type: StringID,
     ) {
-        unsafe {
+        yolo! {
             JSC_JSModuleRecord__addRequestedModuleHostDefined(
                 self,
                 ia,
@@ -519,7 +520,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         local_name: StringID,
         module_name: StringID,
     ) {
-        unsafe {
+        yolo! {
             JSC_JSModuleRecord__addImportEntrySingle(self, ia, import_name, local_name, module_name)
         }
     }
@@ -531,7 +532,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         local_name: StringID,
         module_name: StringID,
     ) {
-        unsafe {
+        yolo! {
             JSC_JSModuleRecord__addImportEntrySingleTypeScript(
                 self,
                 ia,
@@ -549,7 +550,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         local_name: StringID,
         module_name: StringID,
     ) {
-        unsafe {
+        yolo! {
             JSC_JSModuleRecord__addImportEntryNamespace(
                 self,
                 ia,

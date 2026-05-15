@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -704,7 +705,7 @@ impl PackageManager {
         // `init`, never cleared) and the pointee is the CLI-scope `Log`, which
         // outlives every `'a` a caller can name. Exclusive access is upheld by
         // single-threaded use; see doc comment.
-        unsafe { &mut *p }
+        yolo! { &mut *p }
     }
 
     /// Reborrow the active progress download node (`self.progress.root`-rooted).
@@ -721,7 +722,7 @@ impl PackageManager {
         // SAFETY: `downloads_node` points into `self.progress` (BORROW_FIELD);
         // `Progress` is pinned for the manager's lifetime (leaked singleton)
         // and the node is set before any caller reaches this path.
-        unsafe { &mut *p }
+        yolo! { &mut *p }
     }
 
     /// Reborrow the active scripts progress node, if any.
@@ -741,7 +742,7 @@ impl PackageManager {
         // SAFETY: `scripts_node` is `Some(NonNull)` pointing at a caller
         // stack-local `ProgressNode` that outlives the install pass; access is
         // single-threaded (main install loop only).
-        Some(unsafe { p.as_mut() })
+        Some(yolo! { p.as_mut() })
     }
 
     /// Port of Zig `pub fn get() *PackageManager` (PackageManager.zig:442) —
@@ -761,7 +762,7 @@ impl PackageManager {
         // `allocate_package_manager()` before any caller of `get()` (asserted
         // by Zig's `Holder.ptr = undefined` → init ordering); the singleton
         // lives for the process. Shared `&` aliases freely across threads.
-        unsafe { &*get() }
+        yolo! { &*get() }
     }
 
     /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
@@ -880,7 +881,7 @@ impl PackageManager {
         // `manager.options`/`manager.log` only and never re-projects
         // `manager.lockfile`. Both raw pointers below are derived from `self`,
         // so the caller's borrow stays on the Stacked-Borrows stack.
-        unsafe {
+        yolo! {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
             (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
@@ -932,7 +933,7 @@ impl PackageManager {
         }
         // SAFETY: `ptr` is a leaked `Box<Transpiler>`; main-thread-only so the
         // `&mut` is exclusive for the caller's scope.
-        Ok(unsafe { &mut *ptr })
+        Ok(yolo! { &mut *ptr })
     }
 
     pub fn http_proxy(&mut self, url: &URL<'_>) -> Option<URL<'static>> {
@@ -980,7 +981,7 @@ impl PackageManager {
         // Main-thread / single-owner callers go through `&mut self`; delegate to the
         // raw-pointer path so there is one body.
         // SAFETY: `self` is a valid `*mut PackageManager`.
-        unsafe { Self::wake_raw(self) };
+        yolo! { Self::wake_raw(self) };
     }
 
     /// Raw-pointer wake for concurrent task-thread callers (see
@@ -995,7 +996,7 @@ impl PackageManager {
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub unsafe fn wake_raw(this: *mut Self) {
-        unsafe {
+        yolo! {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
             if let Some(ctx) = on_wake.context {
                 // `WakeHandler.handler`'s second arg is the erased
@@ -1039,11 +1040,11 @@ impl PackageManager {
             // read its two POD fields here (no `&mut Erased` materialized — the local
             // `&mut erased` borrow in the caller is still notionally live across the call).
             let erased = p as *const Erased<C>;
-            let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
+            let (ctx_ptr, is_done) = yolo! { ((*erased).ctx, (*erased).is_done) };
             // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
             // and the caller does not touch `closure` again until `tick_raw` returns, so
             // this is the unique live `&mut C` for the duration of the callback.
-            let ctx = unsafe { &mut *ctx_ptr };
+            let ctx = yolo! { &mut *ctx_ptr };
             is_done(ctx)
         }
         let mut erased = Erased::<C> {
@@ -1055,11 +1056,11 @@ impl PackageManager {
         // and survives the callback's `&mut *this` retag.
         // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
         // reference, only a place projection.
-        let event_loop: *mut AnyEventLoop<'static> = unsafe { &raw mut (*this).event_loop };
+        let event_loop: *mut AnyEventLoop<'static> = yolo! { &raw mut (*this).event_loop };
         // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
         // calls (never across them), so the callback's `&mut PackageManager`
         // never overlaps a live `&mut AnyEventLoop`.
-        unsafe {
+        yolo! {
             AnyEventLoop::tick_raw(
                 event_loop,
                 (&raw mut erased).cast::<c_void>(),
@@ -1103,7 +1104,7 @@ impl PackageManager {
         // that lives outside `self`, so the unbounded `'a` is sound under the
         // same single-threaded contract as `log_mut`/`scripts_node_mut`.
         // `BackRef` guarantees liveness; exclusivity is the caller's contract.
-        unsafe { &mut *self.env.expect("env initialised").as_ptr() }
+        yolo! { &mut *self.env.expect("env initialised").as_ptr() }
     }
 }
 
@@ -1149,7 +1150,7 @@ fn configure_env_for_scripts_run(
     // (lib.rs) `.write()`s the slot via `Transpiler::init` before returning
     // `Ok` — same contract as the runtime impl (run_command.rs:628) and the
     // Zig spec (run_command.zig:780 `this_transpiler.* = try Transpiler.init(...)`).
-    let mut this_transpiler = unsafe { this_transpiler_slot.assume_init() };
+    let mut this_transpiler = yolo! { this_transpiler_slot.assume_init() };
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
@@ -1403,7 +1404,7 @@ pub fn allocate_package_manager() {
     // Zig: `bun.handleOom(bun.default_allocator.create(PackageManager))` — uninitialized
     // memory, abort-on-OOM. The init() functions below write the full struct via
     // `core::ptr::write` (no Drop on the uninit bytes).
-    unsafe {
+    yolo! {
         let layout = core::alloc::Layout::new::<PackageManager>();
         let ptr = std::alloc::alloc(layout).cast::<PackageManager>();
         if ptr.is_null() {
@@ -1421,7 +1422,7 @@ pub fn allocate_package_manager() {
 /// with the main thread holding the `&mut PackageManager` returned by `init()`.
 /// Materializing `&'static mut` here would create aliased mutable references
 /// (UB). Callers must form their own narrowly-scoped reference via raw-pointer
-/// projection (e.g. `unsafe { &(*get()).cache_directory_path }`) and justify
+/// projection (e.g. `yolo! { &(*get()).cache_directory_path }`) and justify
 /// exclusivity / atomicity at the deref site.
 pub fn get() -> *mut PackageManager {
     // `allocate_package_manager()` is the sole writer and runs on the main
@@ -1438,7 +1439,7 @@ pub fn get() -> *mut PackageManager {
 /// exactly once on the single CLI dispatch thread (PackageManager.zig:568). Every
 /// CLI command immediately reborrows the result as `&mut` for the command's
 /// duration; centralising the deref here removes a dozen identical
-/// `unsafe { &mut *ptr }` blocks at call sites.
+/// `yolo! { &mut *ptr }` blocks at call sites.
 ///
 /// Thread-pool workers (`UninstallTask::run`, npm `SaveTask`, `Repository` git ops)
 /// project `&(*get()).field` concurrently once tasks are scheduled — same
@@ -1472,7 +1473,7 @@ pub fn init(
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
     // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
-    unsafe {
+    yolo! {
         let cwd_ptr = CWD_BUF.get().cast::<u8>();
         #[cfg(windows)]
         {
@@ -1514,7 +1515,7 @@ pub fn init(
     // borrowck cannot see that `original_package_json_path` is reassigned
     // before the next use after each mutation.
     let mut original_package_json_path =
-        unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
+        yolo! { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
     let original_cwd =
         strings::without_suffix_comptime(original_package_json_path.as_bytes(), SEP_PACKAGE_JSON);
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
@@ -1677,7 +1678,7 @@ pub fn init(
                     let json_len = json_file_guard.pread_all(&mut json_buf, 0)?;
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
                     // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
-                    let json_path = unsafe {
+                    let json_path = yolo! {
                         bun_sys::get_fd_path(
                             json_file_guard.handle,
                             &mut *ROOT_PACKAGE_JSON_PATH_BUF.get(),
@@ -1693,7 +1694,7 @@ pub fn init(
                     // entry point runs).
                     let json = crate::bun_json::parse_package_json_utf8(
                         &json_source,
-                        unsafe { &mut *ctx.log },
+                        yolo! { &mut *ctx.log },
                         &json_arena,
                     )?;
                     if subcommand == Subcommand::Pm {
@@ -1817,7 +1818,7 @@ pub fn init(
         ctx,
     )?;
     // SAFETY: main-thread global
-    unsafe {
+    yolo! {
         let tld = fs.top_level_dir();
         let cwd = &mut *CWD_BUF.get();
         cwd[..tld.len()].copy_from_slice(tld);
@@ -1845,7 +1846,7 @@ pub fn init(
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
             // access — sole exclusive borrow is sound.
-            unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
+            yolo! { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
         }
         fs::EntriesOption::Err(e) => return Err(e.canonical_error),
     };
@@ -1854,7 +1855,7 @@ pub fn init(
     // `dot_env::Loader<'a>` borrows `&'a mut Map`, so the pair is self-referential; allocate
     // both into process-lifetime statics (same allocate-then-fill pattern as `holder::RAW_PTR`)
     // instead of `Box::leak`. Zig: `ctx.allocator.create(dot_env::Map)` + `create(dot_env::Loader)`.
-    let env: &mut dot_env::Loader = unsafe {
+    let env: &mut dot_env::Loader = yolo! {
         let map_ptr =
             std::alloc::alloc(core::alloc::Layout::new::<dot_env::Map>()).cast::<dot_env::Map>();
         if map_ptr.is_null() {
@@ -1879,7 +1880,7 @@ pub fn init(
     // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
     // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
     env.load(
-        unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
+        yolo! { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
         &[],
         dot_env::DotEnvFileSuffix::Production,
         false,
@@ -1972,7 +1973,7 @@ pub fn init(
     // a ≈443 KB memcpy into the singleton. Zig's `manager.* = .{...}` writes
     // fields directly to the heap (RLS); per-field placement mirrors that and
     // keeps the frame under 16 KB.
-    unsafe {
+    yolo! {
         let p = manager_ptr;
         macro_rules! wr {
             ($field:ident, $val:expr) => {
@@ -2109,10 +2110,10 @@ pub fn init(
     // onward). We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
     // below spawns workers that deref `get()` concurrently, which would alias such a
     // borrow under Stacked Borrows. Instead each statement forms its own narrowly-scoped
-    // reborrow via `unsafe { &mut *manager_ptr }`, dropped before the next raw-ptr use.
+    // reborrow via `yolo! { &mut *manager_ptr }`, dropped before the next raw-ptr use.
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
-        let manager = unsafe { &mut *manager_ptr };
+        let manager = yolo! { &mut *manager_ptr };
         // Zig: `manager.event_loop.loop().internal_loop_data.setParentEventLoop(
         //     jsc.EventLoopHandle.init(&manager.event_loop))` (PackageManager.zig:883).
         // `r#loop()` returns the process-global `*mut uws::Loop`; build the
@@ -2135,13 +2136,13 @@ pub fn init(
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
-        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
+        let raw: &[u8] = yolo! { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
         let mut buf = PathBuffer::uninit();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
         resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
         // SAFETY: singleton fully initialized; main thread, no workers yet.
-        unsafe { &mut *manager_ptr }.folders.put(
+        yolo! { &mut *manager_ptr }.folders.put(
             crate::resolvers::folder_resolver::hash(normalized),
             crate::resolvers::folder_resolver::FolderResolution::PackageId(0),
         )?;
@@ -2153,7 +2154,7 @@ pub fn init(
     // thread-local global to point at the embedded mini loop. The Rust port
     // stores it in `bun_event_loop::mini_event_loop::GLOBAL`.
     {
-        let evl = unsafe { &mut (*manager_ptr).event_loop };
+        let evl = yolo! { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
             let mini_ptr: *mut MiniEventLoop<'static> = mini;
             // Zig spec (PackageManager.zig:893) sets ONLY `MiniEventLoop.global`,
@@ -2172,7 +2173,7 @@ pub fn init(
     }
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
-        let manager = unsafe { &mut *manager_ptr };
+        let manager = yolo! { &mut *manager_ptr };
         if !manager.options.enable.cache() {
             manager.options.enable.set_manifest_cache(false);
             manager.options.enable.set_manifest_cache_control(false);
@@ -2196,7 +2197,7 @@ pub fn init(
             // SAFETY: ctx.log is the process-lifetime CLI log set by
             // create_context_data(); single-threaded init region.
             .load(
-                unsafe { &mut *ctx.log },
+                yolo! { &mut *ctx.log },
                 env,
                 Some(cli),
                 ctx.install.as_deref(),
@@ -2318,7 +2319,7 @@ pub fn init(
     // project `&(*get()).field` concurrently, but `timestamp_for_manifest_cache_control`
     // is main-thread-only state; this raw-pointer place write does not materialize a
     // `&mut PackageManager` that could alias worker projections.
-    unsafe {
+    yolo! {
         (*manager_ptr).timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
     }
 
@@ -2328,7 +2329,7 @@ pub fn init(
     // the CLI dispatch thread; the returned `&'static mut` is the sole
     // first-class reference handed out (worker threads project fields via the
     // raw [`get`] accessor, never via this reference).
-    Ok((unsafe { &mut *manager_ptr }, original_cwd_clone))
+    Ok((yolo! { &mut *manager_ptr }, original_cwd_clone))
 }
 
 pub fn init_with_runtime(
@@ -2383,7 +2384,7 @@ pub fn init_with_runtime_once(
     {
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
-        Ok(fs::EntriesOption::Entries(e)) => unsafe {
+        Ok(fs::EntriesOption::Entries(e)) => yolo! {
             &mut *std::ptr::from_mut::<fs::DirEntry>(*e)
         },
         Ok(fs::EntriesOption::Err(e)) => {
@@ -2423,7 +2424,7 @@ pub fn init_with_runtime_once(
     // `ptr::write`ing it materialized a ≈911 KB stack frame because of the
     // two inline `HiveArrayFallback` pools; per-field placement mirrors Zig's
     // result-location semantics and writes directly to the heap singleton.
-    unsafe {
+    yolo! {
         let p = manager_ptr;
         macro_rules! wr {
             ($field:ident, $val:expr) => {
@@ -2562,7 +2563,7 @@ pub fn init_with_runtime_once(
     // SAFETY: per-field placement above fully initialized the PackageManager;
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body (Zig PackageManager.zig:1031 onward).
-    let manager = unsafe { &mut *manager_ptr };
+    let manager = yolo! { &mut *manager_ptr };
     // PORT NOTE: Zig `manager.lockfile = try allocator.create(Lockfile)` —
     // folded into the struct literal above (`Box::new(Lockfile::default())`).
 

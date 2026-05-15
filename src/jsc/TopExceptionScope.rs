@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_uint};
 use core::ptr::NonNull;
 
@@ -115,7 +116,7 @@ macro_rules! src {
 ///
 /// ```ignore
 /// bun_jsc::top_scope!(scope, global);
-/// let value: i32 = unsafe { external_call(vm, foo, bar, baz) };
+/// let value: i32 = yolo! { external_call(vm, foo, bar, baz) };
 /// scope.return_if_exception()?;
 /// Ok(value)
 /// // `scope` drops here → C++ dtor runs.
@@ -152,7 +153,7 @@ impl Drop for TopExceptionScopeGuard<'_> {
     fn drop(&mut self) {
         // SAFETY: the guard is only ever constructed by `init_guard`, which fully
         // initialized the scope; the borrow ensures it has not been destroyed.
-        unsafe { TopExceptionScope::destroy(self.0) };
+        yolo! { TopExceptionScope::destroy(self.0) };
     }
 }
 
@@ -228,7 +229,7 @@ impl TopExceptionScope {
     pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
         // SAFETY: `bytes` is SIZE bytes, ALIGNMENT-aligned (via #[repr(align(8))]); the C++
         // side asserts size/alignment match.
-        unsafe {
+        yolo! {
             TopExceptionScope__construct(
                 &raw mut self.bytes,
                 global,
@@ -350,11 +351,11 @@ impl TopExceptionScope {
     /// Prefer dropping a [`TopExceptionScopeGuard`] instead.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(this.location, &this.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
+        yolo! { TopExceptionScope__destruct(&raw mut this.bytes) };
         // this.bytes = undefined; — no-op in Rust
     }
 }
@@ -368,7 +369,7 @@ impl TopExceptionScope {
 ///
 /// ```ignore
 /// bun_jsc::top_scope!(scope, global);
-/// let r = unsafe { raw_ffi(global) };
+/// let r = yolo! { raw_ffi(global) };
 /// scope.return_if_exception()?;
 /// ```
 #[macro_export]
@@ -393,7 +394,7 @@ macro_rules! top_scope {
 ///
 /// ```ignore
 /// bun_jsc::validation_scope!(scope, global);
-/// let v = unsafe { raw_ffi_returning_jsvalue(global) };
+/// let v = yolo! { raw_ffi_returning_jsvalue(global) };
 /// scope.assert_exception_presence_matches(v == JSValue::ZERO);
 /// if v == JSValue::ZERO { Err(JsError::Thrown) } else { Ok(v) }
 /// ```
@@ -447,7 +448,7 @@ impl Drop for ExceptionValidationScopeGuard<'_> {
     #[inline]
     fn drop(&mut self) {
         // SAFETY: only constructed by `init_guard*`, which fully initialized the scope.
-        unsafe { ExceptionValidationScope::destroy(self.0) };
+        yolo! { ExceptionValidationScope::destroy(self.0) };
     }
 }
 
@@ -493,13 +494,13 @@ impl ExceptionValidationScope {
                         == core::mem::align_of::<TopExceptionScope>()
             );
             // SAFETY: layout assertion above; `MaybeUninit<T>` is `repr(transparent)`.
-            let inner = unsafe {
+            let inner = yolo! {
                 &mut *(storage as *mut core::mem::MaybeUninit<Self>
                     as *mut core::mem::MaybeUninit<TopExceptionScope>)
             };
             TopExceptionScope::init_at(inner, global, src);
             // SAFETY: `init_at` fully initialized the sole field.
-            unsafe { storage.assume_init_mut() }
+            yolo! { storage.assume_init_mut() }
         }
         #[cfg(not(any(debug_assertions, bun_asan)))]
         {
@@ -575,7 +576,7 @@ impl ExceptionValidationScope {
     /// Prefer dropping an [`ExceptionValidationScopeGuard`] instead.
     pub unsafe fn destroy(this: *mut Self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        unsafe {
+        yolo! {
             TopExceptionScope::destroy(&mut (*this).scope)
         };
         #[cfg(not(any(debug_assertions, bun_asan)))]

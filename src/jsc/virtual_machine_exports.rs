@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::event_loop::ConcurrentTask;
@@ -17,7 +18,7 @@ use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
 // `#[unsafe(no_mangle)] extern "C"` thunks for everything below are emitted by
 // `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
 // markers; the bodies here take safe `&VirtualMachine` / `&JSGlobalObject` /
-// `&BunString` borrows and the thunk performs the single `unsafe { &*ptr }`
+// `&BunString` borrows and the thunk performs the single `yolo! { &*ptr }`
 // deref centrally.
 
 // HOST_EXPORT(Bun__VirtualMachine__isShuttingDown, c)
@@ -60,7 +61,7 @@ pub fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
         Some(IPCInstanceUnion::Initialized(inst)) => {
             // SAFETY: `inst` was produced by `IPCInstance::new` (heap::alloc)
             // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
-            unsafe { (**inst).data.is_connected() }
+            yolo! { (**inst).data.is_connected() }
         }
         Some(IPCInstanceUnion::Waiting { .. }) => true,
         None => false,
@@ -130,7 +131,7 @@ pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_ta
     // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
     // returns null for a Bun-owned global. Called off-thread but the loop
     // wakeup is thread-safe.
-    unsafe {
+    yolo! {
         (*(*global.bun_vm_concurrently()).event_loop())
             .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
     }
@@ -165,7 +166,7 @@ impl HandledPromiseContext {
     fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
         // SAFETY: `context` was produced by `heap::alloc` below; we are the
         // sole owner and reconstitute the Box to drop it at end of scope.
-        let context = unsafe { bun_core::heap::take(context) };
+        let context = yolo! { bun_core::heap::take(context) };
         let global: &JSGlobalObject = &context.global_this;
         // JSGlobalObject::bun_vm contract.
         let _ = global
@@ -243,13 +244,13 @@ pub fn is_no_proxy(
     let vm = VirtualMachine::get();
     // SAFETY: caller (C++) guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname: Option<&[u8]> = if hostname_len > 0 {
-        Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
+        Some(yolo! { bun_core::ffi::slice(hostname_ptr, hostname_len) })
     } else {
         None
     };
     // SAFETY: caller (C++) guarantees `host_ptr[..host_len]` is valid for reads.
     let host: Option<&[u8]> = if host_len > 0 {
-        Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
+        Some(yolo! { bun_core::ffi::slice(host_ptr, host_len) })
     } else {
         None
     };

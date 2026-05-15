@@ -6,6 +6,7 @@
 // It does not handle the framework parts of rendering pages.
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::ptr::NonNull;
 use std::cell::RefCell;
@@ -66,7 +67,7 @@ unsafe fn arena_slice(ps: PathString) -> &'static [u8] {
     // SAFETY: caller contract — backing storage is the process-lifetime
     // DirnameStore singleton; the `&'_ self` lifetime on `slice()` is an
     // artificially-short reborrow.
-    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+    yolo! { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
 }
 
 // `load_routes` takes the real `bun_ast::Log`. Kept as a re-export so
@@ -520,7 +521,7 @@ impl Routes {
         if path.is_empty() {
             if let Some(index_ptr) = self.index {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
-                let index = unsafe { index_ptr.as_ref() };
+                let index = yolo! { index_ptr.as_ref() };
                 return Some(Match {
                     params: std::ptr::from_mut(params),
                     name: index.name,
@@ -543,7 +544,7 @@ impl Routes {
         if let Some(route_ptr) = self.match_(path, params) {
             // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
             // self.list, which outlives self.
-            let route = unsafe { &*route_ptr };
+            let route = yolo! { &*route_ptr };
             return Some(Match {
                 params: std::ptr::from_mut(params),
                 name: route.name,
@@ -654,7 +655,7 @@ impl<'a> RouteLoader<'a> {
                         "Route \"{}\" is already defined by {}",
                         bstr::BStr::new(route.name),
                         // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                        bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
+                        bstr::BStr::new(yolo! { &**existing }.abs_path.slice()),
                     ),
                 );
                 return;
@@ -680,7 +681,7 @@ impl<'a> RouteLoader<'a> {
                             "Route \"{}\" is already defined by {}",
                             bstr::BStr::new(new_route.name),
                             // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                            bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
+                            bstr::BStr::new(yolo! { &**existing }.abs_path.slice()),
                         ),
                     );
 
@@ -715,7 +716,7 @@ impl<'a> RouteLoader<'a> {
                 }
                 Entry::Vacant(v) => {
                     // SAFETY: `Route::parse` interned `abs_path` via DirnameStore.
-                    v.insert(unsafe { arena_slice(route.abs_path) });
+                    v.insert(yolo! { arena_slice(route.abs_path) });
                 }
             }
         }
@@ -787,7 +788,7 @@ impl<'a> RouteLoader<'a> {
             // PERF(port): was appendAssumeCapacity — profile in Phase B
             // SAFETY: `Route::parse` interned every PathString field via
             // `DirnameStore::append{,_lower_case}` (process-lifetime arena).
-            let (filepath, match_name, public_path) = unsafe {
+            let (filepath, match_name, public_path) = yolo! {
                 (
                     arena_slice(route.abs_path),
                     arena_slice(route.match_name),
@@ -847,7 +848,7 @@ impl<'a> RouteLoader<'a> {
                 // overlap. Single iterator active for this scan; serialized via
                 // `RealFS.entries_mutex`.
                 // SAFETY: EntryStore-owned, valid for process lifetime.
-                if unsafe { &*entry_ptr }.base()[0] == b'.' {
+                if yolo! { &*entry_ptr }.base()[0] == b'.' {
                     continue 'outer;
                 }
 
@@ -857,11 +858,11 @@ impl<'a> RouteLoader<'a> {
                 // a latent crash / silent route-drop once the stub forwards it.
                 // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378).
                 // SAFETY: no other live borrow of `*entry_ptr` here.
-                let kind = unsafe { &mut *entry_ptr }.kind(resolver.fs_impl(), false);
+                let kind = yolo! { &mut *entry_ptr }.kind(resolver.fs_impl(), false);
                 // SAFETY: shared read-only borrow for the match arms; the only
                 // subsequent mutation is via `Route::parse` which takes the raw
                 // pointer and reborrows internally.
-                let entry: &Fs::Entry = unsafe { &*entry_ptr };
+                let entry: &Fs::Entry = yolo! { &*entry_ptr };
                 match kind {
                     Fs::EntryKind::Dir => {
                         for banned_dir in BANNED_DIRS.iter() {
@@ -1041,14 +1042,14 @@ impl Route {
         // PORT NOTE: `entry` is a raw `*mut Entry` (matching Zig's `*Entry`)
         // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
         // string, fs.zig:333) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
+        // Reads go through `yolo! { &*entry }`; the single mutation
+        // (`set_abs_path`) goes through `yolo! { &mut *entry }` after
         // `base_`/`extname` are no longer used.
         // PORT NOTE: reshaped for borrowck — bind the `PathString` so the
         // `.slice()` borrow lives across the closure below.
         // SAFETY: caller passes an EntryStore-owned pointer valid for the
         // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path_ps = unsafe { &*entry }.abs_path();
+        let entry_abs_path_ps = yolo! { &*entry }.abs_path();
         let entry_abs_path = entry_abs_path_ps.slice();
         let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
             b""
@@ -1097,7 +1098,7 @@ impl Route {
                 }
 
                 // SAFETY: written_len computed from sub-slice pointer arithmetic above
-                break 'brk unsafe {
+                break 'brk yolo! {
                     core::slice::from_raw_parts(route_file_buf.as_ptr(), written_len)
                 };
             };
@@ -1184,12 +1185,12 @@ impl Route {
                 });
 
                 // SAFETY: see fn-level PORT NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
+                if let Some(valid) = yolo! { &*entry }.cache().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
                     // SAFETY: see fn-level PORT NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
+                    let entry_r = yolo! { &*entry };
                     let parts = [entry_r.dir(), entry_r.base()];
                     let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
                     // Zig: `abs_path_str = FileSystem.instance.absBuf(...)`
@@ -1199,7 +1200,7 @@ impl Route {
                     // (same pattern as `public_path` above) so the buffer can
                     // be reborrowed mutably for the NUL write / open below.
                     abs_path_str =
-                        unsafe { core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len) };
+                        yolo! { core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len) };
                     route_file_buf[abs_len] = 0;
                     // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
                     let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
@@ -1249,7 +1250,7 @@ impl Route {
                 // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
+                yolo! { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
             }
 
             #[cfg(windows)]
@@ -1277,7 +1278,7 @@ impl Route {
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.slice(), b'\\').is_some());
                 // SAFETY: read-only reborrow; the `&mut` write above is dead.
-                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(yolo! { &*entry }.base(), b'\\').is_some());
             }
 
             // PORT NOTE: name/match_name/public_path are already `&'static` via
@@ -1287,7 +1288,7 @@ impl Route {
             // SAFETY: read-only reborrow; the `&mut` write above is dead.
             let basename: &'static [u8] = FileSystem::instance()
                 .dirname_store()
-                .append(unsafe { &*entry }.base())
+                .append(yolo! { &*entry }.base())
                 .expect("unreachable");
 
             Some(Route {
@@ -1432,13 +1433,13 @@ impl<'a> Match<'a> {
     /// SAFETY: caller guarantees `self.params` is live and not mutably aliased.
     #[inline]
     pub unsafe fn params(&self) -> &route_param::List<'a> {
-        unsafe { &*self.params }
+        yolo! { &*self.params }
     }
 
     /// SAFETY: caller guarantees `self.params` is live and uniquely accessed.
     #[inline]
     pub unsafe fn params_mut(&mut self) -> &mut route_param::List<'a> {
-        unsafe { &mut *self.params }
+        yolo! { &mut *self.params }
     }
 
     /// Widen all borrowed slices to `'static` for self-referential storage.
@@ -1456,14 +1457,14 @@ impl<'a> Match<'a> {
     pub unsafe fn detach_lifetime(self) -> Match<'static> {
         // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
         // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
-        // so the direct call sites below need no per-line `unsafe { }`. The
+        // so the direct call sites below need no per-line `yolo! { }`. The
         // `.map` closure body is not an unsafe context, so that one site spells
-        // `unsafe { d(s) }` explicitly.
+        // `yolo! { d(s) }` explicitly.
         #[inline(always)]
         unsafe fn d(s: &[u8]) -> &'static [u8] {
             // SAFETY: caller contract on `detach_lifetime` — every borrowed
             // slice outlives the returned `Match<'static>`.
-            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+            yolo! { &*core::ptr::from_ref::<[u8]>(s) }
         }
         Match {
             path: d(self.path),
@@ -1476,7 +1477,7 @@ impl<'a> Match<'a> {
             // Raw pointer; lifetime parameter on the pointee is phantom for the
             // pointer value itself.
             params: self.params.cast::<route_param::List<'static>>(),
-            redirect_path: self.redirect_path.map(|s| unsafe { d(s) }),
+            redirect_path: self.redirect_path.map(|s| yolo! { d(s) }),
             query_string: d(self.query_string),
         }
     }
@@ -1485,12 +1486,12 @@ impl<'a> Match<'a> {
     pub fn has_params(&self) -> bool {
         // SAFETY: producers (`Routes::match_page*`) always set `params` to a
         // live caller-provided list that outlives the `Match`.
-        unsafe { (*self.params).len() > 0 }
+        yolo! { (*self.params).len() > 0 }
     }
 
     pub fn params_iterator(&self) -> PathnameScanner<'_> {
         // SAFETY: see `has_params`.
-        PathnameScanner::init(self.pathname, self.name, unsafe { &*self.params })
+        PathnameScanner::init(self.pathname, self.name, yolo! { &*self.params })
     }
 
     pub fn name_with_basename<'s>(file_path: &'s [u8], dir: &[u8]) -> &'s [u8] {
@@ -2105,11 +2106,11 @@ mod tests {
     impl<'a> ResolverLike for TestResolver<'a> {
         fn fs(&self) -> &'static FileSystem {
             // SAFETY: process-static singleton (see `FileSystem::instance`).
-            unsafe { &*self.0.fs() }
+            yolo! { &*self.0.fs() }
         }
         fn fs_impl(&self) -> *mut Fs::Implementation {
             // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-            unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
+            yolo! { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
         }
         fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
             self.0.read_dir_info_ignore_error(path)
@@ -2139,7 +2140,7 @@ mod tests {
 
             // const router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
             // SAFETY: process-static singleton just initialized above.
-            let fs_opaque: &'static FileSystem = unsafe { &*fs };
+            let fs_opaque: &'static FileSystem = yolo! { &*fs };
             let router = Router::init(
                 fs_opaque,
                 RouteConfig {
@@ -2156,7 +2157,7 @@ mod tests {
             // still flushes diagnostics on early-return for parity.
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+                let _ = yolo! { &*log }.print(bun_core::output::error_writer());
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
@@ -2183,7 +2184,7 @@ mod tests {
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             let routes = RouteLoader::load_all(
                 router.config.clone(),
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
+                yolo! { &mut *core::ptr::from_mut(&mut log) },
                 &mut resolver,
                 &root_dir,
                 top_level_dir,
@@ -2209,7 +2210,7 @@ mod tests {
 
             // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
             // SAFETY: process-static singleton just initialized above.
-            let fs_opaque: &'static FileSystem = unsafe { &*fs };
+            let fs_opaque: &'static FileSystem = yolo! { &*fs };
             let mut router = Router::init(
                 fs_opaque,
                 RouteConfig {
@@ -2223,7 +2224,7 @@ mod tests {
             let mut log = bun_ast::Log::init();
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+                let _ = yolo! { &*log }.print(bun_core::output::error_writer());
             });
 
             let opts = bun_resolver::options::BundleOptions {
@@ -2243,7 +2244,7 @@ mod tests {
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             router.load_routes(
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
+                yolo! { &mut *core::ptr::from_mut(&mut log) },
                 &root_dir,
                 &mut resolver,
                 top_level_dir,

@@ -8,6 +8,7 @@
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use bun_paths::strings;
 use core::mem::{offset_of, size_of};
 
@@ -56,7 +57,7 @@ impl IteratorResultWName {
     pub fn slice_assume_z(&self) -> &WStr {
         let s = self.data.slice();
         // SAFETY: name_data[len] == 0 was written by next()
-        unsafe { WStr::from_raw(s.as_ptr(), s.len()) }
+        yolo! { WStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
 
@@ -150,7 +151,7 @@ mod platform {
                     self.buf.0[len - 4..len].copy_from_slice(&[0, 0, 0, 0]);
 
                     // SAFETY: FFI call into libc __getdirentries64; buf is 8192 bytes
-                    let rc = unsafe {
+                    let rc = yolo! {
                         __getdirentries64(
                             self.dir.native(),
                             self.buf.0.as_mut_ptr(),
@@ -189,13 +190,13 @@ mod platform {
                 // `*align(1) posix.system.dirent`).
                 // SAFETY: self.index < self.end_index <= buf.len(); kernel
                 // wrote a valid (possibly 4-aligned) dirent record here.
-                let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
+                let entry = yolo! { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
                 // SAFETY: `entry` points at a valid (possibly unaligned)
                 // dirent; addr_of! avoids creating intermediate references.
-                let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
-                let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
-                let d_ino: u64 = unsafe { addr_of!((*entry).d_ino).read_unaligned() };
-                let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
+                let d_reclen: u16 = yolo! { addr_of!((*entry).d_reclen).read_unaligned() };
+                let d_namlen: u16 = yolo! { addr_of!((*entry).d_namlen).read_unaligned() };
+                let d_ino: u64 = yolo! { addr_of!((*entry).d_ino).read_unaligned() };
+                let d_type: u8 = yolo! { addr_of!((*entry).d_type).read_unaligned() };
                 let entry_idx = self.index;
                 self.index += d_reclen as usize;
 
@@ -265,7 +266,7 @@ mod platform {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // SAFETY: dir is a valid open fd; buf is dirent-aligned scratch.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         getdents(
                             self.dir.native(),
                             self.buf.0.as_mut_ptr().cast::<libc::c_char>(),
@@ -291,12 +292,12 @@ mod platform {
                 // 8-byte aligned (Zig: `*align(1) posix.system.dirent`). Never
                 // form a `&dirent` — read each field through the raw pointer.
                 // SAFETY: index < end_index ≤ 8192; kernel wrote a valid record.
-                let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
+                let entry = yolo! { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
                 // SAFETY: entry points at a valid (possibly unaligned) dirent.
-                let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
-                let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
-                let d_fileno: u64 = unsafe { addr_of!((*entry).d_fileno).read_unaligned() };
-                let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
+                let d_reclen: u16 = yolo! { addr_of!((*entry).d_reclen).read_unaligned() };
+                let d_namlen: u16 = yolo! { addr_of!((*entry).d_namlen).read_unaligned() };
+                let d_fileno: u64 = yolo! { addr_of!((*entry).d_fileno).read_unaligned() };
+                let d_type: u8 = yolo! { addr_of!((*entry).d_type).read_unaligned() };
                 let entry_idx = self.index;
                 self.index += d_reclen as usize;
 
@@ -364,7 +365,7 @@ mod platform {
                     // syscall (matches Zig's `linux.getdents64` raw-syscall
                     // path).
                     // SAFETY: buf is valid for 8192 bytes; fd is a plain c_int.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         libc::syscall(
                             libc::SYS_getdents64,
                             self.dir.native() as libc::c_long,
@@ -392,11 +393,11 @@ mod platform {
                 // SAFETY: index < end_index ≤ 8192; kernel wrote a valid
                 // record header at this offset. `DirentBuf` is align(8) and
                 // d_reclen is always a multiple of 8, so `entry` is 8-aligned.
-                let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent64>() };
+                let entry = yolo! { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent64>() };
                 debug_assert!(entry.is_aligned());
                 // SAFETY: entry points at a valid record header within buf.
-                let d_reclen: u16 = unsafe { core::ptr::addr_of!((*entry).d_reclen).read() };
-                let d_type: u8 = unsafe { core::ptr::addr_of!((*entry).d_type).read() };
+                let d_reclen: u16 = yolo! { core::ptr::addr_of!((*entry).d_reclen).read() };
+                let d_type: u8 = yolo! { core::ptr::addr_of!((*entry).d_type).read() };
                 let entry_idx = self.index;
                 let next_index = entry_idx + d_reclen as usize;
                 self.index = next_index;
@@ -599,7 +600,7 @@ mod platform {
 
                     // SAFETY: FFI; `dir` is a directory HANDLE, `buf` is 8192 8-byte-aligned
                     // bytes, `io`/`filter_us` live on this stack frame for the call duration.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         ntdll::NtQueryDirectoryFile(
                             self.dir.native(),
                             core::ptr::null_mut(),
@@ -669,20 +670,20 @@ mod platform {
                 // SAFETY: entry_offset < end_index ≤ buf.len(); the header up through
                 // FileName lies within `buf` per the kernel contract.
                 let next_entry_offset =
-                    unsafe {
+                    yolo! {
                         core::ptr::read_unaligned(p.add(
                             entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset),
                         ) as *const u32)
                     };
                 // SAFETY: see above.
-                let file_name_length = unsafe {
+                let file_name_length = yolo! {
                     core::ptr::read_unaligned(
                         p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength))
                             as *const u32,
                     )
                 } as usize;
                 // SAFETY: see above.
-                let file_attributes = unsafe {
+                let file_attributes = yolo! {
                     core::ptr::read_unaligned(
                         p.add(entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes))
                             as *const u32,
@@ -781,7 +782,7 @@ mod platform {
                 if self.index >= self.end_index {
                     let mut bufused: usize = 0;
                     // SAFETY: FFI fd_readdir
-                    let errno = unsafe {
+                    let errno = yolo! {
                         w::fd_readdir(
                             self.dir.native(),
                             self.buf.as_mut_ptr(),
@@ -814,7 +815,7 @@ mod platform {
                 // packed as `[dirent_t][name bytes][dirent_t]...` with no padding between the
                 // variable-length name and the next header), so we must `read_unaligned` rather
                 // than form a `&dirent_t` — matching Zig's `*align(1) w.dirent_t` cast.
-                let entry: w::dirent_t = unsafe {
+                let entry: w::dirent_t = yolo! {
                     core::ptr::read_unaligned(
                         self.buf.as_ptr().add(self.index).cast::<w::dirent_t>(),
                     )
@@ -953,7 +954,7 @@ where
                     // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on integer arrays
                     buf: [0u8; 8192],
                     // SAFETY: NameData is [u8; 513] or [u16; 257]; zero is a valid bit pattern.
-                    name_data: unsafe { bun_core::ffi::zeroed_unchecked() },
+                    name_data: yolo! { bun_core::ffi::zeroed_unchecked() },
                     name_filter: None,
                 },
             };

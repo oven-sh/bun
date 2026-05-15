@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::sync::OnceLock;
 
 use crate::ThreadPool;
@@ -35,7 +36,7 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     #[inline(always)]
     unsafe fn from_task_ptr(task: *mut Task) -> *mut Self {
         // SAFETY: caller upholds the trait safety contract above.
-        unsafe { Self::from_field_ptr(task) }
+        yolo! { Self::from_field_ptr(task) }
     }
 }
 
@@ -63,7 +64,7 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
         // `WorkPool::schedule_owned` leaked. The thread pool guarantees this
         // callback fires exactly once per scheduled task, so reclaiming the
         // `Box` here is sound.
-        let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };
+        let this = yolo! { Box::from_raw(Self::from_task_ptr(task)) };
         this.run();
     }
 }
@@ -174,7 +175,7 @@ impl WorkPool {
         let raw = Box::into_raw(task);
         // SAFETY: `raw` is a live heap allocation now owned by the pool;
         // `IntrusiveField::field_of` projects to the embedded `Task`.
-        Self::schedule(unsafe { T::field_of(raw) });
+        Self::schedule(yolo! { T::field_of(raw) });
     }
 
     /// `Box::new` + [`schedule_owned`](Self::schedule_owned). Convenience for
@@ -197,7 +198,7 @@ impl WorkPool {
         unsafe fn callback<C>(task: *mut Task) {
             // SAFETY: `task` points to the `task` field of a `TaskType<C>` allocated below
             // via Box::into_raw; recover the parent pointer, run the user fn, then free.
-            unsafe {
+            yolo! {
                 let this_task = bun_core::from_field_ptr!(TaskType<C>, task, task);
                 let this_task = Box::from_raw(this_task);
                 (this_task.function)(this_task.context);
@@ -213,7 +214,7 @@ impl WorkPool {
             function,
         }));
         // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
-        Self::schedule(unsafe { &raw mut (*task_).task });
+        Self::schedule(yolo! { &raw mut (*task_).task });
         Ok(())
     }
 }

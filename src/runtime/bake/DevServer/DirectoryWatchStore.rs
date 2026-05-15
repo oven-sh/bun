@@ -7,6 +7,7 @@
 //! import resolution failures are solved.
 // TODO: when a file fixes its resolution, there is no code specifically to remove the watchers.
 
+use bun_yolo::yolo;
 use bun_paths::strings;
 use core::mem::offset_of;
 
@@ -71,7 +72,7 @@ impl DirectoryWatchStore {
         // TODO(port): `container_of` aliasing — returning &mut DevServer while
         // &mut self is live is unsound under stacked borrows; Phase B may need
         // to return *mut DevServer or restructure access.
-        unsafe {
+        yolo! {
             &mut *bun_core::from_field_ptr!(
                 DevServer,
                 directory_watchers,
@@ -229,7 +230,7 @@ impl DirectoryWatchStore {
         // SAFETY: server_transpiler is initialized by Framework::init_transpiler
         // before DevServer accepts requests / processes resolution failures.
         // `dev` is a valid *mut DevServer for the duration of this call.
-        let cache_fd: Option<Fd> = match unsafe { (*dev).server_transpiler.assume_init_mut() }
+        let cache_fd: Option<Fd> = match yolo! { (*dev).server_transpiler.assume_init_mut() }
             .resolver
             .read_dir_info(dir_name_to_watch)
         {
@@ -307,7 +308,7 @@ impl DirectoryWatchStore {
         );
 
         // SAFETY: `dev` is a valid *mut DevServer for the duration of this call.
-        let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<false>(
+        let watch_index = match yolo! { &mut (*dev).bun_watcher }.add_directory::<false>(
             fd,
             &dir_name,
             Watcher::get_hash(&dir_name),

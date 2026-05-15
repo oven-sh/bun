@@ -35,6 +35,7 @@
 // the macro definitions into a sibling `env_var_impl.rs` and `#[macro_use]` it to restore Zig
 // declaration order in this file.
 
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
@@ -340,7 +341,7 @@ pub(crate) mod kind {
 
                 // SAFETY: ptr/len were stored together in deser_and_invalidate from a valid
                 // &'static [u8] returned by getenv_z (envp memory lives for process lifetime).
-                CacheOutput::Value(unsafe { core::slice::from_raw_parts(ptr, len) })
+                CacheOutput::Value(yolo! { core::slice::from_raw_parts(ptr, len) })
             }
 
             #[inline]

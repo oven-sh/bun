@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::{c_uint, c_void};
 
@@ -41,7 +42,7 @@ impl ConnectingSocket {
         // allocation; `&mut self` guarantees exclusive access to it for the
         // returned borrow's lifetime. Caller asserts the slot was sized/
         // aligned for T at group creation.
-        unsafe { &mut *us_connecting_socket_ext(self).cast::<T>() }
+        yolo! { &mut *us_connecting_socket_ext(self).cast::<T>() }
     }
 
     pub fn get_error(&mut self) -> i32 {

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 use core::ptr::NonNull;
 
@@ -220,7 +221,7 @@ impl List {
 
         // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
         let last_tail: &mut Query = match self.tail {
-            Some(mut p) => unsafe { p.as_mut() },
+            Some(mut p) => yolo! { p.as_mut() },
             None => &mut self.head,
         };
         last_tail.next = Some(tail);
@@ -313,7 +314,7 @@ impl Group {
             // SAFETY: `input` points into the parse source buffer which the
             // caller must keep alive for the lifetime of this Group (Zig
             // stored a bare `[]const u8` with the same contract).
-            let input = unsafe { &*self.input };
+            let input = yolo! { &*self.input };
             let _ = write!(&mut v, "{}", self.fmt(input));
             v
         };
@@ -405,7 +406,7 @@ impl Group {
 
         // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
         let prev_tail: &mut List = match self.tail {
-            Some(mut p) => unsafe { p.as_mut() },
+            Some(mut p) => yolo! { p.as_mut() },
             None => &mut self.head,
         };
         prev_tail.next = Some(new_tail);
@@ -416,7 +417,7 @@ impl Group {
     pub fn and_range(&mut self, range: Range) -> Result<(), AllocError> {
         // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
         let tail: &mut List = match self.tail {
-            Some(mut p) => unsafe { p.as_mut() },
+            Some(mut p) => yolo! { p.as_mut() },
             None => &mut self.head,
         };
         tail.and_range(range)
@@ -435,7 +436,7 @@ impl Group {
 
         // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
         let prev_tail: &mut List = match self.tail {
-            Some(mut p) => unsafe { p.as_mut() },
+            Some(mut p) => yolo! { p.as_mut() },
             None => &mut self.head,
         };
         prev_tail.next = Some(new_tail);

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_char;
 
 use bun_alloc::AllocError;
@@ -44,13 +45,13 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         let wtf16_buf: *mut u16 = crate::windows::GetEnvironmentStringsW()?;
         let _free = scopeguard::guard(wtf16_buf, |p| {
             // SAFETY: `p` was returned by GetEnvironmentStringsW and has not been freed.
-            unsafe { crate::windows::FreeEnvironmentStringsW(p) };
+            yolo! { crate::windows::FreeEnvironmentStringsW(p) };
         });
         let mut len: usize = 0;
         loop {
             // SAFETY: `wtf16_buf` is a contiguous double-NUL-terminated block returned by the OS;
             // every offset we read is inside that block until we observe the terminating empty string.
-            let str_len = unsafe { bun_core::ffi::wcslen(wtf16_buf.add(len)) };
+            let str_len = yolo! { bun_core::ffi::wcslen(wtf16_buf.add(len)) };
             len += str_len + 1; // each string is null-terminated
             if str_len == 0 {
                 break; // array ends with empty null-terminated string
@@ -58,7 +59,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
             num_vars += 1;
         }
         // SAFETY: we just measured `len` u16 elements (including terminators) within the OS-owned block.
-        let wtf16_slice = unsafe { bun_core::ffi::slice(wtf16_buf, len) };
+        let wtf16_slice = yolo! { bun_core::ffi::slice(wtf16_buf, len) };
         // Zig: `bun.strings.toUTF8AllocWithType(allocator, []u16, slice) catch oom()`.
         // Rust `bun_core::strings::to_utf8_alloc` is infallible (panics on OOM)
         // and returns `Vec<u8>` directly — no `?` here.
@@ -92,7 +93,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     let envp_slice = Box::leak(envp.into_boxed_slice());
     let envp_nonnull_len = envp_slice.len() - 1;
     // SAFETY: single-threaded startup; statics are written exactly once here.
-    unsafe {
+    yolo! {
         WTF8_ENV_BUF.write(Some(wtf8_buf));
         // TODO(port): need Rust equivalent of Zig `std.os.environ` (process-global envp slice).
         ORIG_ENVIRON.write(Some(bun_core::os::take_environ()));

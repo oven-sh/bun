@@ -26,6 +26,7 @@
 //!   fn on_connecting_error(*ConnectingSocket, code: i32)
 //!   fn on_handshake(ext, *us_socket_t, ok: bool, err: us_bun_verify_error_t)
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 
 use crate::socket_group::VTable;
@@ -251,7 +252,7 @@ impl<H: Handler> Trampolines<H> {
     ) -> *mut us_socket_t {
         // SAFETY: usockets guarantees `ip[0..ip_len]` is valid when non-null.
         let ip_slice: &[u8] =
-            unsafe { thunk::c_slice(ip, usize::try_from(ip_len).expect("int cast")) };
+            yolo! { thunk::c_slice(ip, usize::try_from(ip_len).expect("int cast")) };
         if H::HAS_EXT {
             H::on_open(Self::ext(s), s, is_client != 0, ip_slice);
         } else {
@@ -262,7 +263,7 @@ impl<H: Handler> Trampolines<H> {
 
     pub extern "C" fn on_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid.
-        let data_slice = unsafe { thunk::c_slice(data, usize::try_from(len).expect("int cast")) };
+        let data_slice = yolo! { thunk::c_slice(data, usize::try_from(len).expect("int cast")) };
         if H::HAS_EXT {
             H::on_data(Self::ext(s), s, data_slice);
         } else {

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::fmt;
 
@@ -118,7 +119,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         debug_assert!(self.tag == Tag::Git || self.tag == Tag::Github);
         // SAFETY: `git` and `github` occupy the same union slot type
         // (`Repository`); tag asserted to be one of the two.
-        unsafe { &(*core::ptr::from_ref(&self.value)).git }
+        yolo! { &(*core::ptr::from_ref(&self.value)).git }
     }
 
     pub fn is_git(&self) -> bool {
@@ -858,7 +859,7 @@ pub fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
     // SAFETY: all-zero is a valid Value — every variant is POD with a valid
     // all-zero representation (Semver String, Repository, VersionedURLType are
     // all #[repr(C)] with no NonNull/NonZero fields).
-    unsafe { bun_core::ffi::zeroed_unchecked() }
+    yolo! { bun_core::ffi::zeroed_unchecked() }
 }
 
 /// To avoid undefined memory between union values, we must zero initialize the union first.

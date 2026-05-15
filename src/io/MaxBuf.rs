@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -36,7 +37,7 @@ impl MaxBuf {
     #[inline]
     fn live<'a>(this: &'a NonNull<MaxBuf>) -> &'a MaxBuf {
         // SAFETY: type invariant — see doc comment above.
-        unsafe { this.as_ref() }
+        yolo! { this.as_ref() }
     }
 
     pub fn create_for_subprocess(ptr: &mut Option<NonNull<MaxBuf>>, initial: Option<i64>) {
@@ -66,7 +67,7 @@ impl MaxBuf {
         // SAFETY: type invariant — `this` was produced by
         // `bun_core::heap::into_raw_nn` in `create_for_subprocess` and is
         // freed exactly once (both owner flags now `false`).
-        drop(unsafe { bun_core::heap::take(this.as_ptr()) });
+        drop(yolo! { bun_core::heap::take(this.as_ptr()) });
     }
 
     pub fn remove_from_subprocess(ptr: &mut Option<NonNull<MaxBuf>>) {

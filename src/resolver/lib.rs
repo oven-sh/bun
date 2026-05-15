@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 // Port of src/resolver/resolver.zig
 #![allow(
     dead_code,
@@ -72,7 +73,7 @@ pub(crate) fn path_string_static(ps: &bun_core::PathString) -> &'static [u8] {
     // SAFETY: see fn doc — `PathString` always points into a process-lifetime
     // BSS append-only store (`FilenameStore`/`DirnameStore`); the bytes outlive
     // the program. `Interned` is the canonical proof type for this widen.
-    unsafe { bun_ptr::Interned::assume(ps.slice()) }.as_bytes()
+    yolo! { bun_ptr::Interned::assume(ps.slice()) }.as_bytes()
 }
 
 // Re-export the un-gated Phase-A body. `Resolver`, `Result`, `MatchResult`,
@@ -136,7 +137,7 @@ pub mod fs {
                     // formed). The returned slice borrows its never-freed backing storage
                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
                     // widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                    yolo! { bun_alloc::BSSStringList::append($backing(), value) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 pub fn append_parts(
@@ -144,7 +145,7 @@ pub mod fs {
                     parts: &[&[u8]],
                 ) -> core::result::Result<&'static [u8], bun_core::Error> {
                     // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), parts) }
+                    yolo! { bun_alloc::BSSStringList::append($backing(), parts) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format
@@ -154,15 +155,15 @@ pub mod fs {
                     args: core::fmt::Arguments<'_>,
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append_slice`.
-                    let s = unsafe { bun_alloc::BSSStringList::print($backing(), args)? };
+                    let s = yolo! { bun_alloc::BSSStringList::print($backing(), args)? };
                     // SAFETY: storage owned by the process-lifetime `BSSStringList`
                     // singleton (never freed); `Interned` is the canonical proof type.
-                    Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
+                    Ok(yolo! { bun_ptr::Interned::assume(s) }.as_bytes())
                 }
                 #[inline]
                 pub fn exists(&self, value: &[u8]) -> bool {
                     // SAFETY: see `append_slice`.
-                    unsafe { &*$backing() }.exists(value)
+                    yolo! { &*$backing() }.exists(value)
                 }
             }
         };
@@ -185,7 +186,7 @@ pub mod fs {
                     // `BSSStringList::append` takes `*mut Self` and serializes all mutation
                     // through its internal `mutex`. Returned slice borrows its never-freed
                     // storage, so widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                    yolo! { bun_alloc::BSSStringList::append($backing(), value) }
                         .map_err(|_| bun_alloc::AllocError)
                 }
                 /// Zig: `<Store>.appendLowerCase(allocator, value)`.
@@ -195,7 +196,7 @@ pub mod fs {
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append`.
-                    unsafe { bun_alloc::BSSStringList::append_lower_case($backing(), value) }
+                    yolo! { bun_alloc::BSSStringList::append_lower_case($backing(), value) }
                         .map_err(|_| bun_alloc::AllocError)
                 }
             }
@@ -270,7 +271,7 @@ pub mod fs {
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called (matches Zig global singleton).
-            unsafe { (*INSTANCE.get()).assume_init_mut() }
+            yolo! { (*INSTANCE.get()).assume_init_mut() }
         }
 
         /// Shared-ref accessor for the process-lifetime singleton. Prefer this
@@ -290,7 +291,7 @@ pub mod fs {
             // SAFETY: `INSTANCE` is written exactly once by `init()` during
             // single-threaded startup (Release-paired with the Acquire above)
             // and never freed; shared `&` aliases freely across threads.
-            unsafe { (*INSTANCE.get()).assume_init_ref() }
+            yolo! { (*INSTANCE.get()).assume_init_ref() }
         }
 
         /// Port of `FileSystem.init` (fs.zig:90-108). First call writes the
@@ -314,7 +315,7 @@ pub mod fs {
         ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
             // SAFETY: matches Zig global singleton init pattern; called from
             // `Transpiler::init` before any worker spawn.
-            unsafe {
+            yolo! {
                 if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
                     return Ok((*INSTANCE.get()).as_mut_ptr());
                 }
@@ -343,7 +344,7 @@ pub mod fs {
             // guaranteed UTF-8, and the lower tier stores/serves bytes.
             bun_paths::fs::FileSystem::init(cwd);
             // SAFETY: see above.
-            unsafe {
+            yolo! {
                 (*INSTANCE.get()).write(FileSystem {
                     top_level_dir: cwd,
                     top_level_dir_buf: bun_paths::PathBuffer::uninit(),
@@ -515,7 +516,7 @@ pub mod fs {
             let r = self.fs.read_directory(dir, None, generation, store_fd)?;
             // SAFETY: `r` borrows the BSSMap singleton (process-lifetime); re-erase
             // to `'static` so `&mut self` is dropped before the caller binds the slot.
-            Ok(unsafe { &mut *std::ptr::from_mut::<EntriesOption>(r) })
+            Ok(yolo! { &mut *std::ptr::from_mut::<EntriesOption>(r) })
         }
     }
 
@@ -727,7 +728,7 @@ pub mod fs {
             // unbounded `&mut EntriesOption` return type — the `RefMut` guard
             // drops immediately on return, so no live `RefCell` borrow aliases
             // the escaped reference.
-            unsafe { &mut *slot.as_mut_ptr() }
+            yolo! { &mut *slot.as_mut_ptr() }
         })
     }
 
@@ -854,7 +855,7 @@ pub mod fs {
                 };
                 // SAFETY: `existing`/`new` are NUL-terminated WTF-16 backed by
                 // stack `WPathBuffer`s alive for this frame.
-                if unsafe {
+                if yolo! {
                     w::kernel32::MoveFileExW(
                         existing.as_ptr(),
                         new.as_ptr(),
@@ -943,7 +944,7 @@ pub mod fs {
             // borrow is bounded by that `&mut self` — it cannot outlive the
             // field borrow nor be sent to another thread independently of it.
             // Cross-thread exclusion is provided by the mutex asserted above.
-            unsafe { &mut *entries_option_map() }
+            yolo! { &mut *entries_option_map() }
         }
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
             self.inner().get(key)
@@ -1144,7 +1145,7 @@ pub mod fs {
                         }),
                     )?;
                     // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-                    return Ok(unsafe { &mut *opt });
+                    return Ok(yolo! { &mut *opt });
                 }
             }
 
@@ -1216,7 +1217,7 @@ pub mod fs {
                         // Single `&mut` reborrow — the catch-all arm binds and returns the
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
-                        match unsafe { &mut *cached_ptr } {
+                        match yolo! { &mut *cached_ptr } {
                             EntriesOption::Entries(e) if e.generation < generation => {
                                 in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
@@ -1256,7 +1257,7 @@ pub mod fs {
                 if let Some(existing) = in_place {
                     // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
                     // its `dir` field is DirnameStore-interned (&'static).
-                    unsafe { (*existing).dir }
+                    yolo! { (*existing).dir }
                 } else {
                     DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
                 }
@@ -1270,7 +1271,7 @@ pub mod fs {
             // Cache miss: read the directory entries
             let prev = in_place.map(|p| {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
-                unsafe { &mut (*p).data }
+                yolo! { &mut (*p).data }
             });
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
@@ -1279,7 +1280,7 @@ pub mod fs {
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
                         // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
-                        unsafe { (*existing).data.clear() };
+                        yolo! { (*existing).data.clear() };
                     }
                     return Ok(self.read_directory_error(dir, err)?);
                 }
@@ -1297,7 +1298,7 @@ pub mod fs {
                 if let Some(original) = in_place {
                     // SAFETY: BSSMap-owned; entries_mutex held.
                     // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
-                    unsafe { (*original).data.clear() };
+                    yolo! { (*original).data.clear() };
                 }
                 if store_fd && !entries.fd.is_valid() {
                     entries.fd = handle;
@@ -1305,15 +1306,15 @@ pub mod fs {
 
                 // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
                 // leaked Box; exclusively owned here under `entries_mutex`.
-                unsafe { *entries_ptr = entries };
+                yolo! { *entries_ptr = entries };
                 let result = EntriesOption::Entries(
                     // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
-                    unsafe { &mut *entries_ptr },
+                    yolo! { &mut *entries_ptr },
                 );
 
                 let out = self.entries.put(cache_result.as_mut().unwrap(), result)?;
                 // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-                return Ok(unsafe { &mut *out });
+                return Ok(yolo! { &mut *out });
             }
 
             // ENABLE_ENTRY_CACHE = false: stash in the threadlocal and hand back its
@@ -1321,7 +1322,7 @@ pub mod fs {
             // this thread (matches Zig — threadlocal `temp_entries_option`).
             let entries_ptr = bun_core::heap::into_raw(Box::new(entries));
             // SAFETY: freshly-leaked Box; re-borrow as 'static for the threadlocal slot.
-            Ok(temp_entries_option_write(EntriesOption::Entries(unsafe {
+            Ok(temp_entries_option_write(EntriesOption::Entries(yolo! {
                 &mut *entries_ptr
             })))
         }
@@ -1408,7 +1409,7 @@ pub mod fs {
                     absolute_path_c.as_bytes(),
                 );
                 // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
-                let handle = unsafe {
+                let handle = yolo! {
                     w::CreateFileW(
                         wpath.as_ptr(),
                         0,
@@ -1434,12 +1435,12 @@ pub mod fs {
                 }
                 scopeguard::defer! {
                     // SAFETY: `handle` is a valid HANDLE from CreateFileW above.
-                    unsafe { let _ = w::CloseHandle(handle); }
+                    yolo! { let _ = w::CloseHandle(handle); }
                 }
 
                 let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
-                if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+                if yolo! { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                         EntryKind::Dir
                     } else {
@@ -1493,7 +1494,7 @@ pub mod fs {
                             let _ = bun_sys::close(file);
                         } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
                             // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                            unsafe { (*cache_ptr).fd = file };
+                            yolo! { (*cache_ptr).fd = file };
                         }
                     });
 
@@ -1570,11 +1571,11 @@ pub mod fs {
             // `entries_mutex` held by caller; sole `&mut` to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
-            if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
+            if let EntriesOption::Entries(existing) = yolo! { &mut *result_ptr } {
                 if existing.generation < generation {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
-                    let dir = unsafe { (*e_ptr).dir };
+                    let dir = yolo! { (*e_ptr).dir };
                     // Spec fs.zig:617 — `bun.openDirForIteration(FD.cwd(), dir)`, NOT
                     // `RealFS.openDir`. On Windows the two diverge: `open_dir` passes
                     // `read_only: true` (no DELETE access on the handle), whereas
@@ -1585,7 +1586,7 @@ pub mod fs {
                         Ok(h) => h,
                         Err(err) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
+                            yolo! { (*e_ptr).data.clear() };
                             return self.read_directory_error(dir, err.into()).ok();
                         }
                     };
@@ -1594,24 +1595,24 @@ pub mod fs {
                         let _ = bun_sys::close(h);
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
-                    let prev = Some(unsafe { &mut (*e_ptr).data });
+                    let prev = Some(yolo! { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
+                            yolo! { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            yolo! { *e_ptr = new_entry };
                         }
                         Err(err) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
+                            yolo! { (*e_ptr).data.clear() };
                             return self.read_directory_error(dir, err).ok();
                         }
                     }
                 }
             }
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-            Some(unsafe { &mut *result_ptr })
+            Some(yolo! { &mut *result_ptr })
         }
 
         fn platform_temp_dir_compute() -> &'static [u8] {
@@ -2010,7 +2011,7 @@ pub mod dir_entry_accessor {
                     // singleton; reborrow as shared 'static for the Copy handle.
                     let p: *const DirEntry = &raw const **entry;
                     Ok(Ok(DirEntryHandle {
-                        value: Some(unsafe { &*p }),
+                        value: Some(yolo! { &*p }),
                     }))
                 }
                 EntriesOption::Err(err) => Err(err.original_err),
@@ -2110,7 +2111,7 @@ pub mod cache {
         pub fn call(&self) {
             if let Some(func) = self.function {
                 // SAFETY: ctx was provided by the same native plugin that provided `function`.
-                unsafe { func(self.ctx) };
+                yolo! { func(self.ctx) };
             }
         }
     }
@@ -2177,14 +2178,14 @@ pub mod cache {
                 // and valid for shared reads for at least `'_`. Cannot be a
                 // `bun_ptr::RawSlice` field without breaking `src/bundler/`
                 // struct-literal constructors (out-of-shard).
-                Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
+                Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => yolo! {
                     core::slice::from_raw_parts(*ptr, *len)
                 },
                 // SAFETY: ARENA — `ptr[..len]` lives in the caller-supplied
                 // `MimallocArena`, which the caller guarantees outlives every
                 // read through this `Entry` (the arena is dropped only after
                 // the `ParseResult` carrying this `Contents` is recycled).
-                Contents::Arena { ptr, len } => unsafe {
+                Contents::Arena { ptr, len } => yolo! {
                     core::slice::from_raw_parts(ptr.as_ptr(), *len)
                 },
             }
@@ -2303,7 +2304,7 @@ pub mod cache {
         pub fn deinit(&mut self) {
             if let Some(func) = self.external_free_function.function {
                 // SAFETY: ctx/function pair was supplied together by the native plugin.
-                unsafe { func(self.external_free_function.ctx) };
+                yolo! { func(self.external_free_function.ctx) };
             }
             // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
             // `allocator.free(entry.contents)`); `Arena`/`SharedBuffer`/
@@ -2756,7 +2757,7 @@ pub mod __phase_a_body {
                 cwd, part
             ));
             // SAFETY: see PORT NOTE — slice borrows threadlocal storage, valid 'static per-thread.
-            unsafe { bun_ptr::detach_lifetime(s) }
+            yolo! { bun_ptr::detach_lifetime(s) }
         }
         pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
             dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
@@ -3458,7 +3459,7 @@ pub mod __phase_a_body {
         // field is scratch (write-then-read within a single resolve call,
         // including `open_dirs` which is bounded by `open_dir_count`), so
         // there is no need to pay for zero-filling ~100 KiB on first use.
-        let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
+        let p: *mut Bufs = Box::leak(yolo! { Box::<Bufs>::new_uninit().assume_init() });
         BUFS_PTR.set(p);
         p
     }
@@ -3468,7 +3469,7 @@ pub mod __phase_a_body {
     macro_rules! bufs {
     ($field:ident) => {
         // SAFETY: threadlocal storage; callers must not alias the same field within one call frame.
-        unsafe { &mut (*bufs_storage_get()).$field }
+        yolo! { &mut (*bufs_storage_get()).$field }
     };
 }
 
@@ -3496,7 +3497,7 @@ pub mod __phase_a_body {
             if let Some(path_) = self.next_() {
                 // SAFETY: reshaped for borrowck — recurse via raw ptr to avoid double &mut.
                 let p: *mut Path = path_;
-                unsafe {
+                yolo! {
                     if (*p).is_disabled {
                         return self.next();
                     }
@@ -3672,7 +3673,7 @@ pub mod __phase_a_body {
             // PackageJSON cache (or a `'static` fallback-module literal); never
             // freed while a `Result` is live (see LIFETIMES.tsv). No
             // `&mut PackageJSON` is ever materialized concurrently with a read.
-            ptr.map(|p| unsafe { &*p })
+            ptr.map(|p| yolo! { &*p })
         }
 
         pub fn path(&mut self) -> Option<&mut Path> {
@@ -4066,7 +4067,7 @@ pub mod __phase_a_body {
                 // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
                 // (Rust-ABI, thin-ptr first arg); the `wrap` shim in Zig did the
                 // same erase. The callback body discharges its own type-recovery.
-                callback: unsafe {
+                callback: yolo! {
                     bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(
                         self.on_watch,
                     )
@@ -4206,7 +4207,7 @@ pub mod __phase_a_body {
             // SAFETY: `slot` was derived via `addr_of_mut!` from the raw resolver
             // pointer in `scoped_log` (SharedReadWrite provenance); caller contract
             // guarantees the resolver outlives this guard.
-            unsafe { *self.slot = self.prev };
+            yolo! { *self.slot = self.prev };
         }
     }
 
@@ -4256,7 +4257,7 @@ pub mod __phase_a_body {
                 // vtable layout is identical (only the borrow-checker tag differs);
                 // a raw-pointer `as`-cast cannot change the `+ 'b` bound, so widen
                 // via a layout-preserving transmute on the `Option<&dyn>`.
-                standalone_module_graph: unsafe {
+                standalone_module_graph: yolo! {
                     core::mem::transmute::<
                         Option<&'_ dyn StandaloneModuleGraph>,
                         Option<&'a dyn StandaloneModuleGraph>,
@@ -4278,7 +4279,7 @@ pub mod __phase_a_body {
         /// aliased unique refs to the same singleton (PORTING.md §Forbidden:
         /// aliased-&mut), and any later `&mut *self.fs` retag would pop a previously
         /// returned `&'a mut`'s SB tag while it's still nominally live for `'a`.
-        /// Callers must `unsafe { &mut *r.fs() }` at the narrowest use site and let
+        /// Callers must `yolo! { &mut *r.fs() }` at the narrowest use site and let
         /// the projection die at end-of-expression. Spec resolver.zig:455 stores raw
         /// `*Fs.FileSystem` and dereferences per-use.
         #[inline(always)]
@@ -4288,7 +4289,7 @@ pub mod __phase_a_body {
 
         /// Shared-borrow of the FileSystem singleton for read-only methods
         /// (`abs_buf*`, `normalize_buf`, `dirname_store`, `filename_store`,
-        /// `top_level_dir`). Preferred over `unsafe { &mut *self.fs() }` whenever
+        /// `top_level_dir`). Preferred over `yolo! { &mut *self.fs() }` whenever
         /// the callee takes `&self` — avoids materializing a `&mut FileSystem`
         /// that could (under Stacked Borrows) pop a coexisting `rfs_ptr()` /
         /// `&mut *query.entry` tag derived from the same allocation.
@@ -4298,11 +4299,11 @@ pub mod __phase_a_body {
             // (LIFETIMES.tsv: STATIC); resolver mutex serializes all mutation. A
             // shared `&` cannot alias-UB with the raw `*mut RealFS` projections
             // used elsewhere because no Unique tag is pushed.
-            unsafe { &*self.fs }
+            yolo! { &*self.fs }
         }
 
         /// Unique-borrow of the `FileSystem` singleton. Centralizes the
-        /// `unsafe { &mut *self.fs() }` retag for call sites that hold no other
+        /// `yolo! { &mut *self.fs() }` retag for call sites that hold no other
         /// borrow of `self` across the call. Sites that need `&mut FileSystem`
         /// while also borrowing a disjoint `self.<field>` (e.g.
         /// `self.caches.fs.read_file_with_allocator`) cannot route through
@@ -4314,7 +4315,7 @@ pub mod __phase_a_body {
             // `FileSystem` singleton (set in `init1`); resolver mutex serializes
             // all mutation across worker clones; `&mut self` rules out
             // intra-instance aliasing.
-            unsafe { &mut *self.fs }
+            yolo! { &mut *self.fs }
         }
 
         /// Resolve the current [`options::ExtOrder`] tag to the slice it names
@@ -4337,14 +4338,14 @@ pub mod __phase_a_body {
             // SAFETY: `self.fs` is the process-global FileSystem singleton; valid
             // for the resolver's lifetime. `addr_of_mut!` creates a raw place
             // projection without an intermediate `&mut FileSystem`.
-            unsafe { core::ptr::addr_of_mut!((*self.fs).fs) }
+            yolo! { core::ptr::addr_of_mut!((*self.fs).fs) }
         }
 
         /// Port of Zig `r.log` deref.
         ///
         /// PORT NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). BACKREF
         /// — owner (Transpiler/BundleV2) outlives the Resolver; worker clones share
-        /// the same Log under the resolver mutex. Caller `unsafe { &mut *r.log() }`
+        /// the same Log under the resolver mutex. Caller `yolo! { &mut *r.log() }`
         /// at each use site; do not bind the projected `&mut Log` across another
         /// `log()` deref.
         #[inline(always)]
@@ -4369,15 +4370,15 @@ pub mod __phase_a_body {
         pub unsafe fn scoped_log(self_: *mut Self, log: *mut bun_ast::Log) -> ResolverLogScope {
             // SAFETY: caller contract — `self_` is live; `addr_of_mut!` projects
             // the field place without an intermediate `&mut Resolver`.
-            let slot = unsafe { core::ptr::addr_of_mut!((*self_).log) };
+            let slot = yolo! { core::ptr::addr_of_mut!((*self_).log) };
             // SAFETY: `slot` just derived from a live resolver.
-            let prev = unsafe { *slot };
-            unsafe { *slot = log };
+            let prev = yolo! { *slot };
+            yolo! { *slot = log };
             ResolverLogScope { slot, prev }
         }
 
         /// Shared-borrow of the resolver's `Log` for read-only inspection
-        /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
+        /// (e.g. `log.level`). Preferred over `yolo! { &*self.log() }`.
         #[inline(always)]
         pub fn log_ref(&self) -> &bun_ast::Log {
             // SAFETY: BACKREF — `self.log` is never null (set in `init1` /
@@ -4385,12 +4386,12 @@ pub mod __phase_a_body {
             // mutex serializes mutation; a Shared `&` here pushes no Unique tag
             // and so cannot alias-UB with the narrow `log_mut()` retags elsewhere
             // (none are live across a `log_ref()` call).
-            unsafe { &*self.log }
+            yolo! { &*self.log }
         }
 
         /// Unique-borrow of the resolver's `Log` for `add_*_fmt` / `add_msg`.
         ///
-        /// Centralizes the per-site `unsafe { &mut *self.log() }` retag. `&mut
+        /// Centralizes the per-site `yolo! { &mut *self.log() }` retag. `&mut
         /// self` rules out two coexisting `&mut Log` from the SAME `Resolver`;
         /// cross-clone aliasing (worker copies share the owner's `Log`) is
         /// guarded by the resolver `mutex` — same invariant the open-coded sites
@@ -4406,14 +4407,14 @@ pub mod __phase_a_body {
             // `scoped_log`); the pointee (owner-allocated `Log`, or a stack `Log`
             // pinned by a live `ResolverLogScope`) outlives every borrow returned
             // here. Resolver mutex serializes mutation across worker clones.
-            unsafe { &mut *self.log }
+            yolo! { &mut *self.log }
         }
 
         /// Port of Zig `r.dir_cache` deref.
         ///
         /// PORT NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —
         /// `DirInfo::hash_map_instance()` singleton; never freed. Caller
-        /// `unsafe { &mut *r.dir_cache() }` at each use site.
+        /// `yolo! { &mut *r.dir_cache() }` at each use site.
         #[inline(always)]
         pub fn dir_cache(&self) -> *mut DirInfo::HashMap {
             self.dir_cache
@@ -4421,7 +4422,7 @@ pub mod __phase_a_body {
 
         /// Unique-borrow of the `DirInfo` BSSMap singleton.
         ///
-        /// Centralizes the `unsafe { &mut *self.dir_cache() }` retag that every
+        /// Centralizes the `yolo! { &mut *self.dir_cache() }` retag that every
         /// call site previously open-coded. `&mut self` ensures no two coexisting
         /// `&mut HashMap` are produced from the SAME `Resolver`; cross-clone
         /// aliasing (per-worker `Resolver`s share the singleton) is
@@ -4439,7 +4440,7 @@ pub mod __phase_a_body {
             // `DirInfo::hash_map_instance()` static (set in `init1`, never
             // reassigned, never freed). Resolver mutex serializes all mutation
             // across worker clones; `&mut self` rules out intra-instance aliasing.
-            unsafe { &mut *self.dir_cache }
+            yolo! { &mut *self.dir_cache }
         }
 
         /// Port of resolver.zig `getPackageManager`. The Zig spec lazily calls
@@ -4474,10 +4475,10 @@ pub mod __phase_a_body {
             // process-lifetime storage (Transpiler-owned). The returned pointer
             // names the `PackageManager` singleton (`'static`).
             let pm: NonNull<dyn AutoInstaller> =
-                unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) };
+                yolo! { __bun_resolver_init_package_manager(self.log, self.opts.install, env) };
             // Zig: `pm.onWake = this.onWakePackageManager;`
             // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
-            unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager.clone()) };
+            yolo! { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager.clone()) };
             self.package_manager = Some(pm);
             pm.as_ptr()
         }
@@ -4496,7 +4497,7 @@ pub mod __phase_a_body {
             // SAFETY: BACKREF — `package_manager` names the bun_install-owned
             // singleton, live for the resolver's lifetime once installed; `&mut
             // self` ⇒ exclusive access to the only Rust handle.
-            self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+            self.package_manager.map(|mut pm| yolo! { pm.as_mut() })
         }
 
         /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
@@ -4514,7 +4515,7 @@ pub mod __phase_a_body {
             // never mutates the env, so no `&mut Loader` overlaps this shared
             // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
             // the env borrow across `&mut self` resolver calls.
-            self.env_loader.map(|p| unsafe { p.as_ref() })
+            self.env_loader.map(|p| yolo! { p.as_ref() })
         }
 
         #[inline]
@@ -4613,7 +4614,7 @@ pub mod __phase_a_body {
             // SAFETY: PORT — `import_path` is caller-interned (DirnameStore/source text)
             // and outlives the returned MatchResult. Zig used raw `[]const u8` here.
             // TODO(port): thread an explicit `'a` through MatchResult instead.
-            let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
+            let import_path: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(import_path) };
             if source_dir.is_empty() {
                 return None;
             }
@@ -4639,7 +4640,7 @@ pub mod __phase_a_body {
             // SAFETY: BACKREF — `self.log` points at owner-allocated `Log`; disjoint from
             // `self.debug_logs` (separate allocation), so the `&mut Log` does not alias the
             // `self.debug_logs.as_mut()` borrow below.
-            let log = unsafe { &mut *self.log() };
+            let log = yolo! { &mut *self.log() };
             if let Some(debug) = self.debug_logs.as_mut() {
                 // PORT NOTE: spec resolver.zig:650-658 — only consume `what`/`notes` inside
                 // the arm that actually emits, so the success-at-non-verbose path touches
@@ -4700,7 +4701,7 @@ pub mod __phase_a_body {
             // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
             // and outlives the returned Result. Zig used raw `[]const u8` here.
             // TODO(port): thread an explicit lifetime through Result instead.
-            let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
+            let import_path: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(import_path) };
             let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
             // Only setting 'current_action' in debug mode because module resolution
@@ -4747,7 +4748,7 @@ pub mod __phase_a_body {
                 if FeatureFlags::TRACING {
                     // SAFETY: `self` outlives this guard (drops at end of fn body);
                     // `elapsed`/`timer` are not borrowed when the guard fires.
-                    unsafe { *elapsed_ptr += (*timer_ptr).read(); }
+                    yolo! { *elapsed_ptr += (*timer_ptr).read(); }
                 }
             }
 
@@ -5117,7 +5118,7 @@ pub mod __phase_a_body {
         ) -> core::result::Result<Result, bun_core::Error> {
             // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
             // and outlives the returned Result. TODO(port): thread explicit lifetime.
-            let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
+            let import_path: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(import_path) };
             // TODO(port): narrow error set
             if let Some(f) = self.opts.framework.as_ref() {
                 if let Some(mod_) = f.built_in_modules.get(import_path) {
@@ -5140,7 +5141,7 @@ pub mod __phase_a_body {
                             // PORT NOTE: copy out `path` so the `&self.opts.framework` borrow
                             // ends before `self.resolve(&mut self, ...)`.
                             let path: &'static [u8] =
-                                unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
+                                yolo! { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                             let top = self.fs_ref().top_level_dir;
                             return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                         }
@@ -6520,7 +6521,7 @@ pub mod __phase_a_body {
                     // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
                     macro_rules! manager {
                         () => {
-                            unsafe { &mut *manager_ptr }
+                            yolo! { &mut *manager_ptr }
                         };
                     }
                     let mut dependency_version = Dependency::Version::default();
@@ -6955,7 +6956,7 @@ pub mod __phase_a_body {
             let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
             macro_rules! rfs {
                 () => {
-                    unsafe { &mut *rfs }
+                    yolo! { &mut *rfs }
                 };
             }
             // resolver mutex held; `EntriesMap` methods are safe wrappers over the singleton.
@@ -6998,7 +6999,7 @@ pub mod __phase_a_body {
                 let mut new_entry = Fs::file_system::DirEntry::init(
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
-                        unsafe { &*existing }.dir
+                        yolo! { &*existing }.dir
                     } else {
                         Fs::file_system::DirnameStore::instance()
                             .append_slice(dir_path)
@@ -7021,7 +7022,7 @@ pub mod __phase_a_body {
                     new_entry
                         .add_entry_with_store(
                             // SAFETY: see block-wide note above.
-                            in_place.map(|existing| unsafe { &mut (*existing).data }),
+                            in_place.map(|existing| yolo! { &mut (*existing).data }),
                             &_value,
                             &mut filename_store,
                             (),
@@ -7032,7 +7033,7 @@ pub mod __phase_a_body {
                     // SAFETY: see block-wide note above.
                     // PORT NOTE: Zig `clearAndFree` — `StringHashMap` (std::HashMap newtype)
                     // has no separate `clear_and_free`; `clear()` drops all entries.
-                    unsafe { &mut *existing }.data.clear();
+                    yolo! { &mut *existing }.data.clear();
                 }
 
                 if self.store_fd {
@@ -7043,7 +7044,7 @@ pub mod __phase_a_body {
                 let dir_entries_ptr = match in_place {
                     Some(p) => {
                         // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                        unsafe { *p = new_entry };
+                        yolo! { *p = new_entry };
                         p
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -7056,7 +7057,7 @@ pub mod __phase_a_body {
                     // SAFETY: see block-wide note above.
                     .put(
                         &mut cached_dir_entry_result,
-                        Fs::file_system::real_fs::EntriesOption::Entries(unsafe {
+                        Fs::file_system::real_fs::EntriesOption::Entries(yolo! {
                             &mut *dir_entries_ptr
                         }),
                     )
@@ -7080,7 +7081,7 @@ pub mod __phase_a_body {
             // outlives the resolver. Hoist the `&'static [u8] dir` read out so no `&EntriesOption`
             // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
             // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
-            let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
+            let dir_entries_dir = yolo! { &*dir_entries_option }.entries().dir;
             self.dir_info_uncached(
                 dir_info_ptr,
                 dir_entries_dir,
@@ -7096,7 +7097,7 @@ pub mod __phase_a_body {
                 Some(package_id),
             )?;
             // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
-            Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
+            Ok(Some(yolo! { DirInfoRef::from_raw(dir_info_ptr) }))
         }
 
         fn enqueue_dependency_to_resolve(
@@ -7127,7 +7128,7 @@ pub mod __phase_a_body {
             // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
             macro_rules! pm {
                 () => {
-                    unsafe { &mut *pm_ptr }
+                    yolo! { &mut *pm_ptr }
                 };
             }
             // we should never be trying to resolve a dependency that is already resolved
@@ -7143,7 +7144,7 @@ pub mod __phase_a_body {
                     // (see `intern_package_json`); `NonNull` carries mut-provenance
                     // from `NonNull::from(&mut **last)` and no other live borrow
                     // exists here.
-                    let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
+                    let package_json: &mut PackageJSON = yolo! { package_json.as_mut() };
                     // PORT NOTE: Zig called `Package.fromPackageJSON(lockfile, pm,
                     // log, package_json, features)` then `setHasInstallScript` then
                     // `lockfile.appendPackage`. The `Package` type is bun_install-
@@ -7377,7 +7378,7 @@ pub mod __phase_a_body {
                         if entry_query.entry().abs_path.is_empty() {
                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                             // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *entry_query.entry }.abs_path = PathString::init(
+                            yolo! { &mut *entry_query.entry }.abs_path = PathString::init(
                                 self.fs_ref()
                                     .dirname_store
                                     .append_slice(abs_esm_path)
@@ -7467,7 +7468,7 @@ pub mod __phase_a_body {
             let mut entry = self.caches.fs.read_file_with_allocator(
                 // SAFETY: process-global `FileSystem` singleton (see `fs()` PORT NOTE); narrow `&mut`
                 // for this call only — `self.caches` is a field of `self` (disjoint allocation).
-                unsafe { &mut *self.fs() },
+                yolo! { &mut *self.fs() },
                 file,
                 dirname_fd,
                 false,
@@ -7505,7 +7506,7 @@ pub mod __phase_a_body {
             // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); disjoint from `self.caches`,
             // narrow `&mut` for this call only.
             let mut result = match TSConfigJSON::parse(
-                unsafe { &mut *self.log() },
+                yolo! { &mut *self.log() },
                 &source,
                 &mut self.caches.json,
             )? {
@@ -7551,7 +7552,7 @@ pub mod __phase_a_body {
             }
             // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites;
             // `BIN_FOLDERS_LOADED` (acquire) guarantees init.
-            unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
+            yolo! { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
         }
 
         pub fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -7736,12 +7737,12 @@ pub mod __phase_a_body {
             // borrow live across the loop body (which calls `&mut self` methods).
             // SAFETY: ARENA — `self.fs` points at the process-global FileSystem singleton.
             // Derive provenance from the raw `*mut FileSystem` field directly so later
-            // `unsafe { &mut *self.fs() }` calls (e.g. `dirname_store.append_*`) cannot pop `rfs`'s tag
+            // `yolo! { &mut *self.fs() }` calls (e.g. `dirname_store.append_*`) cannot pop `rfs`'s tag
             // under Stacked Borrows (PORTING.md §Forbidden: aliased-&mut).
             let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
             macro_rules! rfs {
                 () => {
-                    unsafe { &mut *rfs }
+                    yolo! { &mut *rfs }
                 };
             }
 
@@ -7776,7 +7777,7 @@ pub mod __phase_a_body {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
-                            let slot = unsafe {
+                            let slot = yolo! {
                                 bufs!(dir_entry_paths_to_resolve)
                                     [usize::try_from(i).expect("int cast")]
                                 .assume_init_mut()
@@ -7816,7 +7817,7 @@ pub mod __phase_a_body {
                         match top_entry {
                             Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                                 // SAFETY: slot was written immediately above.
-                                let slot = unsafe {
+                                let slot = yolo! {
                                     bufs!(dir_entry_paths_to_resolve)
                                         [usize::try_from(i).expect("int cast")]
                                     .assume_init_mut()
@@ -7882,7 +7883,7 @@ pub mod __phase_a_body {
             // Start at the top.
             while queue_slice_len > 0 {
                 // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
-                let mut queue_top = unsafe {
+                let mut queue_top = yolo! {
                     bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].assume_init_ref()
                 }
                 .clone();
@@ -8010,7 +8011,7 @@ pub mod __phase_a_body {
                     // SAFETY: non-empty `safe_path` is always a dirname_store-backed
                     // `&'static [u8]` (set from `entries.dir` above); widen the
                     // `RawSlice`-tied borrow back to its true `'static` lifetime.
-                    unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
+                    yolo! { bun_ptr::detach_lifetime(queue_top_safe_path) }
                 } else {
                     // ensure trailing slash
                     if _safe_path.is_none() {
@@ -8080,7 +8081,7 @@ pub mod __phase_a_body {
                     let mut new_entry = Fs::file_system::DirEntry::init(
                         if let Some(existing) = in_place {
                             // SAFETY: see block-wide note above.
-                            unsafe { &*existing }.dir
+                            yolo! { &*existing }.dir
                         } else {
                             Fs::file_system::DirnameStore::instance()
                                 .append_slice(dir_path)
@@ -8112,7 +8113,7 @@ pub mod __phase_a_body {
                         new_entry
                             .add_entry_with_store(
                                 // SAFETY: see block-wide note above.
-                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                in_place.map(|existing| yolo! { &mut (*existing).data }),
                                 &_value,
                                 &mut filename_store,
                                 (),
@@ -8122,7 +8123,7 @@ pub mod __phase_a_body {
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
                         // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
-                        unsafe { &mut *existing }.data.clear();
+                        yolo! { &mut *existing }.data.clear();
                     }
                     new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
                     // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)` then
@@ -8132,7 +8133,7 @@ pub mod __phase_a_body {
                     let dir_entries_ptr = match in_place {
                         Some(p) => {
                             // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                            unsafe { *p = new_entry };
+                            yolo! { *p = new_entry };
                             p
                         }
                         None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -8142,7 +8143,7 @@ pub mod __phase_a_body {
                         // SAFETY: see block-wide note above.
                         .put(
                             &mut cached_dir_entry_result,
-                            Fs::file_system::real_fs::EntriesOption::Entries(unsafe {
+                            Fs::file_system::real_fs::EntriesOption::Entries(yolo! {
                                 &mut *dir_entries_ptr
                             }),
                         )?;
@@ -8183,7 +8184,7 @@ pub mod __phase_a_body {
 
                 if queue_slice_len == 0 {
                     // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
-                    return Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }));
+                    return Ok(Some(yolo! { DirInfoRef::from_raw(dir_info_ptr) }));
 
                     // Is the directory we're searching for actually a file?
                 } else if queue_slice_len == 1 {
@@ -8758,7 +8759,7 @@ pub mod __phase_a_body {
                                 let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
                                 // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                                 // evaluated before LHS `&mut Entry` is materialized.
-                                unsafe { &mut *lookup.entry }.abs_path = PathString::init(
+                                yolo! { &mut *lookup.entry }.abs_path = PathString::init(
                                     self.fs_ref()
                                         .dirname_store
                                         .append_slice(out_buf_)
@@ -9150,14 +9151,14 @@ pub mod __phase_a_body {
         ) -> Option<LoadResult> {
             // SAFETY: PORT — RealFS is the global singleton (fs.zig); Zig held a raw
             // pointer here (resolver.zig:3784). Derive provenance from the raw
-            // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
+            // `*mut FileSystem` field so intervening `yolo! { &mut *self.fs() }` calls in
             // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
             // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
             let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
             #[allow(unused_macros)]
             macro_rules! rfs {
                 () => {
-                    unsafe { &mut *rfs }
+                    yolo! { &mut *rfs }
                 };
             }
 
@@ -9185,7 +9186,7 @@ pub mod __phase_a_body {
             // while each read goes through safe `BackRef: Deref` (pointee outlives
             // holder by ARENA invariant).
             let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
-                match unsafe { &mut *rfs }.read_directory(
+                match yolo! { &mut *rfs }.read_directory(
                     dir_path,
                     None,
                     self.generation,
@@ -9251,7 +9252,7 @@ pub mod __phase_a_body {
                                 self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                             // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *query.entry }.abs_path = PathString::init(
+                            yolo! { &mut *query.entry }.abs_path = PathString::init(
                                 self.fs_ref()
                                     .dirname_store
                                     .append_slice(joined)
@@ -9380,7 +9381,7 @@ pub mod __phase_a_body {
                                             };
                                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
                                             // fully evaluated above — sole `&mut Entry` for this write.
-                                            unsafe { &mut *query.entry }.abs_path = new_abs;
+                                            yolo! { &mut *query.entry }.abs_path = new_abs;
                                         }
                                         crate::path_string_static(&query.entry().abs_path)
                                     },
@@ -9426,7 +9427,7 @@ pub mod __phase_a_body {
             entries: &Fs::file_system::DirEntry,
         ) -> Option<LoadResult> {
             // SAFETY: PORT — see load_as_file; derive `rfs` from the raw `*mut FileSystem`
-            // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
+            // field so `yolo! { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
             // its provenance under Stacked Borrows.
             let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
             // BACKREF — `entries` is a slot in the BSSMap-backed `DirEntry` arena
@@ -9460,7 +9461,7 @@ pub mod __phase_a_body {
                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
                             // evaluated (shared reads) before the LHS `&mut Entry` is
                             // materialized for the write — no overlapping unique borrow.
-                            unsafe { &mut *query.entry }.abs_path =
+                            yolo! { &mut *query.entry }.abs_path =
                                 if query.entry().abs_path.is_empty() {
                                     PathString::init(
                                         self.fs_ref()
@@ -9500,23 +9501,23 @@ pub mod __phase_a_body {
 
             // SAFETY: PORT — RealFS / DirEntry are global ARENA singletons (BSSMap-backed);
             // Zig held raw pointers here (resolver.zig:4004 `rfs: *Fs.FileSystem.RealFS`).
-            // Derive `rfs_ptr` from the raw `*mut FileSystem` field so later `unsafe { &mut *self.fs() }` calls
+            // Derive `rfs_ptr` from the raw `*mut FileSystem` field so later `yolo! { &mut *self.fs() }` calls
             // (`abs_buf` / `dirname_store.append_slice` in the parent-symlink block) cannot
             // invalidate it under Stacked Borrows. Re-borrow at EACH use site so no `&mut`
-            // outlives a `unsafe { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
+            // outlives a `yolo! { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
             // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
             let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
             let entries_ptr: *mut Fs::file_system::DirEntry =
-                unsafe { &mut *_entries }.entries_mut();
+                yolo! { &mut *_entries }.entries_mut();
             // PORT NOTE: re-borrow per use; see SAFETY note above.
             macro_rules! rfs {
                 () => {
-                    unsafe { &mut *rfs_ptr }
+                    yolo! { &mut *rfs_ptr }
                 };
             }
             macro_rules! entries {
                 () => {
-                    unsafe { &mut *entries_ptr }
+                    yolo! { &mut *entries_ptr }
                 };
             }
 
@@ -9532,7 +9533,7 @@ pub mod __phase_a_body {
             }
 
             // SAFETY: info is a slot in the BSSMap-backed dir_cache
-            let info = unsafe { &mut *info };
+            let info = yolo! { &mut *info };
             *info = DirInfo::DirInfo {
                 abs_path: path,
                 // .abs_real_path = path,
@@ -9570,7 +9571,7 @@ pub mod __phase_a_body {
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
                             if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                                 // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+                                yolo! { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
                                 BIN_FOLDERS_LOADED
                                     .store(true, core::sync::atomic::Ordering::Release);
                             }
@@ -9590,7 +9591,7 @@ pub mod __phase_a_body {
                             let _unlock = BIN_FOLDERS_LOCK.lock_guard();
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
-                            unsafe {
+                            yolo! {
                                 for existing_folder in
                                     (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
                                 {
@@ -9616,7 +9617,7 @@ pub mod __phase_a_body {
                                 // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                                 if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                                     // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                    unsafe {
+                                    yolo! {
                                         (*BIN_FOLDERS.get()).write(BinFolderArray::default())
                                     };
                                     BIN_FOLDERS_LOADED
@@ -9636,7 +9637,7 @@ pub mod __phase_a_body {
                                 let _unlock = BIN_FOLDERS_LOCK.lock_guard();
 
                                 // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
-                                unsafe {
+                                yolo! {
                                     for existing_folder in
                                         (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
                                     {
@@ -9725,7 +9726,7 @@ pub mod __phase_a_body {
                                 // this might leak a little i'm not sure
                                 let parts = [parent_.abs_real_path, base];
                                 // PORT NOTE: split into two statements so the two `&mut FileSystem`
-                                // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
+                                // borrows from `yolo! { &mut *self.fs() }` don't overlap (Stacked Borrows).
                                 let joined = self
                                     .fs_ref()
                                     .abs_buf(&parts, bufs!(dir_info_uncached_filename));
@@ -9864,7 +9865,7 @@ pub mod __phase_a_body {
                         .opts
                         .tsconfig_override
                         .as_deref()
-                        .map(|s| unsafe { &*std::ptr::from_ref::<[u8]>(s) });
+                        .map(|s| yolo! { &*std::ptr::from_ref::<[u8]>(s) });
                 }
 
                 if let Some(tsconfigpath) = tsconfig_path {
@@ -9964,9 +9965,9 @@ pub mod __phase_a_body {
                         // successively apply the inheritable attributes to the next config
                         while let Some(parent_config_ptr) = parent_configs.pop() {
                             // SAFETY: see loop-wide note above.
-                            let parent_config = unsafe { &mut *parent_config_ptr };
+                            let parent_config = yolo! { &mut *parent_config_ptr };
                             // SAFETY: see loop-wide note above.
-                            let mc = unsafe { &mut *merged_config };
+                            let mc = yolo! { &mut *merged_config };
                             mc.emit_decorator_metadata =
                                 mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                             if !parent_config.base_url.is_empty() {
@@ -10009,7 +10010,7 @@ pub mod __phase_a_body {
                             // each dirInfoUncached() call, which is especially bad under HMR where
                             // bustDirCache triggers a re-parse of the whole chain on every reload.
                             // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                            TSConfigJSON::destroy(unsafe {
+                            TSConfigJSON::destroy(yolo! {
                                 bun_core::heap::take(parent_config_ptr)
                             });
                         }
@@ -10083,9 +10084,9 @@ pub mod __phase_a_body {
                 // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
                 // cache is process-global); the `'b` borrow on `map` artificially shortens
                 // what is process-lifetime storage. `Interned` is the canonical proof type.
-                self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
+                self.remapped = yolo! { bun_ptr::Interned::assume(result) }.as_bytes();
                 // SAFETY: TODO(port): lifetime — extending borrow of caller-owned slice; consumed before checker is dropped.
-                self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(path_to_check) };
+                self.input_path = yolo! { &*std::ptr::from_ref::<[u8]>(path_to_check) };
                 return true;
             }
 
@@ -10107,11 +10108,11 @@ pub mod __phase_a_body {
                     // }
                     if let Some(_remapped) = map.get(new_path) {
                         // SAFETY: ARENA — see `result` note above.
-                        self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                        self.remapped = yolo! { bun_ptr::Interned::assume(_remapped) }.as_bytes();
                         // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-                        self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
+                        self.cleaned = yolo! { &*std::ptr::from_ref::<[u8]>(new_path) };
                         // SAFETY: same as above.
-                        self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
+                        self.input_path = yolo! { &*std::ptr::from_ref::<[u8]>(new_path) };
                         return true;
                     }
                 }
@@ -10134,9 +10135,9 @@ pub mod __phase_a_body {
 
             if let Some(_remapped) = map.get(index_path) {
                 // SAFETY: ARENA — see `result` note above.
-                self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                self.remapped = yolo! { bun_ptr::Interned::assume(_remapped) }.as_bytes();
                 // SAFETY: TODO(port): lifetime — `index_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-                self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(index_path) };
+                self.input_path = yolo! { &*std::ptr::from_ref::<[u8]>(index_path) };
                 return true;
             }
 
@@ -10155,11 +10156,11 @@ pub mod __phase_a_body {
                     // }
                     if let Some(_remapped) = map.get(new_path) {
                         // SAFETY: ARENA — see `result` note above.
-                        self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                        self.remapped = yolo! { bun_ptr::Interned::assume(_remapped) }.as_bytes();
                         // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-                        self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
+                        self.cleaned = yolo! { &*std::ptr::from_ref::<[u8]>(new_path) };
                         // SAFETY: same as above.
-                        self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
+                        self.input_path = yolo! { &*std::ptr::from_ref::<[u8]>(new_path) };
                         return true;
                     }
                 }

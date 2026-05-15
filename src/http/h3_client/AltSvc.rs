@@ -12,6 +12,7 @@
 //! honored; cross-host alternatives need extra certificate-authority checks
 //! (RFC 7838 §2.1) that are out of scope here.
 
+use bun_yolo::yolo;
 use bun_collections::StringHashMap;
 use bun_core::{strings, time::timestamp};
 
@@ -146,7 +147,7 @@ static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::Racy
 fn cache() -> &'static mut StringHashMap<Record> {
     // SAFETY: HTTP-thread only; lazy init cannot race. Every call site is a
     // per-statement reborrow (audited in r3); no two `&mut` overlap.
-    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::default) }
+    yolo! { (*CACHE.get()).get_or_insert_with(StringHashMap::default) }
 }
 
 /// Hard cap on cached origins. When reached, `record()` first sweeps expired

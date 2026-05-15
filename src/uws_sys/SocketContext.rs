@@ -3,6 +3,7 @@
 //! here is the `us_bun_socket_context_options_t` extern mirror, kept under its
 //! old name so `SSLConfig.asUSockets()` callers don't churn.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
@@ -21,7 +22,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // SAFETY: POD, zero-valid — `libc::stat` is all-integer; `stat(2)` writes it.
     let mut st: libc::stat = bun_core::ffi::zeroed();
     // SAFETY: `path` is NUL-terminated (ZStr invariant).
-    let rc = unsafe { libc::stat(path.as_ptr().cast::<c_char>(), &raw mut st) };
+    let rc = yolo! { libc::stat(path.as_ptr().cast::<c_char>(), &raw mut st) };
     if rc != 0 {
         return None;
     }
@@ -57,7 +58,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 is query-
     // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;
     // omitting FILE_FLAG_OPEN_REPARSE_POINT makes CreateFileW follow symlinks.
-    let h = unsafe {
+    let h = yolo! {
         fs::CreateFileW(
             wbuf.as_ptr(),
             0,
@@ -73,9 +74,9 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     }
     let mut data: fs::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: `h` is a valid open handle; `data` is a valid out-ptr.
-    let ok = unsafe { fs::GetFileInformationByHandle(h, &raw mut data) };
+    let ok = yolo! { fs::GetFileInformationByHandle(h, &raw mut data) };
     // SAFETY: `h` is a valid open handle from CreateFileW above.
-    unsafe { fs::CloseHandle(h) };
+    yolo! { fs::CloseHandle(h) };
     if ok == 0 {
         return None;
     }
@@ -158,7 +159,7 @@ impl BunSocketContextOptions {
     /// CertificateRequest unless these options asked it to.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<*mut SSL_CTX> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        let ctx = unsafe { c::us_ssl_ctx_from_options(self, err) };
+        let ctx = yolo! { c::us_ssl_ctx_from_options(self, err) };
         if ctx.is_null() { None } else { Some(ctx) }
     }
 
@@ -176,7 +177,7 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: caller-provided NUL-terminated C string.
-                hp.update(unsafe { bun_core::ffi::cstr(s) }.to_bytes());
+                hp.update(yolo! { bun_core::ffi::cstr(s) }.to_bytes());
             }
             hp.update(&[0]); // terminator so {a:"xy"} ≠ {a:"x",b:"y"}
         };
@@ -186,12 +187,12 @@ impl BunSocketContextOptions {
             hp.update(bun_core::bytes_of(&n));
             if !arr.is_null() {
                 // SAFETY: `arr` points to `n` (possibly null) C strings.
-                let slice = unsafe { bun_core::ffi::slice(arr, n as usize) };
+                let slice = yolo! { bun_core::ffi::slice(arr, n as usize) };
                 for &s in slice {
                     hp.update(&[(!s.is_null()) as u8]);
                     if !s.is_null() {
                         // SAFETY: NUL-terminated C string.
-                        hp.update(unsafe { bun_core::ffi::cstr(s) }.to_bytes());
+                        hp.update(yolo! { bun_core::ffi::cstr(s) }.to_bytes());
                     }
                     hp.update(&[0]);
                 }
@@ -208,9 +209,9 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
+                let bytes = yolo! { bun_core::ffi::cstr(s) }.to_bytes();
                 // SAFETY: `s[bytes.len()] == 0` (CStr invariant) and `s[..len]` is readable.
-                let path = unsafe { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
+                let path = yolo! { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {
@@ -252,11 +253,11 @@ impl BunSocketContextOptions {
                 return;
             }
             // SAFETY: `arr` points to `count` (possibly null) C strings.
-            let slice = unsafe { bun_core::ffi::slice(arr, count as usize) };
+            let slice = yolo! { bun_core::ffi::slice(arr, count as usize) };
             for &s in slice {
                 if !s.is_null() {
                     // SAFETY: NUL-terminated C string.
-                    *n += unsafe { bun_core::ffi::cstr(s) }.to_bytes().len();
+                    *n += yolo! { bun_core::ffi::cstr(s) }.to_bytes().len();
                 }
             }
         };
@@ -276,13 +277,13 @@ impl Sha256 {
     fn init() -> Self {
         let mut ctx = core::mem::MaybeUninit::<bun_boringssl_sys::SHA256_CTX>::uninit();
         // SAFETY: SHA256_Init writes the full ctx; never reads uninit bytes.
-        unsafe { bun_boringssl_sys::SHA256_Init(ctx.as_mut_ptr()) };
+        yolo! { bun_boringssl_sys::SHA256_Init(ctx.as_mut_ptr()) };
         Self(ctx)
     }
     #[inline]
     fn update(&mut self, data: &[u8]) {
         // SAFETY: ctx was initialized in `init`; data is a valid readable slice.
-        unsafe {
+        yolo! {
             bun_boringssl_sys::SHA256_Update(
                 self.0.as_mut_ptr(),
                 data.as_ptr().cast::<core::ffi::c_void>(),
@@ -293,7 +294,7 @@ impl Sha256 {
     #[inline]
     fn final_(&mut self, out: &mut [u8; 32]) {
         // SAFETY: ctx was initialized in `init`; out has room for 32 bytes.
-        unsafe { bun_boringssl_sys::SHA256_Final(out.as_mut_ptr(), self.0.as_mut_ptr()) };
+        yolo! { bun_boringssl_sys::SHA256_Final(out.as_mut_ptr(), self.0.as_mut_ptr()) };
     }
 }
 

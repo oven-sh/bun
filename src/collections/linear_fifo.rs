@@ -4,6 +4,7 @@
 // FIFO of fixed size items
 // Usually used for e.g. byte buffers
 
+use bun_yolo::yolo;
 use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
 use core::ptr;
@@ -67,7 +68,7 @@ pub trait LinearFifoBuffer<T> {
 #[inline(always)]
 fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
     // SAFETY: see fn doc.
-    unsafe { &*(ptr::from_ref::<[MaybeUninit<T>]>(s) as *const [T]) }
+    yolo! { &*(ptr::from_ref::<[MaybeUninit<T>]>(s) as *const [T]) }
 }
 
 /// Mutable variant of [`assume_init_slice`]. The input borrow is consumed by
@@ -76,7 +77,7 @@ fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
 #[inline(always)]
 fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
     // SAFETY: see `assume_init_slice`.
-    unsafe { &mut *(ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) }
+    yolo! { &mut *(ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) }
 }
 
 /// Shift `slice[1..]` down to `slice[0..len-1]` (memmove). Used by
@@ -91,7 +92,7 @@ fn shift_down_one<T>(slice: &mut [T]) {
     }
     // SAFETY: src `[1..len)` and dst `[0..len-1)` are both in-bounds of
     // `slice`; `ptr::copy` handles the overlap.
-    unsafe { ptr::copy(slice.as_ptr().add(1), slice.as_mut_ptr(), slice.len() - 1) };
+    yolo! { ptr::copy(slice.as_ptr().add(1), slice.as_mut_ptr(), slice.len() - 1) };
 }
 
 #[cfg(debug_assertions)]
@@ -100,7 +101,7 @@ fn poison<T>(slice: &mut [T], n: usize) {
     debug_assert!(n <= slice.len());
     // SAFETY: writing 0xAA into the byte representation of `n` slots that are
     // about to be logically discarded; never read as `T` again.
-    unsafe {
+    yolo! {
         ptr::write_bytes(
             slice.as_mut_ptr().cast::<u8>(),
             0xAA,
@@ -177,7 +178,7 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
         let mut new = Box::<[T]>::new_uninit_slice(new_size);
         let n = self.0.len().min(new_size);
         // SAFETY: disjoint allocations; MaybeUninit copy is always sound.
-        unsafe { ptr::copy_nonoverlapping(self.0.as_ptr(), new.as_mut_ptr(), n) };
+        yolo! { ptr::copy_nonoverlapping(self.0.as_ptr(), new.as_mut_ptr(), n) };
         self.0 = new;
         Ok(())
     }
@@ -282,7 +283,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             let head = self.head;
             let buf = self.buf.as_mut_slice();
             // SAFETY: src/dst within same allocation; ptr::copy is memmove.
-            unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
+            yolo! { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
             self.head = 0;
         } else {
             // Zig: `var tmp: [page_size_min / 2 / @sizeOf(T)]T = undefined;`
@@ -310,7 +311,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 // `n * size_of::<T>()` raw bytes (no `T` typed access through
                 // the 1-aligned scratch). The buf→buf shift overlaps, so use
                 // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(buf.as_ptr().cast::<u8>(), tmp_ptr, n * t_size);
                     ptr::copy(buf.as_ptr().add(n), buf.as_mut_ptr(), m);
                     ptr::copy_nonoverlapping(
@@ -328,7 +329,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             let count = self.count;
             let unused = &mut self.buf.as_mut_slice()[count..];
             // SAFETY: poisoning unused tail; matches Zig `@memset(unused, undefined)`.
-            unsafe {
+            yolo! {
                 ptr::write_bytes(
                     unused.as_mut_ptr().cast::<u8>(),
                     0xAA,
@@ -377,7 +378,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 let new = self.buf.as_mut_slice();
                 // After realign(), head==0 so readableSlice(0) == old[0..count].
                 // SAFETY: old and new are disjoint allocations.
-                unsafe {
+                yolo! {
                     ptr::copy_nonoverlapping(old.as_ptr().cast::<T>(), new.as_mut_ptr(), count);
                 }
             }
@@ -477,7 +478,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
         // SAFETY: buf[head] is in the readable region (count > 0); we move it
         // out and immediately discard(1), so the slot is never read again.
-        let c = unsafe { ptr::read(self.buf.as_slice().as_ptr().add(self.head)) };
+        let c = yolo! { ptr::read(self.buf.as_slice().as_ptr().add(self.head)) };
         self.discard(1);
         Some(c)
     }
@@ -599,7 +600,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         // logically uninitialized — `ptr::write` matches Zig assignment semantics
         // (no drop of the prior bit-pattern), required for non-`Copy` `T` whose
         // backing storage is `MaybeUninit<T>`.
-        unsafe { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
+        yolo! { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
         self.update(1);
     }
 
@@ -718,11 +719,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 // The items before and after the head have to be shifted
                 // SAFETY: buf[0] is initialized (it's in the wrapped readable
                 // region); we move it to the end after shifting.
-                let wrap = unsafe { ptr::read(buf.as_ptr()) };
+                let wrap = yolo! { ptr::read(buf.as_ptr()) };
                 shift_down_one(&mut buf[index..]);
                 // SAFETY: writing into the last slot; previous occupant already
                 // shifted down.
-                unsafe { ptr::write(buf.as_mut_ptr().add(buf_len - 1), wrap) };
+                yolo! { ptr::write(buf.as_mut_ptr().add(buf_len - 1), wrap) };
                 shift_down_one(&mut buf[..head - count]);
             }
         }

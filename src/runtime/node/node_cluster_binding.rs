@@ -4,6 +4,7 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
+use bun_yolo::yolo;
 use bun_core::String as BunString;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
@@ -48,7 +49,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     // `'static` storage so the returned `&mut` is valid for any caller-chosen
     // `'a`. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
-    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
+    yolo! { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 
 #[bun_jsc::host_fn]
@@ -101,7 +102,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
     let ipc_instance = vm.get_ipc_instance().unwrap();
     // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
-    let ipc_instance = unsafe { &mut *ipc_instance };
+    let ipc_instance = yolo! { &mut *ipc_instance };
 
     #[bun_jsc::host_fn]
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {

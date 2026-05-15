@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::css_parser as css;
 use crate::css_parser::compat::Feature;
 use crate::css_parser::targets::Targets;
@@ -577,7 +578,7 @@ fn is_selector_unused(
                 // `SelectorParser::new_local_identifier`).
                 let actual_ident: &[u8] = match (*ident).as_ident() {
                     // SAFETY: arena-owned slice (Phase-A `'static` placeholder).
-                    Some(i) => unsafe { crate::arena_str(i.v) },
+                    Some(i) => yolo! { crate::arena_str(i.v) },
                     None => {
                         let _ = symbols;
                         continue; // blocked_on: as_original_string ref arm
@@ -884,7 +885,7 @@ pub mod serialize {
                     // Serialize as both an identifier and a string and choose the shorter one.
                     // SAFETY: per the `CssString` invariant, the pointee borrows the parser
                     // arena which outlives the `Printer` it is being written to.
-                    let value_bytes = unsafe { crate::arena_str(*value) };
+                    let value_bytes = yolo! { crate::arena_str(*value) };
                     // `Vec<u8>: WriteAll<Error = Infallible>` — cannot fail.
                     let mut id: Vec<u8> = Vec::new();
                     let _ = css::serializer::serialize_identifier(value_bytes, &mut id);

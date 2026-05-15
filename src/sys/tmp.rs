@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_core::ZStr;
 
 use crate::{E, ErrorCase, Fd, FdExt, O, Tag};
@@ -74,7 +75,7 @@ impl<'a> Tmpfile<'a> {
             let mut retry = true;
             // SAFETY: basename returns a suffix of `destname`, which is NUL-terminated,
             // so the suffix is also NUL-terminated at the same position.
-            let basename: &ZStr = unsafe {
+            let basename: &ZStr = yolo! {
                 let b = bun_paths::basename(destname.as_bytes());
                 ZStr::from_raw(b.as_ptr(), b.len())
             };

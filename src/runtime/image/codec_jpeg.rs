@@ -1,6 +1,7 @@
 //! libjpeg-turbo (TurboJPEG 3 API) decode/encode for `Bun.Image`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
 
@@ -61,7 +62,7 @@ impl Handle {
     #[inline]
     pub fn init(init_type: c_int) -> Option<Self> {
         // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-        NonNull::new(unsafe { tj3Init(init_type) }).map(Self)
+        NonNull::new(yolo! { tj3Init(init_type) }).map(Self)
     }
 
     #[inline]
@@ -75,7 +76,7 @@ impl Drop for Handle {
     fn drop(&mut self) {
         // SAFETY: `self.0` is the non-null tjhandle returned by tj3Init;
         // tj3Destroy is the documented owner-release and is called exactly once.
-        unsafe { tj3Destroy(self.0.as_ptr()) };
+        yolo! { tj3Destroy(self.0.as_ptr()) };
     }
 }
 
@@ -125,26 +126,26 @@ pub fn decode(
     hint: codecs::DecodeHint,
 ) -> Result<codecs::Decoded, codecs::Error> {
     // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-    let h = unsafe { tj3Init(1) };
+    let h = yolo! { tj3Init(1) };
     if h.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
     // SAFETY: `h` is the non-null tjhandle returned above; tj3Destroy is the
     // documented owner-release and is called exactly once via this guard.
-    let _h_guard = scopeguard::guard(h, |h| unsafe { tj3Destroy(h) });
+    let _h_guard = scopeguard::guard(h, |h| yolo! { tj3Destroy(h) });
     // Ask libjpeg-turbo to keep the APP2/ICC_PROFILE markers so we can pull
     // the profile out after header parse. Must be set PRE-header — the
     // marker buffer is discarded if we set this after.
     // SAFETY: `h` is a live tjhandle for the duration of `_h_guard`.
-    unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
+    yolo! { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
     // SAFETY: `h` is live; ptr/len come from a valid `&[u8]` borrowed for the call.
-    if unsafe { tj3DecompressHeader(h, bytes.as_ptr(), bytes.len()) } != 0 {
+    if yolo! { tj3DecompressHeader(h, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    let rw = unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) };
+    let rw = yolo! { tj3Get(h, TJPARAM_JPEGWIDTH) };
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    let rh = unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) };
+    let rh = yolo! { tj3Get(h, TJPARAM_JPEGHEIGHT) };
     // tj3Get returns -1 on error; treat any non-positive dim as a decode
     // failure rather than letting the cast trap on hostile input.
     if rw <= 0 || rh <= 0 {
@@ -166,12 +167,12 @@ pub fn decode(
         let mut n: c_int = 0;
         // SAFETY: FFI — writes a count into `n` and returns a pointer to a
         // static const table inside libjpeg-turbo; no handle required.
-        let sfs = unsafe { tj3GetScalingFactors(&raw mut n) };
+        let sfs = yolo! { tj3GetScalingFactors(&raw mut n) };
         if !sfs.is_null() {
             let mut best = ScalingFactor { num: 1, denom: 1 };
             // SAFETY: tj3GetScalingFactors returned `n` valid ScalingFactor entries at `sfs`.
             let sfs =
-                unsafe { core::slice::from_raw_parts(sfs, usize::try_from(n).expect("int cast")) };
+                yolo! { core::slice::from_raw_parts(sfs, usize::try_from(n).expect("int cast")) };
             for &sf in sfs {
                 // Only consider downscale factors.
                 if sf.num >= sf.denom {
@@ -193,7 +194,7 @@ pub fn decode(
             }
             if best.num != best.denom {
                 // SAFETY: `h` is live; `best` is a plain #[repr(C)] value passed by copy.
-                unsafe { tj3SetScalingFactor(h, best) };
+                yolo! { tj3SetScalingFactor(h, best) };
                 w = scaled(src_w, best);
                 ht = scaled(src_h, best);
             }
@@ -216,7 +217,7 @@ pub fn decode(
     // and post-check the second-parse dims so a smaller swap (which would
     // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
     // SAFETY: `h` is live; CropRegion is a plain #[repr(C)] value passed by copy.
-    unsafe {
+    yolo! {
         tj3Set(
             h,
             TJPARAM_MAXPIXELS,
@@ -237,7 +238,7 @@ pub fn decode(
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
     // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
     // region above bound libjpeg-turbo's writes to that allocation.
-    if unsafe {
+    if yolo! {
         tj3Decompress8(
             h,
             bytes.as_ptr(),
@@ -251,8 +252,8 @@ pub fn decode(
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) } != rw
-        || unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) } != rh
+    if yolo! { tj3Get(h, TJPARAM_JPEGWIDTH) } != rw
+        || yolo! { tj3Get(h, TJPARAM_JPEGHEIGHT) } != rh
     {
         return Err(codecs::Error::DecodeFailed);
     }
@@ -271,7 +272,7 @@ pub fn decode(
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
         // SAFETY: `h` is live; out-params are valid `&mut` locals.
-        if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
+        if yolo! { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
         {
             break 'blk None;
         }
@@ -279,14 +280,14 @@ pub fn decode(
             if !p.is_null() {
                 // SAFETY: `p` was allocated by libjpeg-turbo via tj3GetICCProfile;
                 // tj3Free is its matching deallocator and is called exactly once.
-                unsafe { tj3Free(p.cast()) };
+                yolo! { tj3Free(p.cast()) };
             }
         });
         if icc_ptr.is_null() {
             break 'blk None;
         }
         // SAFETY: tj3GetICCProfile wrote `icc_size` bytes at `icc_ptr`.
-        let src = unsafe { core::slice::from_raw_parts(icc_ptr, icc_size) };
+        let src = yolo! { core::slice::from_raw_parts(icc_ptr, icc_size) };
         break 'blk Some(src.to_vec());
     };
     Ok(codecs::Decoded {
@@ -306,15 +307,15 @@ pub fn encode(
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
     // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-    let h = unsafe { tj3Init(0) };
+    let h = yolo! { tj3Init(0) };
     if h.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
     // SAFETY: `h` is the non-null tjhandle returned above; tj3Destroy is the
     // documented owner-release and is called exactly once via this guard.
-    let _h_guard = scopeguard::guard(h, |h| unsafe { tj3Destroy(h) });
+    let _h_guard = scopeguard::guard(h, |h| yolo! { tj3Destroy(h) });
     // SAFETY: `h` is a live tjhandle for the duration of `_h_guard`.
-    unsafe {
+    yolo! {
         tj3Set(h, TJPARAM_QUALITY, c_int::from(quality.clamp(1, 100)));
         tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);
     }
@@ -323,7 +324,7 @@ pub fn encode(
     // mishandle it).
     if progressive {
         // SAFETY: `h` is live.
-        unsafe { tj3Set(h, TJPARAM_PROGRESSIVE, 1) };
+        yolo! { tj3Set(h, TJPARAM_PROGRESSIVE, 1) };
     }
     // Embed the source colour profile as an APP2/ICC_PROFILE marker. The
     // library copies the bytes, so the caller can free `icc_profile` right
@@ -334,7 +335,7 @@ pub fn encode(
         if !p.is_empty() {
             // SAFETY: `h` is live; ptr/len come from a valid `&[u8]`; the
             // library copies the bytes so the borrow need only outlive the call.
-            unsafe { tj3SetICCProfile(h, p.as_ptr(), p.len()) };
+            yolo! { tj3SetICCProfile(h, p.as_ptr(), p.len()) };
         }
     }
     let mut out_ptr: *mut u8 = core::ptr::null_mut();
@@ -342,7 +343,7 @@ pub fn encode(
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]` with the
     // caller-asserted `w*ht*4` layout; out-params are valid `&mut` locals and
     // libjpeg-turbo allocates the output buffer (out_ptr starts null).
-    if unsafe {
+    if yolo! {
         tj3Compress8(
             h,
             rgba.as_ptr(),
@@ -360,7 +361,7 @@ pub fn encode(
         if !out_ptr.is_null() {
             // SAFETY: `out_ptr` was allocated by tj3Compress8 via libjpeg-turbo's
             // allocator; tj3Free is its matching deallocator.
-            unsafe { tj3Free(out_ptr.cast()) };
+            yolo! { tj3Free(out_ptr.cast()) };
         }
         return Err(codecs::Error::EncodeFailed);
     }
@@ -368,7 +369,7 @@ pub fn encode(
     // with `tj3Free` as the finalizer instead of duping.
     Ok(codecs::Encoded {
         // SAFETY: tj3Compress8 succeeded; out_ptr is non-null and owns `out_len` bytes.
-        bytes: unsafe {
+        bytes: yolo! {
             NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len))
         },
         free: encoded_wrap_free!(tj3Free),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
@@ -50,7 +51,7 @@ impl PBKDF2 {
         boringssl::ERR_clear_error();
         // SAFETY: password/salt point to valid slices for the given lengths;
         // algorithm.md() returns a non-null EVP_MD; output is writable for `length` bytes.
-        let rc = unsafe {
+        let rc = yolo! {
             boringssl::PKCS5_PBKDF2_HMAC(
                 if !password.is_empty() {
                     password.as_ptr()
@@ -331,7 +332,7 @@ pub fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
     )
     .expect("Pbkdf2Ctx::init is infallible");
     // SAFETY: `job` is a freshly-created live pointer.
-    unsafe { AnyTaskJob::schedule(job) };
+    yolo! { AnyTaskJob::schedule(job) };
     job
 }
 

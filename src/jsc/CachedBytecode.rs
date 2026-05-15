@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use bun_core::String as BunString;
@@ -47,7 +48,7 @@ impl CachedBytecode {
         let mut input_code_size: usize = 0;
         let mut input_code_ptr: Option<NonNull<u8>> = None;
         // SAFETY: out-params are valid for write; input slice valid for read.
-        let ok = unsafe {
+        let ok = yolo! {
             generateCachedModuleByteCodeFromSourceCode(
                 source_provider_url,
                 input.as_ptr(),
@@ -61,7 +62,7 @@ impl CachedBytecode {
             // SAFETY: on success, C++ guarantees both out-params are non-null
             // and the slice is valid for `input_code_size` bytes until deref().
             let slice =
-                unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
+                yolo! { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
             return Some((slice, this.unwrap()));
         }
 
@@ -76,7 +77,7 @@ impl CachedBytecode {
         let mut input_code_size: usize = 0;
         let mut input_code_ptr: Option<NonNull<u8>> = None;
         // SAFETY: out-params are valid for write; input slice valid for read.
-        let ok = unsafe {
+        let ok = yolo! {
             generateCachedCommonJSProgramByteCodeFromSourceCode(
                 source_provider_url,
                 input.as_ptr(),
@@ -90,7 +91,7 @@ impl CachedBytecode {
             // SAFETY: on success, C++ guarantees both out-params are non-null
             // and the slice is valid for `input_code_size` bytes until deref().
             let slice =
-                unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
+                yolo! { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
             return Some((slice, this.unwrap()));
         }
 

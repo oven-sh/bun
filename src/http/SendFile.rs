@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr;
 
 use bun_core::feature_flags;
@@ -41,7 +42,7 @@ impl SendFile {
             // this does the syscall directly, without libc
             // SAFETY: fds are valid open descriptors owned by `self`/caller; offset ptr is a
             // live stack local.
-            let val = unsafe {
+            let val = yolo! {
                 bun_sys::linux::sendfile(
                     socket_fd.native(),
                     self.fd.native(),
@@ -73,7 +74,7 @@ impl SendFile {
             let signed_offset: i64 = self.offset as u64 as i64;
             // FreeBSD: sendfile(fd, s, offset, nbytes, hdtr, *sbytes, flags)
             // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
-            let errcode = bun_sys::get_errno(unsafe {
+            let errcode = bun_sys::get_errno(yolo! {
                 bun_sys::c::sendfile(
                     self.fd.native(),
                     socket_fd.native(),
@@ -105,7 +106,7 @@ impl SendFile {
             // Zig: `@as(i64, @bitCast(self.offset))` — same-width `as` is the bitcast.
             let signed_offset: i64 = self.offset as u64 as i64;
             // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
-            let errcode = bun_sys::get_errno(unsafe {
+            let errcode = bun_sys::get_errno(yolo! {
                 bun_sys::c::sendfile(
                     self.fd.native(),
                     socket_fd.native(),

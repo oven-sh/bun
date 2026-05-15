@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
@@ -98,7 +99,7 @@ impl Route {
     pub fn params(&self) -> &[BunString] {
         // SAFETY: param_names points to param_names_len contiguous BunString
         // values (or is `(null, 0)`, which `ffi::slice` tolerates).
-        unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
+        yolo! { bun_core::ffi::slice(self.param_names, self.param_names_len) }
     }
 }
 
@@ -109,7 +110,7 @@ impl Drop for Route {
             // contiguous [BunString; param_names_len]. Reconstructing the Box drops each
             // element (deref) and frees the backing storage.
             let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
-            drop(unsafe { bun_core::heap::take(slice) });
+            drop(yolo! { bun_core::heap::take(slice) });
             self.param_names = core::ptr::null_mut();
             self.param_names_len = 0;
         }
@@ -202,7 +203,7 @@ impl InspectorHTTPServerAgent {
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
         // above; remaining args are by-value scalars / `&BunString`.
-        unsafe {
+        yolo! {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
                 core::ptr::from_mut(agent).cast(),
                 server_id.get() as _,
@@ -222,7 +223,7 @@ impl InspectorHTTPServerAgent {
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
         // via `opaque_mut`; remaining args are by-value scalars.
-        unsafe {
+        yolo! {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStopped(
                 core::ptr::from_mut(agent).cast(),
                 server_id.get() as _,
@@ -240,7 +241,7 @@ impl InspectorHTTPServerAgent {
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
         // via `opaque_mut`; `routes` is a valid `&mut [Route]` slice.
-        unsafe {
+        yolo! {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerRoutesUpdated(
                 core::ptr::from_mut(agent).cast(),
                 server_id.get() as _,

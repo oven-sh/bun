@@ -15,6 +15,7 @@
 //! `values::{length,number,resolution,ratio}` calc lattice has un-gated, so
 //! `@media`/`@container` parse end-to-end.
 
+use bun_yolo::yolo;
 use crate as css;
 use crate::css_properties::custom::EnvironmentVariable;
 use crate::css_values::ident::{DashedIdent, Ident};
@@ -183,7 +184,7 @@ impl PartialEq for MediaType {
             (Self::Print, Self::Print) => true,
             (Self::Screen, Self::Screen) => true,
             // SAFETY: arena-owned slices valid for the MediaList lifetime.
-            (Self::Custom(a), Self::Custom(b)) => unsafe { **a == **b },
+            (Self::Custom(a), Self::Custom(b)) => yolo! { **a == **b },
             _ => false,
         }
     }
@@ -251,7 +252,7 @@ impl<FeatureId: FeatureIdTrait> PartialEq for MediaFeatureName<FeatureId> {
             (Self::Standard(a), Self::Standard(b)) => a == b,
             (Self::Custom(a), Self::Custom(b)) => a.v() == b.v(),
             // SAFETY: arena-owned slices valid for the MediaList lifetime.
-            (Self::Unknown(a), Self::Unknown(b)) => unsafe { *a.v == *b.v },
+            (Self::Unknown(a), Self::Unknown(b)) => yolo! { *a.v == *b.v },
             _ => false,
         }
     }
@@ -727,7 +728,7 @@ impl MediaQuery {
             MediaType::Screen => dest.write_str("screen")?,
             MediaType::Custom(desc) => {
                 // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                dest.write_str(unsafe { crate::arena_str(*desc) })?;
+                dest.write_str(yolo! { crate::arena_str(*desc) })?;
             }
         }
 

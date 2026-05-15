@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 
 use crate::{ConnectingSocket, Loop, SocketGroup, Timer, udp, us_socket_t};
@@ -63,7 +64,7 @@ impl InternalLoopData {
     pub fn recv_slice(&mut self) -> &mut [u8] {
         // SAFETY: `recv_buf` is malloc'd by C `us_internal_loop_data_init` with at least
         // LIBUS_RECV_BUFFER_LENGTH bytes and lives as long as the loop.
-        unsafe { core::slice::from_raw_parts_mut(self.recv_buf, Self::LIBUS_RECV_BUFFER_LENGTH) }
+        yolo! { core::slice::from_raw_parts_mut(self.recv_buf, Self::LIBUS_RECV_BUFFER_LENGTH) }
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {

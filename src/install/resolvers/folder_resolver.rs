@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 
 use bun_collections::{HashMap, IdentityContext};
@@ -61,7 +62,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 
         // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
         let joined_path: &mut PathBuffer =
-            unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
+            yolo! { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
         let mut paths = normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
             joined_path,
@@ -298,7 +299,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
-        let json = unsafe { &mut *manager_ptr }
+        let json = yolo! { &mut *manager_ptr }
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
             .unwrap()?;
@@ -309,7 +310,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let source: *const bun_ast::Source = &raw const json.source;
 
         // SAFETY: see PORT NOTE above on borrow splitting.
-        unsafe {
+        yolo! {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
             package.parse_with_json::<R>(
                 &mut *lockfile,
@@ -341,7 +342,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         };
 
         // SAFETY: see PORT NOTE above on borrow splitting.
-        unsafe {
+        yolo! {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
             package.parse::<R>(
                 &mut *lockfile,

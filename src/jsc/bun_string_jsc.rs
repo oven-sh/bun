@@ -2,6 +2,7 @@
 //! `src/string/` free of `JSValue`/`JSGlobalObject`/`CallFrame` types — the
 //! original methods are aliased to the free fns here.
 
+use bun_yolo::yolo;
 use core::fmt;
 use std::io::Write as _;
 
@@ -45,7 +46,7 @@ unsafe extern "C" {
 pub fn transfer_to_js(this: &mut String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: `this` is a live `&mut String`; the cppbind wrapper opens its own
     // validation scope and converts `.zero` to `Err(JsError::Thrown)`.
-    unsafe { crate::cpp::BunString__transferToJS(this, global_this) }
+    yolo! { crate::cpp::BunString__transferToJS(this, global_this) }
 }
 
 pub fn to_error_instance(this: &String, global_object: &JSGlobalObject) -> JSValue {
@@ -72,7 +73,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     crate::validation_scope!(scope, global_object);
     let mut out: String = String::DEAD;
     // SAFETY: `global_object` is a valid handle; `out` is a live stack out-param.
-    let ok = unsafe {
+    let ok = yolo! {
         crate::cpp::raw::BunString__fromJS(
             global_object as *const JSGlobalObject as *mut JSGlobalObject,
             value,
@@ -95,7 +96,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
 #[track_caller]
 pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: `this` borrows a live `String` for the call duration.
-    unsafe { crate::cpp::BunString__toJS(global_object, this) }
+    yolo! { crate::cpp::BunString__toJS(global_object, this) }
 }
 
 /// `BunString__toJSDOMURL` opens a `DECLARE_THROW_SCOPE` and throws (returning
@@ -119,7 +120,7 @@ pub fn to_jsdomurl(this: &mut String, global_object: &JSGlobalObject) -> JsResul
 #[track_caller]
 pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; `array` ptr/len from a live slice, global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, || unsafe {
+    crate::from_js_host_call(global_object, || yolo! {
         BunString__createArray(global_object, array.as_ptr(), array.len())
     })
 }
@@ -130,13 +131,13 @@ pub fn to_js_by_parse_json(
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     // SAFETY: `self_` is a live `&mut String`.
-    unsafe { crate::cpp::BunString__toJSON(global_object, self_) }
+    yolo! { crate::cpp::BunString__toJSON(global_object, self_) }
 }
 
 #[track_caller]
 pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; ptr/len from a live &[u8], global_object borrowed for call duration.
-    unsafe {
+    yolo! {
         crate::cpp::BunString__createUTF8ForJS(
             global_object,
             utf8_slice.as_ptr().cast(),
@@ -156,13 +157,13 @@ pub fn create_format_for_js(
     builder.write_fmt(args).expect("Vec<u8> write cannot fail");
     let (ptr, len) = (builder.as_ptr(), builder.len());
     // SAFETY: FFI call into JSC; ptr/len from a live Vec<u8>, global_object borrowed for call duration.
-    unsafe { crate::cpp::BunString__createUTF8ForJS(global_object, ptr.cast(), len) }
+    yolo! { crate::cpp::BunString__createUTF8ForJS(global_object, ptr.cast(), len) }
 }
 
 #[track_caller]
 pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult<f64> {
     // SAFETY: `this` is a live `&mut String`; cppbind wrapper opens its own scope.
-    unsafe { crate::cpp::Bun__parseDate(global_object, this) }
+    yolo! { crate::cpp::Bun__parseDate(global_object, this) }
 }
 
 #[bun_jsc::host_fn]
@@ -263,7 +264,7 @@ fn slice_with_underlying_string_to_js_with_options(
                 let zig = ZigString::from_bytes(
                     // SAFETY: `take_owned_raw` returned a leaked, contiguous
                     // mimalloc-owned buffer of `len` bytes.
-                    unsafe { bun_core::ffi::slice(ptr, len) },
+                    yolo! { bun_core::ffi::slice(ptr, len) },
                 );
                 return Ok(zig.to_external_value(global_object));
             } else {

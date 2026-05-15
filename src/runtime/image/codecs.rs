@@ -8,6 +8,7 @@
 //! JS layer can hand the buffer to `ArrayBuffer.toJSWithContext` without a
 //! dupe — see `Encoded` below.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
@@ -362,15 +363,15 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             // turbojpeg's header decode is already cheap (no scan data read).
             let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
             // SAFETY: handle is live; (ptr,len) come from a valid live slice.
-            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) }
+            if yolo! { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) }
                 != 0
             {
                 return Err(Error::DecodeFailed);
             }
             // SAFETY: handle is live and has had a header decoded into it above.
-            let rw = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
+            let rw = yolo! { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
             // SAFETY: same handle invariant as above.
-            let rh = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
+            let rh = yolo! { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
             if rw <= 0 || rh <= 0 {
                 return Err(Error::DecodeFailed);
             }
@@ -381,7 +382,7 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             let mut cw: c_int = 0;
             let mut ch: c_int = 0;
             // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
-            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
+            if yolo! { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
                 == 0
                 || cw <= 0
                 || ch <= 0
@@ -492,7 +493,7 @@ pub struct Encoded {
 impl Drop for Encoded {
     fn drop(&mut self) {
         // SAFETY: `bytes` was allocated by the codec whose deallocator is `free`.
-        unsafe {
+        yolo! {
             (self.free)(
                 self.bytes.as_ptr().cast::<u8>().cast::<c_void>(),
                 core::ptr::null_mut(),
@@ -511,7 +512,7 @@ macro_rules! encoded_wrap_free {
     ($f:path) => {{
         unsafe extern "C" fn call(p: *mut ::core::ffi::c_void, _: *mut ::core::ffi::c_void) {
             // SAFETY: p was allocated by the matching allocator for `$f`.
-            unsafe { $f(p) }
+            yolo! { $f(p) }
         }
         call as unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void)
     }};
@@ -521,7 +522,7 @@ impl Encoded {
     pub fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.
-        let slice = unsafe {
+        let slice = yolo! {
             NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(
                 bytes.as_mut_ptr(),
                 bytes.len(),
@@ -537,7 +538,7 @@ impl Encoded {
 pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Result<Encoded, Error> {
     // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
     // duration of this call (Phase-A raw-ptr stand-in for a lifetime param).
-    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
+    let icc: Option<&[u8]> = opts.icc_profile.map(|p| yolo! { p.as_ref() });
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise
@@ -647,7 +648,7 @@ unsafe extern "C" {
 /// luma (0 = greyscale, 1 = identity, >1 = boost).
 pub fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
-    unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
+    yolo! { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
 pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Result<Vec<u8>, Error> {
@@ -667,7 +668,7 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
     // into the same size class as the row buffer alone.
     let out_sz: usize = (dw as usize) * (dh as usize) * 4;
     // SAFETY: pure FFI query; all args are by-value ints, no pointers.
-    let scratch_sz = unsafe {
+    let scratch_sz = yolo! {
         bun_image_resize_scratch_size(
             i32::try_from(sw).expect("int cast"),
             i32::try_from(sh).expect("int cast"),
@@ -678,7 +679,7 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
     };
     let mut block: Vec<u8> = vec![0u8; out_sz + scratch_sz];
     // SAFETY: block has out_sz + scratch_sz bytes; dst at [0..out_sz), scratch at [out_sz..).
-    let rc = unsafe {
+    let rc = yolo! {
         bun_image_resize_rgba8(
             src.as_ptr(),
             i32::try_from(sw).expect("int cast"),
@@ -724,7 +725,7 @@ pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error
     }
     let mut out: Vec<u8> = vec![0u8; (dw as usize) * (dh as usize) * 4];
     // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes; degrees is multiple of 90.
-    unsafe {
+    yolo! {
         bun_image_rotate_rgba8(
             src.as_ptr(),
             i32::try_from(w).expect("int cast"),
@@ -752,7 +753,7 @@ pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Err
     }
     let mut out: Vec<u8> = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
-    unsafe {
+    yolo! {
         bun_image_flip_rgba8(
             src.as_ptr(),
             i32::try_from(w).expect("int cast"),

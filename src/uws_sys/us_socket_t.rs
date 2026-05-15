@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
@@ -37,7 +38,7 @@ impl us_socket_t {
         bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
         if let Some(ip) = ip_addr {
             debug_assert!(ip.len() < MAX_I32);
-            unsafe {
+            yolo! {
                 // SAFETY: self is a live us_socket_t; ip.ptr valid for ip.len bytes
                 let _ = c::us_socket_open(
                     self,
@@ -47,7 +48,7 @@ impl us_socket_t {
                 );
             }
         } else {
-            unsafe {
+            yolo! {
                 // SAFETY: self is a live us_socket_t
                 let _ = c::us_socket_open(self, is_client as i32, ptr::null(), 0);
             }
@@ -71,7 +72,7 @@ impl us_socket_t {
             self,
             <&'static str>::from(code)
         );
-        unsafe {
+        yolo! {
             // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
         }
@@ -110,7 +111,7 @@ impl us_socket_t {
     // TODO(port): narrow error set
     pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
+        yolo! {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
             c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
@@ -128,7 +129,7 @@ impl us_socket_t {
     // TODO(port): narrow error set
     pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
+        yolo! {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
@@ -163,7 +164,7 @@ impl us_socket_t {
         if !self.is_tls() {
             return None;
         }
-        unsafe {
+        yolo! {
             // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
             c::us_socket_get_native_handle(self)
                 .cast::<bun_boringssl_sys::SSL>()
@@ -180,7 +181,7 @@ impl us_socket_t {
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
-        unsafe {
+        yolo! {
             // SAFETY: us_socket_ext returns LIBUS_EXT_ALIGNMENT-aligned storage
             // sized for T at socket creation; caller picks the same T it stored.
             &mut *c::us_socket_ext(self).cast::<T>()
@@ -195,7 +196,7 @@ impl us_socket_t {
     }
 
     pub fn group(&mut self) -> &mut SocketGroup {
-        unsafe {
+        yolo! {
             // SAFETY: us_socket_group never returns null for a live socket
             &mut *c::us_socket_group(self)
         }
@@ -228,7 +229,7 @@ impl us_socket_t {
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
         // SAFETY: self and g are live; C may realloc and return a different us_socket_t*
-        unsafe { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
+        yolo! { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
     }
 
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
@@ -248,7 +249,7 @@ impl us_socket_t {
     ) -> Option<NonNull<us_socket_t>> {
         // SAFETY: self/g/ssl_ctx are live; sni is null or a valid C string; C may
         // realloc and return a different us_socket_t*
-        unsafe {
+        yolo! {
             NonNull::new(c::us_socket_adopt_tls(
                 self,
                 g,
@@ -275,7 +276,7 @@ impl us_socket_t {
     }
 
     pub fn write(&mut self, data: &[u8]) -> i32 {
-        let rc = unsafe {
+        let rc = yolo! {
             // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_write(
                 self,
@@ -289,7 +290,7 @@ impl us_socket_t {
 
     #[cfg(not(windows))]
     pub fn write_fd(&mut self, data: &[u8], file_descriptor: Fd) -> i32 {
-        let rc = unsafe {
+        let rc = yolo! {
             // SAFETY: data.as_ptr() valid for data.len() bytes; fd is a valid native descriptor
             c::us_socket_ipc_write_fd(
                 self,
@@ -318,7 +319,7 @@ impl us_socket_t {
     }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
-        let rc = unsafe {
+        let rc = yolo! {
             // SAFETY: both slices valid for their respective lengths
             c::us_socket_write2(
                 self,
@@ -342,7 +343,7 @@ impl us_socket_t {
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
-        unsafe {
+        yolo! {
             // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_raw_write(
                 self,
@@ -398,7 +399,7 @@ mod c {
     // / `&mut us_socket_t` are ABI-identical to a non-null pointer with no
     // `readonly`/`noalias` attribute. Shims whose only pointer argument is the
     // socket itself (plus value types) are declared `safe fn` so the validity
-    // proof lives in the type signature instead of per-call-site `unsafe { }`.
+    // proof lives in the type signature instead of per-call-site `yolo! { }`.
     // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
     // stay unsafe.
     unsafe extern "C" {
@@ -534,7 +535,7 @@ impl us_socket_stream_buffer_t {
     pub fn to_stream_buffer(&self) -> StreamBuffer {
         StreamBuffer {
             list: if !self.list_ptr.is_null() {
-                unsafe {
+                yolo! {
                     // SAFETY: list_ptr/list_len/list_cap were produced by decomposing a
                     // Vec<u8> in `update`; global allocator (mimalloc) matches.
                     Vec::from_raw_parts(self.list_ptr, self.list_len, self.list_cap)
@@ -554,9 +555,9 @@ impl us_socket_stream_buffer_t {
     /// the global mimalloc allocator). Not called more than once.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` is non-null and exclusively borrowed
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         if !this.list_ptr.is_null() {
-            unsafe {
+            yolo! {
                 // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
                 drop(Vec::from_raw_parts(this.list_ptr, 0, this.list_cap));
             }
@@ -567,7 +568,7 @@ impl us_socket_stream_buffer_t {
 #[unsafe(no_mangle)]
 pub extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
     // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
-    unsafe { us_socket_stream_buffer_t::destroy(buffer) };
+    yolo! { us_socket_stream_buffer_t::destroy(buffer) };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs
 

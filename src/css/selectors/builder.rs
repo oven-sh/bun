@@ -17,6 +17,7 @@
 //! is non-trivial. This module encapsulates those details and presents an
 //! easy-to-use API for the parser.
 
+use bun_yolo::yolo;
 use crate::SmallList;
 pub use crate::{PrintErr, Printer};
 
@@ -181,7 +182,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
                 // monotonically advances; `rest_of_simple_selectors` is the
                 // disjoint prefix of the previous `current` slice). The source
                 // storage is leaked-then-truncated via `set_len(0)`.
-                let moved = unsafe {
+                let moved = yolo! {
                     core::ptr::read(&raw const current_simple_selectors[current_simple_selectors_i])
                 };
                 components.push(moved);

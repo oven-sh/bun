@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_core::Output;
 
 // here so existing `crate::cli::shell_completions::Shell` paths keep working.
@@ -55,7 +56,7 @@ impl ShellCompletions {
         let _flush = Output::flush_guard();
         // SAFETY: Output::writer() returns a process-lifetime *mut io::Writer
         // (thread-local Source storage); the deref lives for this fn body only.
-        let writer = unsafe { &mut *Output::writer() };
+        let writer = yolo! { &mut *Output::writer() };
 
         if self.commands.is_empty() {
             return;

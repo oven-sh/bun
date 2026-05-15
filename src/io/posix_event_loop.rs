@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::fmt;
 use core::ptr;
@@ -438,7 +439,7 @@ impl FilePoll {
         // this T3 crate names no variant types. // PERF(port): was inline switch.
         // SAFETY: `self` is a live FilePoll for the duration of the call
         // (guaranteed by the uws loop callback contract).
-        unsafe { __bun_run_file_poll(self, size_or_offset) };
+        yolo! { __bun_run_file_poll(self, size_or_offset) };
     }
 
     #[inline]
@@ -733,7 +734,7 @@ impl FilePoll {
             };
 
             // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
+            let ctl = yolo! { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
@@ -801,7 +802,7 @@ impl FilePoll {
             // limit expires, then kevent() returns 0.
             let rc = 'rc: loop {
                 // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-                let rc = unsafe {
+                let rc = yolo! {
                     bun_sys::darwin::kevent64(
                         watcher_fd,
                         changelist.as_ptr(),
@@ -880,7 +881,7 @@ impl FilePoll {
 
             let rc = 'rc: loop {
                 // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-                let rc = unsafe {
+                let rc = yolo! {
                     kevent(
                         watcher_fd,
                         changelist.as_ptr(),
@@ -1032,7 +1033,7 @@ impl FilePoll {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
             // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
-            let ctl = unsafe {
+            let ctl = yolo! {
                 linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
             };
 
@@ -1108,7 +1109,7 @@ impl FilePoll {
             // the eventlist, up to the value given by nevents.  If the time
             // limit expires, then kevent() returns 0.
             // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-            let rc = unsafe {
+            let rc = yolo! {
                 kevent64(
                     watcher_fd,
                     changelist.as_ptr(),
@@ -1173,7 +1174,7 @@ impl FilePoll {
             // first failing change. For EV_DELETE (typically ENOENT) a silent
             // miss on the second entry is harmless.
             // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-            let rc = unsafe {
+            let rc = yolo! {
                 kevent(
                     watcher_fd,
                     changelist.as_ptr(),
@@ -1384,7 +1385,7 @@ impl Store {
             // raw-pointer reads/writes only — materializing a `&mut FilePoll`
             // here would alias the `&mut self.hive` borrow taken by `put()`
             // below (the slot may live inside the inline hive array).
-            unsafe {
+            yolo! {
                 next = (*current).next_to_free;
                 (*current).next_to_free = ptr::null_mut();
                 // FilePoll has no drop glue; `put` is a no-op drop + recycle.
@@ -1404,16 +1405,16 @@ impl Store {
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
             // drop glue, so `put` is a no-op drop + recycle.
-            unsafe { self.hive.put(poll) };
+            yolo! { self.hive.put(poll) };
             return;
         }
 
-        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
+        debug_assert!(yolo! { (*poll).next_to_free }.is_null());
 
         if !self.pending_free_tail.is_null() {
             debug_assert!(!self.pending_free_head.is_null());
             // SAFETY: tail is non-null and points into the hive.
-            unsafe {
+            yolo! {
                 debug_assert!((*self.pending_free_tail).next_to_free.is_null());
                 (*self.pending_free_tail).next_to_free = poll;
             }
@@ -1425,7 +1426,7 @@ impl Store {
         }
 
         // SAFETY: see fn-level comment — raw-pointer field access only.
-        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
+        yolo! { (*poll).flags.insert(Flags::IgnoreUpdates) };
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
@@ -1445,7 +1446,7 @@ impl Store {
     // `Store`. Body wraps its raw-ptr op explicitly.
     extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
         // SAFETY: ctx was set to `self as *mut Store` in `put` above.
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
+        let this = yolo! { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
 }
@@ -1518,7 +1519,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     }
 
     // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
-    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_file_poll() };
+    let file_poll: &mut FilePoll = yolo! { &mut *tag.as_file_poll() };
     if file_poll.flags.contains(Flags::IgnoreUpdates) {
         return;
     }
@@ -1530,7 +1531,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
     // accessor returns by value), then drop the borrow before dispatching so the
     // handler is free to form its own `&mut Loop`.
-    let ev = unsafe { &*loop_ }.current_ready_event();
+    let ev = yolo! { &*loop_ }.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     file_poll.on_kqueue_event(&ev);

@@ -1,6 +1,7 @@
 //! Contains helpers for C++ to do TextEncoder/Decoder like operations.
 //! Also contains the code used by `bun.String.encode` and `bun.String.encodeInto`
 
+use bun_yolo::yolo;
 use core::slice;
 
 use crate::node::types::Encoding;
@@ -159,7 +160,7 @@ pub extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: u
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(input: *const u16, len: usize) -> usize {
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let input = yolo! { bun_core::ffi::slice(input, len) };
     strings::element_length_utf16_into_utf8(input)
 }
 
@@ -207,7 +208,7 @@ pub extern "C" fn Bun__encoding__toStringUTF8(
     global_object: &JSGlobalObject,
 ) -> JSValue {
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let input = yolo! { bun_core::ffi::slice(input, len) };
     match to_string_comptime::<{ enc::UTF8 }>(input, global_object) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
@@ -222,7 +223,7 @@ pub extern "C" fn Bun__encoding__toString(
     encoding: u8,
 ) -> JSValue {
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input = unsafe { bun_core::ffi::slice(input, len) };
+    let input = yolo! { bun_core::ffi::slice(input, len) };
     match to_string(input, global_object, encoding_from_u8(encoding)) {
         Ok(v) => v,
         Err(_) => JSValue::ZERO,
@@ -300,7 +301,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
             // Vec<u8> as Vec<u16> is not generally sound in Rust (alignment + allocator layout).
             // Phase B: route through bun_core::String API that accepts raw (ptr,len,cap) bytes.
             // SAFETY: input.as_ptr() is at least 1-aligned; Zig asserted u16 alignment via @alignCast.
-            let as_u16 = unsafe {
+            let as_u16 = yolo! {
                 let mut input = core::mem::ManuallyDrop::new(input);
                 Vec::from_raw_parts(
                     input.as_mut_ptr().cast::<u16>(),
@@ -478,8 +479,8 @@ pub fn write_u8<const ENCODING: u8>(
     // if (comptime encoding.isBinaryToText()) {}
 
     // SAFETY: caller guarantees `input[..len]` and `to_ptr[..to_len]` are valid; len/to_len > 0.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-    let to_slice = unsafe { slice::from_raw_parts_mut(to_ptr, to_len) };
+    let input_slice = yolo! { bun_core::ffi::slice(input, len) };
+    let to_slice = yolo! { slice::from_raw_parts_mut(to_ptr, to_len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer | Encoding::Latin1 => {
@@ -530,7 +531,7 @@ pub fn write_u8<const ENCODING: u8>(
                 let output_ptr = to_slice.as_mut_ptr().cast::<u16>();
                 // SAFETY: `to_slice` is valid for `written * 2` bytes; unaligned stores.
                 for i in 0..written {
-                    unsafe { output_ptr.add(i).write_unaligned(buf[i] as u16) };
+                    yolo! { output_ptr.add(i).write_unaligned(buf[i] as u16) };
                 }
                 Ok(written * 2)
             }
@@ -550,7 +551,7 @@ pub fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize
     }
 
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+    let input_slice = yolo! { bun_core::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::element_length_latin1_into_utf8(input_slice),
@@ -609,8 +610,8 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Utf8 => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            let input_slice = yolo! { bun_core::ffi::slice(input, len) };
+            let to_slice = yolo! { slice::from_raw_parts_mut(to, to_len) };
             Ok(
                 strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(to_slice, input_slice)
                     .written as usize,
@@ -620,8 +621,8 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             let out = len.min(to_len);
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { bun_core::ffi::slice(input, out) };
-            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            let input_slice = yolo! { bun_core::ffi::slice(input, out) };
+            let to_slice = yolo! { slice::from_raw_parts_mut(to, to_len) };
             strings::copy_u16_into_u8(to_slice, input_slice);
             Ok(out)
         }
@@ -632,7 +633,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
                 let written = bytes_input_len.min(to_len);
                 let input_u8 = input.cast::<u8>();
                 // SAFETY: ranges may overlap; use ptr::copy (memmove).
-                unsafe { core::ptr::copy(input_u8, to, written) };
+                yolo! { core::ptr::copy(input_u8, to, written) };
                 Ok(written)
             } else {
                 let bytes_input_len = len * 2;
@@ -644,7 +645,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
                 let fixed_len = (written / 2) * 2;
                 let input_u8 = input.cast::<u8>();
                 // SAFETY: ranges may overlap; use ptr::copy (memmove).
-                unsafe { core::ptr::copy(input_u8, to, fixed_len) };
+                yolo! { core::ptr::copy(input_u8, to, fixed_len) };
                 // PORT NOTE: Zig wrote `to[0..written]` from `input_u8[0..fixed_len]` (mismatched
                 // lengths into bun.memmove). Preserving fixed_len bytes copied as that is what is
                 // returned; revisit in Phase B if behavior diverges.
@@ -655,8 +656,8 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Hex => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            let input_slice = yolo! { bun_core::ffi::slice(input, len) };
+            let to_slice = yolo! { slice::from_raw_parts_mut(to, to_len) };
             Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice))
         }
 
@@ -669,7 +670,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             // shouldn't really happen though
             // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
             // needed here since the output goes through `write_u8` with raw `to`.
-            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+            let input_slice = yolo! { bun_core::ffi::slice(input, len) };
             let transcoded = strings::to_utf8_alloc(input_slice);
             // transcoded dropped at end of scope
             write_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len(), to, to_len)
@@ -692,7 +693,7 @@ pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Ve
     }
 
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+    let input_slice = yolo! { bun_core::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer => {
@@ -771,7 +772,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
     }
 
     // SAFETY: caller guarantees `input[..len]` is valid.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
+    let input_slice = yolo! { bun_core::ffi::slice(input, len) };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::to_utf8_alloc_with_type(input_slice),

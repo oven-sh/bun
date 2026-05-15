@@ -8,6 +8,7 @@
 //!
 //! Note: This is specifically for WebSocket client implementations, not for server-side WebSockets.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_core::{String as BunString, ZigString};
@@ -67,7 +68,7 @@ unsafe extern "C" {
 // an opaque C++ handle with no Rust-visible state; mutation happens entirely on
 // the C++ side. Callers hold `NonNull<CppWebSocket>` and dispatch via shared
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
-// would force needless `unsafe { &mut *ptr }` at every site.
+// would force needless `yolo! { &mut *ptr }` at every site.
 impl CppWebSocket {
     pub fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
@@ -84,7 +85,7 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; reason outlives the call.
-        unsafe { WebSocket__didClose(self, code, reason) };
+        yolo! { WebSocket__didClose(self, code, reason) };
         event_loop.exit();
     }
 
@@ -94,7 +95,7 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; text outlives the call.
-        unsafe { WebSocket__didReceiveText(self, clone, text) };
+        yolo! { WebSocket__didReceiveText(self, clone, text) };
         event_loop.exit();
     }
 
@@ -104,7 +105,7 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; bytes points to byte_len valid bytes.
-        unsafe { WebSocket__didReceiveBytes(self, bytes, byte_len, opcode) };
+        yolo! { WebSocket__didReceiveBytes(self, bytes, byte_len, opcode) };
         event_loop.exit();
     }
 
@@ -131,7 +132,7 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; all pointers are valid for the call duration.
-        unsafe {
+        yolo! {
             WebSocket__didConnect(
                 self,
                 socket,
@@ -156,7 +157,7 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; tunnel/buffered_data are valid for the call duration.
-        unsafe {
+        yolo! {
             WebSocket__didConnectWithTunnel(
                 self,
                 tunnel,
@@ -184,7 +185,7 @@ impl CppWebSocket {
     pub fn set_protocol(&self, protocol: &mut BunString) {
         bun_jsc::mark_binding!();
         // SAFETY: self is a valid C++ WebCore::WebSocket; protocol outlives the call.
-        unsafe { WebSocket__setProtocol(self, protocol) };
+        yolo! { WebSocket__setProtocol(self, protocol) };
     }
 }
 

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::sync::atomic::Ordering;
 
 use bun_core::Output;
@@ -116,7 +117,7 @@ impl PackageManager {
         // singleton; `progress_name_buf` is an inline field of that same
         // singleton, so erasing the slice lifetime to `'static` matches Zig's
         // raw-pointer aliasing (`node.name = this.progress_name_buf[..]`).
-        unsafe {
+        yolo! {
             let len = if Output::enable_ansi_colors_stderr() {
                 if IS_FIRST {
                     self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);

@@ -1,6 +1,7 @@
 //
 //
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -156,7 +157,7 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             twin: JsCell::new(None),
         });
         // SAFETY: `NewSocket::new` returns a live heap pointer (`heap::alloc`).
-        unsafe { (*socket).get_this_value(global) }
+        yolo! { (*socket).get_this_value(global) }
     }
 
     Ok(if !is_ssl {

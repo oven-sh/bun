@@ -10,6 +10,7 @@
     clippy::too_many_arguments
 )]
 
+use bun_yolo::yolo;
 use core::fmt;
 use core::mem::size_of;
 use std::io::Write as _;
@@ -4547,12 +4548,12 @@ impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
 impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     pub fn slice(&self) -> &[T] {
         // SAFETY: first `len` elements are initialized
-        unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize) }
+        yolo! { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize) }
     }
 
     pub fn slice_mut(&mut self) -> &mut [T] {
         // SAFETY: first `self.len` elements are initialized; pointer is valid for `len` reads/writes.
-        unsafe {
+        yolo! {
             core::slice::from_raw_parts_mut(self.items.as_mut_ptr().cast::<T>(), self.len as usize)
         }
     }
@@ -4566,7 +4567,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         // SAFETY: moving INLINED_MAX initialized elements out
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
-            let v = unsafe { self.items[i].assume_init_read() };
+            let v = yolo! { self.items[i].assume_init_read() };
             list.append_assume_capacity(v);
         }
         self.len = 0;
@@ -4600,7 +4601,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
 
     pub fn pop(&mut self) -> T {
         // SAFETY: caller guarantees self.len > 0; slot at len-1 is initialized.
-        let ret = unsafe { self.items[self.len as usize - 1].assume_init_read() };
+        let ret = yolo! { self.items[self.len as usize - 1].assume_init_read() };
         self.len -= 1;
         ret
     }

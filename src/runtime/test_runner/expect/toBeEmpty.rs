@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
@@ -30,7 +31,7 @@ pub fn to_be_empty(
                     _: JSValue,
                 ) {
                     // SAFETY: `any_` is the `&mut bool` passed to `for_each` below.
-                    unsafe { *any_.cast::<bool>() = true };
+                    yolo! { *any_.cast::<bool>() = true };
                 }
 
                 value.for_each(

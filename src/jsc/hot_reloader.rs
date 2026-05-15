@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use bun_yolo::yolo;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -161,7 +162,7 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `enable_hot_module_reloading`; non-null whenever the reloader is
         // running. The cast recovers the concrete type the field was erased to.
-        let import_watcher = unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() };
+        let import_watcher = yolo! { &mut *self.bun_watcher.cast::<ImportWatcher>() };
         match import_watcher {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
             ImportWatcher::None => unreachable!("bun_watcher_mut on un-enabled reloader"),
@@ -201,7 +202,7 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `install_bun_watcher`; the cast recovers the concrete type.
         !matches!(
-            unsafe { &*self.bun_watcher.cast::<ImportWatcher>() },
+            yolo! { &*self.bun_watcher.cast::<ImportWatcher>() },
             ImportWatcher::None
         )
     }
@@ -236,7 +237,7 @@ impl HotReloaderCtx for VirtualMachine {
         // vtable (re-exported from `bun_watcher`, so it's the same type).
         // SAFETY: `watcher_ptr` was just installed into `self.bun_watcher`
         // via `heap::alloc` and is live for the VM's lifetime.
-        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        self.transpiler.resolver.watcher = Some(yolo! { (*watcher_ptr).get_resolve_watcher() });
 
         watcher_ptr
     }
@@ -412,7 +413,7 @@ impl WatchChangedPaths {
     fn get_mut(&self) -> &mut StringSet {
         // SAFETY: see doc comment — single-writer (watcher thread) after
         // init-once publish; allocation outlives the process.
-        unsafe { &mut *self.0.as_ptr() }
+        yolo! { &mut *self.0.as_ptr() }
     }
 }
 // SAFETY: published exactly once before the watcher thread starts; thereafter
@@ -616,7 +617,7 @@ where
         // SAFETY: BACKREF — see doc comment above. `addr_of!` forms a place
         // projection without an intermediate `&NewHotReloader`; `pending_count`
         // is `AtomicU32` (interior-mutable) so a cross-thread `&` to it is sound.
-        unsafe { &*core::ptr::addr_of!((*self.reloader).pending_count) }
+        yolo! { &*core::ptr::addr_of!((*self.reloader).pending_count) }
     }
 
     /// Per-field raw read of the reloader's `ctx` pointer. See
@@ -627,7 +628,7 @@ where
         // SAFETY: BACKREF — reloader outlives every Task; `addr_of!` avoids
         // forming `&NewHotReloader`. `ctx` is set once at init and never
         // mutated, so a racy raw read of the pointer value is fine.
-        unsafe { (*core::ptr::addr_of!((*self.reloader).ctx)).as_ptr() }
+        yolo! { (*core::ptr::addr_of!((*self.reloader).ctx)).as_ptr() }
     }
 
     pub fn append(&mut self, id: u32) {
@@ -649,7 +650,7 @@ where
     /// and must not be used after this call.
     pub unsafe fn deinit(this: *mut Self) {
         // SAFETY: precondition — `this` came from heap::alloc in `enqueue`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn run(&mut self) {
@@ -665,7 +666,7 @@ where
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*ctx).reload(self) };
+            yolo! { (*ctx).reload(self) };
         }
     }
 
@@ -707,7 +708,7 @@ where
             concurrent_task: None,
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
-        unsafe {
+        yolo! {
             // PORT NOTE: `JscTask::init` requires `Taskable`, but const-generic
             // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
             // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
@@ -747,7 +748,7 @@ where
         // SAFETY: `ctx` is the live owning context; it outlives the reloader
         // and every Task spawned from it (BACKREF).
         let reloader = bun_core::heap::into_raw(Box::new(Self {
-            ctx: unsafe { bun_ptr::BackRef::from_raw(ctx) },
+            ctx: yolo! { bun_ptr::BackRef::from_raw(ctx) },
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
             main: MainFile::default(),
@@ -804,7 +805,7 @@ where
     pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
         // SAFETY: caller passes the live `Ctx` (VirtualMachine / DevServer)
         // pointer; it outlives the reloader allocated below.
-        let ctx = unsafe { &mut *this };
+        let ctx = yolo! { &mut *this };
 
         // Zig: `if (@TypeOf(this.bun_watcher) == ImportWatcher) { if (!= .none) return; }
         //        else { if (!= null) return; }`
@@ -814,7 +815,7 @@ where
 
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: `this` is the live owning context; it outlives the reloader.
-            ctx: unsafe { bun_ptr::BackRef::from_raw(this) },
+            ctx: yolo! { bun_ptr::BackRef::from_raw(this) },
             verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
@@ -845,7 +846,7 @@ where
         );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
-        if let Err(_) = unsafe { (*watcher_ptr).start() } {
+        if let Err(_) = yolo! { (*watcher_ptr).start() } {
             panic!("Failed to start File Watcher");
         }
     }
@@ -877,7 +878,7 @@ where
     fn ctx_mut(&mut self) -> &mut Ctx {
         // SAFETY: BACKREF invariant — ctx outlives the reloader; `&mut self`
         // gives exclusivity for the returned borrow's duration.
-        unsafe { self.ctx.get_mut() }
+        yolo! { self.ctx.get_mut() }
     }
 
     pub fn get_context(&mut self) -> &mut Watcher {
@@ -904,7 +905,7 @@ where
         // for `slice.len()` elements; the watcher thread is the sole writer of
         // this column for the loop's duration and no other `&` to it is live.
         let counts: &mut [u32] =
-            unsafe { bun_core::ffi::slice_mut(slice.items_raw::<"count", u32>(), slice.len()) };
+            yolo! { bun_core::ffi::slice_mut(slice.items_raw::<"count", u32>(), slice.len()) };
         let kinds = slice.items_kind();
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
@@ -936,10 +937,10 @@ where
         let _flush = scopeguard::guard(ctx, |ctx| {
             Output::flush();
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-            unsafe { (*ctx).flush_evictions() };
+            yolo! { (*ctx).flush_evictions() };
         });
         // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-        let ctx = unsafe { &mut *ctx };
+        let ctx = yolo! { &mut *ctx };
 
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
@@ -1196,7 +1197,7 @@ where
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration.
-                            let dir_ent = unsafe { &mut *dir_ent };
+                            let dir_ent = yolo! { &mut *dir_ent };
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
@@ -1398,7 +1399,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;
         // live for the process (BundleV2 is leaked under --watch — see
         // `generate_from_cli`).
-        unsafe { &mut *handle.as_ptr() }
+        yolo! { &mut *handle.as_ptr() }
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
@@ -1443,7 +1444,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
         self.bun_watcher = Some(watcher_nn);
         // SAFETY: `watcher_ptr` was just installed; live for the process.
-        self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        self.transpiler.resolver.watcher = Some(yolo! { (*watcher_ptr).get_resolve_watcher() });
         watcher_ptr
     }
 

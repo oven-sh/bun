@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::sync::atomic::Ordering;
 
 use bun_core::time::nano_timestamp;
@@ -78,7 +79,7 @@ pub fn install_with_manager(
         // SAFETY: `mgr` is the sole provenance root; `lockfile`, `*mgr`, and
         // `*log` are disjoint storage. `load_from_cwd` only reads `manager`
         // for option flags and writes through `lockfile`/`log`.
-        unsafe {
+        yolo! {
             let log = (*mgr).log;
             (*mgr)
                 .lockfile
@@ -203,7 +204,7 @@ pub fn install_with_manager(
                     let mgr: *mut PackageManager = manager;
                     maybe_root.parse(
                         &mut lockfile,
-                        unsafe { &mut *mgr },
+                        yolo! { &mut *mgr },
                         log,
                         &source_copy,
                         &mut resolver,
@@ -230,16 +231,16 @@ pub fn install_with_manager(
                     // from here on; `Diff::generate` reborrows disjoint fields
                     // (`lockfile`, `update_requests`) through it. No other live
                     // `&mut` to `*mgr` exists across the call.
-                    let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
+                    let from_lockfile: *mut Lockfile = yolo! { &raw mut *(*mgr).lockfile };
                     let update_requests = if to_update {
-                        Some(unsafe { &(&(*mgr).update_requests)[..] })
+                        Some(yolo! { &(&(*mgr).update_requests)[..] })
                     } else {
                         None
                     };
                     Diff::generate(
-                        unsafe { &mut *mgr },
+                        yolo! { &mut *mgr },
                         log,
-                        unsafe { &mut *from_lockfile },
+                        yolo! { &mut *from_lockfile },
                         &mut lockfile,
                         &root,
                         &maybe_root,
@@ -605,7 +606,7 @@ pub fn install_with_manager(
         // within `*mgr`; `clean_with_logger` only reads `manager` for option flags
         // and its preinstall_state, so a single raw provenance root keeps all
         // reborrows under one tag (PORTING.md §Aliasing-split-borrow).
-        unsafe {
+        yolo! {
             let log = (*mgr).log;
             let exact_versions = (*mgr).options.enable.exact_versions();
             Lockfile::clean_with_logger(
@@ -652,7 +653,7 @@ pub fn install_with_manager(
         // exclusive `manager` borrow above; this guard runs once at scope exit
         // (before `manager` is returned to the caller) and is the sole access
         // to `*mgr_for_root_scripts_cleanup` at that instant.
-        unsafe { (*mgr_for_root_scripts_cleanup).root_lifecycle_scripts = None };
+        yolo! { (*mgr_for_root_scripts_cleanup).root_lifecycle_scripts = None };
     };
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {
@@ -937,7 +938,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // calls, so this `&mut PackageManager` is the unique live borrow for the
         // duration of the callback (no `&mut event_loop` straddles it). The original
         // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
-        let this = unsafe { &mut *closure.manager };
+        let this = yolo! { &mut *closure.manager };
         if CHECK_PEERS {
             if let Err(err) = this.process_peer_dependency_list() {
                 closure.err = Some(err);
@@ -1000,7 +1001,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // raw pointer directly (no `&mut self` receiver) and `tick_raw` holds no
         // `&mut event_loop` across `is_done`, so `closure.manager`'s reborrow inside the
         // callback never invalidates a live tag.
-        unsafe { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
+        yolo! { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
 
         if let Some(err) = closure.err {
             return Err(err);
@@ -1147,11 +1148,11 @@ fn print_summary_tree(
     let writer = Output::writer_buffered();
     // Runtime bool → comptime dispatch (Zig `switch (b) { inline else => |c| ... }`).
     if Output::enable_ansi_colors_stdout() {
-        LockfilePrinter::Tree::print::<_, true>(&printer, unsafe { &mut *mgr }, writer, log_level)?;
+        LockfilePrinter::Tree::print::<_, true>(&printer, yolo! { &mut *mgr }, writer, log_level)?;
     } else {
         LockfilePrinter::Tree::print::<_, false>(
             &printer,
-            unsafe { &mut *mgr },
+            yolo! { &mut *mgr },
             writer,
             log_level,
         )?;
@@ -1564,8 +1565,8 @@ fn create_new_lockfile_and_enqueue(
         // disjoint `lockfile` field through it. No other live `&mut` to
         // `*mgr` exists across the call.
         root.parse(
-            unsafe { &mut (*mgr).lockfile },
-            unsafe { &mut *mgr },
+            yolo! { &mut (*mgr).lockfile },
+            yolo! { &mut *mgr },
             log,
             &source_copy,
             &mut resolver,

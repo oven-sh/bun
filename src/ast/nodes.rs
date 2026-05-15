@@ -1,6 +1,7 @@
 //! Core AST node payload types and arena-slice helpers.
 #![allow(non_snake_case, dead_code, clippy::all)]
 
+use bun_yolo::yolo;
 use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -79,7 +80,7 @@ impl<T> StoreRef<T> {
         // `@constCast` on prefill tables. The pointee is *never* written
         // through — `DerefMut` on a `StoreRef` produced here is UB and callers
         // must not do so (audited: only `Deref`/`get()` reads occur).
-        StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
+        StoreRef(yolo! { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
     }
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]
@@ -99,7 +100,7 @@ impl<T> Deref for StoreRef<T> {
     #[inline]
     fn deref(&self) -> &T {
         // SAFETY: StoreRef invariant — points into a live Store/arena block.
-        unsafe { self.0.as_ref() }
+        yolo! { self.0.as_ref() }
     }
 }
 impl<T> DerefMut for StoreRef<T> {
@@ -109,7 +110,7 @@ impl<T> DerefMut for StoreRef<T> {
         // visiting; no two `StoreRef` to the same node are deref'd `&mut`
         // simultaneously in single-threaded parser/visitor passes — same
         // contract as the Zig original.
-        unsafe { self.0.as_mut() }
+        yolo! { self.0.as_mut() }
     }
 }
 impl<T> From<NonNull<T>> for StoreRef<T> {
@@ -205,7 +206,7 @@ impl StoreStr {
         // SAFETY: StoreStr invariant — `ptr` is non-null, points at `len`
         // initialized bytes valid for the arena lifetime (or `'static`); caller
         // must not outlive the owning arena (same as `StoreRef`).
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        yolo! { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     #[inline]
@@ -394,7 +395,7 @@ impl<T> StoreSlice<T> {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
         // initialized `T` valid for the arena lifetime (or `'static`); caller
         // must not outlive the owning arena (same as `StoreRef`).
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
+        yolo! { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
     /// Re-borrow as `&mut [T]`. Same `StoreRef` contract as [`slice`]: the
@@ -410,7 +411,7 @@ impl<T> StoreSlice<T> {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
         // initialized `T` valid for the arena lifetime; uniqueness is upheld
         // by the single-threaded visitor contract (same as `StoreRef::DerefMut`).
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
+        yolo! { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
     /// Shorten the slice in place. Panics if `new_len > len` (mirrors Zig

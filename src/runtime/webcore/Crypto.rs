@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::slice;
 
 use bun_core::String as BunString;
@@ -243,8 +244,8 @@ impl Crypto {
 
         // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array;
         // `JSUint8Array::slice()` needs `&mut self`, so reconstruct the slices here).
-        let a = unsafe { slice::from_raw_parts(a_ptr, len) };
-        let b = unsafe { slice::from_raw_parts(b_ptr, len) };
+        let a = yolo! { slice::from_raw_parts(a_ptr, len) };
+        let b = yolo! { slice::from_raw_parts(b_ptr, len) };
         JSValue::from(bun_boringssl_sys::constant_time_eq(a, b))
     }
 
@@ -286,7 +287,7 @@ impl Crypto {
         // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` writable bytes while the
         // typed-array cell is alive; `ffi::slice_mut` tolerates `(null, 0)` for detached.
-        random_data(global, unsafe {
+        random_data(global, yolo! {
             bun_core::ffi::slice_mut(array.ptr(), array.len())
         });
         // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))) — encode the cell

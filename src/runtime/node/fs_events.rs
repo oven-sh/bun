@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -151,7 +152,7 @@ static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
-    let ptr = unsafe { bun_sys::c::dlsym(handle, symbol.as_ptr()) };
+    let ptr = yolo! { bun_sys::c::dlsym(handle, symbol.as_ptr()) };
     if ptr.is_null() {
         return None;
     }
@@ -161,7 +162,7 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // assert above enforces size parity, and the null check rules out the absent-symbol
     // case so the resulting fn pointer is always non-null. Not expressible via
     // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
-    Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
+    Some(yolo! { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
 #[cfg(not(unix))]
 fn dlsym<T>(_handle: *mut c_void, _symbol: &core::ffi::CStr) -> Option<T> {
@@ -378,7 +379,7 @@ impl Task {
         // SAFETY: fn(&mut T) and fn(*mut ()) have identical single-pointer ABI;
         // ctx is always a valid &mut T at call time (see run()).
         Task {
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&mut T), fn(*mut ())>(callback) },
+            callback: yolo! { bun_ptr::cast_fn_ptr::<fn(&mut T), fn(*mut ())>(callback) },
             ctx: std::ptr::from_mut::<T>(ctx).cast::<()>(),
         }
     }
@@ -395,7 +396,7 @@ unsafe impl bun_threading::Linked for ConcurrentTask {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -419,7 +420,7 @@ impl FSEventsLoop {
         let cf = CoreFoundation::get();
 
         // SAFETY: CF fn pointers loaded via dlsym; signal_source is valid
-        unsafe {
+        yolo! {
             self.loop_ = (cf.run_loop_get_current)();
 
             (cf.run_loop_add_source)(self.loop_, self.signal_source, *cf.run_loop_default_mode);
@@ -441,7 +442,7 @@ impl FSEventsLoop {
             return;
         }
         // SAFETY: arg was set to `this: *mut FSEventsLoop` in init()
-        let this = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(arg) };
+        let this = yolo! { bun_ptr::callback_ctx::<FSEventsLoop>(arg) };
 
         let mut concurrent = this.tasks.pop_batch();
         let count = concurrent.count;
@@ -456,11 +457,11 @@ impl FSEventsLoop {
                 break;
             }
             // SAFETY: task is a valid *mut ConcurrentTask from the queue
-            let task = unsafe { &mut *task };
+            let task = yolo! { &mut *task };
             task.task.run();
             if task.auto_delete {
                 // SAFETY: was heap-allocated in enqueue_task_concurrent
-                drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
+                drop(yolo! { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
             }
         }
     }
@@ -499,13 +500,13 @@ impl FSEventsLoop {
 
         // SAFETY: ctx is stack-local and outlives the call; CF copies it
         let signal_source =
-            unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
+            yolo! { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
             return Err(bun_core::err!("FailedToCreateCoreFoudationSourceLoop"));
         }
 
         // SAFETY: this is a valid freshly-boxed pointer
-        unsafe {
+        yolo! {
             (*this).signal_source = signal_source;
             // PORT NOTE: Zig std.Thread.spawn → std::thread::spawn. The raw `this`
             // pointer is moved into the closure; the FSEventsLoop is heap-allocated
@@ -513,7 +514,7 @@ impl FSEventsLoop {
             let this_addr = this as usize;
             (*this).thread = Some(std::thread::spawn(move || {
                 // SAFETY: see above — `this` is a valid heap allocation for the thread's lifetime.
-                unsafe { (*(this_addr as *mut FSEventsLoop)).cf_thread_loop() }
+                yolo! { (*(this_addr as *mut FSEventsLoop)).cf_thread_loop() }
             }));
 
             // sync threads
@@ -533,7 +534,7 @@ impl FSEventsLoop {
             auto_delete: false,
         }));
         // SAFETY: concurrent is a valid freshly-boxed pointer
-        unsafe {
+        yolo! {
             ConcurrentTask::from(&mut *concurrent, task, true);
             self.tasks.push(concurrent);
             (cf.run_loop_source_signal)(self.signal_source);
@@ -554,11 +555,11 @@ impl FSEventsLoop {
     ) {
         // SAFETY: event_paths is a `char **` of length num_events per FSEvents API
         let paths_ptr = event_paths as *const *const c_char;
-        let paths = unsafe { bun_core::ffi::slice(paths_ptr, num_events) };
+        let paths = yolo! { bun_core::ffi::slice(paths_ptr, num_events) };
         // SAFETY: info was set to self in _schedule()
-        let loop_ = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(info) };
+        let loop_ = yolo! { bun_ptr::callback_ctx::<FSEventsLoop>(info) };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
-        let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
+        let event_flags = yolo! { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
         // Hold the mutex for the whole iteration. `unregisterWatcher` on the
         // main thread nulls the entry under this same mutex and then the
@@ -579,7 +580,7 @@ impl FSEventsLoop {
             for (i, path_ptr) in paths.iter().enumerate() {
                 let mut flags = event_flags[i];
                 // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
-                let mut path = unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
+                let mut path = yolo! { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
                 // Filter out paths that are outside handle's request
                 if path.len() < handle_path.len() || !path.starts_with(handle_path) {
                     continue;
@@ -649,7 +650,7 @@ impl FSEventsLoop {
         let cs = CoreServices::get();
 
         // SAFETY: all CF/CS calls below operate on handles we own
-        unsafe {
+        yolo! {
             if !self.fsevent_stream.is_null() {
                 let stream = self.fsevent_stream;
                 // Stop emitting events
@@ -851,7 +852,7 @@ impl FSEventsLoop {
     fn _stop(&mut self) {
         let cf = CoreFoundation::get();
         // SAFETY: self.loop_ is the CF thread's current run loop
-        unsafe { (cf.run_loop_stop)(self.loop_) };
+        yolo! { (cf.run_loop_stop)(self.loop_) };
     }
 }
 
@@ -867,7 +868,7 @@ impl Drop for FSEventsLoop {
         let cf = CoreFoundation::get();
 
         // SAFETY: signal_source is a valid CF object until released here
-        unsafe { (cf.release)(self.signal_source) };
+        yolo! { (cf.release)(self.signal_source) };
         self.signal_source = ptr::null_mut();
 
         if self.watcher_count > 0 {
@@ -931,7 +932,7 @@ impl FSEventsWatcher {
         // SAFETY: `loop_` is the heap-allocated global default loop (heap::alloc
         // in FSEventsLoop::init); valid for the program lifetime. Mutable access
         // to its watcher list is serialized by `self.mutex` inside register_watcher.
-        unsafe { (*loop_).register_watcher(&raw mut *this) };
+        yolo! { (*loop_).register_watcher(&raw mut *this) };
         this
     }
 
@@ -952,7 +953,7 @@ impl Drop for FSEventsWatcher {
             // None here by FSEventsLoop::drop *after* draining watchers. Mutable
             // access to the watcher list is serialized by `self.mutex` inside
             // unregister_watcher.
-            unsafe {
+            yolo! {
                 (*loop_.as_ptr()).unregister_watcher(std::ptr::from_mut(self));
             }
         }
@@ -1006,7 +1007,7 @@ pub fn close_and_wait() {
         if !loop_.is_null() {
             let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
             // SAFETY: loop_ was heap-allocated in FSEventsLoop::init(); reconstitute to run Drop
-            unsafe { drop(bun_core::heap::take(loop_)) };
+            yolo! { drop(bun_core::heap::take(loop_)) };
             FSEVENTS_DEFAULT_LOOP.store(ptr::null_mut(), Ordering::Release);
         }
     }

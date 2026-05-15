@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![allow(
     unused,
     non_snake_case,
@@ -68,7 +69,7 @@ impl us_bun_verify_error_t {
         // SAFETY: uSockets guarantees a non-null `code` is a valid
         // NUL-terminated C string that outlives this struct (it points into
         // BoringSSL's static error table). Lifetime narrowed to `&self`.
-        Some(unsafe { core::ffi::CStr::from_ptr(self.code) })
+        Some(yolo! { core::ffi::CStr::from_ptr(self.code) })
     }
 
     /// Borrow the BoringSSL verify-error `reason` as a `CStr`, or `None` if null.
@@ -80,7 +81,7 @@ impl us_bun_verify_error_t {
         }
         // SAFETY: same invariant as `code()` — non-null `reason` is a valid
         // NUL-terminated C string from BoringSSL's static error table.
-        Some(unsafe { core::ffi::CStr::from_ptr(self.reason) })
+        Some(yolo! { core::ffi::CStr::from_ptr(self.reason) })
     }
 
     /// `code` as a byte slice (no NUL), or `b""` if null. Convenience for the
@@ -164,7 +165,7 @@ pub use bun_core::Timespec;
 // real module body isn't needed. See `bun_core::opaque_extern!` doc for the
 // `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
 // ABI-identical to a non-null pointer, which lets us declare value-typed shims
-// as `safe fn` and drop per-call-site `unsafe { }`.
+// as `safe fn` and drop per-call-site `yolo! { }`.
 bun_core::opaque_extern!(
     pub us_loop_t, pub us_socket_context_t, pub us_udp_socket_t, pub us_udp_packet_buffer_t,
     pub UpgradedDuplex, pub WindowsNamedPipe,
@@ -232,11 +233,11 @@ impl UpgradedDuplex {
     }
     #[inline]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
+        yolo! { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
+        yolo! { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn shutdown(&mut self) {
@@ -311,11 +312,11 @@ impl WindowsNamedPipe {
     }
     #[inline]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
+        yolo! { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
+        yolo! { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn shutdown(&mut self) {

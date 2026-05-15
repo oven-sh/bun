@@ -4,6 +4,7 @@
 //! operations like writing `Store::File` to another `Store::File` knows to use a
 //! basic file copy instead of a naive read write loop.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
@@ -73,7 +74,7 @@ pub extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: 
     // SAFETY: `ctx` is a `*mut Store` previously yielded by `StoreRef::into_raw`
     // (one outstanding strong ref). `Store::deref` consumes that ref.
     if let Some(store) = NonNull::new(ctx.cast::<Store>()) {
-        unsafe { Store::deref(store) };
+        yolo! { Store::deref(store) };
     }
 }
 
@@ -379,8 +380,8 @@ pub trait BlobExt {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usize) -> *const u8 {
     // SAFETY: preconditions documented on the fn item above.
-    let view = unsafe { (*this).shared_view() };
-    unsafe { *len = view.len() };
+    let view = yolo! { (*this).shared_view() };
+    yolo! { *len = view.len() };
     view.as_ptr()
 }
 
@@ -432,8 +433,8 @@ impl BlobExt for Blob {
         #[cfg(windows)]
         {
             // SAFETY: handler was just boxed; sole owner.
-            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
-            let promise_value = unsafe { (*handler).promise.value() };
+            yolo! { (*handler).promise = jsc::JSPromiseStrong::init(global) };
+            let promise_value = yolo! { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
             read_file::ReadFileUV::start::<Handler<'_, F>>(
@@ -471,8 +472,8 @@ impl BlobExt for Blob {
             // PORT NOTE: `JSPromiseStrong.strong` is private; `init` creates the
             // JSPromise *and* the strong handle in one step, matching the Zig.
             // SAFETY: handler was just boxed; sole owner.
-            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
-            let promise_value = unsafe { (*handler).promise.value() };
+            yolo! { (*handler).promise = jsc::JSPromiseStrong::init(global) };
+            let promise_value = yolo! { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
             read_file::ReadFileTask::schedule(read_file_task);
@@ -504,14 +505,14 @@ impl BlobExt for Blob {
                 fn call(c: *mut H, r: read_file::ReadFileResultType) {
                     // SAFETY: `c` is the `*mut H` passed by the caller and kept
                     // alive across the async read by contract.
-                    let c = unsafe { &mut *c };
+                    let c = yolo! { &mut *c };
                     H::on_read_bytes(
                         c,
                         match r {
                             // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the
                             // ReadFile finisher; reclaim ownership here.
                             read_file::ReadFileResultType::Result(b) => ReadBytesResult::Ok(
-                                unsafe { bun_core::heap::take(b.buf) }.into_vec(),
+                                yolo! { bun_core::heap::take(b.buf) }.into_vec(),
                             ),
                             read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(e),
                         },
@@ -532,7 +533,7 @@ impl BlobExt for Blob {
                     self.poll.unref(bun_io::js_vm_ctx());
                     self.blob.deinit();
                     // SAFETY: caller-owned ctx, kept alive by contract.
-                    let c = unsafe { &mut *self.ctx };
+                    let c = yolo! { &mut *self.ctx };
                     drop(self);
                     H::on_read_bytes(c, r);
                 }
@@ -541,7 +542,7 @@ impl BlobExt for Blob {
                     opaque_self: *mut c_void,
                 ) -> JsTerminatedResult<()> {
                     // SAFETY: `opaque_self` was heap-allocated below.
-                    let t = unsafe { bun_core::heap::take(opaque_self.cast::<Task<H>>()) };
+                    let t = yolo! { bun_core::heap::take(opaque_self.cast::<Task<H>>()) };
                     match result {
                         // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
                         crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
@@ -594,7 +595,7 @@ impl BlobExt for Blob {
             }
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
             // it stays valid until `Task::done` deinits the blob in the callback.
-            let path = unsafe { &*path };
+            let path = yolo! { &*path };
             let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {
@@ -628,7 +629,7 @@ impl BlobExt for Blob {
         let view = self.shared_view();
         let owned = view.to_vec(); // PERF(port): was allocator.dupe — global mimalloc
         // SAFETY: caller-owned ctx.
-        H::on_read_bytes(unsafe { &mut *ctx }, ReadBytesResult::Ok(owned));
+        H::on_read_bytes(yolo! { &mut *ctx }, ReadBytesResult::Ok(owned));
         Ok(())
     }
 
@@ -759,10 +760,10 @@ impl BlobExt for Blob {
         // `(uint8_t**)&ptr`) and a one-past-the-end `*const u8`; both are
         // non-null and `[*ptr, end)` is the serialized byte range owned by
         // SerializedScriptValue for the duration of this call.
-        let cursor = unsafe { &mut *ptr };
+        let cursor = yolo! { &mut *ptr };
         let total_length: usize = (end as usize) - (*cursor as usize);
         let mut buffer_stream =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
+            bun_io::FixedBufferStream::new(yolo! { bun_core::ffi::slice(*cursor, total_length) });
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
@@ -783,7 +784,7 @@ impl BlobExt for Blob {
 
         // Advance the caller's cursor by the number of bytes consumed.
         // SAFETY: buffer_stream.pos <= total_length by construction; result stays within [*ptr, end].
-        *cursor = unsafe { (*cursor).add(buffer_stream.pos) };
+        *cursor = yolo! { (*cursor).add(buffer_stream.pos) };
 
         Ok(result)
     }
@@ -798,7 +799,7 @@ impl BlobExt for Blob {
         search_params.to_string(&mut converter, URLSearchParamsConverter::convert);
         let store = Store::init(converter.buf);
         // SAFETY: `store` is the sole +1 on this freshly-allocated Store.
-        unsafe {
+        yolo! {
             (*store.as_ptr()).mime_type = bun_http_types::MimeType::Compact::from(
                 // Zig: `MimeType.Compact.from(.@"application/x-www-form-urlencoded")` —
                 // the bare tag, *without* `;charset=UTF-8` (charset promotion is
@@ -861,25 +862,25 @@ impl BlobExt for Blob {
         ) {
             // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
             // erased lifetime is the caller's stack frame in `from_dom_form_data`.
-            let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
+            let ctx = yolo! { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
             let entry = if is_blob == 0 {
                 // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
+                FormDataEntry::String(yolo! { *value_ptr.cast::<ZigString>() })
             } else {
                 FormDataEntry::File {
                     // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
                     // valid for the synchronous callback scope.
-                    blob: unsafe { &mut *value_ptr.cast::<Blob>() },
+                    blob: yolo! { &mut *value_ptr.cast::<Blob>() },
                     filename: if filename.is_null() {
                         ZigString::EMPTY
                     } else {
                         // SAFETY: non-null `filename` is a valid `*ZigString` for this call.
-                        unsafe { *filename }
+                        yolo! { *filename }
                     },
                 }
             };
             // SAFETY: `name_` is always a valid non-null `*ZigString` for this callback.
-            ctx.on_entry(unsafe { *name_ }, entry);
+            ctx.on_entry(yolo! { *name_ }, entry);
         }
         unsafe extern "C" {
             // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
@@ -1411,7 +1412,7 @@ impl BlobExt for Blob {
             let path = s3.path();
             // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
             // is a live `*mut Loader` owned by the transpiler.
-            let proxy = unsafe {
+            let proxy = yolo! {
                 (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
             };
             let proxy_url = proxy.map(|p| p.href);
@@ -1514,7 +1515,7 @@ impl BlobExt for Blob {
                     ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                unsafe {
+                yolo! {
                     (*sink)
                         .writer
                         .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)))
@@ -1525,9 +1526,9 @@ impl BlobExt for Blob {
                 if is_stdout_or_stderr {
                     // SAFETY: sink is live; sole owner here.
                     if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start_sync(fd, false)) }
+                        yolo! { (*sink).writer.with_mut(|w| w.start_sync(fd, false)) }
                     {
-                        unsafe { webcore::FileSink::deref(sink) };
+                        yolo! { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             err.to_js(global_this),
@@ -1536,9 +1537,9 @@ impl BlobExt for Blob {
                 } else {
                     // SAFETY: sink is live; sole owner here.
                     if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start(fd, true)) }
+                        yolo! { (*sink).writer.with_mut(|w| w.start(fd, true)) }
                     {
-                        unsafe { webcore::FileSink::deref(sink) };
+                        yolo! { webcore::FileSink::deref(sink) };
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             err.to_js(global_this),
@@ -1578,8 +1579,8 @@ impl BlobExt for Blob {
                 });
 
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                if let bun_sys::Result::Err(err) = unsafe { (*sink).start(stream_start) } {
-                    unsafe { webcore::FileSink::deref(sink) };
+                if let bun_sys::Result::Err(err) = yolo! { (*sink).start(stream_start) } {
+                    yolo! { webcore::FileSink::deref(sink) };
                     return Ok(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1592,7 +1593,7 @@ impl BlobExt for Blob {
         };
 
         // SAFETY: file_sink is a live +1 *mut FileSink for the rest of this fn.
-        let signal = unsafe { &(*file_sink).signal };
+        let signal = yolo! { &(*file_sink).signal };
         signal.set(webcore::file_sink::SinkSignal::init(JSValue::ZERO));
 
         // explicitly set it to a dead pointer
@@ -1608,12 +1609,12 @@ impl BlobExt for Blob {
         // `Signal` in streams.rs), so C++ (`JSSink::assignToStream`) may write
         // the controller cell through this as `void**`.
         let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw mut (*(*file_sink).signal.as_ptr()).ptr).cast::<*mut c_void>() };
+            yolo! { (&raw mut (*(*file_sink).signal.as_ptr()).ptr).cast::<*mut c_void>() };
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
             // SAFETY: file_sink is a live +1 *mut FileSink.
-            unsafe { &mut *file_sink },
+            yolo! { &mut *file_sink },
             signal_ptr,
         );
 
@@ -1624,7 +1625,7 @@ impl BlobExt for Blob {
 
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.
-            unsafe { webcore::FileSink::deref(file_sink) };
+            yolo! { webcore::FileSink::deref(file_sink) };
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
@@ -1651,7 +1652,7 @@ impl BlobExt for Blob {
                             sink: file_sink,
                         }));
                         // SAFETY: wrapper was just produced by heap::alloc; sole owner here.
-                        let promise_value = unsafe { (*wrapper).promise.value() };
+                        let promise_value = yolo! { (*wrapper).promise.value() };
                         assignment_result.then(
                             global_this,
                             wrapper.cast::<c_void>(),
@@ -1662,7 +1663,7 @@ impl BlobExt for Blob {
                     }
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: release our +1 ref on the sink.
-                        unsafe { webcore::FileSink::deref(file_sink) };
+                        yolo! { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
@@ -1671,7 +1672,7 @@ impl BlobExt for Blob {
                     }
                     jsc::js_promise::Status::Rejected => {
                         // SAFETY: release our +1 ref on the sink.
-                        unsafe { webcore::FileSink::deref(file_sink) };
+                        yolo! { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1681,7 +1682,7 @@ impl BlobExt for Blob {
                 }
             } else {
                 // SAFETY: release our +1 ref on the sink.
-                unsafe { webcore::FileSink::deref(file_sink) };
+                yolo! { webcore::FileSink::deref(file_sink) };
                 readable_stream.cancel(global_this);
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1692,7 +1693,7 @@ impl BlobExt for Blob {
             }
         }
         // SAFETY: release our +1 ref on the sink.
-        unsafe { webcore::FileSink::deref(file_sink) };
+        yolo! { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
@@ -1726,7 +1727,7 @@ impl BlobExt for Blob {
             let path = s3.path();
             // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
             // is the process-singleton dotenv loader, never null once init'd.
-            let proxy_url: Option<bun_url::URL<'_>> = unsafe {
+            let proxy_url: Option<bun_url::URL<'_>> = yolo! {
                 (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
             };
             let proxy = proxy_url.as_ref().map(|p| p.href);
@@ -1874,7 +1875,7 @@ impl BlobExt for Blob {
                 ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
-            let sink_mut = unsafe { &mut *sink };
+            let sink_mut = yolo! { &mut *sink };
             sink_mut
                 .writer
                 .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
@@ -1888,7 +1889,7 @@ impl BlobExt for Blob {
             });
             if let bun_sys::Result::Err(err) = start_result {
                 // SAFETY: release the +1 ref from `init`.
-                unsafe { webcore::FileSink::deref(sink) };
+                yolo! { webcore::FileSink::deref(sink) };
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
@@ -1899,7 +1900,7 @@ impl BlobExt for Blob {
             // is off by one against `~JSFileSink`'s `finalize`.
             let js = sink_mut.to_js(global_this);
             // SAFETY: `to_js` took a +1; this releases init's +1 (rc ≥ 1 after).
-            unsafe { webcore::FileSink::deref(sink) };
+            yolo! { webcore::FileSink::deref(sink) };
             return Ok(js);
         }
 
@@ -1947,17 +1948,17 @@ impl BlobExt for Blob {
             }
 
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
-            if let bun_sys::Result::Err(err) = unsafe { (*sink).start(stream_start) } {
+            if let bun_sys::Result::Err(err) = yolo! { (*sink).start(stream_start) } {
                 // SAFETY: release the +1 ref from `init`.
-                unsafe { webcore::FileSink::deref(sink) };
+                yolo! { webcore::FileSink::deref(sink) };
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
             // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
-            let js = unsafe { (*sink).to_js(global_this) };
+            let js = yolo! { (*sink).to_js(global_this) };
             // #53265: release init's +1 (see Windows arm above for rationale).
             // SAFETY: `to_js` took a +1; rc ≥ 1 after this deref.
-            unsafe { webcore::FileSink::deref(sink) };
+            yolo! { webcore::FileSink::deref(sink) };
             Ok(js)
         }
     }
@@ -2004,7 +2005,7 @@ impl BlobExt for Blob {
         // `&mut *` forces the inherent `Blob::to_js(&mut self)` (which calls
         // `calculate_estimated_byte_size` and routes S3 blobs to
         // `S3File.toJSUnchecked`) over the by-value `JsClass::to_js`.
-        unsafe { BlobExt::to_js(&*ptr, global_this) }
+        yolo! { BlobExt::to_js(&*ptr, global_this) }
     }
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
@@ -2018,7 +2019,7 @@ impl BlobExt for Blob {
             let ptr = Blob::new(Blob::init_empty(global_this));
             // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
             // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
+            return Ok(yolo! { BlobExt::to_js(&*ptr, global_this) });
         }
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
@@ -2100,7 +2101,7 @@ impl BlobExt for Blob {
             global_this,
             relative_start,
             relative_end,
-            unsafe { &*content_type },
+            yolo! { &*content_type },
             content_type_was_allocated,
         ))
     }
@@ -2258,7 +2259,7 @@ impl BlobExt for Blob {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
+                        let binding = yolo! {
                             &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
                         };
                         Ok(crate::node::fs::async_::Stat::create(
@@ -2282,7 +2283,7 @@ impl BlobExt for Blob {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
+                        let binding = yolo! {
                             &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
                         };
                         Ok(crate::node::fs::async_::Fstat::create(
@@ -2490,7 +2491,7 @@ impl BlobExt for Blob {
         if len > 0 {
             let s = Store::init(bytes);
             // SAFETY: freshly-minted Store with refcount==1; no other alias.
-            unsafe { (*s.as_ptr()).is_all_ascii = Some(is_all_ascii) };
+            yolo! { (*s.as_ptr()).is_all_ascii = Some(is_all_ascii) };
             store = Some(s);
         }
         Blob {
@@ -2643,7 +2644,7 @@ impl BlobExt for Blob {
                 let store = store_ref.as_ptr();
                 // SAFETY: `store` is live (we hold a `StoreRef`); single-threaded
                 // JS execution means no concurrent &Store borrow is outstanding.
-                unsafe {
+                yolo! {
                     if matches!((*store).data, store::Data::Bytes(_)) {
                         (*store).is_all_ascii = Some(is_all_ascii);
                     }
@@ -2662,14 +2663,14 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         // SAFETY: `raw_bytes` is valid for reads for the duration of this call
         // (either a leaked Box for `Temporary` or a store-backed view otherwise).
-        let raw_slice: &[u8] = unsafe { &*raw_bytes };
+        let raw_slice: &[u8] = yolo! { &*raw_bytes };
         let (bom, buf) = strings::BOM::detect_and_split(raw_slice);
 
         if buf.is_empty() {
             // If all it contained was the bom, we need to free the bytes
             if LIFETIME == Lifetime::Temporary {
                 // SAFETY: temporary lifetime means raw_bytes is a leaked default-allocator buffer.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                yolo! { drop(bun_core::heap::take(raw_bytes)) };
             }
             return Ok(ZigString::EMPTY.to_js(global));
         }
@@ -2702,7 +2703,7 @@ impl BlobExt for Blob {
                     self.detach();
                 }
                 if LIFETIME == Lifetime::Temporary {
-                    unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                    yolo! { drop(bun_core::heap::take(raw_bytes)) };
                 }
                 // Ownership of the UTF-16 buffer transfers to JSC's external-string
                 // finalizer (which calls back into the default allocator's `free`).
@@ -2762,7 +2763,7 @@ impl BlobExt for Blob {
                     // (Zig: `defer { free; out.deref() }`).
                     let out = OwnedString::new(BunString::clone_latin1(buf));
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
-                    unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                    yolo! { drop(bun_core::heap::take(raw_bytes)) };
                     return out.to_js(global);
                 }
                 Ok(ZigString::init(buf).to_external_value(global))
@@ -2848,10 +2849,10 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         // SAFETY: `raw_bytes` is valid for reads for the duration of this call
         // (either a leaked Box for `Temporary` or a store-backed view otherwise).
-        let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
+        let (bom, buf) = strings::BOM::detect_and_split(yolo! { &*raw_bytes });
         if buf.is_empty() {
             if LIFETIME == Lifetime::Temporary {
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                yolo! { drop(bun_core::heap::take(raw_bytes)) };
             }
             return Ok(
                 global.create_syntax_error_instance(format_args!("Unexpected end of JSON input"))
@@ -2870,7 +2871,7 @@ impl BlobExt for Blob {
             let result = out.to_js_by_parse_json(global);
             if LIFETIME == Lifetime::Temporary {
                 // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
+                yolo! { drop(bun_core::heap::take(raw_bytes)) };
             }
             if LIFETIME == Lifetime::Transfer {
                 self.detach();
@@ -2922,7 +2923,7 @@ impl BlobExt for Blob {
         // `FormData::to_js` only reads it.
         match crate::webcore::form_data::FormData::to_js(
             global,
-            unsafe { &*buf },
+            yolo! { &*buf },
             &encoder.encoding,
         ) {
             Ok(v) => v,
@@ -2959,7 +2960,7 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         // SAFETY: `buf` is valid for reads for the duration of this call (either a
         // leaked Box for `Temporary` or a store-backed view otherwise).
-        let buf_len = unsafe { &*buf }.len();
+        let buf_len = yolo! { &*buf }.len();
         match LIFETIME {
             Lifetime::Clone => {
                 if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
@@ -2978,7 +2979,7 @@ impl BlobExt for Blob {
                         if let store::Data::Bytes(bytes) = &store.data {
                             let allocated = bytes.allocated_slice();
                             // SAFETY: `Clone` arm reads only; `buf` is store-backed.
-                            if bun::is_slice_in_buffer(unsafe { &*buf }, allocated) {
+                            if bun::is_slice_in_buffer(yolo! { &*buf }, allocated) {
                                 if let Some(memfd) = LinuxMemFdAllocator::from(bytes.allocator()) {
                                     // Zig: `allocator.ref(); defer allocator.deref();`
                                     // Hold a ref across the FFI call so a concurrent
@@ -2986,13 +2987,13 @@ impl BlobExt for Blob {
                                     // SAFETY: `memfd` is the live Box-allocated ptr
                                     // smuggled through `StdAllocator.ptr` by
                                     // `LinuxMemFdAllocator::allocator`.
-                                    unsafe { (*memfd).ref_() };
+                                    yolo! { (*memfd).ref_() };
                                     let byte_offset = (buf.cast::<u8>() as usize)
                                         .saturating_sub(allocated.as_ptr() as usize);
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
                                             // SAFETY: `memfd` is live for the ref held above.
-                                            unsafe { (*memfd).fd }.native() as i64,
+                                            yolo! { (*memfd).fd }.native() as i64,
                                             global,
                                             byte_offset,
                                             buf_len,
@@ -3002,7 +3003,7 @@ impl BlobExt for Blob {
                                     // SAFETY: drop the ref taken above; `memfd` came
                                     // from `heap::alloc` (see `LinuxMemFdAllocator::deref`
                                     // contract).
-                                    unsafe { LinuxMemFdAllocator::deref(memfd) };
+                                    yolo! { LinuxMemFdAllocator::deref(memfd) };
                                     debug!(
                                         "toArrayBuffer COW clone({}, {}) = {}",
                                         byte_offset,
@@ -3018,7 +3019,7 @@ impl BlobExt for Blob {
                     }
                 }
                 // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
-                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
+                jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, yolo! { &*buf })
             }
             Lifetime::Share => {
                 if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
@@ -3031,7 +3032,7 @@ impl BlobExt for Blob {
                 // pointer is then handed to JSC as an external buffer backing whose
                 // lifetime is the cloned `store` ref above. No Rust-side `&` to the
                 // Store bytes is live across this reborrow. Mirrors Zig `@constCast`.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
+                jsc::ArrayBuffer::from_bytes(yolo! { &mut *buf }, TYPED_ARRAY_VIEW)
                     .to_js_with_context(
                         global,
                         store.into_raw().cast::<c_void>(),
@@ -3050,7 +3051,7 @@ impl BlobExt for Blob {
                 let store = self.take_store().expect("transfer with null store");
                 // SAFETY: see `Share` arm. After `take()` the store ref is moved
                 // out of `self`, so JSC becomes the sole owner via the deallocator.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
+                jsc::ArrayBuffer::from_bytes(yolo! { &mut *buf }, TYPED_ARRAY_VIEW)
                     .to_js_with_context(
                         global,
                         store.into_raw().cast::<c_void>(),
@@ -3062,12 +3063,12 @@ impl BlobExt for Blob {
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
                     // SAFETY: `Temporary` ⇒ `buf` is a leaked default-allocator `Box<[u8]>`.
-                    unsafe { drop(bun_core::heap::take(buf)) };
+                    yolo! { drop(bun_core::heap::take(buf)) };
                     return Err(global.throw_out_of_memory());
                 }
                 // SAFETY: `Temporary` ⇒ `buf` is a leaked `Box<[u8]>` we exclusively own;
                 // ownership is transferred to JSC via `to_js` (Zig: `JSC.MarkedArrayBuffer.fromBytes`).
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js(global)
+                jsc::ArrayBuffer::from_bytes(yolo! { &mut *buf }, TYPED_ARRAY_VIEW).to_js(global)
             }
         }
     }
@@ -3278,7 +3279,7 @@ impl BlobExt for Blob {
                     if !fail_if_top_value_is_not_typed_array_like {
                         if let Some(blob_ptr) = top_value.as_::<Blob>() {
                             // SAFETY: JS heap pointer; single-threaded JS execution.
-                            let blob = unsafe { &mut *blob_ptr };
+                            let blob = yolo! { &mut *blob_ptr };
                             if MOVE {
                                 // Move the store without bumping its refcount, but take
                                 // independent ownership of name/content_type so the
@@ -3623,7 +3624,7 @@ impl BlobExt for Blob {
                         .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
                     // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
                     // process-lifetime singleton; this runs on the JS thread.
-                    if let Some(file) = unsafe { &mut *graph }.find(path_or_fd.path().slice()) {
+                    if let Some(file) = yolo! { &mut *graph }.find(path_or_fd.path().slice()) {
                         use crate::api::standalone_graph_jsc::FileJsc as _;
                         let blob = file.file_blob(global_this).dupe();
                         // Zig: `defer { if (path_or_fd.path != .string) {
@@ -3668,7 +3669,7 @@ impl BlobExt for Blob {
                     // SAFETY: the ctor hook (`webcore::blob::store::stdio_store_ctor`)
                     // returns `Box::<Store>::into_raw` — non-null, live for the
                     // process lifetime, and laid out as `Store`.
-                    let store = unsafe {
+                    let store = yolo! {
                         StoreRef::retained(NonNull::new_unchecked(erased.cast::<Store>()))
                     };
                     return Blob::init_with_store(store, global_this);
@@ -3904,7 +3905,7 @@ impl StructuredCloneWriter {
     pub fn write(&self, bytes: &[u8]) -> usize {
         // SAFETY: ctx and impl_ are supplied by C++ SerializedScriptValue and valid
         // for the duration of on_structured_clone_serialize.
-        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
+        yolo! { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
         bytes.len()
     }
 }
@@ -4046,8 +4047,8 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // store. `content_type` is handled by its own Drop above since it
     // hasn't been attached to `blob` yet.
     // SAFETY: blob is a freshly-allocated heap pointer from Blob::new.
-    let mut blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
-    let blob = unsafe { &mut **blob_guard };
+    let mut blob_guard = scopeguard::guard(blob, |b| yolo! { (*b).deinit() });
+    let blob = yolo! { &mut **blob_guard };
 
     'versions: {
         if version == 1 {
@@ -4105,7 +4106,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
     // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
     // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
-    Ok(unsafe { BlobExt::to_js(&*blob_ptr, global_this) })
+    Ok(yolo! { BlobExt::to_js(&*blob_ptr, global_this) })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4132,7 +4133,7 @@ pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
     let this = Blob::from_js(value)?;
     // SAFETY: `from_js` returns a live heap pointer when Some.
     Some(
-        NonNull::new(Blob__dupe(unsafe { &*this }))
+        NonNull::new(Blob__dupe(yolo! { &*this }))
             .expect("Blob__dupe returns a fresh heap allocation"),
     )
 }
@@ -4291,7 +4292,7 @@ fn write_file_with_empty_source_to_destination(
     let dest_ptr: *mut Blob = destination_blob;
     // SAFETY: `dest_ptr` derives from the caller's `&mut Blob`; deref'd only on
     // scope exit, after all other borrows in this function have ended.
-    let _detach = scopeguard::guard((), move |_| unsafe { (*dest_ptr).detach() });
+    let _detach = scopeguard::guard((), move |_| yolo! { (*dest_ptr).detach() });
 
     match &destination_store.data {
         store::Data::File(file) => {
@@ -4421,7 +4422,7 @@ fn write_file_with_empty_source_to_destination(
                     opaque_this: *mut c_void,
                 ) -> jsc::JsTerminatedResult<()> {
                     // SAFETY: opaque_this was heap-allocated in the caller below.
-                    let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
+                    let mut this = yolo! { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
                     let global = this.global.get();
                     match result {
                         S3UploadResult::Success => {
@@ -4528,7 +4529,7 @@ pub fn write_file_with_source_destination(
             let promise_value = promise.as_value(ctx);
             promise_value.ensure_still_alive();
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise.set(ctx, promise_value) };
+            yolo! { (*write_file_promise).promise.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
                 ctx.bun_vm().event_loop(),
                 destination_blob.borrowed_view(),
@@ -4562,8 +4563,8 @@ pub fn write_file_with_source_destination(
             // `JSPromiseStrong.strong` is private in `bun_jsc`, so use `init` (which
             // creates the JSPromise *and* the strong handle in one step) instead.
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
-            let promise_value = unsafe { (*write_file_promise).promise.value() };
+            yolo! { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
+            let promise_value = yolo! { (*write_file_promise).promise.value() };
             promise_value.ensure_still_alive();
             write_file_mod::WriteFileTask::schedule(task);
             return Ok(promise_value);
@@ -4635,7 +4636,7 @@ pub fn write_file_with_source_destination(
         // SAFETY: ptr was just produced by heap::alloc in Blob::new; the
         // inherent `to_js(&mut self)` (not the by-value `JsClass` one) hands
         // ownership to the C++ wrapper.
-        return Ok(JSPromise::resolved_promise_value(ctx, unsafe {
+        return Ok(JSPromise::resolved_promise_value(ctx, yolo! {
             BlobExt::to_js(&*cloned, ctx)
         }));
     } else if destination_type == store::DataTag::Bytes
@@ -4710,7 +4711,7 @@ pub fn write_file_with_source_destination(
                         ) -> jsc::JsTerminatedResult<()> {
                             // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
                             let mut this =
-                                unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
+                                yolo! { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                             let global = this.global.get();
                             match result {
                                 S3UploadResult::Success => {
@@ -4978,7 +4979,7 @@ pub fn write_file_internal(
                 use webcore::body::Value as BodyValue;
                 // SAFETY: `body_value` is `&mut Body::Value` from a live JS heap
                 // Response/Request `m_ctx`; raw to allow re-borrow after `use_()`.
-                let body_value_ref = unsafe { &mut *body_value };
+                let body_value_ref = yolo! { &mut *body_value };
                 match body_value_ref {
                     BodyValue::WTFStringImpl(_)
                     | BodyValue::InternalBlob(_)
@@ -4989,7 +4990,7 @@ pub fn write_file_internal(
                     BodyValue::Error(err_ref) => {
                         let err_js = err_ref.to_js(global_this);
                         destination_blob.detach();
-                        let _ = unsafe { &mut *body_value }.use_();
+                        let _ = yolo! { &mut *body_value }.use_();
                         Ok(ControlFlow::Break(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this, err_js,
@@ -5008,7 +5009,7 @@ pub fn write_file_internal(
                             let _ = body_value_ref.to_readable_stream(global_this)?;
                             let readable_opt = get_stream(global_this).or_else(|| {
                                 // SAFETY: re-borrow after `to_readable_stream`.
-                                let BodyValue::Locked(locked) = (unsafe { &mut *body_value })
+                                let BodyValue::Locked(locked) = (yolo! { &mut *body_value })
                                 else {
                                     return None;
                                 };
@@ -5068,13 +5069,13 @@ pub fn write_file_internal(
                                 mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                             }));
                         // SAFETY: re-borrow after the early-return paths.
-                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                        let BodyValue::Locked(locked) = (yolo! { &mut *body_value }) else {
                             unreachable!()
                         };
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
-                        Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))
+                        Ok(ControlFlow::Break(yolo! { (*task).promise.value() }))
                     }
                 }
             };
@@ -5366,7 +5367,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     if truncate {
         #[cfg(windows)]
         // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe {
+        yolo! {
             bun_sys::windows::kernel32::SetEndOfFile(fd.native())
         };
         #[cfg(not(windows))]
@@ -5507,7 +5508,7 @@ pub fn jsdom_file_construct_(
 
     let blob_ = Blob::new(blob);
     // SAFETY: ptr was just produced by heap::alloc in Blob::new.
-    unsafe { (*blob_).is_jsdom_file.set(true) };
+    yolo! { (*blob_).is_jsdom_file.set(true) };
     Ok(blob_)
 }
 
@@ -5590,7 +5591,7 @@ pub fn construct_bun_file(
     let ptr = Blob::new(blob);
     // SAFETY: ptr was just produced by heap::alloc in Blob::new. Explicit
     // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
-    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+    Ok(yolo! { BlobExt::to_js(&*ptr, global_object) })
 }
 
 // `find_or_create_file_from_path`: canonical impl lives later in this file
@@ -5648,8 +5649,8 @@ impl S3BlobDownloadTask {
         this: *mut S3BlobDownloadTask,
     ) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `this` was heap-allocated in init() and is consumed here.
-        let this = unsafe { &mut *this };
-        let _drop = scopeguard::guard(std::ptr::from_mut::<S3BlobDownloadTask>(this), |p| unsafe {
+        let this = yolo! { &mut *this };
+        let _drop = scopeguard::guard(std::ptr::from_mut::<S3BlobDownloadTask>(this), |p| yolo! {
             drop(bun_core::heap::take(p));
         });
         // Copy the `BackRef` out so the `&JSGlobalObject` borrow is detached
@@ -5670,7 +5671,7 @@ impl S3BlobDownloadTask {
                     this.blob.size.set(bytes.len() as SizeType);
                 }
                 let value =
-                    JSPromise::wrap(global, |_g| Ok(this.call_handler(unsafe { &mut *bytes })))?;
+                    JSPromise::wrap(global, |_g| Ok(this.call_handler(yolo! { &mut *bytes })))?;
                 this.promise.resolve(global, value)?;
             }
             crate::webcore::__s3_client::S3DownloadResult::NotFound(err)
@@ -5702,7 +5703,7 @@ impl S3BlobDownloadTask {
             handler,
         }));
         // SAFETY: just allocated.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         let promise = this_ref.promise.value();
         let store::Data::S3(s3_store) = &this_ref
             .blob
@@ -5800,7 +5801,7 @@ pub struct FileStreamWrapper {
 impl Drop for FileStreamWrapper {
     fn drop(&mut self) {
         // SAFETY: `sink` is the +1 ref handed over by `pipe_readable_stream_to_blob`.
-        unsafe { webcore::FileSink::deref(self.sink) };
+        yolo! { webcore::FileSink::deref(self.sink) };
     }
 }
 
@@ -5811,7 +5812,7 @@ pub fn on_file_stream_resolve_request_stream(
 ) -> JsResult<JSValue> {
     let args = callframe.arguments_old::<2>();
     // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
-    let mut this: Box<FileStreamWrapper> = unsafe {
+    let mut this: Box<FileStreamWrapper> = yolo! {
         bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let mut strong = core::mem::take(&mut this.readable_stream_ref);
@@ -5831,7 +5832,7 @@ pub fn on_file_stream_reject_request_stream(
     // PORT NOTE: Zig defers `this.sink.deref()` here but does NOT call `this.deinit()`
     // (leaks the wrapper). We take ownership via Box so Drop runs `sink.deref()`
     // and frees the wrapper — same observable effect on the sink, fixes the leak.
-    let mut this: Box<FileStreamWrapper> = unsafe {
+    let mut this: Box<FileStreamWrapper> = yolo! {
         bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let err = args.ptr[0];
@@ -5901,7 +5902,7 @@ pub extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
         return core::ptr::null_mut();
     };
     // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    let data = unsafe { (*blob).shared_view() };
+    let data = yolo! { (*blob).shared_view() };
     if data.is_empty() {
         return core::ptr::null_mut();
     }
@@ -5914,7 +5915,7 @@ pub extern "C" fn Blob__getSize(value: JSValue) -> usize {
         return 0;
     };
     // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    unsafe { (*blob).shared_view().len() }
+    yolo! { (*blob).shared_view().len() }
 }
 
 #[unsafe(no_mangle)]
@@ -5927,7 +5928,7 @@ pub extern "C" fn Blob__fromBytes(
         return Blob::new(Blob::init_empty(global_this));
     }
     // SAFETY: caller guarantees [ptr, ptr+len) is valid.
-    let bytes = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+    let bytes = yolo! { bun_core::ffi::slice(ptr, len) }.to_vec();
     let store = Store::init(bytes);
     Blob::new(Blob::init_with_store(store, global_this))
 }
@@ -5944,9 +5945,9 @@ pub extern "C" fn Blob__fromBytesWithType(
 ) -> *mut Blob {
     let blob = Blob__fromBytes(global_this, ptr, len);
     // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
-    let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
+    let mime_slice = yolo! { bun_core::ffi::cstr(mime) }.to_bytes();
     if !mime_slice.is_empty() {
-        unsafe {
+        yolo! {
             (*blob)
                 .content_type
                 .set(std::ptr::from_ref::<[u8]>(mime_slice));
@@ -5977,13 +5978,13 @@ pub extern "C" fn Blob__fromMmapWithType(
     {
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
         // is a valid page-aligned mmap'd region we now own.
-        let store = Store::init_mmap(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
+        let store = Store::init_mmap(yolo! { core::slice::from_raw_parts_mut(ptr, len) });
         let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
-        let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
+        let mime_slice = yolo! { bun_core::ffi::cstr(mime) }.to_bytes();
         if !mime_slice.is_empty() {
             // SAFETY: `blob` was just produced by heap::alloc in Blob::new.
-            unsafe {
+            yolo! {
                 (*blob)
                     .content_type
                     .set(std::ptr::from_ref::<[u8]>(mime_slice));
@@ -6122,7 +6123,7 @@ impl Drop for TemporaryBytes {
     fn drop(&mut self) {
         // SAFETY: only constructed when `LIFETIME == Temporary`, where the
         // caller passed ownership of a leaked default-allocator `Box<[u8]>`.
-        unsafe { drop(bun_core::heap::take(self.0)) };
+        yolo! { drop(bun_core::heap::take(self.0)) };
     }
 }
 
@@ -6333,8 +6334,8 @@ impl Any {
                 // SAFETY: `Blob::new` returns a fresh heap allocation we own;
                 // `BlobExt::to_js` (the `&mut self` overload) consumes the
                 // pointer into a JS wrapper which takes ownership.
-                unsafe { (*result).global_this.set(global_this) };
-                Ok(BlobExt::to_js(unsafe { &*result }, global_this))
+                yolo! { (*result).global_this.set(global_this) };
+                Ok(BlobExt::to_js(yolo! { &*result }, global_this))
             }
             streams::BufferActionTag::ArrayBuffer => {
                 if matches!(self, Any::Blob(_)) {
@@ -6655,7 +6656,7 @@ impl Internal {
                 bun_core::heap::into_raw(self.to_owned_slice().into_boxed_slice());
             // SAFETY: `owned` is a fresh heap allocation released via `into_raw`;
             // ZigString borrows ptr+len, then `to_external_value` adopts it.
-            let mut str = ZigString::init(unsafe { &*owned });
+            let mut str = ZigString::init(yolo! { &*owned });
             str.mark_global();
             return Ok(str.to_external_value(global_this));
         }
@@ -6899,12 +6900,12 @@ pub trait FileOpener: Sized {
                 use bun_sys::ReturnCodeExt as _;
                 // SAFETY: `req.data` was set to `self as *mut Self` below before
                 // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
-                let self_: &mut S = unsafe { bun_ptr::callback_ctx::<S>((*req).data) };
+                let self_: &mut S = yolo! { bun_ptr::callback_ctx::<S>((*req).data) };
                 {
                     // SAFETY: req points into self_.req(); cleanup before reuse.
-                    scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
+                    scopeguard::defer! { yolo! { bun_libuv_sys::uv_fs_req_cleanup(req); } }
                     // SAFETY: req is the live uv_fs_t from the open request.
-                    let result = unsafe { (*req).result };
+                    let result = yolo! { (*req).result };
                     if let Some(err_enum) = result.err_enum_e() {
                         let path_string_2 = match self_.pathlike() {
                             PathOrFileDescriptor::Path(p) => p.clone(),
@@ -6936,7 +6937,7 @@ pub trait FileOpener: Sized {
             // through the raw pointer keeps the reborrow as a child of
             // `self_ptr`, so its provenance survives until the callback fires.
             // SAFETY: `self_ptr` was just derived from a live `&mut self`.
-            let req = unsafe { (*self_ptr).req() };
+            let req = yolo! { (*self_ptr).req() };
             // Stash `self` on the request BEFORE dispatch. libuv never touches
             // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
             // is a UAF when the call fails synchronously and `callback` frees
@@ -6945,7 +6946,7 @@ pub trait FileOpener: Sized {
             req.data = self_ptr.cast();
             // SAFETY: loop_/req are live for the duration of the async open;
             // req.data is consumed by `wrapped_callback::<Self>` above.
-            let rc = unsafe {
+            let rc = yolo! {
                 bun_libuv_sys::uv_fs_open(
                     loop_,
                     req,

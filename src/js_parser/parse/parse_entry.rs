@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
 use core::ffi::c_void;
@@ -57,7 +58,7 @@ macro_rules! init_p {
         <$ty>::init(&mut __slot, $($arg),*)?;
         // SAFETY: `init` returned `Ok`, so `*__slot` is initialized; the
         // guard's drop closure is the sole owner of the slot from here.
-        scopeguard::guard(__slot, |mut s| unsafe { s.assume_init_drop() })
+        scopeguard::guard(__slot, |mut s| yolo! { s.assume_init_drop() })
     }};
 }
 
@@ -344,7 +345,7 @@ impl<'a> Parser<'a> {
         // which outlives `'a` (and therefore `self`). `self.lexer.log` aliases
         // the same allocation as a `NonNull` (not `&mut`), so this transient
         // reborrow does not invalidate it.
-        unsafe { self.log.as_mut() }
+        yolo! { self.log.as_mut() }
     }
 }
 
@@ -424,7 +425,7 @@ impl<'a> Parser<'a> {
         let mut __p = init_p!(Pi<'_, TS>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_, TS> = unsafe { __p.assume_init_mut() };
+        let p: &mut Pi<'_, TS> = yolo! { __p.assume_init_mut() };
         p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
         p.named_imports = crate::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
 
@@ -570,7 +571,7 @@ impl<'a> Parser<'a> {
         let mut __p = init_p!(JavaScriptParser<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut JavaScriptParser<'_> = unsafe { __p.assume_init_mut() };
+        let p: &mut JavaScriptParser<'_> = yolo! { __p.assume_init_mut() };
 
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
@@ -666,7 +667,7 @@ impl<'a> Parser<'a> {
         let mut __p = init_p!(TSXParser<'_>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut TSXParser<'_> = unsafe { __p.assume_init_mut() };
+        let p: &mut TSXParser<'_> = yolo! { __p.assume_init_mut() };
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
@@ -766,7 +767,7 @@ impl<'a> Parser<'a> {
         let mut __p = init_p!(P<'_, TS, false>;
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+        let p: &mut P<'_, TS, false> = yolo! { __p.assume_init_mut() };
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);
@@ -1427,7 +1428,7 @@ impl<'a> Parser<'a> {
                                         // Borrow the arena/Vec-backed records as a Vec view
                                         // (matches `P::to_ast`); `p` is dropped immediately
                                         // after this return so no double-ownership.
-                                        import_records: unsafe {
+                                        import_records: yolo! {
                                             Vec::from_bump_slice(p.import_records.items_mut())
                                         },
                                         redirect_import_record_index: Some(id),
@@ -1612,7 +1613,7 @@ impl<'a> Parser<'a> {
                         return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                             // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
                             // See note on the matching arm above re double-ownership.
-                            import_records: unsafe {
+                            import_records: yolo! {
                                 Vec::from_bump_slice(p.import_records.items_mut())
                             },
                             redirect_import_record_index: Some(star.import_record_index),

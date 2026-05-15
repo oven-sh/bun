@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate as css;
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 use crate::css_values::length::LengthPercentage;
@@ -363,7 +364,7 @@ fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(),
         |d| d.write_char(b' '),
         |d, name| {
             // SAFETY: arena-owned slice valid for 'bump.
-            write_ident(unsafe { crate::arena_str(name.v) }, d)
+            write_ident(yolo! { crate::arena_str(name.v) }, d)
         },
     )?;
     dest.write_char(b']')
@@ -483,7 +484,7 @@ impl GridTemplateAreas {
             .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
             .ok()
         {
-            let s = unsafe { crate::arena_str(s) };
+            let s = yolo! { crate::arena_str(s) };
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {

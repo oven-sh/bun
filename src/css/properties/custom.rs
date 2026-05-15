@@ -1,6 +1,7 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //!
 //! Ported from `src/css/properties/custom.zig`.
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 //
 // ─── B-2 round 9 status ────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ mod ext {
         let url = input.expect_url()?;
         // SAFETY: `url` borrows the parser source/arena which outlives the
         // `add_import_record` call (same lifetime erasure as `src_str`).
-        let url: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+        let url: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(url) };
         let import_record_idx =
             input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
         Ok(Url {
@@ -85,7 +86,7 @@ mod ext {
             // &mut *dest, so capture arena/filename first.
             let arena = dest.arena;
             // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
+            let filename: &[u8] = yolo! { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
             let records = dest.get_import_records()?;
             Some(dependencies::UrlDependency::new(
                 arena, this, filename, records,
@@ -99,7 +100,7 @@ mod ext {
         if let Some(d) = dep {
             dest.write_str("url(")?;
             // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
+            let placeholder = yolo! { crate::arena_str(d.placeholder) };
             dest.serialize_string(placeholder)?;
             dest.write_char(b')')?;
 
@@ -118,7 +119,7 @@ mod ext {
         let url: &'static [u8] = {
             let u = dest.get_import_record_url(this.import_record_idx)?;
             // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
-            unsafe { &*std::ptr::from_ref::<[u8]>(u) }
+            yolo! { &*std::ptr::from_ref::<[u8]>(u) }
         };
 
         if dest.minify && !is_internal {
@@ -179,7 +180,7 @@ mod ext {
             None => false,
         };
         // SAFETY: arena-owned slice valid for the printer's `'a` lifetime.
-        let v: &'static [u8] = unsafe { crate::arena_str(this.v) };
+        let v: &'static [u8] = yolo! { crate::arena_str(this.v) };
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
 }
@@ -1552,7 +1553,7 @@ pub enum CustomPropertyName {
 impl PartialEq for CustomPropertyName {
     fn eq(&self, other: &Self) -> bool {
         // SAFETY: arena-owned slices live for the parse session.
-        unsafe { (&*self.as_ptr()).eq(&*other.as_ptr()) }
+        yolo! { (&*self.as_ptr()).eq(&*other.as_ptr()) }
     }
 }
 
@@ -1566,7 +1567,7 @@ impl CustomPropertyName {
             }
             CustomPropertyName::Unknown(unknown) => {
                 // SAFETY: arena-owned slice valid for printer lifetime.
-                let v = unsafe { crate::arena_str(unknown.v) };
+                let v = yolo! { crate::arena_str(unknown.v) };
                 dest.serialize_identifier(v)
             }
         }
@@ -1597,7 +1598,7 @@ impl CustomPropertyName {
     #[inline]
     pub fn as_str(&self) -> &[u8] {
         // SAFETY: see doc comment.
-        unsafe { crate::arena_str(self.as_ptr()) }
+        yolo! { crate::arena_str(self.as_ptr()) }
     }
 
     // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.

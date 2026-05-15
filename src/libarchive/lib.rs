@@ -7,6 +7,7 @@
 // (`Archiver`, `BufferReadStream`) sits on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
@@ -149,7 +150,7 @@ pub mod lib {
     impl Archive {
         pub fn read_new() -> *mut Archive {
             // SAFETY: FFI call with no preconditions.
-            let p = unsafe { archive_read_new() };
+            let p = yolo! { archive_read_new() };
             // libarchive's `archive_read_new()` returns NULL on calloc failure.
             // Every caller immediately dereferences the result (forming
             // `&Archive`), so fail loudly here instead of invoking UB at the
@@ -159,42 +160,42 @@ pub mod lib {
         }
         pub fn read_close(&self) -> Result {
             // SAFETY: self came from archive_read_new().
-            unsafe { archive_read_close(self.as_mut_ptr()) }
+            yolo! { archive_read_close(self.as_mut_ptr()) }
         }
         pub fn read_free(&self) -> Result {
             // SAFETY: self came from archive_read_new(); not used after this.
-            unsafe { archive_read_free(self.as_mut_ptr()) }
+            yolo! { archive_read_free(self.as_mut_ptr()) }
         }
         pub fn read_support_format_tar(&self) -> Result {
             // SAFETY: self valid.
-            unsafe { archive_read_support_format_tar(self.as_mut_ptr()) }
+            yolo! { archive_read_support_format_tar(self.as_mut_ptr()) }
         }
         pub fn read_support_format_gnutar(&self) -> Result {
             // SAFETY: self valid.
-            unsafe { archive_read_support_format_gnutar(self.as_mut_ptr()) }
+            yolo! { archive_read_support_format_gnutar(self.as_mut_ptr()) }
         }
         pub fn read_support_filter_gzip(&self) -> Result {
             // SAFETY: self valid.
-            unsafe { archive_read_support_filter_gzip(self.as_mut_ptr()) }
+            yolo! { archive_read_support_filter_gzip(self.as_mut_ptr()) }
         }
         pub fn read_set_options(&self, opts: &core::ffi::CStr) -> Result {
             // SAFETY: self valid; opts is NUL-terminated.
-            unsafe { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr()) }
+            yolo! { archive_read_set_options(self.as_mut_ptr(), opts.as_ptr()) }
         }
         pub fn read_open_memory(&self, buf: &[u8]) -> Result {
             // SAFETY: self valid; buf outlives the archive (caller contract,
             // see `BufferReadStream::buf` field comment).
-            unsafe { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
+            yolo! { archive_read_open_memory(self.as_mut_ptr(), buf.as_ptr().cast(), buf.len()) }
         }
         pub fn read_next_header(&self, entry: &mut *mut Entry) -> Result {
             // SAFETY: self valid; entry is a valid out-ptr.
-            unsafe {
+            yolo! {
                 archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry))
             }
         }
         pub fn read_data(&self, buf: &mut [u8]) -> isize {
             // SAFETY: self valid; buf writable for buf.len().
-            unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
+            yolo! { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
         /// `archive_read_data_block` — returns `None` on EOF.
@@ -202,7 +203,7 @@ pub mod lib {
             let mut buff: *const c_void = core::ptr::null();
             let mut size: usize = 0;
             // SAFETY: self valid; out-ptrs are valid stack locations.
-            let r = unsafe {
+            let r = yolo! {
                 archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset)
             };
             if r == Result::Eof {
@@ -217,7 +218,7 @@ pub mod lib {
             }
             // SAFETY: on ARCHIVE_OK, libarchive guarantees buff[0..size] is
             // readable until the next read call on this archive.
-            let bytes = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), size) };
+            let bytes = yolo! { core::slice::from_raw_parts(buff.cast::<u8>(), size) };
             Some(Block {
                 bytes,
                 offset: *offset,
@@ -337,7 +338,7 @@ pub mod lib {
 
         pub fn error_string(this: *mut Archive) -> &'static [u8] {
             // SAFETY: `this` came from archive_{read,write}_new().
-            let p = unsafe { archive_error_string(this) };
+            let p = yolo! { archive_error_string(this) };
             if p.is_null() {
                 return b"";
             }
@@ -345,29 +346,29 @@ pub mod lib {
             // archive; callers treat it as borrowed-until-next-call. The
             // `'static` here mirrors Zig's `[]const u8` — caller must not
             // outlive the archive (same as the Zig API).
-            unsafe { ZStr::from_c_ptr(p) }.as_bytes()
+            yolo! { ZStr::from_c_ptr(p) }.as_bytes()
         }
 
         // ── write side ─────────────────────────────────────────────────────
         pub fn write_new() -> *mut Archive {
             // SAFETY: FFI call with no preconditions.
-            unsafe { archive_write_new() }
+            yolo! { archive_write_new() }
         }
         pub fn write_free(&self) -> Result {
             // SAFETY: self came from archive_write_new(); not used after this.
-            unsafe { archive_write_free(self.as_mut_ptr()) }
+            yolo! { archive_write_free(self.as_mut_ptr()) }
         }
         pub fn write_close(&self) -> Result {
             // SAFETY: self valid.
-            unsafe { archive_write_close(self.as_mut_ptr()) }
+            yolo! { archive_write_close(self.as_mut_ptr()) }
         }
         pub fn write_set_format_pax_restricted(&self) -> Result {
             // SAFETY: self valid.
-            unsafe { archive_write_set_format_pax_restricted(self.as_mut_ptr()) }
+            yolo! { archive_write_set_format_pax_restricted(self.as_mut_ptr()) }
         }
         pub fn write_add_filter_gzip(&self) -> Result {
             // SAFETY: self valid.
-            unsafe { archive_write_add_filter_gzip(self.as_mut_ptr()) }
+            yolo! { archive_write_add_filter_gzip(self.as_mut_ptr()) }
         }
         pub fn write_set_filter_option(
             &self,
@@ -376,7 +377,7 @@ pub mod lib {
             value: &ZStr,
         ) -> Result {
             // SAFETY: self valid; ZStr guarantees NUL-termination.
-            unsafe {
+            yolo! {
                 archive_write_set_filter_option(
                     self.as_mut_ptr(),
                     module.map_or(core::ptr::null(), |m| m.as_ptr().cast()),
@@ -387,24 +388,24 @@ pub mod lib {
         }
         pub fn write_set_options(&self, opts: &ZStr) -> Result {
             // SAFETY: self valid; ZStr guarantees NUL-termination.
-            unsafe { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
+            yolo! { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
         }
         pub fn write_open_filename(&self, filename: &ZStr) -> Result {
             // SAFETY: self valid; ZStr guarantees NUL-termination.
-            unsafe { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
+            yolo! { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
         }
         pub fn write_header(&self, entry: &Entry) -> Result {
             // SAFETY: self valid; entry came from Entry::new()/read_next_header().
             // `Entry` has interior mutability so `&Entry -> *mut Entry` is sound.
-            unsafe { archive_write_header(self.as_mut_ptr(), entry.as_mut_ptr()) }
+            yolo! { archive_write_header(self.as_mut_ptr(), entry.as_mut_ptr()) }
         }
         pub fn write_data(&self, data: &[u8]) -> isize {
             // SAFETY: self valid; data readable for data.len().
-            unsafe { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
+            yolo! { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
         }
         pub fn write_finish_entry(&self) -> Result {
             // SAFETY: self valid.
-            unsafe { archive_write_finish_entry(self.as_mut_ptr()) }
+            yolo! { archive_write_finish_entry(self.as_mut_ptr()) }
         }
     }
 
@@ -412,83 +413,83 @@ pub mod lib {
         pub fn pathname(&self) -> &ZStr {
             // SAFETY: self valid; returned string owned by libarchive for the
             // lifetime of this entry.
-            unsafe { ZStr::from_c_ptr(archive_entry_pathname(self.as_mut_ptr())) }
+            yolo! { ZStr::from_c_ptr(archive_entry_pathname(self.as_mut_ptr())) }
         }
         pub fn pathname_utf8(&self) -> &ZStr {
             // SAFETY: self valid.
-            unsafe { ZStr::from_c_ptr(archive_entry_pathname_utf8(self.as_mut_ptr())) }
+            yolo! { ZStr::from_c_ptr(archive_entry_pathname_utf8(self.as_mut_ptr())) }
         }
         #[cfg(windows)]
         pub fn pathname_w(&self) -> &bun_core::WStr {
             // SAFETY: self valid.
-            unsafe { bun_core::WStr::from_ptr(archive_entry_pathname_w(self.as_mut_ptr())) }
+            yolo! { bun_core::WStr::from_ptr(archive_entry_pathname_w(self.as_mut_ptr())) }
         }
         pub fn symlink(&self) -> &ZStr {
             // SAFETY: self valid.
-            unsafe { ZStr::from_c_ptr(archive_entry_symlink(self.as_mut_ptr())) }
+            yolo! { ZStr::from_c_ptr(archive_entry_symlink(self.as_mut_ptr())) }
         }
         pub fn perm(&self) -> u32 {
             // SAFETY: self valid.
-            unsafe { archive_entry_perm(self.as_mut_ptr()) as u32 }
+            yolo! { archive_entry_perm(self.as_mut_ptr()) as u32 }
         }
         pub fn size(&self) -> i64 {
             // SAFETY: self valid.
-            unsafe { archive_entry_size(self.as_mut_ptr()) }
+            yolo! { archive_entry_size(self.as_mut_ptr()) }
         }
         pub fn filetype(&self) -> u32 {
             // SAFETY: self valid.
-            unsafe { archive_entry_filetype(self.as_mut_ptr()) as u32 }
+            yolo! { archive_entry_filetype(self.as_mut_ptr()) as u32 }
         }
         pub fn mtime(&self) -> i64 {
             // SAFETY: self valid.
-            unsafe { archive_entry_mtime(self.as_mut_ptr()) as i64 }
+            yolo! { archive_entry_mtime(self.as_mut_ptr()) as i64 }
         }
 
         // ── write side ─────────────────────────────────────────────────────
         pub fn new() -> *mut Entry {
             // SAFETY: FFI call with no preconditions.
-            unsafe { archive_entry_new() }
+            yolo! { archive_entry_new() }
         }
         /// `archive_entry_new2(archive)` — ties the entry to the archive's
         /// charset-conversion context (preferred over `new()` when an archive
         /// is available).
         pub fn new2(archive: *mut Archive) -> *mut Entry {
             // SAFETY: `archive` came from `Archive::read_new()`/`write_new()`.
-            unsafe { archive_entry_new2(archive) }
+            yolo! { archive_entry_new2(archive) }
         }
         pub fn free(&self) {
             // SAFETY: self came from Entry::new(); not used after this.
-            unsafe { archive_entry_free(self.as_mut_ptr()) }
+            yolo! { archive_entry_free(self.as_mut_ptr()) }
         }
         pub fn clear(&self) -> *mut Entry {
             // SAFETY: self valid.
-            unsafe { archive_entry_clear(self.as_mut_ptr()) }
+            yolo! { archive_entry_clear(self.as_mut_ptr()) }
         }
         /// Raw `archive_entry_set_pathname` — bytes are stored verbatim (no
         /// charset conversion). Matches Zig's `setPathname` on POSIX.
         pub fn set_pathname(&self, name: &ZStr) {
             // SAFETY: self valid; name is NUL-terminated.
-            unsafe { archive_entry_set_pathname(self.as_mut_ptr(), name.as_ptr()) }
+            yolo! { archive_entry_set_pathname(self.as_mut_ptr(), name.as_ptr()) }
         }
         pub fn set_pathname_utf8(&self, name: &ZStr) {
             // SAFETY: self valid; name is NUL-terminated.
-            unsafe { archive_entry_set_pathname_utf8(self.as_mut_ptr(), name.as_ptr()) }
+            yolo! { archive_entry_set_pathname_utf8(self.as_mut_ptr(), name.as_ptr()) }
         }
         pub fn set_size(&self, s: i64) {
             // SAFETY: self valid.
-            unsafe { archive_entry_set_size(self.as_mut_ptr(), s) }
+            yolo! { archive_entry_set_size(self.as_mut_ptr(), s) }
         }
         pub fn set_filetype(&self, t: u32) {
             // SAFETY: self valid.
-            unsafe { archive_entry_set_filetype(self.as_mut_ptr(), t as c_uint) }
+            yolo! { archive_entry_set_filetype(self.as_mut_ptr(), t as c_uint) }
         }
         pub fn set_perm(&self, p: u32) {
             // SAFETY: self valid.
-            unsafe { archive_entry_set_perm(self.as_mut_ptr(), p as bun_sys::Mode) }
+            yolo! { archive_entry_set_perm(self.as_mut_ptr(), p as bun_sys::Mode) }
         }
         pub fn set_mtime(&self, secs: isize, nsecs: core::ffi::c_long) {
             // SAFETY: self valid.
-            unsafe { archive_entry_set_mtime(self.as_mut_ptr(), secs as time_t, nsecs) }
+            yolo! { archive_entry_set_mtime(self.as_mut_ptr(), secs as time_t, nsecs) }
         }
     }
 
@@ -519,14 +520,14 @@ pub mod lib {
         #[inline]
         fn deref(&self) -> &Archive {
             // SAFETY: handle is live until Drop; libarchive owns the storage.
-            unsafe { self.0.as_ref() }
+            yolo! { self.0.as_ref() }
         }
     }
     impl Drop for ReadArchive {
         #[inline]
         fn drop(&mut self) {
             // SAFETY: handle came from archive_read_new() and is freed exactly once.
-            let _ = unsafe { archive_read_free(self.0.as_ptr()) };
+            let _ = yolo! { archive_read_free(self.0.as_ptr()) };
         }
     }
 
@@ -551,14 +552,14 @@ pub mod lib {
         #[inline]
         fn deref(&self) -> &Archive {
             // SAFETY: handle is live until Drop; libarchive owns the storage.
-            unsafe { self.0.as_ref() }
+            yolo! { self.0.as_ref() }
         }
     }
     impl Drop for WriteArchive {
         #[inline]
         fn drop(&mut self) {
             // SAFETY: handle came from archive_write_new() and is freed exactly once.
-            let _ = unsafe { archive_write_free(self.0.as_ptr()) };
+            let _ = yolo! { archive_write_free(self.0.as_ptr()) };
         }
     }
 
@@ -587,14 +588,14 @@ pub mod lib {
         #[inline]
         fn deref(&self) -> &Entry {
             // SAFETY: handle is live until Drop; libarchive owns the storage.
-            unsafe { self.0.as_ref() }
+            yolo! { self.0.as_ref() }
         }
     }
     impl Drop for OwnedEntry {
         #[inline]
         fn drop(&mut self) {
             // SAFETY: handle came from archive_entry_new()/new2() and is freed exactly once.
-            unsafe { archive_entry_free(self.0.as_ptr()) };
+            yolo! { archive_entry_free(self.0.as_ptr()) };
         }
     }
 
@@ -653,13 +654,13 @@ pub mod lib {
         #[inline]
         fn archive(&self) -> &Archive {
             // SAFETY: see doc comment — non-null for the lifetime of `self`.
-            unsafe { &*self.archive }
+            yolo! { &*self.archive }
         }
 
         pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {
             let archive = Archive::read_new();
             // SAFETY: archive_read_new() returns a non-null handle owned by libarchive.
-            let a = unsafe { &*archive };
+            let a = yolo! { &*archive };
 
             match a.read_support_format_tar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
@@ -755,7 +756,7 @@ pub mod lib {
             archive: *mut Archive,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
-            let size = unsafe { (*self.entry).size() };
+            let size = yolo! { (*self.entry).size() };
             if size < 0 || size > 64 * 1024 * 1024 {
                 return Ok(IteratorResult::init_err(
                     archive,
@@ -764,7 +765,7 @@ pub mod lib {
             }
             let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
             // SAFETY: archive is valid for the lifetime of the iterator.
-            let read = unsafe { &*archive }.read_data(&mut buf);
+            let read = yolo! { &*archive }.read_data(&mut buf);
             if read < 0 {
                 return Ok(IteratorResult::init_err(
                     archive,
@@ -795,7 +796,7 @@ pub mod lib {
     ) -> c_int {
         // SAFETY: `a` came from archive_write_new(); callbacks have correct
         // ABI; client_data lifetime is caller's responsibility.
-        unsafe { archive_write_open2_raw(a, client_data, open, write, close, free) }
+        yolo! { archive_write_open2_raw(a, client_data, open, write, close, free) }
     }
 
     /// Growing memory buffer for archive writes with libarchive callbacks.
@@ -824,7 +825,7 @@ pub mod lib {
             client_data: *mut c_void,
         ) -> c_int {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+            let this = yolo! { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
             this.list.clear();
             this.had_error = false;
             0
@@ -837,12 +838,12 @@ pub mod lib {
             length: usize,
         ) -> la_ssize_t {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+            let this = yolo! { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
             if buff.is_null() || length == 0 {
                 return 0;
             }
             // SAFETY: buff[0..length] is valid for reads per libarchive contract.
-            let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
+            let data = yolo! { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
             if this.list.try_reserve(length).is_err() {
                 this.had_error = true;
                 return -1;
@@ -891,7 +892,7 @@ pub mod lib {
         pub fn entry(&self) -> &Entry {
             // SAFETY: `entry` was just written by `archive_read_next_header`;
             // libarchive guarantees it stays valid until the next header read.
-            unsafe { &*self.entry }
+            yolo! { &*self.entry }
         }
         /// Port of `NextEntry.readEntryData` (bindings.zig). Allocates `size`
         /// bytes and reads the current entry's data into it.
@@ -908,7 +909,7 @@ pub mod lib {
             }
             let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
             // SAFETY: `archive` came from `Archive::read_new()`.
-            let read = unsafe { &*archive }.read_data(&mut buf);
+            let read = yolo! { &*archive }.read_data(&mut buf);
             if read < 0 {
                 return Ok(Err(IteratorError {
                     archive,
@@ -938,7 +939,7 @@ pub mod lib {
         #[inline]
         fn archive(&self) -> &Archive {
             // SAFETY: see doc comment — non-null for the lifetime of `self`.
-            unsafe { &*self.archive }
+            yolo! { &*self.archive }
         }
 
         /// Port of `Iterator.init` (bindings.zig). Opens `tarball_bytes` as a
@@ -946,7 +947,7 @@ pub mod lib {
         pub fn init(tarball_bytes: &[u8]) -> IterResult<Self> {
             let archive = Archive::read_new();
             // SAFETY: `archive` is a fresh non-null `*mut Archive`.
-            let a = unsafe { &*archive };
+            let a = yolo! { &*archive };
 
             match a.read_support_format_tar() {
                 Result::Failed | Result::Fatal | Result::Warn => {
@@ -1103,7 +1104,7 @@ impl BufferReadStream {
     #[inline]
     fn archive(&self) -> &Archive {
         // SAFETY: see doc comment — non-null for the lifetime of `self`.
-        unsafe { &*self.archive }
+        yolo! { &*self.archive }
     }
 
     /// Borrow the input buffer.
@@ -1114,7 +1115,7 @@ impl BufferReadStream {
     #[inline]
     fn buf(&self) -> &[u8] {
         // SAFETY: see doc comment — borrowed for `self`'s lifetime.
-        unsafe { &*self.buf }
+        yolo! { &*self.buf }
     }
 
     pub fn open_read(&mut self) -> lib::Result {
@@ -1169,7 +1170,7 @@ impl BufferReadStream {
         buffer: *mut *const c_void,
     ) -> lib::la_ssize_t {
         // SAFETY: libarchive passes back the ctx we registered (a *mut BufferReadStream)
-        let this = unsafe { bun_core::callback_ctx::<Self>(ctx_) };
+        let this = yolo! { bun_core::callback_ctx::<Self>(ctx_) };
         let remaining = this.buf_left();
         if remaining.is_empty() {
             return 0;
@@ -1177,7 +1178,7 @@ impl BufferReadStream {
 
         let diff = remaining.len().min(this.block_size);
         // SAFETY: buffer is a non-null out-param provided by libarchive
-        unsafe { *buffer = remaining[..diff].as_ptr().cast::<c_void>() };
+        yolo! { *buffer = remaining[..diff].as_ptr().cast::<c_void>() };
         this.pos += diff;
         isize::try_from(diff).expect("int cast")
     }
@@ -1188,7 +1189,7 @@ impl BufferReadStream {
         offset: lib::la_int64_t,
     ) -> lib::la_int64_t {
         // SAFETY: ctx is the *mut BufferReadStream we registered
-        let this = unsafe { bun_core::callback_ctx::<Self>(ctx_) };
+        let this = yolo! { bun_core::callback_ctx::<Self>(ctx_) };
 
         let buflen = isize::try_from(this.buf().len()).expect("int cast");
         let pos = isize::try_from(this.pos).expect("int cast");
@@ -1206,7 +1207,7 @@ impl BufferReadStream {
         whence: c_int,
     ) -> lib::la_int64_t {
         // SAFETY: ctx is the *mut BufferReadStream we registered
-        let this = unsafe { bun_core::callback_ctx::<Self>(ctx_) };
+        let this = yolo! { bun_core::callback_ctx::<Self>(ctx_) };
 
         let buflen = isize::try_from(this.buf().len()).expect("int cast");
         let pos = isize::try_from(this.pos).expect("int cast");
@@ -1460,7 +1461,7 @@ impl Archiver {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
+        let mut stream = yolo! { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
         let archive = stream.archive;
 
@@ -1489,7 +1490,7 @@ impl Archiver {
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = yolo! { (*archive).read_next_header(&mut entry) };
 
             match r {
                 lib::Result::Eof => break 'loop_,
@@ -1605,7 +1606,7 @@ impl Archiver {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
-        let mut stream = unsafe { BufferReadStream::init(file_buffer) };
+        let mut stream = yolo! { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
         let archive = stream.archive;
         let mut count: u32 = 0;
@@ -1623,7 +1624,7 @@ impl Archiver {
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = yolo! { (*archive).read_next_header(&mut entry) };
 
             match r {
                 lib::Result::Eof => break 'loop_,
@@ -1815,7 +1816,7 @@ impl Archiver {
                             {
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
                                 // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
+                                let path_z: &ZStr = yolo! {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
                                 match bun_sys::mkdirat_z(
@@ -1871,7 +1872,7 @@ impl Archiver {
                                 }
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
                                 // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
+                                let path_z: &ZStr = yolo! {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
                                 match bun_sys::symlinkat(link_target, dir_fd, path_z) {
@@ -1940,7 +1941,7 @@ impl Archiver {
                             let file_handle_native: Fd = {
                                 // PORT NOTE: dir.createFileZ(.{truncate, mode}) → bun_sys::openat
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
-                                let path_z: &ZStr = unsafe {
+                                let path_z: &ZStr = yolo! {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
                                 match bun_sys::openat(dir_fd, path_z, flags, mode) {
@@ -2028,7 +2029,7 @@ impl Archiver {
                                             let cap = plucker_.contents.list.capacity();
                                             plucker_.contents.list.resize(cap, 0);
                                             // SAFETY: archive valid
-                                            let read = unsafe {
+                                            let read = yolo! {
                                                 (*archive).read_data(
                                                     plucker_.contents.list.as_mut_slice(),
                                                 )
@@ -2060,7 +2061,7 @@ impl Archiver {
 
                                 'possibly_retry: while retries_remaining != 0 {
                                     // SAFETY: archive valid
-                                    match unsafe {
+                                    match yolo! {
                                         (*archive).read_data_into_fd(
                                             *file_handle,
                                             &mut use_pwrite,

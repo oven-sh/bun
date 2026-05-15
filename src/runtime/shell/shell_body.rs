@@ -8,6 +8,7 @@
     clippy::too_many_arguments
 )]
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int};
 use core::fmt;
 use core::mem::size_of;
@@ -232,7 +233,7 @@ fn set_env(name: *const c_char, value: *const c_char) {
     // TODO: windows
     // SAFETY: name/value are valid NUL-terminated C strings provided by callers; setenv is
     // not called concurrently with getenv on this thread (single-threaded JS event loop).
-    unsafe {
+    yolo! {
         let _ = setenv(name, value, 1);
     }
 }
@@ -301,7 +302,7 @@ impl<'a> GlobalJS<'a> {
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
         // long-lived `*mut Loader` owned by the VM.
-        unsafe {
+        yolo! {
             (*self.global_this.bun_vm().as_mut().transpiler.env)
                 .map
                 .create_null_delimited_env_map()
@@ -321,7 +322,7 @@ impl<'a> GlobalJS<'a> {
             .cast_mut();
         let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
         // SAFETY: see above — `enqueue_task_concurrent` only touches the lock-free queue.
-        unsafe { (*vm).enqueue_task_concurrent(concurrent) };
+        yolo! { (*vm).enqueue_task_concurrent(concurrent) };
     }
 
     #[inline]
@@ -342,12 +343,12 @@ impl<'a> GlobalJS<'a> {
         let vm = self.event_loop_ctx();
         #[cfg(windows)]
         // SAFETY: uv_loop() returns the live libuv loop owned by the VM; lifetime tied to 'a.
-        unsafe {
+        yolo! {
             return &*vm.uv_loop();
         }
         #[cfg(not(windows))]
         // SAFETY: `event_loop_handle` is set during VM init and never freed before the VM.
-        unsafe {
+        yolo! {
             &*vm.event_loop_handle.expect("event_loop_handle is null")
         }
     }
@@ -378,7 +379,7 @@ impl<'a> GlobalMini<'a> {
         // returned `&Loader` across a path that takes `&mut Loader` from the same
         // allocation (e.g. `create_null_delimited_env_map`); current callers scope
         // it to read-only env-var lookups.
-        unsafe { self.mini.env_ptr().unwrap().as_ref() }
+        yolo! { self.mini.env_ptr().unwrap().as_ref() }
     }
 
     #[inline]
@@ -412,7 +413,7 @@ impl<'a> GlobalMini<'a> {
         self,
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
-        unsafe { self.mini.env.unwrap().as_mut() }
+        yolo! { self.mini.env.unwrap().as_mut() }
             .map
             .create_null_delimited_env_map()
     }
@@ -432,9 +433,9 @@ impl<'a> GlobalMini<'a> {
         //    mini.enqueueTaskConcurrent(anytask);`
         let anytask = bun_core::heap::into_raw(Box::new(AnyTaskWithExtraContext::default()));
         // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
-        unsafe { (*anytask).from(task, run_from_main_thread_mini) };
+        yolo! { (*anytask).from(task, run_from_main_thread_mini) };
         // SAFETY: `mini` is a long-lived loop; the concurrent queue is thread-safe.
-        unsafe {
+        yolo! {
             (*(std::ptr::from_ref::<MiniEventLoop<'a>>(self.mini) as *mut MiniEventLoop<'a>))
                 .enqueue_task_concurrent(anytask)
         };
@@ -464,12 +465,12 @@ impl<'a> GlobalMini<'a> {
         #[cfg(windows)]
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant; `uv_loop` is its
         // embedded libuv loop, set once by `us_create_loop` and immutable.
-        unsafe {
+        yolo! {
             return &*(*self.mini.loop_ptr()).uv_loop;
         }
         #[cfg(not(windows))]
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
-        unsafe {
+        yolo! {
             &*self.mini.loop_ptr()
         }
     }
@@ -522,7 +523,7 @@ impl<'a> CmdEnvIter<'a> {
         // SAFETY: `env` outlives `'a` and is not mutated through `self.env` while `iter`
         // walks the backing arrays.
         let env_ptr: *mut _ = env;
-        let iter = unsafe { (*env_ptr).iterator() };
+        let iter = yolo! { (*env_ptr).iterator() };
         Self { env, iter }
     }
 

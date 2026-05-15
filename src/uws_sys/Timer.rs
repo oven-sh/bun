@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::mem::size_of;
@@ -23,7 +24,7 @@ impl Timer {
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
         // SAFETY: `loop_` is a valid loop pointer.
-        let t = unsafe {
+        let t = yolo! {
             us_create_timer(
                 loop_,
                 0,
@@ -44,7 +45,7 @@ impl Timer {
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
         // SAFETY: `loop_` is a valid loop pointer.
-        let t = unsafe {
+        let t = yolo! {
             us_create_timer(
                 loop_,
                 1,
@@ -67,7 +68,7 @@ impl Timer {
         ms: i32,
         repeat_ms: i32,
     ) {
-        unsafe {
+        yolo! {
             us_timer_set(self, cb, ms, repeat_ms);
             let value_ptr = us_timer_ext(self);
             // SAFETY: ext storage was allocated with size_of::<T>() in create();
@@ -83,11 +84,11 @@ impl Timer {
         bun_core::scoped_log!(uws, "Timer.deinit()");
         // SAFETY: `this` is a live timer handle; us_timer_close frees it (caller must not
         // use `this` afterward).
-        unsafe { us_timer_close(this, FALLTHROUGH as i32) };
+        yolo! { us_timer_close(this, FALLTHROUGH as i32) };
     }
 
     pub fn ext<T>(&mut self) -> Option<&mut T> {
-        unsafe {
+        yolo! {
             // SAFETY: us_timer_ext returns a pointer to the ext slot (`*?*anyopaque`);
             // deref + unwrap, then cast to *mut T. Caller guarantees T matches the
             // type used at create()/set().
@@ -98,7 +99,7 @@ impl Timer {
 
     // PORT NOTE: Zig name is `as`, which is a Rust keyword.
     pub fn as_<T>(&mut self) -> T {
-        unsafe {
+        yolo! {
             // SAFETY: @setRuntimeSafety(false) in Zig — reinterpret the ext slot
             // (`*?*anyopaque`) as `*?T`, deref, unwrap. The slot was allocated
             // with `size_of::<T>()` and written via [`set`] as a bare `T`, so

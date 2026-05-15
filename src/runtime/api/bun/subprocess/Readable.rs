@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem;
 use core::ptr::NonNull;
 
@@ -56,12 +57,12 @@ impl Readable {
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn pipe_reader_mut(pipe: &IntrusiveRc<PipeReader>) -> &mut PipeReader {
         // SAFETY: see fn doc — owning IntrusiveRc, heap-disjoint, single-thread.
-        unsafe { &mut *pipe.as_ptr() }
+        yolo! { &mut *pipe.as_ptr() }
     }
 
     /// Consume an owned `IntrusiveRc<PipeReader>`, clear its `process` backref,
     /// and release the ref (Zig: `pipe.detach()`). Centralises what was the
-    /// `into_raw()` + `unsafe { PipeReader::detach(raw) }` dance so the three
+    /// `into_raw()` + `yolo! { PipeReader::detach(raw) }` dance so the three
     /// callers in `finalize` / `to_js` / `to_buffered_value` stay safe — the
     /// owned `IntrusiveRc` already encodes the "live + one ref" invariant
     /// `detach()` needs, and `RefPtr::deref` is the safe drop.

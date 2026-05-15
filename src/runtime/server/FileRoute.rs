@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -135,7 +136,7 @@ impl FileRoute {
         // so its raw `content_type: Cell<*const [u8]>` (when
         // `content_type_allocated`) would otherwise leak on Box auto-drop.
         // `headers` is freed by its own Drop when the Box is dropped.
-        unsafe {
+        yolo! {
             (*this).blob.deinit();
             drop(bun_core::heap::take(this));
         }
@@ -287,7 +288,7 @@ impl FileRoute {
 
     pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: `this` is a live heap FileRoute (intrusive ref held by the route table).
-        debug_assert!(unsafe { (*this).server.get() }.is_some());
+        debug_assert!(yolo! { (*this).server.get() }.is_some());
 
         Self::on(this, req, resp, Method::HEAD);
     }
@@ -309,7 +310,7 @@ impl FileRoute {
         // fn body — the `ref_()` taken below keeps it alive until
         // `on_response_complete`. All mutation through `this` goes via `Cell`,
         // so the shared borrow is sound.
-        let this = unsafe { &*this_ptr };
+        let this = yolo! { &*this_ptr };
         debug_assert!(this.server.get().is_some());
         this.ref_();
         if let Some(mut server) = this.server.get() {
@@ -569,7 +570,7 @@ impl FileRoute {
         resp.clear_on_writable();
         resp.clear_timeout();
         // SAFETY: `this` is live (ref held by caller); `deref()` may free it.
-        unsafe {
+        yolo! {
             if let Some(mut server) = (*this).server.get() {
                 server.on_static_request_complete();
             }

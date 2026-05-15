@@ -18,6 +18,7 @@
 //! - Shell command execution with proper I/O handling
 //! - Any Bun subsystem that needs event-driven architecture without JS overhead
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -72,7 +73,7 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -146,7 +147,7 @@ pub fn init_global(
     // the pointer while this exclusive borrow is live. The `&mut` is scoped to
     // this function body — NOT `'static` — and ends before we publish/return the
     // raw ptr.
-    let global = unsafe { &mut *global_ptr };
+    let global = yolo! { &mut *global_ptr };
 
     // PORT NOTE: `InternalLoopData::set_parent_event_loop` (typed) lives in a
     // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
@@ -154,7 +155,7 @@ pub fn init_global(
     {
         let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
         // SAFETY: see `loop_ptr()` invariant.
-        unsafe {
+        yolo! {
             (*global.loop_ptr())
                 .internal_loop_data
                 .set_parent_raw(tag, ptr)
@@ -175,7 +176,7 @@ pub fn init_global(
         let map: *mut dotenv::Map = bun_core::heap::into_raw(Box::new(dotenv::Map::init()));
         // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
         let loader =
-            bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
+            bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init(yolo! { &mut *map })));
         global.env = Some(loader);
     }
 
@@ -271,7 +272,7 @@ impl<'a> MiniEventLoop<'a> {
             self.after_event_loop_callback_ctx = None;
             // SAFETY: `cb` is a C-ABI callback registered by the owner of `ctx`; the owner
             // guarantees `ctx` is valid until the callback fires (Zig invariant).
-            unsafe { cb(ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr())) };
+            yolo! { cb(ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr())) };
         }
     }
 
@@ -299,7 +300,7 @@ impl<'a> MiniEventLoop<'a> {
     /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
     /// `this`; the body cannot discharge that precondition.)
     pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
-        unsafe {
+        yolo! {
             let slot = core::ptr::addr_of_mut!((*this).file_polls_);
             if (*slot).is_none() {
                 slot.write(Some(Box::new(FilePollStore::init())));
@@ -377,7 +378,7 @@ impl<'a> MiniEventLoop<'a> {
     pub fn tick_once(&mut self, context: *mut c_void) {
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
             // SAFETY: see `loop_ptr()` invariant.
-            unsafe {
+            yolo! {
                 (*self.loop_ptr()).inc();
                 (*self.loop_ptr()).tick();
                 (*self.loop_ptr()).dec();
@@ -388,7 +389,7 @@ impl<'a> MiniEventLoop<'a> {
 
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
-            unsafe { (*task).run(context) };
+            yolo! { (*task).run(context) };
         }
     }
 
@@ -397,11 +398,11 @@ impl<'a> MiniEventLoop<'a> {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {
                 // SAFETY: see tick_once.
-                unsafe { (*task).run(context) };
+                yolo! { (*task).run(context) };
             }
 
             // SAFETY: see `loop_ptr()` invariant.
-            unsafe { (*self.loop_ptr()).tick_without_idle() };
+            yolo! { (*self.loop_ptr()).tick_without_idle() };
 
             if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
                 break;
@@ -442,14 +443,14 @@ impl<'a> MiniEventLoop<'a> {
     ) {
         // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
         // `<field>: AnyTaskWithExtraContext`, and `ctx` is live for the task's duration.
-        let task = unsafe {
+        let task = yolo! {
             ctx.cast::<u8>()
                 .add(field_offset)
                 .cast::<AnyTaskWithExtraContext>()
         };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
-        unsafe { task.write(New::<C, ()>::init(ctx, callback)) };
+        yolo! { task.write(New::<C, ()>::init(ctx, callback)) };
         // Zig: `this.enqueueJSCTask(&@field(ctx, name))` — see PORT NOTE above.
         self.tasks.write_item(task).expect("unreachable");
     }
@@ -457,7 +458,7 @@ impl<'a> MiniEventLoop<'a> {
     pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
         self.concurrent_tasks.push(task);
         // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        yolo! { (*self.loop_ptr()).wakeup() };
     }
 
     /// Zig: `enqueueTaskConcurrentWithExtraCtx(comptime Context, comptime ParentContext,
@@ -476,19 +477,19 @@ impl<'a> MiniEventLoop<'a> {
         // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
         // `<field>: AnyTaskWithExtraContext`, and `ctx` outlives the queued task
         // (intrusive node; ownership stays with caller).
-        let task = unsafe {
+        let task = yolo! {
             ctx.cast::<u8>()
                 .add(field_offset)
                 .cast::<AnyTaskWithExtraContext>()
         };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
-        unsafe { task.write(New::<C, P>::init(ctx, callback)) };
+        yolo! { task.write(New::<C, P>::init(ctx, callback)) };
 
         self.concurrent_tasks.push(task);
 
         // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        yolo! { (*self.loop_ptr()).wakeup() };
     }
 
     /// Lazy-init helper shared by [`stderr`]/[`stdout`]: `fstat → __bun_stdio_blob_store_new → cache`.
@@ -562,7 +563,7 @@ impl<'a> MiniEventLoop<'a> {
     pub fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
         // SAFETY: `this` is the live per-thread MiniEventLoop singleton; it
         // outlives every `EventLoopCtx` derived from it.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
+        yolo! { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
     }
 }
 

@@ -3,6 +3,7 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
+use bun_yolo::yolo;
 use bun_ptr::AsCtxPtr;
 
 use crate::shell::ExitCode;
@@ -203,12 +204,12 @@ impl BufferedIoClosed {
             // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
             // which the owning Cmd's `base.shell` keeps live for the duration
             // of the command. Single-threaded.
-            unsafe { (*shell_buf).append_slice(the_slice) };
+            yolo! { (*shell_buf).append_slice(the_slice) };
         }
         // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
         // single-threaded and this is the same pattern `subproc::on_close_io`
         // uses to take the done buffer.
-        let buffer = unsafe { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
+        let buffer = yolo! { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
         *state = BufferedIoState::Closed(Vec::<u8>::move_from_list(buffer));
     }
 }
@@ -503,7 +504,7 @@ impl Cmd {
         // outlives this Cmd, so the slice remains valid across reborrows.
         let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
-        spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
+        spawn_args.cwd = yolo! { &*shell_ptr }.cwd();
 
         // Resolve argv[0] via PATH (`bun_which::which`). Spec lines 487-498.
         let resolved: Option<Vec<u8>> = {
@@ -613,7 +614,7 @@ impl Cmd {
         let cmd_parent = crate::shell::subproc::CmdHandle {
             // SAFETY: `interp_ptr` is the live owning Interpreter (from
             // `&mut Interpreter` above); single-threaded, write provenance.
-            interp: unsafe { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
+            interp: yolo! { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
             id: this,
         };
 
@@ -649,7 +650,7 @@ impl Cmd {
         // SAFETY: `spawn_async` Ok ⇒ wrote a live `heap::alloc` subprocess
         // pointer into `*child_out` (== `sub.child`); valid until `Cmd::deinit`
         // reclaims the box. Single-threaded.
-        let subproc = unsafe { &mut *child };
+        let subproc = yolo! { &mut *child };
         // Spec order (Cmd.zig 531-533): `subproc.ref()` precedes
         // `spawn_arena_freed = true; arena.deinit()`.
         subproc.r#ref();
@@ -775,7 +776,7 @@ impl Cmd {
                     panic!("TODO SHELL READABLE STREAM");
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-                    let req = unsafe { &mut *req };
+                    let req = yolo! { &mut *req };
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
                         let b = req.get_body_value().use_as_any_blob();
@@ -887,7 +888,7 @@ impl Cmd {
                 // `heap::alloc(ShellSubprocess)` and stays valid until this
                 // drop. Single-threaded. Reclaiming the box runs
                 // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).
-                let mut child = unsafe { bun_core::heap::take(sub.child) };
+                let mut child = yolo! { bun_core::heap::take(sub.child) };
                 if !child.has_exited() {
                     let _ = child.try_kill(9);
                 }
@@ -987,14 +988,14 @@ impl Cmd {
         };
         // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
         // SAFETY: `child` is the live subprocess owned by this Cmd.
-        let child = unsafe { &mut *sub.child };
+        let child = yolo! { &mut *sub.child };
         // Spec: tee into the JS-side captured buffer if `io.stdout == .fd`
         // with a `captured` slot and the redirect didn't send stdout
         // elsewhere.
         if let IoOutKind::Fd(fd) = &self.io.stdout {
             // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
             // owning `ShellExecEnv` and no other borrow of it is live here.
-            if let Some(captured) = unsafe { fd.captured_mut() } {
+            if let Some(captured) = yolo! { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stdout) {
                     if let Readable::Pipe(pipe) = &child.stdout {
                         captured.append_slice(pipe.slice());
@@ -1025,11 +1026,11 @@ impl Cmd {
         };
         // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
         // SAFETY: `child` is the live subprocess owned by this Cmd.
-        let child = unsafe { &mut *sub.child };
+        let child = yolo! { &mut *sub.child };
         if let IoOutKind::Fd(fd) = &self.io.stderr {
             // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
             // owning `ShellExecEnv` and no other borrow of it is live here.
-            if let Some(captured) = unsafe { fd.captured_mut() } {
+            if let Some(captured) = yolo! { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stderr) {
                     if let Readable::Pipe(pipe) = &child.stderr {
                         captured.append_slice(pipe.slice());
@@ -1068,7 +1069,7 @@ impl Cmd {
             // this point so the `&Interpreter` borrow does not alias it.
             // The caller (`ShellSubprocess::on_process_exit`) does not touch
             // its `*mut Cmd` again after this returns.
-            Yield::Next(this_id).run(unsafe { &*interp });
+            Yield::Next(this_id).run(yolo! { &*interp });
         }
     }
 }

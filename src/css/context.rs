@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::css_parser as css;
 use bun_alloc::ArenaVecExt as _;
 
@@ -115,7 +116,7 @@ impl<'a> PropertyHandlerContext<'a> {
     /// lifetime erasure.
     #[inline]
     fn bump_static(&self) -> &'static Bump {
-        unsafe { bun_collections::detach_ref(self.arena) }
+        yolo! { bun_collections::detach_ref(self.arena) }
     }
 
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.

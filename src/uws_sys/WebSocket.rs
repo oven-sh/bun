@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -27,7 +28,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     pub fn raw(&mut self) -> &mut RawWebSocket {
         // SAFETY: layout-identical opaque ZSTs (see doc comment); the reborrow
         // covers zero bytes and `UnsafeCell` suppresses `noalias`.
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<RawWebSocket>() }
+        yolo! { &mut *std::ptr::from_mut::<Self>(self).cast::<RawWebSocket>() }
     }
 
     /// Cast the C-side user data pointer to `&mut T`.
@@ -38,7 +39,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     pub unsafe fn as_<T>(&mut self) -> Option<&mut T> {
         // SAFETY: mirrors Zig `@setRuntimeSafety(false)` + ptrCast/alignCast of
         // the opaque user-data pointer. Caller upholds the type invariant.
-        unsafe {
+        yolo! {
             let p = c::uws_ws_get_user_data(SSL_FLAG, self.raw());
             p.cast::<T>().as_mut()
         }
@@ -50,7 +51,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn send(&mut self, message: &[u8], opcode: Opcode) -> SendStatus {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
+        yolo! {
             c::uws_ws_send(
                 SSL_FLAG,
                 self.raw(),
@@ -69,7 +70,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         fin: bool,
     ) -> SendStatus {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
+        yolo! {
             c::uws_ws_send_with_options(
                 SSL_FLAG,
                 self.raw(),
@@ -88,7 +89,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn send_last_fragment(&mut self, message: &[u8], compress: bool) -> SendStatus {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
+        yolo! {
             c::uws_ws_send_last_fragment(
                 SSL_FLAG,
                 self.raw(),
@@ -101,7 +102,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn end(&mut self, code: i32, message: &[u8]) {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_end(SSL_FLAG, self.raw(), code, message.as_ptr(), message.len()) }
+        yolo! { c::uws_ws_end(SSL_FLAG, self.raw(), code, message.as_ptr(), message.len()) }
     }
 
     /// Run `callback(ctx)` while the socket is corked.
@@ -118,9 +119,9 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
             // which outlives the synchronous uws_ws_cork call.
-            let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
+            let data = yolo! { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
             // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-            (data.1)(unsafe { &mut *data.0 });
+            (data.1)(yolo! { &mut *data.0 });
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
         // `data` lives on this stack frame for the duration of the synchronous
@@ -135,24 +136,24 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn subscribe(&mut self, topic: &[u8]) -> bool {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_subscribe(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
+        yolo! { c::uws_ws_subscribe(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
     }
 
     pub fn unsubscribe(&mut self, topic: &[u8]) -> bool {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_unsubscribe(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
+        yolo! { c::uws_ws_unsubscribe(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
     }
 
     pub fn is_subscribed(&mut self, topic: &[u8]) -> bool {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe { c::uws_ws_is_subscribed(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
+        yolo! { c::uws_ws_is_subscribed(SSL_FLAG, self.raw(), topic.as_ptr(), topic.len()) }
     }
 
     // getTopicsAsJSArray: use AnyWebSocket::get_topics_as_js_array (src/runtime/socket/uws_jsc.rs)
 
     pub fn publish(&mut self, topic: &[u8], message: &[u8]) -> bool {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
+        yolo! {
             c::uws_ws_publish(
                 SSL_FLAG,
                 self.raw(),
@@ -172,7 +173,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         compress: bool,
     ) -> bool {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
-        unsafe {
+        yolo! {
             c::uws_ws_publish_with_options(
                 SSL_FLAG,
                 self.raw(),
@@ -196,7 +197,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         let mut ptr: *mut u8 = core::ptr::null_mut();
         let len = c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &mut ptr);
         // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { bun_core::ffi::slice(ptr, len) };
+        let src = yolo! { bun_core::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
         &mut buf[..len]
     }
@@ -251,7 +252,7 @@ impl AnyWebSocket {
         // TODO(port): lifetime — returning an unbounded `&mut` is a placeholder; Phase
         // B should scope this to the callback frame or return *mut T.
         let (ssl, ws) = self.split();
-        unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
+        yolo! { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
     }
 
     /// Raw user-data pointer cast to `*mut T` (NULL if unset).
@@ -302,7 +303,7 @@ impl AnyWebSocket {
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe {
+        yolo! {
             c::uws_ws_send_with_options(
                 ssl,
                 ws,
@@ -318,13 +319,13 @@ impl AnyWebSocket {
     pub fn send_last_fragment(self, message: &[u8], compress: bool) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe { c::uws_ws_send_last_fragment(ssl, ws, message.as_ptr(), message.len(), compress) }
+        yolo! { c::uws_ws_send_last_fragment(ssl, ws, message.as_ptr(), message.len(), compress) }
     }
 
     pub fn end(self, code: i32, message: &[u8]) {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe { c::uws_ws_end(ssl, ws, code, message.as_ptr(), message.len()) }
+        yolo! { c::uws_ws_end(ssl, ws, code, message.as_ptr(), message.len()) }
     }
 
     // TODO(port): comptime-callback monomorphization — see NewWebSocket::cork.
@@ -334,9 +335,9 @@ impl AnyWebSocket {
         extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack tuple alive for the duration
             // of the synchronous uws_ws_cork call.
-            let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
+            let data = yolo! { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
             // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-            (data.1)(unsafe { &mut *data.0 });
+            (data.1)(yolo! { &mut *data.0 });
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
         let ud = (&raw mut data).cast::<c_void>();
@@ -349,19 +350,19 @@ impl AnyWebSocket {
     pub fn subscribe(self, topic: &[u8]) -> bool {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe { c::uws_ws_subscribe(ssl, ws, topic.as_ptr(), topic.len()) }
+        yolo! { c::uws_ws_subscribe(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     pub fn unsubscribe(self, topic: &[u8]) -> bool {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe { c::uws_ws_unsubscribe(ssl, ws, topic.as_ptr(), topic.len()) }
+        yolo! { c::uws_ws_unsubscribe(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     pub fn is_subscribed(self, topic: &[u8]) -> bool {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe { c::uws_ws_is_subscribed(ssl, ws, topic.as_ptr(), topic.len()) }
+        yolo! { c::uws_ws_is_subscribed(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     // getTopicsAsJSArray — deleted: *_jsc alias (see PORTING.md). Lives in
@@ -374,7 +375,7 @@ impl AnyWebSocket {
     pub fn publish(self, topic: &[u8], message: &[u8], opcode: Opcode, compress: bool) -> bool {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
-        unsafe {
+        yolo! {
             c::uws_ws_publish_with_options(
                 ssl,
                 ws,
@@ -430,7 +431,7 @@ impl AnyWebSocket {
         let mut ptr: *mut u8 = core::ptr::null_mut();
         let len = c::uws_ws_get_remote_address(ssl_flag, ws, &mut ptr);
         // SAFETY: uWS returns a pointer+len into its internal buffer.
-        let src = unsafe { bun_core::ffi::slice(ptr, len) };
+        let src = yolo! { bun_core::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
         &mut buf[..len]
     }
@@ -593,7 +594,7 @@ where
             return;
         }
         // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-        unsafe { T::on_open(this, ws) };
+        yolo! { T::on_open(this, ws) };
     }
 
     pub extern "C" fn on_message(
@@ -608,7 +609,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
+        yolo! { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
     }
 
     pub extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
@@ -618,7 +619,7 @@ where
             return;
         }
         // SAFETY: see `on_open`.
-        unsafe { T::on_drain(this, ws) };
+        yolo! { T::on_drain(this, ws) };
     }
 
     pub extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
@@ -628,7 +629,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
+        yolo! { T::on_ping(this, ws, thunk::c_slice(message, length)) };
     }
 
     pub extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
@@ -638,7 +639,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
+        yolo! { T::on_pong(this, ws, thunk::c_slice(message, length)) };
     }
 
     pub extern "C" fn on_close(
@@ -653,7 +654,7 @@ where
             return;
         }
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid when non-null.
-        unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
+        yolo! { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
     pub extern "C" fn on_upgrade(
@@ -672,7 +673,7 @@ where
         if ptr.is_null() {
             return;
         }
-        unsafe {
+        yolo! {
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
                 res.cast::<uws::NewAppResponse<SSL>>(),

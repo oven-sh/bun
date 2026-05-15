@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
@@ -102,7 +103,7 @@ impl Stdio {
             // SAFETY: `buf` is a live backref owned by the caller (shell); the
             // returned slice borrows `self` and the caller guarantees the
             // Vec<u8> outlives this Stdio.
-            Self::Capture(c) => unsafe { (*c.buf).slice() },
+            Self::Capture(c) => yolo! { (*c.buf).slice() },
             Self::ArrayBuffer(ab) => ab.array_buffer.byte_slice(),
             Self::Blob(blob) => blob.slice(),
             _ => &[],

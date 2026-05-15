@@ -12,6 +12,7 @@
 //! `` blocks below; un-gate piecewise as the cycle breaks.
 //! ──────────────────────────────────────────────────────────────────────────
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
@@ -452,7 +453,7 @@ impl VMHolder {
     pub extern "C" fn Bun__setDefaultGlobalObject(global: *mut JSGlobalObject) {
         if let Some(vm_instance) = VM.get() {
             // SAFETY: vm pointer set by init() on this thread
-            let vm_instance = unsafe { &mut *vm_instance };
+            let vm_instance = yolo! { &mut *vm_instance };
             vm_instance.global = global;
             if vm_instance.is_main_thread {
                 MAIN_THREAD_VM.store(vm_instance, core::sync::atomic::Ordering::Release);
@@ -468,7 +469,7 @@ impl VMHolder {
         }
         if let Some(vm_instance) = VM.get() {
             // SAFETY: vm pointer set by init() on this thread
-            let g = unsafe { (*vm_instance).global };
+            let g = yolo! { (*vm_instance).global };
             CACHED_GLOBAL_OBJECT.set(Some(g));
         }
         None
@@ -623,7 +624,7 @@ impl VirtualMachine {
         // SAFETY: `get_or_null()` returns the thread-local pointer set by
         // `init()`; non-null while a VM is installed; the allocation outlives
         // the thread.
-        unsafe { &*Self::get_mut_ptr() }
+        yolo! { &*Self::get_mut_ptr() }
     }
 
     /// Raw `*mut` accessor for the current thread's VM. Prefer [`Self::get`]
@@ -647,7 +648,7 @@ impl VirtualMachine {
         // SAFETY: every caller is reached from a JS host_fn / event-loop tick,
         // which by construction runs after `init()` installed `VMHolder::VM`
         // for this thread.
-        unsafe { Self::get_or_null().unwrap_unchecked() }
+        yolo! { Self::get_or_null().unwrap_unchecked() }
     }
 
     /// `&mut self` from `&self` — the `JsCell` escape hatch applied to the
@@ -665,13 +666,13 @@ impl VirtualMachine {
         debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
         // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
         // Provenance comes from the thread-local `*mut` set in `init()`.
-        unsafe { &mut *Self::get_mut_ptr() }
+        yolo! { &mut *Self::get_mut_ptr() }
     }
 
     /// `&'static mut` to this thread's VM singleton — the static-fn counterpart
     /// of [`Self::as_mut`]. Exists so per-type `fn vm_mut(&self)` shims (sql,
     /// bake, cron) collapse to one call instead of each open-coding
-    /// `unsafe { &mut *self.vm.as_ptr() }` against a stored `BackRef`.
+    /// `yolo! { &mut *self.vm.as_ptr() }` against a stored `BackRef`.
     ///
     /// Returns `'static` (not tied to any `&self`) so callers may pair the VM
     /// borrow with a disjoint `&mut self.field` in the same expression. Same
@@ -684,7 +685,7 @@ impl VirtualMachine {
     pub fn get_mut() -> &'static mut VirtualMachine {
         // SAFETY: single-JS-thread invariant — see `unsafe impl Sync` above.
         // Provenance comes from the thread-local `*mut` set in `init()`.
-        unsafe { &mut *Self::get_mut_ptr() }
+        yolo! { &mut *Self::get_mut_ptr() }
     }
 
     #[inline(always)]
@@ -738,14 +739,14 @@ impl VirtualMachine {
     /// `regular_event_loop` or `macro_event_loop` (both owned by this VM), so it
     /// is live for the VM lifetime. Same single-JS-thread soundness contract as
     /// [`Self::as_mut`]; keep the borrow short and do not hold across reentrant
-    /// JS calls. Prefer this over `unsafe { &mut *vm.event_loop() }` at call
+    /// JS calls. Prefer this over `yolo! { &mut *vm.event_loop() }` at call
     /// sites.
     #[inline(always)]
     #[allow(clippy::mut_from_ref)]
     pub fn event_loop_mut(&self) -> &mut EventLoop {
         // SAFETY: `event_loop` points at a sibling field of this VM; non-null
         // after `init()`; single-JS-thread invariant per `unsafe impl Sync`.
-        unsafe { &mut *self.event_loop }
+        yolo! { &mut *self.event_loop }
     }
 
     /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
@@ -754,7 +755,7 @@ impl VirtualMachine {
     #[inline(always)]
     pub fn event_loop_shared(&self) -> &EventLoop {
         // SAFETY: see `event_loop_mut`.
-        unsafe { &*self.event_loop }
+        yolo! { &*self.event_loop }
     }
 
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
@@ -811,12 +812,12 @@ impl VirtualMachine {
     pub fn enter_event_loop_scope(&self) -> crate::event_loop::EventLoopEnterGuard {
         // SAFETY: `self.event_loop` is the live VM-owned event-loop pointer and
         // remains valid for the VM (and thus the guard's) lifetime.
-        unsafe { EventLoop::enter_scope(self.event_loop) }
+        yolo! { EventLoop::enter_scope(self.event_loop) }
     }
 
     /// Safe shared-reference accessor for the process-lifetime dotenv loader
     /// (`vm.transpiler.env`). The loader is allocated once during VM init and
-    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    /// never freed; callers previously open-coded `yolo! { &*vm.transpiler.env }`.
     #[inline]
     pub fn env_loader(&self) -> &'static bun_dotenv::Loader<'static> {
         self.env_loader_opt()
@@ -830,7 +831,7 @@ impl VirtualMachine {
     pub fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader<'static>> {
         // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
         // to a process-lifetime allocation; never freed while a VM is installed.
-        unsafe { self.transpiler.env.as_ref() }
+        yolo! { self.transpiler.env.as_ref() }
     }
 
     #[inline]
@@ -840,13 +841,13 @@ impl VirtualMachine {
 
     /// Safe accessor for the process-lifetime resolver `FileSystem` singleton
     /// (`vm.transpiler.fs`). Allocated once during VM init and never freed;
-    /// callers previously open-coded `unsafe { &*vm.transpiler.fs }`.
+    /// callers previously open-coded `yolo! { &*vm.transpiler.fs }`.
     #[inline]
     pub fn fs(&self) -> &'static bun_resolver::fs::FileSystem {
         // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
         // process-lifetime `Fs::FileSystem` singleton; never null while a VM
         // is installed.
-        unsafe { &*self.transpiler.fs }
+        yolo! { &*self.transpiler.fs }
     }
 
     /// Safe accessor for the process-lifetime cwd string
@@ -875,7 +876,7 @@ impl VirtualMachine {
         // SAFETY: `uws_loop()` returns the per-VM loop pointer; non-null on
         // the JS thread once `init()` ran. Single-JS-thread invariant per
         // `unsafe impl Sync`.
-        unsafe { &mut *self.uws_loop() }
+        yolo! { &mut *self.uws_loop() }
     }
 
     /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
@@ -894,7 +895,7 @@ impl VirtualMachine {
         // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
         // for the VM lifetime. Single-JS-thread invariant per `unsafe impl
         // Sync` — only the owning JS thread reborrows mutably.
-        self.event_loop_handle.map(|h| unsafe { &mut *h })
+        self.event_loop_handle.map(|h| yolo! { &mut *h })
     }
 
     /// Read-then-zero `pending_unref_counter`. Wraps the common
@@ -924,7 +925,7 @@ impl VirtualMachine {
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> Option<&mut bun_ast::Log> {
         // SAFETY: see `log_ref`; single-JS-thread invariant.
-        self.as_mut().log.map(|mut p| unsafe { p.as_mut() })
+        self.as_mut().log.map(|mut p| yolo! { p.as_mut() })
     }
 
     /// Safe `&WebWorker` accessor for the optional owning worker. The
@@ -934,7 +935,7 @@ impl VirtualMachine {
         // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
         // owned by C++ that outlives this VM (BACKREF — see field decl).
         self.worker
-            .map(|w| unsafe { &*w.cast::<crate::web_worker::WebWorker>() })
+            .map(|w| yolo! { &*w.cast::<crate::web_worker::WebWorker>() })
     }
 
     #[inline]
@@ -1023,7 +1024,7 @@ impl VirtualMachine {
             );
             // SAFETY: set in `init()` on the JS thread before any host_fn /
             // event-loop tick runs; never cleared while the VM is live.
-            unsafe { self.event_loop_handle.unwrap_unchecked() }
+            yolo! { self.event_loop_handle.unwrap_unchecked() }
         }
         #[cfg(not(unix))]
         {
@@ -1035,7 +1036,7 @@ impl VirtualMachine {
         if let Some(cb) = self.after_event_loop_callback.take() {
             let ctx = self.after_event_loop_callback_ctx.take();
             // SAFETY: `cb` was registered with the matching `ctx`.
-            unsafe { cb(ctx.unwrap_or(core::ptr::null_mut())) };
+            yolo! { cb(ctx.unwrap_or(core::ptr::null_mut())) };
         }
     }
 
@@ -1081,7 +1082,7 @@ impl VirtualMachine {
         value.ensure_still_alive();
         if let Some(ptr) = this.unhandled_pending_rejection_to_capture {
             // SAFETY: caller passed &mut stack_var (see LIFETIMES.tsv)
-            unsafe { *ptr = value };
+            yolo! { *ptr = value };
         }
     }
 
@@ -1108,7 +1109,7 @@ impl VirtualMachine {
         // SAFETY: BORROW_PARAM ptr set by caller, outlives this call (TODO(port): lifetime)
         let list = this
             .on_unhandled_rejection_exception_list
-            .map(|mut p| unsafe { p.as_mut() });
+            .map(|mut p| yolo! { p.as_mut() });
         this.run_error_handler(value, list);
     }
 
@@ -1227,9 +1228,9 @@ impl VirtualMachine {
         extern "C" fn call<F: FnOnce() -> R, R>(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut Trampoline<F, R>` on the caller's stack;
             // `JSC__VM__holdAPILock` invokes us exactly once with that pointer.
-            let t = unsafe { bun_ptr::callback_ctx::<Trampoline<F, R>>(ctx) };
+            let t = yolo! { bun_ptr::callback_ctx::<Trampoline<F, R>>(ctx) };
             // SAFETY: single-shot — `f` is taken exactly once.
-            let f = unsafe { ManuallyDrop::take(&mut t.f) };
+            let f = yolo! { ManuallyDrop::take(&mut t.f) };
             t.result.write(f());
         }
 
@@ -1241,7 +1242,7 @@ impl VirtualMachine {
         // invokes `call` exactly once before returning.
         JSC__VM__holdAPILock(self.jsc_vm(), (&raw mut t).cast(), call::<F, R>);
         // SAFETY: `call` wrote `t.result` exactly once above.
-        unsafe { t.result.assume_init() }
+        yolo! { t.result.assume_init() }
     }
 
     #[cold]
@@ -1341,7 +1342,7 @@ impl VirtualMachine {
         // collapses into a captured local.
         // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
         // from the cache; it lives for the VM lifetime.
-        let path: &[u8] = unsafe { &*entry_point }.source.path.text;
+        let path: &[u8] = yolo! { &*entry_point }.source.path.text;
         let promise = self.run_with_api_lock(|| {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
             VirtualMachine::get().as_mut()._load_macro_entry_point(path)
@@ -1370,7 +1371,7 @@ impl VirtualMachine {
     pub fn ensure_debugger(&mut self, block_until_connected: bool) -> Result<(), bun_core::Error> {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.ensure_debugger)(self, block_until_connected) };
+            yolo! { (hooks.ensure_debugger)(self, block_until_connected) };
         }
         Ok(())
     }
@@ -1404,13 +1405,13 @@ impl VirtualMachine {
             self.run_error_handler(err, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
-            unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
+            yolo! { (hooks.process_exit)(global_object.as_ptr(), 7) };
             panic!("Uncaught exception while handling uncaught exception");
         }
         if self.exit_on_uncaught_exception {
             self.run_error_handler(err, None);
             // SAFETY: see above.
-            unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+            yolo! { (hooks.process_exit)(global_object.as_ptr(), 1) };
             panic!("made it past process.exit()");
         }
         self.is_handling_uncaught_exception = true;
@@ -1512,7 +1513,7 @@ impl VirtualMachine {
             for hook in hooks {
                 // SAFETY: ctx/func were registered together by the N-API
                 // caller (`CleanupHook::init`).
-                unsafe { (hook.func)(hook.ctx) };
+                yolo! { (hook.func)(hook.ctx) };
             }
         }
         // Zig `defer rare_data.cleanup_hooks.clearAndFree(...)` — `mem::take`
@@ -1531,7 +1532,7 @@ impl VirtualMachine {
                 // `EventLoop::auto_tick`; `close::<true>()` (fallthrough)
                 // frees it without re-entering the loop. Spec
                 // VirtualMachine.zig:967 `t.deinit(true)`.
-                unsafe { uws::Timer::close::<true>(t.as_ptr()) };
+                yolo! { uws::Timer::close::<true>(t.as_ptr()) };
             }
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
@@ -1552,7 +1553,7 @@ impl VirtualMachine {
                 // touches `vm.rare_data`, so the disjoint reborrow is sound.
                 // SAFETY: `self` is the live per-thread VM; the shared borrow
                 // only reads `event_loop_handle` (no overlap with `rare_data`).
-                let vm_ref = unsafe { &*core::ptr::from_ref(self) };
+                let vm_ref = yolo! { &*core::ptr::from_ref(self) };
                 self.rare_data
                     .as_deref_mut()
                     .unwrap()
@@ -1567,7 +1568,7 @@ impl VirtualMachine {
             // socket that was still open at process.exit().
             // SAFETY: `uws::Loop::get()` returns the process-global usockets
             // loop, which is live for the process lifetime.
-            unsafe { (*uws::Loop::get()).drain_closed_sockets() };
+            yolo! { (*uws::Loop::get()).drain_closed_sockets() };
 
             // TODO(port): `self.transpiler.deinit()` — `Transpiler<'_>` has no
             // `deinit()` yet (resolver BSSMap teardown not ported).
@@ -1805,7 +1806,7 @@ pub struct RuntimeHooks {
 #[inline(always)]
 fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
     // SAFETY: vtable contract — `owner` is a live `*mut VirtualMachine`.
-    unsafe { &mut *owner.cast::<VirtualMachine>() }
+    yolo! { &mut *owner.cast::<VirtualMachine>() }
 }
 
 bun_io::link_impl_EventLoopCtx! {
@@ -1844,7 +1845,7 @@ impl VirtualMachine {
     pub fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
         // SAFETY: `this` is a live VM (per-thread or a worker's parent ref);
         // it outlives every ctx derived from it.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
+        yolo! { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
     }
 
     /// `&self` overload of [`event_loop_ctx`]. Routes through
@@ -1871,7 +1872,7 @@ impl VirtualMachine {
     ) {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_insert)(vm, timer) }
+        yolo! { (hooks.timer_insert)(vm, timer) }
     }
 
     /// `vm.timer.remove(timer)` — see [`Self::timer_insert`].
@@ -1886,7 +1887,7 @@ impl VirtualMachine {
     ) {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_remove)(vm, timer) }
+        yolo! { (hooks.timer_remove)(vm, timer) }
     }
 }
 
@@ -1991,7 +1992,7 @@ impl VirtualMachine {
         let layout = core::alloc::Layout::new::<VirtualMachine>();
         // SAFETY: `layout` is non-zero-sized; `alloc_zeroed` returns either a
         // valid aligned ptr or null (handled by `handle_alloc_error`).
-        let vm: *mut VirtualMachine = unsafe {
+        let vm: *mut VirtualMachine = yolo! {
             let p = alloc::alloc::alloc_zeroed(layout);
             if p.is_null() {
                 alloc::alloc::handle_alloc_error(layout);
@@ -2027,7 +2028,7 @@ impl VirtualMachine {
         // formed while non-zero-valid fields are still zero. Every target is
         // either zero-valid (no Drop on the overwritten bytes) or written via
         // `ptr::write` (no Drop of the uninit bytes).
-        unsafe {
+        yolo! {
             use core::ptr::addr_of_mut;
             addr_of_mut!((*vm).global).write(core::ptr::null_mut());
             addr_of_mut!((*vm).console).write(console);
@@ -2124,7 +2125,7 @@ impl VirtualMachine {
             // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
             // `&mut VirtualMachine` is held live across the hook call — the
             // hook body itself dereferences `vm`.
-            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts) };
+            yolo! { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts) };
         }
 
         // JSGlobalObject creation. Spec JSGlobalObject.zig:875 — the wrapper
@@ -2132,7 +2133,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread; raw-ptr deref so
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
         // ZigGlobalObject.cpp:473/961).
-        unsafe { (*vm).regular_event_loop.ensure_waker() };
+        yolo! { (*vm).regular_event_loop.ensure_waker() };
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread) — spec VirtualMachine.zig:1477-1484 / JSGlobalObject.zig:876.
@@ -2150,7 +2151,7 @@ impl VirtualMachine {
         // pattern as the `init_runtime_state` hook above. `global` is freshly
         // created and live for VM lifetime; `vm_ptr()` returns the FFI
         // `*mut VM` directly (no `&VM` reborrow), preserving mutable provenance.
-        let jsc_vm = unsafe {
+        let jsc_vm = yolo! {
             (*vm).global = global;
             (*vm).regular_event_loop.global = NonNull::new(global);
             let jsc_vm = (*global).vm_ptr();
@@ -2163,7 +2164,7 @@ impl VirtualMachine {
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
         // recover the JSC VM via `internal_loop_data`.
         // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
-        unsafe {
+        yolo! {
             (*uws::Loop::get()).internal_loop_data.jsc_vm = jsc_vm.cast();
         }
 
@@ -2196,7 +2197,7 @@ impl VirtualMachine {
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let vm = Self::init(opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
-        let vm_ref = unsafe { &mut *vm };
+        let vm_ref = yolo! { &mut *vm };
         vm_ref.set_main(entry_path);
         vm_ref.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         Ok(vm)
@@ -2238,7 +2239,7 @@ impl VirtualMachine {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
             // PERF(port): was inline switch.
-            unsafe { (hooks.auto_tick)(self) };
+            yolo! { (hooks.auto_tick)(self) };
         } else {
             // No high tier (unit tests) — fall back to a non-blocking tick.
             self.event_loop_mut().tick();
@@ -2256,7 +2257,7 @@ impl VirtualMachine {
         if let Some(hooks) = runtime_hooks() {
             // PERF(port): was inline switch — direct call in event_loop.zig.
             // SAFETY: `self` is the live per-thread VM (hook contract).
-            unsafe { (hooks.auto_tick_active)(self) };
+            yolo! { (hooks.auto_tick_active)(self) };
         } else {
             // No high-tier hook (unit tests) — drain JS tasks only so callers
             // observe forward progress without blocking on the I/O loop.
@@ -2293,7 +2294,7 @@ impl VirtualMachine {
             if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
                     // SAFETY: hook contract.
-                    let p = unsafe { (hooks.load_preloads)(self) }?;
+                    let p = yolo! { (hooks.load_preloads)(self) }?;
                     if !p.is_null() {
                         JSValue::from_cell(p).ensure_still_alive();
                         JSValue::from_cell(p).protect();
@@ -2594,7 +2595,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// Borrows). Only the worker-safe `debugger` bytes are retagged here.
     #[inline]
     fn vm_debugger(&self) -> Option<&crate::debugger::Debugger> {
-        unsafe { (*self.vm).debugger.as_deref() }
+        yolo! { (*self.vm).debugger.as_deref() }
     }
 
     /// Exclusive access to `(*vm).source_mappings` via raw place projection.
@@ -2609,7 +2610,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// touches none of those bytes.
     #[inline]
     fn vm_source_mappings_mut(&mut self) -> &mut SavedSourceMap {
-        unsafe { &mut (*self.vm).source_mappings }
+        yolo! { &mut (*self.vm).source_mappings }
     }
 
     /// Raw pointer to the active `BufferPrinter`.
@@ -2684,7 +2685,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // `&mut BufferPrinter` from the raw pointer after
         // `print_with_source_map` returns (see jsc_hooks.rs). See
         // `printer_ptr()` for why this is not a `&mut`-returning accessor.
-        let printer = unsafe { &mut *self.printer };
+        let printer = yolo! { &mut *self.printer };
 
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
         printer
@@ -2704,13 +2705,13 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             let buf = &mut printer.ctx.buffer.list;
             // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
             // `wrote<=encode_len` bytes.
-            let wrote = unsafe {
+            let wrote = yolo! {
                 bun_base64::encode(
                     &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
                     temp_json_buffer.list.as_slice(),
                 )
             };
-            unsafe { bun_core::vec::commit_spare(buf, wrote) };
+            yolo! { bun_core::vec::commit_spare(buf, wrote) };
         }
         printer
             .ctx
@@ -2810,7 +2811,7 @@ impl IPCInstance {
     pub fn deinit(this: *mut IPCInstance) {
         // SAFETY: `this` was produced by `IPCInstance::new` (heap::alloc).
         // `SendQueue` cleans itself up via `Drop`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     /// Spec VirtualMachine.zig:3940 `IPCInstance.handleIPCMessage`.
@@ -2841,7 +2842,7 @@ impl IPCInstance {
                 if let Some(hooks) = runtime_hooks() {
                     // SAFETY: hook fn is supplied by `bun_runtime` at startup;
                     // `global_this` is the live VM global.
-                    unsafe { (hooks.handle_ipc_internal_child)(global_this, data) };
+                    yolo! { (hooks.handle_ipc_internal_child)(global_this, data) };
                 }
                 event_loop.exit();
             }
@@ -2998,7 +2999,7 @@ unsafe extern "C" {
 extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
     // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
     // `ref_counted_string_with_was_new`; it points at a heap `RefString`.
-    unsafe { crate::ref_string::RefString::destroy(str_) };
+    yolo! { crate::ref_string::RefString::destroy(str_) };
 }
 
 impl VirtualMachine {
@@ -3053,7 +3054,7 @@ impl VirtualMachine {
         // same `bun_runtime` build that registered the hook; `self` is the
         // live per-thread VM (which owns the hive allocator inside
         // `runtime_state`).
-        unsafe { (hooks.init_request_body_value)(self, body) }
+        yolo! { (hooks.init_request_body_value)(self, body) }
     }
 
     /// Spec VirtualMachine.zig:279 `uvLoop`.
@@ -3377,7 +3378,7 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call (Zig spec uses alias-allowed `*Watcher`).
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
+            let _ = yolo! { (*watcher).add_file_by_path_slow(main, loader) };
         }
     }
 
@@ -3395,7 +3396,7 @@ impl VirtualMachine {
         // forward-decl of `bun_install::PackageManager`; the pointer was
         // produced by `PackageManager::init_with_runtime` (the install crate)
         // and only ever names that one type.
-        unsafe { &mut *pm.cast::<bun_install::PackageManager>() }
+        yolo! { &mut *pm.cast::<bun_install::PackageManager>() }
     }
 
     /// Spec VirtualMachine.zig:769 `reload`.
@@ -3473,7 +3474,7 @@ impl VirtualMachine {
         // SAFETY: hook contract — `self` is the live per-thread VM. The hook
         // boxes a `NodeFS{ vm: self if standalone else null }` and returns
         // the leaked pointer.
-        let new = unsafe { (hooks.create_node_fs)(self) };
+        let new = yolo! { (hooks.create_node_fs)(self) };
         self.node_fs = Some(new);
         new
     }
@@ -3521,9 +3522,9 @@ impl VirtualMachine {
         // SAFETY: `this` is the unique live VM; each deref is a momentary
         // access only (no borrow held across the re-entrant call).
         while !cond.get() {
-            unsafe { (*this).event_loop_mut().tick() };
+            yolo! { (*this).event_loop_mut().tick() };
             if !cond.get() {
-                unsafe { (*this).auto_tick() };
+                yolo! { (*this).auto_tick() };
             }
         }
     }
@@ -3561,7 +3562,7 @@ impl VirtualMachine {
         };
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
-        let vm_ref = unsafe { &mut *vm };
+        let vm_ref = yolo! { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
@@ -3603,7 +3604,7 @@ impl VirtualMachine {
         // / RuntimeHooks) and then patch the worker-specific fields.
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
-        let vm_ref = unsafe { &mut *vm };
+        let vm_ref = yolo! { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
         // `parent_vm()` is a `BackRef`; the parent outlives this worker while
         // `parent_poll_ref` is held (see web_worker.rs file header).
@@ -3643,7 +3644,7 @@ impl VirtualMachine {
         // swap the global.
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
-        let vm_ref = unsafe { &mut *vm };
+        let vm_ref = yolo! { &mut *vm };
         // `console` is the opaque round-trip pointer C++ stores into the new global.
         let new_global = BakeCreateProdGlobal(vm_ref.console.cast());
         vm_ref.global = new_global;
@@ -3654,7 +3655,7 @@ impl VirtualMachine {
         // (no `&VM` reborrow).
         vm_ref.jsc_vm = JSGlobalObject::opaque_ref(new_global).vm_ptr();
         // SAFETY: per-thread uws loop is live.
-        unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
+        yolo! { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
         vm_ref.event_loop_mut().ensure_waker();
         if opts.smol {
             // SAFETY: process-global written once at startup.
@@ -3672,7 +3673,7 @@ impl VirtualMachine {
         // SAFETY: only reachable via `RefString::destroy`, which passes the
         // live heap `RefString` allocated in `ref_counted_string_with_was_new`;
         // safe-fn coerces to the unsafe-fn-ptr `Callback` slot type.
-        let hash = unsafe { &*ref_string }.hash;
+        let hash = yolo! { &*ref_string }.hash;
         // SAFETY: `get()` is the live per-thread VM.
         VirtualMachine::get().as_mut().ref_strings.remove(&hash);
     }
@@ -3705,7 +3706,7 @@ impl VirtualMachine {
         // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
         // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
         // external-string finalizer.
-        let source_ref = unsafe { &*source };
+        let source_ref = yolo! { &*source };
         if ADD_DOUBLE_REF {
             source_ref.ref_();
             source_ref.ref_();
@@ -3771,13 +3772,13 @@ impl VirtualMachine {
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
                 let s = bun_core::String::create_external::<*mut RefString>(
-                    unsafe { bun_core::ffi::slice(ptr, len) },
+                    yolo! { bun_core::ffi::slice(ptr, len) },
                     true,
                     ref_,
                     free_ref_string,
                 );
                 // SAFETY: see above.
-                unsafe { (*ref_).impl_ = s.leak_wtf_impl() };
+                yolo! { (*ref_).impl_ = s.leak_wtf_impl() };
                 v.insert(ref_);
                 *new = true;
                 ref_
@@ -3842,7 +3843,7 @@ impl VirtualMachine {
             }
         }
         // SAFETY: `jsc_vm` outlives this stack frame.
-        let loader_ctx = unsafe {
+        let loader_ctx = yolo! {
             bun_bundler::options::VmLoaderCtx::new(
                 bun_bundler::options::VmLoaderCtxKind::Runtime,
                 std::ptr::from_ref::<VirtualMachine>(jsc_vm).cast_mut(),
@@ -3874,7 +3875,7 @@ impl VirtualMachine {
                 if self.1 {
                     let vm = std::ptr::from_mut::<VirtualMachine>(self.0);
                     // SAFETY: `vm` is the live per-thread VM.
-                    unsafe { ModuleLoader::ModuleLoader::reset_arena(&mut *vm) };
+                    yolo! { ModuleLoader::ModuleLoader::reset_arena(&mut *vm) };
                 }
             }
         }
@@ -3894,7 +3895,7 @@ impl VirtualMachine {
             // `transpile_source_code` call below; `TranspileExtra` declares
             // `'static` only because it crosses the §Dispatch boundary as
             // `*mut c_void` — the hook never retains the borrow.
-            path: unsafe { lr.path.into_static() },
+            path: yolo! { lr.path.into_static() },
             loader: lr.loader.unwrap_or(if lr.is_main {
                 bun_ast::Loader::Js
             } else {
@@ -3933,7 +3934,7 @@ impl VirtualMachine {
     fn dupe_resolved_path(s: &[u8]) -> &'static [u8] {
         // SAFETY: allocation is VM-lifetime by spec (VirtualMachine.zig:1740,
         // :1744, :1755, :1761) — never freed in `deinit`.
-        unsafe { &*bun_core::heap::into_raw(s.to_vec().into_boxed_slice()) }
+        yolo! { &*bun_core::heap::into_raw(s.to_vec().into_boxed_slice()) }
     }
 
     /// Spec VirtualMachine.zig:1724 `_resolve`.
@@ -3955,7 +3956,7 @@ impl VirtualMachine {
         // bytes that outlive `ResolveFunctionResult` (`'static` per the
         // struct's TODO(port) lifetime note). Erase to `'static` to seat the
         // result paths without threading a lifetime parameter through the VM.
-        let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
+        let specifier: &'static [u8] = yolo! { bun_ptr::detach_lifetime(specifier) };
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
@@ -4019,14 +4020,14 @@ impl VirtualMachine {
                 // re-slice of `source`, which the caller guarantees outlives
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
-                unsafe {
+                yolo! {
                     bun_ptr::detach_lifetime(
                         bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
                     )
                 }
             } else {
                 // SAFETY: see `specifier` lifetime erasure note above.
-                unsafe { bun_ptr::detach_lifetime(source) }
+                yolo! { bun_ptr::detach_lifetime(source) }
             }
         } else {
             top_level_dir
@@ -4060,7 +4061,7 @@ impl VirtualMachine {
 
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
-                    let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
+                    let buf = yolo! { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
@@ -4115,13 +4116,13 @@ impl VirtualMachine {
         }
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
-        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
+        ret.query_string = yolo! { bun_ptr::detach_lifetime(query_string) };
         let result_path = result
             .path_const()
             .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see field TODO(port) lifetime).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.path = yolo! { bun_ptr::detach_lifetime(result_path.text) };
         ret.result = Some(result);
         self.resolved_count += 1;
 
@@ -4189,7 +4190,7 @@ impl VirtualMachine {
         let mut result = ResolveFunctionResult::default();
         // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm_ptr = global.bun_vm_ptr();
-        let jsc_vm = unsafe { &mut *jsc_vm_ptr };
+        let jsc_vm = yolo! { &mut *jsc_vm_ptr };
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
@@ -4265,7 +4266,7 @@ impl VirtualMachine {
         // PORT NOTE: reshaped for borrowck — re-derive from raw so the unique
         // borrow doesn't span the guard's drop.
         // SAFETY: per-thread VM is live for this synchronous call.
-        let jsc_vm = unsafe { &mut *jsc_vm_ptr };
+        let jsc_vm = yolo! { &mut *jsc_vm_ptr };
 
         let resolve_result = jsc_vm._resolve(
             &mut result,
@@ -4344,7 +4345,7 @@ impl VirtualMachine {
             // SAFETY: `printer` was produced by `heap::alloc` in
             // `ensure_source_code_printer` and is exclusively owned by this
             // thread's VM.
-            drop(unsafe { bun_core::heap::take(printer.as_ptr()) });
+            drop(yolo! { bun_core::heap::take(printer.as_ptr()) });
         }
 
         // PORT NOTE: `SavedSourceMap`'s `Drop` is the Zig `deinit()`; it frees
@@ -4378,7 +4379,7 @@ impl VirtualMachine {
             // SAFETY: hook contract — `state` is exactly the pointer
             // `init_runtime_state` returned for this VM (or null), handed back
             // once on the same thread; `self` is the live per-thread VM.
-            unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
+            yolo! { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
         self.has_terminated = true;
     }
@@ -4444,7 +4445,7 @@ impl VirtualMachine {
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract.
-                let p = unsafe { (hooks.load_preloads)(self) }?;
+                let p = yolo! { (hooks.load_preloads)(self) }?;
                 if !p.is_null() {
                     JSValue::from_cell(p).ensure_still_alive();
                     self.pending_internal_promise = Some(p);
@@ -4570,26 +4571,26 @@ impl VirtualMachine {
                 Some(IPCInstanceUnion::Initialized(inst)) => {
                     // SAFETY: `inst` was produced by `IPCInstance::new` and is
                     // live for as long as `self.ipc` holds it.
-                    unsafe { (**inst).group }
+                    yolo! { (**inst).group }
                 }
                 _ => core::ptr::null_mut(),
             };
             #[cfg(not(unix))]
             let skip_process_ipc: *mut uws::SocketGroup = core::ptr::null_mut();
             // SAFETY: process-global usockets loop is live.
-            let loop_ = unsafe { &mut *uws::Loop::get() };
+            let loop_ = yolo! { &mut *uws::Loop::get() };
             let mut maybe_group = loop_.internal_loop_data.head;
             while let Some(group) = NonNull::new(maybe_group) {
                 // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
-                let next = unsafe { (*group.as_ptr()).next };
+                let next = yolo! { (*group.as_ptr()).next };
                 let g = group.as_ptr();
                 if g != skip_spawn_ipc && g != skip_process_ipc && g != skip_test_parallel_ipc {
                     // SAFETY: see above.
-                    unsafe { (*g).close_all() };
+                    yolo! { (*g).close_all() };
                 }
                 // SAFETY: `next` may have been unlinked by an on_close JS
                 // callback; restart from head if so (mirrors loop.c).
-                maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
+                maybe_group = if !next.is_null() && yolo! { (*next).linked } == 0 {
                     loop_.internal_loop_data.head
                 } else {
                     next
@@ -4639,7 +4640,7 @@ impl VirtualMachine {
             // SAFETY: `inst` was produced by `IPCInstance::new` and stays live
             // until `IPCInstance::deinit`; repoint at the new global so
             // `Process__emitMessageEvent` doesn't dispatch on a freed cell.
-            unsafe { (*inst).global_this = new_global };
+            yolo! { (*inst).global_this = new_global };
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             for hook in rare.cleanup_hooks.iter_mut() {
@@ -4709,7 +4710,7 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
+                let ctx = yolo! { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
                 // SAFETY: per-thread VM.
                 let vm = VirtualMachine::get().as_mut();
                 // SAFETY: `formatter`/`writer`/`exception_list` borrow the
@@ -4719,14 +4720,14 @@ impl VirtualMachine {
                 let exception_list = if ctx.exception_list.is_null() {
                     None
                 } else {
-                    Some(unsafe { &mut *ctx.exception_list })
+                    Some(yolo! { &mut *ctx.exception_list })
                 };
                 vm.print_errorlike_object(
                     next_value,
                     None,
                     exception_list,
-                    unsafe { &mut *ctx.formatter },
-                    unsafe { &mut *ctx.writer },
+                    yolo! { &mut *ctx.formatter },
+                    yolo! { &mut *ctx.writer },
                     ctx.allow_ansi_color,
                     ctx.allow_side_effects,
                 );
@@ -4979,7 +4980,7 @@ impl VirtualMachine {
         // the same source); port the straightforward per-frame resolve and
         // leave the cache as `// PERF(port)`.
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
-        let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
+        let frames = yolo! { bun_core::ffi::slice_mut(frames, frames_count) };
         for frame in frames {
             if frame.position.is_invalid() || frame.remapped {
                 continue;
@@ -5068,13 +5069,13 @@ impl VirtualMachine {
             fn drop(&mut self) {
                 // SAFETY: `this`/`exception` are stack-local raw ptrs taken
                 // before the body below reborrows them; no overlap at drop.
-                let this = unsafe { &mut *self.this };
-                let exception = unsafe { &mut *self.exception };
+                let this = yolo! { &mut *self.this };
+                let exception = yolo! { &mut *self.exception };
                 #[cfg(debug_assertions)]
                 {
                     let preview = self.enable_source_code_preview.get();
                     // SAFETY: stack-local raw ptr; live for guard scope.
-                    let slice = unsafe { &*self.source_code_slice };
+                    let slice = yolo! { &*self.source_code_slice };
                     if !preview && slice.is_some() {
                         bun_core::Output::panic(format_args!(
                             "Do not collect source code when we don't need to"
@@ -5082,7 +5083,7 @@ impl VirtualMachine {
                     }
                     // SAFETY: `source_lines_numbers[0]` is always valid —
                     // `Holder` backs it with a `[i32; SOURCE_LINES_COUNT]`.
-                    if !preview && unsafe { *exception.stack.source_lines_numbers } != -1 {
+                    if !preview && yolo! { *exception.stack.source_lines_numbers } != -1 {
                         bun_core::Output::panic(format_args!(
                             "Do not collect source code when we don't need to"
                         ));
@@ -5112,9 +5113,9 @@ impl VirtualMachine {
         };
         // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
         // touch them until Drop, so no aliasing during the body.
-        let exception: &mut ZigException = unsafe { &mut *_tail.exception };
+        let exception: &mut ZigException = yolo! { &mut *_tail.exception };
         let source_code_slice: &mut Option<bun_core::ZigStringSlice> =
-            unsafe { &mut *_tail.source_code_slice.cast_mut() };
+            yolo! { &mut *_tail.source_code_slice.cast_mut() };
 
         /// Spec VirtualMachine.zig:3058 `NoisyBuiltinFunctionMap`.
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
@@ -5135,7 +5136,7 @@ impl VirtualMachine {
         // backing buffer (ZigStackTrace contract).
         let mut frames_len = exception.stack.frames_len as usize;
         let frames_buf =
-            unsafe { bun_core::ffi::slice_mut(exception.stack.frames_ptr, frames_len) };
+            yolo! { bun_core::ffi::slice_mut(exception.stack.frames_ptr, frames_len) };
 
         if self.hide_bun_stackframes {
             let mut start_index: Option<usize> = None;
@@ -5331,9 +5332,9 @@ impl VirtualMachine {
                 const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
                 // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
                 let source_lines =
-                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
+                    yolo! { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
                 let source_line_numbers =
-                    unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) };
+                    yolo! { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) };
                 for s in source_lines.iter_mut() {
                     *s = bun_core::String::empty();
                 }
@@ -5471,7 +5472,7 @@ impl VirtualMachine {
 
         self.remap_zig_exception(
             // SAFETY: `exception` points into stack-local `exception_holder`.
-            unsafe { &mut *exception },
+            yolo! { &mut *exception },
             error_instance,
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
@@ -5482,7 +5483,7 @@ impl VirtualMachine {
 
         let result = self.print_error_instance_body(
             // SAFETY: see above.
-            unsafe { &mut *exception },
+            yolo! { &mut *exception },
             error_instance,
             None, // PORT NOTE: spec passes `exception_list` but it was already
             // consumed by `remap_zig_exception` above (only writer).
@@ -5679,14 +5680,14 @@ impl VirtualMachine {
         });
         let code: Option<&[u8]> = if is_error_instance {
             // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
-            let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
+            let obj = yolo! { &mut *error_instance.get_object().unwrap_unchecked() };
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
                 if code_value.is_string() {
                     match code_value.to_bun_string(global_ref) {
                         Ok(code_string) if code_string.is_8bit() => {
                             // SAFETY: `code_string` is moved into
                             // `code_string_guard` and outlives the borrow.
-                            let bytes: &[u8] = unsafe {
+                            let bytes: &[u8] = yolo! {
                                 bun_core::ffi::slice(
                                     code_string.latin1().as_ptr(),
                                     code_string.latin1().len(),
@@ -5858,7 +5859,7 @@ impl VirtualMachine {
         if is_error_instance {
             let mut saw_cause = false;
             // SAFETY: `is_error_instance` ⇒ object.
-            let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
+            let error_obj = yolo! { error_instance.get_object().unwrap_unchecked() };
             let mut iterator = crate::JSPropertyIterator::init(
                 global_ref,
                 error_obj,
@@ -6339,7 +6340,7 @@ impl VirtualMachine {
         let instance: *mut IPCInstance = {
             // SAFETY: disjoint borrow — `spawn_ipc_group` only touches the
             // embedded `SocketGroup` field + `vm.uws_loop()`.
-            let group: *mut uws::SocketGroup = unsafe {
+            let group: *mut uws::SocketGroup = yolo! {
                 let rare = std::ptr::from_mut::<RareData>((*this).rare_data());
                 (*rare).spawn_ipc_group(&mut *this)
             };
@@ -6365,13 +6366,13 @@ impl VirtualMachine {
             // also avoids holding a live `&mut` across `deinit` on the failure
             // branch.
             // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            yolo! { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
             // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
             // is the freshly-initialized SendQueue stored inline in `*instance`.
-            let socket = unsafe {
+            let socket = yolo! {
                 crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
                     &mut *group,
                     uws::SocketKind::SpawnIpc,
@@ -6389,7 +6390,7 @@ impl VirtualMachine {
             socket.set_timeout(0);
 
             // SAFETY: `instance` is the live boxed IPCInstance.
-            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
+            yolo! { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
 
             instance
         };
@@ -6412,7 +6413,7 @@ impl VirtualMachine {
             // branch (live `&mut T` to freed memory violates the validity
             // invariant even if never dereferenced).
             // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            yolo! { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
@@ -6425,10 +6426,10 @@ impl VirtualMachine {
             // pointer (UB under Stacked Borrows). Mirror the POSIX branch's
             // `addr_of_mut!` treatment.
             // SAFETY: `instance` is the live boxed IPCInstance.
-            let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
+            let data_ptr = yolo! { core::ptr::addr_of_mut!((*instance).data) };
             // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
             // stored inline in `*instance`; no other live `&mut` aliases it.
-            if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
+            if let Err(_) = yolo! { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
             {
                 IPCInstance::deinit(instance);
                 self.ipc = None;
@@ -6440,7 +6441,7 @@ impl VirtualMachine {
         };
 
         // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data.write_version_packet(self.global()) };
+        yolo! { (*instance).data.write_version_packet(self.global()) };
 
         Some(instance)
     }
@@ -6494,7 +6495,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     if reason_str.is_string() {
         // SAFETY: `as_string()` returns a non-null `*mut JSString` when
         // `is_string()` is true; `view()` borrows it for the `write!` below.
-        let view = unsafe { (*reason_str.as_string()).view(global_object) };
+        let view = yolo! { (*reason_str.as_string()).view(global_object) };
         return global_object
             .err(
                 crate::ErrorCode::ERR_UNHANDLED_REJECTION,

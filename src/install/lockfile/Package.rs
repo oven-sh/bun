@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::mem;
 
@@ -1618,7 +1619,7 @@ impl Package<u64> {
         let mut hasher = bun_wyhash::Wyhash::init(0);
         hasher.update(name);
         // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
-        hasher.update(unsafe {
+        hasher.update(yolo! {
             bun_core::ffi::slice(
                 (&raw const version).cast::<u8>(),
                 mem::size_of::<SemverVersion>(),
@@ -1675,7 +1676,7 @@ impl Package<u64> {
         // of this call (caller passes `self as *mut _`); `lockfile` and `log`
         // are disjoint fields, and `parse_with_json` only reaches `manager`
         // through the `pm` argument it receives here — no re-entrancy.
-        let (lockfile, pm, log) = unsafe {
+        let (lockfile, pm, log) = yolo! {
             let m = &mut *manager;
             let lockfile: *mut Lockfile = &raw mut *m.lockfile;
             let log: *mut bun_ast::Log = m.log;
@@ -1746,7 +1747,7 @@ impl Package<u64> {
         // (`allocate()` ran before this fn). No realloc occurs, so the detached
         // borrow stays valid; a tracked `&[u8]` would needlessly lock the builder.
         let buf: &[u8] =
-            unsafe { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
+            yolo! { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
         let sliced = external_version.sliced(buf);
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
@@ -1881,7 +1882,7 @@ impl Package<u64> {
                         // SAFETY: `range.input` borrows `lockfile.buffers.string_bytes`
                         // (set by `semver::query::parse` above), which is live here.
                         let version_literal =
-                            strings::trim(unsafe { &*range.input }, &strings::WHITESPACE_CHARS);
+                            strings::trim(yolo! { &*range.input }, &strings::WHITESPACE_CHARS);
                         if version_literal.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)
@@ -1947,7 +1948,7 @@ impl Package<u64> {
                                     // thread for the remainder of this block. When `rel` aliased
                                     // it, its last use was the `.as_ptr()` above (NLL-dead);
                                     // otherwise `rel` borrows a disjoint allocation.
-                                    let common = unsafe { &mut *common_raw };
+                                    let common = yolo! { &mut *common_raw };
                                     if !rel_is_common {
                                         // `rel` is into a disjoint thread-local (RELATIVE_TO_BUF)
                                         // or `b""` (len==0 → no read).
@@ -1981,7 +1982,7 @@ impl Package<u64> {
                                         package_dep.realname().slice(buf),
                                     ) == name_hash
                                         // SAFETY: tag == Npm selects the `npm` union member.
-                                        && unsafe {
+                                        && yolo! {
                                             package_dep
                                                 .version
                                                 .value
@@ -3244,7 +3245,7 @@ pub mod serializer {
             // SAFETY: each `PackageField` discriminant corresponds to a column
             // whose element size matches `SIZES_BYTES[field as usize]`; we
             // address the column as raw bytes for serialisation.
-            let bytes: &[u8] = unsafe {
+            let bytes: &[u8] = yolo! {
                 let n = list.len();
                 let sz =
                     bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
@@ -3270,7 +3271,7 @@ pub mod serializer {
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
                 let resolutions: &[Resolution<SemverIntType>] =
-                    unsafe { sliced.items::<"resolution", Resolution<SemverIntType>>() };
+                    yolo! { sliced.items::<"resolution", Resolution<SemverIntType>>() };
                 for val in resolutions {
                     // `ResolutionType::copy` builds a fresh zero-initialised
                     // `Resolution` and writes only the active union member,
@@ -3279,7 +3280,7 @@ pub mod serializer {
                     // lockfile output).
                     let copy = val.copy();
                     // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
-                    stream.write_all(unsafe {
+                    stream.write_all(yolo! {
                         bun_core::ffi::slice(
                             (&raw const copy).cast::<u8>(),
                             mem::size_of_val(&copy),
@@ -3367,7 +3368,7 @@ pub mod serializer {
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
             // SAFETY: capacity reserved above; `load_fields` writes every column.
-            unsafe { list_for_migrating_from_v2.set_len(list_len as usize) };
+            yolo! { list_for_migrating_from_v2.set_len(list_len as usize) };
 
             load_fields::<u32>(
                 stream,
@@ -3429,7 +3430,7 @@ pub mod serializer {
             }
         } else {
             // SAFETY: capacity reserved above; `load_fields` writes every column.
-            unsafe { list.set_len(list_len as usize) };
+            yolo! { list.set_len(list_len as usize) };
             load_fields::<SemverIntType>(stream, end_at as u64, &mut list, &mut needs_update)?;
         }
 
@@ -3454,7 +3455,7 @@ pub mod serializer {
             // SAFETY: `items_raw` returns a column pointer with `n` elements of
             // `sz` bytes each; the byte view is used solely for memcpy from the
             // serialised lockfile stream.
-            let bytes: &mut [u8] = unsafe {
+            let bytes: &mut [u8] = yolo! {
                 {
                     let _ = sz;
                     sliced.column_bytes_mut(field as usize)
@@ -3469,7 +3470,7 @@ pub mod serializer {
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
-                    let metas: &mut [Meta] = unsafe { sliced.items_mut::<"meta", Meta>() };
+                    let metas: &mut [Meta] = yolo! { sliced.items_mut::<"meta", Meta>() };
                     for meta in metas {
                         if meta.needs_update() {
                             *needs_update = true;

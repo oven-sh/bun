@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use crate::webcore::ReadableStream;
@@ -61,7 +62,7 @@ impl PipeReader {
     pub fn r#ref(&self) {
         // SAFETY: `self` is live; RefCount::ref_ only touches the interior-mutable
         // `ref_count` cell via raw-ptr field projection.
-        unsafe { RefCount::<PipeReader>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
+        yolo! { RefCount::<PipeReader>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
 
     /// Decrement the intrusive refcount; frees the allocation when it hits zero.
@@ -78,7 +79,7 @@ impl PipeReader {
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
-        unsafe { RefCount::<PipeReader>::deref(this) };
+        yolo! { RefCount::<PipeReader>::deref(this) };
     }
 }
 
@@ -100,8 +101,8 @@ impl PipeReader {
     /// `this` must point to a live `PipeReader`; may be freed on return (see `deref`).
     pub unsafe fn detach(this: *mut Self) {
         // SAFETY: `this` is live; raw-ptr field write avoids holding a `&mut` across deref.
-        unsafe { (*this).process = None };
-        unsafe { PipeReader::deref(this) };
+        yolo! { (*this).process = None };
+        yolo! { PipeReader::deref(this) };
     }
 
     pub fn create(
@@ -133,7 +134,7 @@ impl PipeReader {
 
         let raw: *mut PipeReader = bun_core::heap::into_raw(this);
         // SAFETY: `raw` is a valid, freshly-boxed PipeReader.
-        unsafe {
+        yolo! {
             (*raw).reader.set_parent(raw.cast::<core::ffi::c_void>());
             IntrusiveRc::from_raw(raw)
         }
@@ -170,7 +171,7 @@ impl PipeReader {
             // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            let _keepalive = yolo! { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
 
             // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors Zig `.?`.
             match self.reader.start(self.stdio_result.unwrap(), true) {
@@ -219,7 +220,7 @@ impl PipeReader {
             // SAFETY: last use of `self`; raw ptr derived from `&mut self` carries
             // write provenance, and the caller (BufferedReader vtable) holds only a
             // raw parent pointer, so freeing here does not invalidate any live `&mut`.
-            unsafe { PipeReader::deref(self) };
+            yolo! { PipeReader::deref(self) };
         }
     }
 
@@ -278,7 +279,7 @@ impl PipeReader {
         scopeguard::defer! {
             // SAFETY: `self` is valid for the duration of this call; detach() may free it,
             // but only after this defer fires at scope exit when no other borrow remains.
-            unsafe { PipeReader::detach(this_ptr) };
+            yolo! { PipeReader::detach(this_ptr) };
         }
 
         match &self.state {
@@ -335,7 +336,7 @@ impl PipeReader {
             let kind = self.kind(process.get());
             process.on_close_io(kind);
             // SAFETY: last use of `self`; see `on_reader_done` for rationale.
-            unsafe { PipeReader::deref(self) };
+            yolo! { PipeReader::deref(self) };
         }
     }
 
@@ -367,7 +368,7 @@ impl PipeReader {
         #[cfg(windows)]
         {
             // SAFETY: uws loop pointer is live for the VM lifetime.
-            unsafe { (*uws).uv_loop }
+            yolo! { (*uws).uv_loop }
         }
         #[cfg(not(windows))]
         {
@@ -381,7 +382,7 @@ impl PipeReader {
     /// whose generated trait `destructor` upholds the sole-owner contract.
     fn deinit(this: *mut PipeReader) {
         // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
 
         #[cfg(unix)]
         {
@@ -410,7 +411,7 @@ impl PipeReader {
         // Zig: this.reader.deinit() — handled by Drop of `reader` field when Box drops.
 
         // SAFETY: `this` was created via heap::alloc in `create()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 

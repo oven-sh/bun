@@ -2,6 +2,7 @@
 //!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
@@ -78,7 +79,7 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
             uws::InternalSocket::Pipe(p) => {
                 // SAFETY: `Pipe` carries a non-null `*mut WindowsNamedPipe`
                 // (type-erased in `bun_uws`); set by `WindowsNamedPipeContext`.
-                unsafe {
+                yolo! {
                     (*p.cast::<super::windows_named_pipe::WindowsNamedPipe>()).resume_stream()
                 }
             }
@@ -96,7 +97,7 @@ impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
             #[cfg(windows)]
             uws::InternalSocket::Pipe(p) => {
                 // SAFETY: see `resume_stream` above.
-                unsafe { (*p.cast::<super::windows_named_pipe::WindowsNamedPipe>()).pause_stream() }
+                yolo! { (*p.cast::<super::windows_named_pipe::WindowsNamedPipe>()).pause_stream() }
             }
             _ => false,
         }
@@ -201,13 +202,13 @@ extern "C" fn select_alpn_callback(
         return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
     // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open).
-    let this: &TLSSocket = unsafe { &*this_ptr.cast::<TLSSocket>() };
+    let this: &TLSSocket = yolo! { &*this_ptr.cast::<TLSSocket>() };
     if let Some(protos) = this.protos.get() {
         if protos.is_empty() {
             return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
         }
         // SAFETY: out/outlen/in are valid per BoringSSL ALPN callback contract.
-        let status = unsafe {
+        let status = yolo! {
             boringssl_sys::SSL_select_next_proto(
                 out.cast::<*mut u8>(),
                 outlen,
@@ -278,7 +279,7 @@ pub struct NewSocket<const SSL: bool> {
     // pointee while a callback frame still holds the pointer), so Rust's
     // `&mut` exclusivity cannot be upheld across `callback.call()`. A raw
     // pointer carries no aliasing guarantee to violate; callers reborrow
-    // `unsafe { &mut *p }` only for the exact field access they need and
+    // `yolo! { &mut *p }` only for the exact field access they need and
     // never across a reentrant JS call. See `get_handlers` for the access
     // contract.
     pub handlers: Cell<Option<NonNull<Handlers>>>,
@@ -314,12 +315,12 @@ impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
     type DestructorCtx = ();
     unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
         // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
+        yolo! { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: refcount reached zero; we are the unique owner of the
         // `heap::alloc` allocation and `this` is not used after.
-        unsafe { Self::deinit_and_destroy(this) };
+        yolo! { Self::deinit_and_destroy(this) };
     }
 }
 
@@ -354,7 +355,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that access.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
+        yolo! { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
     }
     // R-2: takes `&self` — every mutated field is `UnsafeCell`-backed so the
     // `*mut Self` formed for `RefCount::deref` (and onward into
@@ -365,7 +366,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn deref(&self) {
         // SAFETY: `self` is live; if count hits 0, `RefCounted::destructor`
         // (→ `deinit_and_destroy`) runs and `self` is not used after.
-        unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
+        yolo! { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
     }
 
     // ── codegen accessors (Zig: `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`) ──
@@ -467,7 +468,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // borrow held across the body) and derefs on Drop.
         // SAFETY: `self` is live until guard drop; all writes go through
         // interior-mutable cells.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
         // Stash the raw `*mut Self` for the uSockets ext slot.
         let self_ptr: *mut Self = self.as_ctx_ptr();
 
@@ -528,12 +529,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                         }
                         uws::ConnectResult::Socket(s) => {
                             // SAFETY: ext slot is sized for `*mut Self`.
-                            unsafe { *(*s).ext::<*mut Self>() = self_ptr };
+                            yolo! { *(*s).ext::<*mut Self>() = self_ptr };
                             SocketHandler::<SSL>::from(s)
                         }
                         uws::ConnectResult::Connecting(c) => {
                             // SAFETY: ext slot is sized for `*mut Self`.
-                            unsafe { *(*c).ext::<*mut Self>() = self_ptr };
+                            yolo! { *(*c).ext::<*mut Self>() = self_ptr };
                             SocketHandler::<SSL>::from_connecting(c)
                         }
                     },
@@ -552,7 +553,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     return Err(bun_core::err!("FailedToOpenSocket"));
                 }
                 // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *(*s).ext::<*mut Self>() = self_ptr };
+                yolo! { *(*s).ext::<*mut Self>() = self_ptr };
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
             Some(UnixOrHost::Fd(f)) => {
@@ -572,13 +573,13 @@ impl<const SSL: bool> NewSocket<SSL> {
                     return Err(bun_core::err!("ConnectionFailed"));
                 }
                 // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *(*s).ext::<*mut Self>() = self_ptr };
+                yolo! { *(*s).ext::<*mut Self>() = self_ptr };
                 let sock = SocketHandler::<SSL>::from(s);
                 self.socket.set(sock);
                 // SAFETY: the `&self.connection` match borrow has ended (NLL —
                 // `f` is unused past `from_fd`); `self_ptr` is the live
                 // `*mut Self`. `on_open` takes `*mut Self` (noalias re-entrancy).
-                unsafe { Self::on_open(self_ptr, sock) };
+                yolo! { Self::on_open(self_ptr, sock) };
             }
             None => unreachable!("do_connect requires self.connection to be set"),
         }
@@ -732,7 +733,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY (whole body): per fn contract; R-2 — every field is
         // `Cell`/`JsCell`, so a single shared reborrow is sufficient and no
         // borrow spans `callback.call`.
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         if this.socket.get().is_detached() {
             return;
         }
@@ -784,7 +785,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub unsafe fn on_timeout(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // SAFETY (whole body): per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         if this.socket.get().is_detached() {
             return;
         }
@@ -824,7 +825,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// across any `callback.call(...)` / `resolve_promise` / `reject_promise`
     /// boundary: JS may synchronously reenter `socket.reload()` which
     /// `drop_in_place`s + `ptr::write`s the pointee, invalidating any
-    /// outstanding `&mut` under Stacked Borrows. Reborrow `unsafe { &mut *p }`
+    /// outstanding `&mut` under Stacked Borrows. Reborrow `yolo! { &mut *p }`
     /// per field access (or re-derive after every reentrant call) instead.
     ///
     /// Server-mode: the returned pointer addresses the embedded
@@ -836,7 +837,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Returned as a [`BackRef`](bun_ptr::BackRef) so the ~40 read-only field
     /// projections at call sites go through `Deref` (one short-lived `&Handlers`
     /// per expression — same Stacked-Borrows footprint as the previous manual
-    /// `unsafe { (*p).field }`). Mutating sites use `.as_ptr()` and reborrow
+    /// `yolo! { (*p).field }`). Mutating sites use `.as_ptr()` and reborrow
     /// `&mut` explicitly.
     pub fn get_handlers(&self) -> bun_ptr::BackRef<Handlers> {
         self.handlers
@@ -855,7 +856,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub unsafe fn handle_connect_error(this: *mut Self, errno: c_int) -> JsResult<()> {
         // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
         // mutated fields are `Cell`/`JsCell`.
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         let handlers = this.get_handlers();
         log!(
             "onConnectError {} ({}, {})",
@@ -874,7 +875,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // ref_() above is balanced even if those calls unwind.
         let _outer_deref = scopeguard::guard(this.as_ctx_ptr(), |p| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-            unsafe { (*p).deref() };
+            yolo! { (*p).deref() };
         });
         // PORT NOTE: reshaped for borrowck — explicit cleanup at end of fn.
         this.buffered_data_for_node_net
@@ -894,7 +895,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // (cleanup → _outer_deref) mirrors Zig's three defers exactly.
         let cleanup = scopeguard::guard((this.as_ctx_ptr(), needs_deref), |(p, nd)| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-            unsafe {
+            yolo! {
                 // Zig defer order (reverse-declaration): needs_deref → markInactive.
                 if nd {
                     (*p).deref();
@@ -956,7 +957,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // and frees them. Null the field so a retry via
                 // `connectInner` doesn't double-free.
                 // SAFETY: `p` is the live `*mut Self`.
-                unsafe { (*p).handlers.set(None) };
+                yolo! { (*p).handlers.set(None) };
             }
         });
 
@@ -977,9 +978,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let js_promise: *mut jsc::JSPromise = promise.as_promise().unwrap();
                 // SAFETY: `as_promise` returned non-null; promise lives for this call.
                 let err_value =
-                    err.to_error_instance_with_async_stack(&global, unsafe { &*js_promise });
+                    err.to_error_instance_with_async_stack(&global, yolo! { &*js_promise });
                 // SAFETY: same — `reject` takes &mut self.
-                unsafe { (*js_promise).reject(&global, Ok(err_value)) }?;
+                yolo! { (*js_promise).reject(&global, Ok(err_value)) }?;
             }
 
             return Ok(());
@@ -1029,7 +1030,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         // SAFETY: per fn contract.
-        unsafe { Self::handle_connect_error(this, errno) }
+        yolo! { Self::handle_connect_error(this, errno) }
     }
 
     pub fn mark_active(&self) {
@@ -1087,7 +1088,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // just release the event-loop ref and stop.
             let vm = VirtualMachine::get();
             // SAFETY: VM singleton is always live once initialized.
-            if unsafe { (*vm).is_shutting_down() } {
+            if yolo! { (*vm).is_shutting_down() } {
                 self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
                 return;
             }
@@ -1096,7 +1097,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `Listener.handlers` field, so `mark_inactive`'s
             // `container_of` arithmetic is valid; client-mode it is the
             // `heap::alloc` allocation `mark_inactive` frees in place.
-            if unsafe { Handlers::mark_inactive(handlers.as_ptr()) } {
+            if yolo! { Handlers::mark_inactive(handlers.as_ptr()) } {
                 // Client-mode handlers are allocated per-connection and
                 // `Handlers.markInactive` just freed them. Null the field
                 // so `connectInner` (net.Socket reconnect path) and
@@ -1129,7 +1130,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
         // mutated fields are `Cell`/`JsCell`.
         let this_ptr = this;
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         log!(
             "onOpen {} {:p} {} {}",
             if this.is_server() { "S" } else { "C" },
@@ -1158,7 +1159,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         if !host.is_empty() {
                             let host_z = bun_core::ZBox::from_bytes(host);
                             // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                            unsafe {
+                            yolo! {
                                 boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr())
                             };
                         }
@@ -1168,7 +1169,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             if !host.is_empty() {
                                 let host_z = bun_core::ZBox::from_bytes(host);
                                 // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                                unsafe {
+                                yolo! {
                                     boringssl_sys::SSL_set_tlsext_host_name(
                                         ssl_ptr,
                                         host_z.as_ptr(),
@@ -1203,7 +1204,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             // bytes (borrowed `&[u8]` from `this.protos`) and
                             // BoringSSL copies the buffer internally — raw
                             // ptr+len pair is the genuine FFI precondition here.
-                            unsafe {
+                            yolo! {
                                 boringssl_sys::SSL_set_alpn_protos(
                                     ssl_ptr,
                                     protos.as_ptr(),
@@ -1218,7 +1219,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext slot is sized for `*mut anyopaque`.
-            unsafe { *ctx = this_ptr.cast::<c_void>() };
+            yolo! { *ctx = this_ptr.cast::<c_void>() };
         }
 
         let handlers = this.get_handlers();
@@ -1298,7 +1299,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub unsafe fn on_end(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
         // SAFETY (whole body): per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         if this.socket.get().is_detached() {
             return;
         }
@@ -1352,7 +1353,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         // SAFETY (whole body): per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
         this.socket.set(s);
         if this.socket.get().is_detached() {
@@ -1412,7 +1413,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // servers don't support renegotiation
                 // SAFETY: short-lived `&mut` write; raw-ptr access is the
                 // ONLY way to mutate the freely-aliased `Handlers` here.
-                unsafe {
+                yolo! {
                     (*handlers.as_ptr()).on_open.unprotect();
                     (*handlers.as_ptr()).on_open = JSValue::ZERO;
                 }
@@ -1466,7 +1467,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         // SAFETY (whole body): per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         let handlers = this.get_handlers();
         log!(
             "onClose {}",
@@ -1488,12 +1489,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             // which releases that +1 — so hand it the raw pointer instead of
             // letting `IntrusiveRc::drop` release a *second* time.
             let raw = IntrusiveRc::into_raw(raw);
-            unsafe { Self::on_close(raw, socket, err, reason).ok() };
+            yolo! { Self::on_close(raw, socket, err, reason).ok() };
         }
         // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
         let cleanup = scopeguard::guard(this.as_ctx_ptr(), |p| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-            unsafe {
+            yolo! {
                 (*p).mark_inactive();
                 (*p).deref();
             }
@@ -1551,7 +1552,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub unsafe fn on_data(this: *mut Self, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
         // SAFETY (whole body): per fn contract; R-2 shared reborrow.
-        let this: &Self = unsafe { &*this };
+        let this: &Self = yolo! { &*this };
         this.socket.set(s);
         if this.socket.get().is_detached() {
             return;
@@ -1636,7 +1637,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: server-mode invariant (checked above) guarantees `handlers`
         // addresses `Listener.handlers`.
         let l: &Listener =
-            unsafe { &*bun_core::from_field_ptr!(Listener, handlers, handlers.as_ptr()) };
+            yolo! { &*bun_core::from_field_ptr!(Listener, handlers, handlers.as_ptr()) };
         l.strong_self.get().get().unwrap_or(JSValue::UNDEFINED)
     }
 
@@ -2027,7 +2028,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if let uws::InternalSocket::Connected(connected) = socket.socket {
                     if !buffer.slice().is_empty() {
                         // SAFETY: `connected` is a live `*mut us_socket_t` (guard above).
-                        let rc = unsafe {
+                        let rc = yolo! {
                             (*connected).write2(
                                 self.buffered_data_for_node_net.get().slice(),
                                 buffer.slice(),
@@ -2508,7 +2509,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// intrusive refcount + `finalize()`.
     // SAFETY: `this` was allocated via `heap::alloc` and refcount == 0.
     unsafe fn deinit_and_destroy(this: *mut Self) {
-        let this_ref: &Self = unsafe { &*this };
+        let this_ref: &Self = yolo! { &*this };
         this_ref.mark_inactive();
         this_ref.detach_native_callback();
         // PORT NOTE: Zig `JSRef.deinit()` → reset to empty (Strong drops on assign).
@@ -2535,10 +2536,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         if let Some(ctx) = this_ref.owned_ssl_ctx.take() {
             // SAFETY: BoringSSL FFI; we hold one owned ref.
-            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+            yolo! { boringssl_sys::SSL_CTX_free(ctx) };
         }
         // SAFETY: `this` was heap-allocated in `new()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -2593,7 +2594,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `p` is the freely-aliased raw pointer; no `&Handlers` borrow
         // is live across the read/writes below (single-threaded event loop,
         // and `from_js` cannot reenter this socket's handlers).
-        let prev_mode = unsafe { (*p).mode };
+        let prev_mode = yolo! { (*p).mode };
         let handlers =
             Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
@@ -2604,7 +2605,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the heap-allocated client `Handlers` while the socket still points at it, or
         // underflow on the server path.
         // SAFETY: raw-pointer-only access; see `get_handlers` contract.
-        unsafe {
+        yolo! {
             let active_connections = (*p).active_connections.get();
             core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()
             core::ptr::write(p, handlers);
@@ -2711,7 +2712,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
             if let Some(c) = c {
                 // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
-                unsafe { boringssl_sys::SSL_CTX_free(c) };
+                yolo! { boringssl_sys::SSL_CTX_free(c) };
             }
         });
         let mut ssl_opts: Option<SSLConfig> = None;
@@ -2742,7 +2743,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 ));
             };
             // SAFETY: `from_js` returns a live `*mut SecureContext`.
-            *owned_ctx = Some(unsafe { (*sc).borrow() }.cast::<SSL_CTX>());
+            *owned_ctx = Some(yolo! { (*sc).borrow() }.cast::<SSL_CTX>());
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
@@ -2780,7 +2781,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 debug_assert!(!state.is_null(), "RuntimeState not installed");
                 // SAFETY: per-thread `RuntimeState` boxed by `init_runtime_state`;
                 // stable address for the VM's lifetime, JS-thread-only access.
-                unsafe { &mut (*state).ssl_ctx_cache }
+                yolo! { &mut (*state).ssl_ctx_cache }
             };
             *owned_ctx = match cache.get_or_create(cfg, &mut create_err) {
                 Some(c) => Some(c.cast::<SSL_CTX>()),
@@ -2850,7 +2851,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // its provenance. A `&mut *tls_ptr` reborrow that outlives the
         // ext-slot store and the `on_open`/`start_tls_handshake` calls would
         // alias the `&mut TLSSocket` those calls materialise from ext.
-        // Reborrow short-lived `unsafe { &mut *tls_ptr }` per use instead.
+        // Reborrow short-lived `yolo! { &mut *tls_ptr }` per use instead.
 
         let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name_cstr());
         // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
@@ -2861,7 +2862,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
         // taken from SecureContext/ssl_ctx_cache and never null here.
-        let new_raw: NonNull<uws::us_socket_t> = match unsafe {
+        let new_raw: NonNull<uws::us_socket_t> = match yolo! {
             (*raw_socket).adopt_tls(
                 group,
                 uws::SocketKind::BunSocketTls,
@@ -2884,7 +2885,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `Handlers` we're about to free explicitly (Zig sequences
                 // `tls.deref()` then `handlers_ptr.deinit(); destroy(handlers_ptr)`).
                 // SAFETY: sole owner of the fresh allocation.
-                unsafe {
+                yolo! {
                     (*tls_ptr).handlers.set(None);
                     (*tls_ptr).deref();
                 }
@@ -2892,7 +2893,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `Handlers` has a `Drop` impl that runs `deinit` (unprotect).
                 // SAFETY: `handlers_ptr` is the `heap::alloc` allocation
                 // created above; sole owner here.
-                drop(unsafe { bun_core::heap::take(handlers_ptr.as_ptr()) });
+                drop(yolo! { bun_core::heap::take(handlers_ptr.as_ptr()) });
                 if err != 0 && !global.has_exception() {
                     return Err(global.throw_value(boringssl_err_to_js(global, err)));
                 }
@@ -2934,7 +2935,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // SAFETY: `this` is the JS-wrapper-owned allocation; the wrapper's
             // +1 keeps it alive across the whole call regardless of which exit
             // we take. Single JS thread.
-            unsafe { (*p).deref() };
+            yolo! { (*p).deref() };
         });
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
@@ -2945,10 +2946,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // provenance with our per-use reborrows below.
         // SAFETY: ext slot is sized for `*mut TLSSocket`; `new_raw` is the live
         // adopted `us_socket_t`.
-        unsafe { *(*new_raw.as_ptr()).ext::<*mut TLSSocket>() = tls_ptr };
+        yolo! { *(*new_raw.as_ptr()).ext::<*mut TLSSocket>() = tls_ptr };
         // SAFETY: short-lived reborrows; no `&mut TLSSocket` is held across
         // any dispatch boundary (`on_open`/`start_tls_handshake` below).
-        unsafe {
+        yolo! {
             (*tls_ptr)
                 .socket
                 .set(SocketHandler::<true>::from(new_raw.as_ptr()));
@@ -2980,16 +2981,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             twin: JsCell::new(None),
         });
         // SAFETY: raw just allocated via heap::alloc.
-        let raw_ref: &TLSSocket = unsafe { &*raw };
+        let raw_ref: &TLSSocket = yolo! { &*raw };
         raw_ref.ref_();
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
-        unsafe { (*tls_ptr).twin.set(Some(IntrusiveRc::from_raw(raw))) };
+        yolo! { (*tls_ptr).twin.set(Some(IntrusiveRc::from_raw(raw))) };
         // SAFETY: `new_raw` is the live adopted `us_socket_t`.
-        unsafe { (*new_raw.as_ptr()).set_ssl_raw_tap(true) };
+        yolo! { (*new_raw.as_ptr()).set_ssl_raw_tap(true) };
 
         // SAFETY: short-lived reborrow; no dispatch can fire until
         // `on_open`/`start_tls_handshake` below.
-        let tls_js_value = unsafe { (*tls_ptr).get_this_value(global) };
+        let tls_js_value = yolo! { (*tls_ptr).get_this_value(global) };
         let raw_js_value = raw_ref.get_this_value(global);
         TLSSocket::data_set_cached(tls_js_value, global, default_data);
         // `raw` keeps the pre-upgrade `data` so its callbacks emit on the
@@ -2997,7 +2998,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         TLSSocket::data_set_cached(raw_js_value, global, original_data);
 
         // SAFETY: short-lived reborrows on the allocation-root pointer.
-        unsafe {
+        yolo! {
             (*tls_ptr).mark_active();
             if was_reffed {
                 (*tls_ptr).poll_ref.with_mut(|p| {
@@ -3016,12 +3017,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // synchronously dispatch through the ext slot (which now stores
         // `tls_ptr`); passing the allocation-root pointer keeps provenance and
         // no `&mut TLSSocket` is held across the call.
-        unsafe {
+        yolo! {
             let sock = (*tls_ptr).socket.get();
             TLSSocket::on_open(tls_ptr, sock);
         };
         // SAFETY: `new_raw` is the live adopted `us_socket_t`.
-        unsafe { (*new_raw.as_ptr()).start_tls_handshake() };
+        yolo! { (*new_raw.as_ptr()).start_tls_handshake() };
 
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, raw_js_value)?;
@@ -3047,7 +3048,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         debug_assert!(SSL);
         // SAFETY: only called from the `if SSL` branch; `NewSocket<SSL>` and
         // `NewSocket<true>` are the same monomorphisation when `SSL == true`.
-        unsafe { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
+        yolo! { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3448,7 +3449,7 @@ impl DuplexUpgradeContext {
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch. `on_open`
             // takes `*mut Self` (noalias re-entrancy) — no `&mut TLSSocket` held.
-            unsafe { TLSSocket::on_open(tls.as_ptr(), socket) };
+            yolo! { TLSSocket::on_open(tls.as_ptr(), socket) };
         }
     }
 
@@ -3457,7 +3458,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_data(tls.as_ptr(), socket, decoded_data) };
+            yolo! { TLSSocket::on_data(tls.as_ptr(), socket, decoded_data) };
         }
     }
 
@@ -3467,7 +3468,7 @@ impl DuplexUpgradeContext {
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
             let _ =
-                unsafe { TLSSocket::on_handshake(tls.as_ptr(), socket, success as i32, ssl_error) };
+                yolo! { TLSSocket::on_handshake(tls.as_ptr(), socket, success as i32, ssl_error) };
         }
     }
 
@@ -3475,7 +3476,7 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_end(tls.as_ptr(), socket) };
+            yolo! { TLSSocket::on_end(tls.as_ptr(), socket) };
         }
     }
 
@@ -3484,7 +3485,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_writable(tls.as_ptr(), socket) };
+            yolo! { TLSSocket::on_writable(tls.as_ptr(), socket) };
         }
     }
 
@@ -3517,7 +3518,7 @@ impl DuplexUpgradeContext {
                 // `handle_connect_error`'s `needs_deref` arm (socket is
                 // UpgradedDuplex, not Detached) — do NOT reconstruct the
                 // IntrusiveRc. `handle_connect_error` takes `*mut Self`.
-                let _ = unsafe {
+                let _ = yolo! {
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int)
                 };
             }
@@ -3529,7 +3530,7 @@ impl DuplexUpgradeContext {
 
         if let Some(tls) = &mut self.tls {
             // SAFETY: intrusive refcount; single-threaded dispatch.
-            unsafe { TLSSocket::on_timeout(tls.as_ptr(), socket) };
+            yolo! { TLSSocket::on_timeout(tls.as_ptr(), socket) };
         }
     }
 
@@ -3551,7 +3552,7 @@ impl DuplexUpgradeContext {
             // consumes the +1 we held via its internal `deref()`, so we do NOT
             // reconstruct the IntrusiveRc (that would double-deref). `on_close`
             // takes `*mut Self` (noalias re-entrancy).
-            let _ = unsafe { TLSSocket::on_close(p, socket, 0, None) };
+            let _ = yolo! { TLSSocket::on_close(p, socket, 0, None) };
         }
 
         self.deinit_in_next_tick();
@@ -3564,7 +3565,7 @@ impl DuplexUpgradeContext {
     /// pointer directly so no Stacked Borrows protector spans the dealloc.
     unsafe fn run_event(this: *mut Self) {
         // SAFETY: `this` is live; copy of a `Copy` field.
-        match unsafe { (*this).task_event } {
+        match yolo! { (*this).task_event } {
             EventState::StartTLS => {
                 // A pre-open error (onError's `!is_open` branch) may have
                 // already fired the connect-error callback, freed
@@ -3577,15 +3578,15 @@ impl DuplexUpgradeContext {
                 // the dead socket.
                 //
                 // SAFETY: `this` is live; short-lived `&` for the null-check.
-                if unsafe { (*this).tls.is_none() } {
+                if yolo! { (*this).tls.is_none() } {
                     // SAFETY: per fn contract; no `&Self` live across this.
-                    unsafe { Self::deinit(this) };
+                    yolo! { Self::deinit(this) };
                     return;
                 }
                 // SAFETY: `this` is live; this `&mut` is scoped to the block
                 // and ends before any `Self::deinit` call below.
                 let started: Result<(), bun_core::Error> = {
-                    let this_ref = unsafe { &mut *this };
+                    let this_ref = yolo! { &mut *this };
                     log!(
                         "DuplexUpgradeContext.startTLS mode={}",
                         <&'static str>::from(this_ref.mode)
@@ -3607,7 +3608,7 @@ impl DuplexUpgradeContext {
                     }
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
                     // SAFETY: `this` is live; short-lived `&mut` for `take`.
-                    if let Some(tls) = unsafe { (*this).tls.take() } {
+                    if let Some(tls) = yolo! { (*this).tls.take() } {
                         // `handleConnectError` consumes our +1 — `tls.socket`
                         // is `InternalSocket::UpgradedDuplex` (set before
                         // `start_tls()` was queued), so `needs_deref =
@@ -3618,7 +3619,7 @@ impl DuplexUpgradeContext {
                         // `needs_deref` arm releases the +1 transferred via
                         // `into_raw` (socket is UpgradedDuplex, not Detached).
                         // `handle_connect_error` takes `*mut Self`.
-                        let _ = unsafe { TLSSocket::handle_connect_error(p, errno) };
+                        let _ = yolo! { TLSSocket::handle_connect_error(p, errno) };
                     }
                     // `startTLS`/`startTLSWithCTX` failed before the
                     // SSLWrapper was assigned, so its close callback
@@ -3626,17 +3627,17 @@ impl DuplexUpgradeContext {
                     // `.Close`. Same as the `tls == null` early-return
                     // above: tear down here.
                     // SAFETY: per fn contract; no `&Self` live across this.
-                    unsafe { Self::deinit(this) };
+                    yolo! { Self::deinit(this) };
                     return;
                 }
                 // SAFETY: `this` is live; short-lived `&mut` for the field write.
-                unsafe { (*this).ssl_config = None }; // Drop frees.
+                yolo! { (*this).ssl_config = None }; // Drop frees.
             }
             // Previously this only called `upgrade.close()` and never `deinit`,
             // leaking the SSLWrapper, the strong refs, and this struct itself
             // for every duplex-upgraded TLS socket.
             // SAFETY: per fn contract; no `&Self` live across this.
-            EventState::Close => unsafe { Self::deinit(this) },
+            EventState::Close => yolo! { Self::deinit(this) },
         }
     }
 
@@ -3671,7 +3672,7 @@ impl DuplexUpgradeContext {
         {
             // SAFETY: `this` is live; short-lived `&mut` ends before the
             // `heap::take` free below — no protector spans the dealloc.
-            let this_ref = unsafe { &mut *this };
+            let this_ref = yolo! { &mut *this };
             if let Some(tls) = this_ref.tls.take() {
                 // Zig `tls.deref()` — IntrusiveRc::drop decrements.
                 drop(tls);
@@ -3680,7 +3681,7 @@ impl DuplexUpgradeContext {
             this_ref.ssl_config = None;
             if let Some(ctx) = this_ref.owned_ctx.take() {
                 // SAFETY: BoringSSL FFI; we hold one owned ref.
-                unsafe { boringssl_sys::SSL_CTX_free(ctx) };
+                yolo! { boringssl_sys::SSL_CTX_free(ctx) };
             }
         }
         // PORT NOTE: Zig `self.upgrade.deinit()` — `UpgradedDuplex` cleanup
@@ -3688,7 +3689,7 @@ impl DuplexUpgradeContext {
         // struct below; an explicit call here would double-free.
         // SAFETY: heap-allocated in `js_upgrade_duplex_to_tls`; this is the
         // matching free. No `&`/`&mut Self` survives past this point.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 }
 
@@ -3749,7 +3750,7 @@ pub fn js_upgrade_duplex_to_tls(
     let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
         if let Some(c) = c {
             // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
-            unsafe { boringssl_sys::SSL_CTX_free(c) };
+            yolo! { boringssl_sys::SSL_CTX_free(c) };
         }
     });
     let sc_js: JSValue = 'blk: {
@@ -3774,7 +3775,7 @@ pub fn js_upgrade_duplex_to_tls(
             ));
         };
         // SAFETY: `from_js` returns a live `*mut SecureContext`.
-        *owned_ctx = Some(unsafe { (*sc).borrow() }.cast::<SSL_CTX>());
+        *owned_ctx = Some(yolo! { (*sc).borrow() }.cast::<SSL_CTX>());
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
@@ -3834,7 +3835,7 @@ pub fn js_upgrade_duplex_to_tls(
         twin: JsCell::new(None),
     });
     // SAFETY: tls just allocated via heap::alloc.
-    let tls_ref: &TLSSocket = unsafe { &*tls };
+    let tls_ref: &TLSSocket = yolo! { &*tls };
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
@@ -3856,7 +3857,7 @@ pub fn js_upgrade_duplex_to_tls(
     .cast();
     // SAFETY: fresh heap allocation; every field is `ptr::write`-initialized
     // below before any read or `&mut DuplexUpgradeContext` is formed.
-    unsafe {
+    yolo! {
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls)));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`.
@@ -3869,7 +3870,7 @@ pub fn js_upgrade_duplex_to_tls(
                 // `ctx`. `run_event` may free the allocation, so pass the raw
                 // pointer through — never form a `&mut` here whose protector
                 // would span the dealloc.
-                unsafe { DuplexUpgradeContext::run_event(p.cast::<DuplexUpgradeContext>()) };
+                yolo! { DuplexUpgradeContext::run_event(p.cast::<DuplexUpgradeContext>()) };
                 Ok(())
             },
         });
@@ -3894,28 +3895,28 @@ pub fn js_upgrade_duplex_to_tls(
             global,
             duplex,
             UpgradedDuplexHandlers {
-                on_open: |c: *mut ()| unsafe {
+                on_open: |c: *mut ()| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_open()
                 },
-                on_data: |c: *mut (), d| unsafe {
+                on_data: |c: *mut (), d| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_data(d)
                 },
-                on_handshake: |c: *mut (), ok, err| unsafe {
+                on_handshake: |c: *mut (), ok, err| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_handshake(ok, err)
                 },
-                on_close: |c: *mut ()| unsafe {
+                on_close: |c: *mut ()| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_close()
                 },
-                on_end: |c: *mut ()| unsafe {
+                on_end: |c: *mut ()| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_end()
                 },
-                on_writable: |c: *mut ()| unsafe {
+                on_writable: |c: *mut ()| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_writable()
                 },
-                on_error: |c: *mut (), e| unsafe {
+                on_error: |c: *mut (), e| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_error(e)
                 },
-                on_timeout: |c: *mut ()| unsafe {
+                on_timeout: |c: *mut ()| yolo! {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_timeout()
                 },
                 ctx: duplex_context.cast::<()>(),
@@ -3923,7 +3924,7 @@ pub fn js_upgrade_duplex_to_tls(
         ));
     }
     // SAFETY: every field initialized above.
-    let dc = unsafe { &mut *duplex_context };
+    let dc = yolo! { &mut *duplex_context };
     // ssl_opts is moved into duplexContext.ssl_config when owned_ctx == null;
     // otherwise it was only used for protos/server_name and is freed here.
     if dc.ssl_config.is_none() {
@@ -4008,7 +4009,7 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
         let mut fds_: [libc::c_int; 2] = [0, 0];
         // SAFETY: libc FFI.
         let rc =
-            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
+            yolo! { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
         if rc != 0 {
             let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
             return Err(global.throw_value(err.to_js(global)));
@@ -4036,7 +4037,7 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
         return Err(global.throw(format_args!("Expected a SocketTCP instance")));
     };
     // SAFETY: `as_` returned a non-null `*mut TCPSocket` owned by the JS wrapper.
-    let socket: &TCPSocket = unsafe { &*socket };
+    let socket: &TCPSocket = yolo! { &*socket };
 
     let is_for_send_buffer = arguments[1].to_int32() == 1;
     let is_for_recv_buffer = arguments[1].to_int32() == 2;
@@ -4050,7 +4051,7 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
         let setsockopt = |level: libc::c_int, opt: libc::c_int| -> Option<sys::Error> {
             let val: libc::c_int = buffer_size;
             // SAFETY: libc FFI; `val` lives for the call.
-            let rc = unsafe {
+            let rc = yolo! {
                 libc::setsockopt(
                     file_descriptor.native(),
                     level,

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
@@ -86,7 +87,7 @@ impl AbortSignal {
         extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
             // SAFETY: ptr was registered below as `*mut C`; C++ calls back on
             // the same thread before `cleanNativeBindings` removes it.
-            let val = unsafe { bun_ptr::callback_ctx::<C>(ptr) };
+            let val = yolo! { bun_ptr::callback_ctx::<C>(ptr) };
             C::on_abort(val, reason);
         }
         self.add_listener(ctx.cast::<c_void>(), callback::<C>)
@@ -197,7 +198,7 @@ impl AbortSignal {
         let ptr = WebCore__AbortSignal__getTimeout(self);
         // SAFETY: returned Timeout is owned by `self` and valid while `self` is held
         // (see doc comment).
-        NonNull::new(ptr).map(|p| unsafe { p.as_ref() })
+        NonNull::new(ptr).map(|p| yolo! { p.as_ref() })
     }
 }
 
@@ -242,7 +243,7 @@ impl AbortSignal {
             // SAFETY: `from_js` returned a live borrow of the JS wrapper's
             // payload; `ref_()` bumps the intrusive refcount and returns the
             // same non-null pointer with +1 ownership.
-            unsafe { AbortSignalRef::adopt((*p).ref_()) }
+            yolo! { AbortSignalRef::adopt((*p).ref_()) }
         })
     }
 }
@@ -338,7 +339,7 @@ impl Timeout {
         // We default to not keeping the event loop alive with this timeout.
         // SAFETY: `this` is freshly boxed and not yet shared; `event_loop_timer`
         // is unlinked. `timer_insert` links it into the per-VM heap.
-        unsafe {
+        yolo! {
             VirtualMachine::timer_insert(vm, core::ptr::addr_of_mut!((*this).event_loop_timer));
         }
 
@@ -351,7 +352,7 @@ impl Timeout {
         if this.event_loop_timer.state == TimerState::ACTIVE {
             // SAFETY: state == ACTIVE ⇒ node is currently linked into the heap;
             // `vm` is the live per-thread VM (JS-thread-only call site).
-            unsafe {
+            yolo! {
                 VirtualMachine::timer_remove(vm, &raw mut this.event_loop_timer);
             }
         }
@@ -365,7 +366,7 @@ impl Timeout {
     pub unsafe fn run(this: *mut Timeout, vm: *mut VirtualMachine) {
         // SAFETY: caller passes a live Timeout; we stop touching `this` before
         // `dispatch`, which may free it.
-        unsafe {
+        yolo! {
             (*this).event_loop_timer.state = TimerState::FIRED;
             Self::cancel(&mut *this, vm);
 
@@ -403,7 +404,7 @@ impl Timeout {
     // (see export fns below) and `deinit` needs a `vm` parameter.
     unsafe fn deinit(this: *mut Timeout, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
-        unsafe {
+        yolo! {
             Self::cancel(&mut *this, vm);
             drop(bun_core::heap::take(this));
         }
@@ -423,7 +424,7 @@ pub extern "C" fn AbortSignal__Timeout__create(
 #[unsafe(no_mangle)]
 pub extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
     // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
-    unsafe { Timeout::run(this, vm) }
+    yolo! { Timeout::run(this, vm) }
 }
 
 #[unsafe(no_mangle)]
@@ -435,7 +436,7 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // context to obtain).
     // SAFETY: `this` is the pointer returned from AbortSignal__Timeout__create;
     // VM singleton is process-lifetime.
-    unsafe { Timeout::deinit(this, VirtualMachine::get_mut_ptr()) }
+    yolo! { Timeout::deinit(this, VirtualMachine::get_mut_ptr()) }
 }
 
 // ported from: src/jsc/AbortSignal.zig

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_char};
 use core::mem::size_of;
 
@@ -217,7 +218,7 @@ impl ModuleInfoDeserialized {
     /// [`ModuleInfoExt::into_deserialized`].
     pub unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
-        unsafe {
+        yolo! {
             match (*this).owner {
                 Owner::ModuleInfo(mi) => {
                     // PORT NOTE: Zig recovered the parent via
@@ -260,10 +261,10 @@ impl ModuleInfoDeserialized {
         // properly aligned for `&[T]` materialisation.
         let duped_raw: *mut [u8] = dupe_aligned(source);
         // On error, reclaim the allocation.
-        let guard = scopeguard::guard(duped_raw, |p| unsafe { free_aligned_dup(p) });
+        let guard = scopeguard::guard(duped_raw, |p| yolo! { free_aligned_dup(p) });
 
         // SAFETY: `duped_raw` is a valid, exclusively-owned allocation.
-        let mut rem: &[u8] = unsafe { &*duped_raw };
+        let mut rem: &[u8] = yolo! { &*duped_raw };
 
         let record_kinds_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
         let record_kinds = bytes_as_slice::<RecordKind>(Self::eat(
@@ -384,13 +385,13 @@ fn dupe_aligned(source: &[u8]) -> *mut [u8] {
     let layout = std::alloc::Layout::from_size_align(source.len(), MODULE_INFO_ALIGN)
         .expect("module-info buffer too large");
     // SAFETY: layout has non-zero size (checked above).
-    let ptr = unsafe { std::alloc::alloc(layout) };
+    let ptr = yolo! { std::alloc::alloc(layout) };
     if ptr.is_null() {
         std::alloc::handle_alloc_error(layout);
     }
     // SAFETY: `ptr` is a fresh `source.len()`-byte allocation; `source` is a
     // valid readable slice; the regions cannot overlap.
-    unsafe { core::ptr::copy_nonoverlapping(source.as_ptr(), ptr, source.len()) };
+    yolo! { core::ptr::copy_nonoverlapping(source.as_ptr(), ptr, source.len()) };
     core::ptr::slice_from_raw_parts_mut(ptr, source.len())
 }
 
@@ -403,7 +404,7 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
     }
     // SAFETY: caller contract — `slice` came from `dupe_aligned`, which
     // allocated with this exact layout.
-    unsafe {
+    yolo! {
         std::alloc::dealloc(
             slice as *mut u8,
             std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
@@ -457,7 +458,7 @@ impl ModuleInfoExt for ModuleInfo {
     #[inline]
     unsafe fn destroy_raw(this: *mut ModuleInfo) {
         // SAFETY: caller contract — `this` is `heap::alloc` output.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
         // PORT NOTE: Zig wrote a self-referential `_deserialized` view inside
@@ -511,20 +512,20 @@ impl ModuleInfoExt for ModuleInfo {
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
     // SAFETY: C++ caller passes a pointer obtained from `ModuleInfo::create`.
-    drop(unsafe { bun_core::heap::take(info) });
+    drop(yolo! { bun_core::heap::take(info) });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
     // SAFETY: C++ caller passes a pointer obtained from `create` or
     // `ModuleInfoExt::into_deserialized`.
-    unsafe { ModuleInfoDeserialized::deinit(info) }
+    yolo! { ModuleInfoDeserialized::deinit(info) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig_log(msg: *const c_char) {
     // SAFETY: caller passes a NUL-terminated C string.
-    let bytes = unsafe { bun_core::ffi::cstr(msg) }.to_bytes();
+    let bytes = yolo! { bun_core::ffi::cstr(msg) }.to_bytes();
     // Zig: `Output.errorWriter().print("{s}\n", .{bytes}) catch {}`.
     bun_core::Output::print_error(format_args!("{}\n", bstr::BStr::new(bytes)));
 }

@@ -21,6 +21,7 @@
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
 #![warn(unreachable_pub)]
 extern crate bun_core as bun_str;
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 
 // ── B-2 un-gated sibling modules ──────────────────────────────────────────
@@ -82,7 +83,7 @@ impl BakeSourceProvider {
     pub fn get_source_slice(&self) -> bun_core::String {
         // SAFETY: opaque FFI handle; address-only pass-through, callee does not
         // write Rust-visible memory.
-        unsafe { BakeSourceProvider__getSourceSlice(self) }
+        yolo! { BakeSourceProvider__getSourceSlice(self) }
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -102,9 +103,9 @@ impl BakeSourceProvider {
         // slice borrows `PerThread.bundled_outputs`, which outlives this
         // `BakeSourceProvider` (the provider is created from a
         // `bundled_outputs` entry), so reborrowing as `&'self [u8]` is sound.
-        let slice = unsafe { __BUN_BAKE_EXTERNAL_SOURCEMAP }(source_filename)?;
+        let slice = yolo! { __BUN_BAKE_EXTERNAL_SOURCEMAP }(source_filename)?;
         // SAFETY: per the hook contract above.
-        Some(unsafe { &*slice })
+        Some(yolo! { &*slice })
     }
 
     /// The last two arguments to this specify loading hints
@@ -526,12 +527,12 @@ impl DevServerSourceProvider {
     pub fn get_source_slice(&self) -> bun_core::String {
         // SAFETY: opaque FFI handle; address-only pass-through, callee does not
         // write Rust-visible memory.
-        unsafe { DevServerSourceProvider__getSourceSlice(self) }
+        yolo! { DevServerSourceProvider__getSourceSlice(self) }
     }
     pub fn get_source_map_json_raw(&self) -> DevServerSourceMapData {
         // SAFETY: opaque FFI handle; address-only pass-through, callee does not
         // write Rust-visible memory.
-        unsafe { DevServerSourceProvider__getSourceMapJSON(self) }
+        yolo! { DevServerSourceProvider__getSourceMapJSON(self) }
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -564,7 +565,7 @@ impl SourceProvider for DevServerSourceProvider {
             return None;
         }
         // SAFETY: ptr/length come from C++ and are valid for the call duration
-        Some(unsafe { core::slice::from_raw_parts(d.ptr, d.length) })
+        Some(yolo! { core::slice::from_raw_parts(d.ptr, d.length) })
     }
 }
 
@@ -856,7 +857,7 @@ pub mod SerializedSourceMap {
             // Zig: `*align(1) const Header` — read_unaligned because the blob
             // sits at an arbitrary offset inside the executable.
             // SAFETY: callers guarantee `bytes.len() >= size_of::<Header>()`.
-            unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<Header>()) }
+            yolo! { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<Header>()) }
         }
 
         pub fn mapping_blob(self) -> Option<&'static [u8]> {
@@ -892,7 +893,7 @@ pub mod SerializedSourceMap {
             // SAFETY: second contiguous `StringPointer` array immediately
             // follows the first (see `Header` layout doc); the offset stays
             // within `bytes`. Same align(1) caveat as `source_file_names`.
-            let ptr = unsafe {
+            let ptr = yolo! {
                 self.bytes[size_of::<Header>()..]
                     .as_ptr()
                     .cast::<StringPointer>()
@@ -923,7 +924,7 @@ pub mod SerializedSourceMap {
                 // SAFETY: `index < source_files_count` is upheld by caller;
                 // pointer is into the mmapped `'static` blob. Read unaligned
                 // per Zig's `[]align(1) const StringPointer`.
-                let sp = unsafe { compressed_codes.add(index).read_unaligned() };
+                let sp = yolo! { compressed_codes.add(index).read_unaligned() };
                 let compressed_file = sp.slice(self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
@@ -218,7 +219,7 @@ impl MySQLQuery {
         // caller passes the raw pointer before reborrowing `self`, so this is the only
         // live mutable access path to the statement for the duration of this function
         // (matches Zig .zig:74 which takes an independent `*MySQLStatement`).
-        let statement = unsafe { &mut *statement };
+        let statement = yolo! { &mut *statement };
 
         // Bind before touching the writer so a bind failure (user-triggerable via JS
         // getters / param-count mismatch) doesn't leave a partial packet header in
@@ -237,7 +238,7 @@ impl MySQLQuery {
         fn is_null_thunk(ctx: *mut c_void, i: usize) -> bool {
             // SAFETY: `ctx` is `params.as_ptr()` and `i < params.len()` (asserted by
             // the `len` field passed alongside, checked in `Execute::write_internal`).
-            unsafe { matches!(*ctx.cast::<Value>().add(i), Value::Null) }
+            yolo! { matches!(*ctx.cast::<Value>().add(i), Value::Null) }
         }
         fn to_data_thunk(
             ctx: *mut c_void,
@@ -245,7 +246,7 @@ impl MySQLQuery {
             ft: FieldType,
         ) -> Result<bun_sql::shared::Data, any_mysql_error::Error> {
             // SAFETY: same as `is_null_thunk`.
-            unsafe { (*ctx.cast::<Value>().add(i)).to_data(ft) }
+            yolo! { (*ctx.cast::<Value>().add(i)).to_data(ft) }
         }
 
         let execute = prepared_statement::Execute {
@@ -526,7 +527,7 @@ impl MySQLQuery {
             let s = self.statement;
             self.statement = core::ptr::null_mut();
             // SAFETY: `s` is a live boxed `MySQLStatement` we held one intrusive ref on.
-            unsafe { MySQLStatement::deref(s) };
+            yolo! { MySQLStatement::deref(s) };
         }
         // Zig: `var q = this.#query; defer q.deref(); this.#query = .empty;`
         // `BunString` is `Copy` (no `Drop`); assigning `empty()` would NOT deref
@@ -601,7 +602,7 @@ impl MySQLQuery {
         // kept alive by the intrusive ref we hold. Returning `&mut` mirrors Zig's
         // `?*MySQLStatement` (shared mutation through the intrusive pointer); the
         // lifetime is bounded by `&self`, which owns one ref.
-        unsafe { self.statement.as_mut() }
+        yolo! { self.statement.as_mut() }
     }
 }
 

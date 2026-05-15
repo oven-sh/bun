@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::string::{ZStr, strings};
 use bun_alloc::AllocError;
 
@@ -100,7 +101,7 @@ impl MutableString {
 
     pub fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
         // SAFETY: caller fully writes the returned slice (Zig contract).
-        unsafe { crate::vec::writable_slice_assume_capacity(&mut self.list, amount) }
+        yolo! { crate::vec::writable_slice_assume_capacity(&mut self.list, amount) }
     }
 
     /// Increases the length of the buffer by `amount` bytes, expanding the capacity if necessary.
@@ -305,7 +306,7 @@ impl MutableString {
         // SAFETY: index <= capacity asserted; bytes in [len..index] may be
         // uninitialized — matches Zig semantics. Callers must have previously
         // written those bytes (e.g. via writable_n_bytes).
-        unsafe { self.list.set_len(index) };
+        yolo! { self.list.set_len(index) };
     }
 
     pub fn inflate(&mut self, amount: usize) -> Result<(), AllocError> {
@@ -315,7 +316,7 @@ impl MutableString {
         self.list.reserve(amount.saturating_sub(self.list.len()));
         // SAFETY: `u8` has no drop and any bit pattern is valid; capacity ≥
         // `amount` after `reserve`. Callers MUST write before reading.
-        unsafe { self.list.set_len(amount) };
+        yolo! { self.list.set_len(amount) };
         Ok(())
     }
 
@@ -415,7 +416,7 @@ impl MutableString {
 
     pub fn to_owned_slice_length(&mut self, length: usize) -> Box<[u8]> {
         // SAFETY: caller guarantees `length` bytes have been initialized.
-        unsafe { self.list.set_len(length) };
+        yolo! { self.list.set_len(length) };
         self.to_owned_slice()
     }
 
@@ -561,7 +562,7 @@ impl<'a> BufferedWriter<'a> {
             let old = self.context.list.len();
             // SAFETY: copy_utf16_into_utf8 writes <= bytes.len*2; trimmed below.
             let tail =
-                unsafe { crate::vec::writable_slice(&mut self.context.list, bytes.len() * 2) };
+                yolo! { crate::vec::writable_slice(&mut self.context.list, bytes.len() * 2) };
             let decoded = strings::copy_utf16_into_utf8(tail, bytes);
             self.context.list.truncate(old + decoded.written as usize);
             return Ok(pending.len());

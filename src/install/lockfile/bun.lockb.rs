@@ -1,6 +1,7 @@
 //! Binary lockfile (bun.lockb) serializer/deserializer.
 //! Port of `src/install/lockfile/bun.lockb.zig` (`const Serializer = @This();`).
 
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use core::mem::{align_of, size_of};
 
@@ -444,7 +445,7 @@ pub fn load(
                         .ensure_total_capacity(workspace_versions_list.len())?;
                     // SAFETY: capacity reserved above; both columns are fully
                     // overwritten by `copy_from_slice` before `re_index` reads them.
-                    unsafe {
+                    yolo! {
                         lockfile
                             .workspace_versions
                             .set_entries_len(workspace_versions_list.len());
@@ -474,7 +475,7 @@ pub fn load(
 
                     // SAFETY: capacity reserved above; both columns are fully
                     // overwritten by `copy_from_slice` before `re_index` reads them.
-                    unsafe {
+                    yolo! {
                         lockfile
                             .workspace_paths
                             .set_entries_len(workspace_paths_strings.len());
@@ -511,7 +512,7 @@ pub fn load(
                 // SAFETY: capacity reserved above; keys are fully overwritten
                 // by `copy_from_slice` before `re_index` reads them; value type
                 // is `()` so its column needs no init.
-                unsafe {
+                yolo! {
                     td.set_entries_len(trusted_dependencies_hashes.len());
                 }
                 td.keys_mut().copy_from_slice(&trusted_dependencies_hashes);

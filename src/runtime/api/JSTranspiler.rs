@@ -1,5 +1,6 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
+use bun_yolo::yolo;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_options_types::{LoaderExt as _, TargetExt as _};
@@ -195,7 +196,7 @@ impl Config {
                 };
 
                 // SAFETY: `define_obj` is a non-null *mut JSObject (just returned by get_object()).
-                let define_obj_ref = unsafe { &*define_obj };
+                let define_obj_ref = yolo! { &*define_obj };
                 let mut define_iter =
                     JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
                 // `defer define_iter.deinit()` → Drop
@@ -564,7 +565,7 @@ impl Config {
                 };
 
                 // SAFETY: `replace_obj` is non-null (just returned by get_object()).
-                let replace_obj_ref = unsafe { &*replace_obj };
+                let replace_obj_ref = yolo! { &*replace_obj };
                 let mut iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
                 // defer iter.deinit() → Drop
 
@@ -728,7 +729,7 @@ impl<'a> TransformTask<'a> {
         // `transform_task.transpiler = transpiler.transpiler`. Heap-owned fields
         // are shared with `js_instance` (kept alive via IntrusiveRc); the copy is
         // wrapped in `ManuallyDrop` so only the original frees them.
-        let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
+        let transpiler_copy = core::mem::ManuallyDrop::new(yolo! {
             core::ptr::read(transpiler.transpiler.as_ptr())
         });
 
@@ -749,7 +750,7 @@ impl<'a> TransformTask<'a> {
             // `Cell<u32>`-backed count (Zig: `transpiler.ref()`). `as_ctx_ptr`
             // yields `*mut Self` from `&Self` — signature-only; the only mutation
             // is to the `RefCount` field, which is interior-mutable.
-            js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler.as_ctx_ptr()) },
+            js_instance: yolo! { bun_ptr::IntrusiveRc::init_ref(transpiler.as_ctx_ptr()) },
         });
 
         // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
@@ -784,7 +785,7 @@ impl<'a> TransformTask<'a> {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         self.transpiler
-            .set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            .set_arena(yolo! { bun_ptr::detach_lifetime_ref(&arena) });
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
@@ -990,7 +991,7 @@ impl JSTranspiler {
         // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
         // the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena =
-            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
+            yolo! { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
 
         // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
         // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
@@ -1051,8 +1052,8 @@ impl JSTranspiler {
         // SAFETY: `this: Box<_>` is exclusively owned (init-time, before the JS
         // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
         // alias-free.
-        let config = unsafe { this.config.get_mut() };
-        let transpiler = unsafe { this.transpiler.get_mut() };
+        let config = yolo! { this.config.get_mut() };
+        let transpiler = yolo! { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
 
         transpiler.options.no_macros = config.no_macros;
@@ -1108,7 +1109,7 @@ impl Drop for JSTranspiler {
         // SAFETY: `transpiler.log` is a *mut Log set via `set_log` to a live Log.
         let log = self.transpiler.get().log;
         if !log.is_null() {
-            unsafe { (*log).clear_and_free() };
+            yolo! { (*log).clear_and_free() };
         }
         // scan_pass_result.{named_imports,import_records,used_symbols}.deinit() → field Drop
         // buffer_writer.?.buffer.deinit() → Option<BufferWriter>: Drop
@@ -1148,7 +1149,7 @@ impl TranspilerStateGuard {
     /// this runs.
     #[inline]
     fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
-        unsafe { &mut *self.transpiler }
+        yolo! { &mut *self.transpiler }
     }
 
     /// Raw `*mut Log` to restore on drop. Returned as a pointer (not `&mut`)
@@ -1198,7 +1199,7 @@ impl JSTranspiler {
     fn config_log_ptr(&self) -> *mut bun_ast::Log {
         // SAFETY: `as_ptr()` yields the `UnsafeCell` payload; `&raw mut` field
         // projection forms no intermediate reference.
-        unsafe { &raw mut (*self.config.as_ptr()).log }
+        yolo! { &raw mut (*self.config.as_ptr()).log }
     }
 
     /// `&mut Transpiler` projection through `&self`.
@@ -1214,7 +1215,7 @@ impl JSTranspiler {
     /// that no `noalias &mut JSTranspiler` is live across that re-entry.
     #[inline]
     unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {
-        unsafe { self.transpiler.get_mut() }
+        yolo! { self.transpiler.get_mut() }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1289,7 +1290,7 @@ impl JSTranspiler {
         };
 
         // SAFETY: see `transpiler_mut` — `parse` may re-enter JS via macros.
-        unsafe { self.transpiler_mut() }.parse(parse_options, None)
+        yolo! { self.transpiler_mut() }.parse(parse_options, None)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1333,7 +1334,7 @@ impl JSTranspiler {
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(yolo! { bun_ptr::detach_lifetime_ref(&arena) });
             t.set_log(&raw mut log);
             prev
         });
@@ -1524,7 +1525,7 @@ impl JSTranspiler {
             let prev_arena = t.arena;
             // `take()` both reads the prior value AND nulls it (spec: `macro_context = null`).
             let prev_mc = t.macro_context.take();
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(yolo! { bun_ptr::detach_lifetime_ref(&arena) });
             t.set_log(&raw mut log);
             (prev_arena, prev_mc)
         });
@@ -1563,7 +1564,7 @@ impl JSTranspiler {
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
-        if let Err(err) = unsafe { self.transpiler_mut() }.print(
+        if let Err(err) = yolo! { self.transpiler_mut() }.print(
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,
@@ -1710,7 +1711,7 @@ impl JSTranspiler {
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(yolo! { bun_ptr::detach_lifetime_ref(&arena) });
             t.set_log(&raw mut log);
             prev
         });
@@ -1736,7 +1737,7 @@ impl JSTranspiler {
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.
-        let transpiler = unsafe { self.transpiler_mut() };
+        let transpiler = yolo! { self.transpiler_mut() };
         if transpiler.macro_context.is_none() {
             let mc = JSAst::Macro::MacroContext::init(transpiler);
             transpiler.macro_context = Some(mc);
@@ -1746,7 +1747,7 @@ impl JSTranspiler {
         // SAFETY: `options.define` is `Box<Define>` owned by the long-lived
         // `Transpiler`; the parser borrows it for the arena lifetime. Erase to
         // satisfy `JavaScript::scan`'s `&'a Define` param (Zig held `*const Define`).
-        let define = unsafe { &*(&raw const *transpiler.options.define) };
+        let define = yolo! { &*(&raw const *transpiler.options.define) };
 
         // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
         // resolver-side `cache::JavaScript` is a fieldless shell with
@@ -1756,7 +1757,7 @@ impl JSTranspiler {
         // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
         let scan_result = bun_bundler::cache::JavaScript::init().scan(
             &arena,
-            unsafe { self.scan_pass_result.get_mut() },
+            yolo! { self.scan_pass_result.get_mut() },
             opts,
             define,
             &mut log,

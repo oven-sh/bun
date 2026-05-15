@@ -13,6 +13,7 @@
 //! allocates one of these and one `SSL_CTX` total — `tls.ts` no longer hashes
 //! in JS.
 
+use bun_yolo::yolo;
 use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
@@ -108,7 +109,7 @@ impl SecureContext {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
                 // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
-                if unsafe { (*existing).digest } == d {
+                if yolo! { (*existing).digest } == d {
                     return Ok(cached);
                 }
             }
@@ -151,7 +152,7 @@ impl SecureContext {
         // SAFETY: `state` is the boxed per-thread `RuntimeState` installed by
         // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
         // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        let cache = yolo! { &mut (*state).ssl_ctx_cache };
         let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
@@ -179,7 +180,7 @@ impl SecureContext {
     /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
     /// take its own ref.
     pub fn borrow(&self) -> *mut boringssl::SSL_CTX {
-        unsafe {
+        yolo! {
             // SAFETY: self.ctx is a valid SSL_CTX* held for the lifetime of this wrapper.
             let _ = boringssl::SSL_CTX_up_ref(self.ctx);
         }
@@ -188,7 +189,7 @@ impl SecureContext {
 
     pub fn finalize(self: Box<Self>) {
         // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
-        unsafe { boringssl::SSL_CTX_free(self.ctx) };
+        yolo! { boringssl::SSL_CTX_free(self.ctx) };
     }
 
     pub fn memory_cost(&self) -> usize {

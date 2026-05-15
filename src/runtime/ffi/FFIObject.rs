@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_core::ZigString;
@@ -25,7 +26,7 @@ unsafe fn deallocator_from_addr(addr: usize) -> jsc::c::JSTypedArrayBytesDealloc
     // `Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>`, which under
     // the null-pointer optimisation is layout-compatible with a single
     // pointer-sized word — exactly `usize` here. `0` round-trips to `None`.
-    unsafe { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
+    yolo! { core::mem::transmute::<usize, jsc::c::JSTypedArrayBytesDeallocator>(addr) }
 }
 
 /// Port of Zig `JSValue.createBufferWithCtx(global, slice, ctx, callback)` —
@@ -51,7 +52,7 @@ fn create_buffer_with_ctx(
     }
     // SAFETY: `global` is live; slice describes FFI-owned memory whose
     // ownership transfers to JSC (freed via `callback`, or never if None).
-    unsafe {
+    yolo! {
         JSBuffer__bufferFromPointerAndLengthAndDeinit(
             global,
             slice.as_mut_ptr(),
@@ -94,7 +95,7 @@ pub fn new_cstring(
         ValueOrError::Err(err) => Ok(err),
         ValueOrError::Slice(ptr, len) => {
             // SAFETY: ptr/len point to FFI-owned memory whose lifetime the caller guarantees.
-            let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+            let bytes = yolo! { core::slice::from_raw_parts(ptr, len) };
             jsc::bun_string_jsc::create_utf8_for_js(global_this, bytes)
         }
     }
@@ -147,7 +148,7 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     }
 
     // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
-    unsafe { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };
+    yolo! { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };
     object.put(global_object, b"read", reader::to_js(global_object));
 
     object
@@ -264,7 +265,7 @@ pub mod reader {
         let obj = JSValue::create_empty_object(global_this, DOM_CALLS.len());
         for (_, dc) in DOM_CALLS {
             // SAFETY: `put` is a C++-side helper; global_this is live for the call.
-            unsafe { (dc.put)(std::ptr::from_ref(global_this).cast_mut(), obj) };
+            yolo! { (dc.put)(std::ptr::from_ref(global_this).cast_mut(), obj) };
         }
         obj
     }
@@ -297,7 +298,7 @@ pub mod reader {
     #[inline(always)]
     pub(super) unsafe fn read_unaligned_at<T: Copy>(addr: usize) -> T {
         // SAFETY: precondition delegated to caller (see fn-level Safety doc).
-        unsafe { (addr as *const T).read_unaligned() }
+        yolo! { (addr as *const T).read_unaligned() }
     }
 
     pub fn u8(
@@ -307,7 +308,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<u8>(addr) };
+        let value = yolo! { read_unaligned_at::<u8>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn u16(
@@ -317,7 +318,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<u16>(addr) };
+        let value = yolo! { read_unaligned_at::<u16>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn u32(
@@ -327,7 +328,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<u32>(addr) };
+        let value = yolo! { read_unaligned_at::<u32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn ptr(
@@ -337,7 +338,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<u64>(addr) };
+        let value = yolo! { read_unaligned_at::<u64>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn i8(
@@ -347,7 +348,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<i8>(addr) };
+        let value = yolo! { read_unaligned_at::<i8>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn i16(
@@ -357,7 +358,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<i16>(addr) };
+        let value = yolo! { read_unaligned_at::<i16>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn i32(
@@ -367,7 +368,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<i32>(addr) };
+        let value = yolo! { read_unaligned_at::<i32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn intptr(
@@ -377,7 +378,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<i64>(addr) };
+        let value = yolo! { read_unaligned_at::<i64>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn f32(
@@ -387,7 +388,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<f32>(addr) };
+        let value = yolo! { read_unaligned_at::<f32>(addr) };
         Ok(JSValue::js_number(value as f64))
     }
     pub fn f64(
@@ -397,7 +398,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<f64>(addr) };
+        let value = yolo! { read_unaligned_at::<f64>(addr) };
         Ok(JSValue::js_number(value))
     }
     pub fn i64(
@@ -407,7 +408,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<i64>(addr) };
+        let value = yolo! { read_unaligned_at::<i64>(addr) };
         Ok(JSValue::from_int64_no_truncate(global_object, value))
     }
     pub fn u64(
@@ -417,7 +418,7 @@ pub mod reader {
     ) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
-        let value = unsafe { read_unaligned_at::<u64>(addr) };
+        let value = yolo! { read_unaligned_at::<u64>(addr) };
         Ok(JSValue::from_uint64_no_truncate(global_object, value))
     }
 
@@ -436,7 +437,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u8>(addr) };
+        let value = yolo! { read_unaligned_at::<u8>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -449,7 +450,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u16>(addr) };
+        let value = yolo! { read_unaligned_at::<u16>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -462,7 +463,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u32>(addr) };
+        let value = yolo! { read_unaligned_at::<u32>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -475,7 +476,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u64>(addr) };
+        let value = yolo! { read_unaligned_at::<u64>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -488,7 +489,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i8>(addr) };
+        let value = yolo! { read_unaligned_at::<i8>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -501,7 +502,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i16>(addr) };
+        let value = yolo! { read_unaligned_at::<i16>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -514,7 +515,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i32>(addr) };
+        let value = yolo! { read_unaligned_at::<i32>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -527,7 +528,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i64>(addr) };
+        let value = yolo! { read_unaligned_at::<i64>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -540,7 +541,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<f32>(addr) };
+        let value = yolo! { read_unaligned_at::<f32>(addr) };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
@@ -553,7 +554,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<f64>(addr) };
+        let value = yolo! { read_unaligned_at::<f64>(addr) };
         JSValue::js_number(value)
     }
     #[bun_jsc::host_call]
@@ -566,7 +567,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<u64>(addr) };
+        let value = yolo! { read_unaligned_at::<u64>(addr) };
         JSValue::from_uint64_no_truncate(global, value)
     }
     #[bun_jsc::host_call]
@@ -579,7 +580,7 @@ pub mod reader {
         let addr = usize::try_from(raw_addr).expect("int cast")
             + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
-        let value = unsafe { read_unaligned_at::<i64>(addr) };
+        let value = yolo! { read_unaligned_at::<i64>(addr) };
         JSValue::from_int64_no_truncate(global, value)
     }
 }
@@ -599,7 +600,7 @@ pub extern "C" fn ptr_without_type_checks(
     array: *mut JSUint8Array,
 ) -> JSValue {
     // SAFETY: `array` is a live JSUint8Array cell on the JS thread.
-    JSValue::from_ptr_address(unsafe { (*array).ptr() } as usize)
+    JSValue::from_ptr_address(yolo! { (*array).ptr() } as usize)
 }
 
 fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValue>) -> JSValue {
@@ -773,7 +774,7 @@ fn get_ptr_slice(
 
     // Zig: `bun.span(@as([*:0]u8, @ptrFromInt(addr)))` — scan for NUL terminator.
     // SAFETY: caller asserts `addr` points at a NUL-terminated C string.
-    let len = unsafe { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
+    let len = yolo! { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
         .to_bytes()
         .len();
     ValueOrError::Slice(addr as *mut u8, len)
@@ -814,7 +815,7 @@ pub fn to_array_buffer(
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
+                    callback = yolo! { deallocator_from_addr(callback_ptr) };
 
                     if let Some(ctx_value) = finalization_ctx_or_ptr {
                         if let Some(ctx_ptr) = get_cptr(ctx_value) {
@@ -833,7 +834,7 @@ pub fn to_array_buffer(
             } else if let Some(callback_value) = finalization_ctx_or_ptr {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
+                    callback = yolo! { deallocator_from_addr(callback_ptr) };
                 } else if !callback_value.is_empty_or_undefined_or_null() {
                     return Ok(global_this.to_invalid_arguments(format_args!(
                         "Expected callback to be a C pointer (number or BigInt)"
@@ -842,7 +843,7 @@ pub fn to_array_buffer(
             }
 
             // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
-            let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+            let slice = yolo! { core::slice::from_raw_parts_mut(ptr, len) };
             ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
                 global_this,
                 ctx.unwrap_or(core::ptr::null_mut()),
@@ -869,7 +870,7 @@ pub fn to_buffer(
             if let Some(callback_value) = finalization_callback {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
+                    callback = yolo! { deallocator_from_addr(callback_ptr) };
 
                     if let Some(ctx_value) = finalization_ctx_or_ptr {
                         if let Some(ctx_ptr) = get_cptr(ctx_value) {
@@ -888,7 +889,7 @@ pub fn to_buffer(
             } else if let Some(callback_value) = finalization_ctx_or_ptr {
                 if let Some(callback_ptr) = get_cptr(callback_value) {
                     // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
+                    callback = yolo! { deallocator_from_addr(callback_ptr) };
                 } else if !callback_value.is_empty_or_undefined_or_null() {
                     return Ok(global_this.to_invalid_arguments(format_args!(
                         "Expected callback to be a C pointer (number or BigInt)"
@@ -897,7 +898,7 @@ pub fn to_buffer(
             }
 
             // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
-            let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+            let slice = yolo! { core::slice::from_raw_parts_mut(ptr, len) };
             if callback.is_some() || ctx.is_some() {
                 return Ok(create_buffer_with_ctx(
                     global_this,
@@ -925,7 +926,7 @@ pub fn to_cstring_buffer(
         ValueOrError::Err(err) => err,
         ValueOrError::Slice(ptr, len) => {
             // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
-            let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+            let slice = yolo! { core::slice::from_raw_parts_mut(ptr, len) };
             create_buffer_with_ctx(global_this, slice, core::ptr::null_mut(), None)
         }
     }
@@ -991,7 +992,7 @@ macro_rules! wrap_host_fn {
                 callframe: *mut CallFrame,
             ) -> JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the host call.
-                let (global, callframe) = unsafe { (&*global, &*callframe) };
+                let (global, callframe) = yolo! { (&*global, &*callframe) };
                 jsc::to_js_host_fn_result(global, $body(global, callframe))
             }
         }

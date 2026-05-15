@@ -11,6 +11,7 @@
 //!
 //! Spec: `src/shell/interpreter.zig` + per-builtin `src/shell/interpreter/*.zig`.
 
+use bun_yolo::yolo;
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 
@@ -45,7 +46,7 @@ impl ShellAsyncSubprocessDone {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `ShellSubprocess::on_process_exit`; `interp` outlives
         // every spawned subprocess.
-        let (owned, interp) = unsafe {
+        let (owned, interp) = yolo! {
             let owned = bun_core::heap::take(this);
             let interp = &*owned.interp;
             (owned, interp)
@@ -70,7 +71,7 @@ impl AsyncDeinitWriter {
     pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOWriter::async_deinit`.
-        let owned = unsafe { bun_core::heap::take(this) };
+        let owned = yolo! { bun_core::heap::take(this) };
         crate::shell::io_writer::IOWriter::deinit_on_main_thread(owned.writer);
     }
 }
@@ -89,7 +90,7 @@ impl AsyncDeinitReader {
     pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOReader::async_deinit`.
-        let owned = unsafe { bun_core::heap::take(this) };
+        let owned = yolo! { bun_core::heap::take(this) };
         crate::shell::io_reader::IOReader::deinit_on_main_thread(owned.reader);
     }
 }
@@ -112,7 +113,7 @@ pub struct CondExprStatInner {
 impl ShellCondExprStatTask {
     pub fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
-        let owned = unsafe { bun_core::heap::take(this) };
+        let owned = yolo! { bun_core::heap::take(this) };
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(
             interp,
             owned.task.cond,
@@ -153,7 +154,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
-        let mut me = unsafe { bun_core::heap::take(this) };
+        let mut me = yolo! { bun_core::heap::take(this) };
         crate::shell::states::expansion::Expansion::on_glob_walk_done(
             interp,
             me.expansion,
@@ -181,7 +182,7 @@ impl ShellGlobTask {
         });
         // SAFETY: `this` is a fresh heap allocation embedding `ShellTask` at
         // `TASK_OFFSET`; freed in `run_from_main_thread`.
-        unsafe { ShellTask::schedule::<ShellGlobTask>(this) };
+        yolo! { ShellTask::schedule::<ShellGlobTask>(this) };
     }
 
     /// Spec: Expansion.zig `ShellGlobTask.walkImpl`.

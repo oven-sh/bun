@@ -4,6 +4,7 @@
 //! checks `closed` first. See `src/http/H3Client.zig` for the module-level
 //! overview.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -168,9 +169,9 @@ impl ClientSession {
         }
         // SAFETY: stream was heap-allocated by Stream::new; ownership is reclaimed
         // here. `Stream::Drop` decrements live_streams.
-        unsafe { drop(bun_core::heap::take(stream)) };
+        yolo! { drop(bun_core::heap::take(stream)) };
         // SAFETY: `self` is a live heap allocation produced by `new`.
-        unsafe { ClientSession::deref(self) };
+        yolo! { ClientSession::deref(self) };
     }
 
     pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
@@ -394,7 +395,7 @@ pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPCli
 #[inline(always)]
 pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
     // SAFETY: see INVARIANT above.
-    unsafe { &mut *qs }
+    yolo! { &mut *qs }
 }
 
 /// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
@@ -406,7 +407,7 @@ pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket
 #[inline(always)]
 pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
     // SAFETY: see [`quic_socket_mut`] INVARIANT.
-    unsafe { &mut *s }
+    yolo! { &mut *s }
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from
@@ -416,7 +417,7 @@ pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream 
 #[inline]
 pub(super) fn stream_mut<'a>(p: *mut Stream) -> &'a mut Stream {
     // SAFETY: see fn doc.
-    unsafe { &mut *p }
+    yolo! { &mut *p }
 }
 
 /// Shared-borrow a `*mut Stream` (a live `session.pending` entry) to read
@@ -441,12 +442,12 @@ pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
 /// `heap::into_raw`-boxed allocation disjoint from `ClientContext`, and all
 /// access is HTTP-thread-only, so the returned `&mut` is the sole live borrow
 /// for its scope. Mirrors [`client_mut`]/[`stream_mut`] — centralises the
-/// `unsafe { &mut *p }` backref upgrade repeated across `ClientContext` /
+/// `yolo! { &mut *p }` backref upgrade repeated across `ClientContext` /
 /// `PendingConnect`.
 #[inline]
 pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     // SAFETY: see INVARIANT above.
-    unsafe { &mut *p }
+    yolo! { &mut *p }
 }
 
 fn apply_headers(

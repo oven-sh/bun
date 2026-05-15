@@ -8,6 +8,7 @@
 
 #![allow(clippy::collapsible_if, clippy::needless_return)]
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
@@ -1117,7 +1118,7 @@ impl Bunfig {
         // (Parser later needs `&mut ctx` alongside `&mut log`).
         let log_ptr: *mut bun_ast::Log = ctx.log;
         debug_assert!(!log_ptr.is_null());
-        let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
+        let log: &mut bun_ast::Log = yolo! { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
         // Zig passes `bun.default_allocator` here — no side `mi_heap`. The Rust

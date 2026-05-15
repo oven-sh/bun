@@ -17,6 +17,7 @@
 //! Phase-A callers should use the std types directly (PORTING.md §Pointers). This file exists so
 //! `bun_ptr::owned::*` resolves and so the Zig API surface has a 1:1 diffable mapping comment.
 
+use bun_yolo::yolo;
 use core::mem::ManuallyDrop;
 
 use bun_alloc::AllocError;
@@ -134,11 +135,11 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // ── fromRaw ──────────────────────────────────────────────────────────────────────────────────
 // Creates an owned pointer from a raw pointer.
 //   fromRaw(data: Pointer) Self
-//     .single:   → unsafe { bun_core::heap::take(data) }
-//     .slice:    → unsafe { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) }
+//     .single:   → yolo! { bun_core::heap::take(data) }
+//     .slice:    → yolo! { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) }
 //                  or, when `data` came from `Vec::into_raw_parts`:
-//                  unsafe { Vec::from_raw_parts(ptr, len, cap) }.into_boxed_slice()
-//     optional:  → if data.is_null() { None } else { Some(unsafe { bun_core::heap::take(data) }) }
+//                  yolo! { Vec::from_raw_parts(ptr, len, cap) }.into_boxed_slice()
+//     optional:  → if data.is_null() { None } else { Some(yolo! { bun_core::heap::take(data) }) }
 //
 // PORT NOTE: the Zig doc's caveat about `bun.new` vs `bun.default_allocator.create` is the
 // typed-mimalloc-heap distinction; in Rust both paths go through the same `#[global_allocator]`,
@@ -162,7 +163,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //     (a) T has no Drop → plain `drop(boxed)` is already shallow.
 //     (b) caller moved the payload out first → use `*boxed` to move out, then `drop(boxed)`.
 //   If a literal "dealloc without dropping" is needed:
-//     unsafe {
+//     yolo! {
 //         let raw = bun_core::heap::into_raw(boxed);
 //         core::ptr::drop_in_place(raw as *mut ManuallyDrop<T>); // no-op
 //         alloc::alloc::dealloc(raw.cast(), Layout::new::<T>());
@@ -301,7 +302,7 @@ pub fn alloc_dupe_slice<T: Clone>(data: &[T]) -> Box<[T]> {
 #[inline]
 pub unsafe fn from_raw<T>(data: *mut T) -> Box<T> {
     // SAFETY: caller contract above mirrors Zig `fromRaw` requirements.
-    unsafe { bun_core::heap::take(data) }
+    yolo! { bun_core::heap::take(data) }
 }
 
 /// `Owned(*T).intoRaw()` → `bun_core::heap::into_raw(boxed)`

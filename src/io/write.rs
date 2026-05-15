@@ -17,6 +17,7 @@
 //! Error type is `bun_core::Error` so `?` composes with the rest of the
 //! codebase. [`Result`] is exported as `bun_io::Result` for downstream sigs.
 
+use bun_yolo::yolo;
 use core::fmt;
 
 /// `bun_io::Result<T>` — alias over `bun_core::Error` so byte-writer fallible
@@ -191,7 +192,7 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         // bytes from the safe slice borrow; caller contract guarantees `T` is
         // `#[repr(C)]` POD where every byte pattern is valid (same as Zig
         // `readStruct`). `read_unaligned` tolerates any source alignment.
-        let out = unsafe { core::ptr::read_unaligned(buf[self.pos..end].as_ptr().cast::<T>()) };
+        let out = yolo! { core::ptr::read_unaligned(buf[self.pos..end].as_ptr().cast::<T>()) };
         self.pos = end;
         Ok(out)
     }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::fmt;
 use std::sync::OnceLock;
@@ -47,7 +48,7 @@ fn tl_bufs() -> *mut TlBufs {
     //   ptr), and `&tl_bufs.get().folder_name_buf` in Zig is raw-ptr field projection
     //   that never asserts uniqueness over sibling buffers. We mirror that exactly:
     //   this function returns `*mut TlBufs`, and call sites project a SINGLE field via
-    //   raw-ptr place expr `unsafe { &mut (*tl_bufs()).<field> }` so only that one
+    //   raw-ptr place expr `yolo! { &mut (*tl_bufs()).<field> }` so only that one
     //   field is retagged Unique under Stacked Borrows.
     // - This is load-bearing: per the .zig spec callers (PackageManagerTask.zig:179,206),
     //   `try_https`/`try_ssh` return a slice into `final_path_buf`/`ssh_path_buf` which
@@ -88,22 +89,22 @@ impl TlBufs {
     fn ssh_path_buf() -> &'static mut PathBuffer {
         // SAFETY: see `tl_bufs()` — thread-local leaked alloc; per-field
         // projection retags only this field.
-        unsafe { &mut (*tl_bufs()).ssh_path_buf }
+        yolo! { &mut (*tl_bufs()).ssh_path_buf }
     }
     #[inline]
     fn final_path_buf() -> &'static mut PathBuffer {
         // SAFETY: see `tl_bufs()`.
-        unsafe { &mut (*tl_bufs()).final_path_buf }
+        yolo! { &mut (*tl_bufs()).final_path_buf }
     }
     #[inline]
     fn folder_name_buf() -> &'static mut PathBuffer {
         // SAFETY: see `tl_bufs()`.
-        unsafe { &mut (*tl_bufs()).folder_name_buf }
+        yolo! { &mut (*tl_bufs()).folder_name_buf }
     }
     #[inline]
     fn json_path_buf() -> &'static mut PathBuffer {
         // SAFETY: see `tl_bufs()`.
-        unsafe { &mut (*tl_bufs()).json_path_buf }
+        yolo! { &mut (*tl_bufs()).json_path_buf }
     }
 }
 
@@ -254,7 +255,7 @@ impl SharedEnv {
         // during enqueue (single-threaded at that point in Zig too). Once
         // `env` is `Some` it is never reassigned, so the returned `&'static`
         // remains valid for the program lifetime.
-        unsafe {
+        yolo! {
             let this = &mut *SHARED_ENV.get();
             if this.env.is_none() {
                 // Note: currently if the user sets this to some value that causes

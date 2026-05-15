@@ -2,6 +2,7 @@
 //! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
 //! `CharacterSet`/`FieldType` enums without `JSValue` references.
 
+use bun_yolo::yolo;
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, StringJsc as _, bun_string_jsc, js_error_to_mysql,
@@ -407,7 +408,7 @@ impl Value {
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
                             // duration of this call; init_dupe copies immediately.
-                            slice: ZigStringSlice::init_dupe(unsafe {
+                            slice: ZigStringSlice::init_dupe(yolo! {
                                 core::slice::from_raw_parts(ptr, len)
                             })
                             .map_err(|_| any_mysql_error::Error::OutOfMemory)?,
@@ -423,7 +424,7 @@ impl Value {
                             Ok(Value::Bytes(Bytes {
                                 // SAFETY: backing ArrayBuffer is pinned (non-detachable) and
                                 // rooted via `roots`; slice stays valid until Bytes::drop unpins.
-                                slice: ZigStringSlice::from_utf8_never_free(unsafe {
+                                slice: ZigStringSlice::from_utf8_never_free(yolo! {
                                     core::slice::from_raw_parts(ptr, len)
                                 }),
                                 pinned: value,

@@ -8,6 +8,7 @@
 //! `onDNSResolved` runs. The `quic.PendingConnect` C handle is consumed by
 //! exactly one of `resolved()` or `cancel()`.
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -33,7 +34,7 @@ impl Drop for PendingConnect {
         // Invariant: a constructed PendingConnect holds exactly one ref on `session`
         // (taken in `register`); release it here.
         // SAFETY: ref taken in `register`; session is live until this drops it.
-        unsafe { ClientSession::deref(self.session) };
+        yolo! { ClientSession::deref(self.session) };
     }
 }
 
@@ -49,7 +50,7 @@ impl PendingConnect {
     #[inline]
     fn pc_mut<'a>(&self) -> &'a mut quic::PendingConnect {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.pc }
+        yolo! { &mut *self.pc }
     }
 
     pub fn register(session: *mut ClientSession, pc: *mut quic::PendingConnect, l: *mut uws::Loop) {
@@ -68,7 +69,7 @@ impl PendingConnect {
         let self_ = bun_core::heap::into_raw(self_);
         // SAFETY: `self_` is the Box we just leaked above and is consumed by
         // `on_dns_resolved` (via the global cache's notify path).
-        unsafe { bun_dns::internal::register_quic(addrinfo, self_.cast()) };
+        yolo! { bun_dns::internal::register_quic(addrinfo, self_.cast()) };
     }
 
     pub fn r#loop(&self) -> *mut uws::Loop {
@@ -81,7 +82,7 @@ impl PendingConnect {
         // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box drops at
         // end of scope — `Drop` derefs `session` and the allocation is freed.
         // (Zig: defer { session.deref(); bun.destroy(this); })
-        let this = unsafe { bun_core::heap::take(this) };
+        let this = yolo! { bun_core::heap::take(this) };
         let session = this.session;
 
         // session is kept alive by the ref `this` holds for the duration of this
@@ -126,7 +127,7 @@ impl PendingConnect {
         .r#loop();
         RESOLVED.lock().push(Resolved(this));
         // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*loop_ptr).wakeup() };
+        yolo! { (*loop_ptr).wakeup() };
     }
 
     pub fn drain_resolved() {
@@ -134,7 +135,7 @@ impl PendingConnect {
         for Resolved(head) in batch {
             // SAFETY: every entry was heap-allocated in `register()` and is
             // consumed exactly once here.
-            unsafe { PendingConnect::on_dns_resolved(head) };
+            yolo! { PendingConnect::on_dns_resolved(head) };
         }
     }
 
@@ -162,7 +163,7 @@ impl PendingConnect {
         // Zig .monotonic == LLVM monotonic == Rust Relaxed
         let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
         // session is intrusive-refcounted; this drops the connection-alive ref.
-        unsafe { ClientSession::deref(session) };
+        yolo! { ClientSession::deref(session) };
     }
 }
 

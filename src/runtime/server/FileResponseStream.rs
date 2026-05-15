@@ -8,6 +8,7 @@
 //! calling `start()`. Exactly one of `on_complete` / `on_error` fires, exactly
 //! once; after it fires the caller must not touch `resp` body methods again.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::c_void;
 
@@ -140,13 +141,13 @@ impl FileResponseStream {
                 state: State::default(),
             }));
         // SAFETY: just allocated above; uWS callbacks below alias `this` as raw ptr.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
 
         this.resp.timeout(this.idle_timeout);
         this.resp.on_aborted(
             |p: *mut FileResponseStream, r| {
                 // SAFETY: uWS hands back the userdata pointer set below.
-                unsafe { (*p).on_aborted(r) }
+                yolo! { (*p).on_aborted(r) }
             },
             std::ptr::from_mut::<FileResponseStream>(this),
         );
@@ -185,7 +186,7 @@ impl FileResponseStream {
         this.reader.set_parent(this_parent);
 
         // SAFETY: `this` reborrows the live heap::alloc allocation above.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::<Self>::new(this) };
 
         let start_result = if opts.offset > 0 {
             this.reader
@@ -222,7 +223,7 @@ impl FileResponseStream {
     pub fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
         let this: *mut Self = self;
         // SAFETY: `this` is the live intrusive allocation owning `self`.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let _guard = yolo! { bun_ptr::ScopedRef::new(this) };
 
         if self.state.contains(State::RESPONSE_DONE) {
             return false;
@@ -243,13 +244,13 @@ impl FileResponseStream {
                         // above; the eof_task lives inside `*p` and the ref taken
                         // for the in-flight read keeps the allocation alive until
                         // `on_reader_done` releases it.
-                        unsafe { (*p).on_reader_done() };
+                        yolo! { (*p).on_reader_done() };
                         Ok(())
                     }));
                     // SAFETY: `vm.event_loop()` returns the live JS loop;
                     // `eof_task` was just set and lives inside `*this` which
                     // outlives the task (refcount held until `on_reader_done`).
-                    unsafe {
+                    yolo! {
                         (*self.vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut::<
                             AnyTask::AnyTask,
                         >(
@@ -278,11 +279,11 @@ impl FileResponseStream {
                 // release the read ref; on_writable re-takes it. Adopts the ref
                 // taken before `reader.read()` — no fresh `ref_()` here.
                 // SAFETY: `this` is the live intrusive allocation owning `self`.
-                let _guard2 = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+                let _guard2 = yolo! { bun_ptr::ScopedRef::<Self>::adopt(this) };
                 self.resp.on_writable(
                     |p: *mut FileResponseStream, off, r| {
                         // SAFETY: uWS hands back the userdata pointer set below.
-                        unsafe { (*p).on_writable(off, r) }
+                        yolo! { (*p).on_writable(off, r) }
                     },
                     std::ptr::from_mut::<FileResponseStream>(self),
                 );
@@ -297,21 +298,21 @@ impl FileResponseStream {
     pub fn on_reader_done(&mut self) {
         // Adopts the in-flight read ref taken before `reader.read()`.
         // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
+        let _guard = yolo! { bun_ptr::ScopedRef::<Self>::adopt(self) };
         self.finish();
     }
 
     pub fn on_reader_error(&mut self, err: sys::Error) {
         // Adopts the in-flight read ref taken before `reader.read()`.
         // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
+        let _guard = yolo! { bun_ptr::ScopedRef::<Self>::adopt(self) };
         self.fail_with(err);
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
         bun_output::scoped_log!(FileResponseStream, "onWritable");
         // SAFETY: `self` is the live intrusive allocation (uWS userdata ptr).
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(self) };
+        let _guard = yolo! { bun_ptr::ScopedRef::<Self>::new(self) };
 
         if self.mode == Mode::Sendfile {
             return self.on_sendfile();
@@ -347,7 +348,7 @@ impl FileResponseStream {
             let mut off: i64 = i64::try_from(self.sendfile.offset).expect("int cast");
             // SAFETY: both fds are valid open file descriptors owned by `self`;
             // `off` is a stack local.
-            let rc = unsafe {
+            let rc = yolo! {
                 sys::linux::sendfile(
                     self.sendfile.socket_fd.native(),
                     self.fd.native(),
@@ -387,7 +388,7 @@ impl FileResponseStream {
                 i64::try_from(self.sendfile.remain.min(i32::MAX as u64)).expect("int cast");
             // SAFETY: both fds are valid open file descriptors owned by `self`;
             // `sbytes` is a stack local; hdtr is null per spec.
-            let errno = sys::get_errno(unsafe {
+            let errno = sys::get_errno(yolo! {
                 sys::c::sendfile(
                     self.fd.native(),
                     self.sendfile.socket_fd.native(),
@@ -436,7 +437,7 @@ impl FileResponseStream {
             self.resp.on_writable(
                 |p: *mut FileResponseStream, off, r| {
                     // SAFETY: uWS hands back the userdata pointer set below.
-                    unsafe { (*p).on_writable(off, r) }
+                    yolo! { (*p).on_writable(off, r) }
                 },
                 std::ptr::from_mut::<FileResponseStream>(self),
             );
@@ -517,7 +518,7 @@ impl FileResponseStream {
 
         // SAFETY: `self` is the unique &mut handed in by the uWS callback
         // trampoline; provenance traces back to heap::alloc in `start()`.
-        unsafe { Self::deref(self) };
+        yolo! { Self::deref(self) };
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
@@ -529,7 +530,7 @@ impl FileResponseStream {
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
             // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
+            return yolo! { (*self.event_loop().r#loop()).uv_loop };
         }
         #[cfg(not(windows))]
         {

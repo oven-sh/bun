@@ -27,6 +27,7 @@
     clippy::not_unsafe_ptr_arg_deref
 )]
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_long, c_void};
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
     let bytes = if msg.is_null() {
         &b""[..]
     } else {
-        unsafe { core::slice::from_raw_parts(msg, len) }
+        yolo! { core::slice::from_raw_parts(msg, len) }
     };
     bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
 }

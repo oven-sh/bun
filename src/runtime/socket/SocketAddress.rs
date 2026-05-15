@@ -5,6 +5,7 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
@@ -218,7 +219,7 @@ impl SocketAddress {
         };
         // `defer url.deinit()`
         // SAFETY: URL::from_string returns an owned C++ heap pointer; freed exactly once via destroy().
-        let _url_guard = scopeguard::guard(url_ptr, |p| unsafe { URL::destroy(p.as_ptr()) });
+        let _url_guard = scopeguard::guard(url_ptr, |p| yolo! { URL::destroy(p.as_ptr()) });
         // `_url_guard` keeps the C++ allocation live for this scope, so the
         // `BackRef` liveness invariant holds; `Deref` encapsulates the single
         // `NonNull::as_ref` site.
@@ -737,7 +738,7 @@ impl SocketAddress {
 // PERF(port): was comptime monomorphization (`comptime af: c_int`) — profile in Phase B
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
-    match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
+    match yolo! { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
         0 => Err(global
             .err(
                 bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
@@ -774,7 +775,7 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
     buf[..addr.len()].copy_from_slice(addr);
     // buf[addr.len()] is already 0
     // SAFETY: buf is NUL-terminated, dst points to a valid in_addr/in6_addr
-    unsafe { ares::ares_inet_pton(af, buf.as_ptr().cast(), dst) == 1 }
+    yolo! { ares::ares_inet_pton(af, buf.as_ptr().cast(), dst) == 1 }
 }
 
 impl SocketAddress {
@@ -914,7 +915,7 @@ impl sockaddr {
         // SAFETY: `family` is the first field of both `sockaddr_in` and
         // `sockaddr_in6` at the same offset/type; reading through `sin` is
         // well-defined regardless of which variant was written.
-        unsafe { self.sin.family }
+        yolo! { self.sin.family }
     }
 
     /// Raw network-byte-order port from the shared prefix — valid for either variant.
@@ -922,7 +923,7 @@ impl sockaddr {
     pub fn port_raw(&self) -> inet::in_port_t {
         // SAFETY: `port` follows `family` in both `sockaddr_in` and
         // `sockaddr_in6` at the same offset/type.
-        unsafe { self.sin.port }
+        yolo! { self.sin.port }
     }
 
     /// Tag-checked borrow of the IPv4 payload.
@@ -930,7 +931,7 @@ impl sockaddr {
     pub fn as_sin(&self) -> Option<&inet::sockaddr_in> {
         if self.family_raw() as u16 == inet::AF_INET as u16 {
             // SAFETY: family == AF_INET ⇒ `sin` is the active variant.
-            Some(unsafe { &self.sin })
+            Some(yolo! { &self.sin })
         } else {
             None
         }
@@ -941,7 +942,7 @@ impl sockaddr {
     pub fn as_sin6(&self) -> Option<&inet::sockaddr_in6> {
         if self.family_raw() as u16 == inet::AF_INET6 as u16 {
             // SAFETY: family == AF_INET6 ⇒ `sin6` is the active variant.
-            Some(unsafe { &self.sin6 })
+            Some(yolo! { &self.sin6 })
         } else {
             None
         }
@@ -1018,7 +1019,7 @@ impl sockaddr {
         };
         // SAFETY: buf is INET6_ADDRSTRLEN bytes; addr_src points to in_addr/in6_addr per family().
         let len =
-            unsafe { bun_cares_sys::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
+            yolo! { bun_cares_sys::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
                 .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
                 .len();
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above

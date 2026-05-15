@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use core::sync::atomic::{AtomicI32, Ordering};
@@ -167,7 +168,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     // R-2: deref as shared (`&*const`) — every field is read-only after
     // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
     // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
-    let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
+    let this: &ScopeFunctions = yolo! { &*this_ptr.cast_const() };
     let line_no = jest::capture_test_line_number(frame, global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(
@@ -311,7 +312,7 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in:
         // PORTING.md: `BaseScope.parent` is `Option<*const DescribeScope>` (raw backref);
         // per-use reborrow.
         // SAFETY: parent backrefs are stable for the lifetime of the collection tree.
-        parent = scope.base.parent.map(|p| unsafe { &*p });
+        parent = scope.base.parent.map(|p| yolo! { &*p });
         if scope.base.name.is_none() {
             continue;
         }
@@ -356,7 +357,7 @@ impl ScopeFunctions {
         let mut test_id_for_debugger: i32 = 0;
         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for any
         // Bun-owned global; single JS thread so no aliasing across this borrow.
-        if let Some(debugger) = unsafe { (*vm).debugger.as_mut() } {
+        if let Some(debugger) = yolo! { (*vm).debugger.as_mut() } {
             if debugger.test_reporter_agent.is_enabled() {
                 // Zig: fn-local `struct { var max_test_id_for_debugger: i32 = 0; }` — process-global static.
                 static MAX_TEST_ID_FOR_DEBUGGER: AtomicI32 = AtomicI32::new(0);
@@ -401,7 +402,7 @@ impl ScopeFunctions {
         match self.mode {
             Mode::Describe => {
                 // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base)?;
+                let new_scope = yolo! { bun_test.collection.active_scope.as_mut() }.append_describe(description, base)?;
                 bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
             }
             Mode::Test => {
@@ -409,14 +410,14 @@ impl ScopeFunctions {
                 let mut matches_filter = true;
                 if let Some(reporter) = bun_test.reporter {
                     // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-                    let reporter = unsafe { reporter.as_ref() };
+                    let reporter = yolo! { reporter.as_ref() };
                     if let Some(filter_regex) = reporter.jest.filter_regex {
                         group_log::log(format_args!("matches_filter begin"));
                         debug_assert!(bun_test.collection.filter_buffer.is_empty());
                         // PORT NOTE: reshaped for borrowck — clear at end via explicit call below.
 
                         // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                        let active_scope: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
+                        let active_scope: &DescribeScope = yolo! { bun_test.collection.active_scope.as_ref() };
 
                         let mut len = Measure { len: 0 };
                         filter_names(&mut len, description, Some(active_scope));
@@ -437,7 +438,7 @@ impl ScopeFunctions {
                         // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
                         // `TestRunner` for the process lifetime; single-threaded here so the
                         // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(str);
+                        matches_filter = yolo! { &mut *filter_regex.as_ptr() }.matches(str);
 
                         bun_test.collection.filter_buffer.clear();
                     }

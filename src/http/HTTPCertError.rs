@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_core::ZStr;
 
 pub struct HTTPCertError {
@@ -45,7 +46,7 @@ impl HTTPCertError {
             // widen to `&'static ZStr` is sound. (`Interned` itself is
             // `[u8]`-only; `ZStr` keeps the open-coded widen but the owner is
             // now named per the `Interned::assume` contract.)
-            unsafe { ZStr::from_c_ptr(p) }
+            yolo! { ZStr::from_c_ptr(p) }
         }
         Self {
             error_no: ssl_error.error_no,

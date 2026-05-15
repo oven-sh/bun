@@ -2,6 +2,7 @@
 //!
 //! Ported from src/runtime/api/html_rewriter.zig.
 
+use bun_yolo::yolo;
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -223,7 +224,7 @@ impl Drop for LOLHTMLContext {
     fn drop(&mut self) {
         for selector in self.selectors.drain(..) {
             // SAFETY: selector was allocated by LOLHTML.HTMLSelector.parse and is owned here.
-            unsafe { lolhtml::HTMLSelector::destroy(selector) };
+            yolo! { lolhtml::HTMLSelector::destroy(selector) };
         }
         // element_handlers / document_handlers: Box<_> drops via Drop impls below.
     }
@@ -268,7 +269,7 @@ impl HTMLRewriter {
             Ok(s) => s,
             Err(_) => return Err(global.throw_value(create_lolhtml_error(global))),
         };
-        let mut selector_guard = scopeguard::guard(selector, |s| unsafe {
+        let mut selector_guard = scopeguard::guard(selector, |s| yolo! {
             // SAFETY: selector owned by us until appended to context.selectors below.
             lolhtml::HTMLSelector::destroy(s)
         });
@@ -288,7 +289,7 @@ impl HTMLRewriter {
         // SAFETY: builder is a valid lol-html builder; `handler_ptr` stays
         // alive because the Box is pushed into `self.context.element_handlers`
         // below, outliving the rewriter.
-        let res = unsafe {
+        let res = yolo! {
             (*self.builder).add_element_content_handlers(
                 &mut **selector_guard,
                 has_element.then_some(handler_ptr),
@@ -327,7 +328,7 @@ impl HTMLRewriter {
         // If this fails, subsequent calls to write or end should throw
         // SAFETY: builder is valid; `handler_ptr` lives in
         // `context.document_handlers`, outliving the rewriter.
-        unsafe {
+        yolo! {
             (*self.builder).add_document_content_handlers(
                 has_doc_type.then_some(handler_ptr),
                 has_comment.then_some(handler_ptr),
@@ -347,7 +348,7 @@ impl HTMLRewriter {
     pub fn finalize_without_destroy(&self) {
         // context: Rc drop happens via field drop; builder needs explicit FFI deinit.
         // SAFETY: builder was created by Builder::init() and not yet freed.
-        unsafe { lolhtml::HTMLRewriterBuilder::destroy(self.builder) };
+        yolo! { lolhtml::HTMLRewriterBuilder::destroy(self.builder) };
         // TODO(port): Zig calls context.deref() here explicitly; with Rc the
         // drop happens when HTMLRewriter is dropped. If finalize_without_destroy
         // is called without immediate drop, we'd want to swap context to a
@@ -375,7 +376,7 @@ impl HTMLRewriter {
         {
             // SAFETY: response is the m_ctx of a live JS Response (response_value
             // is on the stack, conservatively scanned).
-            let body_value = unsafe { (*response).get_body_value() };
+            let body_value = yolo! { (*response).get_body_value() };
             if matches!(*body_value, webcore::body::Value::Used) {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Response body already used"))
@@ -418,7 +419,7 @@ impl HTMLRewriter {
             let _resp_guard = scopeguard::guard(resp, |r| {
                 // SAFETY: `r` is the `heap::into_raw` allocation from just
                 // above; finalize takes ownership and frees it exactly once.
-                Response::finalize(unsafe { Box::from_raw(r) })
+                Response::finalize(yolo! { Box::from_raw(r) })
             });
 
             let out_response_value = self.begin_transform(global, resp)?;
@@ -434,7 +435,7 @@ impl HTMLRewriter {
             };
             // SAFETY: out_response is the m_ctx of out_response_value (kept alive
             // on the stack via ensure_still_alive above).
-            let mut blob = unsafe {
+            let mut blob = yolo! {
                 (*out_response)
                     .get_body_value()
                     .use_as_any_blob_allow_non_utf8_string()
@@ -447,7 +448,7 @@ impl HTMLRewriter {
                 // SAFETY: `v` is the live JS wrapper (kept on stack via
                 // ensure_still_alive); `r` is its `m_ctx` pointer, detached here
                 // and finalized exactly once.
-                unsafe {
+                yolo! {
                     let _ = bun_jsc::generated::JSResponse::dangerously_set_ptr(
                         v,
                         core::ptr::null_mut(),
@@ -523,7 +524,7 @@ impl HTMLRewriterLoader {
             return;
         }
         // SAFETY: rewriter created via builder.build(); not yet freed.
-        unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
+        yolo! { lolhtml::HTMLRewriter::destroy(self.rewriter) };
         self.backpressure = LinearFifo::<u8, DynamicBuffer<u8>>::init();
         self.finalized = true;
     }
@@ -575,7 +576,7 @@ impl HTMLRewriterLoader {
                 // here — that would double-buffer relative to the spec.
                 // SAFETY: `pending` points at a heap WritablePending owned by
                 // the destination sink; valid for the duration of this call.
-                unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
+                yolo! { (*pending).apply_backpressure(&mut self.output, bytes) };
             }
             Writable::IntoArray(_) | Writable::Owned(_) | Writable::Temporary(_) => {
                 self.signal.ready(
@@ -611,7 +612,7 @@ impl HTMLRewriterLoader {
     ) -> Option<lolhtml::HTMLString> {
         let chunk_size = size_hint.unwrap_or(16384).max(1024);
         // SAFETY: builder valid; `self` outlives the rewriter (deinit'd in finalize()).
-        let built = unsafe {
+        let built = yolo! {
             (*builder).build(
                 lolhtml::Encoding::UTF8,
                 lolhtml::MemorySettings {
@@ -654,7 +655,7 @@ impl HTMLRewriterLoader {
     // takes them back out on the success path).
     fn write_bytes(&mut self, bytes: &[u8]) -> Option<bun_sys::Error> {
         // SAFETY: rewriter valid (setup() succeeded, not yet finalized).
-        if unsafe { lolhtml::HTMLRewriter::write(self.rewriter, bytes) }.is_err() {
+        if yolo! { lolhtml::HTMLRewriter::write(self.rewriter, bytes) }.is_err() {
             return Some(bun_sys::Error {
                 errno: 1,
                 // TODO: make this a union
@@ -722,7 +723,7 @@ impl HTMLRewriterLoader {
         } else {
             if !self.finalized {
                 // SAFETY: rewriter set by setup(); not yet finalized.
-                let _ = unsafe { lolhtml::HTMLRewriter::end(self.rewriter) };
+                let _ = yolo! { lolhtml::HTMLRewriter::end(self.rewriter) };
             }
             self.done();
         }
@@ -772,7 +773,7 @@ impl BufferOutputSink {
         // SAFETY: `sink` is a live heap allocation (refcount > 0, caller
         // invariant); `tmp_sync_error` was set in `init()` and the synchronous
         // caller is reached only while `init()` is still on the stack.
-        unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = err };
+        yolo! { *(*sink).tmp_sync_error.unwrap().as_ptr() = err };
     }
 
     pub fn init(
@@ -794,7 +795,7 @@ impl BufferOutputSink {
         }));
         // defer sink.deref();
         // SAFETY: `sink` is the `heap::into_raw` allocation above; refcount >= 1.
-        let _sink_guard = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
+        let _sink_guard = yolo! { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // PORT NOTE: do not hold a long-lived `&mut *sink` here — the same
         // allocation is also written through the raw pointer by the lol-html
         // output-sink callback during `bufferer.run()` and by `deref(sink)`
@@ -815,7 +816,7 @@ impl BufferOutputSink {
         )));
 
         // SAFETY: sink was just allocated via heap::alloc above; refcount==1.
-        unsafe { (*sink).response = result };
+        yolo! { (*sink).response = result };
         // PORT NOTE (Stacked Borrows): `sink_error` is written via raw pointer
         // by the unhandled-rejection handler during `bufferer.run()` and via
         // `tmp_sync_error` from `on_finished_buffering`. Use a `Cell` so the
@@ -827,7 +828,7 @@ impl BufferOutputSink {
         let sink_error_ptr: *mut JSValue = sink_error.as_ptr();
         // SAFETY: original is a live *Response passed from begin_transform; its
         // JS wrapper is on the caller's stack.
-        let input_size = unsafe { (*original).get_body_len() };
+        let input_size = yolo! { (*original).get_body_len() };
         // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this fn.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
 
@@ -839,7 +840,7 @@ impl BufferOutputSink {
         vm.unhandled_pending_rejection_to_capture = Some(sink_error_ptr);
         // SAFETY: sink is a live heap allocation (refcount >= 1); sink_error_ptr
         // is non-null (addr of stack local).
-        unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
+        yolo! { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
         vm.on_unhandled_rejection =
             VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         // Zig `defer sink_error.ensureStillAlive()` — read the *live* slot at
@@ -857,7 +858,7 @@ impl BufferOutputSink {
         // stored in the C rewriter shares provenance with every other
         // `(*sink).field` access in this module — see the PORT NOTE on
         // `HTMLRewriterBuilder::build`.
-        let built = unsafe {
+        let built = yolo! {
             (*builder).build(
                 lolhtml::Encoding::UTF8,
                 lolhtml::MemorySettings {
@@ -875,7 +876,7 @@ impl BufferOutputSink {
             )
         };
         // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe {
+        yolo! {
             (*sink).rewriter = match built {
                 Ok(r) => r,
                 Err(_) => {
@@ -889,7 +890,7 @@ impl BufferOutputSink {
 
         // SAFETY: result and original are both live *Response (result allocated
         // above, original kept alive by caller); no aliasing &mut exists.
-        unsafe {
+        yolo! {
             (*result).set_init(
                 (*original).get_method(),
                 (*original).get_init_status_code(),
@@ -908,22 +909,22 @@ impl BufferOutputSink {
 
         // Hold off on cloning until we're actually done.
         // SAFETY: (*sink).response == result (set above), live heap allocation.
-        let response_js_value = unsafe { (*(*sink).response).to_js(&(*sink).global) };
+        let response_js_value = yolo! { (*(*sink).response).to_js(&(*sink).global) };
         // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe { (*sink).response_value.set(global, response_js_value) };
+        yolo! { (*sink).response_value.set(global, response_js_value) };
 
         // SAFETY: result/original are live *Response (see SAFETY note above).
         // `url()` is +0 borrowed-bits; `set_url` takes +1 — `.clone()` to bump
         // (html_rewriter.zig:492 `original.getUrl().clone()`).
-        unsafe { (*result).set_url((*original).url().clone()) };
+        yolo! { (*result).set_url((*original).url().clone()) };
 
         // SAFETY: original is a live *Response kept alive by caller.
-        let value = unsafe { (*original).get_body_value() };
+        let value = yolo! { (*original).get_body_value() };
         // SAFETY: original is a live *Response kept alive by caller; sink live.
         let owned_readable_stream =
-            unsafe { (*original).get_body_readable_stream(&(*sink).global) };
+            yolo! { (*original).get_body_readable_stream(&(*sink).global) };
         // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe {
+        yolo! {
             (*sink).ref_();
             (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
                 sink.cast::<core::ffi::c_void>(),
@@ -942,7 +943,7 @@ impl BufferOutputSink {
         // `<BufferOutputSink as OutputSink>::write/done` and forms a fresh
         // `&mut *sink`. Hoist the bufferer through a raw pointer so no `&mut`
         // derived from `*sink` is live across that callback.
-        let buffering_result: Result<(), bun_core::Error> = unsafe {
+        let buffering_result: Result<(), bun_core::Error> = yolo! {
             let bufferer: *mut webcore::body::ValueBufferer =
                 (*sink).body_value_bufferer.as_mut().unwrap();
             (*bufferer).run(value, owned_readable_stream)
@@ -950,7 +951,7 @@ impl BufferOutputSink {
         if let Err(buffering_error) = buffering_result {
             // SAFETY: `sink` is a live `heap::into_raw` allocation; release the
             // ref taken for the in-flight bufferer.
-            unsafe { BufferOutputSink::deref(sink) };
+            yolo! { BufferOutputSink::deref(sink) };
             return Ok(match buffering_error {
                 e if e == bun_core::err!("StreamAlreadyUsed") => {
                     let err = system_error(
@@ -996,7 +997,7 @@ impl BufferOutputSink {
     ) {
         // SAFETY: `sink` was ref'd in `init()` before scheduling this callback;
         // refcount > 0 so the allocation is live. `adopt` consumes that +1 on Drop.
-        let _g = unsafe { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
+        let _g = yolo! { bun_ptr::ScopedRef::<BufferOutputSink>::adopt(sink) };
         // PORT NOTE: do not materialise `&mut *sink` here — the lol-html
         // write/end FFI calls below re-enter `<BufferOutputSink as
         // OutputSink>::write/done` through the userdata pointer, which forms
@@ -1006,12 +1007,12 @@ impl BufferOutputSink {
         //
         // SAFETY: sink was ref'd in init() before scheduling this callback;
         // refcount > 0 so the allocation is live.
-        let global = unsafe { (*sink).global };
+        let global = yolo! { (*sink).global };
 
         if let Some(err) = js_err {
             // SAFETY: (*sink).response is the heap Response allocated in init()
             // and kept alive by (*sink).response_value (Strong root).
-            let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
+            let sink_body_value = yolo! { (*(*sink).response).get_body_value() };
             let sink_ptr_usize = sink as usize;
             if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
@@ -1041,8 +1042,8 @@ impl BufferOutputSink {
             }
             // SAFETY: rewriter set by init(). Read into a local before the
             // call — `end()` re-enters `OutputSink::done(&mut *sink)`.
-            let rewriter = unsafe { (*sink).rewriter };
-            let _ = unsafe { lolhtml::HTMLRewriter::end(rewriter) };
+            let rewriter = yolo! { (*sink).rewriter };
+            let _ = yolo! { lolhtml::HTMLRewriter::end(rewriter) };
             return;
         }
 
@@ -1062,16 +1063,16 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
-        let _ = unsafe { (*sink).bytes.grow_by(bytes.len()) }; // OOM/capacity: Zig aborts; port keeps fire-and-forget
-        let global = unsafe { (*sink).global };
-        let response = unsafe { (*sink).response };
-        let rewriter = unsafe { (*sink).rewriter };
+        let _ = yolo! { (*sink).bytes.grow_by(bytes.len()) }; // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let global = yolo! { (*sink).global };
+        let response = yolo! { (*sink).response };
+        let rewriter = yolo! { (*sink).rewriter };
 
         // SAFETY: rewriter set by init().
-        if unsafe { lolhtml::HTMLRewriter::write(rewriter, bytes) }.is_err() {
+        if yolo! { lolhtml::HTMLRewriter::write(rewriter, bytes) }.is_err() {
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                let _ = yolo! { (*response).get_body_value() }.to_error_instance(
                     webcore::body::ValueError::Message(create_lolhtml_string_error()),
                     &global,
                 );
@@ -1083,10 +1084,10 @@ impl BufferOutputSink {
         }
 
         // SAFETY: rewriter set by init() and not yet freed.
-        if unsafe { lolhtml::HTMLRewriter::end(rewriter) }.is_err() {
+        if yolo! { lolhtml::HTMLRewriter::end(rewriter) }.is_err() {
             if is_async {
                 // SAFETY: response kept alive by response_value Strong.
-                let _ = unsafe { (*response).get_body_value() }.to_error_instance(
+                let _ = yolo! { (*response).get_body_value() }.to_error_instance(
                     webcore::body::ValueError::Message(create_lolhtml_string_error()),
                     &global,
                 );
@@ -1103,7 +1104,7 @@ impl BufferOutputSink {
     pub fn done(&mut self) {
         // SAFETY: self.response is kept alive by self.response_value (Strong
         // root) for the lifetime of this sink.
-        let body_value = unsafe { (*self.response).get_body_value() };
+        let body_value = yolo! { (*self.response).get_body_value() };
         let mut prev_value = core::mem::replace(
             body_value,
             webcore::body::Value::InternalBlob(webcore::InternalBlob {
@@ -1142,7 +1143,7 @@ impl Drop for BufferOutputSink {
         // bytes, body_value_bufferer, context (Rc), response_value (Strong) drop automatically.
         if !self.rewriter.is_null() {
             // SAFETY: rewriter created via builder.build() and not yet freed.
-            unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
+            yolo! { lolhtml::HTMLRewriter::destroy(self.rewriter) };
         }
     }
 }
@@ -1340,14 +1341,14 @@ macro_rules! impl_wrapper_like {
             fn deref(this: *mut Self) {
                 // SAFETY: `WrapperLike::deref` contract — `this` is a live
                 // `heap::alloc` allocation with refcount >= 1.
-                unsafe { Self::deref(this) }
+                yolo! { Self::deref(this) }
             }
             fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
                 // SAFETY: `this` is a live `heap::alloc` allocation
                 // (refcount >= 1); ownership is shared with the GC wrapper via
                 // the intrusive refcount (`${T}Class__finalize` →
                 // `Self::finalize` → `deref`).
-                unsafe { Self::to_js_ptr(this, g) }
+                yolo! { Self::to_js_ptr(this, g) }
             }
             $(
                 fn invalidate(&self) { Self::$invalidate(self) }
@@ -1371,14 +1372,14 @@ where
 
     let wrapper = Z::init(value);
     // SAFETY: Z::init returns a fresh heap allocation.
-    unsafe { (*wrapper).ref_() };
+    yolo! { (*wrapper).ref_() };
 
     // When using RefCount, we don't check the count value directly as it's an
     // opaque type now. The init values are handled by Box::new with Cell::new(1).
 
     // SAFETY: wrapper is a live heap allocation (ref'd above) for the entire
     // scope of this guard; deref runs at most once on this path.
-    let _guard = scopeguard::guard(wrapper, |w| unsafe {
+    let _guard = scopeguard::guard(wrapper, |w| yolo! {
         if Z::HAS_INVALIDATE {
             // Some wrapper types (Element) hand out sub-objects that borrow
             // from the underlying lol-html value and must be detached along
@@ -1395,7 +1396,7 @@ where
     // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
     // JS, which may re-enter another `handler_callback` on the same handler
     // (R-2); aliased `&H` is sound, aliased `&mut H` is not.
-    let this = unsafe { &*this };
+    let this = yolo! { &*this };
     let global = this.global();
     // PORT NOTE: spec (html_rewriter.zig:938,954,969,972) re-derives
     // `this.global.bunVM()` at each use site rather than caching a `&mut`.
@@ -1436,7 +1437,7 @@ where
                 // by BufferOutputSink)
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
                     // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-                    unsafe { *err_ptr = exc_value };
+                    yolo! { *err_ptr = exc_value };
                     exc_value.protect();
                 }
             }
@@ -1454,7 +1455,7 @@ where
         // Store the exception in the VM's unhandled rejection capture mechanism
         if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
             // SAFETY: VM-owned pointer set by BufferOutputSink::init.
-            unsafe { *err_ptr = exc_value };
+            yolo! { *err_ptr = exc_value };
             exc_value.protect();
         }
         // Clear the exception to prevent assertion failures
@@ -1600,7 +1601,7 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
     let vm: &VirtualMachine = global.bun_vm();
     if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
         // SAFETY: VM-owned pointer; valid while VM lives.
-        let slot = unsafe { &mut *err_ptr };
+        let slot = yolo! { &mut *err_ptr };
         if !slot.is_empty() {
             // it's a promise rejection
             let result = *slot;
@@ -2008,8 +2009,8 @@ impl AttributeIterator {
     /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe { (*this).detach() };
-        drop(unsafe { bun_core::heap::take(this) });
+        yolo! { (*this).detach() };
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn init(iterator: *mut lolhtml::AttributeIterator) -> *mut AttributeIterator {
@@ -2034,7 +2035,7 @@ impl AttributeIterator {
         this.detach();
         // SAFETY: `this` is the Box-allocated m_ctx payload; the JS wrapper
         // held one ref, which this call releases.
-        unsafe { Self::deref(this) };
+        yolo! { Self::deref(this) };
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2119,8 +2120,8 @@ impl Element {
     /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe { (*this).invalidate() };
-        drop(unsafe { bun_core::heap::take(this) });
+        yolo! { (*this).invalidate() };
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     pub fn init(element: *mut lolhtml::Element) -> *mut Element {
@@ -2147,10 +2148,10 @@ impl Element {
         for iter in iters {
             // SAFETY: iter is a live AttributeIterator we ref'd in get_attributes();
             // ref_count >= 1 so the allocation is valid here.
-            unsafe { (*iter).detach() };
+            yolo! { (*iter).detach() };
             // SAFETY: `iter` is a live AttributeIterator we ref'd in
             // `get_attributes()`; release that ref.
-            unsafe { AttributeIterator::deref(iter) };
+            yolo! { AttributeIterator::deref(iter) };
         }
     }
 
@@ -2190,7 +2191,7 @@ impl Element {
             .is_err()
         {
             // SAFETY: end_tag_handler allocated above and not yet handed to lol-html.
-            unsafe { drop(bun_core::heap::take(end_tag_handler)) };
+            yolo! { drop(bun_core::heap::take(end_tag_handler)) };
             let err = create_lolhtml_error(global_object);
             return Err(global_object.throw_value(err));
         }
@@ -2423,7 +2424,7 @@ impl Element {
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: namespaceURI returns a NUL-terminated C string owned by lol-html.
-        let ns = unsafe { bun_core::ffi::cstr(el.namespace_uri()) };
+        let ns = yolo! { bun_core::ffi::cstr(el.namespace_uri()) };
         bun_string_jsc::create_utf8_for_js(global_object, ns.to_bytes())
     }
 
@@ -2445,12 +2446,12 @@ impl Element {
         // buffer which is freed after the callback; leaking the iterator to JS
         // without detaching it would be a use-after-free.
         // SAFETY: attr_iter is a fresh heap::alloc allocation (refcount==1).
-        unsafe { (*attr_iter).ref_() };
+        yolo! { (*attr_iter).ref_() };
         // R-2: `with_mut` — closure does not call into JS (push only).
         self.attribute_iterators.with_mut(|v| v.push(attr_iter));
         // SAFETY: attr_iter is live (refcount==2 now); ownership is shared with
         // the GC wrapper via the intrusive refcount (`finalize` → `deref`).
-        unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) }
+        yolo! { AttributeIterator::to_js_ptr(attr_iter, global_object) }
     }
 }
 

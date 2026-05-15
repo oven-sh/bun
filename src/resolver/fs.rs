@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::{Cell, RefCell};
 use core::ffi::{CStr, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -211,7 +212,7 @@ macro_rules! string_store_impl {
                 // returned slice borrows the singleton's never-freed storage
                 // (heap-owned by a `'static` `BSSStringList` or a leaked
                 // mi_malloc), so widening to `'static` is sound.
-                unsafe { <$bty>::append(Self::backing(), value) }
+                yolo! { <$bty>::append(Self::backing(), value) }
             }
             /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly
             /// into the store's tail (no intermediate `String`). See
@@ -221,10 +222,10 @@ macro_rules! string_store_impl {
                 args: core::fmt::Arguments<'_>,
             ) -> core::result::Result<&'static [u8], AllocError> {
                 // SAFETY: see `append`.
-                let s = unsafe { <$bty>::print(Self::backing(), args)? };
+                let s = yolo! { <$bty>::print(Self::backing(), args)? };
                 // SAFETY: storage owned by the process-lifetime `BSSStringList`
                 // singleton (never freed); `Interned` is the canonical proof type.
-                Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
+                Ok(yolo! { bun_ptr::Interned::assume(s) }.as_bytes())
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
@@ -232,18 +233,18 @@ macro_rules! string_store_impl {
                 // `exists` only reads `backing_buf`'s pointer/len (set once at
                 // init, never mutated), so a shared `&` is sound even concurrent
                 // with `append`.
-                unsafe { (*Self::backing()).exists(value) }
+                yolo! { (*Self::backing()).exists(value) }
             }
         }
         impl strings::Appender for &'static $t {
             fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
                 // SAFETY: see `<$t>::append`. Returned `'static` narrows to the
                 // trait's elided lifetime.
-                unsafe { <$bty>::append(<$t>::backing(), s) }
+                yolo! { <$bty>::append(<$t>::backing(), s) }
             }
             fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
                 // SAFETY: see `append`.
-                unsafe { <$bty>::append_lower_case(<$t>::backing(), s) }
+                yolo! { <$bty>::append_lower_case(<$t>::backing(), s) }
             }
         }
     };
@@ -288,17 +289,17 @@ impl strings::Appender for FilenameStoreAppender {
         // singleton; `BSSStringList::append` takes `*mut Self` and serializes on
         // its inner mutex (no aliased `&mut` is ever formed). Returned slice
         // borrows the singleton's never-freed storage.
-        let r = unsafe { FilenameStoreBacking::append(self.backing, s)? };
+        let r = yolo! { FilenameStoreBacking::append(self.backing, s)? };
         // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
         // (never freed); `Interned` is the canonical proof type for this widen.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
+        Ok(yolo! { bun_ptr::Interned::assume(r) }.as_bytes())
     }
     #[inline]
     fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
         // SAFETY: see `append`.
-        let r = unsafe { FilenameStoreBacking::append_lower_case(self.backing, s)? };
+        let r = yolo! { FilenameStoreBacking::append_lower_case(self.backing, s)? };
         // SAFETY: see `append`.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
+        Ok(yolo! { bun_ptr::Interned::assume(r) }.as_bytes())
     }
 }
 
@@ -444,7 +445,7 @@ impl FileSystem {
         };
 
         // SAFETY: matches Zig global singleton init pattern
-        unsafe {
+        yolo! {
             if !INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire) || FORCE {
                 // Publish to T0 storage so `bun_sys` / display paths can read
                 // the cwd without an upward dep on the resolver. Kept inside
@@ -476,7 +477,7 @@ impl FileSystem {
         // thread pool) would each hold a live `&'static mut` to the same object (UB).
         // Form the `&mut` only for the duration of a single operation at the call site.
         // SAFETY: caller guarantees `init()` was called.
-        unsafe { (*INSTANCE.get()).as_mut_ptr() }
+        yolo! { (*INSTANCE.get()).as_mut_ptr() }
     }
 }
 
@@ -643,7 +644,7 @@ impl Entry {
             // This is technically incorrect, but we are choosing not to handle errors here
             // SAFETY: `fs` points at the process-global RealFS singleton; caller holds
             // `entries_mutex` so the `&mut` is exclusive for the duration of this call.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
+            match yolo! { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
             {
                 Ok(c) => self.cache.set(c),
                 Err(_) => return self.cache().kind,
@@ -659,7 +660,7 @@ impl Entry {
             // This error can happen if the file was deleted between the time the directory
             // was scanned and the time it was read
             // SAFETY: see `Entry::kind` PORT NOTE.
-            match unsafe { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
+            match yolo! { &mut *fs }.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd)
             {
                 Ok(c) => self.cache.set(c),
                 Err(_) => return b"",
@@ -714,7 +715,7 @@ pub struct DifferentCase<'a> {
 /// Port of `FileSystem.DirEntry.Lookup` in `fs.zig`.
 // PORT NOTE: `entry` is a RAW `*mut Entry` (matching Zig `*Entry`). A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
-// aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
+// aliased `&mut Entry` (PORTING.md §Forbidden). Callers `yolo! { &mut *entry }`
 // at each write site under `entries_mutex`.
 pub struct EntryLookup<'a> {
     pub entry: *mut Entry,
@@ -736,7 +737,7 @@ impl<'a> EntryLookup<'a> {
     #[inline(always)]
     pub fn entry(&self) -> &'a Entry {
         // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
-        unsafe { &*self.entry }
+        yolo! { &*self.entry }
     }
 
     // PORT NOTE: former `entry_mut() -> &'a mut Entry` accessor removed
@@ -770,7 +771,7 @@ pub mod dir_entry {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton.
             // `BSSList::append` takes `*mut Self` and serializes on its own inner
             // mutex (matching Zig `EntryStore.instance.append`); no outer lock.
-            unsafe { EntryStoreBacking::append(Self::instance(), value) }
+            yolo! { EntryStoreBacking::append(Self::instance(), value) }
         }
         /// Reserve an `Entry` slot in the store and return its uninitialized
         /// storage. The caller MUST fully initialize every field before any
@@ -789,7 +790,7 @@ pub mod dir_entry {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton;
             // `BSSList::append_uninit` takes `*mut Self` and serializes on its
             // own inner mutex.
-            unsafe { EntryStoreBacking::append_uninit(Self::instance()) }
+            yolo! { EntryStoreBacking::append_uninit(Self::instance()) }
         }
     }
 
@@ -924,7 +925,7 @@ impl DirEntry {
                 // `name_hash` instead of re-hashing.
                 if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                    let existing = unsafe { &mut *existing_ptr };
+                    let existing = yolo! { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
                     // holding it does not borrow `existing` — the field writes
                     // below remain unconstrained. Replaces the manual
@@ -957,7 +958,7 @@ impl DirEntry {
             // owned by this thread (`append_uninit` bumped the index under the
             // store's inner mutex). Every field is written exactly once below
             // before the cell is observed via `*mut Entry`.
-            unsafe {
+            yolo! {
                 use core::ptr::addr_of_mut;
                 let p = (*slot).as_mut_ptr();
                 // name_slice only lives for the duration of the iteration.
@@ -1004,7 +1005,7 @@ impl DirEntry {
         };
 
         // SAFETY: just produced from EntryStore append or prev_map lookup
-        let stored_ref = unsafe { &mut *stored };
+        let stored_ref = yolo! { &mut *stored };
 
         // PERF(port): Zig's `StringHashMap.put` borrows the key slice; the
         // generic `put` here would heap-box a second copy. `base_lowercase`
@@ -1017,7 +1018,7 @@ impl DirEntry {
         // SAFETY: `stored` is an `EntryStore` slot (never freed, never moved);
         // `base_lowercase_` is never mutated after construction.
         let key: &'static [u8] =
-            unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
+            yolo! { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
         // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
         // entry interned `name_lc`; a recycled one matched it exactly above), so
         // `name_hash` is its hash too — insert without re-hashing.
@@ -1054,7 +1055,7 @@ impl DirEntry {
         let &result_ptr = self.data.get(query)?;
         // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
         // borrow here only to compare basename — never overlaps a writer.
-        let basename = unsafe { &*result_ptr }.base();
+        let basename = yolo! { &*result_ptr }.base();
         if !strings::eql_long(basename, query_, true) {
             return Some(EntryLookup {
                 entry: result_ptr,
@@ -1063,9 +1064,9 @@ impl DirEntry {
                     // TODO(port): lifetime — Zig stored caller's slice; widened to 'static.
                     // SAFETY: extended for borrowck reshape; consumed before caller's buffer
                     // is overwritten (see resolver call sites).
-                    query: unsafe { &*core::ptr::from_ref::<[u8]>(query_) },
+                    query: yolo! { &*core::ptr::from_ref::<[u8]>(query_) },
                     // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
+                    actual: yolo! { &*core::ptr::from_ref::<[u8]>(basename) },
                 }),
                 _marker: core::marker::PhantomData,
             });
@@ -1085,7 +1086,7 @@ impl DirEntry {
         // PERF(port): was comptime hash precompute — profile in Phase B
         let &result_ptr = self.data.get(query_lower)?;
         // SAFETY: EntryStore-owned pointer; read-only basename compare.
-        let basename = unsafe { &*result_ptr }.base();
+        let basename = yolo! { &*result_ptr }.base();
 
         if basename != query_lower {
             return Some(EntryLookup {
@@ -1094,7 +1095,7 @@ impl DirEntry {
                     dir: self.dir,
                     query: query_lower,
                     // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                    actual: unsafe { &*core::ptr::from_ref::<[u8]>(basename) },
+                    actual: yolo! { &*core::ptr::from_ref::<[u8]>(basename) },
                 }),
                 _marker: core::marker::PhantomData,
             });
@@ -1171,7 +1172,7 @@ impl FileSystem {
         JOIN_BUF.with_borrow_mut(|buf| {
             let s = path_handler::join_string_buf::<platform::Loose>(&mut buf[..], parts);
             // SAFETY: borrows the threadlocal buffer; matches Zig pattern
-            unsafe { bun_ptr::detach_lifetime(s) }
+            yolo! { bun_ptr::detach_lifetime(s) }
         })
     }
 
@@ -1297,9 +1298,9 @@ impl EntriesMap {
 /// RAII guard over the `entries_option_map()` singleton: holds
 /// `RealFS.entries_mutex` for its lifetime and exposes the map operations as
 /// **safe** methods. Obtaining this guard is the proof-of-exclusivity that
-/// every `unsafe { self.entries.* }` call site previously had to re-assert in
+/// every `yolo! { self.entries.* }` call site previously had to re-assert in
 /// a SAFETY comment — the lock is now structurally tied to the access, so the
-/// raw-pointer escape (`unsafe { &mut *entries_option_map() }`) lives in
+/// raw-pointer escape (`yolo! { &mut *entries_option_map() }`) lives in
 /// exactly one place ([`map_mut`]) instead of at ~dozen call sites.
 ///
 /// `bun_threading::MutexGuard` stores the mutex by raw pointer (no borrow of
@@ -1324,7 +1325,7 @@ impl EntriesGuard {
         // SAFETY: `self._lock` holds `entries_mutex` for this guard's whole
         // lifetime — sole `&mut` to the process-static singleton. The returned
         // borrow is tied to `&self` (the guard), so it cannot outlive the lock.
-        unsafe { &mut *entries_option_map() }
+        yolo! { &mut *entries_option_map() }
     }
 
     pub fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
@@ -1499,7 +1500,7 @@ impl RealFS {
 
     /// Lock `entries_mutex` and return an [`EntriesGuard`] exposing safe
     /// accessors to the entries singleton. Replaces the
-    /// `let _g = self.entries_mutex.lock_guard(); unsafe { self.entries.* }`
+    /// `let _g = self.entries_mutex.lock_guard(); yolo! { self.entries.* }`
     /// pattern — the guard *is* the proof the SAFETY precondition holds.
     #[inline]
     pub fn entries_locked(&self) -> EntriesGuard {
@@ -1527,7 +1528,7 @@ impl RealFS {
         // never hand a `&'static mut` back to the caller.
         let existing_ptr = map.at_index(index)?;
         // SAFETY: `entries_mutex` held; no other `&mut` to this slot in scope.
-        if let EntriesOption::Entries(entries) = unsafe { &mut *existing_ptr } {
+        if let EntriesOption::Entries(entries) = yolo! { &mut *existing_ptr } {
             if entries.generation < generation {
                 let dir_path = entries.dir;
                 // PORT NOTE: capture raw ptrs to the in-place `DirEntry` fields, then
@@ -1541,12 +1542,12 @@ impl RealFS {
                 // the later `*entries_ptr = new_entry` UB. Zig's `existing.entries.*`
                 // / `existing.entries.data` go through one `*DirEntry`; mirror that.
                 let prev_map_ptr: *mut dir_entry::EntryMap =
-                    unsafe { core::ptr::addr_of_mut!((*entries_ptr).data) };
+                    yolo! { core::ptr::addr_of_mut!((*entries_ptr).data) };
                 let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir_path) {
                     Ok(h) => h,
                     Err(err) => {
                         // SAFETY: `entries_mutex` held; sole access to this slot.
-                        unsafe { (*prev_map_ptr).clear() };
+                        yolo! { (*prev_map_ptr).clear() };
                         return Some(
                             self.read_directory_error(Some(&map), dir_path, err.into())
                                 .expect("unreachable"),
@@ -1559,7 +1560,7 @@ impl RealFS {
                     false,
                     // SAFETY: `entries_mutex` held; `readdir` does not touch
                     // `self.entries`, so this `&mut EntryMap` is unaliased.
-                    Some(unsafe { &mut *prev_map_ptr }),
+                    Some(yolo! { &mut *prev_map_ptr }),
                     dir_path,
                     generation,
                     handle_dir,
@@ -1568,7 +1569,7 @@ impl RealFS {
                     Ok(e) => e,
                     Err(err) => {
                         // SAFETY: see above.
-                        unsafe { (*prev_map_ptr).clear() };
+                        yolo! { (*prev_map_ptr).clear() };
                         handle_dir.close();
                         return Some(
                             self.read_directory_error(Some(&map), dir_path, err)
@@ -1577,7 +1578,7 @@ impl RealFS {
                     }
                 };
                 // SAFETY: `entries_mutex` held; sole access to this slot.
-                unsafe {
+                yolo! {
                     (*prev_map_ptr).clear();
                     *entries_ptr = new_entry;
                 }
@@ -1650,7 +1651,7 @@ impl RealFS {
             let resource = bun_sys::posix::RlimitResource::NOFILE;
             let mut lim = bun_sys::posix::getrlimit(resource)?;
             // SAFETY: single init-time write
-            unsafe { limit::HANDLES_BEFORE.write(lim) };
+            yolo! { limit::HANDLES_BEFORE.write(lim) };
 
             // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
             // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child processes
@@ -1740,7 +1741,7 @@ impl ModKey {
             write!(&mut cursor, "{:x}", hex_int).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let written = len - cursor.len();
             // SAFETY: threadlocal buffer outlives caller's use (matches Zig pattern)
-            Ok(unsafe { bun_ptr::detach_lifetime(&buf[..written]) })
+            Ok(yolo! { bun_ptr::detach_lifetime(&buf[..written]) })
         })
     }
 
@@ -1942,7 +1943,7 @@ impl TmpfileWindows {
         // TODO(port): Fs.FileSystem.instance.tmpdir() — needs &mut FileSystem
         // SAFETY: `instance()` is the process-lifetime singleton (Zig `*FileSystem`);
         // `&mut` scoped to this call only (no `&'static mut` escapes).
-        unsafe { (*FileSystem::instance()).tmpdir().expect("tmpdir") }
+        yolo! { (*FileSystem::instance()).tmpdir().expect("tmpdir") }
     }
 
     #[inline]
@@ -2003,7 +2004,7 @@ impl TmpfileWindows {
 
         // SAFETY: `existing`/`new` are NUL-terminated WTF-16 paths backed by
         // stack `WPathBuffer`s alive for this frame.
-        if unsafe {
+        if yolo! {
             bun_sys::windows::kernel32::MoveFileExW(
                 existing.as_ptr(),
                 new.as_ptr(),
@@ -2219,7 +2220,7 @@ impl RealFS {
                 if let Some(cached_result) = entries.at_index(cr.index) {
                     // SAFETY: `entries_mutex` held; form a short-lived `&mut` for the
                     // match only — the raw `*mut` is what escapes to the caller.
-                    match unsafe { &mut *cached_result } {
+                    match yolo! { &mut *cached_result } {
                         EntriesOption::Err(_) => return Ok(cached_result),
                         EntriesOption::Entries(e) if e.generation >= generation => {
                             return Ok(cached_result);
@@ -2267,7 +2268,7 @@ impl RealFS {
         let dir: &'static [u8] = if !had_handle {
             if let Some(existing) = in_place {
                 // SAFETY: in_place points to BSSMap-owned DirEntry
-                unsafe { (*existing).dir }
+                yolo! { (*existing).dir }
             } else {
                 DirnameStore::instance().append(dir_maybe_trail_slash)?
             }
@@ -2281,14 +2282,14 @@ impl RealFS {
         // Cache miss: read the directory entries
         let prev = in_place.map(|p| {
             // SAFETY: BSSMap-owned, no aliasing here
-            unsafe { &mut (*p).data }
+            yolo! { &mut (*p).data }
         });
         let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator) {
             Ok(e) => e,
             Err(err) => {
                 if let Some(existing) = in_place {
                     // SAFETY: see above
-                    unsafe { (*existing).data.clear() };
+                    yolo! { (*existing).data.clear() };
                 }
                 return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?);
             }
@@ -2311,7 +2312,7 @@ impl RealFS {
                     // owned by `self.entries` at `cache_result.index`; no other borrow exists
                     // (entries_mutex held). Clearing the stale map then assigning the freshly
                     // built entries struct in place — no drop of the owning Box.
-                    unsafe {
+                    yolo! {
                         (*p).data.clear();
                         *p = entries;
                     }
@@ -2499,7 +2500,7 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
     // exclusively by this fresh arena allocation, so forming a `&mut [u8]` view
     // over it is sound provided every byte is written before being read (the
     // doc-comment contract, upheld by all callers).
-    unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
+    yolo! { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
 /// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16), write the
@@ -2527,7 +2528,7 @@ fn finish_arena_contents(
                 let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
                 dst[..converted.len()].copy_from_slice(&converted);
                 // SAFETY: `dst` is a non-null arena slice of length ≥ 1.
-                let ptr = unsafe { core::ptr::NonNull::new_unchecked(dst.as_mut_ptr()) };
+                let ptr = yolo! { core::ptr::NonNull::new_unchecked(dst.as_mut_ptr()) };
                 return (ptr, converted.len());
             }
         }
@@ -2536,7 +2537,7 @@ fn finish_arena_contents(
     buf[total] = 0;
     // SAFETY: `buf` is a non-null arena slice (len ≥ 1 on every path that
     // reaches here; the `size == 0` / empty cases return earlier).
-    let ptr = unsafe { core::ptr::NonNull::new_unchecked(buf.as_mut_ptr()) };
+    let ptr = yolo! { core::ptr::NonNull::new_unchecked(buf.as_mut_ptr()) };
     (ptr, total)
 }
 
@@ -2596,7 +2597,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         let mut bytes_read: u64 = 0;
         shared_buffer.grow_by(size + 1)?;
         // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-        unsafe { shared_buffer.list.expand_to_capacity() };
+        yolo! { shared_buffer.list.expand_to_capacity() };
 
         // if you press save on a large file we might not read all the
         // bytes in the first few pread() calls. we only handle this on
@@ -2633,7 +2634,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
                 if (bytes_read as usize) < new_size {
                     shared_buffer.grow_by(new_size - size)?;
                     // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-                    unsafe { shared_buffer.list.expand_to_capacity() };
+                    yolo! { shared_buffer.list.expand_to_capacity() };
                     size = new_size;
                     continue;
                 }
@@ -2643,7 +2644,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
 
         if shared_buffer.list.capacity() > file_contents_len {
             // SAFETY: capacity > len, so writing one byte past len is in-bounds
-            unsafe {
+            yolo! {
                 *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0;
             }
         }
@@ -2685,7 +2686,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
                 // SAFETY: capacity is `read_count + 1`; every element is written
                 // (`copy_from_slice` + `allocation[read_count] = 0`) before it is
                 // read, and `truncate` only shrinks the length.
-                unsafe { allocation.set_len(read_count + 1) };
+                yolo! { allocation.set_len(read_count + 1) };
                 allocation[..read_count].copy_from_slice(&buf[..read_count]);
                 allocation[read_count] = 0;
                 allocation.truncate(read_count);
@@ -2725,7 +2726,7 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         // `File::read_all`, `buf[size] = 0`) before being read; bytes past
         // `total` are dropped by `truncate` and never observed; `read_all` only
         // writes into the slice it is given.
-        unsafe { buf.set_len(size + 1) };
+        yolo! { buf.set_len(size + 1) };
         buf[..initial_read.len()].copy_from_slice(initial_read);
 
         if size == 0 {
@@ -2820,7 +2821,7 @@ impl RealFS {
                     let _ = bun_sys::close(file);
                 } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
                     // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                    unsafe { (*cache_ptr).fd = file };
+                    yolo! { (*cache_ptr).fd = file };
                 }
             });
 
@@ -2909,7 +2910,7 @@ impl RealFS {
             // SAFETY: `wpath` is NUL-terminated WTF-16 backed by the pooled
             // `WPathBuffer`; null SECURITY_ATTRIBUTES / template handle are
             // documented-valid for `CreateFileW`.
-            let handle = unsafe {
+            let handle = yolo! {
                 w::kernel32::CreateFileW(
                     wpath.as_ptr(),
                     0,
@@ -2935,14 +2936,14 @@ impl RealFS {
             }
             scopeguard::defer! {
                 // SAFETY: `handle` ≠ INVALID_HANDLE_VALUE (checked above).
-                let _ = unsafe { w::CloseHandle(handle) };
+                let _ = yolo! { w::CloseHandle(handle) };
             }
 
             let mut info: w::BY_HANDLE_FILE_INFORMATION =
                 // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD)
-                unsafe { bun_core::ffi::zeroed_unchecked() };
+                yolo! { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: `handle` is a valid file handle for the scope.
-            if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+            if yolo! { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
                 cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                     EntryKind::Dir
                 } else {
@@ -2997,7 +2998,7 @@ impl RealFS {
                         let _ = bun_sys::close(file);
                     } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
                         // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                        unsafe { (*cache_ptr).fd = file };
+                        yolo! { (*cache_ptr).fd = file };
                     }
                 });
 

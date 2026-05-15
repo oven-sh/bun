@@ -1,5 +1,6 @@
 //! Bun's filesystem watcher implementation for windows using kernel32
 
+use bun_yolo::yolo;
 use core::mem::size_of;
 use core::ptr;
 
@@ -111,7 +112,7 @@ impl DirWatcher {
             | w::FileNotifyChangeFilter::CREATION;
         // SAFETY: dir_handle is a valid directory handle opened with FILE_LIST_DIRECTORY;
         // buf and overlapped are valid for the duration of the async operation (self-owned).
-        if unsafe {
+        if yolo! {
             w::kernel32::ReadDirectoryChangesW(
                 self.dir_handle,
                 self.buf.as_mut_ptr().cast(),
@@ -173,7 +174,7 @@ impl EventIterator {
         // FILE_NOTIFY_INFORMATION records; `offset` is advanced only by
         // NextEntryOffset values returned by the kernel, so each cast targets a
         // properly-aligned record header.
-        let info: &w::FILE_NOTIFY_INFORMATION = unsafe {
+        let info: &w::FILE_NOTIFY_INFORMATION = yolo! {
             &*(buf_ptr
                 .add(self.offset)
                 .cast::<w::FILE_NOTIFY_INFORMATION>())
@@ -245,7 +246,7 @@ impl WindowsWatcher {
         let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
         let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
         // SAFETY: all pointer params point to valid stack locals for the duration of the call.
-        let rc = unsafe {
+        let rc = yolo! {
             w::ntdll::NtCreateFile(
                 &mut handle,
                 w::FILE_LIST_DIRECTORY,
@@ -266,14 +267,14 @@ impl WindowsWatcher {
             bun_core::scoped_log!(watcher, "failed to open directory for watching: {}", err.0);
             return Err(Error::CreateFileFailed.into());
         }
-        let handle_guard = scopeguard::guard(handle, |h| unsafe {
+        let handle_guard = scopeguard::guard(handle, |h| yolo! {
             // SAFETY: handle was successfully opened by NtCreateFile above.
             let _ = w::CloseHandle(h);
         });
 
         self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
             .map_err(|_| bun_core::Error::from(Error::IocpFailed))?;
-        let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
+        let iocp_guard = scopeguard::guard(self.iocp, |h| yolo! {
             // SAFETY: iocp handle was successfully created above.
             let _ = w::CloseHandle(h);
         });
@@ -316,7 +317,7 @@ impl WindowsWatcher {
         let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
         loop {
             // SAFETY: iocp is a valid IOCP handle; out-params are valid stack locals.
-            let rc = unsafe {
+            let rc = yolo! {
                 w::kernel32::GetQueuedCompletionStatus(
                     self.iocp,
                     &mut nbytes,
@@ -388,7 +389,7 @@ impl WindowsWatcher {
 
     pub fn stop(&mut self) {
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
-        unsafe {
+        yolo! {
             w::CloseHandle(self.watcher.dir_handle);
             w::CloseHandle(self.iocp);
         }

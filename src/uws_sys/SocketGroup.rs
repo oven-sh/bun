@@ -7,6 +7,7 @@
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
 //! context.c flips `linked`).
 
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_ushort, c_void};
 use core::ptr;
 
@@ -104,7 +105,7 @@ impl SocketGroup {
     pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.
-        unsafe {
+        yolo! {
             us_socket_group_init(
                 self,
                 loop_,
@@ -128,12 +129,12 @@ impl SocketGroup {
     /// concurrently with the loop walking this group.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller upholds the contract above.
-        unsafe { us_socket_group_deinit(this) }
+        yolo! { us_socket_group_deinit(this) }
     }
 
     pub fn close_all(&mut self) {
         // SAFETY: forwarding to C; `self` is a valid initialized group.
-        unsafe { us_socket_group_close_all(self) }
+        yolo! { us_socket_group_close_all(self) }
     }
 
     /// Non-null after `init`. The fields stay nullable raw pointers only because
@@ -175,7 +176,7 @@ impl SocketGroup {
         err: &mut c_int,
     ) -> *mut ListenSocket {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
-        unsafe {
+        yolo! {
             us_socket_group_listen(
                 self,
                 kind as u8,
@@ -199,7 +200,7 @@ impl SocketGroup {
         err: &mut c_int,
     ) -> *mut ListenSocket {
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
-        unsafe {
+        yolo! {
             us_socket_group_listen_unix(
                 self,
                 kind as u8,
@@ -228,7 +229,7 @@ impl SocketGroup {
         // the branches read the right way round — see PR review #3161005603.
         let mut has_dns_resolved: c_int = 0;
         // SAFETY: forwarding to C; `host` is a valid NUL-terminated C string.
-        let ptr = unsafe {
+        let ptr = yolo! {
             us_socket_group_connect(
                 self,
                 kind as u8,
@@ -259,7 +260,7 @@ impl SocketGroup {
         socket_ext_size: c_int,
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
-        unsafe {
+        yolo! {
             us_socket_group_connect_unix(
                 self,
                 kind as u8,
@@ -281,7 +282,7 @@ impl SocketGroup {
         ipc: bool,
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C.
-        unsafe {
+        yolo! {
             us_socket_from_fd(
                 self,
                 kind as u8,
@@ -300,7 +301,7 @@ impl SocketGroup {
         fds: &mut [LIBUS_SOCKET_DESCRIPTOR; 2],
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C; `fds` is a valid 2-element array.
-        unsafe { us_socket_pair(self, kind as u8, ext_size, fds.as_mut_ptr().cast()) }
+        yolo! { us_socket_pair(self, kind as u8, ext_size, fds.as_mut_ptr().cast()) }
     }
 
     pub fn next_in_loop(&mut self) -> *mut SocketGroup {

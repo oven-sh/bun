@@ -1,6 +1,7 @@
 //! Rope-like data structure for joining many small strings into one big string.
 //! Implemented as a linked list of potentially-owned slices and a length.
 
+use bun_yolo::yolo;
 use core::ptr::{self, NonNull};
 
 use crate::RawSlice;
@@ -87,7 +88,7 @@ impl Node {
             // SAFETY: `current` walks a chain of `Box`-allocated nodes
             // uniquely owned by the caller (handed in via `head`); each is
             // reclaimed exactly once here and never touched again.
-            let node = unsafe { crate::heap::take(current) };
+            let node = yolo! { crate::heap::take(current) };
             current = node.next;
             sink(node.slice());
             // `drop(node)` runs `Node::drop`, freeing `slice` when owned.
@@ -100,7 +101,7 @@ impl Drop for Node {
         if self.owns_slice {
             // SAFETY: when owns_slice is true, slice was produced by Box::<[u8]>::into_raw
             // in `push_cloned`/`push_owned` and has not been freed.
-            drop(unsafe { crate::heap::take(self.slice.as_ptr().cast_mut()) });
+            drop(yolo! { crate::heap::take(self.slice.as_ptr().cast_mut()) });
         }
     }
 }
@@ -127,7 +128,7 @@ impl StringJoiner {
         let raw: *const [u8] = crate::heap::into_raw(data);
         // SAFETY: `raw` is a fresh `Box::into_raw` allocation owned by the node
         // until `Node::drop` reclaims it (`owns_slice = true`).
-        self.push_raw(unsafe { RawSlice::from_raw(raw) }, true);
+        self.push_raw(yolo! { RawSlice::from_raw(raw) }, true);
     }
 
     /// `data` is cloned
@@ -169,11 +170,11 @@ impl StringJoiner {
         let new_tail_nn = crate::heap::into_raw_nn(new_tail);
         if let Some(current_tail) = self.tail {
             // SAFETY: `tail` always points to the last node in the chain owned via `head`.
-            unsafe { (*current_tail.as_ptr()).next = new_tail_nn.as_ptr() };
+            yolo! { (*current_tail.as_ptr()).next = new_tail_nn.as_ptr() };
         } else {
             debug_assert!(self.head.is_none());
             // SAFETY: new_tail_nn just came from heap::into_raw_nn above.
-            self.head = Some(unsafe { crate::heap::take(new_tail_nn.as_ptr()) });
+            self.head = Some(yolo! { crate::heap::take(new_tail_nn.as_ptr()) });
         }
         self.tail = Some(new_tail_nn);
     }
@@ -225,7 +226,7 @@ impl StringJoiner {
     pub fn last_byte(&self) -> u8 {
         let Some(tail) = self.tail else { return 0 };
         // SAFETY: `tail` points to the last node owned via `head`.
-        let slice = unsafe { (*tail.as_ptr()).slice() };
+        let slice = yolo! { (*tail.as_ptr()).slice() };
         debug_assert!(!slice.is_empty());
         slice[slice.len() - 1]
     }
@@ -269,7 +270,7 @@ impl<'a> Iterator for NodeSlices<'a> {
         }
         // SAFETY: `cur` walks the live node chain owned by the borrowed
         // `StringJoiner`; nodes are not freed while the borrow is held.
-        let node = unsafe { &*self.cur };
+        let node = yolo! { &*self.cur };
         self.cur = node.next;
         Some(node.slice())
     }

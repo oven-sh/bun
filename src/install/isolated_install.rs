@@ -21,6 +21,7 @@ pub use store::Store;
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
 pub use store::entry::Id as EntryId;
 
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use std::hash::Hasher as _;
 use std::io::Write as _;
@@ -172,7 +173,7 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
         // The returned reference cannot outlive `'x`, so all inner `'a`
         // borrows remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
+        yolo! { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
     }
 }
 
@@ -236,7 +237,7 @@ pub fn install_isolated_packages(
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
-    let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
+    let lockfile: &mut Lockfile = yolo! { &mut *lockfile };
 
     let store: Store = 'store: {
         let mut timer = std::time::Instant::now();
@@ -1965,7 +1966,7 @@ pub fn install_isolated_packages(
         // SAFETY: `progress` aliases `manager.progress`; reborrows below are
         // disjoint from the other `manager.*` field accesses (Zig holds the
         // same two pointers freely).
-        let progress = unsafe { &mut *progress };
+        let progress = yolo! { &mut *progress };
 
         if manager.options.log_level.show_progress() {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
@@ -2046,7 +2047,7 @@ pub fn install_isolated_packages(
                 });
             }
             // SAFETY: every element was written in the loop above.
-            unsafe { uninit.assume_init() }
+            yolo! { uninit.assume_init() }
         };
 
         let show_progress = manager.options.log_level.show_progress();
@@ -2095,7 +2096,7 @@ pub fn install_isolated_packages(
             summary: Default::default(),
             task_queue: Default::default(),
         };
-        let manager = unsafe { &mut *manager_ptr };
+        let manager = yolo! { &mut *manager_ptr };
         // (Drop handles installer.deinit())
 
         // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
@@ -2577,7 +2578,7 @@ pub fn install_isolated_packages(
             // SAFETY: `mgr` derived from the live exclusive `manager` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
             // `Wait::is_done`.
-            unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
+            yolo! { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
 
             if let Some(err) = wait.err {
                 Output::err(err, "failed to install packages", format_args!(""));

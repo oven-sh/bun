@@ -3,6 +3,7 @@
 //! routes IPC frames); this file holds only the per-process state and the
 //! spawn/dispatch/shutdown mechanics.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_core::{self, Output};
@@ -78,13 +79,13 @@ impl Worker {
         debug_assert!(!self.alive);
         let coord_ptr = self.coord;
         // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
-        let coord = unsafe { &*coord_ptr };
+        let coord = yolo! { &*coord_ptr };
 
         // SAFETY: out/err are fields of self; setParent stores the raw parent
         // pointer for later `container_of`-style callback recovery. The
         // pointers remain valid as long as `self` is not moved (Coordinator
         // holds workers in a stable slice).
-        unsafe {
+        yolo! {
             let out_ptr: *mut WorkerPipe = &raw mut self.out;
             (*out_ptr).reader.set_parent(out_ptr.cast::<c_void>());
             let err_ptr: *mut WorkerPipe = &raw mut self.err;
@@ -98,7 +99,7 @@ impl Worker {
             if let Some(p) = this.process.take() {
                 // SAFETY: `p` is a live intrusive-refcounted *mut Process
                 // produced by `to_process` below; sole owner until reaped.
-                unsafe {
+                yolo! {
                     (*p).exit_handler = Default::default();
                     if !(*p).has_exited() {
                         let _ = (*p).kill(9);
@@ -202,7 +203,7 @@ impl Worker {
             let ipc_pipe_guard = scopeguard::guard(ipc_pipe, |p| {
                 // SAFETY: `p` is the live Box-allocated uv_pipe_t; sole owner
                 // on every error path (extra_pipes is drained back to raw below).
-                unsafe { uv::Pipe::close_and_destroy(p) };
+                yolo! { uv::Pipe::close_and_destroy(p) };
             });
 
             // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
@@ -257,7 +258,7 @@ impl Worker {
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
                 // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
                 // ownership transfers into the reader's `Source` (heap::take inside).
-                unsafe {
+                yolo! {
                     this.out
                         .reader
                         .start_with_pipe(bun_core::heap::into_raw(pipe))
@@ -266,7 +267,7 @@ impl Worker {
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
                 // SAFETY: see stdout above.
-                unsafe {
+                yolo! {
                     this.err
                         .reader
                         .start_with_pipe(bun_core::heap::into_raw(pipe))
@@ -291,13 +292,13 @@ impl Worker {
         let process_ptr = this.process.expect("set above");
         // SAFETY: process_ptr is the live intrusive-refcounted *mut Process from
         // `to_process` above; sole owner until reaped.
-        let process = unsafe { &mut *process_ptr };
+        let process = yolo! { &mut *process_ptr };
         #[cfg(windows)]
         {
             if let Some(job) = coord.windows_job {
                 if let spawn::Poller::Uv(ref uv) = process.poller {
                     // SAFETY: FFI call; handles are valid (just spawned).
-                    unsafe {
+                    yolo! {
                         let _ = bun_sys::windows::AssignProcessToJobObject(job, uv.process_handle);
                     }
                 }
@@ -305,10 +306,10 @@ impl Worker {
         }
         this.alive = true;
         // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
-        unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
+        yolo! { (*coord_ptr.cast_mut()).live_workers += 1 };
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
-        process.set_exit_handler(unsafe {
+        process.set_exit_handler(yolo! {
             bun_spawn::ProcessExit::new(
                 bun_spawn::ProcessExitKind::TestParallelWorker,
                 &raw mut **this,
@@ -324,7 +325,7 @@ impl Worker {
                 // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;
                 // SAFETY: see above.
-                unsafe { (*coord_ptr.cast_mut()).live_workers -= 1 };
+                yolo! { (*coord_ptr.cast_mut()).live_workers -= 1 };
                 Output::err(e, "watchOrReap failed for test worker", ());
                 return Err(bun_core::err!("ProcessWatchFailed"));
             }
@@ -338,7 +339,7 @@ impl Worker {
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         self.alive = false;
         // SAFETY: coord backref valid for worker lifetime; mutation — see field TODO.
-        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
+        yolo! { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
     /// Borrow the parent `Coordinator`.
@@ -349,7 +350,7 @@ impl Worker {
     #[inline]
     fn coord(&self) -> &Coordinator<'static> {
         // SAFETY: see doc comment — non-null backref valid for `'_`.
-        unsafe { &*self.coord }
+        yolo! { &*self.coord }
     }
 
     pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
@@ -361,7 +362,7 @@ impl Worker {
 
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
-        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
+        let f = yolo! { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
         f.u32_(file_idx);
         f.str(file);
@@ -373,7 +374,7 @@ impl Worker {
 
     pub fn shutdown(&mut self) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
-        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
+        let f = yolo! { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
@@ -384,7 +385,7 @@ impl Worker {
     /// `Channel` owner callback: a decoded frame arrived.
     pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
+        yolo! { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
     /// `Channel` owner callback: peer closed, errored, or sent a corrupt frame.
@@ -396,11 +397,11 @@ impl Worker {
             // the in-flight file and the slot can respawn.
             if let Some(p) = self.process {
                 // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                let _ = unsafe { (*p).kill(9) };
+                let _ = yolo! { (*p).kill(9) };
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*self.coord.cast_mut()).try_reap(self) };
+        yolo! { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 
@@ -415,7 +416,7 @@ bun_core::intrusive_field!(Worker, ipc: Channel<Worker>);
 impl ChannelOwner for Worker {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
+        yolo! { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
     fn on_channel_done(&mut self) {
@@ -424,11 +425,11 @@ impl ChannelOwner for Worker {
             // the in-flight file and the slot can respawn.
             if let Some(p) = self.process {
                 // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                let _ = unsafe { (*p).kill(9) };
+                let _ = yolo! { (*p).kill(9) };
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*self.coord.cast_mut()).try_reap(self) };
+        yolo! { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 
@@ -466,7 +467,7 @@ impl WorkerPipe {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
         // Phase B may need *mut or Cell/UnsafeCell on Worker.captured.
-        unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
+        yolo! { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }
     pub fn on_reader_done(&mut self) {
@@ -477,11 +478,11 @@ impl WorkerPipe {
     }
     pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.event_loop() }
+        yolo! { (*(*self.worker).coord).vm.event_loop() }
     }
     pub fn loop_(&self) -> *mut r#async::Loop {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.uv_loop() }
+        yolo! { (*(*self.worker).coord).vm.uv_loop() }
     }
 }
 

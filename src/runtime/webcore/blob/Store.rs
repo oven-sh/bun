@@ -5,6 +5,7 @@
 //! this module re-exports them and layers the `bun_runtime`-tier behaviour
 //! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -365,7 +366,7 @@ impl S3Ext for S3 {
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
+                let mut self_ = yolo! { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 let global_object = self_.global.get();
                 match result {
@@ -413,7 +414,7 @@ impl S3Ext for S3 {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount (Zig: `store.ref()`).
-                store: unsafe { StoreRef::retained(NonNull::from(store)) },
+                store: yolo! { StoreRef::retained(NonNull::from(store)) },
                 global: bun_ptr::BackRef::new(global_this),
             }))
             .cast::<c_void>(),
@@ -451,7 +452,7 @@ impl S3Ext for S3 {
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via heap::alloc below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
+                let mut self_ = yolo! { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 let global_object = self_.global.get();
 
@@ -514,7 +515,7 @@ impl S3Ext for S3 {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
             // intrusive refcount (Zig: `store.ref()`).
-            store: unsafe { StoreRef::retained(NonNull::from(store)) },
+            store: yolo! { StoreRef::retained(NonNull::from(store)) },
             resolved_list_options: options,
             global: bun_ptr::BackRef::new(global_this),
         }));
@@ -523,7 +524,7 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             // SAFETY: `wrapper` is freshly leaked and untouched until the
             // callback; this borrow ends before any other access.
-            unsafe { &(*wrapper).resolved_list_options },
+            yolo! { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
             proxy,
@@ -554,7 +555,7 @@ impl BytesExt for Bytes {
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `slice` is a
         // page-aligned mmap'd region we now own. `len == cap` so `free` munmaps
         // exactly the same range.
-        unsafe {
+        yolo! {
             Bytes::from_raw_parts(
                 slice.as_mut_ptr(),
                 slice.len() as SizeType,
@@ -590,7 +591,7 @@ impl BytesExt for Bytes {
             // SAFETY: `init(Vec<u8>)` is the only path that stores
             // `C_ALLOCATOR`, and it recorded the exact `(ptr, len, cap)`
             // from `Vec::into_raw_parts`-equivalent decomposition.
-            unsafe { Vec::from_raw_parts(ptr.as_ptr(), len, cap) }
+            yolo! { Vec::from_raw_parts(ptr.as_ptr(), len, cap) }
         } else {
             // Non-global allocator (e.g. memfd → munmap): copy through the
             // safe `Bytes::slice()` accessor, then free via the owning vtable
@@ -621,5 +622,5 @@ pub extern "C" fn BlobArrayBuffer_deallocator(
     // SAFETY: `blob` is the non-null `*mut Store` C++ stashed as deallocator
     // context (originating from `heap::alloc` / `StoreRef::into_raw`); it
     // owns one outstanding reference being released here.
-    unsafe { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
+    yolo! { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
 }

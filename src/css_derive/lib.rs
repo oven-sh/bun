@@ -29,6 +29,7 @@
 //!   * Each type parameter `T` gets a `T: DeepClone<'bump>` where-bound so
 //!     generic containers like `CssRule<R>` constrain their payload.
 
+use bun_yolo::yolo;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
@@ -1124,7 +1125,7 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
                     __loc.new_unexpected_token_error(::bun_css::Token::Ident(
                         // SAFETY: `__id` is a sub-slice of the parser's source
                         // buffer (see `enum_property_util::parse`).
-                        unsafe { ::bun_css::css_parser::src_str(__id) },
+                        yolo! { ::bun_css::css_parser::src_str(__id) },
                     )),
                 )
             }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::mem::size_of;
 
@@ -208,7 +209,7 @@ impl List {
         // is detached from `list`.
         both_lists!(&self.r#impl, |list| {
             // SAFETY: column borrow is read-only; `sort` swaps via raw ptrs.
-            let generated = unsafe {
+            let generated = yolo! {
                 core::slice::from_raw_parts(
                     list.items_raw::<"generated", LineColumnOffset>(),
                     list.len(),
@@ -407,7 +408,7 @@ impl Lookup {
                 // owned by the standalone module graph trailer; lifetime is
                 // process-static (mmapped). `source_file_contents` mutates the
                 // decompression cache in-place.
-                let code = unsafe { (*serialized).source_file_contents(index) };
+                let code = yolo! { (*serialized).source_file_contents(index) };
 
                 return Some(ZigStringSlice::from_utf8_never_free(code?));
             }

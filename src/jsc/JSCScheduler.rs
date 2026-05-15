@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_int;
 
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
@@ -69,7 +70,7 @@ pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     // SAFETY: `paused` points to a live bool for the duration of the call.
     VirtualMachine::get()
         .event_loop_mut()
-        .tick_while_paused(unsafe { &mut *paused });
+        .tick_while_paused(yolo! { &mut *paused });
 }
 
 // Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.

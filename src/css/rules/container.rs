@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
 use crate::css_values::ident::CustomIdent;
@@ -39,7 +40,7 @@ impl ContainerName {
 
         // SAFETY: CustomIdent.v points into the parser source/arena (Phase A
         // lifetime erasure — see PORTING.md §AST crates).
-        let v: &'static [u8] = unsafe { crate::arena_str(ident.v) };
+        let v: &'static [u8] = yolo! { crate::arena_str(ident.v) };
         // todo_stuff.match_ignore_ascii_case;
         if strings::eql_any_case_insensitive_ascii(v, &[b"none", b"and", b"not", b"or"]) {
             return Err(input.new_unexpected_token_error(css::Token::Ident(v)));

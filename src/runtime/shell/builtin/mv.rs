@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -125,7 +126,7 @@ impl Mv {
                     task.task.interp = interp.as_ctx_ptr();
                     // SAFETY: `task` is heap-allocated and outlives the worker
                     // call (held in `MvState::CheckTarget` below).
-                    unsafe { ShellTask::schedule(&raw mut *task) };
+                    yolo! { ShellTask::schedule(&raw mut *task) };
                     Self::state_mut(interp, cmd).state = MvState::CheckTarget(task);
                     return Yield::suspended();
                 }
@@ -265,7 +266,7 @@ impl Mv {
                             t.task.interp = interp_ptr;
                             // SAFETY: `t` is a `Box<ShellMvBatchedTask>` held by
                             // `MvState::Executing` for the worker call's lifetime.
-                            unsafe { ShellTask::schedule(&raw mut **t) };
+                            yolo! { ShellTask::schedule(&raw mut **t) };
                         }
                     }
                     return Yield::suspended();
@@ -450,7 +451,7 @@ impl ShellMvCheckTargetTask {
 
     pub fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &Interpreter) {
         // SAFETY: `this` is a live boxed task.
-        let cmd = unsafe { (*this).cmd };
+        let cmd = yolo! { (*this).cmd };
         Mv::check_target_task_done(interp, cmd);
     }
 }
@@ -578,7 +579,7 @@ impl ShellMvBatchedTask {
 
     pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &Interpreter) {
         // SAFETY: `this` is a live boxed task held in `MvState::Executing::tasks`.
-        let (cmd, idx) = unsafe { ((*this).cmd, (*this).idx) };
+        let (cmd, idx) = yolo! { ((*this).cmd, (*this).idx) };
         Mv::batched_move_task_done(interp, cmd, idx);
     }
 }

@@ -8,6 +8,7 @@
 //!
 //! Spec: src/runtime/bake/DevServer/SourceMapStore.zig
 
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
@@ -685,9 +686,9 @@ impl SourceMapStore {
     ) {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
-        let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
+        let store: &mut SourceMapStore = yolo! { &mut *SourceMapStore::from_timer_ptr(timer) };
         // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
-        debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
+        debug_assert!(yolo! { (*store.owner()).magic } == Magic::Valid);
 
         // PORT NOTE: Zig compared `i64 expire <= u64 now` with mathematically-correct
         // mixed-sign semantics (negative expire ⇒ expired). Keep `now` as i64 (already
@@ -712,14 +713,14 @@ impl SourceMapStore {
                     },
                 );
                 // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
+                yolo! { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;
             }
         }
 
         store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
         // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
+        yolo! { (*store.owner()).emit_memory_visualizer_message_if_needed() };
     }
 
     /// This is used in exactly one place: remapping errors.

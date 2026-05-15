@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use crate::BundledAst as JSAst;
@@ -175,7 +176,7 @@ impl Graph {
     /// (BACKREF). All `ThreadPool` driver methods (`schedule`, `start`,
     /// `worker_pool`, `schedule_inside_thread_pool`) take `&self`, so callers
     /// can use this in place of the prior open-coded
-    /// `unsafe { self.pool.as_ref() }` / `as_mut()`.
+    /// `yolo! { self.pool.as_ref() }` / `as_mut()`.
     #[inline]
     pub fn pool(&self) -> &ThreadPool {
         // BackRef invariant: `pool` is set in `BundleV2::init` to an
@@ -193,7 +194,7 @@ impl Graph {
     pub fn pool_mut(&mut self) -> &mut ThreadPool {
         // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
         // `Graph`, so no aliasing `&ThreadPool` is live.
-        unsafe { self.pool.get_mut() }
+        yolo! { self.pool.get_mut() }
     }
 
     #[inline]

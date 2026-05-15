@@ -10,6 +10,7 @@
 //! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
 //! `bun_bundler::linker` that aren't wired yet.
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
@@ -186,7 +187,7 @@ impl AsyncModule {
         // passed to FFI below is dead by the time the guard runs.
         let sp: *mut BunString = &raw mut specifier;
         let rp: *mut BunString = &raw mut referrer;
-        let _strings_guard = scopeguard::guard((), move |()| unsafe {
+        let _strings_guard = scopeguard::guard((), move |()| yolo! {
             (*sp).deref();
             (*rp).deref();
         });
@@ -339,7 +340,7 @@ impl Queue {
         err: bun_core::Error,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
+        let this: &mut Queue = yolo! { bun_ptr::callback_ctx::<Queue>(ctx) };
         bun_core::scoped_log!(
             AsyncModule,
             "onDependencyError: {}",
@@ -398,7 +399,7 @@ impl Queue {
         // `from_field_ptr!` is sound. S017 does not apply: that rule forbids
         // widening from a `&mut self`-derived pointer, but `ctx` is a raw
         // `*mut` carried from the original allocation.
-        let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
+        let vm = yolo! { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
         vm.enqueue_task_concurrent(task);
     }
 
@@ -666,7 +667,7 @@ impl AsyncModule {
 
         buf.allocate()?;
         // SAFETY: caller guarantees promise_ptr is non-null and points to a valid out-slot.
-        unsafe {
+        yolo! {
             *opts.promise_ptr.unwrap() = this_promise.as_promise().unwrap();
         }
         // PORT NOTE: Zig kept three aliasing slices into `buf` plus
@@ -714,7 +715,7 @@ impl AsyncModule {
         // SAFETY: clone is a valid heap::alloc allocation owned by the
         // task queue until on_done reclaims it via heap::take; we hold
         // the only reference here.
-        unsafe {
+        yolo! {
             // PORT NOTE: Zig `AnyTask.New(AsyncModule, onDone).init(clone)` —
             // Rust cannot take a fn as const generic, so hand-write the shim
             // (option (b) in event_loop/AnyTask.rs).
@@ -732,7 +733,7 @@ impl AsyncModule {
     pub fn on_done(this: *mut AsyncModule) {
         jsc::mark_binding();
         // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
         // before `&mut this` reborrows below; deref via the local for the rest
         // of the function. `GlobalRef::deref` encapsulates the JSC_BORROW
@@ -788,7 +789,7 @@ impl AsyncModule {
             )
         });
         // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(yolo! { bun_core::heap::take(this) });
     }
 
     // TODO(port): narrow error set to bun_alloc::AllocError — Zig body only
@@ -1257,19 +1258,19 @@ impl AsyncModule {
         // slices into it remain valid across the `&mut self` reborrows below
         // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
         // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
-        let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
+        let specifier: &[u8] = yolo! { bun_ptr::detach_lifetime(self.specifier()) };
+        let path_text: &[u8] = yolo! { bun_ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);
         // raw-ptr aliasing matches the Zig `*VirtualMachine` field accesses
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
         // `*mut Log` aliased deliberately — see `Transpiler::set_log`).
-        let old_log = unsafe { (*jsc_vm).log };
+        let old_log = yolo! { (*jsc_vm).log };
 
         let log_ptr: *mut bun_ast::Log = log;
         // SAFETY: see above — single-thread VM; raw-ptr field stores.
-        unsafe {
+        yolo! {
             (*jsc_vm).transpiler.linker.log = log_ptr;
             (*jsc_vm).transpiler.log = log_ptr;
             (*jsc_vm).transpiler.resolver.log = log_ptr;
@@ -1278,7 +1279,7 @@ impl AsyncModule {
         let _restore = scopeguard::guard((jsc_vm, old_log), |(jsc_vm, old_log)| {
             // SAFETY: same per-thread VM; restoring the original `*mut Log`
             // values stored above.
-            unsafe {
+            yolo! {
                 let old_log_ptr = old_log.map(|p| p.as_ptr()).unwrap_or(core::ptr::null_mut());
                 (*jsc_vm).transpiler.linker.log = old_log_ptr;
                 (*jsc_vm).transpiler.log = old_log_ptr;
@@ -1290,7 +1291,7 @@ impl AsyncModule {
         // We _must_ link because:
         // - node_modules bundle won't be properly
         // SAFETY: per-thread VM; `linker` is a value field of `transpiler`.
-        unsafe {
+        yolo! {
             (*jsc_vm).transpiler.linker.link::<false, true>(
                 &path,
                 &mut parse_result,
@@ -1320,7 +1321,7 @@ impl AsyncModule {
             .expect("source_code_printer not initialized");
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
         let mut printer = core::mem::replace(
-            unsafe { printer_ptr.as_mut() },
+            yolo! { printer_ptr.as_mut() },
             bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         );
         printer.ctx.reset();
@@ -1334,7 +1335,7 @@ impl AsyncModule {
                 // SAFETY: `dst` is the thread-local's leaked Box, `src` is the
                 // stack `printer`; both outlive this guard (it drops before
                 // `printer`). Move the buffer back into the thread-local slot.
-                unsafe {
+                yolo! {
                     *dst = core::mem::replace(
                         &mut *src,
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
@@ -1346,9 +1347,9 @@ impl AsyncModule {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
             // `*mut BufferPrinter` and only reborrows inside
             // `on_source_map_chunk` after the writer's last use retires.
-            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut printer) };
+            let mut mapper = yolo! { (*jsc_vm).source_map_handler(&raw mut printer) };
             // SAFETY: per-thread VM.
-            let _ = unsafe {
+            let _ = yolo! {
                 (*jsc_vm).transpiler.print_with_source_map(
                     parse_result,
                     &mut printer,
@@ -1370,9 +1371,9 @@ impl AsyncModule {
         // TODO(port): Environment.dump_source mapped to cfg feature; confirm flag name.
 
         // SAFETY: per-thread VM.
-        if unsafe { (*jsc_vm).is_watcher_enabled() } {
+        if yolo! { (*jsc_vm).is_watcher_enabled() } {
             // SAFETY: per-thread VM.
-            let mut resolved_source = unsafe {
+            let mut resolved_source = yolo! {
                 (*jsc_vm).ref_counted_resolved_source::<false>(
                     printer.ctx.get_written(),
                     BunString::init(specifier),
@@ -1388,7 +1389,7 @@ impl AsyncModule {
                     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set
                     // when `is_watcher_enabled()`; cast recovers the
                     // concrete type (matches VirtualMachine.rs:2301).
-                    let watcher = unsafe {
+                    let watcher = yolo! {
                         &mut *(*jsc_vm)
                             .bun_watcher
                             .cast::<crate::hot_reloader::ImportWatcher>()
@@ -1400,7 +1401,7 @@ impl AsyncModule {
                     // backref — outlives the watcher entry.
                     let package_json = self
                         .package_json
-                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
+                        .map(|p| yolo! { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
                     let _ = watcher.add_file::<true>(
                         fd_,
                         path.text,

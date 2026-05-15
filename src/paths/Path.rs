@@ -6,6 +6,7 @@
 // Phase B: either enable the feature crate-wide or lower the const-generic enums to a
 // trait-per-option encoding if nightly is unacceptable.
 
+use bun_yolo::yolo;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
@@ -299,7 +300,7 @@ impl PathUnit for u8 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
-        unsafe { ZStr::from_raw(ptr, len) }
+        yolo! { ZStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<PathBuffer> {
         crate::path_buffer_pool::get().into_box()
@@ -346,7 +347,7 @@ impl PathUnit for u16 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
-        unsafe { WStr::from_raw(ptr, len) }
+        yolo! { WStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<WPathBuffer> {
         crate::w_path_buffer_pool::get().into_box()
@@ -745,7 +746,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 let mut wbuf = crate::w_path_buffer_pool::get();
                 let wslice: &mut [u16] = wbuf.as_mut_slice();
                 // SAFETY: wslice is valid for wslice.len() writable u16 units.
-                let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
+                let n = yolo! { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
                 if n <= 0 {
                     // Zig `bun.windows.GetFinalPathNameByHandle` surfaces
                     // `error.FileNotFound` (return_length==0) or
@@ -767,7 +768,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             #[cfg(not(windows))]
             {
                 // SAFETY: buf is valid for buf.len() writable bytes.
-                let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = yolo! { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
                 // `fd_path_raw` returns 0 on misc failure — do not swallow as
                 // an empty path; Zig `try fd.getFdPath(...)` propagates errors.
                 if n <= 0 {
@@ -782,7 +783,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
             // SAFETY: buf is valid for buf.len() writable u16 units.
-            let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
+            let n = yolo! { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
             if n <= 0 {
                 // Zig `bun.windows.GetFinalPathNameByHandle` surfaces
                 // `error.FileNotFound` / `error.NameTooLong`; `fd_path_raw_w`
@@ -891,7 +892,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // written) and the sentinel invariant holds.
         // SAFETY: `base_len <= len`, `buf[len] == 0`, and `buf` outlives the
         // returned borrow.
-        unsafe { U::zslice_from_raw(buf.as_ptr().add(len - base_len), base_len) }
+        yolo! { U::zslice_from_raw(buf.as_ptr().add(len - base_len), base_len) }
     }
 
     pub fn dirname(&self) -> Option<&[U]> {
@@ -921,7 +922,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
         // here; `this` is wrapped in `ManuallyDrop` so `Path::drop` will not run
         // and observe the now-uninitialized field.
-        let pooled = unsafe { ManuallyDrop::take(&mut this._buf.pooled) };
+        let pooled = yolo! { ManuallyDrop::take(&mut this._buf.pooled) };
         Path {
             _buf: Buf {
                 pooled: ManuallyDrop::new(pooled),
@@ -938,7 +939,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
         buf[len] = U::from_u8(0);
         // SAFETY: buf[len] == 0 written above; buf outlives the returned borrow.
-        unsafe { U::zslice_from_raw(buf.as_ptr(), len) }
+        yolo! { U::zslice_from_raw(buf.as_ptr(), len) }
     }
 
     pub fn buf(&mut self) -> &mut [U] {
@@ -1347,7 +1348,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
     fn drop(&mut self) {
         // match BufType::Pool
         // SAFETY: `pooled` is initialized in `init()` and never taken before this; Drop runs once.
-        let pooled = unsafe { ManuallyDrop::take(&mut self._buf.pooled) };
+        let pooled = yolo! { ManuallyDrop::take(&mut self._buf.pooled) };
         U::pool_put(pooled);
         // TODO(port): replace Box<Buffer> + manual put-back with the
         // `crate::path_buffer_pool()` RAII guard once it is generic over

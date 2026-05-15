@@ -26,6 +26,7 @@
 
 #![allow(dead_code)]
 
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::Futex;
@@ -248,7 +249,7 @@ impl WindowsImpl {
     fn unlock(&self) {
         // SAFETY: caller acquired the lock on this thread (`Mutex::unlock`
         // contract); releasing without ownership is documented UB on Windows.
-        unsafe { bun_sys::windows::kernel32::ReleaseSRWLockExclusive(self.srwlock.get()) }
+        yolo! { bun_sys::windows::kernel32::ReleaseSRWLockExclusive(self.srwlock.get()) }
     }
 }
 
@@ -405,14 +406,14 @@ pub fn spin_cycle() {}
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
-    unsafe { (*ptr).lock() }
+    yolo! { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
-    unsafe { (*ptr).unlock() }
+    yolo! { (*ptr).unlock() }
 }
 
 #[unsafe(no_mangle)]

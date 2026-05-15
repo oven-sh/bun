@@ -9,6 +9,7 @@
 //! Lowering for TC39 standard ES decorators.
 //! Extracted from P.zig to reduce duplication via shared helpers.
 
+use bun_yolo::yolo;
 use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
 
@@ -89,7 +90,7 @@ fn prop_copy(p: &Property) -> Property {
         value: p.value,
         // SAFETY: `Metadata` is a plain data enum (no Drop); shallow read is the
         // intended Zig copy semantic.
-        ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
+        ts_metadata: yolo! { core::ptr::read(&raw const p.ts_metadata) },
     }
 }
 
@@ -99,7 +100,7 @@ fn prop_full_copy(p: &Property) -> Property {
     // undecorated property as-is" path).
     // SAFETY: Vec is repr-compatible with a (ptr,len,cap,origin) POD; the
     // arena owns the buffer for the parser lifetime. Shallow copy via read.
-    let ts_decorators = unsafe { core::ptr::read(&raw const p.ts_decorators) };
+    let ts_decorators = yolo! { core::ptr::read(&raw const p.ts_decorators) };
     Property {
         initializer: p.initializer,
         kind: p.kind,
@@ -109,7 +110,7 @@ fn prop_full_copy(p: &Property) -> Property {
         key: p.key,
         value: p.value,
         // SAFETY: see `prop_copy`.
-        ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
+        ts_metadata: yolo! { core::ptr::read(&raw const p.ts_metadata) },
     }
 }
 
@@ -118,7 +119,7 @@ fn class_copy(c: &G::Class) -> G::Class {
     G::Class {
         class_keyword: c.class_keyword,
         // SAFETY: see `prop_full_copy`.
-        ts_decorators: unsafe { core::ptr::read(&raw const c.ts_decorators) },
+        ts_decorators: yolo! { core::ptr::read(&raw const c.ts_decorators) },
         class_name: c.class_name,
         extends: c.extends,
         body_loc: c.body_loc,
@@ -1156,7 +1157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
                 // SAFETY: shallow-reborrow arena Vec.
-                let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
+                let items: ExprNodeList = yolo! { core::ptr::read(&raw const prop.ts_decorators) };
                 let arr = p.new_expr(
                     E::Array {
                         items,
@@ -1590,7 +1591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.use_ref(dec_ref, loc)
             } else {
                 // SAFETY: shallow-reborrow arena Vec.
-                let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
+                let items: ExprNodeList = yolo! { core::ptr::read(&raw const prop.ts_decorators) };
                 p.new_expr(
                     E::Array {
                         items,

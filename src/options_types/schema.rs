@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 // GENERATED: re-run peechy (src/api/schema.peechy) with .rs output
 // source: src/options_types/schema.zig (3224 lines)
 // PORT STATUS: skipped — generated file (see PORTING.md §Don't translate)
@@ -29,7 +30,7 @@ impl<'a> Writer<'a> {
     /// Zig: `writeInt` — `std.mem.asBytes(&int)` is native-endian raw bytes.
     #[inline]
     pub fn write_int<I: Copy>(&mut self, int: I) {
-        let bytes = unsafe {
+        let bytes = yolo! {
             core::slice::from_raw_parts((&raw const int).cast::<u8>(), core::mem::size_of::<I>())
         };
         self.writable.extend_from_slice(bytes);

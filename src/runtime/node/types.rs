@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_paths::strings;
 use core::ffi::c_int;
 
@@ -1146,7 +1147,7 @@ impl PathLikeExt for PathLike {
                 // alignment is runtime-asserted inside `bytes_as_slice_mut`
                 // (port of Zig `@alignCast`); see PathBuffer doc comment for
                 // why the buffer is always sufficiently aligned in practice.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                let buf_u16 = yolo! { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, s);
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
@@ -1159,13 +1160,13 @@ impl PathLikeExt for PathLike {
                 >(resolve, &mut b[..]);
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
                 // SAFETY: same alignment note as above.
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                let buf_u16 = yolo! { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, normal);
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
                 // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-                let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+                let buf_u16 = yolo! { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, b".");
             }
             let normal = path_handler::resolve_path::normalize_string_buf::<
@@ -1174,7 +1175,7 @@ impl PathLikeExt for PathLike {
                 false,
             >(s, &mut b[..]);
             // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
-            let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
+            let buf_u16 = yolo! { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
             return strings::to_kernel32_path(buf_u16, normal);
         }
 

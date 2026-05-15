@@ -2,6 +2,7 @@
 //
 // Port of `src/bundler/linker.zig`.
 
+use bun_yolo::yolo;
 use std::io::Write as _;
 
 use bun_ast::Log;
@@ -162,7 +163,7 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // the inner mutex, copies `src` into its owned backing buffer and returns
     // a slice borrowing that storage; the returned borrow is `'static`-valid
     // by construction.
-    unsafe { ImportPathsList::append(relative_paths_list_ptr(), src).expect("OOM") }
+    yolo! { ImportPathsList::append(relative_paths_list_ptr(), src).expect("OOM") }
 }
 #[inline]
 fn intern(buf: Vec<u8>) -> &'static [u8] {
@@ -196,7 +197,7 @@ impl Linker {
             !self.options.is_null(),
             "Linker.options used before configure_linker"
         );
-        unsafe { &*self.options }
+        yolo! { &*self.options }
     }
 
     /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
@@ -207,7 +208,7 @@ impl Linker {
     #[inline]
     pub fn fs(&self) -> &Fs::FileSystem {
         debug_assert!(!self.fs.is_null());
-        unsafe { &*self.fs }
+        yolo! { &*self.fs }
     }
 
     /// Exclusive borrow of the owning `Transpiler.log`.
@@ -220,7 +221,7 @@ impl Linker {
     #[inline]
     pub fn log_mut(&mut self) -> &mut Log {
         debug_assert!(!self.log.is_null());
-        unsafe { &mut *self.log }
+        yolo! { &mut *self.log }
     }
 
     /// Exclusive borrow of the owning `Transpiler.resolve_results`.
@@ -236,7 +237,7 @@ impl Linker {
             !self.resolve_results.is_null(),
             "Linker.resolve_results used before configure_linker"
         );
-        unsafe { &mut *self.resolve_results }
+        yolo! { &mut *self.resolve_results }
     }
 
     /// Exclusive borrow of the owning `Transpiler.resolve_queue`.
@@ -251,7 +252,7 @@ impl Linker {
             !self.resolve_queue.is_null(),
             "Linker.resolve_queue used before configure_linker"
         );
-        unsafe { &mut *self.resolve_queue }
+        yolo! { &mut *self.resolve_queue }
     }
 
     pub fn init(
@@ -518,7 +519,7 @@ impl Linker {
                             // and holds no other borrow of it for the duration
                             // of `on_resolve`. Shared access here matches Zig
                             // `*PluginRunner` (linker.zig:176-193).
-                            let runner = unsafe { &*runner };
+                            let runner = yolo! { &*runner };
                             if let Some(path) = runner.on_resolve(
                                 import_record.path.text,
                                 file_path.text,

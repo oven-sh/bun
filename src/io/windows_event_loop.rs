@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr;
 
@@ -93,7 +94,7 @@ impl FilePoll {
         // SAFETY: `get()` returns a valid, uniquely-owned, *uninitialized* slot from the
         // HiveArray pool. We must not materialize `&mut FilePoll` (validity invariant
         // requires initialized memory); write the whole value through the raw pointer.
-        unsafe {
+        yolo! {
             poll.write(FilePoll {
                 fd,
                 flags,
@@ -127,7 +128,7 @@ impl FilePoll {
         // `#[repr(transparent)]` over `u64` on Windows, so the bitcast is just
         // the public backing field.
         // SAFETY: see TODO above — preserved verbatim from Zig.
-        unsafe {
+        yolo! {
             uv::uv_unref(self.fd.0 as *mut uv::uv_handle_t);
         }
         true
@@ -302,7 +303,7 @@ impl Store {
             // `&mut FilePoll` here would alias the `&mut self.hive` borrow taken by
             // `put()` below (the slot may live inside the inline hive buffer). Zig's
             // `*FilePoll` freely aliases, so raw-ptr discipline is the faithful port.
-            unsafe {
+            yolo! {
                 next = (*current).next_to_free;
                 (*current).next_to_free = ptr::null_mut();
                 // FilePoll has no drop glue; `put` is a no-op drop + recycle.
@@ -317,22 +318,22 @@ impl Store {
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
             // drop glue, so `put` is a no-op drop + recycle.
-            unsafe { self.hive.put(poll) };
+            yolo! { self.hive.put(poll) };
             return;
         }
 
         // SAFETY: `poll` is a valid HiveArray slot pointer. It may live inside
         // `self.hive.buffer`, so we access it via raw pointer only (no `&mut FilePoll`
         // materialized) to avoid aliasing `&mut self` — Zig's `*FilePoll` freely aliases.
-        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
+        debug_assert!(yolo! { (*poll).next_to_free }.is_null());
 
         let tail = self.pending_free_tail;
         if !tail.is_null() {
             debug_assert!(!self.pending_free_head.is_null());
             // SAFETY: `tail` is a valid slot in the intrusive deferred-free list;
             // raw-ptr access avoids a second `&mut FilePoll` overlapping `poll`/`self`.
-            debug_assert!(unsafe { (*tail).next_to_free }.is_null());
-            unsafe { (*tail).next_to_free = poll };
+            debug_assert!(yolo! { (*tail).next_to_free }.is_null());
+            yolo! { (*tail).next_to_free = poll };
         }
 
         if self.pending_free_head.is_null() {
@@ -341,7 +342,7 @@ impl Store {
         }
 
         // SAFETY: see above — short-lived field borrow through raw `poll`, no overlap held.
-        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
+        yolo! { (*poll).flags.insert(Flags::IgnoreUpdates) };
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
@@ -359,7 +360,7 @@ impl Store {
         // SAFETY: `ctx` was set to `self as *mut Store` in `put` above. The thunk fires
         // from the event loop's after-tick hook with no other `&mut Store` borrow live,
         // so this is the unique accessor (safe-single-owner).
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
+        let this = yolo! { bun_ptr::callback_ctx::<Store>(ctx) };
         this.process_deferred_frees();
     }
 }
@@ -420,7 +421,7 @@ impl Waker {
         // a bare `*WindowsLoop` with no exclusivity; mirror that by calling
         // the C entry point with the raw pointer directly.
         // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton.
-        unsafe { waker_c::us_loop_run(self.loop_.as_ptr()) };
+        yolo! { waker_c::us_loop_run(self.loop_.as_ptr()) };
     }
 
     pub fn wake(&self) {
@@ -429,7 +430,7 @@ impl Waker {
         // event-loop thread's borrow held across `us_loop_run`.
         // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
         // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-        unsafe { waker_c::us_wakeup_loop(self.loop_.as_ptr()) };
+        yolo! { waker_c::us_wakeup_loop(self.loop_.as_ptr()) };
     }
 }
 

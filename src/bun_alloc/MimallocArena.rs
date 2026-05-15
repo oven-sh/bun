@@ -18,6 +18,7 @@
 //! the `pub type Arena = MimallocArena` swap is mostly source-compatible
 //! with the previous `Arena = bumpalo::Bump` alias.
 
+use bun_yolo::yolo;
 use core::alloc::{AllocError, Allocator, Layout};
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
@@ -133,7 +134,7 @@ impl MimallocArena {
         #[cfg(debug_assertions)]
         HEAP_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: FFI call with no preconditions.
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        let heap = yolo! { mimalloc::mi_heap_new() };
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
@@ -157,7 +158,7 @@ impl MimallocArena {
     pub fn borrowing_default() -> Self {
         // SAFETY: FFI call with no preconditions; `mi_heap_main()` returns the
         // always-live process main heap (never null after mimalloc init).
-        let heap = unsafe { mimalloc::mi_heap_main() };
+        let heap = yolo! { mimalloc::mi_heap_main() };
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         Self {
             heap,
@@ -243,8 +244,8 @@ impl MimallocArena {
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
-        unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
-        let heap = unsafe { mimalloc::mi_heap_new() };
+        yolo! { mimalloc::mi_heap_destroy(self.heap_ptr()) };
+        let heap = yolo! { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
         // so an arena `Send`-moved to a worker and then reset there may
@@ -329,7 +330,7 @@ impl MimallocArena {
     #[inline]
     pub fn gc(&self) {
         // SAFETY: `self.heap` is a live heap.
-        unsafe { mimalloc::mi_heap_collect(self.heap_ptr(), false) };
+        yolo! { mimalloc::mi_heap_collect(self.heap_ptr(), false) };
     }
 
     /// Zig: `MimallocArena.helpCatchMemoryIssues()` — debug-only collect of
@@ -356,7 +357,7 @@ impl MimallocArena {
         ) -> bool {
             // SAFETY: mimalloc passes a valid `area` for each heap area when
             // `visit_all_blocks == false`; `arg` is the `&mut usize` we passed.
-            unsafe {
+            yolo! {
                 let total = &mut *arg.cast::<usize>();
                 *total += (*area).used.saturating_mul((*area).full_block_size);
             }
@@ -364,7 +365,7 @@ impl MimallocArena {
         }
         let mut total: usize = 0;
         // SAFETY: `self.heap` is live; `visit` upholds the callback contract.
-        unsafe {
+        yolo! {
             mimalloc::mi_heap_visit_blocks(
                 self.heap_ptr(),
                 false,
@@ -379,7 +380,7 @@ impl MimallocArena {
     #[inline]
     pub fn owns_ptr(&self, p: *const c_void) -> bool {
         // SAFETY: `self.heap` is a live heap; `p` may be any pointer.
-        unsafe { mimalloc::mi_heap_contains(self.heap_ptr(), p) }
+        yolo! { mimalloc::mi_heap_contains(self.heap_ptr(), p) }
     }
 
     /// Zig: `Borrowed.alignedAlloc` — `mi_heap_malloc[_aligned]` on this
@@ -389,7 +390,7 @@ impl MimallocArena {
         self.assert_owning_thread();
         // SAFETY: `self.heap_ptr()` is live (`mi_heap_new()` or
         // `mi_heap_main()`, see struct invariant).
-        unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
+        yolo! { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) }
     }
 
     /// Zig: `vtable_resize` — in-place expand/shrink, no relocation.
@@ -398,7 +399,7 @@ impl MimallocArena {
     pub fn resize_in_place(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize) -> bool {
         // SAFETY: `ptr` was allocated by this arena (caller contract), and is
         // therefore a real mimalloc block head.
-        unsafe { !mimalloc::mi_expand(ptr.as_ptr().cast(), new_len).is_null() }
+        yolo! { !mimalloc::mi_expand(ptr.as_ptr().cast(), new_len).is_null() }
     }
 
     /// `mi_heap_realloc_aligned` on this arena's heap.
@@ -408,7 +409,7 @@ impl MimallocArena {
         // SAFETY: `self.heap` is live; `ptr` is a real mimalloc block head
         // allocated by this arena (caller contract). `mi_heap_realloc_aligned`
         // preserves the `min(old, new)` prefix.
-        unsafe {
+        yolo! {
             mimalloc::mi_heap_realloc_aligned(self.heap_ptr(), ptr.as_ptr().cast(), new_len, align)
                 .cast()
         }
@@ -434,7 +435,7 @@ impl MimallocArena {
         let p = self.alloc_layout(Layout::new::<T>()).cast::<T>();
         // SAFETY: `p` is non-null, properly aligned, and points to at least
         // `size_of::<T>()` uninitialized bytes owned by this arena.
-        unsafe {
+        yolo! {
             p.as_ptr().write(val);
             &mut *p.as_ptr()
         }
@@ -446,7 +447,7 @@ impl MimallocArena {
     pub fn alloc_str(&self, s: &str) -> &mut str {
         let bytes = self.alloc_slice_copy(s.as_bytes());
         // SAFETY: copied from valid UTF-8.
-        unsafe { core::str::from_utf8_unchecked_mut(bytes) }
+        yolo! { core::str::from_utf8_unchecked_mut(bytes) }
     }
 
     /// `bumpalo::Bump::alloc_slice_copy` parity.
@@ -457,7 +458,7 @@ impl MimallocArena {
         let dst = self.alloc_layout(layout).cast::<T>();
         // SAFETY: `dst` is freshly allocated, aligned for `T`, sized for
         // `src.len()` elements; ranges do not overlap.
-        unsafe {
+        yolo! {
             ptr::copy_nonoverlapping(src.as_ptr(), dst.as_ptr(), src.len());
             core::slice::from_raw_parts_mut(dst.as_ptr(), src.len())
         }
@@ -497,7 +498,7 @@ impl MimallocArena {
         // initialize every slot before forming the slice. If `f` panics the
         // partially-initialized prefix leaks into the arena (reclaimed on
         // `reset`/`Drop`) — same behavior as bumpalo.
-        unsafe {
+        yolo! {
             for i in 0..len {
                 dst.as_ptr().add(i).write(f(i));
             }
@@ -529,7 +530,7 @@ impl MimallocArena {
         let dst = self.alloc_layout(layout).cast::<MaybeUninit<T>>();
         // SAFETY: `MaybeUninit<T>` has the same layout as `T` and imposes no
         // initialization invariant.
-        unsafe { core::slice::from_raw_parts_mut(dst.as_ptr(), len) }
+        yolo! { core::slice::from_raw_parts_mut(dst.as_ptr(), len) }
     }
 
     // ── StdAllocator vtable bridge (Zig: `heap_allocator_vtable`) ────────
@@ -585,7 +586,7 @@ impl Drop for MimallocArena {
         // every block still allocated in it without running per-block free.
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
-        unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
+        yolo! { mimalloc::mi_heap_destroy(self.heap_ptr()) };
     }
 }
 
@@ -626,7 +627,7 @@ unsafe impl Allocator for &MimallocArena {
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.assert_owning_thread();
         // SAFETY: `self.heap_ptr()` is live (struct invariant).
-        let p = unsafe {
+        let p = yolo! {
             mimalloc::mi_heap_zalloc_auto_align(self.heap_ptr(), layout.size(), layout.align())
         };
         alloc_result(p.cast(), layout.size())
@@ -636,7 +637,7 @@ unsafe impl Allocator for &MimallocArena {
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         // SAFETY: caller contract — `ptr` came from this allocator's
         // `mi_heap_malloc[_aligned]`. `mi_free` is thread-safe.
-        unsafe { crate::basic::mi_free_checked(ptr.as_ptr().cast(), layout.size(), layout.align()) }
+        yolo! { crate::basic::mi_free_checked(ptr.as_ptr().cast(), layout.size(), layout.align()) }
     }
 
     #[inline]
@@ -663,7 +664,7 @@ unsafe impl Allocator for &MimallocArena {
         let p = NonNull::new(p).ok_or(AllocError)?;
         // SAFETY: `p` holds `new.size()` bytes; the `[old.size(), new.size())`
         // tail is uninitialized (either freshly carved or `mi_realloc`ed).
-        unsafe { ptr::write_bytes(p.as_ptr().add(old.size()), 0, new.size() - old.size()) };
+        yolo! { ptr::write_bytes(p.as_ptr().add(old.size()), 0, new.size() - old.size()) };
         Ok(NonNull::slice_from_raw_parts(p, new.size()))
     }
 
@@ -689,7 +690,7 @@ unsafe impl Allocator for &MimallocArena {
 #[inline]
 unsafe fn heap_alloc_maybe_aligned(heap: *mut mimalloc::Heap, len: usize, align: usize) -> *mut u8 {
     // SAFETY: caller guarantees `heap` is live.
-    let p = unsafe {
+    let p = yolo! {
         if mimalloc::must_use_aligned_alloc(align) {
             mimalloc::mi_heap_malloc_aligned(heap, len, align)
         } else {
@@ -699,7 +700,7 @@ unsafe fn heap_alloc_maybe_aligned(heap: *mut mimalloc::Heap, len: usize, align:
     #[cfg(debug_assertions)]
     if !p.is_null() {
         // SAFETY: `p` was just returned by mimalloc.
-        let usable = unsafe { mimalloc::mi_malloc_usable_size(p) };
+        let usable = yolo! { mimalloc::mi_malloc_usable_size(p) };
         debug_assert!(
             usable >= len,
             "mimalloc: allocated size is too small: {usable} < {len}"
@@ -714,7 +715,7 @@ unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, a: crate::Alignment, _ra: u
     // SAFETY: `ctx` is the `*const MimallocArena` stashed by
     // `std_allocator()`; the `StdAllocator` borrow it was built from is
     // still live (Zig contract: an `Allocator` does not outlive its backing).
-    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
+    let arena = yolo! { &*ctx.cast::<MimallocArena>() };
     arena.aligned_alloc(len, a.to_byte_units())
 }
 
@@ -726,10 +727,10 @@ unsafe fn vtable_resize(
     _ra: usize,
 ) -> bool {
     // SAFETY: see `vtable_alloc`.
-    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
+    let arena = yolo! { &*ctx.cast::<MimallocArena>() };
     arena.resize_in_place(
         // SAFETY: `buf` is a live arena allocation per the vtable contract.
-        unsafe { NonNull::new_unchecked(buf.as_mut_ptr()) },
+        yolo! { NonNull::new_unchecked(buf.as_mut_ptr()) },
         buf.len(),
         new_len,
     )
@@ -743,10 +744,10 @@ unsafe fn vtable_remap(
     _ra: usize,
 ) -> *mut u8 {
     // SAFETY: see `vtable_alloc`.
-    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
+    let arena = yolo! { &*ctx.cast::<MimallocArena>() };
     arena.remap(
         // SAFETY: `buf` is a live arena allocation per the vtable contract.
-        unsafe { NonNull::new_unchecked(buf.as_mut_ptr()) },
+        yolo! { NonNull::new_unchecked(buf.as_mut_ptr()) },
         buf.len(),
         new_len,
         a.to_byte_units(),
@@ -756,7 +757,7 @@ unsafe fn vtable_remap(
 unsafe fn vtable_free(_ctx: *mut c_void, buf: &mut [u8], a: crate::Alignment, _ra: usize) {
     // SAFETY: vtable contract — `buf` was allocated by this arena's
     // `mi_heap_malloc[_aligned]`. `mi_free` is thread-safe.
-    unsafe { crate::basic::mi_free_checked(buf.as_mut_ptr().cast(), buf.len(), a.to_byte_units()) }
+    yolo! { crate::basic::mi_free_checked(buf.as_mut_ptr().cast(), buf.len(), a.to_byte_units()) }
 }
 
 /// Zig: `heap_allocator_vtable` — per-arena thunks; `ctx` is the
@@ -780,7 +781,7 @@ unsafe fn global_vtable_alloc(
 ) -> *mut u8 {
     // `mi_malloc[_aligned]` are declared `safe fn` in the extern block (no input
     // preconditions — any len/alignment is valid; returns null on OOM), so no
-    // `unsafe { }` is required here.
+    // `yolo! { }` is required here.
     if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
         mimalloc::mi_malloc_aligned(len, a.to_byte_units()).cast()
     } else {
@@ -855,7 +856,7 @@ impl<'a> ArenaString<'a> {
     pub fn as_str(&self) -> &str {
         // SAFETY: `buf` is only ever extended via `push_str`/`write_str`, both
         // of which append UTF-8.
-        unsafe { core::str::from_utf8_unchecked(&self.buf) }
+        yolo! { core::str::from_utf8_unchecked(&self.buf) }
     }
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
@@ -874,7 +875,7 @@ impl<'a> ArenaString<'a> {
     pub fn into_bump_str(self) -> &'a str {
         let bytes = self.buf.into_bump_slice();
         // SAFETY: see `as_str`.
-        unsafe { core::str::from_utf8_unchecked(bytes) }
+        yolo! { core::str::from_utf8_unchecked(bytes) }
     }
 }
 

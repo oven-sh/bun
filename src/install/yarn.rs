@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use std::io::Write as _;
 
@@ -915,11 +916,11 @@ pub fn migrate_yarn_lockfile<'a>(
     // beyond len. We mirror with raw pointers and set len at the end.
     let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
     let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
-    let mut dependencies_buf: &mut [Dependency] = unsafe {
+    let mut dependencies_buf: &mut [Dependency] = yolo! {
         // SAFETY: capacity >= num_deps reserved above
         bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
     };
-    let mut resolutions_buf: &mut [PackageID] = unsafe {
+    let mut resolutions_buf: &mut [PackageID] = yolo! {
         // SAFETY: capacity >= num_deps reserved above
         bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
     };
@@ -1396,7 +1397,7 @@ pub fn migrate_yarn_lockfile<'a>(
     let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
         - (dependencies_base_ptr as usize))
         / core::mem::size_of::<Dependency>();
-    unsafe {
+    yolo! {
         // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
         this.buffers.dependencies.set_len(final_deps_len);
         this.buffers.resolutions.set_len(final_deps_len);

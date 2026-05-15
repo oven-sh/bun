@@ -7,6 +7,7 @@
 //! itself — orphan rules require the impl in either the trait crate or the
 //! type crate, and `bun_http_types` is jsc-free.
 
+use bun_yolo::yolo;
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
@@ -22,19 +23,19 @@ pub fn fetch_redirect_to_js(this: FetchRedirect, global: &JSGlobalObject) -> JSV
     // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
     // `as_mut_ptr` routes through `UnsafeCell::get` so the `*mut` carries write
     // provenance even though we hold `&JSGlobalObject` (the C++ side allocates).
-    unsafe { Bun__FetchRedirect__toJS(this as u8, global.as_mut_ptr()) }
+    yolo! { Bun__FetchRedirect__toJS(this as u8, global.as_mut_ptr()) }
 }
 
 pub fn fetch_request_mode_to_js(this: FetchRequestMode, global: &JSGlobalObject) -> JSValue {
     // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
     // `as_mut_ptr` routes through `UnsafeCell::get` for sound interior mutability.
-    unsafe { Bun__FetchRequestMode__toJS(this as u8, global.as_mut_ptr()) }
+    yolo! { Bun__FetchRequestMode__toJS(this as u8, global.as_mut_ptr()) }
 }
 
 pub fn fetch_cache_mode_to_js(this: FetchCacheMode, global: &JSGlobalObject) -> JSValue {
     // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
     // `as_mut_ptr` routes through `UnsafeCell::get` for sound interior mutability.
-    unsafe { Bun__FetchCacheMode__toJS(this as u8, global.as_mut_ptr()) }
+    yolo! { Bun__FetchCacheMode__toJS(this as u8, global.as_mut_ptr()) }
 }
 
 // ported from: src/http_jsc/fetch_enums_jsc.zig

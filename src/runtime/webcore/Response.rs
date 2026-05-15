@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
@@ -81,21 +82,21 @@ impl HeadersRef {
     #[inline]
     pub fn create_empty() -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
-        unsafe { Self::adopt(FetchHeaders::create_empty()) }
+        yolo! { Self::adopt(FetchHeaders::create_empty()) }
     }
 
     /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
     #[inline]
     pub fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
-        unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
+        yolo! { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
     }
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
     pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
-        Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
+        Ok(FetchHeaders::create_from_js(global, value)?.map(|p| yolo! { Self::adopt(p) }))
     }
 
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
@@ -104,7 +105,7 @@ impl HeadersRef {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
             .clone_this(global)?
-            .map(|p| unsafe { Self::adopt(p) }))
+            .map(|p| yolo! { Self::adopt(p) }))
     }
 }
 
@@ -228,7 +229,7 @@ impl Default for Response {
 impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        yolo! { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
     }
 }
 pub type WeakRef = bun_ptr::WeakPtr<Response>;
@@ -363,7 +364,7 @@ impl Response {
     }
 
     /// R-2 `JsCell` escape hatch — single-JS-thread invariant. Centralises the
-    /// `unsafe { self.init.get_mut() }` deref so the four call sites
+    /// `yolo! { self.init.get_mut() }` deref so the four call sites
     /// ([`get_init_headers_mut`], [`header`], [`get_or_create_headers`],
     /// [`get_content_type`]) read it as a plain `&mut Init`.
     ///
@@ -376,7 +377,7 @@ impl Response {
     #[allow(clippy::mut_from_ref)]
     fn init_mut(&self) -> &mut Init {
         // SAFETY: see fn doc — single-JS-thread, no overlapping `&mut Init`.
-        unsafe { self.init.get_mut() }
+        yolo! { self.init.get_mut() }
     }
 
     #[inline]
@@ -832,7 +833,7 @@ impl Response {
             formatter.reset_line();
             // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
             // `&mut self`; single-JS-thread invariant.
-            unsafe { self.body.get_mut() }
+            yolo! { self.body.get_mut() }
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
         writer.write_str("\n")?;
@@ -858,7 +859,7 @@ impl Response {
 
     pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: ptr is a freshly-boxed Response from clone()
-        unsafe { (*ptr).to_js(global_object) }
+        yolo! { (*ptr).to_js(global_object) }
     }
 
     pub fn clone_value(&self, global_this: &JSGlobalObject) -> JsResult<Response> {
@@ -886,7 +887,7 @@ impl Response {
 
     fn destroy(this: *mut Response) {
         // SAFETY: called from unref() when ref_count hits 0; this is the unique owner
-        unsafe {
+        yolo! {
             // Mirrors Zig `destroy` (Response.zig:457-460): `init.deinit()` /
             // `body.deinit()` / `url.deref()` / `js_ref.deinit()`.
             //
@@ -924,7 +925,7 @@ impl Response {
 
     pub fn ref_(this: *mut Response) -> *mut Response {
         // SAFETY: intrusive refcount; caller holds a live reference
-        unsafe {
+        yolo! {
             (*this).ref_count.set((*this).ref_count.get() + 1);
         }
         this
@@ -932,7 +933,7 @@ impl Response {
 
     pub fn unref(this: *mut Response) {
         // SAFETY: intrusive refcount; caller holds a live reference
-        unsafe {
+        yolo! {
             let rc = (*this).ref_count.get();
             debug_assert!(rc > 0);
             (*this).ref_count.set(rc - 1);
@@ -1074,7 +1075,7 @@ impl Response {
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.
-        Ok(unsafe { (*ptr).to_js(global_this) })
+        Ok(yolo! { (*ptr).to_js(global_this) })
     }
 
     fn validate_redirect_status_code(
@@ -1101,7 +1102,7 @@ impl Response {
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.
-        Ok(unsafe { (*ptr).to_js(global_this) })
+        Ok(yolo! { (*ptr).to_js(global_this) })
     }
 
     pub fn construct_redirect_impl(
@@ -1190,9 +1191,9 @@ impl Response {
         }));
 
         // SAFETY: `response` is freshly boxed and uniquely owned here.
-        let js_value = unsafe { (*response).to_js(global_this) };
+        let js_value = yolo! { (*response).to_js(global_this) };
         // SAFETY: `to_js` does not free the payload; still uniquely owned.
-        unsafe { (*response).js_ref.set(JsRef::init_weak(js_value)) };
+        yolo! { (*response).js_ref.set(JsRef::init_weak(js_value)) };
         Ok(js_value)
     }
 
@@ -1332,7 +1333,7 @@ impl Response {
         }));
         // SAFETY: `response` is freshly boxed and uniquely owned by this fn
         // until returned; reborrow for the trailing (infallible) setup.
-        let resp_ref = unsafe { &*response };
+        let resp_ref = yolo! { &*response };
 
         resp_ref.calculate_estimated_byte_size();
         resp_ref.check_body_stream_ref(global_this);
@@ -1409,7 +1410,7 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Request` owned by the
                 // JS wrapper cell; the wrapper is rooted by `response_init` for
                 // the duration of this call, so no GC can finalize it here.
-                let req = unsafe { &mut *req };
+                let req = yolo! { &mut *req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }
@@ -1421,7 +1422,7 @@ impl Init {
             if let Some(resp) = response_init.as_direct::<Response>() {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
-                let resp = unsafe { &*resp };
+                let resp = yolo! { &*resp };
                 return Ok(Some(resp.init.get().clone(global_this)?));
             }
         }
@@ -1441,7 +1442,7 @@ impl Init {
                 if !orig.is_empty() {
                     result.headers = orig
                         .clone_this(global_this)?
-                        .map(|p| unsafe { HeadersRef::adopt(p) });
+                        .map(|p| yolo! { HeadersRef::adopt(p) });
                 }
             } else {
                 result.headers = HeadersRef::create_from_js(global_this, headers)?;

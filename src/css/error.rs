@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bstr::BStr;
 use core::fmt;
 
@@ -11,7 +12,7 @@ use crate::Str;
 #[inline(always)]
 fn bs(p: Str) -> &'static BStr {
     // SAFETY: arena/source slice outlives the error value; only used transiently for Display.
-    BStr::new(unsafe { crate::arena_str(p) })
+    BStr::new(yolo! { crate::arena_str(p) })
 }
 
 /// A printer error.
@@ -200,7 +201,7 @@ impl ErrorLocation {
         // `source.contents` which outlives the diagnostic. Re-thread once
         // `bun_ast::Location` grows a real lifetime.
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
+            .map(|lines| yolo! { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
         Ok(bun_ast::Location {
             file: std::borrow::Cow::Borrowed(source.path.text),
             namespace: source.path.namespace,

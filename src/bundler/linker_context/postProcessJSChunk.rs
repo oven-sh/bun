@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::{self, ModuleInfo};
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
@@ -1030,7 +1031,7 @@ pub fn generate_entry_point_tail_js<'a>(
                             // Exports of imports need EImportIdentifier in case they need to be re-
                             // written to a property access later on
                             // SAFETY: symbol::Map::get returns a non-null `*mut Symbol` for a valid ref.
-                            if unsafe {
+                            if yolo! {
                                 (*c.graph
                                     .symbols
                                     .get(resolved_export_data.import_ref)
@@ -1365,7 +1366,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
     let import_records: &'a [ImportRecord] =
-        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.slice()) };
+        yolo! { bun_ptr::detach_lifetime(ast_view.import_records.slice()) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(

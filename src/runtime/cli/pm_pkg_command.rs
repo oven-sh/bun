@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::io::Write as _;
 
 use crate::cli::command::Context;
@@ -155,7 +156,7 @@ impl PmPkgCommand {
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        let log: &mut Log = unsafe { ctx.log_mut() };
+        let log: &mut Log = yolo! { ctx.log_mut() };
         // const generics mirror Zig `.{ .is_json, .allow_comments,
         // .allow_trailing_commas, .guess_indentation = true }` with the
         // remaining JSONOptions fields at their defaults (false).
@@ -902,7 +903,7 @@ impl PmPkgCommand {
             }
             // SAFETY: `old` is forgotten below so each Property is moved (not
             // duplicated) into `new_props`, matching Zig's value-copy loop.
-            new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
+            new_props.append_assume_capacity(yolo! { core::ptr::read(prop) });
         }
         core::mem::forget(old);
         e_obj.properties = new_props;

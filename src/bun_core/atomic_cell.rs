@@ -17,6 +17,7 @@
 //!
 //! See `docs/PORTING.md` §Global mutable state.
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
@@ -89,21 +90,21 @@ impl<T: Atom> AtomicCell<T> {
     pub fn load(&self) -> T {
         // SAFETY: `inner` is 8-aligned (see `_align`); `T: Atom` upholds the
         // size/padding contract.
-        unsafe { T::_atomic_load(self.inner.get(), Ordering::Acquire) }
+        yolo! { T::_atomic_load(self.inner.get(), Ordering::Acquire) }
     }
 
     /// Release store.
     #[inline]
     pub fn store(&self, value: T) {
         // SAFETY: as above.
-        unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Release) }
+        yolo! { T::_atomic_store(self.inner.get(), value, Ordering::Release) }
     }
 
     /// AcqRel swap; returns the previous value.
     #[inline]
     pub fn swap(&self, value: T) -> T {
         // SAFETY: as above.
-        unsafe { T::_atomic_swap(self.inner.get(), value, Ordering::AcqRel) }
+        yolo! { T::_atomic_swap(self.inner.get(), value, Ordering::AcqRel) }
     }
 
     /// AcqRel compare-and-swap. `Ok(prev)` on success, `Err(actual)` on
@@ -111,7 +112,7 @@ impl<T: Atom> AtomicCell<T> {
     #[inline]
     pub fn compare_exchange(&self, current: T, new: T) -> Result<T, T> {
         // SAFETY: as above.
-        unsafe {
+        yolo! {
             T::_atomic_cas(
                 self.inner.get(),
                 current,
@@ -143,14 +144,14 @@ impl<T: Atom> AtomicCell<T> {
     #[inline]
     pub fn load_relaxed(&self) -> T {
         // SAFETY: as above.
-        unsafe { T::_atomic_load(self.inner.get(), Ordering::Relaxed) }
+        yolo! { T::_atomic_load(self.inner.get(), Ordering::Relaxed) }
     }
 
     /// Relaxed store. See [`load_relaxed`](Self::load_relaxed).
     #[inline]
     pub fn store_relaxed(&self, value: T) {
         // SAFETY: as above.
-        unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Relaxed) }
+        yolo! { T::_atomic_store(self.inner.get(), value, Ordering::Relaxed) }
     }
 }
 
@@ -219,7 +220,7 @@ const unsafe fn xmute<A, B>(a: A) -> B {
         b: ManuallyDrop<B>,
     }
     // SAFETY: caller contract.
-    ManuallyDrop::into_inner(unsafe {
+    ManuallyDrop::into_inner(yolo! {
         U::<A, B> {
             a: ManuallyDrop::new(a),
         }
@@ -255,17 +256,17 @@ macro_rules! unsafe_impl_atom {
             unsafe fn _atomic_load(p: *mut Self, ord: ::core::sync::atomic::Ordering) -> Self {
                 // SAFETY: forwarded from `AtomicCell` which guarantees `p` is
                 // 8-aligned and points to a live `Self`.
-                unsafe { $crate::atomic_cell::_dispatch_load::<$T>(p, ord) }
+                yolo! { $crate::atomic_cell::_dispatch_load::<$T>(p, ord) }
             }
             #[inline]
             unsafe fn _atomic_store(p: *mut Self, v: Self, ord: ::core::sync::atomic::Ordering) {
                 // SAFETY: as above.
-                unsafe { $crate::atomic_cell::_dispatch_store::<$T>(p, v, ord) }
+                yolo! { $crate::atomic_cell::_dispatch_store::<$T>(p, v, ord) }
             }
             #[inline]
             unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: ::core::sync::atomic::Ordering) -> Self {
                 // SAFETY: as above.
-                unsafe { $crate::atomic_cell::_dispatch_swap::<$T>(p, v, ord) }
+                yolo! { $crate::atomic_cell::_dispatch_swap::<$T>(p, v, ord) }
             }
             #[inline]
             unsafe fn _atomic_cas(
@@ -276,7 +277,7 @@ macro_rules! unsafe_impl_atom {
                 f: ::core::sync::atomic::Ordering,
             ) -> ::core::result::Result<Self, Self> {
                 // SAFETY: as above.
-                unsafe { $crate::atomic_cell::_dispatch_cas::<$T>(p, cur, new, s, f) }
+                yolo! { $crate::atomic_cell::_dispatch_cas::<$T>(p, cur, new, s, f) }
             }
         }
     )+};
@@ -291,30 +292,30 @@ macro_rules! size_dispatch {
             1 => {
                 type $A = AtomicU8;
                 type $I = u8;
-                let $a = unsafe { &*($p as *const $A) };
+                let $a = yolo! { &*($p as *const $A) };
                 $body
             }
             2 => {
                 type $A = AtomicU16;
                 type $I = u16;
-                let $a = unsafe { &*($p as *const $A) };
+                let $a = yolo! { &*($p as *const $A) };
                 $body
             }
             4 => {
                 type $A = AtomicU32;
                 type $I = u32;
-                let $a = unsafe { &*($p as *const $A) };
+                let $a = yolo! { &*($p as *const $A) };
                 $body
             }
             8 => {
                 type $A = AtomicU64;
                 type $I = u64;
-                let $a = unsafe { &*($p as *const $A) };
+                let $a = yolo! { &*($p as *const $A) };
                 $body
             }
             // SAFETY: `unsafe_impl_atom!`'s `const _` assert rejected every
             // other width at compile time.
-            _ => unsafe { ::core::hint::unreachable_unchecked() },
+            _ => yolo! { ::core::hint::unreachable_unchecked() },
         }
     };
 }
@@ -322,17 +323,17 @@ macro_rules! size_dispatch {
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_load<T: Copy>(p: *mut T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| unsafe { xmute::<I, T>(a.load(ord)) })
+    size_dispatch!(T, p, |a: A, I| yolo! { xmute::<I, T>(a.load(ord)) })
 }
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
-    size_dispatch!(T, p, |a: A, I| a.store(unsafe { xmute::<T, I>(v) }, ord))
+    size_dispatch!(T, p, |a: A, I| a.store(yolo! { xmute::<T, I>(v) }, ord))
 }
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_swap<T: Copy>(p: *mut T, v: T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| unsafe {
+    size_dispatch!(T, p, |a: A, I| yolo! {
         xmute::<I, T>(a.swap(xmute::<T, I>(v), ord))
     })
 }
@@ -347,13 +348,13 @@ pub unsafe fn _dispatch_cas<T: Copy>(
 ) -> Result<T, T> {
     size_dispatch!(T, p, |a: A, I| {
         match a.compare_exchange(
-            unsafe { xmute::<T, I>(cur) },
-            unsafe { xmute::<T, I>(new) },
+            yolo! { xmute::<T, I>(cur) },
+            yolo! { xmute::<T, I>(new) },
             s,
             f,
         ) {
-            Ok(x) => Ok(unsafe { xmute::<I, T>(x) }),
-            Err(x) => Err(unsafe { xmute::<I, T>(x) }),
+            Ok(x) => Ok(yolo! { xmute::<I, T>(x) }),
+            Err(x) => Err(yolo! { xmute::<I, T>(x) }),
         }
     })
 }
@@ -372,15 +373,15 @@ unsafe_impl_atom!(
 unsafe impl<U> Atom for *mut U {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord) }
+        yolo! { (*(p as *const AtomicPtr<U>)).load(ord) }
     }
     #[inline]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v, ord) }
+        yolo! { (*(p as *const AtomicPtr<U>)).store(v, ord) }
     }
     #[inline]
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        unsafe { (*(p as *const AtomicPtr<U>)).swap(v, ord) }
+        yolo! { (*(p as *const AtomicPtr<U>)).swap(v, ord) }
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -390,7 +391,7 @@ unsafe impl<U> Atom for *mut U {
         s: Ordering,
         f: Ordering,
     ) -> Result<Self, Self> {
-        unsafe { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
+        yolo! { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
     }
 }
 
@@ -398,15 +399,15 @@ unsafe impl<U> Atom for *mut U {
 unsafe impl<U> Atom for *const U {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord) as *const U }
+        yolo! { (*(p as *const AtomicPtr<U>)).load(ord) as *const U }
     }
     #[inline]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v as *mut U, ord) }
+        yolo! { (*(p as *const AtomicPtr<U>)).store(v as *mut U, ord) }
     }
     #[inline]
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        unsafe { (*(p as *const AtomicPtr<U>)).swap(v as *mut U, ord) as *const U }
+        yolo! { (*(p as *const AtomicPtr<U>)).swap(v as *mut U, ord) as *const U }
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -416,7 +417,7 @@ unsafe impl<U> Atom for *const U {
         s: Ordering,
         f: Ordering,
     ) -> Result<Self, Self> {
-        unsafe {
+        yolo! {
             match (*(p as *const AtomicPtr<U>)).compare_exchange(cur as *mut U, new as *mut U, s, f)
             {
                 Ok(x) => Ok(x as *const U),
@@ -437,15 +438,15 @@ fn nn_to_raw<U>(v: Option<NonNull<U>>) -> *mut U {
 unsafe impl<U> Atom for Option<NonNull<U>> {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).load(ord) })
+        NonNull::new(yolo! { (*(p as *const AtomicPtr<U>)).load(ord) })
     }
     #[inline]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        unsafe { (*(p as *const AtomicPtr<U>)).store(nn_to_raw(v), ord) }
+        yolo! { (*(p as *const AtomicPtr<U>)).store(nn_to_raw(v), ord) }
     }
     #[inline]
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).swap(nn_to_raw(v), ord) })
+        NonNull::new(yolo! { (*(p as *const AtomicPtr<U>)).swap(nn_to_raw(v), ord) })
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -455,7 +456,7 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
         s: Ordering,
         f: Ordering,
     ) -> Result<Self, Self> {
-        unsafe {
+        yolo! {
             match (*(p as *const AtomicPtr<U>)).compare_exchange(
                 nn_to_raw(cur),
                 nn_to_raw(new),
@@ -584,7 +585,7 @@ impl<T: ?Sized> ThreadCell<T> {
     pub unsafe fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
         self.assert_owner();
         // SAFETY: caller contract above.
-        f(unsafe { &mut *self.inner.get() })
+        f(yolo! { &mut *self.inner.get() })
     }
 }
 
@@ -624,7 +625,7 @@ mod tests {
         let c: AtomicCell<Option<NonNull<u32>>> = AtomicCell::new(None);
         assert!(c.load().is_none());
         c.store(NonNull::new(&mut x));
-        assert_eq!(unsafe { *c.load().unwrap().as_ptr() }, 5);
+        assert_eq!(yolo! { *c.load().unwrap().as_ptr() }, 5);
     }
 
     #[test]

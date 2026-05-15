@@ -18,6 +18,7 @@
 //! `DefaultRwLock` algorithm is portable across all Bun targets while keeping
 //! `const fn new` (which `pthread_rwlock_t` cannot guarantee).
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
@@ -250,7 +251,7 @@ impl<'a, T> Deref for RwLockReadGuard<'a, T> {
     #[inline]
     fn deref(&self) -> &T {
         // SAFETY: shared lock held; only `&T` is handed out under it.
-        unsafe { &*self.lock.value.get() }
+        yolo! { &*self.lock.value.get() }
     }
 }
 
@@ -275,7 +276,7 @@ impl<'a, T> Deref for RwLockWriteGuard<'a, T> {
     #[inline]
     fn deref(&self) -> &T {
         // SAFETY: exclusive lock held.
-        unsafe { &*self.lock.value.get() }
+        yolo! { &*self.lock.value.get() }
     }
 }
 
@@ -283,7 +284,7 @@ impl<'a, T> DerefMut for RwLockWriteGuard<'a, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: exclusive lock held; this is the only live reference.
-        unsafe { &mut *self.lock.value.get() }
+        yolo! { &mut *self.lock.value.get() }
     }
 }
 

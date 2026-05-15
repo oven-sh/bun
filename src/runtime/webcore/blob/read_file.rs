@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::{MaybeUninit, offset_of};
@@ -86,7 +87,7 @@ pub trait ReadFileCompletion {
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
     fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
-        let mut handler = unsafe { bun_core::heap::take(handler) };
+        let mut handler = yolo! { bun_core::heap::take(handler) };
         // PORT NOTE: `Strong::swap()` ties the returned `&mut JSPromise` to
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
@@ -116,7 +117,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // SAFETY: `promise` was just swapped out of a live `Strong`
                 // handle; the JS heap cell is kept alive by the caller's
                 // `JSRef` over the ReadFile task.
-                let promise = unsafe { &mut *promise };
+                let promise = yolo! { &mut *promise };
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
                 promise.reject(global_this, Ok(val))?;
             }
@@ -157,11 +158,11 @@ impl bun_jsc::work_task::WorkTaskContext for ReadFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
         // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
-        unsafe { (*this).run(task) }
+        yolo! { (*this).run(task) }
     }
     fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
-        ReadFile::then(unsafe { bun_core::heap::take(this) }, global)
+        ReadFile::then(yolo! { bun_core::heap::take(this) }, global)
     }
 }
 
@@ -268,7 +269,7 @@ impl FileCloser for ReadFile {
 
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
-        let this: &mut ReadFile = unsafe {
+        let this: &mut ReadFile = yolo! {
             &mut *(bun_core::from_field_ptr!(
                 ReadFile,
                 io_request,
@@ -277,7 +278,7 @@ impl FileCloser for ReadFile {
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut ReadFile` set below.
-            let this = unsafe { bun_ptr::callback_ctx::<ReadFile>(ctx.cast()) };
+            let this = yolo! { bun_ptr::callback_ctx::<ReadFile>(ctx.cast()) };
             <ReadFile as FileCloser>::on_io_request_closed(this);
         }
         // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
@@ -297,7 +298,7 @@ impl FileCloser for ReadFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
         // recover parent.
-        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
+        let this = yolo! { &mut *ReadFile::from_task_ptr(task) };
         this.close_after_io = false;
         ReadFile::update(this);
     }
@@ -395,7 +396,7 @@ impl ReadFile {
     pub fn on_readable(request: *mut io::Request) {
         // SAFETY: request points to ReadFile.io_request (intrusive field).
         let this: &mut ReadFile =
-            unsafe { &mut *(bun_core::from_field_ptr!(ReadFile, io_request, request)) };
+            yolo! { &mut *(bun_core::from_field_ptr!(ReadFile, io_request, request)) };
         this.on_ready();
     }
 
@@ -439,14 +440,14 @@ impl ReadFile {
     /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), sys::Error)` shape.
     fn on_io_error_thunk(ctx: *mut (), err: bun_sys::Error) {
         // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
-        unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
+        yolo! { (*ctx.cast::<ReadFile>()).on_io_error(err) }
     }
 
     pub fn on_request_readable(request: &mut io::Request) -> io::Action<'_> {
         bloblog!("ReadFile.onRequestReadable");
         request.scheduled = false;
         // SAFETY: request points to ReadFile.io_request (intrusive field); recover parent via offset_of.
-        let this: &mut ReadFile = unsafe {
+        let this: &mut ReadFile = yolo! {
             &mut *(bun_core::from_field_ptr!(
                 ReadFile,
                 io_request,
@@ -511,7 +512,7 @@ impl ReadFile {
             // spare capacity (write-valid via `as_mut_ptr()`); both are
             // exclusively owned by the caller for `buffer.1` bytes and outlive
             // this call. We never access `self.buffer` here, so no aliasing.
-            let buf = unsafe { core::slice::from_raw_parts_mut(buffer.0, buffer.1) };
+            let buf = yolo! { core::slice::from_raw_parts_mut(buffer.0, buffer.1) };
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
             }
@@ -775,7 +776,7 @@ impl ReadFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
         // recover parent.
-        let this = unsafe { &mut *ReadFile::from_task_ptr(task) };
+        let this = yolo! { &mut *ReadFile::from_task_ptr(task) };
 
         this.update();
     }
@@ -828,7 +829,7 @@ impl ReadFile {
                 } else {
                     // record the amount of data read
                     // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
-                    unsafe { bun_core::vec::commit_spare(&mut self.buffer, read_amount) };
+                    yolo! { bun_core::vec::commit_spare(&mut self.buffer, read_amount) };
                 }
                 // - If they DID set a max length, we should stop
                 //   reading after that.
@@ -1054,7 +1055,7 @@ impl<'a> ReadFileUV<'a> {
         // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
         // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
         // async op, which additionally pins it via `ref_concurrently()` below.
-        let event_loop: &'a EventLoop = unsafe { &*event_loop };
+        let event_loop: &'a EventLoop = yolo! { &*event_loop };
         let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {
             // Zig: `event_loop.virtual_machine.uvLoop()` — projected through the
@@ -1085,7 +1086,7 @@ impl<'a> ReadFileUV<'a> {
         event_loop.ref_concurrently();
         let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
-        unsafe { (*this_ptr).get_fd(Self::on_file_open) };
+        yolo! { (*this_ptr).get_fd(Self::on_file_open) };
         // ownership now lives with the libuv request chain until finalize().
         let _ = this_ptr;
     }
@@ -1093,7 +1094,7 @@ impl<'a> ReadFileUV<'a> {
     pub fn finalize(this: *mut Self) {
         log!("ReadFileUV.finalize");
         // SAFETY: `this` was heap-allocated in start(); we reclaim ownership here.
-        let mut this_box = unsafe { bun_core::heap::take(this) };
+        let mut this_box = yolo! { bun_core::heap::take(this) };
         let event_loop = this_box.event_loop;
 
         let cb = this_box.on_complete_fn;
@@ -1162,7 +1163,7 @@ impl<'a> ReadFileUV<'a> {
         // deinit'd `fs_t` owned by `self`, `opened_fd.uv()` is the just-opened fd,
         // and `on_file_initial_stat` is a valid `uv_fs_cb` that recovers `self`
         // from `req.data` (set above).
-        let rc = unsafe {
+        let rc = yolo! {
             libuv::uv_fs_fstat(
                 self.loop_,
                 &mut self.req,
@@ -1187,7 +1188,7 @@ impl<'a> ReadFileUV<'a> {
     extern "C" fn on_file_initial_stat(req: *mut libuv::fs_t) {
         log!("ReadFileUV.onFileInitialStat");
         // SAFETY: req.data was set to *mut Self in on_file_open().
-        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
+        let this: &mut ReadFileUV = yolo! { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
 
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
@@ -1347,7 +1348,7 @@ impl<'a> ReadFileUV<'a> {
             // wrapping `self.buffer`'s spare capacity (libuv copies the iovec
             // descriptor before returning), `opened_fd.uv()` is the open fd, and
             // `on_read` is a valid `uv_fs_cb` that recovers `self` from `req.data`.
-            let res = unsafe {
+            let res = yolo! {
                 libuv::uv_fs_read(
                     self.loop_,
                     &mut self.req,
@@ -1381,7 +1382,7 @@ impl<'a> ReadFileUV<'a> {
 
     pub extern "C" fn on_read(req: *mut libuv::fs_t) {
         // SAFETY: req.data was set to *mut Self in queue_read().
-        let this: &mut ReadFileUV = unsafe { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
+        let this: &mut ReadFileUV = yolo! { bun_ptr::callback_ctx::<ReadFileUV>((*req).data) };
 
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
@@ -1409,7 +1410,7 @@ impl<'a> ReadFileUV<'a> {
 
         this.read_off += SizeType::try_from(result.int()).expect("int cast");
         // SAFETY: libuv wrote result.int() bytes into remaining_buffer()'s spare slice.
-        unsafe {
+        yolo! {
             this.buffer
                 .uv_commit(usize::try_from(result.int()).expect("int cast"))
         };

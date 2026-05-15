@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
@@ -498,7 +499,7 @@ impl<TaskType> NewTaskQueue<TaskType> {
     {
         self.wait_group.add_one();
         // SAFETY: task is a valid Box-allocated task; .task field is the intrusive node.
-        self.thread_pool.schedule(Batch::from(unsafe {
+        self.thread_pool.schedule(Batch::from(yolo! {
             std::ptr::from_mut::<WorkPoolTask>((*task).task())
         }));
     }
@@ -572,7 +573,7 @@ impl HardLinkWindowsInstallTask {
         // process-wide `PackageManager` singleton and never changes.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
-        unsafe {
+        yolo! {
             if INITIALIZED.swap(true, Ordering::Relaxed) {
                 let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
                 *q.errored_task.lock() = None;
@@ -616,16 +617,16 @@ impl HardLinkWindowsInstallTask {
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
-        let self_: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
+        let self_: *mut Self = yolo! { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
-        let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
+        let queue = yolo! { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
 
         // SAFETY: self_ is valid until we reclaim the Box below.
-        if let Some(err) = unsafe { (*self_).run() } {
-            unsafe { (*self_).err = Some(err) };
+        if let Some(err) = yolo! { (*self_).run() } {
+            yolo! { (*self_).err = Some(err) };
             // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
-            let boxed = unsafe { bun_core::heap::take(self_) };
+            let boxed = yolo! { bun_core::heap::take(self_) };
             // First-write-wins: keep only the first error. Any later failing task
             // simply drops its Box here (the Zig original leaks the loser; in Rust
             // that would also leak the inner `Box<[u16]>` per failed file).
@@ -636,7 +637,7 @@ impl HardLinkWindowsInstallTask {
             return;
         }
         // SAFETY: self_ was heap-allocated in init().
-        unsafe { drop(bun_core::heap::take(self_)) };
+        yolo! { drop(bun_core::heap::take(self_)) };
     }
 
     fn run(&mut self) -> Option<bun_core::Error> {
@@ -670,7 +671,7 @@ impl HardLinkWindowsInstallTask {
                     );
                 }
                 // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
-                unsafe { windows::DeleteFileW(dest.as_ptr()) };
+                yolo! { windows::DeleteFileW(dest.as_ptr()) };
                 if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
                     return None;
                 }
@@ -699,7 +700,7 @@ impl HardLinkWindowsInstallTask {
         }
 
         // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
-        if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } != 0 {
+        if yolo! { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } != 0 {
             return None;
         }
 
@@ -719,7 +720,7 @@ struct UninstallTask {
 impl UninstallTask {
     fn run(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of an UninstallTask.
-        let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
+        let uninstall_task: *mut Self = yolo! { bun_core::from_field_ptr!(Self, task, task) };
 
         // PORT NOTE: declared *before* the Box is reclaimed so it drops *after* the
         // Box — Rust drops locals in reverse declaration order. Zig's `defer task.deinit()`
@@ -731,14 +732,14 @@ impl UninstallTask {
             // avoids materializing `&mut PackageManager` from a worker thread (the
             // main thread holds the install borrow). `wake_raw` is the documented
             // thread-safe wake path that never forms `&mut PackageManager`.
-            unsafe {
+            yolo! {
                 (*pm).pending_tasks.fetch_sub(1, Ordering::Release);
                 PackageManager::wake_raw(pm);
             }
         }
 
         // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
-        let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
+        let uninstall_task = yolo! { bun_core::heap::take(uninstall_task) };
         let mut debug_timer = Output::DebugTimer::start();
 
         let dirname =
@@ -841,7 +842,7 @@ impl<'a> PackageInstall<'a> {
         self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
         self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b".bun-tag".len()] = 0;
         // SAFETY: NUL written above.
-        let bun_tag_path = unsafe {
+        let bun_tag_path = yolo! {
             ZStr::from_raw_mut(
                 self.destination_dir_subpath_buf.as_mut_ptr(),
                 dest_len + SEP_STR.len() + b".bun-tag".len(),
@@ -851,7 +852,7 @@ impl<'a> PackageInstall<'a> {
             self.destination_dir_subpath_buf.as_mut_ptr(),
             // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;
             // dest_len < buf capacity (was the prior NUL position).
-            move |p| unsafe { *p.add(dest_len) = 0 },
+            move |p| yolo! { *p.add(dest_len) = 0 },
         );
         // PERF(port): was stack-fallback alloc — profile in Phase B
 
@@ -934,7 +935,7 @@ impl<'a> PackageInstall<'a> {
         self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
         self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b"package.json".len()] = 0;
         // SAFETY: NUL written above.
-        let package_json_path = unsafe {
+        let package_json_path = yolo! {
             ZStr::from_raw_mut(
                 self.destination_dir_subpath_buf.as_mut_ptr(),
                 dest_len + SEP_STR.len() + b"package.json".len(),
@@ -944,7 +945,7 @@ impl<'a> PackageInstall<'a> {
             self.destination_dir_subpath_buf.as_mut_ptr(),
             // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;
             // dest_len < buf capacity (was the prior NUL position).
-            move |p| unsafe { *p.add(dest_len) = 0 },
+            move |p| yolo! { *p.add(dest_len) = 0 },
         );
 
         let package_json_file = self
@@ -1316,7 +1317,7 @@ impl<'a> PackageInstall<'a> {
 
             // SAFETY: FFI — destbase.fd() is an open handle; state.buf is a valid writable
             // WPathBuffer of the passed length.
-            let dest_path_length = unsafe {
+            let dest_path_length = yolo! {
                 windows::GetFinalPathNameByHandleW(
                     destbase.fd().native(),
                     state.buf.as_mut_ptr(),
@@ -1355,7 +1356,7 @@ impl<'a> PackageInstall<'a> {
 
             // SAFETY: FFI — cached_package_dir.fd() is an open handle (opened above);
             // state.buf2 is a valid writable WPathBuffer of the passed length.
-            let cache_path_length = unsafe {
+            let cache_path_length = yolo! {
                 windows::GetFinalPathNameByHandleW(
                     state.cached_package_dir.fd().native(),
                     state.buf2.as_mut_ptr(),
@@ -1451,7 +1452,7 @@ impl<'a> PackageInstall<'a> {
                         EntryKind::Directory => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
-                            if unsafe {
+                            if yolo! {
                                 windows::CreateDirectoryExW(
                                     src.as_ptr(),
                                     dest.as_ptr(),
@@ -1467,7 +1468,7 @@ impl<'a> PackageInstall<'a> {
                         }
                         EntryKind::File => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                            if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } == 0 {
+                            if yolo! { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } == 0 {
                                 if let Some(entry_dirname) =
                                     bun_paths::Dirname::dirname_u16(entry.path.as_slice())
                                 {
@@ -1476,7 +1477,7 @@ impl<'a> PackageInstall<'a> {
                                         entry_dirname,
                                     );
                                     // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                                    if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) }
+                                    if yolo! { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) }
                                         != 0
                                     {
                                         continue;
@@ -1934,7 +1935,7 @@ impl<'a> PackageInstall<'a> {
                         EntryKind::Directory => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
-                            if unsafe {
+                            if yolo! {
                                 windows::CreateDirectoryExW(
                                     src.as_ptr(),
                                     dest.as_ptr(),
@@ -2093,14 +2094,14 @@ impl<'a> PackageInstall<'a> {
                 // (the caller `PackageInstaller` already holds one); `total_tasks` is
                 // main-thread-only state, `pending_tasks` is atomic. Mirrors
                 // `increment_pending_tasks`.
-                unsafe {
+                yolo! {
                     *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
                     (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
                 }
                 // SAFETY: task is a valid heap allocation; .task is the intrusive node.
                 PackageManager::get()
                     .thread_pool
-                    .schedule(Batch::from(unsafe {
+                    .schedule(Batch::from(yolo! {
                         core::ptr::addr_of_mut!((*task).task)
                     }));
             }
@@ -2253,7 +2254,7 @@ impl<'a> PackageInstall<'a> {
             let mut wbuf = WPathBuffer::uninit();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
-            let dest_path_length = unsafe {
+            let dest_path_length = yolo! {
                 windows::GetFinalPathNameByHandleW(
                     destination_dir.fd().native(),
                     wbuf.as_mut_ptr(),
@@ -2408,7 +2409,7 @@ impl<'a> PackageInstall<'a> {
                         resolution::Tag::Npm => 'package_json_exists: {
                             // SAFETY: thread-local PathBuffer; this is the only borrower on
                             // this thread for the duration of the block (Zig: `var buf = ...`).
-                            let buf: &mut [u8] = unsafe {
+                            let buf: &mut [u8] = yolo! {
                                 (*crate::package_manager::cached_package_folder_name_buf())
                                     .as_mut_slice()
                             };
@@ -2427,7 +2428,7 @@ impl<'a> PackageInstall<'a> {
                             // SAFETY: p points into the long-lived cached_package_folder_name_buf;
                             // subpath_len is in bounds (was the prior NUL position).
                             let _restore =
-                                scopeguard::guard(buf.as_mut_ptr(), move |p: *mut u8| unsafe {
+                                scopeguard::guard(buf.as_mut_ptr(), move |p: *mut u8| yolo! {
                                     *p.add(subpath_len) = 0;
                                 });
                             buf[subpath_len + 1..subpath_len + 1 + b"package.json\0".len()]

@@ -3,6 +3,7 @@
 //! and `run_as_worker` (the `--test-worker` side that reads framed commands
 //! from stdin, runs each file under isolation, and streams results to fd 3).
 
+use bun_yolo::yolo;
 use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -84,7 +85,7 @@ pub fn run_as_coordinator(
     // around the self-referential Coordinator/Worker graph.
     let vm_ptr = vm;
     // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *(*vm_ptr).transpiler.env };
+    let env = yolo! { &mut *(*vm_ptr).transpiler.env };
     // TODO(port): narrow error set
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
@@ -94,7 +95,7 @@ pub fn run_as_coordinator(
         let _ = env.map.put(b"JEST_WORKER_ID", b"1");
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
         // SAFETY: see vm_ptr note above.
-        TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
+        TestCommand::run_all_tests(reporter, yolo! { &mut *vm_ptr }, files);
         return Ok(false);
     }
 
@@ -119,7 +120,7 @@ pub fn run_as_coordinator(
             #[cfg(not(windows))]
             {
                 // SAFETY: getpid is always safe
-                unsafe { libc::getpid() as i64 }
+                yolo! { libc::getpid() as i64 }
             }
         };
         // TODO(port): allocPrintSentinel — was arena-backed; sentinel dropped (no C-string consumer on this path)
@@ -200,7 +201,7 @@ pub fn run_as_coordinator(
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
-        unsafe {
+        yolo! {
             (*w).out.worker = w;
             (*w).err.worker = w;
         }
@@ -208,10 +209,10 @@ pub fn run_as_coordinator(
 
     let mut coord = Coordinator {
         // SAFETY: see vm_ptr note above.
-        vm: unsafe { &*vm_ptr },
+        vm: yolo! { &*vm_ptr },
         // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
         event_loop_handle: bun_jsc::EventLoopHandle::init(
-            unsafe { (*vm_ptr).event_loop() }.cast::<()>(),
+            yolo! { (*vm_ptr).event_loop() }.cast::<()>(),
         ),
         reporter,
         files: sorted,
@@ -259,9 +260,9 @@ pub fn run_as_coordinator(
     }
 
     // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
+    yolo! { (*(*vm_ptr).event_loop()).ensure_waker() };
     // SAFETY: see vm_ptr note above.
-    unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    yolo! { &*vm_ptr }.run_with_api_lock(|| coord.drive());
 
     if ctx.test_options.reporters.junit {
         if let Some(outfile) = &ctx.test_options.reporter_outfile {
@@ -271,7 +272,7 @@ pub fn run_as_coordinator(
             let summary_ptr: *const crate::test_runner::jest::Summary = coord.reporter.summary();
             // SAFETY: summary lives in *coord.reporter, which outlives this call
             // and is not mutated by merge_junit_fragments.
-            aggregate::merge_junit_fragments(&mut coord, outfile, unsafe { &*summary_ptr });
+            aggregate::merge_junit_fragments(&mut coord, outfile, yolo! { &*summary_ptr });
         }
     }
     if coverage_opts.enabled {
@@ -573,18 +574,18 @@ struct WorkerLoop<'a> {
 impl<'a> WorkerLoop<'a> {
     pub fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
-        let vm = unsafe { &mut *self.vm };
+        let vm = yolo! { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
             Output::pretty_errorln("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
-        unsafe {
+        yolo! {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-        let wf = unsafe { &mut *WORKER_FRAME.get() };
+        let wf = yolo! { &mut *WORKER_FRAME.get() };
         wf.begin(frame::Kind::Ready);
         self.cmds.send(wf.finish());
 
@@ -659,7 +660,7 @@ pub fn run_as_worker(
     ctx: Command::Context,
 ) -> ! {
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    let vm_ref = unsafe { &mut *vm };
+    let vm_ref = yolo! { &mut *vm };
     vm_ref.test_isolation_enabled = true;
     vm_ref.auto_killer.enabled = true;
 
@@ -667,7 +668,7 @@ pub fn run_as_worker(
     // whether Rust VM still needs explicit arena wiring or if this is a no-op.
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm_ref.event_loop()).ensure_waker() };
+    yolo! { (*vm_ref.event_loop()).ensure_waker() };
     vm_ref.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
@@ -695,12 +696,12 @@ pub fn run_as_worker(
     // sees repeat_bufs/junit_file/coverage_file.
     while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done {
         // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).tick() };
+        yolo! { (*vm_ref.event_loop()).tick() };
         if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done {
             break;
         }
         // SAFETY: event_loop pointer is valid while vm lives.
-        unsafe { (*vm_ref.event_loop()).auto_tick() };
+        yolo! { (*vm_ref.event_loop()).auto_tick() };
     }
     Global::exit(0);
 }
@@ -720,7 +721,7 @@ fn worker_flush_aggregates(
     }
 
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-    let wf = unsafe { &mut *WORKER_FRAME.get() };
+    let wf = yolo! { &mut *WORKER_FRAME.get() };
 
     wf.begin(frame::Kind::RepeatBufs);
     wf.str(reporter.failures_to_repeat_buf.as_slice());
@@ -737,7 +738,7 @@ fn worker_flush_aggregates(
             #[cfg(not(windows))]
             {
                 // SAFETY: getpid is always safe
-                i64::from(unsafe { libc::getpid() })
+                i64::from(yolo! { libc::getpid() })
             }
         };
         if let Some(junit) = &mut reporter.reporters.junit {
@@ -801,14 +802,14 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 /// codes). The coordinator prints these bytes verbatim so output matches serial.
 pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
-    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
+    let Some(cmds_ptr) = (yolo! { WORKER_CMDS.read() }) else {
         return;
     };
     // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
     // outlives all callers (process exits before it is dropped).
-    let cmds = unsafe { &mut *cmds_ptr };
+    let cmds = yolo! { &mut *cmds_ptr };
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
-    let wf = unsafe { &mut *WORKER_FRAME.get() };
+    let wf = yolo! { &mut *WORKER_FRAME.get() };
     wf.begin(frame::Kind::TestDone);
     wf.u32_(file_idx);
     wf.str(formatted_line);

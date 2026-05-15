@@ -7,6 +7,7 @@
 //! barrels are known. When a barrel later loads, applyBarrelOptimization reads
 //! `requested_exports` to see what's already been requested. No graph scan needed.
 
+use bun_yolo::yolo;
 use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
@@ -165,7 +166,7 @@ fn apply_barrel_optimization_impl(
     if let Some(dev) = dev_handle {
         // SAFETY: barrel_needed_exports is owned by DevServer; bundler runs on the bundle
         // thread which holds the DevServer lock during this callback.
-        let needed = unsafe { &*dev.barrel_needed_exports() };
+        let needed = yolo! { &*dev.barrel_needed_exports() };
         if let Some(persisted) = needed.get(result.source.path.text) {
             for alias in persisted.keys() {
                 if let Some(resolution) =
@@ -626,7 +627,7 @@ pub fn schedule_barrel_deferred_imports(
                     // PORT NOTE: arena-backed key slices live for the bundler
                     // arena lifetime; raw-ptr round-trip to detach from the
                     // `&this.requested_exports` borrow before BFS mutates it.
-                    let alias: &[u8] = unsafe { bun_ptr::detach_lifetime_ref(&**key) };
+                    let alias: &[u8] = yolo! { bun_ptr::detach_lifetime_ref(&**key) };
                     queue.push(BarrelWorkItem {
                         barrel_source_index: this_source_index,
                         alias,

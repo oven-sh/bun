@@ -4,6 +4,7 @@
 //! `get_source_map_impl` calls it via a trait bound (Zig used
 //! `@hasDecl(SourceProviderKind, "getExternalData")`).
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -34,7 +35,7 @@ impl BakeSourceProvider {
     #[inline]
     pub fn get_source_slice(&self) -> BunString {
         // SAFETY: `self` is a live `*BakeSourceProvider` handed back to C++.
-        unsafe { BakeSourceProvider__getSourceSlice(self.as_mut_ptr()) }
+        yolo! { BakeSourceProvider__getSourceSlice(self.as_mut_ptr()) }
     }
 
     pub fn to_source_content_ptr(&self) -> source_map::parsed_source_map::SourceContentPtr {
@@ -52,13 +53,13 @@ impl BakeSourceProvider {
     pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
         let global = bun_jsc::virtual_machine::VirtualMachine::get().global;
         // SAFETY: `global` is the live JSGlobalObject for this VM thread.
-        if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
+        if !yolo! { BakeGlobalObject__isBakeGlobalObject(global) } {
             return None;
         }
 
         // SAFETY: `global` is a `Bake::GlobalObject` (checked above), so the
         // attached `PerThread*` is non-null and live for the bake build session.
-        let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
+        let pt = yolo! { BakeGlobalObject__getPerThreadData(global) };
         // PORT NOTE: `PerThread`'s fields name `bun_bundler::OutputFile`, which
         // lives above this crate (forward-dep cycle). The field access
         // (`pt.source_maps.get(filename)` →
@@ -70,8 +71,8 @@ impl BakeSourceProvider {
         // thread. The returned slice borrows `PerThread.bundled_outputs`, which
         // outlives this `BakeSourceProvider` (the provider is created from a
         // `bundled_outputs` entry), so reborrowing as `&'self [u8]` is sound.
-        if let Some(slice) = unsafe { (hooks.bake_per_thread_source_map)(pt, source_filename) } {
-            return Some(unsafe { &*slice });
+        if let Some(slice) = yolo! { (hooks.bake_per_thread_source_map)(pt, source_filename) } {
+            return Some(yolo! { &*slice });
         }
         Some(b"")
     }

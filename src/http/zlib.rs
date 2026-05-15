@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_core::MutableString;
 use bun_zlib::{ZlibError, ZlibReaderArrayList};
 
@@ -37,7 +38,7 @@ mod buffer_pool {
     pub fn put(mutable: *mut MutableString) {
         // SAFETY: `mutable` was returned by `get()` above; #[repr(transparent)] cast is sound;
         // `release_value` recovers the parent node via offset_of.
-        unsafe {
+        yolo! {
             (*mutable).reset();
             BufferPool::release_value(mutable.cast::<PooledMutableString>());
         }

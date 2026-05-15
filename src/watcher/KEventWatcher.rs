@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_int;
 
 use bun_core::output as Output;
@@ -79,7 +80,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let changelist = &mut changelist_array;
 
     // SAFETY: fd is a valid kqueue fd; changelist points to CHANGELIST_COUNT zeroed entries
-    let mut count: c_int = unsafe {
+    let mut count: c_int = yolo! {
         c::kevent(
             fd.native(),
             changelist.as_ptr(),
@@ -99,7 +100,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             tv_nsec: 100_000,
         }; // 0.0001 seconds
         // SAFETY: off < CHANGELIST_COUNT (count < 64), remain entries fit in the buffer
-        let extra: c_int = unsafe {
+        let extra: c_int = yolo! {
             c::kevent(
                 fd.native(),
                 changelist.as_ptr().add(off),

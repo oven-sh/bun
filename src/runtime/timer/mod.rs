@@ -10,6 +10,7 @@
 //! Full Phase-A drafts are preserved gated under ` mod *_draft`
 //! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use bun_collections::ArrayHashMap;
@@ -84,13 +85,13 @@ macro_rules! impl_timer_object {
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
                 // SAFETY: caller contract — `this` points to a live `Self`.
-                unsafe { &raw mut (*this).ref_count }
+                yolo! { &raw mut (*this).ref_count }
             }
             #[inline]
             unsafe fn destructor(this: *mut Self, _ctx: ()) {
                 // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit`
                 // consumes the `heap::alloc`'d allocation from `init_with()`.
-                unsafe { Self::deinit(this) }
+                yolo! { Self::deinit(this) }
             }
         }
 
@@ -123,7 +124,7 @@ macro_rules! impl_timer_object {
             #[inline]
             pub unsafe fn ref_(this: *mut Self) {
                 // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::ref_(this) }
+                yolo! { ::bun_ptr::RefCount::<Self>::ref_(this) }
             }
 
             /// Decrement the intrusive refcount; on zero runs `deinit` (drops
@@ -135,7 +136,7 @@ macro_rules! impl_timer_object {
             #[inline]
             pub unsafe fn deref(this: *mut Self) {
                 // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::deref(this) }
+                yolo! { ::bun_ptr::RefCount::<Self>::deref(this) }
             }
 
             /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:
@@ -159,7 +160,7 @@ macro_rules! impl_timer_object {
                 // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`
                 // shim; `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.
-                let js_value = unsafe { Self::to_js_ptr(payload, global) };
+                let js_value = yolo! { Self::to_js_ptr(payload, global) };
                 // Zig codegen: `bun.assert(value__.as($T).? == this)` —
                 // round-trip ABI check.
                 debug_assert!(
@@ -169,7 +170,7 @@ macro_rules! impl_timer_object {
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
                 // SAFETY: `payload` was just allocated above and is exclusively
                 // owned here; `internals.init()` writes every field.
-                unsafe {
+                yolo! {
                     (*payload).internals.init(
                         js_value, global, id, kind, interval, callback, arguments,
                     );
@@ -194,7 +195,7 @@ macro_rules! impl_timer_object {
             /// `heap::alloc`'d `Self`.
             unsafe fn deinit(this: *mut Self) {
                 // SAFETY: refcount has reached zero ⇒ unique reference.
-                unsafe {
+                yolo! {
                     (*this).internals.deinit();
                     drop(::bun_core::heap::take(this));
                 }
@@ -308,7 +309,7 @@ impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     fn less(&self, a: *mut EventLoopTimer, b: *mut EventLoopTimer) -> bool {
         // SAFETY: `Intrusive` only ever calls `less` with non-null nodes that
         // are live members of the heap (caller invariant on insert/meld).
-        EventLoopTimer::less((), unsafe { &*a }, unsafe { &*b })
+        EventLoopTimer::less((), yolo! { &*a }, yolo! { &*b })
     }
 }
 
@@ -328,7 +329,7 @@ impl TimerHeap {
     #[inline]
     pub unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
-        unsafe { self.0.insert(v) };
+        yolo! { self.0.insert(v) };
     }
 
     /// # Safety
@@ -336,14 +337,14 @@ impl TimerHeap {
     #[inline]
     pub unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
-        unsafe { self.0.remove(v) };
+        yolo! { self.0.remove(v) };
     }
 
     #[inline]
     pub fn delete_min(&mut self) -> Option<*mut EventLoopTimer> {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
         // live until popped (intrusive invariant maintained by `All`).
-        let r = unsafe { self.0.delete_min() };
+        let r = yolo! { self.0.delete_min() };
         if r.is_null() { None } else { Some(r) }
     }
 
@@ -351,7 +352,7 @@ impl TimerHeap {
     pub fn find_max(&self) -> Option<*mut EventLoopTimer> {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
         // live for the heap's lifetime (intrusive invariant maintained by `All`).
-        let r = unsafe { self.0.find_max() };
+        let r = yolo! { self.0.find_max() };
         if r.is_null() { None } else { Some(r) }
     }
 
@@ -359,7 +360,7 @@ impl TimerHeap {
     pub fn count(&self) -> usize {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
         // live for the heap's lifetime (intrusive invariant maintained by `All`).
-        unsafe { self.0.count() }
+        yolo! { self.0.count() }
     }
 }
 
@@ -441,7 +442,7 @@ impl DateHeaderTimer {
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
             // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
-            unsafe { (*Self::timer_all()).insert(elt) };
+            yolo! { (*Self::timer_all()).insert(elt) };
         }
     }
 }
@@ -494,7 +495,7 @@ impl EventLoopDelayMonitor {
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
         // `fake_timers`, disjoint from `event_loop_delay` which `self` aliases.
-        unsafe { (*Self::timer_all()).insert(elt) };
+        yolo! { (*Self::timer_all()).insert(elt) };
     }
 
     pub fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
@@ -506,7 +507,7 @@ impl EventLoopDelayMonitor {
         self.last_fire_ns = 0;
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).remove(elt) };
+        yolo! { (*Self::timer_all()).remove(elt) };
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -558,7 +559,7 @@ impl EventLoopDelayMonitor {
         };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).insert(elt) };
+        yolo! { (*Self::timer_all()).insert(elt) };
     }
 }
 
@@ -599,7 +600,7 @@ pub unsafe fn js_timer_flags_ptr(
 ) -> Option<core::ptr::NonNull<TimerFlags>> {
     use core::ptr::{NonNull, addr_of};
     // SAFETY: caller contract — `t` is live; tag invariant per fn docs.
-    unsafe {
+    yolo! {
         let p: *const TimerFlags = match (*t).tag {
             EventLoopTimerTag::TimeoutObject => {
                 let parent = TimeoutObject::from_timer_ptr(t);
@@ -689,17 +690,17 @@ impl All {
         // fresh `&mut EventLoopTimer` via `(*a).heap()` for the same
         // allocation, so we must NOT hold a `&mut *timer` across that call.
         // Read `tag` and write `state`/`in_heap` via raw deref instead.
-        let allow_fake = unsafe { (*timer).tag }.allow_fake_timers();
+        let allow_fake = yolo! { (*timer).tag }.allow_fake_timers();
         if self.fake_timers.is_active() && allow_fake {
             // SAFETY: see fn contract
-            unsafe {
+            yolo! {
                 self.fake_timers.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
                 (*timer).in_heap = InHeap::Fake;
             }
         } else {
             // SAFETY: see fn contract
-            unsafe {
+            yolo! {
                 self.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
                 (*timer).in_heap = InHeap::Regular;
@@ -751,10 +752,10 @@ impl All {
             // SAFETY: `uv_timer.data` is non-null past the lazy-init block, so
             // `uv_timer_init` has run and the handle's `loop` field points at
             // the owning VM's live `uv_loop_t` (== `vm.uvLoop()` per spec).
-            unsafe { uv::uv_update_time(self.uv_timer.get_loop()) };
+            yolo! { uv::uv_update_time(self.uv_timer.get_loop()) };
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             // SAFETY: `peek` returns a live heap node.
-            let next = unsafe { &(*timer).next };
+            let next = yolo! { &(*timer).next };
             let next_ts = Timespec {
                 sec: next.sec,
                 nsec: next.nsec,
@@ -788,16 +789,16 @@ impl All {
         // SAFETY: `uv_timer_t` is the address of `All.uv_timer` (libuv passes
         // back exactly the handle pointer we registered in `ensure_uv_timer`);
         // recover the containing `All` via container_of.
-        let all: *mut All = unsafe { bun_core::from_field_ptr!(All, uv_timer, uv_timer_t) };
+        let all: *mut All = yolo! { bun_core::from_field_ptr!(All, uv_timer, uv_timer_t) };
         // SAFETY: `data` was set to the VM ptr in `ensure_uv_timer` (non-null).
-        let vm: *mut () = unsafe { (*uv_timer_t).data.cast() };
+        let vm: *mut () = yolo! { (*uv_timer_t).data.cast() };
         // SAFETY: callback fires on the JS thread (libuv invokes on the loop's
         // thread); `all` is live for the VM lifetime. `drain_timers` may
         // re-enter `(*runtime_state()).timer` — it forms only short-lived
         // `&mut All` around heap pop/peek, so the raw-ptr deref here is sound.
-        unsafe { (*all).drain_timers(vm) };
+        yolo! { (*all).drain_timers(vm) };
         // SAFETY: see above; re-arm for the next-soonest deadline (if any).
-        unsafe { (*all).ensure_uv_timer() };
+        yolo! { (*all).ensure_uv_timer() };
     }
 
     pub fn remove(&mut self, timer: *mut EventLoopTimer) {
@@ -812,19 +813,19 @@ impl All {
         // fresh `&mut EventLoopTimer` via `(*v).heap()` for the same
         // allocation, so we must NOT hold a `&mut *timer` across that call.
         // Read `in_heap` and write the post-remove bookkeeping via raw deref.
-        match unsafe { (*timer).in_heap } {
+        match yolo! { (*timer).in_heap } {
             InHeap::None => {
                 // PORT NOTE: `Environment.ci_assert` → `debug_assertions` (see ptr/ref_count.rs).
                 // can't remove a timer that was not inserted
                 debug_assert!(false);
             }
             // SAFETY: timer is in `self.timers` per `in_heap`
-            InHeap::Regular => unsafe { self.timers.remove(timer) },
+            InHeap::Regular => yolo! { self.timers.remove(timer) },
             // SAFETY: timer is in `self.fake_timers.timers` per `in_heap`
-            InHeap::Fake => unsafe { self.fake_timers.timers.remove(timer) },
+            InHeap::Fake => yolo! { self.fake_timers.timers.remove(timer) },
         }
         // SAFETY: `timer` is still a valid live EventLoopTimer.
-        unsafe {
+        yolo! {
             (*timer).in_heap = InHeap::None;
             (*timer).state = EventLoopTimerState::CANCELLED;
         }
@@ -837,13 +838,13 @@ impl All {
         // Read `state` via raw deref so we don't hold a `&mut *timer` across
         // `remove_lock_held` (which also `&mut`-derefs the same pointer);
         // overlapping `&mut` is UB under Stacked Borrows.
-        if unsafe { (*timer).state } == EventLoopTimerState::ACTIVE {
+        if yolo! { (*timer).state } == EventLoopTimerState::ACTIVE {
             self.remove_lock_held(timer);
         }
 
         // SAFETY: `timer` is still a valid live EventLoopTimer; safe to derive
         // an exclusive reference now that no other borrow is outstanding.
-        let timer_ref = unsafe { &mut *timer };
+        let timer_ref = yolo! { &mut *timer };
         // PORT NOTE: Zig asserts `&timer.next != time` (threadsafety); the
         // EventLoopTimer.Timespec and bun_core::Timespec are distinct types
         // until the lower tier unifies them, so the pointer-compare is moot
@@ -856,12 +857,12 @@ impl All {
         // refresh order.
         // SAFETY: `timer` is live (caller contract); `timer_ref`'s last use
         // is above so the raw `(*timer).tag` read inside is SB-clean.
-        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
+        if let Some(flags) = yolo! { js_timer_flags_ptr(timer) } {
             // Zig: `epoch: u25` with `+%= 1`.
             self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
             // SAFETY: exclusive under `self.lock`; `flags` points into the
             // live container recovered above.
-            unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
+            yolo! { (*flags.as_ptr()).set_epoch(self.epoch) };
         }
 
         self.insert_lock_held(timer);
@@ -913,7 +914,7 @@ impl All {
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `peek()` call only.
-            let Some(min) = (unsafe { &mut *this }).timers.peek() else {
+            let Some(min) = (yolo! { &mut *this }).timers.peek() else {
                 break;
             };
             // SAFETY: peek returns a live heap node.
@@ -922,7 +923,7 @@ impl All {
             // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
             // deref and fire via raw deref (mirroring `drain_timers`).
             let (min_next_sec, min_next_nsec, min_tag) =
-                unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
+                yolo! { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
             let now =
                 *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::AllowMockedTime));
 
@@ -937,7 +938,7 @@ impl All {
                     if min_tag == EventLoopTimerTag::WTFTimer {
                         // SAFETY: short-lived `&mut All` scoped to
                         // `delete_min()`; dropped before `fire()`.
-                        let _ = unsafe { &mut *this }.timers.delete_min();
+                        let _ = yolo! { &mut *this }.timers.delete_min();
                         let el_now = ElTimespec {
                             sec: now.sec,
                             nsec: now.nsec,
@@ -945,7 +946,7 @@ impl All {
                         // SAFETY: `min` was just popped and is live; no `&mut`
                         // to `All` or to `*min` is held across `fire()`, which
                         // may re-enter `(*runtime_state()).timer`.
-                        unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+                        yolo! { EventLoopTimer::fire(min, &el_now, vm) };
                         continue;
                     }
                     *spec = Timespec { sec: 0, nsec: 0 };
@@ -996,7 +997,7 @@ impl All {
                 *has_set_now = true;
             }
             // SAFETY: peek returns a live heap node
-            let next = unsafe { &(*timer).next };
+            let next = yolo! { &(*timer).next };
             if (Timespec {
                 sec: next.sec,
                 nsec: next.nsec,
@@ -1036,7 +1037,7 @@ impl All {
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `next()` call only — dropped before fire().
-            let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
+            let Some(t) = (yolo! { &mut *this }).next(&mut has_set_now, &mut now) else {
                 break;
             };
             // PORT NOTE: re-pack into bun_event_loop's local Timespec stub
@@ -1049,7 +1050,7 @@ impl All {
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
             // to `All` is live here.
-            unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            yolo! { EventLoopTimer::fire(t, &el_now, vm) };
         }
     }
 
@@ -1060,7 +1061,7 @@ impl All {
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            yolo! { &mut *uws_loop }.ref_();
             #[cfg(windows)]
             {
                 // Spec Timer.zig:168-179: lazy-init the idle handle and start
@@ -1078,7 +1079,7 @@ impl All {
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            yolo! { &mut *uws_loop }.unref();
             #[cfg(windows)]
             if !self.uv_idle.data.is_null() {
                 self.uv_idle.stop();
@@ -1105,7 +1106,7 @@ impl All {
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            yolo! { &mut *uws_loop }.ref_();
             // Spec Timer.zig:207-213 calls `this.uv_timer.ref()` unconditionally
             // (no `data != null` guard). Invariant: every path that reaches a
             // positive `active_timer_count` first inserts a timer, and `insert`
@@ -1117,7 +1118,7 @@ impl All {
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            yolo! { &mut *uws_loop }.unref();
             #[cfg(windows)]
             self.uv_timer.unref();
         }

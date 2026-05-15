@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
 use bun_paths::{PathBuffer, fs::FileSystem};
@@ -512,7 +513,7 @@ impl NewBuilder<VLQSourceMap> {
             // passes `.ptr[0..4]` (unchecked 4-byte view) and the decoder only
             // dereferences bytes covered by `len`.
             c = strings::decode_wtf8_rune_t::<i32>(
-                unsafe { &*slice.as_ptr().add(i).cast::<[u8; 4]>() },
+                yolo! { &*slice.as_ptr().add(i).cast::<[u8; 4]>() },
                 len,
                 strings::UNICODE_REPLACEMENT as i32,
             );
@@ -614,7 +615,7 @@ impl NewBuilder<VLQSourceMap> {
         // SAFETY: lifetime erased to `'static`; `contents` (`Source.contents`)
         // outlives the builder. Same erasure as `line_offset_table_byte_offset_list`.
         let contents: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(contents.as_ptr(), contents.len()) };
+            yolo! { core::slice::from_raw_parts(contents.as_ptr(), contents.len()) };
         self.deferred_source = Some((contents, approximate_line_count));
     }
 
@@ -674,7 +675,7 @@ impl NewBuilder<VLQSourceMap> {
             // the backing table outlives every `add_source_mapping` call and is
             // never reallocated. Same shape as Zig's cached `[]const u32`.
             self.line_offset_table_byte_offset_list =
-                unsafe { core::slice::from_raw_parts(col.as_ptr(), col.len()) };
+                yolo! { core::slice::from_raw_parts(col.as_ptr(), col.len()) };
         }
         let byte_offsets = self.line_offset_table_byte_offset_list;
 

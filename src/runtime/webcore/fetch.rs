@@ -48,6 +48,7 @@ pub mod fetch_tasklet;
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
@@ -313,13 +314,13 @@ pub fn bun_fetch_preconnect(
     let href_raw: *mut [u8] = bun_core::heap::into_raw(href_box);
     // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
     // to `preconnect` (which frees it) or reclaim it on the early-return paths.
-    let href: &'static [u8] = unsafe { &*href_raw };
+    let href: &'static [u8] = yolo! { &*href_raw };
     let url = ZigURL::parse(href);
 
     macro_rules! reclaim_href {
         () => {
             // SAFETY: paired with the `heap::alloc` above; not yet handed to preconnect.
-            drop(unsafe { bun_core::heap::take(href_raw) });
+            drop(yolo! { bun_core::heap::take(href_raw) });
         };
     }
 
@@ -499,7 +500,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let s: &[u8] = $slice;
             // SAFETY: `s` points into a Vec that is immediately adopted as
             // `url_proxy_buffer` (or already is it); see PORT NOTE above.
-            ZigURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
+            ZigURL::parse(yolo! { bun_ptr::detach_lifetime(s) })
         }};
     }
     let mut url_type = URLType::Remote;
@@ -538,7 +539,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         () => {
             // SAFETY: `request` was obtained from a live JS-owned Request via
             // `as_direct`; each reborrow is non-overlapping at the call site.
-            request.map(|p| unsafe { &mut *p })
+            request.map(|p| yolo! { &mut *p })
         };
     }
 
@@ -1838,13 +1839,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
             // re-parsed URL; the slices stay valid for the buffer's lifetime.
             let url_static =
-                ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
+                ZigURL::parse(yolo! { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
             let s3_path = url_static.s3_path();
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
             // SAFETY: see `url_static` SAFETY note above.
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
-                Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
+                Some(yolo! { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
             } else {
                 None
             };
@@ -1985,7 +1986,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // keeps alive for the lifetime of the parsed URLs (see comment above).
     // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
-    let buf: &'static [u8] = unsafe { &*buf_ptr };
+    let buf: &'static [u8] = yolo! { &*buf_ptr };
     let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
     let proxy_static: Option<ZigURL<'static>> = if has_proxy {
         Some(ZigURL::parse(&buf[url_len..]))
@@ -2062,7 +2063,7 @@ impl<'a> S3StreamWrapper<'a> {
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
-        let mut self_ = unsafe { bun_core::heap::take(self_) };
+        let mut self_ = yolo! { bun_core::heap::take(self_) };
         let global = self_.global;
         // PORT NOTE: `defer bun.destroy(self)` + `defer free(url_proxy_buffer)` →
         // Box<Self> and Box<[u8]> Drop at end of scope.

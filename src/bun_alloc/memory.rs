@@ -1,5 +1,6 @@
 //! Basic utilities for working with memory and objects.
 
+use bun_yolo::yolo;
 use crate::AllocError;
 
 /// Allocates memory for a value of type `T` and initializes the memory with `value`.
@@ -65,7 +66,7 @@ pub fn init_default<T: Default>() -> T {
 // on the target type, not a free function here.
 //
 // TODO(port): if any caller relied on the `*x = undefined` poisoning to catch UAF in
-// debug, add `#[cfg(debug_assertions)] unsafe { ptr::write_bytes(p, 0xAA, 1) }` at
+// debug, add `#[cfg(debug_assertions)] yolo! { ptr::write_bytes(p, 0xAA, 1) }` at
 // that call site.
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -103,7 +104,7 @@ pub unsafe fn rebase_slice<'a>(slice: &[u8], old_base: *const u8, new_base: *con
     let offset = (slice.as_ptr() as usize) - (old_base as usize);
     // SAFETY: caller contract above guarantees `new_base.add(offset)` is in-bounds for
     // `slice.len()` bytes.
-    unsafe { core::slice::from_raw_parts(new_base.add(offset), slice.len()) }
+    yolo! { core::slice::from_raw_parts(new_base.add(offset), slice.len()) }
 }
 
 /// Removes the trailing sentinel from an owned sentinel-terminated buffer, returning

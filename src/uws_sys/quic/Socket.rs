@@ -2,6 +2,7 @@
 //! callback returns; lsquic frees the underlying `lsquic_conn` immediately
 //! after, so callers must drop the pointer inside that callback.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
@@ -37,7 +38,7 @@ impl Socket {
     #[inline]
     pub fn status(&mut self, buf: &mut [u8]) -> c_int {
         // SAFETY: self is a live us_quic_socket_t; buf.ptr is valid for buf.len bytes.
-        unsafe {
+        yolo! {
             us_quic_socket_status(
                 self,
                 buf.as_mut_ptr(),
@@ -63,7 +64,7 @@ impl Socket {
         // never reads or writes, and every Rust access goes through this method
         // behind `&mut self`; the elided return lifetime reborrows `self`, so the
         // borrow checker forbids a second live `&mut` to the slot.
-        unsafe { &mut *us_quic_socket_ext(self).cast::<Option<NonNull<T>>>() }
+        yolo! { &mut *us_quic_socket_ext(self).cast::<Option<NonNull<T>>>() }
     }
 }
 

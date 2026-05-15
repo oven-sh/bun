@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit, size_of};
 use core::ptr::NonNull;
@@ -189,7 +190,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         // SAFETY: caller contract — `out` is aligned and writable. We form a
         // place expression on `*out` only to project to `used`; no `&mut Self`
         // is created over the (uninitialized) whole struct.
-        unsafe {
+        yolo! {
             core::ptr::addr_of_mut!((*out).used).write(HiveBitSet::init_empty());
         }
         // `buffer: [MaybeUninit<T>; CAPACITY]` intentionally untouched.
@@ -337,7 +338,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         // pre-clean fields (`PooledSocket::release_parked_refs`) leave only
         // trivially-droppable residuals, so this is idempotent for them.
         // SAFETY: caller contract — `value` is a fully-initialized `T` in `buffer`.
-        unsafe { core::ptr::drop_in_place(value) };
+        yolo! { core::ptr::drop_in_place(value) };
         asan::poison(value.cast(), size_of::<T>());
 
         self.used.unset(index as usize);
@@ -400,7 +401,7 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         // SAFETY: `slot` is a unique live pointer into the hive buffer (or a
         // freshly leaked `Box<MaybeUninit<T>>`); the `&mut self` receiver
         // guarantees no other `&mut` to the same `MaybeUninit<T>` exists.
-        unsafe { self.slot.as_mut() }
+        yolo! { self.slot.as_mut() }
     }
 
     /// Move `value` into the slot and return the stable initialized pointer.
@@ -436,7 +437,7 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
             // that has not been moved (structural back-pointer guarantee).
             // No `&mut HiveArray` is live across this drop — `claim()`'s
             // borrow was released when the raw pointer was captured.
-            unsafe {
+            yolo! {
                 let index = (*hive)
                     .index_of(self.slot.as_ptr().cast::<T>())
                     .expect("HiveSlot points outside its owning hive");
@@ -449,7 +450,7 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
             // touching `T`.
             // SAFETY: `slot` was produced by `Box::leak(Box::<MaybeUninit<T>>::new_uninit())`
             // in `Fallback::claim` and has not been freed.
-            drop(unsafe { Box::from_raw(self.slot.as_ptr()) });
+            drop(yolo! { Box::from_raw(self.slot.as_ptr()) });
         }
     }
 }
@@ -482,7 +483,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     #[inline]
     pub unsafe fn init_in_place(out: *mut Self) {
         // SAFETY: caller contract.
-        unsafe { HiveArray::<T, CAPACITY>::init_in_place(core::ptr::addr_of_mut!((*out).hive)) };
+        yolo! { HiveArray::<T, CAPACITY>::init_in_place(core::ptr::addr_of_mut!((*out).hive)) };
     }
 
     /// Heap-allocate an empty `Fallback` without materializing it on the
@@ -506,11 +507,11 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         let mut boxed = Box::<Self>::new_uninit();
         // SAFETY: `boxed` is a fresh heap allocation — non-null, aligned for
         // `Self`, and valid for writes of `size_of::<Self>()` bytes.
-        unsafe { Self::init_in_place(boxed.as_mut_ptr()) };
+        yolo! { Self::init_in_place(boxed.as_mut_ptr()) };
         // SAFETY: `init_in_place` fully initialized `hive.used`; `hive.buffer`
         // is `[MaybeUninit<T>; CAPACITY]`, for which uninitialized bytes are a
         // valid representation. Every field of `Self` is therefore valid.
-        NonNull::from(Box::leak(unsafe { boxed.assume_init() }))
+        NonNull::from(Box::leak(yolo! { boxed.assume_init() }))
     }
 
     /// See [`HiveArray::get`] — same UB hazards, plus the heap path leaks a
@@ -593,7 +594,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         // `get()`; it was allocated as `Box<MaybeUninit<T>>` (same layout as
         // `Box<T>`). Reclaiming as `MaybeUninit<T>` deallocates without
         // running `T::drop`.
-        drop(unsafe { Box::from_raw(value.cast::<MaybeUninit<T>>()) });
+        drop(yolo! { Box::from_raw(value.cast::<MaybeUninit<T>>()) });
     }
 
     pub fn r#in(&self, value: *const T) -> bool {
@@ -616,7 +617,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     pub unsafe fn put(&mut self, value: *mut T) {
         if CAPACITY > 0 {
             // SAFETY: caller contract — `value` is fully initialized.
-            if unsafe { self.hive.put(value) } {
+            if yolo! { self.hive.put(value) } {
                 return;
             }
         }
@@ -625,7 +626,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         // in `get_impl`/`get_and_see_if_new`/`try_get` above (it is not in the
         // hive), and the caller has since fully initialized it. `destroy`
         // reconstructs the `Box<T>` and runs `T::drop`.
-        unsafe { bun_core::heap::destroy(value) };
+        yolo! { bun_core::heap::destroy(value) };
     }
 }
 
@@ -664,7 +665,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
     pub unsafe fn init(value: T, pool: *mut Fallback<Self, CAPACITY>) -> *mut Self {
         // SAFETY: caller contract — `pool` is dereferenceable.
-        unsafe {
+        yolo! {
             (*pool)
                 .get_init(HiveRef {
                     ref_count: 1,
@@ -692,7 +693,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
             // `init`). Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps
             // to `T::drop`, which `Fallback::put` now runs (it drops the whole
             // `HiveRef` in place before recycling/freeing the slot).
-            unsafe {
+            yolo! {
                 (*pool).put(std::ptr::from_mut::<Self>(self));
             }
             return None;
@@ -719,18 +720,18 @@ mod tests {
         {
             let b = a.get().unwrap();
             // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
-            unsafe { *b = 0 };
+            yolo! { *b = 0 };
             assert!(a.get().unwrap() != b);
             assert_eq!(a.index_of(b), Some(0));
             // SAFETY: `b` is a fully-initialized hive slot.
-            assert!(unsafe { a.put(b) });
+            assert!(yolo! { a.put(b) });
             assert!(a.get().unwrap() == b);
             let c = a.get().unwrap();
             // SAFETY: `c` points into `a.buffer` and was just unpoisoned by `get()`.
-            unsafe { *c = 123 };
+            yolo! { *c = 123 };
             let mut d: Int = 12345;
             // SAFETY: `&mut d` is foreign — `put` returns `false` and drops nothing.
-            assert!(unsafe { a.put(&mut d) } == false);
+            assert!(yolo! { a.put(&mut d) } == false);
             assert!(a.r#in(&d) == false);
         }
 
@@ -739,10 +740,10 @@ mod tests {
             for i in 0..SIZE {
                 let b = a.get().unwrap();
                 // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
-                unsafe { *b = 0 };
+                yolo! { *b = 0 };
                 assert_eq!(a.index_of(b), Some(u32::try_from(i).expect("int cast")));
                 // SAFETY: `b` is a fully-initialized hive slot.
-                assert!(unsafe { a.put(b) });
+                assert!(yolo! { a.put(b) });
                 assert!(a.get().unwrap() == b);
             }
             for _ in 0..SIZE {
@@ -773,7 +774,7 @@ mod tests {
         assert!(a.used.is_set(0));
         assert_eq!(DROPS.load(Ordering::Relaxed), 0);
         // SAFETY: `p` is a fully-initialized hive slot.
-        unsafe { a.put(p.as_ptr()) };
+        yolo! { a.put(p.as_ptr()) };
         assert_eq!(DROPS.load(Ordering::Relaxed), 1);
 
         // put_raw() does not drop.
@@ -787,7 +788,7 @@ mod tests {
         assert_eq!(DROPS.load(Ordering::Relaxed), 1);
         let p = f.get_init(D(9));
         // SAFETY: heap slot from this Fallback.
-        unsafe { f.put(p.as_ptr()) };
+        yolo! { f.put(p.as_ptr()) };
         assert_eq!(DROPS.load(Ordering::Relaxed), 2);
     }
 }

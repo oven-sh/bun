@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
@@ -19,7 +20,7 @@ impl StringBuilder {
         // SAFETY: StringBuilder__init writes the full SIZE bytes of the C++
         // object into `this.bytes`; after the call the value is fully
         // initialized.
-        unsafe {
+        yolo! {
             StringBuilder__init(this.as_mut_ptr().cast::<c_void>());
             this.assume_init()
         }
@@ -34,12 +35,12 @@ impl StringBuilder {
 
     pub fn append_latin1(&mut self, value: &[u8]) {
         // SAFETY: forwards a valid (ptr,len) slice to C++.
-        unsafe { StringBuilder__appendLatin1(self, value.as_ptr(), value.len()) }
+        yolo! { StringBuilder__appendLatin1(self, value.as_ptr(), value.len()) }
     }
 
     pub fn append_utf16(&mut self, value: &[u16]) {
         // SAFETY: forwards a valid (ptr,len) slice to C++.
-        unsafe { StringBuilder__appendUtf16(self, value.as_ptr(), value.len()) }
+        yolo! { StringBuilder__appendUtf16(self, value.as_ptr(), value.len()) }
     }
 
     pub fn append_double(&mut self, value: f64) {

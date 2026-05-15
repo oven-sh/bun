@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint};
 
 #[repr(C)]
@@ -233,37 +234,37 @@ pub mod validate {
 
         pub fn utf8(input: &[u8]) -> SIMDUTFResult {
             // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-            unsafe { simdutf__validate_utf8_with_errors(input.as_ptr(), input.len()) }
+            yolo! { simdutf__validate_utf8_with_errors(input.as_ptr(), input.len()) }
         }
         pub fn ascii(input: &[u8]) -> SIMDUTFResult {
             // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-            unsafe { simdutf__validate_ascii_with_errors(input.as_ptr(), input.len()) }
+            yolo! { simdutf__validate_ascii_with_errors(input.as_ptr(), input.len()) }
         }
         pub fn utf16le(input: &[u16]) -> SIMDUTFResult {
             // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-            unsafe { simdutf__validate_utf16le_with_errors(input.as_ptr(), input.len()) }
+            yolo! { simdutf__validate_utf16le_with_errors(input.as_ptr(), input.len()) }
         }
         pub fn utf16be(input: &[u16]) -> SIMDUTFResult {
             // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-            unsafe { simdutf__validate_utf16be_with_errors(input.as_ptr(), input.len()) }
+            yolo! { simdutf__validate_utf16be_with_errors(input.as_ptr(), input.len()) }
         }
     }
 
     pub fn utf8(input: &[u8]) -> bool {
         // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-        unsafe { simdutf__validate_utf8(input.as_ptr(), input.len()) }
+        yolo! { simdutf__validate_utf8(input.as_ptr(), input.len()) }
     }
     pub fn ascii(input: &[u8]) -> bool {
         // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-        unsafe { simdutf__validate_ascii(input.as_ptr(), input.len()) }
+        yolo! { simdutf__validate_ascii(input.as_ptr(), input.len()) }
     }
     pub fn utf16le(input: &[u16]) -> bool {
         // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-        unsafe { simdutf__validate_utf16le(input.as_ptr(), input.len()) }
+        yolo! { simdutf__validate_utf16le(input.as_ptr(), input.len()) }
     }
     pub fn utf16be(input: &[u16]) -> bool {
         // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-        unsafe { simdutf__validate_utf16be(input.as_ptr(), input.len()) }
+        yolo! { simdutf__validate_utf16be(input.as_ptr(), input.len()) }
     }
 }
 
@@ -276,7 +277,7 @@ pub mod convert {
             use super::*;
             pub fn utf8(input: &[u8], output: &mut [u8]) -> usize {
                 // SAFETY: caller guarantees output.len() is sufficient (>= utf8_length_from_latin1).
-                unsafe {
+                yolo! {
                     simdutf__convert_latin1_to_utf8(
                         input.as_ptr(),
                         input.len(),
@@ -297,7 +298,7 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u8], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf8_to_utf16le_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -307,7 +308,7 @@ pub mod convert {
                     }
                     pub fn be(input: &[u8], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf8_to_utf16be_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -319,7 +320,7 @@ pub mod convert {
 
                 pub fn le(input: &[u8], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_utf8_to_utf16le(
                             input.as_ptr(),
                             input.len(),
@@ -329,7 +330,7 @@ pub mod convert {
                 }
                 pub fn be(input: &[u8], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_utf8_to_utf16be(
                             input.as_ptr(),
                             input.len(),
@@ -345,7 +346,7 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u8], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf8_to_utf32_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -355,7 +356,7 @@ pub mod convert {
                     }
                     pub fn be(input: &[u8], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf8_to_utf32_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -367,7 +368,7 @@ pub mod convert {
 
                 pub fn le(input: &[u8], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf8_to_utf32(
                             input.as_ptr(),
                             input.len(),
@@ -377,7 +378,7 @@ pub mod convert {
                 }
                 pub fn be(input: &[u8], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf8_to_utf32(
                             input.as_ptr(),
                             input.len(),
@@ -399,7 +400,7 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u16], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf16le_to_utf8_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -409,7 +410,7 @@ pub mod convert {
                     }
                     pub fn be(input: &[u16], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf16be_to_utf8_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -421,7 +422,7 @@ pub mod convert {
 
                 pub fn le(input: &[u16], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf16le_to_utf8(
                             input.as_ptr(),
                             input.len(),
@@ -431,7 +432,7 @@ pub mod convert {
                 }
                 pub fn be(input: &[u16], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf16be_to_utf8(
                             input.as_ptr(),
                             input.len(),
@@ -447,7 +448,7 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u16], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf16le_to_utf32_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -457,7 +458,7 @@ pub mod convert {
                     }
                     pub fn be(input: &[u16], output: &mut [u32]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf16be_to_utf32_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -469,7 +470,7 @@ pub mod convert {
 
                 pub fn le(input: &[u16], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf16le_to_utf32(
                             input.as_ptr(),
                             input.len(),
@@ -479,7 +480,7 @@ pub mod convert {
                 }
                 pub fn be(input: &[u16], output: &mut [u32]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf16be_to_utf32(
                             input.as_ptr(),
                             input.len(),
@@ -501,7 +502,7 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u32], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf32_to_utf8_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -511,7 +512,7 @@ pub mod convert {
                     }
                     pub fn be(input: &[u32], output: &mut [u8]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf32_to_utf8_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -523,7 +524,7 @@ pub mod convert {
 
                 pub fn le(input: &[u32], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf32_to_utf8(
                             input.as_ptr(),
                             input.len(),
@@ -533,7 +534,7 @@ pub mod convert {
                 }
                 pub fn be(input: &[u32], output: &mut [u8]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf32_to_utf8(
                             input.as_ptr(),
                             input.len(),
@@ -549,7 +550,7 @@ pub mod convert {
                     use super::*;
                     pub fn le(input: &[u32], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf32_to_utf16le_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -559,7 +560,7 @@ pub mod convert {
                     }
                     pub fn be(input: &[u32], output: &mut [u16]) -> SIMDUTFResult {
                         // SAFETY: caller guarantees output capacity is sufficient.
-                        unsafe {
+                        yolo! {
                             simdutf__convert_utf32_to_utf16be_with_errors(
                                 input.as_ptr(),
                                 input.len(),
@@ -571,7 +572,7 @@ pub mod convert {
 
                 pub fn le(input: &[u32], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf32_to_utf16le(
                             input.as_ptr(),
                             input.len(),
@@ -581,7 +582,7 @@ pub mod convert {
                 }
                 pub fn be(input: &[u32], output: &mut [u16]) -> usize {
                     // SAFETY: caller guarantees output capacity is sufficient.
-                    unsafe {
+                    yolo! {
                         simdutf__convert_valid_utf32_to_utf16be(
                             input.as_ptr(),
                             input.len(),
@@ -605,22 +606,22 @@ pub mod length {
                 use super::*;
                 pub fn le(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-                    unsafe { simdutf__utf8_length_from_utf16le(input.as_ptr(), input.len()) }
+                    yolo! { simdutf__utf8_length_from_utf16le(input.as_ptr(), input.len()) }
                 }
                 pub fn be(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-                    unsafe { simdutf__utf8_length_from_utf16be(input.as_ptr(), input.len()) }
+                    yolo! { simdutf__utf8_length_from_utf16be(input.as_ptr(), input.len()) }
                 }
             }
 
             pub fn latin1(input: &[u8]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-                unsafe { simdutf__utf8_length_from_latin1(input.as_ptr(), input.len()) }
+                yolo! { simdutf__utf8_length_from_latin1(input.as_ptr(), input.len()) }
             }
 
             pub fn utf32(input: &[u32]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len u32s.
-                unsafe { simdutf__utf8_length_from_utf32(input.as_ptr(), input.len()) }
+                yolo! { simdutf__utf8_length_from_utf32(input.as_ptr(), input.len()) }
             }
         }
     }
@@ -633,17 +634,17 @@ pub mod length {
                 // TODO(port): Zig had `if (@inComptime())` branch using std.unicode.utf8CountCodepoints
                 // for compile-time evaluation; Rust has no equivalent — runtime path only.
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-                unsafe { simdutf__utf16_length_from_utf8(input.as_ptr(), input.len()) }
+                yolo! { simdutf__utf16_length_from_utf8(input.as_ptr(), input.len()) }
             }
 
             pub fn utf32(input: &[u32]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len u32s.
-                unsafe { simdutf__utf16_length_from_utf32(input.as_ptr(), input.len()) }
+                yolo! { simdutf__utf16_length_from_utf32(input.as_ptr(), input.len()) }
             }
 
             pub fn latin1(input: &[u8]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-                unsafe { simdutf__utf16_length_from_latin1(input.as_ptr(), input.len()) }
+                yolo! { simdutf__utf16_length_from_latin1(input.as_ptr(), input.len()) }
             }
         }
     }
@@ -656,11 +657,11 @@ pub mod length {
                 use super::*;
                 pub fn le(input: &[u8]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-                    unsafe { simdutf__utf32_length_from_utf8(input.as_ptr(), input.len()) }
+                    yolo! { simdutf__utf32_length_from_utf8(input.as_ptr(), input.len()) }
                 }
                 pub fn be(input: &[u8]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len bytes.
-                    unsafe { simdutf__utf32_length_from_utf8(input.as_ptr(), input.len()) }
+                    yolo! { simdutf__utf32_length_from_utf8(input.as_ptr(), input.len()) }
                 }
             }
 
@@ -668,11 +669,11 @@ pub mod length {
                 use super::*;
                 pub fn le(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-                    unsafe { simdutf__utf32_length_from_utf16le(input.as_ptr(), input.len()) }
+                    yolo! { simdutf__utf32_length_from_utf16le(input.as_ptr(), input.len()) }
                 }
                 pub fn be(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
-                    unsafe { simdutf__utf32_length_from_utf16be(input.as_ptr(), input.len()) }
+                    yolo! { simdutf__utf32_length_from_utf16be(input.as_ptr(), input.len()) }
                 }
             }
         }
@@ -768,7 +769,7 @@ pub mod base64 {
 
     pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> usize {
         // SAFETY: caller guarantees output.len() >= encode_len(input.len(), is_urlsafe).
-        unsafe {
+        yolo! {
             simdutf__base64_encode(
                 input.as_ptr(),
                 input.len(),
@@ -788,17 +789,17 @@ pub mod base64 {
     /// `encode_len(input.len(), is_urlsafe)` bytes and must not overlap
     /// `input`.
     pub unsafe fn encode_raw(input: &[u8], output: *mut u8, is_urlsafe: bool) -> usize {
-        unsafe { simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe as c_int) }
+        yolo! { simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe as c_int) }
     }
 
     pub fn encode_len(input: usize, is_urlsafe: bool) -> usize {
         // SAFETY: pure length computation; no pointers dereferenced.
-        unsafe { simdutf__base64_length_from_binary(input, is_urlsafe as c_int) }
+        yolo! { simdutf__base64_length_from_binary(input, is_urlsafe as c_int) }
     }
 
     pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
-        unsafe {
+        yolo! {
             simdutf__base64_decode_from_binary(
                 input.as_ptr(),
                 input.len(),
@@ -811,7 +812,7 @@ pub mod base64 {
 
     pub fn decode16(input: &[u16], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
-        unsafe {
+        yolo! {
             simdutf__base64_decode_from_binary16(
                 input.as_ptr(),
                 input.len(),

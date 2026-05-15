@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::node::BlobOrStringOrBuffer as JSArgument;
 use bun_collections::VecExt as _;
 use bun_core::{OwnedString, strings};
@@ -19,7 +20,7 @@ type Slice = bun_jsc::ZigStringSlice;
 /// static ASCII byte-string literal, so it is always valid UTF-8.
 #[inline(always)]
 const fn bname(b: &'static [u8]) -> &'static str {
-    unsafe { core::str::from_utf8_unchecked(b) }
+    yolo! { core::str::from_utf8_unchecked(b) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1959,7 +1960,7 @@ impl JSValkeyClient {
         let new_client_ptr = this.clone_without_connecting(global)?;
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
-        let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
+        let new_client: &JSValkeyClient = yolo! { &*new_client_ptr };
 
         let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
         new_client.this_value.set(JsRef::init_weak(new_client_js));

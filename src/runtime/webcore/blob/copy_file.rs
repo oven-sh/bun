@@ -1,5 +1,6 @@
 //! blocking, but off the main thread
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::marker::ConstParamTy;
 #[cfg(windows)]
@@ -338,7 +339,7 @@ impl<'a> CopyFile<'a> {
         scopeguard::defer! {
             // SAFETY: both raw ptrs point into the enclosing stack frame which
             // outlives this guard (dropped before fn return); disjoint fields.
-            unsafe { *read_len_slot = *total_written_slot as SizeType };
+            yolo! { *read_len_slot = *total_written_slot as SizeType };
         }
         // TODO(port): defer captures &mut to disjoint field via raw ptr;
         // Phase B: reshape to set read_len at each return site instead.
@@ -363,7 +364,7 @@ impl<'a> CopyFile<'a> {
                 }
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                    let _ = unsafe {
+                    let _ = yolo! {
                         libc::ftruncate(
                             dest_fd.native(),
                             i64::try_from(total_written).expect("int cast"),
@@ -379,7 +380,7 @@ impl<'a> CopyFile<'a> {
             let written: isize = match USE {
                 TryWith::CopyFileRange => {
                     // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
-                    unsafe {
+                    yolo! {
                         linux::copy_file_range(
                             src_fd.native(),
                             core::ptr::null_mut(),
@@ -392,7 +393,7 @@ impl<'a> CopyFile<'a> {
                 }
                 TryWith::Sendfile => {
                     // SAFETY: raw sendfile(2); both fds owned by caller, null offset.
-                    unsafe {
+                    yolo! {
                         linux::sendfile(
                             dest_fd.native(),
                             src_fd.native(),
@@ -403,7 +404,7 @@ impl<'a> CopyFile<'a> {
                 }
                 TryWith::Splice => {
                     // SAFETY: raw splice(2); both fds owned by caller, null offsets.
-                    unsafe {
+                    yolo! {
                         libc::splice(
                             src_fd.native(),
                             core::ptr::null_mut(),
@@ -438,7 +439,7 @@ impl<'a> CopyFile<'a> {
                         }
                         bun_sys::Result::Ok(()) => {
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                            let _ = unsafe {
+                            let _ = yolo! {
                                 libc::ftruncate(
                                     dest_fd.native(),
                                     i64::try_from(total_written).expect("int cast"),
@@ -460,10 +461,10 @@ impl<'a> CopyFile<'a> {
                             has_unset_append = true;
                             // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
                             let flags =
-                                unsafe { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
+                                yolo! { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
                             if (flags & bun_sys::O::APPEND) != 0 {
                                 // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                                let _ = unsafe {
+                                let _ = yolo! {
                                     libc::fcntl(
                                         dest_fd.native(),
                                         libc::F_SETFL,
@@ -495,7 +496,7 @@ impl<'a> CopyFile<'a> {
                             }
                             bun_sys::Result::Ok(()) => {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                                let _ = unsafe {
+                                let _ = yolo! {
                                     libc::ftruncate(
                                         dest_fd.native(),
                                         i64::try_from(total_written).expect("int cast"),
@@ -706,7 +707,7 @@ impl<'a> CopyFile<'a> {
                                     {
                                         // If this fails...well, there's not much we can do about it.
                                         // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
-                                        let _ = unsafe {
+                                        let _ = yolo! {
                                             bun_sys::c::truncate(
                                                 self.destination_file_store
                                                     .pathlike
@@ -887,7 +888,7 @@ impl<'a> CopyFile<'a> {
                     && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
                 {
                     // SAFETY: `destination_fd` is open; libc ftruncate(2).
-                    let _ = unsafe {
+                    let _ = yolo! {
                         bun_sys::darwin::ftruncate(
                             self.destination_fd.native(),
                             i64::try_from(self.max_length).expect("int cast"),
@@ -1078,7 +1079,7 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is a zeroed/cleaned
         // `fs_t` owned by `self`, `uv_buf` points into `read_buf`'s capacity, and
         // `on_read` is a valid `uv_fs_cb`.
-        let rc = unsafe {
+        let rc = yolo! {
             libuv::uv_fs_read(
                 loop_,
                 &mut self.io_request,
@@ -1141,7 +1142,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // `*mut CopyFileWindows` with out-of-bounds provenance (UB under Stacked/Tree
     // Borrows). After forming `this`, access the request via `this.io_request` — never
     // through `(*req)`, which would alias the live `&mut`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    let this: &mut CopyFileWindows = yolo! { &mut *(*req).data.cast::<CopyFileWindows>() };
     debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let source_fd = this.read_write_loop.source_fd;
@@ -1167,7 +1168,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
     let n = usize::try_from(rc.int()).expect("int cast");
     // SAFETY: libuv wrote `n` bytes into the buffer's capacity.
-    unsafe { read_buf.set_len(n) };
+    yolo! { read_buf.set_len(n) };
     this.read_write_loop.uv_buf = libuv::uv_buf_t::init(read_buf.as_slice());
 
     if rc.int() == 0 {
@@ -1180,7 +1181,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     this.io_request.deinit();
     // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` points into
     // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
-    let rc2 = unsafe {
+    let rc2 = yolo! {
         libuv::uv_fs_write(
             event_loop.uv_loop(),
             &mut this.io_request,
@@ -1204,7 +1205,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
     // not `from_field_ptr!`; then access the request only via `this.io_request`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    let this: &mut CopyFileWindows = yolo! { &mut *(*req).data.cast::<CopyFileWindows>() };
     debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
     let buf_len = this.read_write_loop.read_buf.len();
 
@@ -1245,7 +1246,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` is a tail
         // slice of the previous write buffer (still backed by `read_buf`), and
         // `on_write` is a valid `uv_fs_cb`.
-        let rc2 = unsafe {
+        let rc2 = yolo! {
             libuv::uv_fs_write(
                 this.event_loop.uv_loop(),
                 &mut this.io_request,
@@ -1319,7 +1320,7 @@ impl<'a> CopyFileWindows<'a> {
             read_write_loop: ReadWriteLoop::default(),
         }));
         // SAFETY: result was just allocated above
-        let result_ref = unsafe { &mut *result };
+        let result_ref = yolo! { &mut *result };
         let promise = result_ref.promise.value();
 
         // On error, this function might free the CopyFileWindows struct.
@@ -1538,7 +1539,7 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is owned by `self`,
         // `old_path`/`new_path` are NUL-terminated (from `slice_z`/`ZStr`), and
         // `on_copy_file` is a valid `uv_fs_cb`.
-        let rc = unsafe {
+        let rc = yolo! {
             libuv::uv_fs_copyfile(
                 loop_,
                 &mut self.io_request,
@@ -1576,11 +1577,11 @@ impl<'a> CopyFileWindows<'a> {
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
-        let _guard = unsafe {
+        let _guard = yolo! {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
-        unsafe { Self::destroy(core::ptr::from_mut(self)) };
+        yolo! { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
         let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
     }
@@ -1623,7 +1624,7 @@ impl<'a> CopyFileWindows<'a> {
                 // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` was just zeroed,
                 // `path_ptr` is NUL-terminated (from `slice_z`) and live for this call,
                 // and `on_chmod` is a valid `uv_fs_cb`.
-                let rc = unsafe {
+                let rc = yolo! {
                     libuv::uv_fs_chmod(
                         loop_,
                         &mut self.io_request,
@@ -1662,12 +1663,12 @@ impl<'a> CopyFileWindows<'a> {
         let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
-        let _guard = unsafe {
+        let _guard = yolo! {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
-        unsafe { Self::destroy(core::ptr::from_mut(self)) };
+        yolo! { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
         let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
     }
@@ -1691,7 +1692,7 @@ impl<'a> CopyFileWindows<'a> {
     /// not yet destroyed. After this call `this` is dangling.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `heap::alloc`-ed pointer.
-        unsafe {
+        yolo! {
             (*this).read_write_loop.close();
             // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
             // promise.deinit() — handled by JscStrong's Drop on Box drop
@@ -1754,7 +1755,7 @@ impl<'a> CopyFileWindows<'a> {
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
     // not `from_field_ptr!`; then access the request only via `this.io_request`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    let this: &mut CopyFileWindows = yolo! { &mut *(*req).data.cast::<CopyFileWindows>() };
     debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let event_loop = this.event_loop;
@@ -1802,7 +1803,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: see `on_read` — recover from `req->data` (whole-struct provenance),
     // not `from_field_ptr!`; then access the request only via `this.io_request`.
-    let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
+    let this: &mut CopyFileWindows = yolo! { &mut *(*req).data.cast::<CopyFileWindows>() };
     debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 
     let event_loop = this.event_loop;
@@ -1827,7 +1828,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     bun_sys::syslog!("mkdirp complete");
     // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
     // by `mkdirp` above; sole owner on this concurrent path.
-    let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
+    let this = yolo! { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
     debug_assert!(this.err.is_none());
     this.err = match err_ {
         bun_sys::Result::Err(e) => Some(e),
@@ -1839,7 +1840,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
         // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
         // do not touch `this` afterward.
-        unsafe { (*this).on_mkdirp_complete() };
+        yolo! { (*this).on_mkdirp_complete() };
         Ok(())
     }
     this.event_loop

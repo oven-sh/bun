@@ -33,6 +33,7 @@
 //! The manifest is generated during the linking phase and serialized as a JSON string
 //! that gets embedded directly into the JavaScript output.
 
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::fmt;
 
@@ -186,7 +187,7 @@ pub fn write<W: Write + ?Sized>(
     let server_source_index = graph.html_imports.server_source_indices.slice()[index as usize];
     let sources: &[Source] = graph.input_files.items_source();
     // SAFETY: graph points to BundleV2.graph.
-    let bv2: &BundleV2<'_> = unsafe {
+    let bv2: &BundleV2<'_> = yolo! {
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;

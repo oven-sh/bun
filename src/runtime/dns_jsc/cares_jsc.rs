@@ -2,6 +2,7 @@
 //! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
+use bun_yolo::yolo;
 use core::ffi::{CStr, c_int};
 
 use ::bstr::BStr;
@@ -33,7 +34,7 @@ pub fn hostent_to_js_response(
             return JSValue::create_empty_array(global_this, 0);
         }
         // SAFETY: h_name is non-null NUL-terminated C string from c-ares.
-        let name = unsafe { bun_core::ffi::cstr(this.h_name) }.to_bytes();
+        let name = yolo! { bun_core::ffi::cstr(this.h_name) }.to_bytes();
         return bun_string_jsc::to_js_array(global_this, &[bstr::String::borrow_utf8(name)]);
     }
 
@@ -43,7 +44,7 @@ pub fn hostent_to_js_response(
 
     let mut count: u32 = 0;
     // SAFETY: h_aliases is a non-null NULL-terminated array of C strings.
-    while unsafe { !(*this.h_aliases.add(count as usize)).is_null() } {
+    while yolo! { !(*this.h_aliases.add(count as usize)).is_null() } {
         count += 1;
     }
 
@@ -52,12 +53,12 @@ pub fn hostent_to_js_response(
 
     loop {
         // SAFETY: h_aliases is a non-null NULL-terminated array of C strings.
-        let alias = unsafe { *this.h_aliases.add(count as usize) };
+        let alias = yolo! { *this.h_aliases.add(count as usize) };
         if alias.is_null() {
             break;
         }
         // SAFETY: alias is a non-null NUL-terminated C string from c-ares.
-        let alias_slice = unsafe { bun_core::ffi::cstr(alias) }.to_bytes();
+        let alias_slice = yolo! { bun_core::ffi::cstr(alias) }.to_bytes();
         array.put_index(global_this, count, utf8_to_js(global_this, alias_slice)?)?;
         count += 1;
     }
@@ -73,14 +74,14 @@ pub fn hostent_with_ttls_to_js_response(
 ) -> JsResult<JSValue> {
     if lookup_name == b"a" || lookup_name == b"aaaa" {
         // SAFETY: this.hostent is a c-ares-owned hostent pointer (non-null on success path).
-        let hostent = unsafe { &*this.hostent };
+        let hostent = yolo! { &*this.hostent };
         if hostent.h_addr_list.is_null() {
             return JSValue::create_empty_array(global_this, 0);
         }
 
         let mut count: u32 = 0;
         // SAFETY: h_addr_list is a non-null NULL-terminated array of address bytes.
-        while unsafe { !(*hostent.h_addr_list.add(count as usize)).is_null() } {
+        while yolo! { !(*hostent.h_addr_list.add(count as usize)).is_null() } {
             count += 1;
         }
 
@@ -89,7 +90,7 @@ pub fn hostent_with_ttls_to_js_response(
 
         loop {
             // SAFETY: h_addr_list is a non-null NULL-terminated array of address bytes.
-            let addr = unsafe { *hostent.h_addr_list.add(count as usize) };
+            let addr = yolo! { *hostent.h_addr_list.add(count as usize) };
             if addr.is_null() {
                 break;
             }
@@ -100,20 +101,20 @@ pub fn hostent_with_ttls_to_js_response(
                 // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
                 let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
                     // SAFETY: addr points to ≥16 bytes for AF_INET6.
-                    let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
+                    let bytes: [u8; 16] = yolo! { *(addr as *const [u8; 16]) };
                     let mut sa6: super::netc::sockaddr_in6 = bun_core::ffi::zeroed();
                     sa6.sin6_family = super::netc::AF_INET6 as _;
                     sa6.sin6_addr.s6_addr = bytes;
                     // SAFETY: &sa6 is a valid sockaddr_in6.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa6).cast()) }
+                    yolo! { bun_dns::Address::init_posix((&raw const sa6).cast()) }
                 } else {
                     // SAFETY: addr points to ≥4 bytes for AF_INET.
-                    let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
+                    let bytes: [u8; 4] = yolo! { *(addr as *const [u8; 4]) };
                     let mut sa4: super::netc::sockaddr_in = bun_core::ffi::zeroed();
                     sa4.sin_family = super::netc::AF_INET as _;
                     sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
                     // SAFETY: &sa4 is a valid sockaddr_in.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa4).cast()) }
+                    yolo! { bun_dns::Address::init_posix((&raw const sa4).cast()) }
                 };
                 match address_to_js(&address, global_this) {
                     Ok(v) => v,
@@ -159,7 +160,7 @@ pub fn nameinfo_to_js_response(
 
     if !this.node.is_null() {
         // SAFETY: node is a non-null NUL-terminated C string from c-ares.
-        let node_slice = unsafe { bun_core::ffi::cstr(this.node.cast()) }.to_bytes();
+        let node_slice = yolo! { bun_core::ffi::cstr(this.node.cast()) }.to_bytes();
         array.put_index(global_this, 0, utf8_to_js(global_this, node_slice)?)?;
     } else {
         array.put_index(global_this, 0, JSValue::UNDEFINED)?;
@@ -167,7 +168,7 @@ pub fn nameinfo_to_js_response(
 
     if !this.service.is_null() {
         // SAFETY: service is a non-null NUL-terminated C string from c-ares.
-        let service_slice = unsafe { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
+        let service_slice = yolo! { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
         array.put_index(global_this, 1, utf8_to_js(global_this, service_slice)?)?;
     } else {
         array.put_index(global_this, 1, JSValue::UNDEFINED)?;
@@ -187,14 +188,14 @@ pub fn addr_info_to_js_array(
     }
     // SAFETY: node is non-null (checked above); c-ares owns the linked list.
     let array =
-        JSValue::create_empty_array(global_this, unsafe { (*addr_info.node).count() } as usize)?;
+        JSValue::create_empty_array(global_this, yolo! { (*addr_info.node).count() } as usize)?;
 
     {
         let mut j: u32 = 0;
         let mut current: *mut c_ares::AddrInfo_node = addr_info.node;
         while !current.is_null() {
             // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
-            let this_node = unsafe { &*current };
+            let this_node = yolo! { &*current };
             // PORT NOTE: Zig matched on family and union-viewed std.net.Address.
             // bun_dns::Address::init_posix copies from the raw sockaddr by family,
             // so we hand it `this_node.addr` directly after asserting a known family.
@@ -202,7 +203,7 @@ pub fn addr_info_to_js_array(
                 this_node.family == c_ares::AF::INET || this_node.family == c_ares::AF::INET6
             );
             // SAFETY: addr is non-null sockaddr_in/in6 for AF_INET/AF_INET6 (c-ares contract).
-            let address = unsafe { bun_dns::Address::init_posix(this_node.addr.cast()) };
+            let address = yolo! { bun_dns::Address::init_posix(this_node.addr.cast()) };
             array.put_index(
                 global_this,
                 j,
@@ -264,7 +265,7 @@ fn cares_list_to_js_array<T: CAresLinked>(
     let mut p: *mut T = head;
     while !p.is_null() {
         // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
-        unsafe { p = (*p).next() };
+        yolo! { p = (*p).next() };
         count += 1;
     }
 
@@ -274,7 +275,7 @@ fn cares_list_to_js_array<T: CAresLinked>(
     let mut i: u32 = 0;
     while !p.is_null() {
         // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
-        let node = unsafe { &mut *p };
+        let node = yolo! { &mut *p };
         array.put_index(global_this, i, to_js(node, global_this)?)?;
         p = node.next();
         i += 1;
@@ -339,7 +340,7 @@ pub fn srv_reply_to_js(
     obj.put(global_this, b"port", JSValue::js_number(this.port as f64));
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
-    let host = unsafe { bun_core::ffi::cstr(this.host.cast()) }.to_bytes();
+    let host = yolo! { bun_core::ffi::cstr(this.host.cast()) }.to_bytes();
     obj.put(global_this, b"name", utf8_to_js(global_this, host)?);
 
     Ok(obj)
@@ -366,7 +367,7 @@ pub fn mx_reply_to_js(
     );
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
-    let host = unsafe { bun_core::ffi::cstr(this.host.cast()) }.to_bytes();
+    let host = yolo! { bun_core::ffi::cstr(this.host.cast()) }.to_bytes();
     obj.put(global_this, b"exchange", utf8_to_js(global_this, host)?);
 
     Ok(obj)
@@ -428,19 +429,19 @@ pub fn naptr_reply_to_js(
     obj.put(global_this, b"order", JSValue::js_number(this.order as f64));
 
     // SAFETY: flags is a non-null NUL-terminated C string from c-ares.
-    let flags = unsafe { bun_core::ffi::cstr(this.flags.cast()) }.to_bytes();
+    let flags = yolo! { bun_core::ffi::cstr(this.flags.cast()) }.to_bytes();
     obj.put(global_this, b"flags", utf8_to_js(global_this, flags)?);
 
     // SAFETY: service is a non-null NUL-terminated C string from c-ares.
-    let service = unsafe { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
+    let service = yolo! { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
     obj.put(global_this, b"service", utf8_to_js(global_this, service)?);
 
     // SAFETY: regexp is a non-null NUL-terminated C string from c-ares.
-    let regexp = unsafe { bun_core::ffi::cstr(this.regexp.cast()) }.to_bytes();
+    let regexp = yolo! { bun_core::ffi::cstr(this.regexp.cast()) }.to_bytes();
     obj.put(global_this, b"regexp", utf8_to_js(global_this, regexp)?);
 
     // SAFETY: replacement is a non-null NUL-terminated C string from c-ares.
-    let replacement = unsafe { bun_core::ffi::cstr(this.replacement.cast()) }.to_bytes();
+    let replacement = yolo! { bun_core::ffi::cstr(this.replacement.cast()) }.to_bytes();
     obj.put(
         global_this,
         b"replacement",
@@ -489,11 +490,11 @@ pub fn soa_reply_to_js(
     );
 
     // SAFETY: nsname is a non-null NUL-terminated C string from c-ares.
-    let nsname = unsafe { bun_core::ffi::cstr(this.nsname.cast()) }.to_bytes();
+    let nsname = yolo! { bun_core::ffi::cstr(this.nsname.cast()) }.to_bytes();
     obj.put(global_this, b"nsname", utf8_to_js(global_this, nsname)?);
 
     // SAFETY: hostmaster is a non-null NUL-terminated C string from c-ares.
-    let hostmaster = unsafe { bun_core::ffi::cstr(this.hostmaster.cast()) }.to_bytes();
+    let hostmaster = yolo! { bun_core::ffi::cstr(this.hostmaster.cast()) }.to_bytes();
     obj.put(
         global_this,
         b"hostmaster",
@@ -600,12 +601,12 @@ pub fn any_reply_to_js(
     }
     if !this.mx_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
-        let response = mx_reply_to_js_response(unsafe { &mut *this.mx_reply }, global_this, b"mx")?;
+        let response = mx_reply_to_js_response(yolo! { &mut *this.mx_reply }, global_this, b"mx")?;
         any_reply_append_all(global_this, array, &mut i, response, b"mx")?;
     }
     if !this.ns_reply.is_null() {
         // SAFETY: non-null c-ares-owned hostent.
-        let response = hostent_to_js_response(unsafe { &mut *this.ns_reply }, global_this, b"ns")?;
+        let response = hostent_to_js_response(yolo! { &mut *this.ns_reply }, global_this, b"ns")?;
         any_reply_append_all(global_this, array, &mut i, response, b"ns")?;
     }
     if !this.txt_reply.is_null() {
@@ -613,37 +614,37 @@ pub fn any_reply_to_js(
         // PORT NOTE: txt is the only reply type whose Zig struct defines `toJSForAny`, so
         // `anyReplyAppendAll`'s `@hasDecl(.., "toJSForAny")` branch dispatched to it.
         let response =
-            txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
+            txt_reply_to_js_for_any(yolo! { &mut *this.txt_reply }, global_this, b"txt")?;
         any_reply_append_all(global_this, array, &mut i, response, b"txt")?;
     }
     if !this.srv_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
         let response =
-            srv_reply_to_js_response(unsafe { &mut *this.srv_reply }, global_this, b"srv")?;
+            srv_reply_to_js_response(yolo! { &mut *this.srv_reply }, global_this, b"srv")?;
         any_reply_append_all(global_this, array, &mut i, response, b"srv")?;
     }
     if !this.ptr_reply.is_null() {
         // SAFETY: non-null c-ares-owned hostent.
         let response =
-            hostent_to_js_response(unsafe { &mut *this.ptr_reply }, global_this, b"ptr")?;
+            hostent_to_js_response(yolo! { &mut *this.ptr_reply }, global_this, b"ptr")?;
         any_reply_append_all(global_this, array, &mut i, response, b"ptr")?;
     }
     if !this.naptr_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
         let response =
-            naptr_reply_to_js_response(unsafe { &mut *this.naptr_reply }, global_this, b"naptr")?;
+            naptr_reply_to_js_response(yolo! { &mut *this.naptr_reply }, global_this, b"naptr")?;
         any_reply_append_all(global_this, array, &mut i, response, b"naptr")?;
     }
     if !this.soa_reply.is_null() {
         // SAFETY: non-null c-ares-owned soa reply.
         let response =
-            soa_reply_to_js_response(unsafe { &mut *this.soa_reply }, global_this, b"soa")?;
+            soa_reply_to_js_response(yolo! { &mut *this.soa_reply }, global_this, b"soa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"soa")?;
     }
     if !this.caa_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
         let response =
-            caa_reply_to_js_response(unsafe { &mut *this.caa_reply }, global_this, b"caa")?;
+            caa_reply_to_js_response(yolo! { &mut *this.caa_reply }, global_this, b"caa")?;
         any_reply_append_all(global_this, array, &mut i, response, b"caa")?;
     }
 
@@ -725,7 +726,7 @@ impl ErrorDeferred {
             fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.
-                let this = unsafe { bun_core::heap::take(this) };
+                let this = yolo! { bun_core::heap::take(this) };
                 let global = this.global_this.get();
                 this.deferred.reject(global).map_err(Into::into)
             }

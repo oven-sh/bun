@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+use bun_yolo::yolo;
 use core::ffi::c_int;
 
 use bun_alloc::AllocError;
@@ -597,14 +598,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             (path_buf.as_ptr(), root_path.len())
         };
         // SAFETY: path_buf[root_path_len] == 0 written above; buffer outlives `cwd_fd` open call.
-        let root_path_z = unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) };
+        let root_path_z = yolo! { ZStr::from_raw(path_buf_ptr, root_path_len) };
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
                 let len = root_path_len + 1;
                 return Ok(Err(self.walker.handle_sys_err_with_path(
                     err,
                     // SAFETY: NUL at index len-1 written above
-                    unsafe { ZStr::from_raw(path_buf_ptr, len) },
+                    yolo! { ZStr::from_raw(path_buf_ptr, len) },
                 )));
             }
             Ok(fd) => fd,
@@ -992,8 +993,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // Buffer is read-only from here on; read via &self.walker.
                             let scratch_ptr = self.walker.path_buf.as_ptr();
                             let symlink_full_path_z =
-                                unsafe { ZStr::from_raw(scratch_ptr, symlink_full_path_len) };
-                            let entry_name: &[u8] = unsafe {
+                                yolo! { ZStr::from_raw(scratch_ptr, symlink_full_path_len) };
+                            let entry_name: &[u8] = yolo! {
                                 core::slice::from_raw_parts(
                                     scratch_ptr.add(entry_start),
                                     symlink_full_path_len - entry_start,
@@ -1539,7 +1540,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if src.as_ptr() != dst.cast_const() {
             // SAFETY: copy_len ≤ both src and dst capacity; ptr::copy is memmove
             // (overlap-safe) so partial overlap is fine too.
-            unsafe { core::ptr::copy(src.as_ptr(), dst, copy_len) };
+            yolo! { core::ptr::copy(src.as_ptr(), dst, copy_len) };
         }
         err.with_path(&self.path_buf[0..copy_len])
     }

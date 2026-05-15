@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 
 bun_core::declare_scope!(RefCountedEnvStr, hidden);
@@ -35,7 +36,7 @@ impl RefCountedStr {
     pub unsafe fn deref(this: *mut RefCountedStr) {
         // SAFETY: caller guarantees `this` was produced by `init` and is still
         // live; on hitting 0, `this` is uniquely owned and Box-allocated.
-        unsafe {
+        yolo! {
             let rc = &(*this).refcount;
             rc.set(rc.get() - 1);
             if rc.get() == 0 {
@@ -48,7 +49,7 @@ impl RefCountedStr {
     // (`bun.default_allocator.destroy(this)`), which must deallocate the Box backing `self`.
     unsafe fn deinit(this: *mut RefCountedStr) {
         // SAFETY: refcount just reached 0; `this` is uniquely owned and was Box-allocated in `init`.
-        unsafe {
+        yolo! {
             bun_core::scoped_log!(
                 RefCountedEnvStr,
                 "deinit: {}",

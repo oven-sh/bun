@@ -1,6 +1,7 @@
 //! libwebp decode/encode for `Bun.Image`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
@@ -127,7 +128,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // allocates the full canvas internally. WebPGetInfo can hand back
     // non-positive on a malformed header; reject before the cast traps.
     // SAFETY: bytes.ptr/len describe a valid readable slice.
-    if unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0
+    if yolo! { WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0
         || cw <= 0
         || ch <= 0
     {
@@ -137,13 +138,13 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
     // SAFETY: bytes.ptr/len describe a valid readable slice; cw/ch are valid out-params.
-    let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
+    let ptr = yolo! { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
     if ptr.is_null() {
         return Err(codecs::Error::DecodeFailed);
     }
     let _free_ptr = scopeguard::guard(ptr, |p| {
         // SAFETY: p was returned by WebPDecodeRGBA above; WebPFree is the matching deallocator.
-        unsafe { WebPFree(p.cast::<c_void>()) }
+        yolo! { WebPFree(p.cast::<c_void>()) }
     });
     // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
     // (the pin only blocks detach), so a hostile caller can swap in a smaller
@@ -156,7 +157,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     }
     let len: usize = (w as usize) * (h as usize) * 4;
     // SAFETY: WebPDecodeRGBA returns a buffer of w*h*4 bytes on success.
-    let out: Vec<u8> = unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec();
+    let out: Vec<u8> = yolo! { core::slice::from_raw_parts(ptr, len) }.to_vec();
 
     // Extract the ICCP chunk (if any) from the RIFF container. A plain
     // VP8/VP8L WebP with no VP8X wrapper has no ICCP — `WebPDemux` still
@@ -176,7 +177,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
             size: bytes.len(),
         };
         // SAFETY: `data` points to a valid WebPData; null state ptr is allowed.
-        let dmux = unsafe {
+        let dmux = yolo! {
             WebPDemuxInternal(
                 &raw const data,
                 0,
@@ -189,21 +190,21 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         }
         let _free_dmux = scopeguard::guard(dmux, |d| {
             // SAFETY: d was returned by WebPDemuxInternal above and is non-null; matching destructor.
-            unsafe { WebPDemuxDelete(d) }
+            yolo! { WebPDemuxDelete(d) }
         });
         // SAFETY: dmux is a live demuxer handle.
-        if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
+        if yolo! { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
             break 'blk None;
         }
         // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
-        let mut iter: WebPChunkIterator = unsafe { core::mem::zeroed::<WebPChunkIterator>() };
+        let mut iter: WebPChunkIterator = yolo! { core::mem::zeroed::<WebPChunkIterator>() };
         // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
-        if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
+        if yolo! { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
             break 'blk None;
         }
         let iter = scopeguard::guard(iter, |mut it| {
             // SAFETY: it was populated by WebPDemuxGetChunk above; matching release call.
-            unsafe { WebPDemuxReleaseChunkIterator(&raw mut it) }
+            yolo! { WebPDemuxReleaseChunkIterator(&raw mut it) }
         });
         if iter.chunk.bytes.is_null() {
             break 'blk None;
@@ -213,7 +214,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         }
         // SAFETY: chunk.bytes points into `bytes` for chunk.size bytes per libwebp contract.
         break 'blk Some(
-            unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }.to_vec(),
+            yolo! { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }.to_vec(),
         );
     };
     Ok(codecs::Decoded {
@@ -236,7 +237,7 @@ pub fn encode(
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
     // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
     let len = if lossless {
-        unsafe {
+        yolo! {
             WebPEncodeLosslessRGBA(
                 rgba.as_ptr(),
                 c_int::try_from(w).expect("int cast"),
@@ -246,7 +247,7 @@ pub fn encode(
             )
         }
     } else {
-        unsafe {
+        yolo! {
             WebPEncodeRGBA(
                 rgba.as_ptr(),
                 c_int::try_from(w).expect("int cast"),
@@ -261,7 +262,7 @@ pub fn encode(
         return Err(codecs::Error::EncodeFailed);
     }
     // SAFETY: WebPEncode* returns a buffer of `len` bytes on success.
-    let bitstream: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(out, len) };
+    let bitstream: &mut [u8] = yolo! { core::slice::from_raw_parts_mut(out, len) };
 
     // Fast path: no profile to attach, so the bare VP8/VP8L RIFF that
     // `WebPEncodeRGBA` produced is already the final container. Avoids the
@@ -288,23 +289,23 @@ pub fn encode(
     // (both do — `bitstream` is freed below, `profile` is caller-owned).
     let _free_bitstream = scopeguard::guard(bitstream.as_mut_ptr(), |p| {
         // SAFETY: p is the buffer returned by WebPEncode*RGBA above; WebPFree is the matching deallocator.
-        unsafe { WebPFree(p.cast::<c_void>()) }
+        yolo! { WebPFree(p.cast::<c_void>()) }
     });
     // SAFETY: WebPNewInternal has no preconditions.
-    let mux = unsafe { WebPNewInternal(WEBP_MUX_ABI_VERSION) };
+    let mux = yolo! { WebPNewInternal(WEBP_MUX_ABI_VERSION) };
     if mux.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
     let _free_mux = scopeguard::guard(mux, |m| {
         // SAFETY: m was returned by WebPNewInternal above and is non-null; matching destructor.
-        unsafe { WebPMuxDelete(m) }
+        yolo! { WebPMuxDelete(m) }
     });
     let img = WebPData {
         bytes: bitstream.as_ptr(),
         size: bitstream.len(),
     };
     // SAFETY: mux is live; img points to valid borrowed data.
-    if unsafe { WebPMuxSetImage(mux, &raw const img, 0) } != WEBP_MUX_OK {
+    if yolo! { WebPMuxSetImage(mux, &raw const img, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
     let icc = WebPData {
@@ -312,17 +313,17 @@ pub fn encode(
         size: profile.len(),
     };
     // SAFETY: mux is live; fourcc reads exactly 4 bytes; icc points to valid borrowed data.
-    if unsafe { WebPMuxSetChunk(mux, b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK {
+    if yolo! { WebPMuxSetChunk(mux, b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
     let mut assembled = WebPData::default();
     // SAFETY: mux is live; assembled is a valid out-param.
-    if unsafe { WebPMuxAssemble(mux, &raw mut assembled) } != WEBP_MUX_OK {
+    if yolo! { WebPMuxAssemble(mux, &raw mut assembled) } != WEBP_MUX_OK {
         // `WebPMuxAssemble` writes a half-built buffer into `assembled` even
         // on failure; its contract says `WebPDataClear` (i.e. `WebPFree`) is
         // safe to call on any return.
         // SAFETY: WebPFree accepts null; assembled.bytes is WebPMalloc-owned or null.
-        unsafe { WebPFree(assembled.bytes as *mut c_void) };
+        yolo! { WebPFree(assembled.bytes as *mut c_void) };
         return Err(codecs::Error::EncodeFailed);
     }
     if assembled.bytes.is_null() {
@@ -330,7 +331,7 @@ pub fn encode(
     }
     let assembled_ptr = assembled.bytes.cast_mut();
     // SAFETY: WebPMuxAssemble returns a WebPMalloc-owned buffer of assembled.size bytes on WEBP_MUX_OK.
-    let assembled_slice = unsafe { core::slice::from_raw_parts_mut(assembled_ptr, assembled.size) };
+    let assembled_slice = yolo! { core::slice::from_raw_parts_mut(assembled_ptr, assembled.size) };
     Ok(codecs::Encoded {
         bytes: NonNull::from(assembled_slice),
         free: encoded_wrap_free!(WebPFree),

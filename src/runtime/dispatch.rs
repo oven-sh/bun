@@ -26,6 +26,7 @@
 #[path = "dispatch_js2native.rs"]
 pub mod js2native;
 
+use bun_yolo::yolo;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_event_loop::{Task, TaskTag, task_tag};
@@ -201,7 +202,7 @@ pub fn run_task(
             // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
             // by `Taskable::into_task`/`Task::new`; tag uniquely identifies
             // the pointee type and the pointer is live for this dispatch.
-            unsafe { &mut *task.ptr.cast::<$ty>() }
+            yolo! { &mut *task.ptr.cast::<$ty>() }
         }};
     }
     /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
@@ -215,7 +216,7 @@ pub fn run_task(
     macro_rules! compression_arm {
         ($T:ty) => {{
             // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
-            unsafe {
+            yolo! {
                 node_zlib_binding::CompressionStream::<$T>::run_from_js_thread(cast_ptr!($T))
             };
         }};
@@ -228,16 +229,16 @@ pub fn run_task(
         ($ty:ty) => {{
             let t = cast_ptr!($ty);
             // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = unsafe { (*t).run_from_js() };
+            let r = yolo! { (*t).run_from_js() };
             // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { <$ty>::destroy(t) };
+            yolo! { <$ty>::destroy(t) };
             r?;
         }};
         (work $ty:ty) => {{
             let t = cast_ptr!($ty);
             let r = bun_jsc::work_task::WorkTask::run_from_js(t);
             // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
+            yolo! { bun_jsc::work_task::WorkTask::destroy(t) };
             r?;
         }};
     }
@@ -352,9 +353,9 @@ pub fn run_task(
             // The task was heap-allocated in `Task::enqueue` (`bun.new`);
             // `deinit` frees it (`bun.destroy`).
             // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-            unsafe { (*t).run() };
+            yolo! { (*t).run() };
             // SAFETY: paired with heap::alloc in `Task::enqueue`.
-            unsafe { hot_reloader::HotReloadTask::deinit(t) };
+            yolo! { hot_reloader::HotReloadTask::deinit(t) };
             return Ok(RunTaskResult::EarlyReturn);
         }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
@@ -366,9 +367,9 @@ pub fn run_task(
             // runs it.
             let t = cast_ptr!(FSWatchTask);
             // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
-            unsafe { (*t).run() };
+            yolo! { (*t).run() };
             // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
-            unsafe { FSWatchTask::deinit(t) };
+            yolo! { FSWatchTask::deinit(t) };
         }
 
         // ── DNS ──────────────────────────────────────────────────────────
@@ -388,7 +389,7 @@ pub fn run_task(
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
                     // SAFETY: outer arm guard proves one of the 42 tags matched.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
+                    _ => yolo! { core::hint::unreachable_unchecked() },
                 }};
             }
             for_each_fs_async_op!(__fs_run);
@@ -405,7 +406,7 @@ pub fn run_task(
             {
                 // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
                 let t =
-                    unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
+                    yolo! { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
                 t.run_from_js_thread();
             }
             #[cfg(windows)]
@@ -500,7 +501,7 @@ fn run_task_cold(task: Task) {
         ($ty:ty) => {{
             // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
             // `interp` was set at schedule time and outlives the task.
-            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
+            yolo! { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
         }};
         // `.task.task.runFromMainThread()` shape (cond-expr wraps an inner
         // `task: ShellTask`-embedding struct one level deeper). Not a
@@ -508,7 +509,7 @@ fn run_task_cold(task: Task) {
         (nested $ty:ty) => {{
             let t = cast_ptr!($ty);
             // SAFETY: see above; `task.task` is the embedded ShellTask.
-            unsafe {
+            yolo! {
                 let st = &raw mut (*t).task.task;
                 (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
                 let interp = &*(*st).interp;
@@ -523,30 +524,30 @@ fn run_task_cold(task: Task) {
             // Spec Task.zig:161 `runFromMainThread()` — Rust port routes via
             // (interp, NodeId).
             // SAFETY: §Dispatch — tag identifies pointee.
-            let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
+            let t = yolo! { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
             // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &*t.interp };
+            let interp = yolo! { &*t.interp };
             ShellAsync::run_from_main_thread(interp, t.node);
         }
         task_tag::ShellAsyncSubprocessDone => {
             let t = cast_ptr!(ShellAsyncSubprocessDone);
             // SAFETY: live Box'd task.
-            unsafe { ShellAsyncSubprocessDone::run_from_main_thread(t) };
+            yolo! { ShellAsyncSubprocessDone::run_from_main_thread(t) };
         }
         task_tag::ShellIOWriterAsyncDeinit => {
             let t = cast_ptr!(ShellIOWriterAsyncDeinit);
             // SAFETY: live Box'd task.
-            unsafe { ShellIOWriterAsyncDeinit::run_from_main_thread(t) };
+            yolo! { ShellIOWriterAsyncDeinit::run_from_main_thread(t) };
         }
         task_tag::ShellIOWriter => {
             let t = cast_ptr!(ShellIOWriter);
             // SAFETY: live IOWriter (ref-counted).
-            unsafe { ShellIOWriter::run_from_main_thread(t) };
+            yolo! { ShellIOWriter::run_from_main_thread(t) };
         }
         task_tag::ShellIOReaderAsyncDeinit => {
             let t = cast_ptr!(ShellIOReaderAsyncDeinit);
             // SAFETY: live Box'd task.
-            unsafe { ShellIOReaderAsyncDeinit::run_from_main_thread(t) };
+            yolo! { ShellIOReaderAsyncDeinit::run_from_main_thread(t) };
         }
         task_tag::ShellCondExprStatTask => {
             // Spec: `task.get(..).?.task.runFromMainThread()` — one level of
@@ -563,7 +564,7 @@ fn run_task_cold(task: Task) {
         task_tag::ShellRmDirTask => {
             let t = cast_ptr!(ShellRmDirTask);
             // SAFETY: live DirTask child of a ShellRmTask tree.
-            unsafe { ShellRmDirTask::run_from_main_thread(t) };
+            yolo! { ShellRmDirTask::run_from_main_thread(t) };
         }
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
 
@@ -573,7 +574,7 @@ fn run_task_cold(task: Task) {
             // element of `DevServer.watcher_atomics.events[_]` and `run` itself
             // re-derives `&mut DevServer` from the BACKREF, so pass the raw
             // pointer to avoid materialising an aliasing `&mut` here.
-            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
+            yolo! { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 
         // ShellYesTask + any tag the hot path mis-routed: producer bug.
@@ -600,7 +601,7 @@ pub fn tick_queue_with_count(
 ) -> Result<(), JsTerminated> {
     // SAFETY: `el.global` is set by VM init before the first tick; live for
     // the duration of the drain loop (Zig: `this.global`).
-    let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
+    let global: &JSGlobalObject = yolo! { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm: *mut bun_jsc::VM = std::ptr::from_ref::<bun_jsc::VM>(global.vm()).cast_mut();
 
     #[cfg(debug_assertions)]
@@ -657,7 +658,7 @@ pub fn tick_queue_with_count(
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     // SAFETY: contract above.
-    let poll_ref = unsafe { &mut *poll };
+    let poll_ref = yolo! { &mut *poll };
     let owner = poll_ref.owner;
     let hup = poll_ref.flags.contains(PollFlag::Hup);
 
@@ -667,7 +668,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     macro_rules! owner_as {
         ($ty:ty) => {{
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            unsafe { &mut *owner.ptr.cast::<$ty>() }
+            yolo! { &mut *owner.ptr.cast::<$ty>() }
         }};
     }
     /// One match-arm body of the poll-tag dispatch. Recovers the typed owner as
@@ -677,7 +678,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     /// covers most tags.
     macro_rules! poll_arm {
         ($Ty:ty) => {
-            poll_arm!($Ty, |h| unsafe { (*h).on_poll(size_or_offset as isize, hup) })
+            poll_arm!($Ty, |h| yolo! { (*h).on_poll(size_or_offset as isize, hup) })
         };
         ($Ty:ty, |$h:ident| $body:expr) => {{
             // SAFETY: tag was set together with this pointee type at `FilePoll::init`.
@@ -687,7 +688,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     }
 
     match owner.tag() {
-        poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| unsafe {
+        poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| yolo! {
             bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup)
         }),
         poll_tag::PROCESS => {
@@ -695,7 +696,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             // by the trailing `deref`, so keep raw provenance end-to-end.
             let proc = owner.ptr.cast::<Process>();
             // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
-            unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
+            yolo! { Process::on_wait_pid_from_event_loop_task(proc) };
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
@@ -719,16 +720,16 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             poll_arm!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>)
         }
         // `bun.shell.Interpreter.IOWriter.Poll`
-        poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| unsafe {
+        poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| yolo! {
             crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup)
         }),
         poll_tag::DNS_RESOLVER => {
             // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
             // `Channel::process` re-enters the resolver via c-ares callbacks.
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
+            let resolver = yolo! { &*owner.ptr.cast_const().cast::<DNSResolver>() };
             // SAFETY: `poll` outlives this call (caller contract).
-            resolver.on_dns_poll(unsafe { &mut *poll });
+            resolver.on_dns_poll(yolo! { &mut *poll });
         }
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
@@ -755,7 +756,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
-            poll_arm!(bun_io::BufferedReader, |h| unsafe {
+            poll_arm!(bun_io::BufferedReader, |h| yolo! {
                 bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup)
             })
         }
@@ -787,12 +788,12 @@ pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bu
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
+            let this = yolo! { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
             this.on_ready();
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
+            let this = yolo! { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
             this.on_ready();
         }
         bun_io::PollableTag::Empty => {
@@ -816,12 +817,12 @@ pub unsafe fn __bun_io_pollable_on_io_error(
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
+            let this = yolo! { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
             this.on_io_error(err);
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
-            let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
+            let this = yolo! { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
             // PORT NOTE: WriteFile::on_io_error already takes `*mut ()` (it
             // self-recovers via the io_request path elsewhere); reuse that
             // shape rather than reborrowing `&mut`.
@@ -852,7 +853,7 @@ pub unsafe fn __bun_run_immediate_task(
 ) -> bool {
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
-    unsafe {
+    yolo! {
         crate::timer::ImmediateObject::run_immediate_task(
             task.cast::<crate::timer::ImmediateObject>(),
             vm,
@@ -878,7 +879,7 @@ pub unsafe fn __bun_run_wtf_timer(
     // SAFETY: per fn contract — `real` is live until consumed; `vm` is the
     // per-thread VM. `run` may re-enter `(*runtime_state()).timer.remove()`;
     // no `&mut` held here.
-    unsafe { crate::timer::WTFTimer::run(real, vm) }
+    yolo! { crate::timer::WTFTimer::run(real, vm) }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -906,11 +907,11 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // SAFETY: §Dispatch — `t.tag` was set together with the container
             // at construction; tag uniquely identifies the embedding type and
             // `$field` is the `EventLoopTimer` slot `t` points into.
-            unsafe { bun_core::from_field_ptr!($ty, $field, t) }
+            yolo! { bun_core::from_field_ptr!($ty, $field, t) }
         }};
     }
     // SAFETY: per fn contract — `t` is live for the dispatch read.
-    let tag = unsafe { (*t).tag };
+    let tag = yolo! { (*t).tag };
     let vm = vm.cast::<VirtualMachine>();
 
     /// One match-arm body: recover the container as RAW `*mut $Ty` (never
@@ -925,7 +926,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
             #[allow(unused_unsafe)]
-            unsafe { $body };
+            yolo! { $body };
         }};
     }
     match tag {
@@ -934,18 +935,18 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             let container = owner!(TimeoutObject, event_loop_timer);
             // SAFETY: container derived from a live `TimeoutObject`; do NOT
             // form `&mut *container` — `internals.fire` may `deref()` and free.
-            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
+            let internals = yolo! { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: per fn contract — `now` is the live snapshot; `vm` is the
             // per-thread VM. `fire` may free the container; `t` is dead after.
             // `fire` takes `*mut Self` (noalias re-entrancy — see its doc).
-            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            yolo! { TimerObjectInternals::fire(internals, &*now, vm) };
         }
         EventLoopTimerTag::ImmediateObject => {
             let container = owner!(ImmediateObject, event_loop_timer);
             // SAFETY: see TimeoutObject arm.
-            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
+            let internals = yolo! { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
-            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            yolo! { TimerObjectInternals::fire(internals, &*now, vm) };
         }
         // Spec `inline else` fallthrough: `container.callback(container)`.
         EventLoopTimerTag::TimerCallback => {
@@ -982,7 +983,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             {
                 let container = owner!(WindowsNamedPipe, event_loop_timer);
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_timeout() };
+                yolo! { (*container).on_timeout() };
             }
             #[cfg(not(windows))]
             {
@@ -995,27 +996,27 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
         EventLoopTimerTag::PostgresSQLConnectionTimeout => {
             // SAFETY: §Dispatch — tag set together with the container at
             // construction; `t` is the connection's `timer` field.
-            let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
+            let container = yolo! { PostgresSQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
+            yolo! { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
-            let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
+            let container = yolo! { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
+            yolo! { (*container).on_max_lifetime_timeout() };
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
             // SAFETY: §Dispatch — `t` is the connection's `timer` field.
-            let container = unsafe { MySQLConnection::from_timer_ptr(t) };
+            let container = yolo! { MySQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
+            yolo! { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
-            let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
+            let container = yolo! { MySQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
+            yolo! { (*container).on_max_lifetime_timeout() };
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
             timer_arm!(Valkey, timer, |c, _now, _vm| (*c).on_connection_timeout())
@@ -1030,12 +1031,12 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // Spec: `bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now)`
             // — takes the raw `*EventLoopTimer` and recovers the store inside.
             // SAFETY: per fn contract.
-            SourceMapStore::sweep_weak_refs(t, unsafe { &*now });
+            SourceMapStore::sweep_weak_refs(t, yolo! { &*now });
         }
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
             // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
             // field of a live DevServer.
-            DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
+            DevServer::emit_memory_visualizer_message_timer(yolo! { &mut *t }, yolo! { &*now });
         }
         EventLoopTimerTag::BunTest => {
             // Spec: `BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self))`
@@ -1047,7 +1048,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // `BunTestCell` is a `UnsafeCell<BunTest>` newtype — same
             // layout as `BunTest`, so the raw `*mut BunTest` recovered above is
             // also the `Rc` payload pointer.
-            let strong: BunTestPtr = unsafe {
+            let strong: BunTestPtr = yolo! {
                 let rc = std::rc::Rc::from_raw(
                     container as *const crate::test_runner::bun_test::BunTestCell,
                 );
@@ -1059,7 +1060,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // SAFETY: per fn contract. `bun_test_timeout_callback` takes a
             // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
             // a layout-identical local stub (see EventLoopTimer.rs TODO(b1)).
-            let now_core = unsafe {
+            let now_core = yolo! {
                 bun_core::Timespec {
                     sec: (*now).sec,
                     nsec: (*now).nsec,
@@ -1089,7 +1090,7 @@ pub unsafe fn __bun_js_timer_epoch(
     // SAFETY: per fn contract — `t` is live in a `TimerHeap`. `_tag` kept for
     // the `extern "Rust"` ABI in `bun_event_loop`; helper re-reads `(*t).tag`
     // (same address the caller loaded it from — folds under LTO).
-    unsafe { crate::timer::js_timer_flags_ptr(t).map(|p| (*p.as_ptr()).epoch()) }
+    yolo! { crate::timer::js_timer_flags_ptr(t).map(|p| (*p.as_ptr()).epoch()) }
 }
 
 /// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in
@@ -1104,7 +1105,7 @@ pub fn __bun_tick_queue_with_count(
 ) -> Result<(), JsTerminated> {
     // SAFETY: `el`/`vm` are live per caller contract; no other `&mut` to either
     // is held across this call.
-    let (el, vm_ref) = unsafe { (&mut *el, &mut *vm) };
+    let (el, vm_ref) = yolo! { (&mut *el, &mut *vm) };
     tick_queue_with_count(el, vm_ref, counter)
 }
 

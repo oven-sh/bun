@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_variables, unused_imports, unused_mut)]
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::ffi::c_void;
 use std::io::Write as _;
@@ -447,7 +448,7 @@ impl SideEffects {
 /// immediately dupes the result. Thin extension trait that delegates to
 /// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
 /// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
-/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
+/// docs/PORTING.md §Forbidden patterns — "`yolo! { &*(p as *const _) }` to
 /// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
 /// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
 /// call-sites that only need a transient borrow.
@@ -1061,8 +1062,8 @@ impl PackageJSON {
         // live in this function. Caller upholds the single-thread `Resolver`
         // aliasing contract (Zig had no borrow split here either — `r.fs`/`r.log`
         // are accessed freely throughout `parse`).
-        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
-        let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
+        let r_fs: &mut fs::FileSystem = yolo! { &mut *r.fs() };
+        let r_log: &mut bun_ast::Log = yolo! { &mut *r.log() };
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
@@ -1139,7 +1140,7 @@ impl PackageJSON {
         // and frees normally (Zig: `allocator.free(entry.contents)`), after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
-        let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
+        let contents_static: &'static [u8] = yolo! { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
         let json: js_ast::Expr = match r.caches.json.parse_package_json(r_log, &json_source, true) {
@@ -1692,7 +1693,7 @@ impl PackageJSON {
                         }
                         // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
                         // on `contents_static` above (owned by the returned PackageJSON).
-                        let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
+                        let value: &'static [u8] = yolo! { bun_ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
                     }
                     Some(Box::new(map))
@@ -2432,7 +2433,7 @@ impl<'a> ESModule<'a> {
         // SAFETY: threadlocal UnsafeCell; finalize() does not recurse, so this is the unique
         // live `&mut` to resolved_path_buf_percent on this thread.
         let resolved_path_buf_percent: &mut PathBuffer =
-            unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
+            yolo! { &mut (*module_bufs()).resolved_path_buf_percent };
         // TODO(port): std.io.fixedBufferStream + PercentEncoding.decode
         let len = match bun_url::PercentEncoding::decode_into(
             &mut resolved_path_buf_percent.0,
@@ -2675,9 +2676,9 @@ impl<'a> ESModule<'a> {
                 // the duration of this arm. Map/Array arms below DO recurse and must not
                 // hold these — that's why acquisition is here, not at fn entry.
                 let mb = module_bufs();
-                let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
+                let resolve_target_buf: &mut PathBuffer = yolo! { &mut (*mb).resolve_target_buf };
                 let resolve_target_buf2: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_buf2 };
+                    yolo! { &mut (*mb).resolve_target_buf2 };
                 let str: &[u8] = str;
                 if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!(
@@ -3180,9 +3181,9 @@ impl<'a> ESModule<'a> {
                 // Map/Array arms below recurse and must not hold these — see MODULE_BUFS note.
                 let mb = module_bufs();
                 let resolve_target_reverse_prefix_buf: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_reverse_prefix_buf };
+                    yolo! { &mut (*mb).resolve_target_reverse_prefix_buf };
                 let resolve_target_reverse_prefix_buf2: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_reverse_prefix_buf2 };
+                    yolo! { &mut (*mb).resolve_target_reverse_prefix_buf2 };
                 let str: &[u8] = str;
                 match kind {
                     ReverseKind::Exact => {

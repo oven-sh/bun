@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use std::io::Write as _;
 
 use bun_core::ZBox;
@@ -351,7 +352,7 @@ pub fn apply_static_route<const SSL: bool, T>(
     T: StaticRouteLike<SSL>,
 {
     // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { T::set_server(entry, server) };
+    yolo! { T::set_server(entry, server) };
 
     // Trampolines: uWS hands us an opaque `uws_res*`, a live `Request*`, and the
     // user_data pointer (= `entry`). Cast back to the typed `Response<SSL>` /
@@ -373,7 +374,7 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
-        unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
+        yolo! { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
     extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
@@ -389,7 +390,7 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
-        unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
+        yolo! { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
     let user_data = entry.cast::<core::ffi::c_void>();
@@ -417,7 +418,7 @@ pub fn apply_static_route_h3<T>(
     T: StaticRouteLike<false>,
 {
     // SAFETY: caller passes a live route pointer for the lifetime of the app.
-    unsafe { T::set_server(entry, server) };
+    yolo! { T::set_server(entry, server) };
 
     fn handler<T: StaticRouteLike<false>>(
         route: &mut T,
@@ -425,7 +426,7 @@ pub fn apply_static_route_h3<T>(
         resp: &mut uws::h3::Response,
     ) {
         // SAFETY: `route` is the `entry` userdata kept alive by the route table.
-        unsafe {
+        yolo! {
             T::on_request(
                 route,
                 bun_uws_sys::AnyRequest::H3(req),
@@ -439,7 +440,7 @@ pub fn apply_static_route_h3<T>(
         resp: &mut uws::h3::Response,
     ) {
         // SAFETY: see `handler` above.
-        unsafe {
+        yolo! {
             T::on_head_request(
                 route,
                 bun_uws_sys::AnyRequest::H3(req),
@@ -494,7 +495,7 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
         // SAFETY: caller guarantees `this` is live; `server` is a Cell so &mut
         // is not required.
-        unsafe { (*this).server.set(Some(server)) };
+        yolo! { (*this).server.set(Some(server)) };
     }
     unsafe fn on_request(
         this: *mut Self,
@@ -502,7 +503,7 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
         resp: bun_uws_sys::AnyResponse,
     ) {
         // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_request(this, req, resp) }
+        yolo! { Self::on_request(this, req, resp) }
     }
     unsafe fn on_head_request(
         this: *mut Self,
@@ -510,14 +511,14 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
         resp: bun_uws_sys::AnyResponse,
     ) {
         // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_head_request(this, req, resp) }
+        yolo! { Self::on_head_request(this, req, resp) }
     }
 }
 
 impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
         // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).set_server(Some(server)) };
+        yolo! { (*this).set_server(Some(server)) };
     }
     unsafe fn on_request(
         this: *mut Self,
@@ -538,7 +539,7 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
 impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
         // SAFETY: caller guarantees `this` is live.
-        unsafe { (*this).server.set(Some(server)) };
+        yolo! { (*this).server.set(Some(server)) };
     }
     unsafe fn on_request(
         this: *mut Self,
@@ -832,7 +833,7 @@ impl ServerConfig {
             // PORT NOTE: in Zig the iterator options are a comptime struct; the
             // Rust port carries them as a runtime arg to `init()`.
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
-            let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
+            let static_obj: &bun_jsc::JSObject = yolo! { &*static_obj };
             let mut iter = JSPropertyIterator::init(
                 global,
                 static_obj,

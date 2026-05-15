@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use core::mem::offset_of;
@@ -85,7 +86,7 @@ pub fn write_output_files_to_disk(
     let mut pathbuf = PathBuffer::uninit();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bv2: &mut BundleV2 =
-        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
+        yolo! { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
     // PORT NOTE: Zig passes `chunk` (an element of `chunks`) and `chunks`
     // together into `code()`/`code_standalone()`. The callee now takes
@@ -560,7 +561,7 @@ pub fn write_output_files_to_disk(
         let additional_output_files = &mut output_files.output_files[additional_start..];
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
         // across `c.log_mut()` below (split borrow).
-        let parse_graph = unsafe { &mut *c.parse_graph };
+        let parse_graph = yolo! { &mut *c.parse_graph };
         debug_assert_eq!(
             parse_graph.additional_output_files.len(),
             additional_output_files.len()

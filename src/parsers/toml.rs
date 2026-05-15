@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::cell::RefCell;
 
@@ -48,7 +49,7 @@ impl ObjectRopeExt for E::Object {
                             return Err(SetError::Clobber);
                         };
                         // SAFETY: rope.next non-null (checked) and arena-owned.
-                        return obj.set_rope(unsafe { &*rope.next }, bump, value);
+                        return obj.set_rope(yolo! { &*rope.next }, bump, value);
                     }
                     array.push(bump, value)?;
                     return Ok(());
@@ -56,7 +57,7 @@ impl ObjectRopeExt for E::Object {
                 ExprData::EObject(mut object) => {
                     if !rope.next.is_null() {
                         // SAFETY: rope.next non-null and arena-owned.
-                        return object.set_rope(unsafe { &*rope.next }, bump, value);
+                        return object.set_rope(yolo! { &*rope.next }, bump, value);
                     }
                     return Err(SetError::Clobber);
                 }
@@ -71,7 +72,7 @@ impl ObjectRopeExt for E::Object {
             obj.data
                 .e_object()
                 .unwrap()
-                .set_rope(unsafe { &*rope.next }, bump, value)?;
+                .set_rope(yolo! { &*rope.next }, bump, value)?;
             value_ = obj;
         }
 
@@ -102,7 +103,7 @@ impl ObjectRopeExt for E::Object {
                             return Err(SetError::Clobber);
                         };
                         // SAFETY: rope.next non-null (checked) and arena-owned.
-                        return obj.get_or_put_array(unsafe { &*rope.next }, bump);
+                        return obj.get_or_put_array(yolo! { &*rope.next }, bump);
                     }
                     return Err(SetError::Clobber);
                 }
@@ -111,7 +112,7 @@ impl ObjectRopeExt for E::Object {
                         return Err(SetError::Clobber);
                     }
                     // SAFETY: rope.next non-null and arena-owned.
-                    return object.get_or_put_array(unsafe { &*rope.next }, bump);
+                    return object.get_or_put_array(yolo! { &*rope.next }, bump);
                 }
                 _ => return Err(SetError::Clobber),
             }
@@ -124,7 +125,7 @@ impl ObjectRopeExt for E::Object {
                 .data
                 .e_object()
                 .unwrap()
-                .get_or_put_array(unsafe { &*rope.next }, bump)?;
+                .get_or_put_array(yolo! { &*rope.next }, bump)?;
             VecExt::append(
                 &mut self.properties,
                 js_ast::G::Property {
@@ -185,7 +186,7 @@ mod hash_map_pool {
             if let Some(first) = list {
                 // SAFETY: `first` was produced by heap::alloc below and is non-null.
                 let node = *first;
-                unsafe {
+                yolo! {
                     *list = if (*node).next.is_null() {
                         None
                     } else {
@@ -217,7 +218,7 @@ mod hash_map_pool {
         // prepend, and `get()` would follow it and double-vend that node.
         LIST.with_borrow_mut(|list| {
             // SAFETY: `node` came from `get()` (heap::alloc) and is exclusively owned here.
-            unsafe { (*node).next = list.unwrap_or(core::ptr::null_mut()) };
+            yolo! { (*node).next = list.unwrap_or(core::ptr::null_mut()) };
             *list = Some(node);
         });
     }
@@ -365,13 +366,13 @@ impl<'a> TOML<'a> {
             // SAFETY: `rope` points into `bump` and is live for this call; we are
             // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
             // PORT NOTE: reshaped for borrowck
-            unsafe {
+            yolo! {
                 rope = (*rope).append(seg, bump)?;
             }
         }
 
         // SAFETY: `head` was just allocated from `bump` above and is non-null.
-        Ok(unsafe { &mut *head })
+        Ok(yolo! { &mut *head })
     }
 
     fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
@@ -465,7 +466,7 @@ impl<'a> TOML<'a> {
                 _ => {
                     // SAFETY: `head` points to an E.Object inside `root` (or a
                     // descendant) allocated from the AST store; valid for this call.
-                    unsafe {
+                    yolo! {
                         self.parse_assignment(&mut *head, key_allocator)?;
                     }
                     // PERF(port): was `stack.fixed_buffer_allocator.reset()` — profile
@@ -595,7 +596,7 @@ impl<'a> TOML<'a> {
 
                 while self.lexer.token != T::t_close_brace {
                     // SAFETY: `obj` points into the AST store and is live here.
-                    if unsafe { (*obj).properties.slice().len() } > 0 {
+                    if yolo! { (*obj).properties.slice().len() } > 0 {
                         if self.lexer.has_newline_before {
                             is_single_line = false;
                         }
@@ -607,7 +608,7 @@ impl<'a> TOML<'a> {
                         }
                     }
                     // SAFETY: see above.
-                    unsafe {
+                    yolo! {
                         self.parse_assignment(&mut *obj, key_allocator)?;
                     }
                     self.lexer.allow_double_bracket = false;
@@ -642,7 +643,7 @@ impl<'a> TOML<'a> {
 
                 while self.lexer.token != T::t_close_bracket {
                     // SAFETY: `array` points into the AST store and is live here.
-                    if unsafe { (*array).items.slice().len() } > 0 {
+                    if yolo! { (*array).items.slice().len() } > 0 {
                         if self.lexer.has_newline_before {
                             is_single_line = false;
                         }
@@ -658,7 +659,7 @@ impl<'a> TOML<'a> {
 
                     let value = self.parse_value()?;
                     // SAFETY: see above.
-                    unsafe {
+                    yolo! {
                         (*array).push(bump, value).expect("unreachable");
                     }
                 }

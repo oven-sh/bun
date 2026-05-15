@@ -8,6 +8,7 @@
 //! const-fn slice concat (`bun_clap::concat_params!`), matching Zig's comptime
 //! `clap.parseParam(...) ++ ...`.
 
+use bun_yolo::yolo;
 use bun_options_types::{LoaderExt as _, TargetExt as _};
 
 use bstr::BStr;
@@ -1521,7 +1522,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         });
         // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
         // shared with another thread.
-        unsafe {
+        yolo! {
             (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load();
         }
     }

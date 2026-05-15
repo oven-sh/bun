@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::ptr::{self, NonNull};
 
@@ -40,7 +41,7 @@ impl Default for Context {
             avail_out: 0,
             flush: Op::process,
             // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
-            last_result: unsafe { bun_core::ffi::zeroed_unchecked() },
+            last_result: yolo! { bun_core::ffi::zeroed_unchecked() },
             error_: c::BrotliDecoderErrorCode2::NO_ERROR,
         }
     }
@@ -249,9 +250,9 @@ mod _impl {
         /// whose generated trait `destroy` upholds the sole-owner contract.
         fn destroy_on_zero(this: *mut Self) {
             // SAFETY: refcount hit zero ⇒ no other borrow remains.
-            unsafe { (*this).deinit() };
+            yolo! { (*this).deinit() };
             // SAFETY: allocated via `Box::new` in `constructor`.
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
 
         /// RefCount destructor body (called when ref_count → 0).
@@ -277,7 +278,7 @@ mod _impl {
                     let alloc = bun_brotli::BrotliAllocator::alloc;
                     let free = bun_brotli::BrotliAllocator::free;
                     // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
-                    let state = unsafe {
+                    let state = yolo! {
                         c::BrotliEncoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
                     };
                     if state.is_null() {
@@ -294,7 +295,7 @@ mod _impl {
                     let alloc = bun_brotli::BrotliAllocator::alloc;
                     let free = bun_brotli::BrotliAllocator::free;
                     // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
-                    let state = unsafe {
+                    let state = yolo! {
                         c::BrotliDecoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
                     };
                     if state.is_null() {
@@ -395,7 +396,7 @@ mod _impl {
                     let mut next_in = self.next_in;
                     // SAFETY: state is a live encoder; next_in/next_out point into
                     // caller-provided buffers sized by avail_in/avail_out.
-                    self.last_result.e = unsafe {
+                    self.last_result.e = yolo! {
                         c::BrotliEncoderCompressStream(
                             self.state_ptr().cast(),
                             self.flush,
@@ -408,7 +409,7 @@ mod _impl {
                     };
                     // self.next_in += (next_in - self.next_in)
                     // SAFETY: next_in advanced within the same allocation; offset = bytes consumed by brotli.
-                    self.next_in = unsafe {
+                    self.next_in = yolo! {
                         self.next_in
                             .add((next_in as usize) - (self.next_in as usize))
                     };
@@ -416,7 +417,7 @@ mod _impl {
                 bun_zlib::NodeMode::BROTLI_DECODE => {
                     let mut next_in = self.next_in;
                     // SAFETY: state is a live decoder; buffers as above.
-                    self.last_result.d = unsafe {
+                    self.last_result.d = yolo! {
                         c::BrotliDecoderDecompressStream(
                             self.state_ptr().cast(),
                             &raw mut self.avail_in,
@@ -427,12 +428,12 @@ mod _impl {
                         )
                     };
                     // SAFETY: next_in advanced within the same allocation; offset = bytes consumed by brotli.
-                    self.next_in = unsafe {
+                    self.next_in = yolo! {
                         self.next_in
                             .add((next_in as usize) - (self.next_in as usize))
                     };
                     // SAFETY: d was just written by the line above.
-                    if unsafe { self.last_result.d } == c::BrotliDecoderResult::err {
+                    if yolo! { self.last_result.d } == c::BrotliDecoderResult::err {
                         self.error_ = c::BrotliDecoderGetErrorCode(self.decoder_mut());
                     }
                 }
@@ -449,7 +450,7 @@ mod _impl {
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     // SAFETY: e is the active field after an encode do_work().
-                    if unsafe { self.last_result.e } == 0 {
+                    if yolo! { self.last_result.e } == 0 {
                         return Error::init(
                             c"Compression failed".as_ptr(),
                             -1,
@@ -467,7 +468,7 @@ mod _impl {
                         );
                     } else if self.flush == Op::finish
                     // SAFETY: d is the active field after a decode do_work().
-                    && unsafe { self.last_result.d } == c::BrotliDecoderResult::needs_more_input
+                    && yolo! { self.last_result.d } == c::BrotliDecoderResult::needs_more_input
                     {
                         return Error::init(
                             c"unexpected end of file".as_ptr(),
@@ -500,7 +501,7 @@ mod _impl {
             // SAFETY: callers branch on `mode == BROTLI_ENCODE`, so `state` was
             // populated by `BrotliEncoderCreateInstance` in `init()` and is not
             // yet freed (`deinit_state` clears it after destroy).
-            unsafe { &mut *self.state.unwrap().as_ptr().cast() }
+            yolo! { &mut *self.state.unwrap().as_ptr().cast() }
         }
 
         /// `&mut` to the live decoder state. Single unsafe deref site for the
@@ -511,7 +512,7 @@ mod _impl {
             // SAFETY: callers branch on `mode == BROTLI_DECODE`, so `state` was
             // populated by `BrotliDecoderCreateInstance` in `init()` and is not
             // yet freed.
-            unsafe { &mut *self.state.unwrap().as_ptr().cast() }
+            yolo! { &mut *self.state.unwrap().as_ptr().cast() }
         }
     }
 

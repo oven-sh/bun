@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
@@ -20,7 +21,7 @@ extern "C" fn deep_equals_iterator(
     item: JSValue,
 ) {
     // SAFETY: `entry_` is `&mut ExpectedEntry` passed through `for_each` below; non-null by contract.
-    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
+    let entry = yolo! { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
     let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
         return;
     };

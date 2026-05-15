@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! OS-native numeric thread ID — the kernel's notion of "this thread", suitable
 //! for storing in an atomic and printing in panics so it lines up with what a
 //! debugger / `top -H` / Instruments shows.
@@ -114,7 +115,7 @@ pub fn current() -> ThreadId {
     {
         // Zig: `LinuxThreadImpl.getCurrentId()` → `linux.gettid()`.
         // SAFETY: `gettid` takes no arguments and cannot fail.
-        return unsafe { libc::gettid() } as ThreadId;
+        return yolo! { libc::gettid() } as ThreadId;
     }
     #[cfg(any(
         target_os = "macos",
@@ -133,7 +134,7 @@ pub fn current() -> ThreadId {
         }
         let mut id: u64 = 0;
         // SAFETY: passing null requests the current thread; `id` is a valid out-ptr.
-        let rc = unsafe { pthread_threadid_np(core::ptr::null_mut(), &mut id) };
+        let rc = yolo! { pthread_threadid_np(core::ptr::null_mut(), &mut id) };
         debug_assert_eq!(rc, 0);
         return id;
     }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
@@ -46,8 +47,8 @@ impl URLSearchParams {
         extern "C" fn cb<Ctx>(c: *mut c_void, str: *const ZigString) {
             // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; `str` is a valid
             // *const ZigString for the duration of this callback (borrowed from C++).
-            let w = unsafe { bun_ptr::callback_ctx::<Wrap<'_, Ctx>>(c) };
-            let str = unsafe { *str };
+            let w = yolo! { bun_ptr::callback_ctx::<Wrap<'_, Ctx>>(c) };
+            let str = yolo! { *str };
             (w.callback)(w.ctx, str);
         }
 

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
@@ -184,7 +185,7 @@ impl<'a> TestRunner<'a> {
         // duration of the timer-removal below. The const→mut projection is
         // centralized in `buntest_as_mut` pending the BunTestPtr interior-mut
         // reshape (see bun_test.rs).
-        let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
+        let active_file = yolo! { bun_test::buntest_as_mut(active_file) };
         if active_file.timer.state != TimerState::ACTIVE
             || active_file.timer.next == ElTimespec::EPOCH
         {
@@ -314,7 +315,7 @@ pub mod Jest {
 
     pub fn runner() -> Option<&'static mut TestRunner<'static>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
+        yolo! { RUNNER.read().map(|p| &mut *p.as_ptr()) }
     }
 
     /// Raw-pointer accessor for callers that must not materialise
@@ -323,7 +324,7 @@ pub mod Jest {
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER.read() }
+        yolo! { RUNNER.read() }
     }
 
     #[unsafe(no_mangle)]
@@ -481,7 +482,7 @@ pub mod Jest {
         let vm = global_object.bun_vm();
 
         // SAFETY: bun_vm() returns the live per-thread VM; deref for a single field read.
-        if unsafe { (*vm).is_in_preload } || runner().is_none() {
+        if yolo! { (*vm).is_in_preload } || runner().is_none() {
             // in preload, no arguments needed
         } else {
             let arguments = callframe.arguments_old::<2>();
@@ -540,7 +541,7 @@ pub mod on_unhandled_rejection {
             // dereferenced for this scope and is dropped before `BunTest::run`
             // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
-            let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+            let buntest = yolo! { bun_test::buntest_as_mut(&buntest_strong) };
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
             // PORT NOTE: split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
@@ -575,7 +576,7 @@ pub mod on_unhandled_rejection {
         // for the duration of `run_error_handler` (single-threaded JS thread).
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
-            .map(|p| unsafe { &mut *p.as_ptr() });
+            .map(|p| yolo! { &mut *p.as_ptr() });
         jsc_vm.run_error_handler(rejection, exception_list);
     }
 }
@@ -773,7 +774,7 @@ pub fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObj
                 ) -> u32;
             }
             // SAFETY: callframe and global_this are valid live references.
-            return unsafe { Bun__CallFrame__getLineNumber(callframe, global_this) };
+            return yolo! { Bun__CallFrame__getLineNumber(callframe, global_this) };
         }
     }
     0

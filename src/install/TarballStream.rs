@@ -18,6 +18,7 @@
 //! resolve thread pool without ever parking a worker on a condvar, and
 //! without holding the full compressed or decompressed tarball in memory.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_void};
 use core::mem::{ManuallyDrop, offset_of};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -263,7 +264,7 @@ impl TarballStream {
     ) {
         // SAFETY: see fn-level # Safety — `this` is live, raw-ptr field
         // projection only (no `&mut TarballStream` formed).
-        unsafe {
+        yolo! {
             (*this).mutex.lock();
             if !chunk.is_empty() {
                 (*this).pending.extend_from_slice(chunk);
@@ -289,7 +290,7 @@ impl TarballStream {
         // SAFETY: see fn-level # Safety — `this` is live; `package_manager`
         // outlives this stream (it owns the thread pool that runs us). Field
         // projections via raw ptr — no `&mut TarballStream` is formed.
-        unsafe {
+        yolo! {
             if (*this).draining.swap(true, Ordering::AcqRel) {
                 return;
             }
@@ -324,7 +325,7 @@ impl TarballStream {
         // projection only. The HTTP thread touches mutex-guarded producer
         // fields concurrently; everything else is drain-local. `finish` may
         // free `*this`; each `return` after it touches nothing.
-        unsafe {
+        yolo! {
             loop {
                 if (*this).fail.is_none() && (*this).phase != Phase::Done {
                     // Only pull bytes into `reading` while libarchive is still
@@ -430,7 +431,7 @@ impl TarballStream {
     /// `read_pos`/`hasher`) are owned by the single active drain task.
     unsafe fn take_pending(this: *mut Self) -> bool {
         // SAFETY: see fn-level # Safety — raw-ptr field projection only.
-        unsafe {
+        yolo! {
             (*this).mutex.lock();
 
             if (*this).pending.is_empty() {
@@ -488,7 +489,7 @@ impl TarballStream {
         // provenance). Transient `&mut *this` for `open_destination` /
         // `begin_entry` / `write_data_block` / `close_output_file` is sound:
         // those do not call into libarchive.
-        unsafe {
+        yolo! {
             if (*this).archive.is_none() {
                 Self::open_archive(this)?;
             }
@@ -574,7 +575,7 @@ impl TarballStream {
         let archive = lib::Archive::read_new();
         let guard = scopeguard::guard(archive, |a| {
             // SAFETY: errdefer cleanup — archive is a valid handle from read_new().
-            unsafe {
+            yolo! {
                 let _ = (*a).read_close();
                 let _ = (*a).read_free();
             }
@@ -583,21 +584,21 @@ impl TarballStream {
         // bidding would try to read-ahead before any bytes have arrived.
         // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_append_filter(archive, 1) } != 0 {
+        if yolo! { lib::archive_read_append_filter(archive, 1) } != 0 {
             return Err(bun_core::err!("Fail"));
         }
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_set_format(archive, 0x30000) } != 0 {
+        if yolo! { lib::archive_read_set_format(archive, 0x30000) } != 0 {
             return Err(bun_core::err!("Fail"));
         }
         // SAFETY: archive is a valid handle.
-        let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
+        let _ = yolo! { (*archive).read_set_options(c"read_concatenated_archives") };
 
         // SAFETY: archive is a valid handle; `this` outlives the archive
         // (freed only in `Drop` after `read_free`). See fn-level # Safety
         // for why client_data must be the Box-rooted `this` and not a
         // `&mut self`-derived pointer.
-        let rc_raw: c_int = unsafe {
+        let rc_raw: c_int = yolo! {
             lib::archive_read_open(
                 archive,
                 this.cast::<c_void>(),
@@ -623,7 +624,7 @@ impl TarballStream {
                 // open() runs the filter bidder which we bypassed, but the
                 // client open path may still probe; treat as transient.
                 // SAFETY: see fn-level # Safety — raw-ptr field write.
-                unsafe { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
+                yolo! { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
                 return Ok(());
             }
             _ => {
@@ -637,7 +638,7 @@ impl TarballStream {
             }
         }
         // SAFETY: see fn-level # Safety — raw-ptr field write.
-        unsafe { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
+        yolo! { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
         Ok(())
     }
 
@@ -752,7 +753,7 @@ impl TarballStream {
         norm_buf[norm_len] = 0;
         // SAFETY: norm_buf[norm_len] == 0 written above.
         let path: OSPathZMut =
-            unsafe { OSPathSliceZ::from_raw_mut(norm_buf.as_mut_ptr(), norm_len) };
+            yolo! { OSPathSliceZ::from_raw_mut(norm_buf.as_mut_ptr(), norm_len) };
         if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
             self.phase = Phase::WantData;
             self.out_fd = None;
@@ -913,7 +914,7 @@ impl TarballStream {
         // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
         // are live raw pointers; this fn is the sole owner. After
         // `heap::take(this)` nothing touches `this`.
-        unsafe {
+        yolo! {
             // Fields are already raw pointers (see struct PORT NOTE), so copying
             // them out before `heap::take(this)` is just a pointer copy — no
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
@@ -1001,7 +1002,7 @@ impl TarballStream {
         // SAFETY: see fn-level # Safety — `task` is live and exclusively
         // owned by this drain; union field `extract` is the active variant
         // for streaming tarballs (set by `enqueueExtractNPMPackage`).
-        unsafe {
+        yolo! {
             // Explicit `&` (no implicit autoref through the raw-ptr deref) for
             // the `ManuallyDrop` → `ExtractRequest` deref.
             let tarball = &(&(*task).request.extract).tarball;
@@ -1132,7 +1133,7 @@ impl Drop for TarballStream {
         }
         if let Some(a) = self.archive {
             // SAFETY: `a` is a live libarchive handle owned by this struct.
-            unsafe {
+            yolo! {
                 let _ = (*a).read_close();
                 let _ = (*a).read_free();
             }
@@ -1151,11 +1152,11 @@ fn drain_callback(task: *mut thread_pool::Task) {
     // SAFETY: thread-pool callback contract — `task` points to
     // `TarballStream.drain_task`; recover the parent via offset_of.
     let this: *mut TarballStream =
-        unsafe { bun_core::from_field_ptr!(TarballStream, drain_task, task) };
+        yolo! { bun_core::from_field_ptr!(TarballStream, drain_task, task) };
     // SAFETY: the thread pool guarantees `task` is live for the duration of
     // the callback, and only one drain runs at a time (see `draining` flag).
     // `drain` may free `this`; nothing touches it after this call.
-    unsafe { TarballStream::drain(this) };
+    yolo! { TarballStream::drain(this) };
 }
 
 /// libarchive client read callback. Returns whatever compressed bytes
@@ -1188,7 +1189,7 @@ extern "C" fn archive_read_callback(
 
     // SAFETY: `this` is valid (see above); `reading`/`read_pos` are owned by
     // the single active drain task.
-    unsafe {
+    yolo! {
         // Explicit `&` on the `Vec` field (no implicit autoref through the
         // raw-ptr deref) for `Index::index`.
         let remaining = &(&(*this).reading)[(*this).read_pos..];
@@ -1205,7 +1206,7 @@ extern "C" fn archive_read_callback(
     // might have landed a fresh chunk in the meantime.
     // SAFETY: `mutex`/`pending`/`closed` accessed via raw ptr; producer side
     // is synchronised by the mutex itself.
-    let (has_pending, closed) = unsafe {
+    let (has_pending, closed) = yolo! {
         (*this).mutex.lock();
         let r = (!(*this).pending.is_empty(), (*this).closed);
         (*this).mutex.unlock();
@@ -1220,7 +1221,7 @@ extern "C" fn archive_read_callback(
         // raw-ptr projection, never forming `&mut TarballStream`; `step()`
         // holds no `&mut TarballStream` across the libarchive call that
         // re-entered us.
-        unsafe {
+        yolo! {
             let _ = TarballStream::take_pending(this);
             // Explicit `&` on the `Vec` field (no implicit autoref through
             // the raw-ptr deref) for `Index::index`.
@@ -1235,7 +1236,7 @@ extern "C" fn archive_read_callback(
 
     if closed {
         // SAFETY: out_buffer is a valid out-param; ptr is unused when len==0.
-        unsafe { *out_buffer = this.cast() };
+        yolo! { *out_buffer = this.cast() };
         return 0;
     }
 

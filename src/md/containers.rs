@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::{align_of, size_of};
 
 use bun_alloc::AllocError;
@@ -203,7 +204,7 @@ impl Parser<'_> {
 
             // SAFETY: bytes_ptr+off is within bounds (checked above) and was written
             // at BlockHeader alignment by push_container_bytes / current_block writes.
-            let hdr: &BlockHeader = unsafe { &*bytes_ptr.add(off).cast::<BlockHeader>() };
+            let hdr: &BlockHeader = yolo! { &*bytes_ptr.add(off).cast::<BlockHeader>() };
             off += size_of::<BlockHeader>();
 
             let block_type = hdr.block_type;
@@ -218,7 +219,7 @@ impl Parser<'_> {
             }
             // SAFETY: bytes_ptr+off..+lines_size is within bounds (checked above) and
             // VerbatimLine entries were written contiguously after the header.
-            let block_lines: &[VerbatimLine] = unsafe {
+            let block_lines: &[VerbatimLine] = yolo! {
                 core::slice::from_raw_parts(
                     bytes_ptr.add(off).cast::<VerbatimLine>(),
                     n_lines as usize,

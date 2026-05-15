@@ -5,6 +5,7 @@
 //! For in-depth details on the fields, most of these are documented
 //! inside of `js_parser`
 
+use bun_yolo::yolo;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
@@ -118,7 +119,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 
     /// Exclusive borrow of the bump-arena `Scope` that `current_scope` points
-    /// at. Centralizes the `unsafe { &mut *self.current_scope }` deref so the
+    /// at. Centralizes the `yolo! { &mut *self.current_scope }` deref so the
     /// invariant is stated once.
     ///
     /// SAFETY (encapsulated): `current_scope` is set to a live `bump.alloc`
@@ -135,7 +136,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         );
         // SAFETY: see fn doc — non-null bump-arena slot, exclusively borrowed
         // through `&mut self`.
-        unsafe { &mut *self.current_scope }
+        yolo! { &mut *self.current_scope }
     }
 
     // PORT NOTE: Zig signature lacks `!` but body uses `try` — porting as fallible.
@@ -263,7 +264,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // SAFETY: every element of `out` was written in the loop above (loop
         // runs exactly N times). `Expr` is `Copy`, so by-value `assume_init`
         // per element is equivalent to `MaybeUninit::array_assume_init`.
-        Ok(out.map(|e| unsafe { e.assume_init() }))
+        Ok(out.map(|e| yolo! { e.assume_init() }))
     }
 
     pub fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
@@ -335,7 +336,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
         let mut top_level_symbols_to_parts = TopLevelSymbolToParts::default();
         // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)
-        let module_scope_ref = unsafe { &*module_scope };
+        let module_scope_ref = yolo! { &*module_scope };
         let generated_len = module_scope_ref.generated.len();
         top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
         // PORT NOTE: reshaped — Zig grew `entries` then wrote keys/values columns
@@ -446,7 +447,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         // reference it from `export_props`.
                         // SAFETY: `StmtOrExpr` lives in the arena; bitwise read
                         // matches Zig's value copy (no Drop fields touched).
-                        let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
+                        let value = yolo! { core::ptr::read(&raw const st.value) }.to_expr();
                         let temp_id = self.generate_temp_ref(Some(b"default_export"));
                         parts.mut_(1).declared_symbols.append(DeclaredSymbol {
                             ref_: temp_id,
@@ -585,7 +586,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
         // SAFETY: module_scope is a live arena allocation. `Scope` is no-Drop
         // arena POD; Zig bitwise-copied it (`module_scope.*`).
-        let module_scope_value: Scope = unsafe { core::ptr::read(module_scope) };
+        let module_scope_value: Scope = yolo! { core::ptr::read(module_scope) };
 
         Ok(crate::BundledAst {
             parts,

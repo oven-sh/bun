@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
@@ -97,7 +98,7 @@ impl Report {
         // SAFETY: `vm` is the live `*mut VM` owning `global_this`; Generator and the
         // callback are kept alive for the duration of the FFI call;
         // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
-        let ok = unsafe {
+        let ok = yolo! {
             CodeCoverage__withBlocksAndFunctions(
                 vm,
                 generator.byte_range_mapping.source_id,
@@ -388,7 +389,7 @@ impl<'a> Generator<'a> {
     ) {
         // SAFETY: `this` was passed as &mut Generator to CodeCoverage__withBlocksAndFunctions
         // and is valid for the duration of this synchronous callback.
-        let this = unsafe { &mut *this };
+        let this = yolo! { &mut *this };
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
         // pointer even for zero-length slices, so we must bail before constructing the slice
@@ -398,7 +399,7 @@ impl<'a> Generator<'a> {
         }
         // SAFETY: blocks_len != 0, so blocks_ptr[0..blocks_len] is a valid contiguous C array
         // provided by JSC for the duration of this synchronous callback.
-        let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
+        let all = yolo! { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
         let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
         let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
         if function_blocks.len() > 1 {
@@ -467,7 +468,7 @@ fn thread_map() -> *mut ByteRangeMappingHashMap {
     MAP.with(|cell| {
         // SAFETY: thread-local; no other reference to this UnsafeCell can exist
         // concurrently on this thread while we hold this exclusive borrow.
-        let slot = unsafe { &mut *cell.get() };
+        let slot = yolo! { &mut *cell.get() };
         if slot.is_none() {
             *slot = Some(Box::new(ByteRangeMappingHashMap::default()));
         }
@@ -480,7 +481,7 @@ fn thread_map() -> *mut ByteRangeMappingHashMap {
 fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
     MAP.with(|cell| {
         // SAFETY: thread-local exclusive access.
-        let slot = unsafe { &mut *cell.get() };
+        let slot = yolo! { &mut *cell.get() };
         slot.as_mut().map(|b| NonNull::from(&mut **b))
     })
 }
@@ -871,7 +872,7 @@ pub extern "C" fn ByteRangeMapping__generate(
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
     // this thread for the duration of this call.
-    let map = unsafe { &mut *thread_map() };
+    let map = yolo! { &mut *thread_map() };
 
     let slice = str_.to_utf8();
     let hash = bun_wyhash::hash(slice.slice());
@@ -887,7 +888,7 @@ pub extern "C" fn ByteRangeMapping__generate(
 #[unsafe(no_mangle)]
 pub extern "C" fn ByteRangeMapping__getSourceID(this: *mut ByteRangeMapping) -> i32 {
     // SAFETY: `this` is a valid pointer obtained from ByteRangeMapping__find.
-    unsafe { (*this).source_id }
+    yolo! { (*this).source_id }
 }
 
 #[unsafe(no_mangle)]
@@ -898,7 +899,7 @@ pub extern "C" fn ByteRangeMapping__find(
 
     let map_ptr = thread_map_opt()?;
     // SAFETY: map_ptr points into this thread's owned Box; valid until thread exit.
-    let map = unsafe { &mut *map_ptr.as_ptr() };
+    let map = yolo! { &mut *map_ptr.as_ptr() };
     let hash = bun_wyhash::hash(slice.slice());
     let entry = map.get_mut(&hash)?;
     Some(NonNull::from(entry))
@@ -917,10 +918,10 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
         return JSValue::NULL;
     };
     // SAFETY: pointer into the thread-local map, valid for this call.
-    let this = unsafe { &*this_ptr.as_ptr() };
+    let this = yolo! { &*this_ptr.as_ptr() };
 
     // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
-    let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
+    let all = yolo! { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
     let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
     let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
     if function_blocks.len() > 1 {

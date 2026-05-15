@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 
 use crate::MAX_PATH_BYTES;
@@ -93,7 +94,7 @@ impl PathString {
         }
         // SAFETY: PathString::init was given a live &[u8] of this len; caller
         // guarantees the borrowed memory outlives this PathString.
-        unsafe { core::slice::from_raw_parts(ptr as *const u8, self.len()) }
+        yolo! { core::slice::from_raw_parts(ptr as *const u8, self.len()) }
     }
 
     #[inline]
@@ -105,7 +106,7 @@ impl PathString {
             return ZStr::EMPTY;
         }
         // SAFETY: caller asserts the backing buffer has a NUL at [len].
-        unsafe { ZStr::from_raw(ptr as *const u8, self.len()) }
+        yolo! { ZStr::from_raw(ptr as *const u8, self.len()) }
     }
 
     /// Create a PathString from a borrowed slice. No allocation occurs.
@@ -139,7 +140,7 @@ impl PathString {
         let raw: *mut [u8] = crate::heap::into_raw(bytes.into_boxed_slice());
         // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
         // ptr+len into the backing int.
-        Self::init(unsafe { &*raw })
+        Self::init(yolo! { &*raw })
     }
 
     /// Free a heap allocation previously adopted by [`init_owned`]. No-op for
@@ -158,7 +159,7 @@ impl PathString {
         }
         // SAFETY: caller contract — (ptr,len) is exactly the `Box<[u8]>` that
         // `init_owned` released via `into_raw`.
-        drop(unsafe { crate::heap::take(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
+        drop(yolo! { crate::heap::take(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
     }
 
     #[inline]

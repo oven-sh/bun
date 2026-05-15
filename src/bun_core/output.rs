@@ -10,6 +10,7 @@
 //! `pretty_fmt!` itself (the `<red>…<r>` → ANSI substitution) is necessarily a proc-macro;
 //! a stub is declared here and flagged `TODO(port): proc-macro`.
 
+use bun_yolo::yolo;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_int;
 use core::fmt;
@@ -107,7 +108,7 @@ impl QuietWriterAdapter {
     pub fn new_interface(&mut self) -> &mut io::Writer {
         // SAFETY: erased <bun_sys::QuietWrite>::Adapter; bun_sys guarantees
         // the io::Writer is the first field (repr(C)).
-        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<io::Writer>() }
+        yolo! { &mut *std::ptr::from_mut::<Self>(self).cast::<io::Writer>() }
     }
 }
 
@@ -354,7 +355,7 @@ impl Source {
     // SAFETY: byte arrays and raw `*mut` pointers are valid all-zero (null fat ptr =
     // `(null, 0)`); only read after `init()` overwrites every field. See TODO above for
     // the adapter/stream caveat.
-    pub const ZEROED: Self = unsafe { crate::ffi::zeroed_unchecked() };
+    pub const ZEROED: Self = yolo! { crate::ffi::zeroed_unchecked() };
 
     /// Accessors replacing the self-referential `*std.Io.Writer` fields.
     #[inline]
@@ -419,7 +420,7 @@ impl Source {
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
         // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe {
+        SOURCE.with_borrow_mut(|s| yolo! {
             Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
         });
         crate::StackCheck::configure_thread();
@@ -447,7 +448,7 @@ impl Source {
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
         // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
-        SOURCE.with_borrow_mut(|s| unsafe {
+        SOURCE.with_borrow_mut(|s| yolo! {
             Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
         });
         // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
@@ -536,7 +537,7 @@ impl Source {
             }
 
             // SAFETY: write-once init guarded by STDOUT_STREAM_SET above.
-            unsafe {
+            yolo! {
                 STDOUT_STREAM.write(stdout);
                 STDERR_STREAM.write(stderr);
             }
@@ -588,7 +589,7 @@ pub mod windows_stdio {
         // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
         // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
         // long-lived `&` — read the handle fields through raw-pointer deref.
-        let (stdin, stdout, stderr) = unsafe {
+        let (stdin, stdout, stderr) = yolo! {
             let pp = (*w::peb()).ProcessParameters;
             ((*pp).hStdInput, (*pp).hStdOutput, (*pp).hStdError)
         };
@@ -641,7 +642,7 @@ pub mod windows_stdio {
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
         // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
-        unsafe {
+        yolo! {
             (*BUFFERED_STDIN.get()).fd = Fd::stdin();
         }
 
@@ -1079,7 +1080,7 @@ fn source_writer_escape(project: fn(&mut Source) -> &mut io::Writer) -> &'static
     // backing field has a stable address once `Source::init` has run, and the
     // returned `&'static mut` is used briefly with no two live at once (see
     // TODO(port) above — known-unsound shim until callers migrate).
-    unsafe { &mut *p }
+    yolo! { &mut *p }
 }
 
 #[allow(clippy::mut_from_ref)]
@@ -1154,7 +1155,7 @@ pub fn flush() {
         // vtable fn pointer directly with the raw `*mut` (no `&mut Writer`
         // formed) so a re-entrant print/flush from inside the drain cannot
         // alias an outstanding exclusive borrow.
-        unsafe {
+        yolo! {
             let _ = ((*bs).flush)(bs);
             let _ = ((*bes).flush)(bes);
         }
@@ -1380,7 +1381,7 @@ unsafe fn write_fmt_raw(w: *mut io::Writer, args: fmt::Arguments<'_>) {
             // via raw-pointer field projection (no intermediate `&`/`&mut`
             // Writer) and call it with the raw `*mut` — any re-entrant write
             // sees only another raw pointer, never an aliased `&mut`.
-            unsafe {
+            yolo! {
                 let f = (*self.0).write_all;
                 let _ = f(self.0, s.as_bytes());
             }
@@ -1396,7 +1397,7 @@ fn write_bytes(dest: Destination, bytes: &[u8]) {
     with_dest_writer(dest, |w| {
         // SAFETY: `w` is valid per `with_dest_writer`; call the vtable fn
         // directly with the raw pointer so no `&mut Writer` is formed.
-        unsafe {
+        yolo! {
             let f = (*w).write_all;
             let _ = f(w, bytes);
         }
@@ -1422,7 +1423,7 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
         // SAFETY: `w` is valid per `with_dest_writer`; `write_fmt_raw` routes
         // through the vtable without forming a `&mut Writer`, so `Display`
         // impls that re-enter `print_to`/`flush` cannot alias.
-        unsafe { write_fmt_raw(w, args) };
+        yolo! { write_fmt_raw(w, args) };
     });
 }
 
@@ -1906,7 +1907,7 @@ impl AsRef<str> for PrettyBuf {
         // SAFETY: contents are ANSI escape bytes (pure ASCII) interleaved with
         // verbatim runs of a `&'static str` template — both UTF-8 by
         // construction.
-        unsafe { core::str::from_utf8_unchecked(&self.0) }
+        yolo! { core::str::from_utf8_unchecked(&self.0) }
     }
 }
 impl fmt::Display for PrettyBuf {
@@ -2189,7 +2190,7 @@ pub fn _scoped_use_ansi() -> bool {
     ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) && SOURCE_SET.get() && {
         // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
         // init; `QuietWriter` is Copy POD so reading it is always sound.
-        let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
+        let sw = yolo! { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
         sw.context_handle() == raw_writer().handle()
     }
 }
@@ -2729,7 +2730,7 @@ pub fn init_scoped_debug_writer_at_startup() {
             // `fd.truncate(0)` from Zig is a no-op here until the vtable entry lands.
             let _ = &fd; // windows
             // SAFETY: single-threaded startup.
-            unsafe {
+            yolo! {
                 scoped_debug_writer::SCOPED_FILE_WRITER
                     .write(output_sink().quiet_writer_from_fd(fd));
             }
@@ -2738,7 +2739,7 @@ pub fn init_scoped_debug_writer_at_startup() {
     }
 
     // SAFETY: single-threaded startup.
-    unsafe {
+    yolo! {
         scoped_debug_writer::SCOPED_FILE_WRITER
             .write(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
     }
@@ -2755,7 +2756,7 @@ fn scoped_writer() -> QuietWriter {
         "scopedWriter() should only be called in debug mode",
     );
     // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
-    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
+    yolo! { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
 }
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
@@ -2956,7 +2957,7 @@ pub fn buffered_stdin_read_until_delimiter(
     max_size: usize,
 ) -> Result<(), crate::Error> {
     // SAFETY: single-threaded static; only live `&mut` for this call's duration.
-    unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
+    yolo! { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

@@ -6,6 +6,7 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 
 // `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
@@ -22,7 +23,7 @@ pub use bun_css::BundlerStyleSheet;
 /// single common lifetime — so the invariant is enforced by drop order, not
 /// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
 /// documented `unsafe` deref justified by that invariant; callers use `&*r`
-/// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
+/// (or `Option::as_deref`) instead of open-coded `yolo! { &*ptr }`.
 pub type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
 
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler

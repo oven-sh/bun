@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
@@ -167,7 +168,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     // SAFETY: `start_pos..end_pos` is in-bounds (checked above) and the lockfile
     // writer aligned the payload to `align_of::<T>()` via `Aligner::write`. Zig
     // used `@alignCast` here with the same precondition.
-    let misaligned: &[T] = unsafe {
+    let misaligned: &[T] = yolo! {
         bun_core::ffi::slice(
             stream.buffer.as_ptr().add(start_pos).cast::<T>(),
             (end_pos - start_pos) / size_of::<T>(),
@@ -198,7 +199,7 @@ where
     // SAFETY: `T` has no uninitialized padding (asserted above in Zig); reading
     // its bytes is sound. Matches `std.mem.sliceAsBytes`.
     let bytes: &[u8] =
-        unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
+        yolo! { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
 
     let start_pos = stream.get_pos()?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;

@@ -6,6 +6,7 @@
 //! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
+use bun_yolo::yolo;
 use ::core::ffi::{c_char, c_void};
 use ::core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
@@ -212,7 +213,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ONCE.call(|| {
             // SAFETY: single-writer (Once gate), process-lifetime storage,
             // CLI is single-threaded at this point.
-            let buf = unsafe { &mut *SHELL_BUF.get() };
+            let buf = yolo! { &mut *SHELL_BUF.get() };
             let len = Self::find_shell_impl(path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.
@@ -292,7 +293,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // Erase the loader's borrowed lifetime to `'static` for the
             // singleton handoff (Zig passed a raw `*DotEnv.Loader`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe {
+                Some(yolo! {
                     &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
                         .cast::<DotEnv::Loader<'static>>()
                 }),
@@ -302,7 +303,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // pointer (Zig `*MiniEventLoop`); reborrow `&'static mut` for the
             // duration of `init_and_run_from_source` — single-threaded mini loop,
             // no aliasing `&mut` exists across this call.
-            let mini = unsafe { &mut *mini };
+            let mini = yolo! { &mut *mini };
             let code = match crate::shell::Interpreter::init_and_run_from_source(
                 ctx,
                 mini,
@@ -379,7 +380,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: same lifetime erasure as the `!use_system_shell`
                         // branch above — `env` outlives the mini event loop.
-                        Some(unsafe {
+                        Some(yolo! {
                             &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
                                 .cast::<DotEnv::Loader<'static>>()
                         }),
@@ -573,7 +574,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // so callers MUST pass a `MaybeUninit` slot (PORTING.md §std.mem.zeroes).
         this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
         // SAFETY: fully written on the line above.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        let this_transpiler = yolo! { this_transpiler.assume_init_mut() };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
@@ -594,7 +595,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = yolo! { (*this_transpiler.fs).top_level_dir };
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
@@ -603,7 +604,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
                     // threaded CLI startup), process-lifetime.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    let _ = yolo! { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
                         Output::error_writer(),
                     ));
                     pretty_errorln!(
@@ -618,7 +619,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
                 Ok(None) => {
                     // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    let _ = yolo! { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
                         Output::error_writer(),
                     ));
                     pretty_errorln!("error loading current directory");
@@ -829,7 +830,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
             // a backref into it.
             let url_str: &'static [u8] =
-                unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
+                yolo! { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
             let url = bun_url::URL::parse(url_str);
 
             if !url.is_http() && !url.is_https() {
@@ -881,12 +882,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
             // singleton (set by `Transpiler::init`); erasing the borrowed
             // lifetime mirrors the `run_package_script_foreground` handoff.
-            Some(unsafe { &mut *bundle.env.cast::<DotEnv::Loader<'static>>() }),
+            Some(yolo! { &mut *bundle.env.cast::<DotEnv::Loader<'static>>() }),
             None,
         );
         // SAFETY: `init_global` returns the thread-local singleton; single-
         // threaded mini loop, no aliasing `&mut` exists across this call.
-        let mini = unsafe { &mut *mini };
+        let mini = yolo! { &mut *mini };
         mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
@@ -945,7 +946,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ..Default::default()
         })?;
         // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
-        let vm = unsafe { &mut *vm_ptr };
+        let vm = yolo! { &mut *vm_ptr };
 
         // PORT NOTE: `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
@@ -967,14 +968,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `cwd/[eval]` path (Zig: `run.entry_path = heap_entry_path`).
         let mut entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
-        let entry: &[u8] = unsafe { &*entry_ptr };
+        let entry: &[u8] = yolo! { &*entry_ptr };
         vm.set_main(entry);
 
         if !ctx.runtime_options.eval.script.is_empty() {
             // PORT NOTE: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
-            let script: &'static [u8] = unsafe {
+            let script: &'static [u8] = yolo! {
                 ::core::slice::from_raw_parts(
                     ctx.runtime_options.eval.script.as_ptr(),
                     ctx.runtime_options.eval.script.len(),
@@ -1059,7 +1060,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
         // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
+        bun_http::async_http::load_env(yolo! { vm.log.unwrap().as_mut() }, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
@@ -1088,7 +1089,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
-        unsafe {
+        yolo! {
             RUN.get().write(Run {
                 ctx: std::ptr::from_mut::<ContextData>(ctx),
                 vm: vm_ptr,
@@ -1104,7 +1105,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call so no
             // other thread touches the VM.
-            let this = unsafe { &mut *ctx.cast::<Run>() };
+            let this = yolo! { &mut *ctx.cast::<Run>() };
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
@@ -1154,7 +1155,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // round-trip per PORTING.md §process-lifetime borrows is sound.
         // SAFETY: `graph` lives in the process-global INSTANCE static; never
         // freed (`global_exit` ends the process before any deinit).
-        let graph_dyn: &'static dyn bun_resolver::StandaloneModuleGraph = unsafe {
+        let graph_dyn: &'static dyn bun_resolver::StandaloneModuleGraph = yolo! {
             &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
                 as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
         };
@@ -1174,7 +1175,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         })?;
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
-        let vm = unsafe { &mut *vm_ptr };
+        let vm = yolo! { &mut *vm_ptr };
 
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
@@ -1186,7 +1187,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // the allocation is process-lifetime by construction.
         let entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
-        vm.set_main(unsafe { &*entry_ptr });
+        vm.set_main(yolo! { &*entry_ptr });
 
         // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
@@ -1211,7 +1212,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
         // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
+        bun_http::async_http::load_env(yolo! { vm.log.unwrap().as_mut() }, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
@@ -1230,7 +1231,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
-        unsafe {
+        yolo! {
             RUN.get().write(Run {
                 ctx: std::ptr::from_mut::<ContextData>(ctx),
                 vm: vm_ptr,
@@ -1241,7 +1242,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         extern "C" fn trampoline(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call.
-            let this = unsafe { &mut *ctx.cast::<Run>() };
+            let this = yolo! { &mut *ctx.cast::<Run>() };
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
@@ -1309,7 +1310,7 @@ impl Run {
         // SAFETY: BORROW_PARAM ptr set by caller, outlives this call.
         let list = this
             .on_unhandled_rejection_exception_list
-            .map(|p| unsafe { &mut *p.as_ptr() });
+            .map(|p| yolo! { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
@@ -1323,15 +1324,15 @@ impl Run {
         }
         // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
         // `boot()` before the API-lock trampoline runs.
-        let vm = unsafe { &*self.vm };
-        let ro = unsafe { &(*self.ctx).runtime_options };
+        let vm = yolo! { &*self.vm };
+        let ro = yolo! { &(*self.ctx).runtime_options };
         if !ro.eval.script.is_empty() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
+            yolo! { Bun__ExposeNodeModuleGlobals(vm.global) };
         }
         if ro.expose_gc {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+            yolo! { JSC__JSGlobalObject__addGc(vm.global) };
         }
     }
 
@@ -1345,12 +1346,12 @@ impl Run {
         // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; `self.ctx`
         // is the CLI's process-lifetime `ContextData`. Both are written by
         // `boot()`/`boot_standalone()` before the API-lock trampoline runs.
-        let vm = unsafe { &mut *self.vm };
-        let ctx = unsafe { &*self.ctx };
+        let vm = yolo! { &mut *self.vm };
+        let ctx = yolo! { &*self.ctx };
         // SAFETY: `entry_path` is process-lifetime (heap from `heap::alloc`
         // or a borrow into the standalone graph); deref to a `'static` slice
         // so `enable_hot_module_reloading` can store it without re-erasing.
-        let mut entry: &'static [u8] = unsafe { &*self.entry_path };
+        let mut entry: &'static [u8] = yolo! { &*self.entry_path };
 
         vm.hot_reload = ctx.debug.hot_reload as u8;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
@@ -1361,15 +1362,15 @@ impl Run {
             // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
             // `'static` for `CPUProfilerConfig` (Zig stored borrowed slices).
             vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name: unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
-                dir: unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
+                name: yolo! { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
+                dir: yolo! { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
                 md_format: opts.md_format,
                 json_format: opts.json_format,
                 interval: opts.interval,
             });
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
             // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+            bun_jsc::bun_cpu_profiler::start_cpu_profiler(yolo! { &mut *vm.jsc_vm });
             bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -1378,8 +1379,8 @@ impl Run {
             let opts = &ctx.runtime_options.heap_prof;
             // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
             vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name: unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
-                dir: unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
+                name: yolo! { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
+                dir: yolo! { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
                 text_format: opts.text_format,
             });
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
@@ -1416,7 +1417,7 @@ impl Run {
             };
             // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
             // wrapper; accessed here under the API lock.
-            if let Err(e) = unsafe { &*client }.do_connect(global, redis) {
+            if let Err(e) = yolo! { &*client }.do_connect(global, redis) {
                 global.report_active_exception_as_unhandled(e);
             }
         }
@@ -1477,7 +1478,7 @@ impl Run {
         if entry == b"." {
             // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
             // singleton (set in `Transpiler::init`).
-            let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
+            let tld = yolo! { (*vm.transpiler.fs).top_level_dir };
             if !tld.is_empty() {
                 entry = tld;
             }
@@ -1486,13 +1487,13 @@ impl Run {
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
-                let promise = unsafe { &mut *promise };
+                let promise = yolo! { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
-                    let result = promise.result(unsafe { &mut *vm.jsc_vm });
+                    let result = promise.result(yolo! { &mut *vm.jsc_vm });
                     let global = vm.global;
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                    let handled = vm.uncaught_exception(yolo! { &*global }, result, true);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -1513,7 +1514,7 @@ impl Run {
                 }
 
                 // SAFETY: `vm.jsc_vm` set in `init`.
-                let _ = promise.result(unsafe { &mut *vm.jsc_vm });
+                let _ = promise.result(yolo! { &mut *vm.jsc_vm });
 
                 if log_has_msgs(vm) {
                     dump_build_error(vm);
@@ -1600,7 +1601,7 @@ impl Run {
                 // Zig: `to_print.print(vm.global, .Log, .Log)`.
                 // SAFETY: `vals[..1]` is the single stack `to_print`; null
                 // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
+                yolo! {
                     bun_jsc::ConsoleObject::message_with_type_and_level(
                         ::core::ptr::null_mut(),
                         bun_jsc::ConsoleObject::MessageType::Log,
@@ -1647,7 +1648,7 @@ fn log_has_msgs(vm: &VirtualMachine) -> bool {
     match vm.log {
         // SAFETY: `vm.log` is a process-lifetime `&mut Log` written once in
         // `VirtualMachine::init`; never freed, single-threaded CLI.
-        Some(p) => unsafe { !(*p.as_ptr()).msgs.is_empty() },
+        Some(p) => yolo! { !(*p.as_ptr()).msgs.is_empty() },
         None => false,
     }
 }
@@ -1656,7 +1657,7 @@ fn log_has_msgs(vm: &VirtualMachine) -> bool {
 fn log_clear_msgs(vm: &mut VirtualMachine) {
     if let Some(p) = vm.log {
         // SAFETY: see `log_has_msgs`.
-        unsafe { (*p.as_ptr()).msgs.clear() };
+        yolo! { (*p.as_ptr()).msgs.clear() };
     }
 }
 
@@ -1667,7 +1668,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
     if let Some(log) = vm.log {
         // SAFETY: `vm.log` set in `init`; single-threaded CLI.
-        let log = unsafe { &mut *log.as_ptr() };
+        let log = yolo! { &mut *log.as_ptr() };
         let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer_buffered(),
         ));
@@ -1764,7 +1765,7 @@ impl RunCommand {
         // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
         // returns the process-global writer; cast to the raw pointer the
         // trait expects.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+        let _ = yolo! { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
         ));
 
@@ -1803,7 +1804,7 @@ impl RunCommand {
             // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
             // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
             // capacity in WCHARs; the call writes at most that many wide chars.
-            let len = unsafe {
+            let len = yolo! {
                 sys::windows::GetTempPathW(
                     u32::try_from(temp_path_buffer.len()).expect("int cast"),
                     temp_path_buffer.as_mut_ptr(),
@@ -2068,7 +2069,7 @@ impl RunCommand {
             // SAFETY: `DIRECT_LAUNCH_BUFFER` is a process-lifetime static used
             // single-threaded from CLI dispatch. The returned slice points into
             // it; we keep the borrow scoped until `try_launch` consumes it.
-            let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
+            let buf = yolo! { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             let w = strings::to_nt_path(buf, executable);
             let w_len = w.len();
             debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
@@ -2138,7 +2139,7 @@ impl RunCommand {
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        Some(unsafe {
+                        Some(yolo! {
                             // SAFETY: env loader is process-lifetime; erase
                             // borrowed lifetime for the singleton handoff.
                             &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
@@ -2162,7 +2163,7 @@ impl RunCommand {
                         {
                             // SAFETY: `executable_z` is the NUL-terminated form
                             // of `executable` (caller invariant).
-                            let exec_z = unsafe {
+                            let exec_z = yolo! {
                                 let cstr = bun_core::ffi::cstr(executable_z);
                                 ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
                             };
@@ -2409,7 +2410,7 @@ impl RunCommand {
         )?;
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        let this_transpiler = yolo! { this_transpiler.assume_init_mut() };
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
@@ -2543,7 +2544,7 @@ impl RunCommand {
             RUN_LOG,
             "Try resolve `{}` in `{}`",
             bstr::BStr::new(target_name),
-            bstr::BStr::new(unsafe { (*this_transpiler.fs).top_level_dir }),
+            bstr::BStr::new(yolo! { (*this_transpiler.fs).top_level_dir }),
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve. Zig: `defer resolver.opts.preserve_symlinks = saved`.
@@ -2555,7 +2556,7 @@ impl RunCommand {
                         .get()
                         .unwrap_or(false);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+            let top_level_dir = yolo! { (*this_transpiler.fs).top_level_dir };
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2625,12 +2626,12 @@ impl RunCommand {
         #[cfg(windows)]
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-            let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
+            let buf = yolo! { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
-            let cwd_len = unsafe {
+            let cwd_len = yolo! {
                 sys::windows::kernel32::GetCurrentDirectoryW(
                     (buf.len() - 4) as u32,
                     buf.as_mut_ptr().add(root.len()),
@@ -2664,7 +2665,7 @@ impl RunCommand {
         {
             let _ = force_using_bun;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let fs = unsafe { &mut *this_transpiler.fs };
+            let fs = yolo! { &mut *this_transpiler.fs };
             let top_level_dir = fs.top_level_dir;
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
@@ -2707,7 +2708,7 @@ impl RunCommand {
         // startup before any worker thread is spawned; read-only here.
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && unsafe { cli::CMD.read() } == Some(CommandTag::AutoCommand)
+            && yolo! { cli::CMD.read() } == Some(CommandTag::AutoCommand)
             && target_name == b"feedback"
         {
             Self::bun_feedback(ctx)?;
@@ -3034,7 +3035,7 @@ impl RunCommand {
     ) -> ! {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
         // CLI startup), process-lifetime.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+        let _ = yolo! { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
         ));
 
@@ -3121,7 +3122,7 @@ impl RemoteImageDownload {
         // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`;
         // `async_http` is the worker-thread temporary whose `.real` points back at
         // `this.async_http`.
-        unsafe {
+        yolo! {
             let this = &mut *this;
             let async_http = &mut *async_http;
             if let Some(real) = async_http.real {
@@ -3159,7 +3160,7 @@ impl RunCommand {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
         // layout-identical newtypes over [u8; MAX_PATH_BYTES].
-        let cwd = bun_core::getcwd(unsafe {
+        let cwd = bun_core::getcwd(yolo! {
             &mut *entry_point_buf.as_mut_ptr().cast::<bun_core::PathBuffer>()
         })?;
         let cwd_len = cwd.as_bytes().len();
@@ -3264,19 +3265,19 @@ impl RunCommand {
             let slot = d.as_mut_ptr();
             // SAFETY: writing to uninitialized fields of a freshly-allocated
             // `MaybeUninit` slot; no prior value is dropped.
-            unsafe {
+            yolo! {
                 ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
                 ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
                 ::core::ptr::addr_of_mut!((*slot).done).write(&raw const done_channel);
             }
             // SAFETY: `(*slot).url` is heap-owned and outlives the AsyncHTTP
             // (freed only when `downloads` drops after the channel drains).
-            let url_static: &'static [u8] = unsafe {
+            let url_static: &'static [u8] = yolo! {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
             let response_buffer_ptr: *mut bun_core::MutableString =
-                unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
+                yolo! { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
@@ -3293,9 +3294,9 @@ impl RunCommand {
                 Default::default(),
             );
             // SAFETY: last field — all four fields are now initialized.
-            unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
+            yolo! { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
             // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
-            let mut d: Box<RemoteImageDownload> = unsafe {
+            let mut d: Box<RemoteImageDownload> = yolo! {
                 bun_core::heap::take(bun_core::heap::into_raw(d).cast::<RemoteImageDownload>())
             };
             d.async_http.schedule(&mut batch);
@@ -3439,7 +3440,7 @@ impl RunCommand {
                 // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
                 let mut size: libc::winsize = bun_core::ffi::zeroed();
                 // SAFETY: ioctl with valid winsize ptr
-                if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0
+                if yolo! { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0
                 {
                     if size.ws_col > 0 {
                         break 'brk size.ws_col;
@@ -3451,11 +3452,11 @@ impl RunCommand {
                 if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
                     // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
                     let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                        unsafe { bun_core::ffi::zeroed_unchecked() };
+                        yolo! { bun_core::ffi::zeroed_unchecked() };
                     // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
                     // is a valid console output HANDLE from GetStdHandle and
                     // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
-                    if unsafe {
+                    if yolo! {
                         sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
                     } != sys::windows::FALSE
                     {
@@ -3575,7 +3576,7 @@ impl RunCommand {
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         this_transpiler.options.env.prefix = Box::default();
         // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
-        unsafe { (*this_transpiler.env).quiet = true };
+        yolo! { (*this_transpiler.env).quiet = true };
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
@@ -3583,7 +3584,7 @@ impl RunCommand {
         this_transpiler.configure_linker();
 
         // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = yolo! { (*this_transpiler.fs).top_level_dir };
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)
@@ -3638,7 +3639,7 @@ impl RunCommand {
                     .flatten()
                 {
                     // SAFETY: resolver cache owns the DirInfo for the process lifetime.
-                    if let Some(entries) = unsafe { &*bin_dir }.get_entries_const() {
+                    if let Some(entries) = yolo! { &*bin_dir }.get_entries_const() {
                         let mut path_buf = PathBuffer::uninit();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3646,9 +3647,9 @@ impl RunCommand {
                         while let Some(entry) = iter.next() {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
-                            let value = unsafe { &**entry.1 };
+                            let value = yolo! { &**entry.1 };
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            if value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            if value.kind(yolo! { &raw mut (*this_transpiler.fs).fs }, true)
                                 == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
@@ -3672,7 +3673,7 @@ impl RunCommand {
                                 }
                                 // we need to dupe because the string may point to a pointer that only exists in the current scope
                                 // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                                let Ok(appended) = unsafe { (*this_transpiler.fs).filename_store }
+                                let Ok(appended) = yolo! { (*this_transpiler.fs).filename_store }
                                     .append_slice(base)
                                 else {
                                     continue;
@@ -3698,7 +3699,7 @@ impl RunCommand {
                     while let Some(entry) = iter.next() {
                         // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by the
                         // resolver dir-cache for the process lifetime.
-                        let value = unsafe { &**entry.1 };
+                        let value = yolo! { &**entry.1 };
                         let name = value.base();
                         if name[0] != b'.'
                             && this_transpiler
@@ -3710,12 +3711,12 @@ impl RunCommand {
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            && value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            && value.kind(yolo! { &raw mut (*this_transpiler.fs).fs }, true)
                                 == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
                             let Ok(appended) =
-                                unsafe { (*this_transpiler.fs).filename_store }.append_slice(name)
+                                yolo! { (*this_transpiler.fs).filename_store }.append_slice(name)
                             else {
                                 continue;
                             };
@@ -3857,7 +3858,7 @@ impl RunCommand {
                 // process-lifetime `runner_arena()` below and `bumpalo::Bump`
                 // never runs `Drop`, so the boxed bytes live until process
                 // exit and erasing to `'static` is sound.
-                unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
+                yolo! { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
             })
             .collect();
         strings::sort_asc(&mut all_keys);
@@ -3868,7 +3869,7 @@ impl RunCommand {
         shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
             // SAFETY: descriptions borrow into the package.json source buffer
             // (process-lifetime); erase to `'static`.
-            unsafe {
+            yolo! {
                 ::core::slice::from_raw_parts(
                     descriptions.as_ptr().cast::<&'static [u8]>(),
                     descriptions.len(),
@@ -3991,7 +3992,7 @@ impl BunXFastPath {
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let direct_launch_buffer =
-            unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
+            yolo! { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
         let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
 
         bun_core::scoped_log!(
@@ -4038,7 +4039,7 @@ impl BunXFastPath {
         ctx.passthrough = passthrough.to_vec();
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        let env_buf = unsafe { &mut *bunx_fast_path_buffers::ENVIRONMENT_BUFFER.get() };
+        let env_buf = yolo! { &mut *bunx_fast_path_buffers::ENVIRONMENT_BUFFER.get() };
         let environment = match env.map.write_windows_env_block(&mut env_buf.0) {
             Ok(env) => Some(env),
             Err(_) => {
@@ -4087,14 +4088,14 @@ impl BunXFastPath {
         // intermediate `&mut` retag covers the caller's borrows.
         // WPathBuffer is `#[repr(transparent)] [u16; PATH_MAX_WIDE]` —
         // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
-        let out_buf = unsafe {
+        let out_buf = yolo! {
             let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = yolo! { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

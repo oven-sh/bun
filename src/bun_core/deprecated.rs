@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -147,7 +148,7 @@ impl<T> DoublyLinkedList<T> {
         new_node: *mut DoublyLinkedNode<T>,
     ) {
         // SAFETY: caller guarantees `node` is in this list and `new_node` is valid+unlinked.
-        unsafe {
+        yolo! {
             (*new_node).prev = node;
             let next_node = (*node).next;
             if !next_node.is_null() {
@@ -176,7 +177,7 @@ impl<T> DoublyLinkedList<T> {
         new_node: *mut DoublyLinkedNode<T>,
     ) {
         // SAFETY: caller guarantees `node` is in this list and `new_node` is valid+unlinked.
-        unsafe {
+        yolo! {
             (*new_node).next = node;
             let prev_node = (*node).prev;
             if !prev_node.is_null() {
@@ -207,7 +208,7 @@ impl<T> DoublyLinkedList<T> {
         let l1_last = self.last;
         if !l1_last.is_null() {
             // SAFETY: `l1_last` and `l2_first` are non-null linked nodes.
-            unsafe {
+            yolo! {
                 (*l1_last).next = list2.first;
                 (*l2_first).prev = self.last;
             }
@@ -232,11 +233,11 @@ impl<T> DoublyLinkedList<T> {
         if !last.is_null() {
             // Insert after last.
             // SAFETY: `last` is a valid node in this list.
-            unsafe { self.insert_after(last, new_node) };
+            yolo! { self.insert_after(last, new_node) };
         } else {
             // Empty list.
             // SAFETY: forwards caller's guarantee on `new_node`.
-            unsafe { self.prepend(new_node) };
+            yolo! { self.prepend(new_node) };
         }
     }
 
@@ -249,13 +250,13 @@ impl<T> DoublyLinkedList<T> {
         if !first.is_null() {
             // Insert before first.
             // SAFETY: `first` is a valid node in this list.
-            unsafe { self.insert_before(first, new_node) };
+            yolo! { self.insert_before(first, new_node) };
         } else {
             // Empty list.
             self.first = new_node;
             self.last = new_node;
             // SAFETY: caller guarantees `new_node` is valid.
-            unsafe {
+            yolo! {
                 (*new_node).prev = ptr::null_mut();
                 (*new_node).next = ptr::null_mut();
             }
@@ -270,7 +271,7 @@ impl<T> DoublyLinkedList<T> {
     ///     node: Pointer to the node to be removed.
     pub unsafe fn remove(&mut self, node: *mut DoublyLinkedNode<T>) {
         // SAFETY: caller guarantees `node` is a valid node currently in this list.
-        unsafe {
+        yolo! {
             let prev_node = (*node).prev;
             if !prev_node.is_null() {
                 // Intermediate node.
@@ -304,7 +305,7 @@ impl<T> DoublyLinkedList<T> {
             return ptr::null_mut();
         }
         // SAFETY: `last` is a valid node in this list.
-        unsafe { self.remove(last) };
+        yolo! { self.remove(last) };
         last
     }
 
@@ -318,7 +319,7 @@ impl<T> DoublyLinkedList<T> {
             return ptr::null_mut();
         }
         // SAFETY: `first` is a valid node in this list.
-        unsafe { self.remove(first) };
+        yolo! { self.remove(first) };
         first
     }
 }
@@ -368,7 +369,7 @@ mod tests {
     #[test]
     fn basic_doubly_linked_list_test() {
         // SAFETY: all nodes are stack-locals that outlive the list; intrusive-list invariants upheld by test sequencing
-        unsafe {
+        yolo! {
             let mut list: DoublyLinkedList<u32> = DoublyLinkedList::default();
 
             let mut one = dnode(1);
@@ -418,7 +419,7 @@ mod tests {
     #[test]
     fn doubly_linked_list_concatenation() {
         // SAFETY: all nodes are stack-locals that outlive the list; intrusive-list invariants upheld by test sequencing
-        unsafe {
+        yolo! {
             let mut list1: DoublyLinkedList<u32> = DoublyLinkedList::default();
             let mut list2: DoublyLinkedList<u32> = DoublyLinkedList::default();
 

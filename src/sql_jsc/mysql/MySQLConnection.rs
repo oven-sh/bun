@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
@@ -307,14 +308,14 @@ impl MySQLConnection {
             // SAFETY: every value inserted into `statements` is a live boxed
             // `MySQLStatement` with the map holding one ref (Zig:
             // `stmt.deref()`).
-            unsafe { MySQLStatement::deref(*stmt) };
+            yolo! { MySQLStatement::deref(*stmt) };
         }
         drop(statements);
 
         self.auth_data = Vec::new();
         if let Some(s) = self.secure.take() {
             // SAFETY: FFI — secure is an owned SSL_CTX* freed exactly once here
-            unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
+            yolo! { bun_boringssl_sys::SSL_CTX_free(s) };
         }
         // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }
@@ -336,7 +337,7 @@ impl MySQLConnection {
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
         // requested (Zig: `this.#secure.?`).
-        let ssl_ctx = unsafe {
+        let ssl_ctx = yolo! {
             &mut *self
                 .secure
                 .expect("secure SSL_CTX must be set before upgradeToTLS")
@@ -347,7 +348,7 @@ impl MySQLConnection {
         } else {
             // SAFETY: `server_name` is a NUL-terminated C string owned by
             // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
+            Some(yolo! { bun_core::ffi::cstr(server_name) })
         };
         // Zig: `@sizeOf(?*JSMySQLConnection)` — `?*T` is an 8-byte null-niche
         // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
@@ -358,7 +359,7 @@ impl MySQLConnection {
 
         // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
         // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
+        let Some(new_socket) = (yolo! { &mut *raw }).adopt_tls(
             tls_group,
             bun_uws::SocketKind::MysqlTls,
             ssl_ctx,
@@ -376,7 +377,7 @@ impl MySQLConnection {
         // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
         // drives both safe inherent methods (`ext` / `start_tls_handshake`).
         // Zig: `ext(?*JSMySQLConnection).* = this.getJSConnection()`.
-        let sock = unsafe { &mut *new_socket };
+        let sock = yolo! { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
             core::ptr::NonNull::new(js_connection);
         self.socket = Socket::SocketTls(uws::SocketTLS {
@@ -449,11 +450,11 @@ impl MySQLConnection {
                                 .unwrap_or(core::ptr::null_mut());
                             // SAFETY: `server_name` is a NUL-terminated C string owned by
                             // `tls_config` for the connection lifetime.
-                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
+                            let hostname = yolo! { bun_core::ffi::cstr(servername) }.to_bytes();
                             if ssl_ptr.is_null()
                                 // SAFETY: `ssl_ptr` is non-null and live (handshake just succeeded).
                                 || !bun_boringssl::check_server_identity(
-                                    unsafe { &mut *ssl_ptr },
+                                    yolo! { &mut *ssl_ptr },
                                     hostname,
                                 )
                             {
@@ -1553,7 +1554,7 @@ impl Writer {
         // caller's own `&mut self` (see the PORT NOTE on `Reader` below).
         // Callers never touch `write_buffer` through `&mut self` while a
         // `Writer` is live, so no two `&mut OffsetByteList` coexist.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
+        yolo! { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
     }
 }
 
@@ -1600,7 +1601,7 @@ impl Reader {
         // live `&mut self` in `process_packets`. `process_packets` never touches
         // `read_buffer` through its own `&mut self` while a `Reader` is live, so
         // no two `&mut OffsetByteList` coexist.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
+        yolo! { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
     }
 
     #[inline]
@@ -1610,7 +1611,7 @@ impl Reader {
         // projection from a non-null connection pointer that outlives the
         // `Reader`; `process_packets` does not access `last_message_start`
         // through `&mut self` while the reader is live.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
+        yolo! { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
     }
 }
 

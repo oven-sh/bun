@@ -1,5 +1,6 @@
 //! Port of src/bun_core/fmt.zig — formatter newtypes and Display impls.
 
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::fmt::{self, Display, Formatter, Write as _};
 use core::ptr::NonNull;
@@ -471,7 +472,7 @@ impl SharedTempBufferBorrow {
     fn chunk(&mut self) -> &mut SharedTempBuffer {
         // SAFETY: this borrow uniquely owns the buffer for its lifetime; the
         // thread-local cell was nulled on construction so recursion cannot alias it.
-        unsafe { self.ptr.as_mut() }
+        yolo! { self.ptr.as_mut() }
     }
 }
 
@@ -482,7 +483,7 @@ impl Drop for SharedTempBufferBorrow {
                 if existing != self.ptr {
                     // Recursion restored a different buffer; free ours.
                     // SAFETY: ptr was allocated via heap::alloc_nn and is uniquely owned by self.
-                    unsafe { crate::heap::destroy(self.ptr.as_ptr()) };
+                    yolo! { crate::heap::destroy(self.ptr.as_ptr()) };
                 }
             } else {
                 c.set(Some(self.ptr));
@@ -578,7 +579,7 @@ impl Display for DebugUTF32PathFormatter<'_> {
         let mut path_buf = crate::PathBuffer::uninit();
         let buf = path_buf.as_mut_slice();
         // SAFETY: FFI reads exactly path.len() u32s and writes ≤ MAX_PATH_BYTES bytes.
-        let result = unsafe {
+        let result = yolo! {
             bun_simdutf_sys::simdutf::simdutf__convert_utf32_to_utf8_with_errors(
                 self.path.as_ptr(),
                 self.path.len(),
@@ -727,7 +728,7 @@ impl fmt::Display for Raw<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // SAFETY: caller contract — `self.0` is valid UTF-8 (in practice ASCII:
         // npm package names, registry URLs, semver tags). Matches Zig `{s}`.
-        f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
+        f.write_str(yolo! { core::str::from_utf8_unchecked(self.0) })
     }
 }
 /// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, Zig-style name).
@@ -1013,7 +1014,7 @@ pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
     }
     let mut count: usize = 0;
     // SAFETY: `buf` is a valid slice; WTF reads at most `len` Latin-1 bytes.
-    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
+    let res = yolo! { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
     if count == 0 {
         return Err(InvalidCharacter);
     }
@@ -1042,7 +1043,7 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
     }
     let mut count: usize = 0;
     // SAFETY: `s` is a valid slice; WTF reads at most `len` Latin-1 bytes.
-    let res = unsafe { WTF__parseDouble(s.as_ptr(), s.len(), &raw mut count) };
+    let res = yolo! { WTF__parseDouble(s.as_ptr(), s.len(), &raw mut count) };
     if count == s.len() {
         return Some(res);
     }
@@ -1084,7 +1085,7 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
         return None;
     }
     // SAFETY: every byte < 0x80 ⇒ `s` is valid (ASCII ⊂ UTF-8).
-    unsafe { core::str::from_utf8_unchecked(s) }
+    yolo! { core::str::from_utf8_unchecked(s) }
         .parse::<T>()
         .ok()
 }
@@ -2733,7 +2734,7 @@ pub fn bytes_to_hex_lower_string(input: &[u8]) -> String {
     let mut out = vec![0u8; input.len() * 2];
     bytes_to_hex_lower(input, &mut out);
     // SAFETY: hex alphabet is ASCII.
-    unsafe { String::from_utf8_unchecked(out) }
+    yolo! { String::from_utf8_unchecked(out) }
 }
 pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
     SizeFormatter {
@@ -2773,7 +2774,7 @@ impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {
             buf[0] = table[(b >> 4) as usize];
             buf[1] = table[(b & 0x0f) as usize];
             // SAFETY: hex alphabet is ASCII.
-            f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })?;
+            f.write_str(yolo! { core::str::from_utf8_unchecked(&buf) })?;
         }
         Ok(())
     }
@@ -3490,7 +3491,7 @@ pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
     buf[s.len()] = 0;
     // SAFETY: itoa output is pure ASCII digits (no interior NUL); we just
     // wrote a NUL terminator at `s.len()`.
-    unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
+    yolo! { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
 }
 
 /// Byte length of `n` formatted with the default `{}` Display — moral
@@ -3755,7 +3756,7 @@ pub const fn s(bytes: &[u8]) -> Raw<'_> {
 #[inline]
 fn write_bytes(w: &mut impl fmt::Write, bytes: &[u8]) -> fmt::Result {
     // SAFETY: see `s()` above — Zig's `{s}` path, callers feed ASCII/utf8.
-    w.write_str(unsafe { core::str::from_utf8_unchecked(bytes) })
+    w.write_str(yolo! { core::str::from_utf8_unchecked(bytes) })
 }
 
 #[inline]

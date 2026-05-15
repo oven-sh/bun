@@ -1,6 +1,7 @@
 #![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -424,7 +425,7 @@ impl Entry {
         let base = paths::basename(dest_slice);
         // SAFETY: `base` is a suffix of `destination_path`, which the caller
         // built via `get_cache_file_path` and is NUL-terminated at `dest_slice.len()`.
-        let base_z = unsafe { ZStr::from_raw(base.as_ptr(), base.len()) };
+        let base_z = yolo! { ZStr::from_raw(base.as_ptr(), base.len()) };
         tmpfile.finish(base_z)?;
         Ok(())
     }
@@ -638,14 +639,14 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun
     // it never reads the uninitialized bytes. Standard read-into-uninit-buffer
     // pattern; the slice is not exposed past this point until proven full.
     let dst: &mut [u8] =
-        unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
+        yolo! { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
     let read = file.pread_all(dst, offset)?;
     if read != len {
         return Err(bun_core::err!(MissingData));
     }
     // SAFETY: `pread_all` reported `len` bytes written, so every element is
     // initialized.
-    Ok(unsafe { buf.assume_init() })
+    Ok(yolo! { buf.assume_init() })
 }
 
 impl RuntimeTranspilerCache {

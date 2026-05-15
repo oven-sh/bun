@@ -8,6 +8,7 @@
 //!
 //! See `docs/PORTING.md` §JSC types and §FFI.
 
+use bun_yolo::yolo;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
@@ -137,9 +138,9 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(r) if r.mutability.is_none()));
     let this_reborrow = if receiver_is_shared {
-        quote! { let __t = unsafe { &*__this }; }
+        quote! { let __t = yolo! { &*__this }; }
     } else {
-        quote! { let __t = unsafe { &mut *__this }; }
+        quote! { let __t = yolo! { &mut *__this }; }
     };
 
     // Shim symbol name. Only emitted when an explicit `export = "..."` is
@@ -166,8 +167,8 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
             quote! { ::bun_jsc::JSValue },
             quote! {
                 // SAFETY: JSC guarantees both pointers are live for the call.
-                let __g = unsafe { &*__global };
-                let __f = unsafe { &*__frame };
+                let __g = yolo! { &*__global };
+                let __f = yolo! { &*__frame };
                 ::bun_jsc::__macro_support::host_fn_result(__g, || #fn_name(__g, __f))
             },
         ),
@@ -200,8 +201,8 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
                     // SAFETY: `__this` is the wrapper's `m_ctx`; JSC guarantees the
                     // remaining pointers are live for the call.
                     #this_reborrow
-                    let __g = unsafe { &*__global };
-                    let __f = unsafe { &*__frame };
+                    let __g = yolo! { &*__global };
+                    let __f = yolo! { &*__frame };
                     ::bun_jsc::__macro_support::host_fn_result(__g, || #call)
                 },
             )
@@ -218,7 +219,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
                 // SAFETY: see `Method`. `&self` getters get `&*` (R-2); `&mut
                 // self` getters that lazily mutate keep `&mut *`.
                 #this_reborrow
-                let __g = unsafe { &*__global };
+                let __g = yolo! { &*__global };
                 ::bun_jsc::__macro_support::host_fn_result(__g, || Self::#fn_name(__t, __g))
             },
         ),
@@ -234,7 +235,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
             quote! {
                 // SAFETY: see `Method`.
                 #this_reborrow
-                let __g = unsafe { &*__global };
+                let __g = yolo! { &*__global };
                 ::bun_jsc::__macro_support::host_fn_setter_result(
                     __g,
                     || Self::#fn_name(__t, __g, __value),
@@ -883,7 +884,7 @@ fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<Token
                         // SAFETY: caller guarantees `#p[..#l]` valid for the call;
                         // for #l == 0 a dangling well-aligned pointer is the
                         // canonical empty `&mut [T]`.
-                        let #name: &mut [#elem] = unsafe {
+                        let #name: &mut [#elem] = yolo! {
                             ::core::slice::from_raw_parts_mut(
                                 if #l == 0 {
                                     ::core::ptr::NonNull::<#elem>::dangling().as_ptr()
@@ -900,7 +901,7 @@ fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<Token
                             &[]
                         } else {
                             // SAFETY: caller guarantees `#p[..#l]` valid for the call.
-                            unsafe { ::core::slice::from_raw_parts(#p, #l) }
+                            yolo! { ::core::slice::from_raw_parts(#p, #l) }
                         };
                     }
                 });
@@ -935,7 +936,7 @@ fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<Token
         // SAFETY: `__ctx` is the `*Self` registered with the C side; uWS / the
         // caller guarantees it is live and exclusively accessed for the
         // duration of the callback.
-        let __this = unsafe { #recv_expr };
+        let __this = yolo! { #recv_expr };
         Self::#fn_name(__this, #(#call_args),*)
     };
 

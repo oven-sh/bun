@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::CStr;
 use core::ptr::{NonNull, addr_of, addr_of_mut};
@@ -35,7 +36,7 @@ pub type RefPtr = bun_ptr::IntrusiveRc<ProxyTunnel>;
 pub(crate) fn raw_as_mut<'a>(ptr: *mut ProxyTunnel) -> &'a mut ProxyTunnel {
     debug_assert!(!ptr.is_null());
     // SAFETY: see INVARIANT above.
-    unsafe { &mut *ptr }
+    yolo! { &mut *ptr }
 }
 
 type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
@@ -106,21 +107,21 @@ impl ProxyTunnel {
     fn socket_of<'a>(this: NonNull<Self>) -> &'a Socket {
         // SAFETY: `this` is a live intrusive-refcounted tunnel; `socket` is
         // disjoint from `wrapper`. HTTP-thread-only.
-        unsafe { &*addr_of!((*this.as_ptr()).socket) }
+        yolo! { &*addr_of!((*this.as_ptr()).socket) }
     }
 
     /// Overwrite `socket` (disjoint from `wrapper`).
     #[inline]
     fn set_socket(this: NonNull<Self>, s: Socket) {
         // SAFETY: see [`Self::socket_of`].
-        unsafe { *addr_of_mut!((*this.as_ptr()).socket) = s };
+        yolo! { *addr_of_mut!((*this.as_ptr()).socket) = s };
     }
 
     /// Mutable access to `write_buffer` (disjoint from `wrapper`).
     #[inline]
     fn write_buffer_of<'a>(this: NonNull<Self>) -> &'a mut bun_io::StreamBuffer {
         // SAFETY: see [`Self::socket_of`].
-        unsafe { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
+        yolo! { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
     }
 
     /// Shared access to `shutdown_err` (a `Cell<Error>`; disjoint from
@@ -128,7 +129,7 @@ impl ProxyTunnel {
     #[inline]
     fn shutdown_err_of<'a>(this: NonNull<Self>) -> &'a Cell<Error> {
         // SAFETY: see [`Self::socket_of`].
-        unsafe { &*addr_of!((*this.as_ptr()).shutdown_err) }
+        yolo! { &*addr_of!((*this.as_ptr()).shutdown_err) }
     }
 
     /// Callback-safe close: sets `shutdown_err` then drives `wrapper.shutdown()`.
@@ -159,7 +160,7 @@ impl ProxyTunnel {
     fn wrapper_ssl(this: NonNull<Self>) -> Option<NonNull<bun_boringssl_sys::SSL>> {
         // SAFETY: `this` is live; transient shared read of a Copy field. See
         // doc note above re: overlap with the caller's `&mut SSLWrapper`.
-        unsafe { (*this.as_ptr()).wrapper.as_ref().and_then(|w| w.ssl) }
+        yolo! { (*this.as_ptr()).wrapper.as_ref().and_then(|w| w.ssl) }
     }
 
     /// Mutable access to `wrapper` via raw field projection.
@@ -176,7 +177,7 @@ impl ProxyTunnel {
     fn wrapper_mut<'a>(this: *mut Self) -> Option<&'a mut ProxyTunnelWrapper> {
         // SAFETY: see INVARIANT above. Projects only the `wrapper` field; no
         // intermediate `&mut Self` is formed.
-        unsafe { (*addr_of_mut!((*this).wrapper)).as_mut() }
+        yolo! { (*addr_of_mut!((*this).wrapper)).as_mut() }
     }
 
     /// Read-only access to `ref_count` (a `Cell<u32>`; disjoint from `wrapper`).
@@ -185,7 +186,7 @@ impl ProxyTunnel {
     #[inline]
     fn ref_count_of<'a>(this: NonNull<Self>) -> &'a core::cell::Cell<u32> {
         // SAFETY: see [`Self::socket_of`].
-        unsafe { &*addr_of!((*this.as_ptr()).ref_count) }
+        yolo! { &*addr_of!((*this.as_ptr()).ref_count) }
     }
 
     /// Bump the intrusive refcount and return a guard that releases it on Drop.
@@ -196,11 +197,11 @@ impl ProxyTunnel {
     /// raw `CellRefCounted::ref_count_raw` field projection — touching only
     /// `ref_count`, never the whole tunnel — so it does not alias the caller's
     /// `&mut SSLWrapper` (see ALIASING NOTE). HTTP-thread-only. Centralises the
-    /// `unsafe { ScopedRef::new(nn.as_ptr()) }` open-coded at five call sites.
+    /// `yolo! { ScopedRef::new(nn.as_ptr()) }` open-coded at five call sites.
     #[inline]
     fn ref_scope(this: NonNull<Self>) -> bun_ptr::ScopedRef<Self> {
         // SAFETY: see INVARIANT above.
-        unsafe { bun_ptr::ScopedRef::new(this.as_ptr()) }
+        yolo! { bun_ptr::ScopedRef::new(this.as_ptr()) }
     }
 }
 
@@ -216,7 +217,7 @@ impl ProxyTunnel {
 #[inline]
 fn client_from_ctx<'a, 'c>(ctx: *mut HTTPClient<'c>) -> &'a mut HTTPClient<'c> {
     // SAFETY: see INVARIANT above.
-    unsafe { &mut *ctx }
+    yolo! { &mut *ctx }
 }
 
 // ─── SSLWrapper callbacks (ctx = *mut HTTPClient) ────────────────────────────
@@ -406,7 +407,7 @@ fn on_handshake(
             // field, so we MUST NOT form `&mut Option<_>` here (rules out
             // `wrapper_mut`); a debug-only `is_some()` autoref read mirrors the
             // pre-refactor inline `proxy.wrapper.?` and is never retained.
-            debug_assert!(unsafe { (*proxy_nn.as_ptr()).wrapper.is_some() });
+            debug_assert!(yolo! { (*proxy_nn.as_ptr()).wrapper.is_some() });
             let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) else {
                 return;
             };
@@ -655,7 +656,7 @@ impl ProxyTunnel {
         // Move the sole strong ref (refcount == 1 from `ProxyTunnel::default`)
         // into the client field; no bump (matches the bare `this.proxy_tunnel =
         // tunnel` in http.zig — Zig's `RefPtr.create` returns the owned ref).
-        this.proxy_tunnel = Some(unsafe { RefPtr::adopt_ref(proxy_nn.as_ptr()) });
+        this.proxy_tunnel = Some(yolo! { RefPtr::adopt_ref(proxy_nn.as_ptr()) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
         // End the named &mut borrows before calling into the SSLWrapper. start()
         // synchronously fires on_open()/write_encrypted(), which re-derive
@@ -788,7 +789,7 @@ impl ProxyTunnel {
         // SAFETY: `&mut self` was derived (transitively) from the `heap::alloc`
         // pointer in `start`/`adopt`; coercing it back to `*mut` preserves write
         // provenance for the dealloc path.
-        unsafe { ProxyTunnel::deref(self) };
+        yolo! { ProxyTunnel::deref(self) };
     }
 
     /// Detach the tunnel from its current HTTPClient owner so it can be safely
@@ -838,7 +839,7 @@ impl ProxyTunnel {
         // transfer the pool's strong ref to the client WITHOUT bumping it
         // (`from_raw` == `take_ref`), matching `existingSocket` in
         // HTTPContext.zig which moves the parked ref into the new client.
-        client.proxy_tunnel = Some(unsafe { RefPtr::from_raw(core::ptr::from_mut(&mut *self)) });
+        client.proxy_tunnel = Some(yolo! { RefPtr::from_raw(core::ptr::from_mut(&mut *self)) });
         client.flags.proxy_tunneling = false;
         // Restore the cert-error flag captured in detachOwner() — no handshake
         // runs here, so the client's own flag would otherwise stay false and

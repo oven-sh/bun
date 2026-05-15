@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use crate::host_fn::from_js_host_call_generic;
@@ -246,7 +247,7 @@ impl<'a> Drop for JSPropertyIterator<'a> {
         if let Some(impl_) = self.impl_ {
             // SAFETY: `impl_` was returned by Bun__JSPropertyIterator__create and has not been
             // freed (we only free here, once).
-            unsafe { Bun__JSPropertyIterator__deinit(impl_.as_ptr()) };
+            yolo! { Bun__JSPropertyIterator__deinit(impl_.as_ptr()) };
         }
         // Zig: `this.* = undefined;` — no-op in Rust.
     }

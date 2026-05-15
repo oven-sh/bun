@@ -8,6 +8,7 @@
 //! `bun_runtime::node::fs` / `bun_transpiler` internals / gated bundler types
 //! (forward-dep cycle on `bun_jsc`).
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
@@ -295,7 +296,7 @@ pub fn transpile_source_code(
         return false;
     };
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM.
-    unsafe { (hooks.transpile_source_code)(jsc_vm, args, ret) }
+    yolo! { (hooks.transpile_source_code)(jsc_vm, args, ret) }
 }
 
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)`.
@@ -311,7 +312,7 @@ pub fn fetch_builtin_module(
     };
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `out` is a
     // valid out-param.
-    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global, specifier, referrer, out) }
+    yolo! { (hooks.fetch_builtin_module)(jsc_vm, global, specifier, referrer, out) }
 }
 
 /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(...)` — thin shim over the
@@ -346,7 +347,7 @@ pub fn resolve_maybe_needs_trailing_slash(
     // SAFETY: hook contract — `global` is the live JS-thread global (Zig
     // `*JSGlobalObject`, mutable: hook may throw on it); `res`/`qs` are valid
     // out-params for the call (single-threaded, no aliasing).
-    let ok = unsafe {
+    let ok = yolo! {
         (hooks.resolve)(
             res,
             global,
@@ -427,7 +428,7 @@ pub extern "C" fn Bun__transpileFile(
     jsc::mark_binding();
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
-        unsafe {
+        yolo! {
             *ret =
                 ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED)
         };
@@ -435,7 +436,7 @@ pub extern "C" fn Bun__transpileFile(
     };
     // SAFETY: hook contract — all pointers are valid for the call (C++ ABI).
     // PERF(port): was inline switch.
-    unsafe {
+    yolo! {
         (hooks.transpile_file)(
             jsc_vm,
             global_object,
@@ -461,7 +462,7 @@ pub extern "C" fn Bun__fetchBuiltinModule(
     jsc::mark_binding();
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let (jsc_vm, specifier, referrer, ret) =
-        unsafe { (&mut *jsc_vm, &*specifier, &*referrer, &mut *ret) };
+        yolo! { (&mut *jsc_vm, &*specifier, &*referrer, &mut *ret) };
     // PORT NOTE: spec ModuleLoader.zig:861-876 — when `fetchBuiltinModule`
     // ERRORS, it calls `VirtualMachine.processFetchLog(..., ret, err)` and
     // returns **true** (so C++ surfaces the error instead of falling through to
@@ -495,7 +496,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
 ) -> bool {
     jsc::mark_binding();
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
-    let specifier = unsafe { &*specifier };
+    let specifier = yolo! { &*specifier };
     let spec_utf8 = specifier.to_utf8();
     let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
         return false;
@@ -510,11 +511,11 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let mut resolved = ResolvedSource::default();
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `&mut
     // resolved` is a valid out-param.
-    if !unsafe { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded, &raw mut resolved) } {
+    if !yolo! { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded, &raw mut resolved) } {
         return false;
     }
     // SAFETY: C++ passed a valid out-param.
-    unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+    yolo! { *ret = ErrorableResolvedSource::ok(resolved) };
     true
 }
 
@@ -540,14 +541,14 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     // SAFETY: hook contract — `vm` is the live per-thread VM; `in_out_str` is a
     // valid in/out `bun.String*` (C++ ABI, BunProcess.cpp:463).
     // PERF(port): was inline switch.
-    unsafe { (hooks.resolve_embedded_node_file)(vm, in_out_str) }
+    yolo! { (hooks.resolve_embedded_node_file)(vm, in_out_str) }
 }
 
 /// Spec ModuleLoader.zig:1344-1347.
 #[unsafe(no_mangle)]
 pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
-    let str = unsafe { bun_core::ffi::slice(data, len) };
+    let str = yolo! { bun_core::ffi::slice(data, len) };
     bun_aliases_get(str).is_some()
 }
 
@@ -605,7 +606,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
     // shape as `Bun__transpileFile` above.
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
-        unsafe {
+        yolo! {
             *ret =
                 ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
         }
@@ -613,7 +614,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
     };
     // SAFETY: hook contract — all pointers are valid for the call (C++ ABI).
     // PERF(port): was inline switch.
-    unsafe {
+    yolo! {
         (hooks.transpile_virtual_module)(global, specifier, referrer, source_code, loader, ret)
     }
 }
@@ -630,7 +631,7 @@ pub extern "C" fn Bun__runVirtualModule(
     }
 
     // SAFETY: C++ passed a valid `bun.String*`.
-    let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
+    let specifier_slice = yolo! { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
     if !PluginRunner::could_be_plugin(specifier) {

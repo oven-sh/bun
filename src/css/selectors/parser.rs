@@ -1,6 +1,7 @@
 //! CSS selector parser — ported from `src/css/selectors/parser.zig`.
 //! Originally derived from servo/lightningcss selector parsing.
 
+use bun_yolo::yolo;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
@@ -62,7 +63,7 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
         for i in 0..len {
             // SAFETY: each index is read exactly once; `set_len(0)` below
             // prevents `SmallList::drop` from re-dropping the moved elements.
-            unsafe { v.push(core::ptr::read(src.get_unchecked(i))) };
+            yolo! { v.push(core::ptr::read(src.get_unchecked(i))) };
         }
     }
     sl.set_len(0);
@@ -355,7 +356,7 @@ pub mod attrs {
                     ao == bo
                         && ac == bc
                         // SAFETY: arena-owned slices live for the parse session.
-                        && unsafe { strings::eql(&**av, &**bv) }
+                        && yolo! { strings::eql(&**av, &**bv) }
                 }
                 _ => false,
             }
@@ -372,7 +373,7 @@ pub mod attrs {
                     operator.hash(hasher);
                     case_sensitivity.hash(hasher);
                     // SAFETY: arena-owned slice.
-                    hasher.update(unsafe { crate::arena_str(*expected_value) });
+                    hasher.update(yolo! { crate::arena_str(*expected_value) });
                 }
             }
         }
@@ -1258,7 +1259,7 @@ impl<'a> SelectorParser<'a> {
         let _ = self;
         // SAFETY: `Ident.v` borrows the parser arena which outlives the parse
         // session (Phase-A `'static` placeholder).
-        Some(unsafe { crate::arena_str(prefix.v) })
+        Some(yolo! { crate::arena_str(prefix.v) })
     }
 
     pub fn parse_functional_pseudo_element(
@@ -2369,7 +2370,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
                     && ac == bc
                     && am == bm
                     // SAFETY: arena-owned slices live for the parse session.
-                    && unsafe { strings::eql(&**av, &**bv) }
+                    && yolo! { strings::eql(&**av, &**bv) }
             }
             (C::AttributeOther(a), C::AttributeOther(b)) => a.eql(b),
             (C::Negation(a), C::Negation(b))
@@ -2498,7 +2499,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
                 local_name.hash(hasher);
                 CssHash::hash(operator, hasher);
                 // SAFETY: arena-owned slice.
-                hasher.update(unsafe { crate::arena_str(*value) });
+                hasher.update(yolo! { crate::arena_str(*value) });
                 CssHash::hash(case_sensitivity, hasher);
                 hasher.update(&[*never_matches as u8]);
             }

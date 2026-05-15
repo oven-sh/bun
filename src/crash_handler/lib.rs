@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 //! This file contains Bun's crash handler. In debug builds, we are able to
 //! print backtraces that are mapped to source code. In release builds, we do
 //! not have debug symbols in the binary. Bun's solution to this is called
@@ -218,7 +219,7 @@ pub mod debug {
             // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
-            let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+            let rc = yolo! { libc::dladdr(address as *const c_void, &mut info) };
             if rc == 0 {
                 return Err(err!("MissingDebugInfo"));
             }
@@ -228,7 +229,7 @@ pub mod debug {
                     Box::default()
                 } else {
                     // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
-                    unsafe { bun_core::ffi::cstr(info.dli_fname) }
+                    yolo! { bun_core::ffi::cstr(info.dli_fname) }
                         .to_bytes()
                         .to_vec()
                         .into_boxed_slice()
@@ -266,7 +267,7 @@ pub mod debug {
             let _ = self.base_address;
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
-            let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
+            let rc = yolo! { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 || info.dli_sname.is_null() {
                 // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
                 // rather than erroring, so the caller still prints the address line.
@@ -277,7 +278,7 @@ pub mod debug {
                 });
             }
             // SAFETY: dli_sname is a valid NUL-terminated C string when non-null.
-            let name = unsafe { bun_core::ffi::cstr(info.dli_sname) }
+            let name = yolo! { bun_core::ffi::cstr(info.dli_sname) }
                 .to_bytes()
                 .to_vec()
                 .into_boxed_slice();
@@ -285,7 +286,7 @@ pub mod debug {
                 bun_paths::basename(&self.name).to_vec().into_boxed_slice()
             } else {
                 // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
-                bun_paths::basename(unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes())
+                bun_paths::basename(yolo! { bun_core::ffi::cstr(info.dli_fname) }.to_bytes())
                     .to_vec()
                     .into_boxed_slice()
             };
@@ -309,12 +310,12 @@ pub mod debug {
     fn lookup_module_name_dyld(address: usize) -> Option<Box<[u8]>> {
         // SAFETY: dladdr only reads; out-param is a valid Dl_info.
         let mut info: libc::Dl_info = bun_core::ffi::zeroed();
-        let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+        let rc = yolo! { libc::dladdr(address as *const c_void, &mut info) };
         if rc == 0 || info.dli_fname.is_null() {
             return None;
         }
         // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
-        let name = unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes();
+        let name = yolo! { bun_core::ffi::cstr(info.dli_fname) }.to_bytes();
         Some(bun_paths::basename(name).to_vec().into_boxed_slice())
     }
 
@@ -330,7 +331,7 @@ pub mod debug {
     pub fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
         // SAFETY: Zig's `var self_debug_info: ?SelfInfo = null` is also a plain
         // mutable global; this is debug-only and invoked from a stopped process.
-        unsafe {
+        yolo! {
             let slot = &mut *SELF_DEBUG_INFO.get();
             if let Some(info) = slot {
                 return Ok(info as *mut _);
@@ -438,7 +439,7 @@ impl Write for StderrWriter {
             // in which case WriteFile fails harmlessly); `bytes` is valid for
             // reads of `len`; `written` is a valid out-pointer; lpOverlapped
             // is null for synchronous I/O.
-            unsafe {
+            yolo! {
                 WriteFile(
                     h,
                     bytes.as_ptr(),
@@ -451,7 +452,7 @@ impl Write for StderrWriter {
         #[cfg(not(windows))]
         {
             // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-            unsafe {
+            yolo! {
                 libc::write(2, bytes.as_ptr().cast(), bytes.len() as _);
             }
         }
@@ -502,11 +503,11 @@ mod draft {
             #[cfg(debug_assertions)]
             core::intrinsics::breakpoint();
             // SAFETY: ExitProcess never returns.
-            unsafe { bun_sys::windows::kernel32::ExitProcess(3) }
+            yolo! { bun_sys::windows::kernel32::ExitProcess(3) }
         }
         #[cfg(not(windows))]
         // SAFETY: libc::abort has no preconditions; never returns.
-        unsafe {
+        yolo! {
             libc::abort()
         }
     }
@@ -807,8 +808,8 @@ mod draft {
         #[cfg(feature = "show_crash_trace")]
         {
             // SAFETY: caller-interned slices outlive the guard; see fn docs.
-            let source_dir: &'static [u8] = unsafe { &*(source_dir as *const [u8]) };
-            let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
+            let source_dir: &'static [u8] = yolo! { &*(source_dir as *const [u8]) };
+            let import_path: &'static [u8] = yolo! { &*(import_path as *const [u8]) };
             set_current_action(Some(Action::Resolver(ResolverAction {
                 source_dir,
                 import_path,
@@ -834,7 +835,7 @@ mod draft {
         }
 
         // SAFETY: addrs is a valid mutable slice of usize, which is layout-compatible with *mut c_void
-        let count = unsafe {
+        let count = yolo! {
             backtrace(
                 addrs.as_mut_ptr().cast(),
                 i32::try_from(addrs.len()).expect("int cast"),
@@ -956,7 +957,7 @@ mod draft {
                         if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                             // SAFETY: name was set from a valid NUL-terminated C string
                             let native_plugin_name =
-                                unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+                                yolo! { bun_core::ffi::cstr(name) }.to_bytes();
                             let fmt = "\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n";
                             if write!(
                                 writer,
@@ -978,7 +979,7 @@ mod draft {
                                 .with(|c| c.get())
                                 .map(|p| {
                                     // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
+                                    yolo! { bun_core::ffi::cstr(p) }.to_bytes()
                                 })
                                 .unwrap_or(b"<unknown>");
                             let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
@@ -1065,7 +1066,7 @@ mod draft {
                                 {
                                     let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
                                     // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
-                                    let result = unsafe {
+                                    let result = yolo! {
                                         bun_sys::windows::GetThreadDescription(
                                             bun_sys::windows::GetCurrentThread(),
                                             &mut name,
@@ -1074,11 +1075,11 @@ mod draft {
                                     // SAFETY: `name` is the PWSTR out-param written by GetThreadDescription; deref is guarded by the S_OK check via `&&` short-circuit
                                     if bun_sys::windows::HRESULT_CODE(result)
                                         == bun_sys::windows::S_OK
-                                        && unsafe { *name } != 0
+                                        && yolo! { *name } != 0
                                     {
                                         // SAFETY: `name` is a valid NUL-terminated wide string
                                         // (PWSTR out-param from GetThreadDescription).
-                                        let span = unsafe { bun_core::ffi::wstr_units(name) };
+                                        let span = yolo! { bun_core::ffi::wstr_units(name) };
                                         if write!(writer, "({})", bun_fmt::utf16(span)).is_err() {
                                             abort();
                                         }
@@ -1089,7 +1090,7 @@ mod draft {
                                         // so the leak is intentional.
                                     } else {
                                         // SAFETY: GetCurrentThreadId is an infallible Win32 call with no pointer/precondition requirements
-                                        if write!(writer, "(thread {})", unsafe {
+                                        if write!(writer, "(thread {})", yolo! {
                                             bun_sys::windows::kernel32::GetCurrentThreadId()
                                         })
                                         .is_err()
@@ -1217,7 +1218,7 @@ mod draft {
                             if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                                 // SAFETY: name was set from a valid NUL-terminated C string
                                 let native_plugin_name =
-                                    unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+                                    yolo! { bun_core::ffi::cstr(name) }.to_bytes();
                                 if write!(writer, "{}", Output::pretty_fmt_args(
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
@@ -1229,7 +1230,7 @@ mod draft {
                                     .with(|c| c.get())
                                     .map(|p| {
                                         // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                        unsafe { bun_core::ffi::cstr(p) }.to_bytes()
+                                        yolo! { bun_core::ffi::cstr(p) }.to_bytes()
                                     })
                                     .unwrap_or(b"<unknown>");
                                 let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
@@ -1385,7 +1386,7 @@ mod draft {
             // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
             let mut lim: libc::rlimit = bun_core::ffi::zeroed();
             // SAFETY: &mut lim is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 {
+            if yolo! { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 {
                 Some(lim)
             } else {
                 None
@@ -1591,7 +1592,7 @@ mod draft {
             } else {
                 // TODO(port): lifetime — Zig borrows msg; erased to &'static for the noreturn path.
                 // SAFETY: process is about to abort; the borrow is never invalidated.
-                CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
+                CrashReason::Panic(yolo! { bun_collections::detach_lifetime(msg) })
             },
             error_return_trace,
             Some(begin_addr.unwrap_or_else(|| debug::return_address())),
@@ -1655,7 +1656,7 @@ mod draft {
     extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, _: *mut c_void) {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
         // sigfault address field (Zig: `info.fields.sigfault.addr` / `info.addr`).
-        let addr: usize = unsafe { (*info).si_addr() as usize };
+        let addr: usize = yolo! { (*info).si_addr() as usize };
 
         crash_handler(
             match sig {
@@ -1695,7 +1696,7 @@ mod draft {
                 };
 
                 // SAFETY: stack points to a valid static buffer
-                if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
+                if yolo! { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
                     act_.sa_flags |= libc::SA_ONSTACK;
                     // SAFETY: single global; only mutated during signal-handler setup
                     DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
@@ -1707,7 +1708,7 @@ mod draft {
             .map(|a| std::ptr::from_ref(a))
             .unwrap_or(core::ptr::null());
         // SAFETY: valid sigaction pointer or null; null oldact is permitted.
-        unsafe {
+        yolo! {
             libc::sigaction(libc::SIGSEGV, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
             libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
@@ -1734,7 +1735,7 @@ mod draft {
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
         act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
         // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
+        yolo! {
             libc::sigemptyset(&raw mut act.sa_mask);
         }
         let _ = update_posix_segfault_handler(Some(&mut act));
@@ -1747,7 +1748,7 @@ mod draft {
         #[cfg(windows)]
         {
             // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
-            unsafe {
+            yolo! {
                 // SAFETY: ABI-identical `extern "system" fn(*mut _) -> i32` —
                 // `*mut EXCEPTION_POINTERS` vs the type-erased `*mut c_void` in
                 // the kernel32 binding, `c_long` == `i32` on Win64.
@@ -1841,7 +1842,7 @@ mod draft {
         // borrow is fully consumed by the `Display`/`TraceString` writes inside
         // this frame and never escapes.
         let reason =
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
+            CrashReason::Panic(yolo! { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
         let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
         {
@@ -1980,7 +1981,7 @@ mod draft {
             return;
         }
         // SAFETY: `addrs[..n]` is a valid slice of captured return addresses.
-        unsafe {
+        yolo! {
             WTF__DumpStackTrace(addrs.as_ptr(), n);
         }
     }
@@ -2003,7 +2004,7 @@ mod draft {
                 // SAFETY: handle was returned by AddVectoredExceptionHandler and
                 // not yet removed (atomically claimed via the swap above).
                 let rc =
-                    unsafe { bun_sys::windows::kernel32::RemoveVectoredExceptionHandler(handle) };
+                    yolo! { bun_sys::windows::kernel32::RemoveVectoredExceptionHandler(handle) };
                 debug_assert!(rc != 0);
             }
             return;
@@ -2015,7 +2016,7 @@ mod draft {
             let mut act: libc::sigaction = bun_core::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             // SAFETY: sa_mask is a valid out-pointer.
-            unsafe {
+            yolo! {
                 libc::sigemptyset(&raw mut act.sa_mask);
             }
             // To avoid a double-panic, do nothing if an error happens here.
@@ -2028,11 +2029,11 @@ mod draft {
         info: *mut bun_sys::windows::EXCEPTION_POINTERS,
     ) -> c_long {
         // SAFETY: kernel provides a valid EXCEPTION_POINTERS
-        let info = unsafe { &*info };
-        let reason = match unsafe { (*info.ExceptionRecord).ExceptionCode } {
+        let info = yolo! { &*info };
+        let reason = match yolo! { (*info.ExceptionRecord).ExceptionCode } {
             bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason::DatatypeMisalignment,
             bun_sys::windows::EXCEPTION_ACCESS_VIOLATION => {
-                CrashReason::SegmentationFault(unsafe {
+                CrashReason::SegmentationFault(yolo! {
                     (*info.ExceptionRecord).ExceptionInformation[1]
                 })
             }
@@ -2041,7 +2042,7 @@ mod draft {
                 // INSTRUCTION` (winnt.h); avoids depending on the arch-specific
                 // `CONTEXT` layout (Zig reached `ContextRecord.Rip` directly).
                 CrashReason::IllegalInstruction(
-                    unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize
+                    yolo! { (*info.ExceptionRecord).ExceptionAddress } as usize
                 )
             }
             bun_sys::windows::EXCEPTION_STACK_OVERFLOW => CrashReason::StackOverflow,
@@ -2059,7 +2060,7 @@ mod draft {
         crash_handler(
             reason,
             None,
-            Some(unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize),
+            Some(yolo! { (*info.ExceptionRecord).ExceptionAddress } as usize),
         );
     }
 
@@ -2098,12 +2099,12 @@ mod draft {
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
                 {
                     // SAFETY: gnu_get_libc_version returns a static NUL-terminated string or null
-                    let version = unsafe { gnu_get_libc_version() };
+                    let version = yolo! { gnu_get_libc_version() };
                     let version_bytes: &[u8] = if version.is_null() {
                         b""
                     } else {
                         // SAFETY: non-null branch — gnu_get_libc_version returned a valid C string.
-                        unsafe { bun_core::ffi::cstr(version) }.to_bytes()
+                        yolo! { bun_core::ffi::cstr(version) }.to_bytes()
                     };
                     let kernel_version =
                         bun_analytics::GenerateHeader::generate_platform::kernel_version();
@@ -2224,7 +2225,7 @@ mod draft {
             let mut peak_commit: usize = 0;
             let mut page_faults: usize = 0;
             // SAFETY: all out-pointers are valid
-            unsafe {
+            yolo! {
                 bun_alloc::mimalloc::mi_process_info(
                     &raw mut elapsed_msecs,
                     &raw mut user_msecs,
@@ -2412,7 +2413,7 @@ mod draft {
             let (head, _) = s.as_bytes().split_at(7);
             // SAFETY: GIT_SHA is ASCII hex; the first 7 bytes are a valid UTF-8
             // prefix. `split_at` const-panics if the input is shorter than 7.
-            unsafe { core::str::from_utf8_unchecked(head) }
+            yolo! { core::str::from_utf8_unchecked(head) }
         }
         if !Environment::GIT_SHA.is_empty() {
             sha7(Environment::GIT_SHA)
@@ -2472,11 +2473,11 @@ mod draft {
                 let address = if addr == 0 { 0 } else { addr - 1 };
 
                 // SAFETY: dyld APIs are safe to call
-                let image_count = unsafe { bun_sys::c::_dyld_image_count() };
+                let image_count = yolo! { bun_sys::c::_dyld_image_count() };
 
                 let mut i: u32 = 0;
                 while i < image_count {
-                    let header = unsafe { bun_sys::c::_dyld_get_image_header(i) };
+                    let header = yolo! { bun_sys::c::_dyld_get_image_header(i) };
                     if header.is_null() {
                         i += 1;
                         continue;
@@ -2488,15 +2489,15 @@ mod draft {
                     }
                     // This 'slide' is the ASLR offset. Subtract from `address` to get a stable address
                     let vmaddr_slide =
-                        unsafe { bun_sys::c::_dyld_get_image_vmaddr_slide(i) } as usize;
+                        yolo! { bun_sys::c::_dyld_get_image_vmaddr_slide(i) } as usize;
 
                     // SAFETY: header points to a valid mach_header_64
-                    let header_ref = unsafe { &*header };
+                    let header_ref = yolo! { &*header };
                     // SAFETY: load commands follow the mach header in memory; the
                     // dyld-mapped image stays live for the process lifetime, so the
                     // iterator's no-realloc/no-free contract is trivially upheld.
                     let mut it =
-                        bun_sys::macho::LoadCommandIterator::new(header_ref.ncmds, unsafe {
+                        bun_sys::macho::LoadCommandIterator::new(header_ref.ncmds, yolo! {
                             core::slice::from_raw_parts(
                                 header
                                     .cast::<u8>()
@@ -2674,7 +2675,7 @@ mod draft {
                 let mut compressed_bytes: [u8; 2048] = [0; 2048];
                 let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
                 // SAFETY: buffers and lengths are valid
-                let ret = unsafe {
+                let ret = yolo! {
                     bun_zlib::compress2(
                         compressed_bytes.as_mut_ptr(),
                         &raw mut len,
@@ -2861,7 +2862,7 @@ mod draft {
                 // SAFETY: every `MaybeUninit<u16>` in `spare` was just written
                 // above; `dst..dst+cap` is now `cap` initialized `u16`s inside one
                 // allocation.
-                let init = unsafe {
+                let init = yolo! {
                     core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u16>(), cap)
                 };
                 let encoded_len = strings::convert_utf8_to_utf16_in_buffer(init, url).len();
@@ -2881,7 +2882,7 @@ mod draft {
             let cmd_line_slice = &mut cmd_line.slice()[0..end];
             // TODO(port): need [:0] sentinel slice — pass raw pointer
             // SAFETY: all pointer args are either null or point to stack-local buffers/structs valid for the duration of the call; cmd_line is NUL-terminated above
-            let spawn_result = unsafe {
+            let spawn_result = yolo! {
                 windows::kernel32::CreateProcessW(
                     core::ptr::null(),
                     cmd_line_slice.as_mut_ptr(),
@@ -2939,23 +2940,23 @@ mod draft {
                 core::ptr::null(),
             ];
             // SAFETY: fork is async-signal-safe; we're already in the crash path
-            let result = unsafe { libc::fork() };
+            let result = yolo! { libc::fork() };
             match result {
                 // child
                 0 => {
                     for i in 0..2 {
                         // SAFETY: closing stdin/stdout in child
-                        unsafe {
+                        yolo! {
                             libc::close(i);
                         }
                     }
                     // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
                     // process environment block
-                    unsafe {
+                    yolo! {
                         libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
                     }
                     // SAFETY: _exit is async-signal-safe in the forked child
-                    unsafe {
+                    yolo! {
                         libc::_exit(0);
                     }
                 }
@@ -2979,7 +2980,7 @@ mod draft {
             let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
             sigact.sa_sigaction = libc::SIG_DFL;
             // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
-            unsafe {
+            yolo! {
                 libc::sigemptyset(&raw mut sigact.sa_mask);
             }
             for sig in [
@@ -2992,7 +2993,7 @@ mod draft {
                 libc::SIGTERM,
             ] {
                 // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
-                unsafe {
+                yolo! {
                     libc::sigaction(sig, &raw const sigact, core::ptr::null_mut());
                 }
             }
@@ -3138,7 +3139,7 @@ mod draft {
             // Windows has issues with opening the PDB file sometimes.
             let debug_info = match debug::get_self_debug_info() {
                 // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
-                Ok(d) => unsafe { &mut *d },
+                Ok(d) => yolo! { &mut *d },
                 Err(err) => {
                     // Zig: `stderr.print(..) catch return;` — if stderr write fails
                     // (e.g. broken pipe), bail out entirely; don't fall through.
@@ -3173,7 +3174,7 @@ mod draft {
             // In non-debug builds, use WTF's stack trace printer and return early
             if !cfg!(debug_assertions) {
                 // SAFETY: trace.instruction_addresses is a valid slice of `index` entries
-                unsafe {
+                yolo! {
                     WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), trace.index);
                 }
                 return;
@@ -3185,7 +3186,7 @@ mod draft {
             // Assume debug symbol tooling is reliable.
             let debug_info = match debug::get_self_debug_info() {
                 // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
-                Ok(d) => unsafe { &mut *d },
+                Ok(d) => yolo! { &mut *d },
                 Err(err) => {
                     let _ = write!(
                         stderr,
@@ -3249,7 +3250,7 @@ mod draft {
         // is at least some trace. Windows crash-trace snapshot tests must account
         // for this extra output.
         // SAFETY: trace.instruction_addresses is a valid slice of `index` entries
-        unsafe {
+        yolo! {
             WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), trace.index);
         }
     }
@@ -3330,13 +3331,13 @@ mod draft {
             // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
             let mut existing_limit: libc::rlimit = bun_core::ffi::zeroed();
             // SAFETY: &mut existing_limit is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
+            if yolo! { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
                 return;
             }
             if existing_limit.rlim_cur > 0 || existing_limit.rlim_cur == libc::RLIM_INFINITY {
                 existing_limit.rlim_cur = 0;
                 // SAFETY: &existing_limit is a valid in-pointer.
-                unsafe {
+                yolo! {
                     libc::setrlimit(libc::RLIMIT_CORE, &raw const existing_limit);
                 }
             }
@@ -3378,7 +3379,7 @@ mod draft {
         let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
             // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
             // when registered and remove_pre_crash_handler() unregisters it before drop.
-            let this = unsafe { bun_ptr::callback_ctx::<T>(opaque_ptr) };
+            let this = yolo! { bun_ptr::callback_ctx::<T>(opaque_ptr) };
             let _ = handler(this);
         });
 
@@ -3807,7 +3808,7 @@ mod draft {
             suppress_reporting();
         }
         // SAFETY: name is non-null (Zig dereferences it unconditionally with `.?`)
-        let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+        let name_bytes = yolo! { bun_core::ffi::cstr(name) }.to_bytes();
         // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
         // buffer suffices — `panic_impl` erases to &'static for the abort path.
         let mut msg = BoundedArray::<u8, 256>::default();
@@ -3822,10 +3823,10 @@ mod draft {
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__crashHandler(message_ptr: *const u8, message_len: usize) -> ! {
         // SAFETY: caller passes a valid (ptr, len) byte slice
-        let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
+        let msg = yolo! { core::slice::from_raw_parts(message_ptr, message_len) };
         crash_handler(
             // SAFETY: noreturn — see panic_impl note
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) }),
+            CrashReason::Panic(yolo! { bun_collections::detach_lifetime(msg) }),
             None,
             Some(debug::return_address()),
         );
@@ -3836,10 +3837,10 @@ mod draft {
         if !action.is_null() {
             debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
             // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
-            let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
+            let s = yolo! { bun_core::ffi::cstr(action) }.to_bytes();
             // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
             CURRENT_ACTION.with(|c| {
-                c.set(Some(Action::Dlopen(unsafe {
+                c.set(Some(Action::Dlopen(yolo! {
                     bun_collections::detach_lifetime(s)
                 })))
             });

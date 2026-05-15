@@ -11,6 +11,7 @@
 //! re-exports them (`pub use bun_install_types::…`); there is exactly one
 //! nominal type per name.
 
+use bun_yolo::yolo;
 use core::cmp::Ordering;
 use core::ffi::c_void;
 use core::marker::PhantomData;
@@ -441,7 +442,7 @@ impl Clone for DependencyVersionValue {
         // every active variant is either `Copy` or `ManuallyDrop<_>` over
         // arena-backed data. Zig copies these by value; replicate with a
         // bitwise read.
-        unsafe { core::ptr::read(self) }
+        yolo! { core::ptr::read(self) }
     }
 }
 

@@ -1,6 +1,7 @@
 //! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Extracted from
 //! `resolver/resolver.zig` so `resolver/` has no JSC references.
 
+use bun_yolo::yolo;
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -128,7 +129,7 @@ impl StringArrayJsc for [BunString] {
                 len: usize,
             ) -> JSValue;
         }
-        crate::host_fn::from_js_host_call(global, || unsafe {
+        crate::host_fn::from_js_host_call(global, || yolo! {
             BunString__createArray(global, self.as_ptr(), self.len())
         })
     }

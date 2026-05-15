@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::VecExt;
 use core::fmt;
@@ -86,7 +87,7 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
             Some(manager),
             // SAFETY: `ctx.log` is set once during `Command::create()` (process-
             // lifetime singleton) and is never null afterward.
-            unsafe { &mut *ctx.log },
+            yolo! { &mut *ctx.log },
             positionals,
             update_requests,
             subcommand,
@@ -171,7 +172,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
-    let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
+    let current_package_json: &mut MapEntry = yolo! { &mut *current_package_json_ptr };
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root.into();
     let current_package_json_indent = current_package_json.indentation;
 
@@ -484,7 +485,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
         // next `get_with_path` (after this block). `edit_patched_dependencies` touches
         // only disjoint manager fields.
-        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
+        let root_package_json: &mut MapEntry = yolo! { &mut *root_package_json_ptr };
 
         if let Some(stuff) = &not_in_workspace_root {
             // PORT NOTE (layering): see `current_package_json_root` above — promote
@@ -810,7 +811,7 @@ pub fn update_package_json_and_install_and_cli(
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
     // singleton (Zig `*PackageManager`). We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let manager: &mut PackageManager = yolo! { &mut *manager_ptr };
 
     if manager.options.should_print_command_name() {
         // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::hash::{Hash, Hasher};
 
 use crate as css;
@@ -72,7 +73,7 @@ impl KeyframesName {
                 // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
                 write_ident(
                     dest,
-                    unsafe { crate::arena_str(ident.v) },
+                    yolo! { crate::arena_str(ident.v) },
                     css_module_animation_enabled,
                 )?;
             }
@@ -374,7 +375,7 @@ const _: () = {
             // SAFETY: `name` is a sub-slice of the parser input arena; see `src_str`.
             Err(
                 input.new_error(BasicParseErrorKind::unexpected_token(css::Token::Ident(
-                    unsafe { css::css_parser::src_str(name) },
+                    yolo! { css::css_parser::src_str(name) },
                 ))),
             )
         }

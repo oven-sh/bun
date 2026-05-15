@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use super::WebSocketProxyTunnel;
@@ -68,7 +69,7 @@ impl Drop for WebSocketProxy {
         if let Some(tunnel) = self.tunnel.take() {
             // SAFETY: tunnel is a live intrusive-refcounted pointer; we hold one ref
             // until deref() below releases it.
-            unsafe {
+            yolo! {
                 WebSocketProxyTunnel::shutdown(tunnel.as_ptr());
                 WebSocketProxyTunnel::deref(tunnel.as_ptr());
             }

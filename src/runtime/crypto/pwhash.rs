@@ -17,6 +17,7 @@
 
 #![allow(dead_code)]
 
+use bun_yolo::yolo;
 use bun_core::Error;
 
 /// PHC / modular-crypt strings are 7-bit ASCII by spec; the third-party
@@ -28,7 +29,7 @@ fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
         return Err(bun_core::err!("InvalidEncoding"));
     }
     // SAFETY: every byte < 0x80 ⇒ valid UTF-8.
-    Ok(unsafe { core::str::from_utf8_unchecked(s) })
+    Ok(yolo! { core::str::from_utf8_unchecked(s) })
 }
 
 /// `std.crypto.pwhash.Encoding`

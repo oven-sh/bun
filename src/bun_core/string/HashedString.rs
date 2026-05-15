@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_wyhash::hash;
 
 // Clone/Copy: bitwise OK — `ptr` borrows the caller-owned string passed to
@@ -49,7 +50,7 @@ impl HashedString {
     pub fn str(&self) -> &[u8] {
         // SAFETY: ptr and len were set together from a valid slice in `init`/`init_no_hash`;
         // caller is responsible for keeping the backing buffer alive (same invariant as Zig).
-        unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) }
+        yolo! { core::slice::from_raw_parts(self.ptr, self.len as usize) }
     }
 }
 

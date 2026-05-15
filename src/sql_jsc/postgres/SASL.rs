@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_base64;
 
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
@@ -80,7 +81,7 @@ impl SASL {
         boringssl::ERR_clear_error();
         // SAFETY: password/salt/out are valid for the given lengths;
         // `EVP_sha256()` returns a static EVP_MD singleton.
-        let rc = unsafe {
+        let rc = yolo! {
             boringssl::PKCS5_PBKDF2_HMAC(
                 if password.is_empty() {
                     core::ptr::null()

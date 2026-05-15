@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
@@ -153,7 +154,7 @@ impl URL {
     // handle constructed/destroyed across the C++ boundary.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` is a valid *URL from C++; freed exactly once
-        unsafe { URL__deinit(this) }
+        yolo! { URL__deinit(this) }
     }
 
     pub fn pathname(&self) -> String {

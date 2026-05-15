@@ -2,6 +2,7 @@
 
 #![allow(non_camel_case_types, non_snake_case)]
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
@@ -101,7 +102,7 @@ impl BrotliDecoder {
         data: &[u8],
     ) -> c_int {
         // SAFETY: state is a valid &mut BrotliDecoder; data.ptr/len are a valid slice
-        unsafe { BrotliDecoderAttachDictionary(state, type_, data.len(), data.as_ptr()) }
+        yolo! { BrotliDecoderAttachDictionary(state, type_, data.len(), data.as_ptr()) }
     }
 
     pub fn create_instance(
@@ -110,19 +111,19 @@ impl BrotliDecoder {
         opaque: *mut c_void,
     ) -> Option<&'static mut BrotliDecoder> {
         // SAFETY: FFI constructor; null on failure
-        unsafe { BrotliDecoderCreateInstance(alloc_func, free_func, opaque).as_mut() }
+        yolo! { BrotliDecoderCreateInstance(alloc_func, free_func, opaque).as_mut() }
     }
 
     pub fn destroy_instance(state: &mut BrotliDecoder) {
         // SAFETY: state is a valid &mut BrotliDecoder allocated by create_instance
-        unsafe { BrotliDecoderDestroyInstance(state) }
+        yolo! { BrotliDecoderDestroyInstance(state) }
     }
 
     pub fn decompress(encoded: &[u8], decoded: &mut &mut [u8]) -> BrotliDecoderResult {
         let mut decoded_size = decoded.len();
         let decoded_ptr = decoded.as_mut_ptr();
         // SAFETY: encoded/decoded are valid slices; decoded_size is in-out
-        let result = unsafe {
+        let result = yolo! {
             BrotliDecoderDecompress(
                 encoded.len(),
                 encoded.as_ptr(),
@@ -132,7 +133,7 @@ impl BrotliDecoder {
         };
         // PORT NOTE: reshaped for borrowck — Zig mutated `decoded.len` in place via `*[]u8`
         // SAFETY: decoded_ptr points to the same allocation; decoded_size <= original len per brotli contract
-        *decoded = unsafe { core::slice::from_raw_parts_mut(decoded_ptr, decoded_size) };
+        *decoded = yolo! { core::slice::from_raw_parts_mut(decoded_ptr, decoded_size) };
         result
     }
 
@@ -145,7 +146,7 @@ impl BrotliDecoder {
         total_out: Option<&mut usize>,
     ) -> BrotliDecoderResult {
         // SAFETY: all pointers are valid for the duration of the call; brotli advances next_in/next_out
-        unsafe {
+        yolo! {
             BrotliDecoderDecompressStream(
                 state,
                 available_in,
@@ -171,7 +172,7 @@ impl BrotliDecoder {
         }
         // SAFETY: brotli returns a pointer to an internal buffer of `max_size` bytes,
         // valid until the next decoder call
-        unsafe { core::slice::from_raw_parts(ptr, max_size) }
+        yolo! { core::slice::from_raw_parts(ptr, max_size) }
     }
 
     pub fn is_used(state: &BrotliDecoder) -> bool {
@@ -192,7 +193,7 @@ impl BrotliDecoder {
             return c"";
         }
         // SAFETY: ptr is a valid NUL-terminated static string from brotli
-        unsafe { core::ffi::CStr::from_ptr(ptr) }
+        yolo! { core::ffi::CStr::from_ptr(ptr) }
     }
 
     pub fn version() -> u32 {
@@ -434,12 +435,12 @@ impl BrotliEncoder {
         opaque: *mut c_void,
     ) -> Option<&'static mut BrotliEncoder> {
         // SAFETY: FFI constructor; null on failure
-        unsafe { BrotliEncoderCreateInstance(alloc_func, free_func, opaque).as_mut() }
+        yolo! { BrotliEncoderCreateInstance(alloc_func, free_func, opaque).as_mut() }
     }
 
     pub fn destroy_instance(state: &mut BrotliEncoder) {
         // SAFETY: state is a valid &mut BrotliEncoder allocated by create_instance
-        unsafe { BrotliEncoderDestroyInstance(state) }
+        yolo! { BrotliEncoderDestroyInstance(state) }
     }
 
     pub fn has_more_output(state: &mut BrotliEncoder) -> bool {
@@ -452,7 +453,7 @@ impl BrotliEncoder {
         if !ptr.is_null() {
             // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
             // valid until the next encoder call
-            return unsafe { core::slice::from_raw_parts(ptr, size) };
+            return yolo! { core::slice::from_raw_parts(ptr, size) };
         }
 
         b""
@@ -473,7 +474,7 @@ impl BrotliEncoder {
 
         // SAFETY: state is a valid &mut BrotliEncoder; in/out pointers are valid;
         // next_out is null (we use take_output below); total_out is null (unused)
-        result.success = unsafe {
+        result.success = yolo! {
             BrotliEncoderCompressStream(
                 state,
                 op,
@@ -491,7 +492,7 @@ impl BrotliEncoder {
             if !ptr.is_null() {
                 // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
                 // valid until the next encoder call (bounded by 'a)
-                result.output = unsafe { core::slice::from_raw_parts::<'a>(ptr, size) };
+                result.output = yolo! { core::slice::from_raw_parts::<'a>(ptr, size) };
             }
         }
 

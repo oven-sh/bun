@@ -1,6 +1,7 @@
 #![allow(unused_imports, unused_variables, dead_code)]
 #![warn(unused_must_use)]
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr;
 use std::sync::Arc;
@@ -54,7 +55,7 @@ impl SavedSourceMap {
         });
 
         // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
-        unsafe { (*map).lock_pointers() };
+        yolo! { (*map).lock_pointers() };
     }
 
     /// Mutable access to the sibling `HashTable` on `VirtualMachine`.
@@ -68,7 +69,7 @@ impl SavedSourceMap {
     fn map_mut(&mut self) -> &mut HashTable {
         debug_assert!(!self.map.is_null());
         // SAFETY: see invariant above — non-null sibling backref, lives as long as `self`.
-        unsafe { &mut *self.map }
+        yolo! { &mut *self.map }
     }
 
     #[inline]
@@ -188,11 +189,11 @@ impl SavedSourceMap {
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
-            if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
+            if let Some(prov) = yolo! { (*parsed).underlying_provider }.provider() {
                 if (prov.ptr() as usize) == (opaque_source_provider as usize) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
-                    unsafe { ParsedSourceMap::deref(parsed) };
+                    yolo! { ParsedSourceMap::deref(parsed) };
                 }
             }
         }
@@ -224,11 +225,11 @@ impl SavedSourceMap {
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
-            if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
+            if let Some(prov) = yolo! { (*parsed).underlying_provider }.provider() {
                 if (prov.ptr() as usize) == (opaque_source_provider as usize) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
-                    unsafe { ParsedSourceMap::deref(parsed) };
+                    yolo! { ParsedSourceMap::deref(parsed) };
                 }
             }
         }
@@ -265,7 +266,7 @@ impl Drop for SavedSourceMap {
                 let value = Value::from(Some(*val));
                 if let Some(source_map) = value.get::<ParsedSourceMap>() {
                     // SAFETY: pointer was stored by us and is live until table teardown.
-                    unsafe { ParsedSourceMap::deref(source_map) };
+                    yolo! { ParsedSourceMap::deref(source_map) };
                 } else if let Some(_provider) = value.get::<SourceProviderMap>() {
                     // do nothing, we did not hold a ref to ZigSourceProvider
                 } else if let Some(ism) = value.get::<InternalSourceMap>() {
@@ -335,7 +336,7 @@ impl SavedSourceMap {
             Ok(()) => Ok(()),
             Err(e) => {
                 // SAFETY: `blob_ptr` came from `heap::alloc` just above and was not consumed.
-                drop(unsafe { Box::<[u8]>::from_raw(blob_ptr) });
+                drop(yolo! { Box::<[u8]>::from_raw(blob_ptr) });
                 Err(e)
             }
         }
@@ -358,7 +359,7 @@ impl SavedSourceMap {
                 let old_value = Value::from(Some(*o.get()));
                 if let Some(parsed_source_map) = old_value.get::<ParsedSourceMap>() {
                     // SAFETY: pointer was stored by us and is live until replaced.
-                    unsafe { ParsedSourceMap::deref(parsed_source_map) };
+                    yolo! { ParsedSourceMap::deref(parsed_source_map) };
                 } else if let Some(_provider) = old_value.get::<SourceProviderMap>() {
                     // do nothing, we did not hold a ref to ZigSourceProvider
                 } else if let Some(ism) = old_value.get::<InternalSourceMap>() {
@@ -420,7 +421,7 @@ impl SavedSourceMap {
             let parsed = tagged.as_unchecked::<ParsedSourceMap>();
             // SAFETY: pointer was stored by us via `Arc::into_raw` and is live
             // while locked. Bump the strong count for the caller's handle.
-            let result = unsafe {
+            let result = yolo! {
                 Arc::increment_strong_count(parsed.cast_const());
                 Arc::from_raw(parsed.cast_const())
             };
@@ -435,7 +436,7 @@ impl SavedSourceMap {
 
             // Do not lock the mutex while we're parsing JSON!
             // SAFETY: SourceProviderMap is kept alive by JSC; we did not hold a ref.
-            if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
+            if let Some(parse) = yolo! { (*ptr).get_source_map(path, Default::default(), hint) } {
                 // TODO(port): `.none` enum literal for second arg — verify SourceMap load-hint default.
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
@@ -462,7 +463,7 @@ impl SavedSourceMap {
 
             // Do not lock the mutex while we're parsing JSON!
             // SAFETY: BakeSourceProvider is kept alive by its owner.
-            if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
+            if let Some(parse) = yolo! { (*ptr).get_source_map(path, Default::default(), hint) } {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
                     let _ =
@@ -488,7 +489,7 @@ impl SavedSourceMap {
 
             // Do not lock the mutex while we're parsing JSON!
             // SAFETY: DevServerSourceProvider is kept alive by its owner.
-            if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
+            if let Some(parse) = yolo! { (*ptr).get_source_map(path, Default::default(), hint) } {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
                     let _ =

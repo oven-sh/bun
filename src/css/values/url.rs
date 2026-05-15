@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
@@ -89,7 +90,7 @@ impl Url {
         if let Some(d) = dep {
             dest.write_str("url(")?;
             // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
+            let placeholder = yolo! { crate::arena_str(d.placeholder) };
             dest.serialize_string(placeholder)?;
             dest.write_char(b')')?;
 
@@ -109,7 +110,7 @@ impl Url {
         // SAFETY: `url` borrows arena-backed `import_info` data valid for the
         // printer's `'a`; detach so `dest` can be re-borrowed mutably below.
         // Printer arena, not parser source — route to the raw primitive.
-        let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
+        let url: &[u8] = yolo! { bun_collections::detach_lifetime(url) };
 
         if dest.minify && !is_internal {
             // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile in Phase B

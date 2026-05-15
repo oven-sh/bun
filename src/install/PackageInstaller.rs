@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::sync::atomic::Ordering;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
@@ -390,7 +391,7 @@ impl<'a> PackageInstaller<'a> {
     #[inline]
     pub fn manager(&self) -> &'a PackageManager {
         // SAFETY: BACKREF — never null; pointee outlives `'a`.
-        unsafe { &*self.manager }
+        yolo! { &*self.manager }
     }
 
     #[inline]
@@ -398,20 +399,20 @@ impl<'a> PackageInstaller<'a> {
     pub fn manager_mut(&self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`; install pass
         // is single-threaded so no concurrent `&mut PackageManager` exists.
-        unsafe { &mut *self.manager }
+        yolo! { &mut *self.manager }
     }
 
     #[inline]
     pub fn lockfile(&self) -> &'a Lockfile {
         // SAFETY: BACKREF — never null; pointee outlives `'a`.
-        unsafe { &*self.lockfile }
+        yolo! { &*self.lockfile }
     }
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn lockfile_mut(&self) -> &'a mut Lockfile {
         // SAFETY: BACKREF — never null; disjoint from `*self`; see `manager_mut`.
-        unsafe { &mut *self.lockfile }
+        yolo! { &mut *self.lockfile }
     }
 
     #[inline]
@@ -420,7 +421,7 @@ impl<'a> PackageInstaller<'a> {
         // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
         // `*self`; the install pass is single-threaded so no concurrent `&mut
         // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
-        unsafe { &mut *self.progress }
+        yolo! { &mut *self.progress }
     }
 
     /// Increments the number of installed packages for a tree id and runs available scripts
@@ -618,7 +619,7 @@ impl<'a> PackageInstaller<'a> {
                         .as_ref()
                         .map(|p| std::ptr::from_ref::<AbsPath>(p))
                         .unwrap_or(nm_ptr.cast_const()),
-                    node_modules_path: unsafe { &mut *nm_ptr },
+                    node_modules_path: yolo! { &mut *nm_ptr },
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
@@ -1188,13 +1189,13 @@ impl<'a> PackageInstaller<'a> {
             let alias_slice = alias.slice(string_buf!());
             // SAFETY: `subpath_buf_ptr` is the unique borrow of the field; valid for
             // the lifetime of this fn body.
-            let buf = unsafe { &mut *subpath_buf_ptr };
+            let buf = yolo! { &mut *subpath_buf_ptr };
             buf[..alias_slice.len()].copy_from_slice(alias_slice);
             buf[alias_slice.len()] = 0;
             // SAFETY: buf[alias_slice.len()] == 0 written above; pointer derives from
             // `subpath_buf_ptr` so it shares provenance with `destination_dir_subpath_buf`
             // below.
-            unsafe { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
+            yolo! { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
         };
 
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
@@ -1287,7 +1288,7 @@ impl<'a> PackageInstaller<'a> {
             },
             cache_dir: Dir::from_fd(Fd::INVALID), // assigned below
             destination_dir_subpath,
-            destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
+            destination_dir_subpath_buf: yolo! { (*subpath_buf_ptr).as_mut_slice() },
             // PORT NOTE: zig `arena: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
             patch: patch_patch.map(|p| package_install::Patch {
@@ -1580,7 +1581,7 @@ impl<'a> PackageInstaller<'a> {
                     );
                     // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
                     // we hold the only pointer until `enqueue_patch_task` takes ownership.
-                    if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback }
+                    if let patch_install::Callback::Apply(apply) = yolo! { &mut (*task).callback }
                     {
                         apply.install_context = Some(patch_install::InstallContext {
                             dependency_id,

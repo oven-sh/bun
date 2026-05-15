@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::lockfile::package::PackageColumns as _;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
@@ -298,11 +299,11 @@ impl PackageManager {
         let event_loop = core::ptr::addr_of_mut!(self.event_loop);
         // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
         // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
-        unsafe {
+        yolo! {
             bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
                 // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
                 // for the duration of `sleep`.
-                let this = unsafe { bun_ptr::callback_ctx::<PackageManager>(ctx) };
+                let this = yolo! { bun_ptr::callback_ctx::<PackageManager>(ctx) };
                 this.has_no_more_pending_lifecycle_scripts()
             });
         }
@@ -332,7 +333,7 @@ impl PackageManager {
         // SAFETY: `peek()` returned a non-null intrusive heap node owned by
         // `active_lifecycle_scripts`; only read for its `started_at` /
         // `package_name` fields below.
-        let longest_running = unsafe { &*longest_running };
+        let longest_running = yolo! { &*longest_running };
         let current_time = bun_core::Timespec::now_allow_mocked_time().ns();
         let time_running = current_time.saturating_sub(longest_running.started_at);
         const NS_PER_S: u64 = 1_000_000_000;

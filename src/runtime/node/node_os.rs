@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ulonglong, c_void};
 
 // TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
@@ -583,7 +584,7 @@ mod _impl {
         let mut info: *mut c::processor_cpu_load_info = core::ptr::null_mut();
         let mut info_size: c::mach_msg_type_number_t = 0;
         // SAFETY: FFI call with valid out-pointers
-        if unsafe {
+        if yolo! {
             c::host_processor_info(
                 c::mach_host_self(),
                 c::PROCESSOR_CPU_LOAD_INFO,
@@ -597,7 +598,7 @@ mod _impl {
         }
         scopeguard::defer! {
             // SAFETY: info/info_size returned by host_processor_info
-            unsafe { let _ = c::vm_deallocate(c::mach_task_self(), info as usize, info_size as usize); }
+            yolo! { let _ = c::vm_deallocate(c::mach_task_self(), info as usize, info_size as usize); }
         };
 
         // Ensure we got the amount of data we expected to guard against buffer overruns
@@ -643,7 +644,7 @@ mod _impl {
         let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
         let mut cpu_index: u32 = 0;
         // SAFETY: info points to num_cpus entries per host_processor_info contract
-        let info_slice = unsafe { bun_core::ffi::slice(info, num_cpus as usize) };
+        let info_slice = yolo! { bun_core::ffi::slice(info, num_cpus as usize) };
         while cpu_index < num_cpus {
             let ticks = &info_slice[cpu_index as usize].cpu_ticks;
             let times = CPUTimes {
@@ -674,13 +675,13 @@ mod _impl {
         let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
+        let err = yolo! { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
         if err != 0 {
             return Err(OsError::Any);
         }
         scopeguard::defer! {
             // SAFETY: returned by uv_cpu_info
-            unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
+            yolo! { libuv::uv_free_cpu_info(cpu_infos, count) };
         };
 
         let values =
@@ -688,7 +689,7 @@ mod _impl {
 
         // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
         let infos =
-            unsafe { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
+            yolo! { bun_core::ffi::slice(cpu_infos, usize::try_from(count).expect("int cast")) };
         for (i, cpu_info) in infos.iter().enumerate() {
             let times = CPUTimes {
                 user: cpu_info.cpu_times.user,
@@ -700,7 +701,7 @@ mod _impl {
 
             let cpu = JSValue::create_empty_object(global_this, 3);
             // SAFETY: cpu_info.model is a NUL-terminated C string from libuv
-            let model = unsafe { bun_core::ffi::cstr(cpu_info.model) }.to_bytes();
+            let model = yolo! { bun_core::ffi::cstr(cpu_info.model) }.to_bytes();
             cpu.put(
                 global_this,
                 b"model",
@@ -749,7 +750,7 @@ mod _impl {
             let mut out = PathBuffer::uninit();
             let mut size: usize = out.len();
             // SAFETY: valid buffer + size out-param
-            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
+            if let Some(err) = yolo! { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
                 .to_error(bun_sys::Tag::uv_os_homedir)
             {
                 return Err(global.throw_value(err.to_js(global)));
@@ -784,7 +785,7 @@ mod _impl {
 
             let ret: c_int = loop {
                 // SAFETY: valid buffers and out-pointer
-                let ret = unsafe {
+                let ret = yolo! {
                     libc::getpwuid_r(
                         libc::geteuid(),
                         &raw mut pw,
@@ -840,7 +841,7 @@ mod _impl {
 
             return Ok(if !pw.pw_dir.is_null() {
                 // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
-                BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
+                BunString::clone_utf8(yolo! { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
             } else {
                 BunString::empty()
             });
@@ -852,7 +853,7 @@ mod _impl {
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
             // SAFETY: valid buffer
-            if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
+            if yolo! { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
                 let js = str.to_js(global);
                 str.deref();
@@ -861,9 +862,9 @@ mod _impl {
 
             let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
-            if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
+            if yolo! { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
                 // SAFETY: valid buffer
-                if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
+                if yolo! { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                     let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
                     let js = y.to_js(global);
                     y.deref();
@@ -927,7 +928,7 @@ mod _impl {
         let result: [f64; 3] = 'loadavg: {
             let mut avg: [f64; 3] = [0.0, 0.0, 0.0];
             // SAFETY: valid buffer
-            if unsafe { c::getloadavg(avg.as_mut_ptr(), 3) } != 3 {
+            if yolo! { c::getloadavg(avg.as_mut_ptr(), 3) } != 3 {
                 break 'loadavg [0.0, 0.0, 0.0];
             }
             avg
@@ -955,7 +956,7 @@ mod _impl {
         // getifaddrs sets a pointer to a linked list
         let mut interface_start: *mut libc::ifaddrs = core::ptr::null_mut();
         // SAFETY: valid out-pointer
-        let rc = unsafe { libc::getifaddrs(&raw mut interface_start) };
+        let rc = yolo! { libc::getifaddrs(&raw mut interface_start) };
         if rc != 0 {
             let _ = rc;
             let errno = bun_sys::posix::errno();
@@ -983,7 +984,7 @@ mod _impl {
         }
         scopeguard::defer! {
             // SAFETY: returned by getifaddrs
-            unsafe { libc::freeifaddrs(interface_start) };
+            yolo! { libc::freeifaddrs(interface_start) };
         };
 
         // We'll skip interfaces that aren't actually available
@@ -1009,10 +1010,10 @@ mod _impl {
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             // SAFETY: ifa_addr is non-null per check above
-            return unsafe { (*iface.ifa_addr).sa_family } as c_int == libc::AF_PACKET;
+            return yolo! { (*iface.ifa_addr).sa_family } as c_int == libc::AF_PACKET;
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             // SAFETY: ifa_addr is non-null per check above
-            return unsafe { (*iface.ifa_addr).sa_family } as c_int == libc::AF_LINK;
+            return yolo! { (*iface.ifa_addr).sa_family } as c_int == libc::AF_LINK;
         }
 
         fn is_loopback(iface: &libc::ifaddrs) -> bool {
@@ -1028,7 +1029,7 @@ mod _impl {
         let mut it = interface_start;
         while !it.is_null() {
             // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
+            let iface = yolo! { &*it };
             if !(skip(iface) || is_link_layer(iface)) {
                 num_inet_interfaces += 1;
             }
@@ -1042,7 +1043,7 @@ mod _impl {
         let mut it = interface_start;
         while !it.is_null() {
             // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
+            let iface = yolo! { &*it };
             let next = iface.ifa_next;
             if skip(iface) || is_link_layer(iface) {
                 it = next;
@@ -1050,12 +1051,12 @@ mod _impl {
             }
 
             // SAFETY: ifa_name is a NUL-terminated C string
-            let interface_name = unsafe { bun_core::ffi::cstr(iface.ifa_name) }.to_bytes();
+            let interface_name = yolo! { bun_core::ffi::cstr(iface.ifa_name) }.to_bytes();
             // TODO(port): std.net.Address — using bun_sys::net::Address (no std::net)
             // SAFETY: ifa_addr/ifa_netmask are valid sockaddr* (skip() ensures ifa_addr non-null)
-            let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr.cast_const()) };
+            let addr = yolo! { bun_sys::net::Address::init_posix(iface.ifa_addr.cast_const()) };
             let netmask =
-                unsafe { bun_sys::net::Address::init_posix(iface.ifa_netmask.cast_const()) };
+                yolo! { bun_sys::net::Address::init_posix(iface.ifa_netmask.cast_const()) };
 
             let interface = JSValue::create_empty_object(global_this, 0);
 
@@ -1066,12 +1067,12 @@ mod _impl {
                 //  be converted to a CIDR suffix
                 let maybe_suffix: Option<u8> = match addr.family() as c_int {
                     // SAFETY: family checked; storage is sockaddr_in/sockaddr_in6-sized
-                    libc::AF_INET => netmask_to_cidr_suffix(unsafe {
+                    libc::AF_INET => netmask_to_cidr_suffix(yolo! {
                         (*netmask.as_sockaddr().cast::<libc::sockaddr_in>())
                             .sin_addr
                             .s_addr
                     }),
-                    libc::AF_INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
+                    libc::AF_INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(yolo! {
                         (*netmask.as_sockaddr().cast::<libc::sockaddr_in6>())
                             .sin6_addr
                             .s6_addr
@@ -1146,7 +1147,7 @@ mod _impl {
                 let maybe_ll_addr: Option<*const c_void> = 'search: {
                     while !ll_it.is_null() {
                         // SAFETY: ll_it is a valid pointer in the linked list
-                        let ll_iface = unsafe { &*ll_it };
+                        let ll_iface = yolo! { &*ll_it };
                         let ll_next = ll_iface.ifa_next;
                         if skip(ll_iface) || !is_link_layer(ll_iface) {
                             ll_it = ll_next;
@@ -1154,7 +1155,7 @@ mod _impl {
                         }
 
                         // SAFETY: ifa_name is a NUL-terminated C string
-                        let ll_name = unsafe { bun_core::ffi::cstr(ll_iface.ifa_name) }.to_bytes();
+                        let ll_name = yolo! { bun_core::ffi::cstr(ll_iface.ifa_name) }.to_bytes();
                         if !strings::has_prefix(ll_name, interface_name) {
                             ll_it = ll_next;
                             continue;
@@ -1177,13 +1178,13 @@ mod _impl {
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     // SAFETY: ll_addr is a sockaddr_ll* per is_link_layer check
                     let addr_data: &[u8] =
-                        unsafe { &(*ll_addr.cast::<libc::sockaddr_ll>()).sll_addr };
+                        yolo! { &(*ll_addr.cast::<libc::sockaddr_ll>()).sll_addr };
                     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
                     let addr_data: &[u8] = {
                         // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check.
                         // `sdl_data` is `[c_char; N]` (signedness varies by platform);
                         // reinterpret as bytes — same width, same provenance.
-                        let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
+                        let dl = yolo! { &*ll_addr.cast::<c::sockaddr_dl>() };
                         let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
                         // c_char and u8 are both Pod; bytemuck statically checks the layout.
                         bytemuck::cast_slice::<_, u8>(raw)
@@ -1222,7 +1223,7 @@ mod _impl {
             if addr.family() as c_int == libc::AF_INET6 {
                 // SAFETY: family checked; storage is sockaddr_in6-sized
                 let scope_id =
-                    unsafe { (*addr.as_sockaddr().cast::<libc::sockaddr_in6>()).sin6_scope_id };
+                    yolo! { (*addr.as_sockaddr().cast::<libc::sockaddr_in6>()).sin6_scope_id };
                 interface.put(global_this, b"scopeid", JSValue::js_number(scope_id as f64));
             }
 
@@ -1250,7 +1251,7 @@ mod _impl {
         let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
+        let err = yolo! { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
         if err != 0 {
             let sys_err = SystemError {
                 message: BunString::static_("uv_interface_addresses failed"),
@@ -1264,7 +1265,7 @@ mod _impl {
         }
         scopeguard::defer! {
             // SAFETY: returned by uv_interface_addresses
-            unsafe { libuv::uv_free_interface_addresses(ifaces, count) };
+            yolo! { libuv::uv_free_interface_addresses(ifaces, count) };
         };
 
         let ret = JSValue::create_empty_object(global_this, 8);
@@ -1274,7 +1275,7 @@ mod _impl {
 
         // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
         let iface_slice =
-            unsafe { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
+            yolo! { bun_core::ffi::slice(ifaces, usize::try_from(count).expect("int cast")) };
         for iface in iface_slice {
             let interface = JSValue::create_empty_object(global_this, 7);
 
@@ -1285,13 +1286,13 @@ mod _impl {
                 // Compute the CIDR suffix; returns null if the netmask cannot
                 //  be converted to a CIDR suffix
                 // SAFETY: union read tagged by family
-                let family = unsafe { iface.address.address4.sin_family } as c_int;
+                let family = yolo! { iface.address.address4.sin_family } as c_int;
                 let maybe_suffix: Option<u8> = match family {
                     bun_sys::posix::AF::INET => {
-                        netmask_to_cidr_suffix(unsafe { iface.netmask.netmask4.sin_addr.s_addr })
+                        netmask_to_cidr_suffix(yolo! { iface.netmask.netmask4.sin_addr.s_addr })
                     }
                     bun_sys::posix::AF::INET6 => {
-                        netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
+                        netmask_to_cidr_suffix(u128::from_ne_bytes(yolo! {
                             iface.netmask.netmask6.sin6_addr.s6_addr
                         }))
                     }
@@ -1306,7 +1307,7 @@ mod _impl {
                     // bun_sys::net::Address will do ptrCast depending on the family so this is ok
                     // SAFETY: the address union backs a valid sockaddr_in/sockaddr_in6; pointer derived
                     // from the whole union so provenance covers the full 28 bytes init_posix may copy.
-                    &unsafe {
+                    &yolo! {
                         bun_sys::net::Address::init_posix(
                             core::ptr::from_ref(&iface.address).cast::<bun_sys::posix::sockaddr>(),
                         )
@@ -1345,7 +1346,7 @@ mod _impl {
                     // bun_sys::net::Address will do ptrCast depending on the family so this is ok
                     // SAFETY: the netmask union backs a valid sockaddr_in/sockaddr_in6; pointer derived
                     // from the whole union so provenance covers the full 28 bytes init_posix may copy.
-                    &unsafe {
+                    &yolo! {
                         bun_sys::net::Address::init_posix(
                             core::ptr::from_ref(&iface.netmask).cast::<bun_sys::posix::sockaddr>(),
                         )
@@ -1361,7 +1362,7 @@ mod _impl {
             }
             // family
             // SAFETY: union read tagged by family
-            let family = unsafe { iface.address.address4.sin_family } as c_int;
+            let family = yolo! { iface.address.address4.sin_family } as c_int;
             interface.put(
                 global_this,
                 b"family",
@@ -1400,13 +1401,13 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"scopeid",
-                    JSValue::js_number(unsafe { iface.address.address6.sin6_scope_id } as f64),
+                    JSValue::js_number(yolo! { iface.address.address6.sin6_scope_id } as f64),
                 );
             }
 
             // Does this entry already exist?
             // SAFETY: iface.name is a NUL-terminated C string from libuv
-            let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
+            let interface_name = yolo! { bun_core::ffi::cstr(iface.name) }.to_bytes();
             if let Some(array) = ret.get(global_this, interface_name)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1444,9 +1445,9 @@ mod _impl {
         #[cfg(windows)]
         let value: &[u8] = 'slice: {
             // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = yolo! { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
+            let err = yolo! { libuv::uv_os_uname(&mut info) };
             if err != 0 {
                 break 'slice b"unknown";
             }
@@ -1561,7 +1562,7 @@ mod _impl {
         #[cfg(windows)]
         {
             // SAFETY: pure FFI getter
-            return unsafe { libuv::uv_get_total_memory() };
+            return yolo! { libuv::uv_get_total_memory() };
         }
     }
 
@@ -1570,7 +1571,7 @@ mod _impl {
         {
             let mut uptime_value: f64 = 0.0;
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
+            let err = yolo! { libuv::uv_uptime(&mut uptime_value) };
             if err != 0 {
                 let sys_err = SystemError {
                     message: BunString::static_("failed to get system uptime"),
@@ -1674,9 +1675,9 @@ mod _impl {
         #[cfg(windows)]
         let slice: &[u8] = 'slice: {
             // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = yolo! { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
+            let err = yolo! { libuv::uv_os_uname(&mut info) };
             if err != 0 {
                 break 'slice b"unknown";
             }

@@ -1,5 +1,6 @@
 //! Implements prompt, alert, and confirm Web API
 
+use bun_yolo::yolo;
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::Output;
@@ -317,7 +318,7 @@ pub mod prompt {
         // SAFETY: process-global static; prompt() runs single-threaded on the JS
         // main thread, so the exclusive borrow is sound for this scope.
         let reader: &mut bun_core::output::BufferedStdin =
-            unsafe { &mut *Output::buffered_stdin_reader() };
+            yolo! { &mut *Output::buffered_stdin_reader() };
         let mut second_byte: Option<u8> = None;
         let Ok(first_byte) = reader.read_byte() else {
             // 8. Let result be null if the user aborts, or otherwise the string

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
@@ -117,7 +118,7 @@ impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL
 }
 
 /// Typed accessors for the `ActiveSocket` tagged-pointer recovered from a
-/// socket's ext slot. Centralises the `unsafe { &mut *ptr }` upgrade that the
+/// socket's ext slot. Centralises the `yolo! { &mut *ptr }` upgrade that the
 /// socket-event dispatch handlers (and HTTPThread queue drains) repeat at
 /// every site.
 ///
@@ -145,7 +146,7 @@ where
 {
     // SAFETY: see [`ActiveSocketExt`] trait-level INVARIANT — the tagged pointer
     // identifies an object live for the dispatched callback, HTTP-thread-only.
-    tagged.get::<T>().map(|p| unsafe { &mut *p })
+    tagged.get::<T>().map(|p| yolo! { &mut *p })
 }
 
 impl<const SSL: bool> ActiveSocketExt<SSL> for ActiveSocket<SSL> {
@@ -209,7 +210,7 @@ fn h2_session_as_mut<'a>(
     s: Option<NonNull<h2::ClientSession>>,
 ) -> Option<&'a mut h2::ClientSession> {
     // SAFETY: see INVARIANT above.
-    s.map(|mut s| unsafe { s.as_mut() })
+    s.map(|mut s| yolo! { s.as_mut() })
 }
 
 /// Upgrade a `*mut PooledSocket<SSL>` returned by `HiveArray::at` to `&mut`.
@@ -224,7 +225,7 @@ fn h2_session_as_mut<'a>(
 #[inline]
 fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut PooledSocket<SSL> {
     // SAFETY: see INVARIANT above.
-    unsafe { &mut *p }
+    yolo! { &mut *p }
 }
 
 impl<const SSL: bool> PooledSocket<SSL> {
@@ -244,7 +245,7 @@ impl<const SSL: bool> PooledSocket<SSL> {
     /// before the slot is recycled or its socket force-closed.
     ///
     /// Centralises the intrusive-rc `deref` so each caller doesn't repeat the
-    /// pair of `unsafe { …::deref(nn.as_ptr()) }`.
+    /// pair of `yolo! { …::deref(nn.as_ptr()) }`.
     fn release_parked_refs(&mut self) {
         // Not gated on `comptime ssl` — an HTTP-proxy-to-HTTPS tunnel pools in
         // the non-SSL context but still stores the inner-TLS tls_props here for
@@ -257,7 +258,7 @@ impl<const SSL: bool> PooledSocket<SSL> {
         }
         if let Some(s) = self.h2_session.take() {
             // SAFETY: pool owns one strong ref while parked.
-            unsafe { h2::ClientSession::deref(s.as_ptr()) };
+            yolo! { h2::ClientSession::deref(s.as_ptr()) };
         }
     }
 }
@@ -302,7 +303,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub fn mark_tagged_socket_as_dead(socket: HTTPSocket<SSL>, tagged: ActiveSocket<SSL>) {
         if tagged.is::<PooledSocket<SSL>>() {
             // SAFETY: tag check above guarantees the pointer is a PooledSocket<SSL>.
-            unsafe {
+            yolo! {
                 Handler::<SSL>::add_memory_back_to_pool(tagged.as_unchecked::<PooledSocket<SSL>>());
             }
         }
@@ -334,7 +335,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub fn get_tagged_from_socket(socket: HTTPSocket<SSL>) -> ActiveSocket<SSL> {
         if let Some(slot) = socket.ext::<*mut c_void>() {
             // SAFETY: ext slot stores the ActiveSocket tagged-pointer word.
-            return Self::get_tagged(unsafe { *slot });
+            return Self::get_tagged(yolo! { *slot });
         }
         ActiveSocket::<SSL>::init(dead_socket())
     }
@@ -350,7 +351,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub fn set_socket_ext(socket: HTTPSocket<SSL>, tagged: ActiveSocket<SSL>) {
         if let Some(slot) = socket.ext::<*mut c_void>() {
             // SAFETY: see INVARIANT above.
-            unsafe { *slot = tagged.ptr() };
+            yolo! { *slot = tagged.ptr() };
         }
     }
 
@@ -402,7 +403,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // Releases the strong ref taken in register_h2.
         // SAFETY: `session` carries write provenance from the original Box.
-        unsafe { h2::ClientSession::deref(session.cast_mut()) };
+        yolo! { h2::ClientSession::deref(session.cast_mut()) };
     }
 
     pub fn register_h2(&mut self, session: *mut h2::ClientSession) {
@@ -491,7 +492,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // SAFETY: `ctx` is live per caller contract. Project the field via raw
         // place expression — no intermediate `&mut Self` is formed, so we do
         // not alias an ancestor frame's `&mut HTTPContext`.
-        let list = unsafe { &mut (*ctx).active_h2_sessions };
+        let list = yolo! { &mut (*ctx).active_h2_sessions };
         Self::h2_swap_remove_and_deref(list, idx, session);
     }
 
@@ -538,7 +539,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         };
         // SAFETY: secure was just set to Some.
-        unsafe { ssl_ctx_setup(self.ssl_ctx()) };
+        yolo! { ssl_ctx_setup(self.ssl_ctx()) };
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         self.group
             .init(http::http_thread().uws_loop(), None, owner_ptr);
@@ -586,7 +587,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 .unwrap(),
             );
             // SAFETY: secure was just set to Some.
-            unsafe { ssl_ctx_setup(self.ssl_ctx()) };
+            yolo! { ssl_ctx_setup(self.ssl_ctx()) };
         }
     }
 
@@ -702,7 +703,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if let Some(s) = h2_session {
             // SAFETY: live intrusive-refcounted ClientSession; deref releases
             // the strong ref the caller transferred.
-            unsafe { h2::ClientSession::deref(s.as_ptr()) };
+            yolo! { h2::ClientSession::deref(s.as_ptr()) };
         }
         Self::close_socket(socket);
     }
@@ -815,7 +816,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // owned-heap fields (ssl_config/tunnel/target_hostname/h2_session)
                 // were just moved out / cleared, so the in-place drop in `put`
                 // touches only trivially-droppable residuals.
-                let ok = unsafe { self.pending_sockets.put(socket_ptr) };
+                let ok = yolo! { self.pending_sockets.put(socket_ptr) };
                 debug_assert!(ok);
                 bun_core::scoped_log!(
                     HTTPContext,
@@ -892,7 +893,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // SAFETY: hostname borrows either a static literal or `client.url`/
             // `client.http_proxy` which outlive `connected_url` for the
             // duration of the connect attempt.
-            unsafe { bun_ptr::detach_lifetime(hostname) };
+            yolo! { bun_ptr::detach_lifetime(hostname) };
 
         if SSL {
             if client.can_offer_h2() {
@@ -1092,12 +1093,12 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             // PORT NOTE: SocketGroup deinit must run before the embedding struct
             // is freed (it unlinks from the loop's group list).
             // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
-            unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
+            yolo! { uws::SocketGroup::destroy(&raw mut self.group) };
         }
         if SSL {
             if let Some(c) = self.secure {
                 // SAFETY: we own one ref on the SSL_CTX.
-                unsafe { bun_boringssl_sys::SSL_CTX_free(c) };
+                yolo! { bun_boringssl_sys::SSL_CTX_free(c) };
             }
         }
         // PORT NOTE: `bun.default_allocator.destroy(this)` is the Box drop
@@ -1222,14 +1223,14 @@ impl<const SSL: bool> Handler<SSL> {
         // this very slot) is created only after the `&mut PooledSocket` borrow
         // is dropped — avoids Stacked Borrows invalidation of the slot pointer.
         // SAFETY: see fn-level contract.
-        let owner = unsafe {
+        let owner = yolo! {
             let slot = &mut *pooled_ptr;
             slot.release_parked_refs();
             slot.owner
         };
         // SAFETY: owner is the HiveArray backing this slot; address-stable
         // (static or Box-allocated) and outlives any pooled entry.
-        let ok = unsafe { (*owner).pending_sockets.put(pooled_ptr) };
+        let ok = yolo! { (*owner).pending_sockets.put(pooled_ptr) };
         debug_assert!(ok);
     }
 

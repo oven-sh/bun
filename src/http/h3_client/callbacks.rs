@@ -5,6 +5,7 @@
 //! corresponding session/stream method so the protocol logic stays in
 //! `client_session.rs` / `encode.rs`.
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_uint};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -158,7 +159,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         );
     }
     let _ = H3::live_sessions.fetch_sub(1, Ordering::Relaxed);
-    unsafe { ClientSession::deref(session) };
+    yolo! { ClientSession::deref(session) };
 }
 
 extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
@@ -248,7 +249,7 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
-    let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
+    let slice = yolo! { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
     stream.session_mut().deliver(stream, fin != 0);
 }

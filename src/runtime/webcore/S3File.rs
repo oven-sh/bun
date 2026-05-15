@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt::Write as _;
 
 use crate::node::types::PathLikeExt as _;
@@ -550,7 +551,7 @@ impl S3BlobStatTask {
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
+        let mut this = yolo! { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
         let global = global_ref.get();
@@ -584,7 +585,7 @@ impl S3BlobStatTask {
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
+        let mut this = yolo! { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
         let global = global_ref.get();
@@ -613,7 +614,7 @@ impl S3BlobStatTask {
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
+        let mut this = yolo! { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
         let global_ref = this.global;
         let global = global_ref.get();
@@ -653,7 +654,7 @@ impl S3BlobStatTask {
             global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         let promise = this_ref.promise.value();
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
@@ -681,7 +682,7 @@ impl S3BlobStatTask {
             global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         let promise = this_ref.promise.value();
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
@@ -708,7 +709,7 @@ impl S3BlobStatTask {
             global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         let promise = this_ref.promise.value();
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
@@ -923,7 +924,7 @@ pub fn construct_internal_js(
     // Call the `BlobExt::to_js` `&mut self` method (not the by-value
     // `JsClass::to_js`), which hands the existing heap pointer to the C++
     // wrapper.
-    Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
+    Ok(BlobExt::to_js(yolo! { &mut *blob }, global))
 }
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
@@ -998,7 +999,7 @@ pub mod exports {
     #[bun_jsc::host_call]
     pub fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
         // SAFETY: C++ prototype getter passes the live `m_ctx` Blob and global.
-        let (this, global) = unsafe { (&*this, &*global) };
+        let (this, global) = yolo! { (&*this, &*global) };
         bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
     }
 
@@ -1011,7 +1012,7 @@ pub mod exports {
         callframe: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
-        let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
+        let (this, global, callframe) = yolo! { (&mut *this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
     }
 
@@ -1025,7 +1026,7 @@ pub mod exports {
         callframe: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
-        let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
+        let (this, global, callframe) = yolo! { (&mut *this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || super::get_stat(this, global, callframe))
     }
 }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "src/yolo",
   "src/opaque",
   "src/analytics",
   "src/api",

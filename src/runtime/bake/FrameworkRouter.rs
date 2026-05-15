@@ -2,6 +2,7 @@
 //! configuration. Agnostic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
 
+use bun_yolo::yolo;
 use bun_alloc::ArenaVecExt as _;
 use bun_paths::strings;
 use core::fmt;
@@ -1160,7 +1161,7 @@ impl FrameworkRouter {
                     // SAFETY: `current_part` borrows from `pattern_string_arena`
                     // (owned by `self`), which outlives every `Route` stored in
                     // `self.routes`.
-                    part: unsafe { current_part.to_owned_part() },
+                    part: yolo! { current_part.to_owned_part() },
                     r#type: ty,
                     parent: Some(route_index),
                     first_child: None,
@@ -1184,7 +1185,7 @@ impl FrameworkRouter {
                         // SAFETY: `next_part_val` borrows from
                         // `pattern_string_arena` (owned by `self`), which
                         // outlives every `Route` stored in `self.routes`.
-                        part: unsafe { next_part_val.to_owned_part() },
+                        part: yolo! { next_part_val.to_owned_part() },
                         r#type: ty,
                         parent: Some(new_route_index),
                         first_child: None,
@@ -1263,7 +1264,7 @@ impl<'a> Part<'a> {
             // router drop/reset — strictly after every `Route` holding a
             // `Part<'static>` is gone. NOT process-lifetime; Phase B should
             // model this with a `'bump` parameter on `Part`.
-            unsafe { bun_ptr::Interned::assume(s) }.as_bytes()
+            yolo! { bun_ptr::Interned::assume(s) }.as_bytes()
         }
         match self {
             Part::Text(s) => Part::Text(d(s)),
@@ -1602,8 +1603,8 @@ impl FrameworkRouter {
         // SAFETY: BACKREF — `r.fs()` is the process-global FileSystem singleton; valid for the
         // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
         // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
-        let fs_ref = unsafe { &*fs };
-        let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
+        let fs_ref = yolo! { &*fs };
+        let fs_impl = yolo! { core::ptr::addr_of_mut!((*fs).fs) };
 
         if let Some(entries) = dir_info.get_entries_const() {
             // PORT NOTE: `entries.data` is backed by `std::collections::HashMap`,
@@ -1628,13 +1629,13 @@ impl FrameworkRouter {
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
                 // outlive this scan and are serialized via `RealFS.entries_mutex`.
                 let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
-                let file = unsafe { &*file_ptr };
+                let file = yolo! { &*file_ptr };
                 let base = file.base();
                 // PORT NOTE: reshaped for borrowck — fetch type fields fresh each iteration.
                 // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
                 // is the unique live reference to this entry during the scan, and `fs_impl`
                 // points at the process-global FS implementation.
-                match unsafe { (*file_ptr).kind(&raw mut *fs_impl, false) } {
+                match yolo! { (*file_ptr).kind(&raw mut *fs_impl, false) } {
                     bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {

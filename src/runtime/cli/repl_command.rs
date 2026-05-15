@@ -9,6 +9,7 @@
 //! - Multi-line input support
 //! - REPL commands (.help, .exit, .clear, .load, .save, .editor)
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -95,8 +96,8 @@ impl ReplCommand {
         })?;
 
         // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.
-        let b = unsafe { &mut (*vm).transpiler };
-        unsafe {
+        let b = yolo! { &mut (*vm).transpiler };
+        yolo! {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
         }
@@ -161,14 +162,14 @@ impl ReplCommand {
             // PORT NOTE: ctx is the process-global ContextData; extend the
             // borrow past the local reborrow lifetime via raw ptr (the runner
             // never outlives ctx — global_exit() is `!`).
-            eval_script: unsafe { &*(&raw const *ctx.runtime_options.eval.script) },
+            eval_script: yolo! { &*(&raw const *ctx.runtime_options.eval.script) },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
         // TODO(port): @constCast(&arena) — vm.arena stores a *mut Arena pointing at runner.arena;
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never unwinds).
         // Assigned AFTER moving `arena` into `runner` — assigning from the pre-move local would
         // dangle. Model as raw ptr until VM arena ownership is decided in Phase B.
-        unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
+        yolo! { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
         // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that
         // produces an `extern "C" fn(*mut c_void)` thunk. `bun_jsc::opaque_wrap` requires a
@@ -176,12 +177,12 @@ impl ReplCommand {
         // the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
-            let runner = unsafe { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
+            let runner = yolo! { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
             ReplRunner::start(runner);
         }
         // SAFETY: vm.global is valid; runner is pinned on stack for the lock duration.
         #[allow(deprecated)]
-        unsafe {
+        yolo! {
             (&*(*vm).global)
                 .vm()
                 .hold_api_lock((&raw mut runner).cast::<c_void>(), repl_runner_thunk);
@@ -198,7 +199,7 @@ impl ReplCommand {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
             // `Log::print` accepts `*mut io::Writer` (IntoLogWrite is impl'd for the raw ptr,
             // not the &mut), so coerce the `&mut Writer` from `error_writer_buffered`.
-            let _ = unsafe {
+            let _ = yolo! {
                 (*log.as_ptr()).print(std::ptr::from_mut::<bun_core::io::Writer>(writer))
             };
         }
@@ -268,7 +269,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
         // SAFETY: vm.global is a valid JSGlobalObject pointer for the duration of the API lock.
-        unsafe {
+        yolo! {
             Bun__ExposeNodeModuleGlobals(vm.global);
         }
 
@@ -278,23 +279,23 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // C++ is `[[ZIG_EXPORT(check_slow)]]` → use the generated `bun_jsc::cpp` wrapper,
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`
         // would assert under `BUN_JSC_validateExceptionChecks=1`).
-        unsafe {
+        yolo! {
             bun_jsc::cpp::Bun__REPL__setupGlobalRequire(&*vm.global, cwd.as_ptr(), cwd.len())?;
         }
 
         // Set timezone if specified
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
-        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
+        if let Some(tz) = yolo! { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
                 // SAFETY: vm.global is valid; ZigString borrows `tz` for the FFI call duration.
                 // PORT NOTE: `JSGlobalObject::set_time_zone` isn't exposed on the Rust
                 // wrapper yet — call the underlying C++ export directly.
-                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
+                let _ = yolo! { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
             }
         }
 
         // SAFETY: transpiler.env is valid.
-        unsafe { (*vm.transpiler.env).load_tracy() };
+        yolo! { (*vm.transpiler.env).load_tracy() };
         Ok(())
     }
 }

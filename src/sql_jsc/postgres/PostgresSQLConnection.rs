@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_jsc::JsCell;
 use core::cell::Cell;
@@ -221,7 +222,7 @@ impl PostgresSQLConnection {
     }
 
     /// `&mut EventLoop` for `enter`/`exit`/`run_callback`. One audited unsafe
-    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
+    /// here replaces the per-site `yolo! { self.vm().event_loop_mut() }` —
     /// the loop is a disjoint heap allocation owned by the JS-thread VM
     /// singleton (see [`vm_mut`]); single-thread affinity ⇒ no two
     /// `&mut EventLoop` ever coexist.
@@ -288,7 +289,7 @@ impl PostgresSQLConnection {
     fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
         // SAFETY: see doc comment — single-JS-thread, no re-entrant access to
         // `authentication_state` for the borrow's lifetime.
-        match unsafe { self.authentication_state.get_mut() } {
+        match yolo! { self.authentication_state.get_mut() } {
             AuthenticationState::Sasl(s) => Some(s),
             _ => None,
         }
@@ -333,7 +334,7 @@ impl PostgresSQLConnection {
         self.auto_flusher
             .with_mut(|a| a.registered = keep_flusher_registered);
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
+        yolo! { Self::deref(self.as_ctx_ptr()) };
         keep_flusher_registered
     }
 
@@ -448,7 +449,7 @@ impl PostgresSQLConnection {
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
         // reached (Zig: `this.secure.?`).
-        let ssl_ctx = unsafe {
+        let ssl_ctx = yolo! {
             &mut *self
                 .secure
                 .expect("secure SSL_CTX must be set before setupTLS")
@@ -459,7 +460,7 @@ impl PostgresSQLConnection {
         } else {
             // SAFETY: `server_name` is a NUL-terminated C string owned by
             // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
+            Some(yolo! { bun_core::ffi::cstr(server_name) })
         };
         // Zig: `@sizeOf(?*PostgresSQLConnection)` — `?*T` is an 8-byte null-niche
         // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
@@ -471,7 +472,7 @@ impl PostgresSQLConnection {
 
         // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
         // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
+        let Some(new_socket) = (yolo! { &mut *raw }).adopt_tls(
             tls_group,
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
@@ -490,7 +491,7 @@ impl PostgresSQLConnection {
         // `adopt_tls`; ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
         // above. One `&mut` reborrow drives both safe inherent methods
         // (`ext` / `start_tls_handshake`). Zig: `ext(?*PostgresSQLConnection).* = this`.
-        let sock = unsafe { &mut *new_socket };
+        let sock = yolo! { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
             core::ptr::NonNull::new(self.as_ctx_ptr());
         self.socket.set(Socket::SocketTls(uws::SocketTLS {
@@ -656,7 +657,7 @@ impl PostgresSQLConnection {
         this.stop_timers();
         this.js_value.with_mut(|r| r.finalize());
         // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
-        unsafe { Self::deref(this) };
+        yolo! { Self::deref(this) };
     }
 
     pub fn flush_data_and_reset_timeout(&self) {
@@ -727,7 +728,7 @@ impl PostgresSQLConnection {
         }
         self.ref_and_close(Some(value));
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
+        yolo! { Self::deref(self.as_ctx_ptr()) };
         self.update_has_pending_activity();
     }
 
@@ -876,11 +877,11 @@ impl PostgresSQLConnection {
                                     .get_native_handle()
                                     .map_or(core::ptr::null_mut(), |p| p.cast());
                                 // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
+                                let hostname = yolo! { bun_core::ffi::cstr(servername) }.to_bytes();
                                 // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                                 !ssl_ptr.is_null()
                                     && BoringSSL::check_server_identity(
-                                        unsafe { &mut *ssl_ptr },
+                                        yolo! { &mut *ssl_ptr },
                                         hostname,
                                     )
                             };
@@ -1047,7 +1048,7 @@ impl PostgresSQLConnection {
         // reset the connection timeout after we're done processing the data
         self.reset_connection_timeout();
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
+        yolo! { Self::deref(self.as_ctx_ptr()) };
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
@@ -1157,7 +1158,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let errdefer_guard = scopeguard::guard((secure, tls_config), |(secure, _tls_config)| {
         if let Some(s) = secure {
             // SAFETY: SSL_CTX_free is safe to call on a valid SSL_CTX*.
-            unsafe { BoringSSL::c::SSL_CTX_free(s) };
+            yolo! { BoringSSL::c::SSL_CTX_free(s) };
         }
     });
 
@@ -1499,7 +1500,7 @@ impl PostgresSQLConnection {
     // strictly before the dealloc — direct mapping of Zig's `*@This()`.
     fn deinit(this: *mut Self) {
         // SAFETY: sole remaining owner; `this` is a live Box-allocated connection.
-        unsafe {
+        yolo! {
             (*this).disconnect();
             (*this).stop_timers();
             for stmt_ptr in (*this).statements.get().values() {
@@ -1638,7 +1639,7 @@ impl PostgresSQLConnection {
 
     /// Drop the queue-held intrusive ref on `request` and pop one entry from
     /// the FIFO head. One audited `unsafe` here replaces the per-site
-    /// `unsafe { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`
+    /// `yolo! { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`
     /// pair (16 callers in `clean_up_requests` / `advance`).
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
@@ -1646,7 +1647,7 @@ impl PostgresSQLConnection {
         // (queue invariant: every stored pointer is a live, heap-allocated
         // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
         // releases exactly that ref. May free if no other refs remain.
-        unsafe { PostgresSQLQuery::deref(request) };
+        yolo! { PostgresSQLQuery::deref(request) };
         self.requests.with_mut(|q| q.discard(1));
     }
 
@@ -2490,7 +2491,7 @@ impl PostgresSQLConnection {
                     // earlier in this block and outliving this guard; `count` is the
                     // post-decode element count and never exceeds the slice length.
                     for i in 0..count {
-                        unsafe { (*cells_ptr.add(i)).deinit() };
+                        yolo! { (*cells_ptr.add(i)).deinit() };
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
                 };
@@ -2972,7 +2973,7 @@ impl PostgresSQLConnection {
                         {
                             // SAFETY: `stmt` is a live `Box`-allocated statement; the
                             // request still holds its own ref so this cannot drop to 0.
-                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
+                            yolo! { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
                         }
                     }
                 }

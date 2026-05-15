@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::ArrayHashMap;
 use bun_spawn::Process;
 use bun_sys::SignalCode;
@@ -37,14 +38,14 @@ impl ProcessAutoKiller {
                 // SAFETY: every key in `processes` was ref()'d on insert and is
                 // live until the matching deref() below; popped entry is
                 // exclusively owned for this scope so `&mut Process` is unaliased.
-                let p: &mut Process = unsafe { &mut *entry.key };
+                let p: &mut Process = yolo! { &mut *entry.key };
                 if !p.has_exited() {
                     bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
                     count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
                 }
             }
             // SAFETY: key live until this releases the ref taken on insert.
-            unsafe { Process::deref(entry.key) };
+            yolo! { Process::deref(entry.key) };
         }
         count
     }
@@ -52,7 +53,7 @@ impl ProcessAutoKiller {
     pub fn clear(&mut self) {
         for process in self.processes.keys() {
             // SAFETY: see kill_processes — key is live until deref().
-            unsafe { Process::deref(*process) };
+            yolo! { Process::deref(*process) };
         }
 
         if self.processes.capacity() > 256 {
@@ -74,7 +75,7 @@ impl ProcessAutoKiller {
             }
             // SAFETY: caller passes a live Process; we take a ref to extend its
             // lifetime for as long as it sits in `processes`.
-            unsafe { (*process).ref_() };
+            yolo! { (*process).ref_() };
         }
     }
 
@@ -84,7 +85,7 @@ impl ProcessAutoKiller {
             if self.processes.swap_remove(&process) {
                 // SAFETY: we held a ref from on_subprocess_spawn; the pointee
                 // is live until this deref() releases it.
-                unsafe { Process::deref(process) };
+                yolo! { Process::deref(process) };
             }
         }
     }
@@ -99,7 +100,7 @@ impl Drop for ProcessAutoKiller {
     fn drop(&mut self) {
         for process in self.processes.keys() {
             // SAFETY: see kill_processes — key is live until deref().
-            unsafe { Process::deref(*process) };
+            yolo! { Process::deref(*process) };
         }
         // `self.processes` storage freed by its own Drop.
     }

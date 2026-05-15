@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_uint;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, align_of, size_of};
@@ -89,7 +90,7 @@ impl Bindgen for BindgenStrongAny {
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
         // SAFETY: bindgen contract — C++ passes a freshly-allocated Strong handle
         // whose ownership is transferred to Zig/Rust here.
-        unsafe { Strong::adopt(extern_value.expect("non-null")) }
+        yolo! { Strong::adopt(extern_value.expect("non-null")) }
     }
 }
 
@@ -101,7 +102,7 @@ impl BindgenOptionalRepr for BindgenStrongAny {
         extern_value: Self::OptionalExternType,
     ) -> Self::OptionalZigType {
         // SAFETY: bindgen contract — if non-null, ownership is transferred.
-        unsafe { jsc::strong::Optional::adopt(extern_value) }
+        yolo! { jsc::strong::Optional::adopt(extern_value) }
     }
 }
 
@@ -141,7 +142,7 @@ impl<Child: Bindgen> Bindgen for BindgenOptional<Child> {
         }
         debug_assert_eq!(extern_value.tag, 1);
         // SAFETY: tag == 1 means the `_1` arm of the union is initialized.
-        Some(Child::convert_from_extern(unsafe {
+        Some(Child::convert_from_extern(yolo! {
             ManuallyDrop::into_inner(extern_value.data._1)
         }))
     }
@@ -172,7 +173,7 @@ impl Bindgen for BindgenString {
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
         // SAFETY: bindgen contract — C++ passes a `StringImpl*` with one ref already
         // taken for us; `adopt` consumes that ref.
-        unsafe { WTFString::adopt(extern_value.expect("non-null").as_ptr()) }
+        yolo! { WTFString::adopt(extern_value.expect("non-null").as_ptr()) }
     }
 }
 
@@ -184,7 +185,7 @@ impl BindgenOptionalRepr for BindgenString {
         extern_value: Self::OptionalExternType,
     ) -> Self::OptionalZigType {
         // SAFETY: bindgen contract — if non-null, one ref is transferred.
-        unsafe {
+        yolo! {
             ExternalSharedOptional::adopt(
                 extern_value.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
             )
@@ -253,7 +254,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         // SAFETY: C++ side guarantees `data` points to `capacity` elements with
         // `length` initialized; allocation came from mimalloc (when `USE_MIMALLOC`).
         let unmanaged: Vec<Child::ExternType> =
-            unsafe { Vec::from_raw_parts(data, length, capacity) };
+            yolo! { Vec::from_raw_parts(data, length, capacity) };
 
         if !bun_alloc::USE_MIMALLOC {
             // Don't reuse memory in this case; it would be freed by the wrong allocator.
@@ -272,7 +273,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                 (v.as_mut_ptr(), v.len(), v.capacity())
             };
             let reused: Vec<Child::ZigType> =
-                unsafe { Vec::from_raw_parts(ptr.cast::<Child::ZigType>(), len, cap) };
+                yolo! { Vec::from_raw_parts(ptr.cast::<Child::ZigType>(), len, cap) };
             return Self::ZigType::from_unmanaged(reused);
         } else if size_of::<Child::ZigType>() <= size_of::<Child::ExternType>()
             && align_of::<Child::ZigType>() <= bun_alloc::mimalloc::MI_MAX_ALIGN_SIZE
@@ -299,7 +300,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                 let mut old_elem = core::mem::MaybeUninit::<Child::ExternType>::uninit();
                 // SAFETY: source range lies within the mimalloc block and holds a
                 // valid (C++-initialized) `ExternType` for `i < length`.
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         storage_ptr.add(i * size_of::<Child::ExternType>()),
                         old_elem.as_mut_ptr().cast::<u8>(),
@@ -307,13 +308,13 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                     );
                 }
                 // SAFETY: bytes for element `i` were just copied from initialized storage.
-                let new_elem = ManuallyDrop::new(Child::convert_from_extern(unsafe {
+                let new_elem = ManuallyDrop::new(Child::convert_from_extern(yolo! {
                     old_elem.assume_init()
                 }));
                 // SAFETY: dest range lies within the block; `size_of ZigType <=
                 // size_of ExternType` so slot `i` of the new layout never overruns
                 // slot `i` of the old layout (and never clobbers slot `i+1`).
-                unsafe {
+                yolo! {
                     core::ptr::copy_nonoverlapping(
                         (&raw const *new_elem).cast::<u8>(),
                         storage_ptr.add(i * size_of::<Child::ZigType>()),
@@ -335,7 +336,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                     // SAFETY: `storage_ptr` is the original mimalloc block (the
                     // `USE_MIMALLOC` guard above gates entry to this path); shrinking
                     // with `mi_realloc` preserves the prefix bytes.
-                    storage_ptr = bun_core::handle_oom(unsafe {
+                    storage_ptr = bun_core::handle_oom(yolo! {
                         bun_alloc::realloc_raw(storage_ptr, new_alloc_size)
                     });
                 }
@@ -350,7 +351,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             // `mi_free`, which ignores layout.
             let items_ptr = storage_ptr.cast::<Child::ZigType>();
             let new_unmanaged: Vec<Child::ZigType> =
-                unsafe { Vec::from_raw_parts(items_ptr, length, new_capacity) };
+                yolo! { Vec::from_raw_parts(items_ptr, length, new_capacity) };
             return Self::ZigType::from_unmanaged(new_unmanaged);
         }
 
@@ -388,7 +389,7 @@ impl<T: ExternalSharedDescriptor> Bindgen for BindgenExternalShared<T> {
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
         // SAFETY: bindgen contract — C++ passes a pointer with one ref already taken.
-        unsafe { ExternalShared::adopt(extern_value.expect("non-null").as_ptr()) }
+        yolo! { ExternalShared::adopt(extern_value.expect("non-null").as_ptr()) }
     }
 }
 
@@ -400,7 +401,7 @@ impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<
         extern_value: Self::OptionalExternType,
     ) -> Self::OptionalZigType {
         // SAFETY: bindgen contract — if non-null, one ref is transferred.
-        unsafe {
+        yolo! {
             ExternalSharedOptional::adopt(
                 extern_value.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
             )

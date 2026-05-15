@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 #![warn(unused_must_use)]
 // `Platform` is used as a const-generic param (Zig: `comptime _platform: Platform`)
@@ -153,7 +154,7 @@ macro_rules! path_literal {
         // (mirrors `os_path_literal!`).
         const __REF: &[u8; __N + 1] = &__OUT;
         // SAFETY: __REF[__N] == 0 (NUL terminator); len excludes it.
-        unsafe { ::bun_core::ZStr::from_raw(__REF.as_ptr(), __N) }
+        yolo! { ::bun_core::ZStr::from_raw(__REF.as_ptr(), __N) }
     }};
 }
 
@@ -197,7 +198,7 @@ macro_rules! os_path_literal {
             // contexts, and a non-promoted `__W` would dangle immediately.
             const __WREF: &[u16; __N + 1] = &__W;
             // SAFETY: __WREF[__N] == 0 (NUL terminator); len excludes it.
-            unsafe { ::bun_core::WStr::from_raw(__WREF.as_ptr(), __N) }
+            yolo! { ::bun_core::WStr::from_raw(__WREF.as_ptr(), __N) }
         }
     }};
 }
@@ -746,7 +747,7 @@ pub mod fs {
             // SAFETY: when `extend == 1`, `dir.ptr[dir.len]` is the separator byte
             // immediately preceding `base` — both slices borrow the same underlying
             // allocation (the `path_` passed to `init`).
-            unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
+            yolo! { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
         }
 
         /// Zig: `PathName.init`.
@@ -871,10 +872,10 @@ pub mod fs {
             #[inline(always)]
             unsafe fn d(s: &[u8]) -> &'static [u8] {
                 // SAFETY: caller contract on `into_static`.
-                unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+                yolo! { &*core::ptr::from_ref::<[u8]>(s) }
             }
             // SAFETY: caller contract — see fn doc.
-            unsafe {
+            yolo! {
                 Path {
                     pretty: d(self.pretty),
                     text: d(self.text),

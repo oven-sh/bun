@@ -2,6 +2,7 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 
+use bun_yolo::yolo;
 use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
@@ -539,7 +540,7 @@ pub const DEFAULT_PERMISSION: Mode = 0;
 // `AbortSignalRef` (= `ExternalShared<AbortSignal>`) implements `Deref`, so
 // `signal.pending_activity_ref()` / `signal.aborted()` resolve directly to the
 // `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
-// per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
+// per-call `yolo! { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
 /// All async FS functions are run in a thread pool, but some implementations may
 /// decide to do something slightly different. For example, reading a file has
@@ -645,11 +646,11 @@ mod _async_tasks {
 
             pub fn work_pool_callback(task: *mut WorkPoolTask) {
                 // SAFETY: task points to AsyncMkdirp.task
-                let this = unsafe { &mut *AsyncMkdirp::from_task_ptr(task) };
+                let this = yolo! { &mut *AsyncMkdirp::from_task_ptr(task) };
 
                 let mut node_fs = NodeFS::default();
                 // SAFETY: caller keeps `path` alive until completion
-                let path = unsafe { &*this.path };
+                let path = yolo! { &*this.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
                     path: PathLike::String(PathString::init(path)),
                     recursive: true,
@@ -767,7 +768,7 @@ mod _async_tasks {
                     debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<$Args>());
                     // SAFETY: identity cast — `A == $Args` for this `F` (see `async_::*`).
                     // `ThreadSafe<A>` is `repr(transparent)`; deref through it for the inner `A`.
-                    unsafe { &*(&*task.args as *const A as *const $Args) }
+                    yolo! { &*(&*task.args as *const A as *const $Args) }
                 }};
             }
             match F {
@@ -781,7 +782,7 @@ mod _async_tasks {
                         // libuv enqueue below (which copies `path` internally) and
                         // never across a JS re-entry point.
                         args.path
-                            .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
+                            .slice_z(yolo! { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
@@ -791,7 +792,7 @@ mod _async_tasks {
                     }
                     // SAFETY: libuv async request; `task.req` and `path` outlive the
                     // call (path is copied internally by libuv before return).
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_open(
                             loop_,
                             &mut task.req,
@@ -815,7 +816,7 @@ mod _async_tasks {
                     if fd == 1 || fd == 2 {
                         sys::syslog!("uv close({}) SKIPPED", fd);
                         // SAFETY: identity write — `R == ret::Close == ()` for this `F`.
-                        unsafe {
+                        yolo! {
                             core::ptr::write(
                                 &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Close>,
                                 Ok(()),
@@ -829,7 +830,7 @@ mod _async_tasks {
                         return task.promise.value();
                     }
                     // SAFETY: libuv async request.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_close(loop_, &mut task.req, fd, Some(Self::uv_callback))
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
@@ -845,7 +846,7 @@ mod _async_tasks {
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: libuv copies the iovec descriptor before return; the
                     // backing Buffer is JS-protected via `to_thread_safe`.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_read(
                             loop_,
                             &mut task.req,
@@ -868,7 +869,7 @@ mod _async_tasks {
                     let buf = &buf[..buf.len().min(args.length as usize)];
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: see Read arm.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_write(
                             loop_,
                             &mut task.req,
@@ -890,7 +891,7 @@ mod _async_tasks {
                     let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
                     // SAFETY: `bufs` (Vec<PlatformIoVec> == Vec<uv_buf_t>) lives in
                     // the leaked task; libuv copies the array before return.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_read(
                             loop_,
                             &mut task.req,
@@ -917,7 +918,7 @@ mod _async_tasks {
                     let bufs = &args.buffers.buffers;
                     if bufs.is_empty() {
                         // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
-                        unsafe {
+                        yolo! {
                             core::ptr::write(
                                 &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
                                 Ok(ret::Write { bytes_written: 0 }),
@@ -933,7 +934,7 @@ mod _async_tasks {
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
                     // SAFETY: see Readv arm.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_write(
                             loop_,
                             &mut task.req,
@@ -960,9 +961,9 @@ mod _async_tasks {
                     // across the libuv enqueue (copies `path` internally).
                     let path = args
                         .path
-                        .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
+                        .slice_z(yolo! { &mut binding.node_fs.get_mut().sync_error_buf });
                     // SAFETY: libuv copies `path` internally before return.
-                    let rc = unsafe {
+                    let rc = yolo! {
                         uv::uv_fs_statfs(
                             loop_,
                             &mut task.req,
@@ -981,9 +982,9 @@ mod _async_tasks {
 
         extern "C" fn uv_callback(req: *mut uv::fs_t) {
             // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-            scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
+            scopeguard::defer! { yolo! { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
+            let this: &mut Self = yolo! { bun_ptr::callback_ctx::<Self>((*req).data) };
             let mut node_fs = NodeFS::default();
             // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
             // `this: &mut Self` is live, re-deriving through the raw `req` would create a
@@ -1003,9 +1004,9 @@ mod _async_tasks {
         extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
             // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
             // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
-            scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
+            scopeguard::defer! { yolo! { uv::uv_fs_req_cleanup(req) } };
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
-            let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };
+            let this: &mut Self = yolo! { bun_ptr::callback_ctx::<Self>((*req).data) };
             let mut node_fs = NodeFS::default();
             // `req` aliases `this.req`; once `this: &mut Self` is live, re-deriving `&mut *req`
             // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
@@ -1025,7 +1026,7 @@ mod _async_tasks {
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
             let _deinit =
-                scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
+                scopeguard::guard(core::ptr::from_mut(self), |p| yolo! { Self::destroy(p) });
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
             let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
@@ -1062,14 +1063,14 @@ mod _async_tasks {
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            let this_ref = yolo! { &mut *this };
             // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
             // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
     }
 
@@ -1373,7 +1374,7 @@ mod _async_tasks {
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
             // SAFETY: task points to Self.task
-            let this = unsafe { &mut *Self::from_task_ptr(task) };
+            let this = yolo! { &mut *Self::from_task_ptr(task) };
 
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
@@ -1387,7 +1388,7 @@ mod _async_tasks {
             let vm = this.global_object().bun_vm_concurrently();
             // SAFETY: VirtualMachine and its event loop are process-static
             // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
-            unsafe {
+            yolo! {
                 (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
                     std::ptr::from_mut::<Self>(this),
                 ));
@@ -1396,7 +1397,7 @@ mod _async_tasks {
 
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
             // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
-            let _deinit = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| unsafe {
+            let _deinit = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| yolo! {
                 Self::destroy(p)
             });
             // Move `result` out so the `global_object()` `&self` borrow can coexist
@@ -1444,7 +1445,7 @@ mod _async_tasks {
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            let this_ref = yolo! { &mut *this };
             // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
             // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
@@ -1452,7 +1453,7 @@ mod _async_tasks {
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
     }
 
@@ -1634,7 +1635,7 @@ mod _async_tasks {
             let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
             // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task;
             // `cp_on_finish` enqueues it onto the main-thread concurrent queue.
-            unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
+            yolo! { ShellCpTask::cp_on_finish(shelltask, result) };
         }
 
         pub fn create(
@@ -1651,7 +1652,7 @@ mod _async_tasks {
                 true,
             );
             // SAFETY: create_with_shell_task returns a Box::leak'd pointer; valid until destroy()
-            unsafe { &*task }.promise.value()
+            yolo! { &*task }.promise.value()
         }
 
         pub fn create_with_shell_task(
@@ -1725,7 +1726,7 @@ mod _async_tasks {
             // SAFETY: task points to Self.task. Kept as a raw pointer — `cp_async`
             // may spawn subtasks that hold `&Self` to the same allocation while
             // this call is still on the stack, so we must not form `&mut Self` here.
-            let this = unsafe { Self::from_task_ptr(task) };
+            let this = yolo! { Self::from_task_ptr(task) };
             let mut node_fs = NodeFS::default();
             Self::cp_async(&mut node_fs, this);
         }
@@ -1764,7 +1765,7 @@ mod _async_tasks {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
             // refcount reaches zero below.
-            let this_ref = unsafe { &*this };
+            let this_ref = yolo! { &*this };
             let old_count = this_ref.subtask_count.fetch_sub(1, Ordering::AcqRel);
             debug_assert!(old_count > 0);
             if old_count != 1 {
@@ -1785,7 +1786,7 @@ mod _async_tasks {
                 // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
                 // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
-                    js: ConcurrentTask::from_callback(this, |p| unsafe {
+                    js: ConcurrentTask::from_callback(this, |p| yolo! {
                         (&mut *p).run_from_js_thread().map_err(Into::into)
                     }),
                 });
@@ -1793,7 +1794,7 @@ mod _async_tasks {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
                         this,
-                        |p: *mut Self, ctx| unsafe { (*p).run_from_js_thread_mini(ctx) },
+                        |p: *mut Self, ctx| yolo! { (*p).run_from_js_thread_mini(ctx) },
                     ),
                 });
             }
@@ -1812,9 +1813,9 @@ mod _async_tasks {
                 let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
                 // SAFETY: shelltask is non-null in the IS_SHELL specialization and
                 // outlives this task; `cp_on_finish` enqueues it concurrently.
-                unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
+                yolo! { ShellCpTask::cp_on_finish(shelltask, result) };
                 // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 return Ok(());
             }
             let go_ptr = self.evtloop.global_object();
@@ -1824,7 +1825,7 @@ mod _async_tasks {
                 );
             }
             // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
-            let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
+            let global_object: &JSGlobalObject = yolo! { &*go_ptr.cast::<JSGlobalObject>() };
             let success = matches!(*self.result.get_mut(), Ok(_));
             let promise_value = self.promise.value();
             // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
@@ -1833,17 +1834,17 @@ mod _async_tasks {
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = match self.result.get_mut() {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-                Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
+                Err(err) => match err.to_js_with_async_stack(global_object, yolo! { &*promise }) {
                     Ok(v) => v,
                     Err(e) => {
-                        return unsafe { &mut *promise }
+                        return yolo! { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
                 },
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return unsafe { &mut *promise }
+                        return yolo! { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
                 },
@@ -1853,10 +1854,10 @@ mod _async_tasks {
             let _dispatch = self.tracker.dispatch(global_object);
 
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
             // valid after `destroy` dropped only the `Strong` wrapper.
-            let promise = unsafe { &mut *promise };
+            let promise = yolo! { &mut *promise };
             if success {
                 promise.resolve(global_object, result)?;
             } else {
@@ -1869,7 +1870,7 @@ mod _async_tasks {
         /// `create_with_shell_task()`/`create_mini()`; called exactly once.
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            let this_ref = yolo! { &mut *this };
             // PORT NOTE: Zig `err.deinit()` freed the path slice; Rust `bun_sys::Error`
             // owns `Box<[u8]>` and frees on Drop (in `heap::take` below).
             if !IS_SHELL {
@@ -1884,7 +1885,7 @@ mod _async_tasks {
             // releases that protect here, fixing the leak.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -1900,7 +1901,7 @@ mod _async_tasks {
             // SAFETY: same pointer as above; valid for the duration of this fn.
             // Shared borrow only — once `_cp_async_directory` spawns `CpSingleTask`s,
             // other workpool threads concurrently hold `&Self` to this same allocation.
-            let this = unsafe { &**_done };
+            let this = yolo! { &**_done };
 
             let args = &this.args;
             let mut src_buf = OSPathBuffer::uninit();
@@ -1911,7 +1912,7 @@ mod _async_tasks {
             #[cfg(windows)]
             {
                 // SAFETY: src is NUL-terminated (os_path); GetFileAttributesW is the Win32 FFI
-                let attributes = unsafe { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
+                let attributes = yolo! { bun_sys::c::GetFileAttributesW(src.as_ptr()) };
                 if attributes == bun_sys::c::INVALID_FILE_ATTRIBUTES {
                     this.finish_concurrently(Err(sys::Error {
                         errno: SystemErrno::ENOENT as _,
@@ -2046,13 +2047,13 @@ mod _async_tasks {
             // The raw `*mut` is threaded through (instead of `&Self`) so that the
             // `cp_task` pointers stored in subtasks retain mutable provenance for
             // `on_subtask_done`'s eventual `&mut` promotion.
-            let this_ref = unsafe { &*this };
+            let this_ref = yolo! { &*this };
             // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
             // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
             // so reconstruct as `&OSPathSliceZ` (Zig: `src_buf[0..src_dir_len :0]`).
-            let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
+            let src = yolo! { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
             // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
-            let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
+            let dest = yolo! { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
 
             #[cfg(target_os = "macos")]
             {
@@ -2315,7 +2316,7 @@ mod _async_tasks {
         #[inline]
         unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
             // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-            unsafe { core::ptr::addr_of!((*item).next) }
+            yolo! { core::ptr::addr_of!((*item).next) }
         }
     }
 
@@ -2344,7 +2345,7 @@ mod _async_tasks {
                 // `AsyncReaddirRecursiveTask::enqueue`; same (ptr, len) layout,
                 // reconstructed exactly once. Build the `*mut [u8]` fat pointer
                 // safely — no need to materialize an intermediate `&mut` reference.
-                unsafe {
+                yolo! {
                     drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
                         ptr,
                         len_with_nul,
@@ -2356,7 +2357,7 @@ mod _async_tasks {
             // refcount. `from_raw_mut` was used at enqueue, so write provenance is
             // present; this work-pool callback is the sole holder of `&mut` to the
             // parent's per-result fields (it pushes to a lock-free queue).
-            unsafe { readdir_task.assume_mut() }.perform_work(
+            yolo! { readdir_task.assume_mut() }.perform_work(
                 basename.slice_assume_z(),
                 &mut buf,
                 false,
@@ -2393,7 +2394,7 @@ mod _async_tasks {
             // SAFETY: `bytes.as_ptr()` is the start of a `Box<[u8]>` allocation of
             // `bytes.len() + 1` (NUL) made in `create()`; reconstructed exactly once.
             // Build the `*mut [u8]` fat pointer safely — no intermediate `&mut` ref.
-            unsafe {
+            yolo! {
                 drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
                     bytes.as_ptr().cast_mut(),
                     bytes.len() + 1,
@@ -2424,7 +2425,7 @@ mod _async_tasks {
                 // SAFETY: `self` is a `Box<AsyncReaddirRecursiveTask>` (stable
                 // address) and outlives every subtask via the `subtask_count`
                 // refcount it just bumped. Write provenance from `&mut self`.
-                readdir_task: unsafe {
+                readdir_task: yolo! {
                     bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self))
                 },
                 basename: basename_ps,
@@ -2506,7 +2507,7 @@ mod _async_tasks {
                         Vec::with_capacity(8192usize / core::mem::size_of::<$T>());
                     let res = NodeFS::readdir_with_entries_recursive_async::<$T>(
                         buf,
-                        unsafe { &*args_ptr },
+                        yolo! { &*args_ptr },
                         self,
                         basename,
                         &mut entries,
@@ -2547,7 +2548,7 @@ mod _async_tasks {
 
         fn work_pool_callback(task: *mut WorkPoolTask) {
             // SAFETY: task points to Self.task
-            let this = unsafe { &mut *Self::from_task_ptr(task) };
+            let this = yolo! { &mut *Self::from_task_ptr(task) };
             let mut buf = PathBuffer::uninit();
             let root_path = this.root_path;
             this.perform_work(root_path.slice_assume_z(), &mut buf, true);
@@ -2621,16 +2622,16 @@ mod _async_tasks {
                     }
                     if let Some(dest) = to_destroy {
                         // SAFETY: paired with heap::alloc in write_results()
-                        unsafe { drop(bun_core::heap::take(dest)) };
+                        yolo! { drop(bun_core::heap::take(dest)) };
                     }
                     to_destroy = Some(val);
                     // SAFETY: `val` came from the queue and is live until heap::take above on the next iter
                     self.result_list
-                        .append_from(&mut unsafe { &mut *val }.value);
+                        .append_from(&mut yolo! { &mut *val }.value);
                 }
                 if let Some(dest) = to_destroy {
                     // SAFETY: paired with heap::alloc in write_results()
-                    unsafe { drop(bun_core::heap::take(dest)) };
+                    yolo! { drop(bun_core::heap::take(dest)) };
                 }
             }
 
@@ -2638,7 +2639,7 @@ mod _async_tasks {
             // documented accessor for off-thread (work-pool) callers.
             // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
             // sole `&mut` borrow at this point on the work-pool thread.
-            let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
+            let vm = yolo! { &mut *self.global_object().bun_vm_concurrently() };
             vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
                 Self,
             >(self))));
@@ -2655,16 +2656,16 @@ mod _async_tasks {
                     break;
                 }
                 // SAFETY: `val` is a live queue node until freed below
-                unsafe { &mut *val }.value.deinit();
+                yolo! { &mut *val }.value.deinit();
                 // SAFETY: paired with heap::alloc in write_results()
                 if let Some(dest) = to_destroy {
-                    unsafe { drop(bun_core::heap::take(dest)) };
+                    yolo! { drop(bun_core::heap::take(dest)) };
                 }
                 to_destroy = Some(val);
             }
             // SAFETY: paired with heap::alloc in write_results()
             if let Some(dest) = to_destroy {
-                unsafe { drop(bun_core::heap::take(dest)) };
+                yolo! { drop(bun_core::heap::take(dest)) };
             }
             self.result_list_count.store(0, Ordering::Relaxed);
         }
@@ -2684,10 +2685,10 @@ mod _async_tasks {
             let promise: *mut bun_jsc::JSPromise = self.promise.get();
             let result = if let Some(err) = &mut self.pending_err {
                 // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-                match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
+                match err.to_js_with_async_stack(global_object, yolo! { &*promise }) {
                     Ok(v) => v,
                     Err(e) => {
-                        return unsafe { &mut *promise }
+                        return yolo! { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
                 }
@@ -2705,7 +2706,7 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
-                        return unsafe { &mut *promise }
+                        return yolo! { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
                 }
@@ -2715,9 +2716,9 @@ mod _async_tasks {
             let _dispatch = self.tracker.dispatch(global_object);
 
             // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            yolo! { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
-            let promise = unsafe { &mut *promise };
+            let promise = yolo! { &mut *promise };
             if success {
                 promise.resolve(global_object, result)?;
             } else {
@@ -2729,7 +2730,7 @@ mod _async_tasks {
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
         pub unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-            let this_ref = unsafe { &mut *this };
+            let this_ref = yolo! { &mut *this };
             debug_assert!(this_ref.root_fd == FD::INVALID); // should already have closed it
             // Zig `err.deinit()` — `bun_sys::Error` frees on Drop; nothing to do.
             let _ = this_ref.pending_err.take();
@@ -2741,7 +2742,7 @@ mod _async_tasks {
             this_ref.clear_result_list();
             // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via heap::take below).
             // SAFETY: paired with Box::leak in create()
-            drop(unsafe { bun_core::heap::take(this) });
+            drop(yolo! { bun_core::heap::take(this) });
         }
     }
 
@@ -4974,7 +4975,7 @@ impl NodeFS {
                 }
                 // SAFETY: `u8` has no validity invariant; the buffer is handed
                 // straight to the kernel which only stores into it.
-                unsafe { buf_to_free.expand_to_capacity() };
+                yolo! { buf_to_free.expand_to_capacity() };
                 buf = &mut buf_to_free[..];
             }
         }
@@ -5284,7 +5285,7 @@ impl NodeFS {
                 // Null offsets so the kernel advances the file's seek position — matches
                 // `std.c.copy_file_range(..., null, ..., null, ...)` and keeps the read/write
                 // fallback (which uses the seek position) coherent if we ever break mid-loop.
-                let rc: isize = unsafe {
+                let rc: isize = yolo! {
                     sys::freebsd::copy_file_range(
                         src_fd.native(),
                         core::ptr::null_mut(),
@@ -5432,7 +5433,7 @@ impl NodeFS {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
+                    let written = yolo! {
                         sys::linux::copy_file_range(
                             src_fd.native(),
                             &raw mut off_in_copy,
@@ -5470,7 +5471,7 @@ impl NodeFS {
             } else {
                 while size > 0 {
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
+                    let written = yolo! {
                         sys::linux::copy_file_range(
                             src_fd.native(),
                             &raw mut off_in_copy,
@@ -5519,7 +5520,7 @@ impl NodeFS {
             );
             let dest = strings::to_kernel32_path(&mut *dest_buf, args.dest.slice());
             // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
-            if unsafe {
+            if yolo! {
                 windows::CopyFileW(
                     src.as_ptr(),
                     dest.as_ptr(),
@@ -5552,7 +5553,7 @@ impl NodeFS {
             // SAFETY: see `standalone_module_graph_get` — exclusive lookup on
             // the per-process singleton; `find` only mutates lazy per-`File`
             // fields.
-            if unsafe { &mut *graph }.find(path.slice()).is_some() {
+            if yolo! { &mut *graph }.find(path.slice()).is_some() {
                 return Ok(true);
             }
         }
@@ -5668,7 +5669,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
-            let rc = unsafe {
+            let rc = yolo! {
                 uv::uv_fs_futime(
                     uv::Loop::get(),
                     &mut *req,
@@ -5755,7 +5756,7 @@ impl NodeFS {
         // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
         #[cfg(not(windows))]
         Maybe::<ret::Link>::errno_sys_pd(
-            unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) },
+            yolo! { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) },
             sys::Tag::link,
             args.old_path.slice(),
             args.new_path.slice(),
@@ -5931,7 +5932,7 @@ impl NodeFS {
             "NodeFS.sync_error_buf misaligned for OSPathChar",
         );
         let working_mem: &mut OSPathBuffer =
-            unsafe { &mut *sync_error_buf_ptr.cast::<OSPathBuffer>() };
+            yolo! { &mut *sync_error_buf_ptr.cast::<OSPathBuffer>() };
         working_mem[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
 
         let mut i: u16 = len - 1;
@@ -5940,7 +5941,7 @@ impl NodeFS {
         while i > 0 {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
-                let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
+                let parent = yolo! { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
                         // PORT NOTE: Zig restores `working_mem[i] = SEP` here, *before*
@@ -5961,7 +5962,7 @@ impl NodeFS {
                                         if !res {
                                             // SAFETY: `working_mem` is not used after this return; re-derive
                                             // the &mut PathBuffer from the stored raw ptr instead of `&mut self`.
-                                            let buf = unsafe { &mut *sync_error_buf_ptr };
+                                            let buf = yolo! { &mut *sync_error_buf_ptr };
                                             return Err(sys::Error {
                                                 errno: E::ENOTDIR as _,
                                                 syscall: sys::Tag::mkdir,
@@ -5996,7 +5997,7 @@ impl NodeFS {
                                     tmp[..n].copy_from_slice(stripped);
                                     // SAFETY: `working_mem`/`parent` are not used after this return.
                                     Self::os_path_into_buf(
-                                        unsafe { &mut *sync_error_buf_ptr },
+                                        yolo! { &mut *sync_error_buf_ptr },
                                         &tmp[..n],
                                     )
                                 };
@@ -6022,7 +6023,7 @@ impl NodeFS {
         while i < len {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
-                let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
+                let parent = yolo! { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
                         working_mem[i as usize] = paths::SEP as OSPathChar;
@@ -6032,7 +6033,7 @@ impl NodeFS {
                             // NOENT shouldn't happen here
                             _ => {
                                 // SAFETY: `working_mem` is not used after this return.
-                                let buf = unsafe { &mut *sync_error_buf_ptr };
+                                let buf = yolo! { &mut *sync_error_buf_ptr };
                                 return Err(err.with_path(Self::os_path_into_buf(
                                     buf,
                                     without_nt_prefix((&path[..])),
@@ -6053,13 +6054,13 @@ impl NodeFS {
 
         // Our final directory will not have a trailing separator
         // so we have to create it once again
-        let final_ = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
+        let final_ = yolo! { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
         match mkdir_os_path(final_, mode) {
             Err(err) => match err.get_errno() {
                 E::EEXIST => {}
                 _ => {
                     // SAFETY: `working_mem` is not used after this return.
-                    let buf = unsafe { &mut *sync_error_buf_ptr };
+                    let buf = yolo! { &mut *sync_error_buf_ptr };
                     return Err(
                         err.with_path(Self::os_path_into_buf(buf, without_nt_prefix((&path[..]))))
                     );
@@ -6094,7 +6095,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
-            let rc = unsafe {
+            let rc = yolo! {
                 uv::uv_fs_mkdtemp(
                     bun_io::Loop::get(),
                     &mut *req,
@@ -6114,7 +6115,7 @@ impl NodeFS {
             // UTF-8 string owned by the request; `UvFsReq::drop` runs
             // `uv_fs_req_cleanup` in place after we've copied the bytes out.
             return Ok(
-                ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes())
+                ZigString::dupe_for_js(yolo! { bun_core::ffi::cstr(req.path) }.to_bytes())
                     .expect("oom"),
             );
         }
@@ -6123,10 +6124,10 @@ impl NodeFS {
         {
             // SAFETY: `prefix_buf` is NUL-terminated and writable; mkdtemp(3) writes the
             // generated name back into the buffer in-place.
-            let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
+            let rc = yolo! { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
             if !rc.is_null() {
                 return Ok(
-                    ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(rc) }.to_bytes())
+                    ZigString::dupe_for_js(yolo! { bun_core::ffi::cstr(rc) }.to_bytes())
                         .expect("oom"),
                 );
             }
@@ -6193,7 +6194,7 @@ impl NodeFS {
         // `uv_statfs_t` (= `RawStatFS` on Windows); we copy it out by value
         // before `uv_fs_req_cleanup` releases the backing storage.
         let statfs_: super::statfs::RawStatFS =
-            unsafe { core::ptr::read_unaligned(req.ptr_as::<super::statfs::RawStatFS>()) };
+            yolo! { core::ptr::read_unaligned(req.ptr_as::<super::statfs::RawStatFS>()) };
         Ok(ret::StatFS::init(&statfs_, args.big_int))
     }
 
@@ -6408,7 +6409,7 @@ impl NodeFS {
         // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
         // kernel never writes through `iov_base` for pwritev(2).
         // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
-        let vecs: &[sys::PlatformIoVecConst] = unsafe {
+        let vecs: &[sys::PlatformIoVecConst] = yolo! {
             core::slice::from_raw_parts(
                 args.buffers
                     .buffers
@@ -6615,7 +6616,7 @@ impl NodeFS {
         // SAFETY: `async_task.root_path`'s backing storage is fixed at `create()` and
         // outlives every `enqueue` call below.
         let root_basename: &[u8] =
-            unsafe { bun_ptr::detach_lifetime(async_task.root_path.slice()) };
+            yolo! { bun_ptr::detach_lifetime(async_task.root_path.slice()) };
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let atfd = if is_root {
             FD::cwd()
@@ -6705,7 +6706,7 @@ impl NodeFS {
             // `PathString` slice over the iterator's NUL-terminated dirent name, and
             // `join_z_buf` writes a sentinel.
             let name_to_copy_z =
-                unsafe { ZStr::from_raw(name_to_copy.as_ptr(), name_to_copy.len()) };
+                yolo! { ZStr::from_raw(name_to_copy.as_ptr(), name_to_copy.len()) };
 
             // Track effective kind - may be resolved from .unknown via stat
             let mut effective_kind = current.kind;
@@ -7103,7 +7104,7 @@ impl NodeFS {
 
                 if let Some(graph) = standalone_module_graph_get() {
                     // SAFETY: see `standalone_module_graph_get`.
-                    if let Some(file) = unsafe { &mut *graph }.find(path.as_bytes()) {
+                    if let Some(file) = yolo! { &mut *graph }.find(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
@@ -7115,7 +7116,7 @@ impl NodeFS {
                             // ArrayBuffer finalizer reconstructs the Box and frees it
                             // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
                             Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                                unsafe { &mut *raw },
+                                yolo! { &mut *raw },
                                 bun_jsc::JSType::Uint8Array,
                             )))
                         } else if string_type == ReadFileStringType::Default {
@@ -7194,7 +7195,7 @@ impl NodeFS {
                 // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
                 // `rare_data()` lazily inits the heap slab and the returned
                 // `&mut [u8; 256*1024]` outlives this call (single-threaded VM).
-                Some(vm) => unsafe { &mut (*vm.as_ptr()).rare_data().pipe_read_buffer()[..] },
+                Some(vm) => yolo! { &mut (*vm.as_ptr()).rare_data().pipe_read_buffer()[..] },
                 None => &mut [][..],
             }
         } else {
@@ -7259,7 +7260,7 @@ impl NodeFS {
                     // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
                     // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
                     Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                        unsafe { &mut *raw },
+                        yolo! { &mut *raw },
                         bun_jsc::JSType::Uint8Array,
                     )))
                 }
@@ -7340,7 +7341,7 @@ impl NodeFS {
         use bun_collections::vec_ext::VecExt as _;
         // SAFETY: `u8` has no validity invariant; the buffer is handed straight
         // to the kernel which only stores into it.
-        unsafe { buf.expand_to_capacity() };
+        yolo! { buf.expand_to_capacity() };
 
         // Two-phase read: first up to `size`, then keep going until EOF.
         // PORT NOTE: Zig spelled this as `while (total < size) { ... } else { while (true) { ... } }`.
@@ -7380,7 +7381,7 @@ impl NodeFS {
                             ));
                         }
                         // SAFETY: `u8` has no validity invariant; kernel only stores.
-                        unsafe { buf.expand_to_capacity() };
+                        yolo! { buf.expand_to_capacity() };
                         continue;
                     }
 
@@ -7428,7 +7429,7 @@ impl NodeFS {
                 // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
                 // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
                 Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                    unsafe { &mut *raw },
+                    yolo! { &mut *raw },
                     bun_jsc::JSType::Uint8Array,
                 )))
             }
@@ -7533,7 +7534,7 @@ impl NodeFS {
             // Not all files are seekable (and thus, not all files can be truncated).
             #[cfg(windows)]
             {
-                let _ = unsafe { windows::SetEndOfFile(fd.native()) };
+                let _ = yolo! { windows::SetEndOfFile(fd.native()) };
             }
             #[cfg(not(windows))]
             {
@@ -7544,7 +7545,7 @@ impl NodeFS {
         if args.flush {
             #[cfg(windows)]
             {
-                let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
+                let _ = yolo! { windows::kernel32::FlushFileBuffers(fd.native()) };
             }
             #[cfg(not(windows))]
             {
@@ -7629,7 +7630,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
-            let rc = unsafe {
+            let rc = yolo! {
                 uv::uv_fs_realpath(
                     bun_io::Loop::get(),
                     &mut *req,
@@ -7649,7 +7650,7 @@ impl NodeFS {
             // string pointer (libuv stores the realpath result directly), so
             // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
             // SAFETY: `rc.errno()` was None ⇒ libuv populated `req.ptr`.
-            let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
+            let ptr: *const c_char = yolo! { req.ptr_as::<c_char>() };
             if ptr.is_null() {
                 return Err(sys::Error {
                     errno: E::ENOENT as _,
@@ -7658,7 +7659,7 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
+            let mut buf = yolo! { bun_core::ffi::cstr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
                 //
@@ -7798,7 +7799,7 @@ impl NodeFS {
         }
         // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
         Maybe::<ret::Rmdir>::errno_sys_p(
-            unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
+            yolo! { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
             sys::Tag::rmdir,
             args.path.slice(),
         )
@@ -7849,7 +7850,7 @@ impl NodeFS {
             if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES) {
                 // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
                 if let Some(Err(err2)) = Maybe::<()>::errno_sys_p(
-                    unsafe { libc::rmdir(dest.as_ptr().cast()) },
+                    yolo! { libc::rmdir(dest.as_ptr().cast()) },
                     sys::Tag::rmdir,
                     args.path.slice(),
                 ) {
@@ -7882,7 +7883,7 @@ impl NodeFS {
         let path = args.path.slice_z(&mut self.sync_error_buf);
         if let Some(graph) = standalone_module_graph_get() {
             // SAFETY: see `standalone_module_graph_get`.
-            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+            if let Some(result) = yolo! { &mut *graph }.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Stats::init(
                     &PosixStat::init(&result),
                     args.big_int,
@@ -8062,7 +8063,7 @@ impl NodeFS {
             let _ = flags;
             // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
             Maybe::<ret::Truncate>::errno_sys_p(
-                unsafe {
+                yolo! {
                     libc::truncate(
                         path.slice_z(&mut self.sync_error_buf).as_ptr().cast(),
                         len_i64,
@@ -8095,7 +8096,7 @@ impl NodeFS {
         }
         // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
         Maybe::<ret::Unlink>::errno_sys_p(
-            unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
+            yolo! { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
             sys::Tag::unlink,
             args.path.slice(),
         )
@@ -8145,7 +8146,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
-            let rc = unsafe {
+            let rc = yolo! {
                 uv::uv_fs_utime(
                     bun_io::Loop::get(),
                     &mut *req,
@@ -8181,7 +8182,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
-            let rc = unsafe {
+            let rc = yolo! {
                 uv::uv_fs_lutime(
                     bun_io::Loop::get(),
                     &mut *req,
@@ -8219,7 +8220,7 @@ impl NodeFS {
             // `*mut FSWatcher` whose ownership is held by the JS wrapper
             // (`js_this`); reading `js_this` here mirrors Zig's
             // `result.js_this` field access on the by-value return.
-            Ok(result) => Ok(unsafe { (*result).js_this() }),
+            Ok(result) => Ok(yolo! { (*result).js_this() }),
             Err(err) => Err(err),
         }
     }
@@ -8295,12 +8296,12 @@ impl NodeFS {
         // SAFETY: caller wrote NUL at [len]; constructing the sentinel slices.
         src_buf[sd] = 0;
         dest_buf[dd] = 0;
-        let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), sd) };
-        let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dd) };
+        let src = yolo! { OSPathSliceZ::from_raw(src_buf.as_ptr(), sd) };
+        let dest = yolo! { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dd) };
 
         #[cfg(windows)]
         {
-            let attributes = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
+            let attributes = yolo! { sys::c::GetFileAttributesW(src.as_ptr()) };
             if attributes == sys::c::INVALID_FILE_ATTRIBUTES {
                 return Err(sys::Error {
                     errno: SystemErrno::ENOENT as _,
@@ -8812,7 +8813,7 @@ impl NodeFS {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
+                    let written = yolo! {
                         sys::linux::copy_file_range(
                             src_fd.native(),
                             &raw mut off_in_copy,
@@ -8855,7 +8856,7 @@ impl NodeFS {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
                     // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
+                    let written = yolo! {
                         sys::linux::copy_file_range(
                             src_fd.native(),
                             &raw mut off_in_copy,
@@ -8984,7 +8985,7 @@ impl NodeFS {
                     size.saturating_sub(wrote.get() as usize)
                 };
                 // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                let rc: isize = unsafe {
+                let rc: isize = yolo! {
                     sys::freebsd::copy_file_range(
                         src_fd.native(),
                         &mut off_in,
@@ -9058,7 +9059,7 @@ impl NodeFS {
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
-                    let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
+                    let a = yolo! { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
                         // `errno_sys_p(0, …)` re-reads `GetLastError()` after
                         // `os_path_into_sync_error_buf` (a non-trivial transcode on
@@ -9073,7 +9074,7 @@ impl NodeFS {
                 }
             };
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-                if unsafe {
+                if yolo! {
                     sys::c::CopyFileW(
                         src.as_ptr(),
                         dest.as_ptr(),
@@ -9092,7 +9093,7 @@ impl NodeFS {
                                 sys::Dir::cwd(),
                                 paths::dirname_w(dest.as_slice()),
                             );
-                            let second_try = unsafe {
+                            let second_try = yolo! {
                                 sys::c::CopyFileW(
                                     src.as_ptr(),
                                     dest.as_ptr(),
@@ -9120,7 +9121,7 @@ impl NodeFS {
                 };
                 let _close = scopeguard::guard(handle, |fd| fd.close());
                 let mut wbuf = paths::os_path_buffer_pool::get();
-                let len = unsafe {
+                let len = yolo! {
                     windows::GetFinalPathNameByHandleW(
                         handle.native(),
                         wbuf.as_mut_ptr(),
@@ -9139,7 +9140,7 @@ impl NodeFS {
                     0
                 };
                 wbuf[len] = 0;
-                if unsafe { windows::CreateSymbolicLinkW(dest.as_ptr(), wbuf.as_ptr(), flags) } == 0
+                if yolo! { windows::CreateSymbolicLinkW(dest.as_ptr(), wbuf.as_ptr(), flags) } == 0
                 {
                     let p = self.os_path_into_sync_error_buf(dest.as_slice());
                     return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p)
@@ -9673,11 +9674,11 @@ fn map_rm_errno_narrow(e: E) -> E {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
-    let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
+    let path_bytes = yolo! { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
     // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
     let node_fs: &mut NodeFS =
-        unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
+        yolo! { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     !matches!(
         node_fs.mkdir_recursive(&args::Mkdir {
             path: PathLike::String(PathString::init(path_bytes)),

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bstr::BStr;
 use bun_collections::VecExt;
 use std::io::Write as _;
@@ -445,14 +446,14 @@ fn send_audit_request(
     }
     // SAFETY: non-null checked above; libdeflate hands back a heap-allocated
     // compressor that lives until `destroy` (Zig: `*Compressor`).
-    let compressor = unsafe { &mut *compressor_ptr };
+    let compressor = yolo! { &mut *compressor_ptr };
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = Vec::with_capacity(max_compressed_size);
     let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
     // SAFETY: `compressor_ptr` was returned by `Compressor::alloc` and is not
     // used after this point (Zig: `defer compressor.deinit()`).
-    unsafe { libdeflate::Compressor::destroy(compressor_ptr) };
+    yolo! { libdeflate::Compressor::destroy(compressor_ptr) };
     let final_compressed_body = compressed_body;
 
     let mut headers = HeaderBuilder::default();

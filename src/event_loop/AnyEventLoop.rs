@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
@@ -63,7 +64,7 @@ impl<'a> AnyEventLoop<'a> {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
             // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
-            AnyEventLoop::Mini(mini) => unsafe { (*mini.loop_ptr()).iteration_number() },
+            AnyEventLoop::Mini(mini) => yolo! { (*mini.loop_ptr()).iteration_number() },
         }
     }
 
@@ -91,7 +92,7 @@ impl<'a> AnyEventLoop<'a> {
         // `vm.eventLoop()`). This is the single `unsafe` boundary for the
         // `AnyEventLoop::Js` arm — all subsequent dispatch is safe.
         AnyEventLoop::Js {
-            owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
+            owner: yolo! { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
         }
     }
 
@@ -149,7 +150,7 @@ impl<'a> AnyEventLoop<'a> {
             // SAFETY: per fn contract — reborrow strictly after `is_done`
             // returns; the borrow ends at the bottom of this loop body before
             // the next `is_done` call.
-            match unsafe { &mut *this } {
+            match yolo! { &mut *this } {
                 AnyEventLoop::Js { owner } => {
                     owner.tick();
                     owner.auto_tick();
@@ -242,7 +243,7 @@ impl AnyEventLoop<'static> {
     #[inline]
     pub fn wakeup(&mut self) {
         // SAFETY: `r#loop()` returns a valid live loop pointer.
-        unsafe { (*self.r#loop()).wakeup() };
+        yolo! { (*self.r#loop()).wakeup() };
     }
 
     /// Returns the FilePoll store as a raw pointer (mirrors Zig
@@ -291,7 +292,7 @@ pub enum EventLoopHandle {
 }
 
 /// Single `unsafe` deref site for the `EventLoopHandle::Mini` arm — collapses
-/// the half-dozen identical `unsafe { mini.get_mut() }` dispatch sites below.
+/// the half-dozen identical `yolo! { mini.get_mut() }` dispatch sites below.
 ///
 /// Soundness: the `MiniEventLoop` behind every `EventLoopHandle::Mini` is the
 /// per-thread `!Send` singleton (see [`EventLoopHandle::init_mini`] /
@@ -305,7 +306,7 @@ pub enum EventLoopHandle {
 fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop<'static>>) -> &'a mut MiniEventLoop<'static> {
     // SAFETY: see fn doc — per-thread `!Send` singleton, exclusive for the
     // returned borrow's duration.
-    unsafe { mini.get_mut() }
+    yolo! { mini.get_mut() }
 }
 
 /// Untagged pointer to either kind of concurrent task. Tag is the surrounding
@@ -365,7 +366,7 @@ impl EventLoopHandle {
         // handle). This is the single `unsafe` boundary for the
         // `EventLoopHandle::Js` arm.
         EventLoopHandle::Js {
-            owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
+            owner: yolo! { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
         }
     }
 
@@ -390,7 +391,7 @@ impl EventLoopHandle {
             // which is what the `EventLoopCtxKind::Js` `link_impl_EventLoopCtx!`
             // (in `bun_jsc`) is written for. Both are per-thread singletons
             // that outlive the ctx.
-            EventLoopHandle::Js { owner } => unsafe {
+            EventLoopHandle::Js { owner } => yolo! {
                 bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, owner.bun_vm())
             },
             EventLoopHandle::Mini(mini) => MiniEventLoop::as_event_loop_ctx(mini.as_ptr()),
@@ -431,7 +432,7 @@ impl EventLoopHandle {
                 // SAFETY: `(tag, ptr)` was produced by `into_tag_ptr` on a
                 // still-live event loop, so `ptr` is a live erased
                 // `*mut jsc::EventLoop`. Same boundary as `EventLoopHandle::init`.
-                owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
+                owner: yolo! { JsEventLoop::new(JsEventLoopKind::Jsc, ptr.cast::<()>()) },
             },
             // `(tag, ptr)` came from `into_tag_ptr` on a live loop, so `ptr`
             // is non-null. `BackRef: From<NonNull<T>>`.
@@ -461,7 +462,7 @@ impl EventLoopHandle {
         // SAFETY: `uws_loop` is the live process-global loop returned by
         // `AnyEventLoop::r#loop()`; `internal_loop_data` is the first field
         // (#[repr(C)]) and outlives every event-loop user.
-        unsafe { (*uws_loop).internal_loop_data.set_parent_raw(tag, ptr) };
+        yolo! { (*uws_loop).internal_loop_data.set_parent_raw(tag, ptr) };
     }
 
     pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
@@ -562,11 +563,11 @@ impl EventLoopHandle {
     pub fn enqueue_task_concurrent(self, task: EventLoopTaskPtr) {
         match self {
             // SAFETY: caller guarantees `task.js` is the active union member when `self` is `Js`.
-            EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(unsafe { task.js }),
+            EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(yolo! { task.js }),
             // SAFETY: caller guarantees `task.mini` is the active union member
             // when `self` is `Mini`.
             EventLoopHandle::Mini(mut mini) => {
-                mini_mut(&mut mini).enqueue_task_concurrent(unsafe { task.mini })
+                mini_mut(&mut mini).enqueue_task_concurrent(yolo! { task.mini })
             }
         }
     }
@@ -621,12 +622,12 @@ impl EventLoopHandle {
 
     pub fn ref_(self) {
         // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).ref_() };
+        yolo! { (*self.r#loop()).ref_() };
     }
 
     pub fn unref(self) {
         // SAFETY: `r#loop` returns a valid live loop.
-        unsafe { (*self.r#loop()).unref() };
+        yolo! { (*self.r#loop()).unref() };
     }
 
     pub fn env(self) -> *mut DotEnvLoader<'static> {
@@ -647,11 +648,11 @@ impl EventLoopHandle {
     pub fn top_level_dir(self) -> &'static [u8] {
         match self {
             // SAFETY: slice borrowed for VM lifetime.
-            EventLoopHandle::Js { owner } => unsafe { &*owner.top_level_dir() },
+            EventLoopHandle::Js { owner } => yolo! { &*owner.top_level_dir() },
             // SAFETY: `BackRef::get()` ties the borrow to the local `mini`, but
             // the pointee is the per-thread singleton (process-lifetime); widen
             // to `'static` so the return type matches the Js arm.
-            EventLoopHandle::Mini(mini) => unsafe { &(*mini.as_ptr()).top_level_dir },
+            EventLoopHandle::Mini(mini) => yolo! { &(*mini.as_ptr()).top_level_dir },
         }
     }
 
@@ -667,7 +668,7 @@ impl EventLoopHandle {
                 // SAFETY: `env` is a `NonNull<DotEnvLoader>` backref; the
                 // loader is a thread-/process-lifetime singleton (see
                 // `MiniEventLoop::env_ptr` invariant) and outlives this call.
-                unsafe { (*env.as_ptr()).map.create_null_delimited_env_map() }
+                yolo! { (*env.as_ptr()).map.create_null_delimited_env_map() }
             }
         }
     }

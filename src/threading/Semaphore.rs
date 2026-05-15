@@ -6,6 +6,7 @@
 //! Only the subset Bun uses is ported (`wait`/`post`); `timedWait` is omitted
 //! because no Rust caller needs it and it would pull in a monotonic timer.
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 
 use crate::{Condition, Mutex};
@@ -50,12 +51,12 @@ impl Semaphore {
         scopeguard::defer! { self.mutex.unlock(); }
 
         // SAFETY: `mutex` is held for every access to `permits` below.
-        while unsafe { *self.permits.get() } == 0 {
+        while yolo! { *self.permits.get() } == 0 {
             self.cond.wait(&self.mutex);
         }
 
-        unsafe { *self.permits.get() -= 1 };
-        if unsafe { *self.permits.get() } > 0 {
+        yolo! { *self.permits.get() -= 1 };
+        if yolo! { *self.permits.get() } > 0 {
             self.cond.signal();
         }
     }
@@ -66,7 +67,7 @@ impl Semaphore {
         scopeguard::defer! { self.mutex.unlock(); }
 
         // SAFETY: `mutex` is held.
-        unsafe { *self.permits.get() += 1 };
+        yolo! { *self.permits.get() += 1 };
         self.cond.signal();
     }
 }

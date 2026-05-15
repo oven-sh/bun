@@ -10,6 +10,7 @@
 
 #![allow(non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
 
+use bun_yolo::yolo;
 use core::ffi::{c_int, c_longlong, c_ulonglong, c_void};
 
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -45,7 +46,7 @@ impl union_EncodedJSValue {
         // SAFETY: `#[repr(C)]` union of 8-byte POD scalars (i64 / f64 / ptr /
         // `JSValue` = `repr(transparent)` usize); reading `as_int64` is sound
         // for any initialization.
-        unsafe { self.as_int64 }
+        yolo! { self.as_int64 }
     }
 }
 

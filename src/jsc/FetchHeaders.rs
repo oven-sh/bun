@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -132,7 +133,7 @@ impl FetchHeaders {
     ) -> JSValue {
         // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
         // passed by address only — C++ never dereferences it as Rust data.
-        unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
+        yolo! { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
     }
 
     /// Construct a `Headers` object from a JSValue.
@@ -177,7 +178,7 @@ impl FetchHeaders {
         // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
         // passed by address only.
         let p =
-            unsafe { WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_) };
+            yolo! { WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_) };
         NonNull::new(p)
     }
 
@@ -190,7 +191,7 @@ impl FetchHeaders {
     ) -> JSValue {
         // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
         // passed by address only.
-        unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
+        yolo! { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
     }
 
     pub fn is_empty(&mut self) -> bool {
@@ -346,7 +347,7 @@ impl FetchHeaders {
 
     pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
-        unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
+        yolo! { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
     }
 }
 

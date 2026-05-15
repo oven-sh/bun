@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 // These are all extern so they can't be top-level structs.
 #![warn(unreachable_pub)]
 pub use crate::external_string::ExternalString;
@@ -533,8 +534,8 @@ pub mod semver_string {
                 // sub-slice of `buf` and is only ever projected back into the same buffer
                 // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast).
                 strings::eql(
-                    unsafe { this_buf.get_unchecked(a_off..a_off + a_len) },
-                    unsafe { that_buf.get_unchecked(b_off..b_off + b_len) },
+                    yolo! { this_buf.get_unchecked(a_off..a_off + a_len) },
+                    yolo! { that_buf.get_unchecked(b_off..b_off + b_len) },
                 )
             }
         }
@@ -610,7 +611,7 @@ pub mod semver_string {
                     // sub-slice of `buf` and is only ever projected back into the same buffer
                     // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast). The two
                     // checked slice ops here were the dominant cost in install hot loops.
-                    unsafe { buf.get_unchecked(off..off + len) }
+                    yolo! { buf.get_unchecked(off..off + len) }
                 }
             }
         }

@@ -9,6 +9,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+use bun_yolo::yolo;
 use core::mem::offset_of;
 
 use bun_core::String as BunString;
@@ -36,7 +37,7 @@ impl All {
             return 0;
         }
         // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
-        unsafe {
+        yolo! {
             (*all).last_id = (*all).last_id.wrapping_add(1);
             (*all).last_id
         }
@@ -305,9 +306,9 @@ impl All {
             return None;
         };
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
-        debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
+        debug_assert!(yolo! { (*value).tag } == EventLoopTimerTag::TimeoutObject);
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
-        Some(unsafe { TimeoutObject::from_timer_ptr(value) })
+        Some(yolo! { TimeoutObject::from_timer_ptr(value) })
     }
 
     pub fn clear_timer(
@@ -327,7 +328,7 @@ impl All {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+                break 'brk Some(yolo! { core::ptr::addr_of_mut!((*t).internals) });
             } else if timer_id_value.is_string_literal() {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
@@ -387,14 +388,14 @@ impl All {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+                break 'brk Some(yolo! { core::ptr::addr_of_mut!((*t).internals) });
             }
 
             if let Some(timeout) = TimeoutObject::from_js(timer_id_value) {
                 // clearImmediate should be a noop if anything other than an Immediate is passed to it.
                 if kind != Kind::SetImmediate {
                     // SAFETY: `timeout` is a valid TimeoutObject pointer
-                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*timeout).internals) });
+                    break 'brk Some(yolo! { core::ptr::addr_of_mut!((*timeout).internals) });
                 } else {
                     return Ok(());
                 }
@@ -402,7 +403,7 @@ impl All {
                 // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
                 if kind == Kind::SetImmediate {
                     // SAFETY: `immediate` is a valid ImmediateObject pointer
-                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*immediate).internals) });
+                    break 'brk Some(yolo! { core::ptr::addr_of_mut!((*immediate).internals) });
                 } else {
                     return Ok(());
                 }
@@ -413,7 +414,7 @@ impl All {
 
         let Some(timer) = timer else { return Ok(()) };
         // SAFETY: timer points to a live TimerObjectInternals
-        unsafe { (*timer).cancel(vm) };
+        yolo! { (*timer).cancel(vm) };
         Ok(())
     }
 
@@ -471,18 +472,18 @@ impl DateHeaderTimer {
             // updateDate() is an expensive function.
             // SAFETY: `vm` is the live per-thread VM; `uws_loop()` returns its
             // owned uws loop, which outlives this call.
-            unsafe { (*(*vm).uws_loop()).update_date() };
+            yolo! { (*(*vm).uws_loop()).update_date() };
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
             // `fake_timers`/`epoch`, disjoint from `date_header_timer` which `self`
             // aliases (raw-ptr-per-field re-entry pattern, see jsc_hooks.rs).
-            unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
+            yolo! { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
         } else {
             // The date was updated recently, just reschedule for the next second
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: see above — disjoint-field access on `All`.
-            unsafe { (*Self::timer_all()).insert(elt) };
+            yolo! { (*Self::timer_all()).insert(elt) };
         }
     }
 }
@@ -499,7 +500,7 @@ pub fn drain_timers_export(vm: *mut VirtualMachine) {
     }
     // SAFETY: `all` is the live per-thread `All`; `vm` is the erased VM pointer
     // (mod.rs::All::drain_timers takes `*mut ()`).
-    unsafe { (*all).drain_timers(vm.cast::<()>()) };
+    yolo! { (*all).drain_timers(vm.cast::<()>()) };
 }
 
 // Zig used `jsc.host_fn.wrapN(...)` + `@export` to generate these C-ABI shims.

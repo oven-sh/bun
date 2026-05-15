@@ -1,5 +1,6 @@
 //! Single allocation only.
 
+use bun_yolo::yolo;
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
@@ -34,7 +35,7 @@ impl MaxHeapAllocator {
             // SAFETY: `new_layout` has nonzero align; size may be 0, which
             // `alloc::alloc` accepts (returns a dangling-but-aligned ptr we
             // never deref). On grow, the old buffer is freed first.
-            let new_ptr = unsafe {
+            let new_ptr = yolo! {
                 if let Some(old) = self.ptr {
                     let old_layout = Layout::from_size_align_unchecked(self.capacity, MAX_ALIGN);
                     std::alloc::realloc(old.as_ptr(), old_layout, len)
@@ -134,7 +135,7 @@ impl Drop for MaxHeapAllocator {
         if let Some(ptr) = self.ptr.take() {
             // SAFETY: `ptr`/`capacity` were produced by `alloc`/`realloc` above
             // with `MAX_ALIGN` alignment.
-            unsafe {
+            yolo! {
                 std::alloc::dealloc(
                     ptr.as_ptr(),
                     Layout::from_size_align_unchecked(self.capacity, MAX_ALIGN),

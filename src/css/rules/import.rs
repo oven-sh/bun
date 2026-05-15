@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate as css;
 use crate::css_rules::Location;
 use crate::css_rules::layer::LayerName;
@@ -234,7 +235,7 @@ impl ImportRule {
         // provenance to just `layer` and make sibling-field reads UB under SB.
         // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
         let base = std::ptr::from_ref::<Self>(self).cast::<u8>();
-        unsafe {
+        yolo! {
             &*base
                 .add(core::mem::offset_of!(Self, layer))
                 .cast::<ImportConditions>()
@@ -246,7 +247,7 @@ impl ImportRule {
         // provenance) via byte offset so the returned `&mut ImportConditions` may
         // legally write `supports` and `media`, not just `layer`.
         let base = std::ptr::from_mut::<Self>(self).cast::<u8>();
-        unsafe {
+        yolo! {
             &mut *base
                 .add(core::mem::offset_of!(Self, layer))
                 .cast::<ImportConditions>()
@@ -315,7 +316,7 @@ impl ImportRule {
         if let Some(d) = dep {
             // SAFETY: `placeholder` is arena-allocated by `css_modules::hash`
             // and outlives this print call.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
+            let placeholder = yolo! { crate::arena_str(d.placeholder) };
             dest.serialize_string(placeholder)?;
 
             if let Some(deps) = &mut dest.dependencies {

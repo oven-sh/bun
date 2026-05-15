@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt::Write as _;
 
 use bstr::BStr;
@@ -105,13 +106,13 @@ impl OutdatedCommand {
 
         // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
         // no other live `&mut Lockfile` exists at this point.
-        let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
+        let lockfile: &mut bun_install::lockfile::Lockfile = yolo! { &mut *(*pm_ptr).lockfile };
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-        let log = unsafe { &mut *log_ptr };
+        let log = yolo! { &mut *log_ptr };
         match lockfile.load_from_cwd::<true>(
             // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
             // fields disjoint from `lockfile` (Zig invariant).
-            Some(unsafe { &mut *pm_ptr }),
+            Some(yolo! { &mut *pm_ptr }),
             log,
         ) {
             LoadResult::NotFound => {
@@ -145,7 +146,7 @@ impl OutdatedCommand {
                         // `*logger.Log` borrowed from `Command::Context`; no
                         // other `&mut Log` is live here.
                         let _ =
-                            unsafe { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
+                            yolo! { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
                     }
                 }
                 Global::crash();

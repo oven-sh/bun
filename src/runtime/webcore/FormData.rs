@@ -1,6 +1,7 @@
 //! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
 //! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
 
+use bun_yolo::yolo;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
@@ -220,7 +221,7 @@ pub fn to_js_from_multipart_data(
     impl<'a> Wrapper<'a> {
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: Field, buf: &[u8]) {
             // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
-            let value_str: &[u8] = unsafe { &*field.value };
+            let value_str: &[u8] = yolo! { &*field.value };
             let key = ZigString::init_utf8(name.slice(buf));
 
             if field.is_file {

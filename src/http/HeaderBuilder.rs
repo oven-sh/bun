@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
 
@@ -106,7 +107,7 @@ impl HeaderBuilder {
         // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
         // holds it past this call); the lifetime is intentionally unbound.
         client.header_buf =
-            unsafe { bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
+            yolo! { bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
     }
 }
 

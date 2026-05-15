@@ -1,6 +1,7 @@
 //! This is a slower wrapper around a function pointer.
 //! Prefer adding a task type directly to `Task` instead of using this.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -65,7 +66,7 @@ impl AnyTask {
             // size/align/ABI (T: Sized), so the two `fn` pointer types are
             // ABI-compatible. `run()` only ever calls back with the exact
             // pointer stored above, which originated as `*mut T`.
-            callback: unsafe {
+            callback: yolo! {
                 core::mem::transmute::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
                     callback,
                 )

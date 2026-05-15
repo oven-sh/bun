@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use core::ffi::c_char;
 use core::ptr::NonNull;
@@ -556,7 +557,7 @@ impl UpgradeCommand {
         HTTP::http_thread::init(&Default::default());
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        let filesystem = yolo! { &mut *fs::FileSystem::init(None)? };
         let mut env_loader: DotEnv::Loader = {
             // Zig leaks the map; allocate in the process-lifetime CLI arena.
             DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
@@ -586,15 +587,15 @@ impl UpgradeCommand {
                 bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
             // SAFETY: refresher is a fresh leaked allocation.
             let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Fetching version tags", 0) };
+                yolo! { (*refresher).start(b"Fetching version tags", 0) };
 
             let Some(version) = Self::get_latest_version::<false>(
                 &mut env_loader,
                 // SAFETY: refresher/progress point into the same leaked allocation;
                 // `get_latest_version` only touches them on the !SILENT error
                 // path (no overlapping live borrows).
-                Some(unsafe { &mut *refresher }),
-                Some(unsafe { &mut *progress }),
+                Some(yolo! { &mut *refresher }),
+                Some(yolo! { &mut *progress }),
                 use_profile,
             )?
             else {
@@ -602,8 +603,8 @@ impl UpgradeCommand {
             };
 
             // SAFETY: see above.
-            unsafe { (*progress).end() };
-            unsafe { (*refresher).refresh() };
+            yolo! { (*progress).end() };
+            yolo! { (*refresher).refresh() };
 
             if !Environment::IS_CANARY {
                 if version.name().is_some() && version.is_current() {
@@ -661,10 +662,10 @@ impl UpgradeCommand {
                 bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
             // SAFETY: refresher is a fresh leaked allocation.
             let progress: *mut Progress::Node =
-                unsafe { (*refresher).start(b"Downloading", version.size as usize) };
+                yolo! { (*refresher).start(b"Downloading", version.size as usize) };
             // SAFETY: see above.
-            unsafe { (*progress).unit = Progress::Unit::Bytes };
-            unsafe { (*refresher).refresh() };
+            yolo! { (*progress).unit = Progress::Unit::Bytes };
+            yolo! { (*refresher).refresh() };
             // Zig leaks this allocation intentionally — store in CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
                 .alloc(MutableString::init(version.size.max(1024) as usize)?);
@@ -710,8 +711,8 @@ impl UpgradeCommand {
             let bytes = zip_file_buffer.slice();
 
             // SAFETY: refresher/progress are leaked allocations.
-            unsafe { (*progress).end() };
-            unsafe { (*refresher).refresh() };
+            yolo! { (*progress).end() };
+            yolo! { (*refresher).refresh() };
 
             if bytes.is_empty() {
                 Output::pretty_errorln(format_args!(
@@ -1092,7 +1093,7 @@ impl UpgradeCommand {
             let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
             // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
             // came from `self_exe_path()` which is bounded by that.
-            unsafe {
+            yolo! {
                 core::ptr::copy_nonoverlapping(
                     destination_executable.as_ptr(),
                     buf_ptr,
@@ -1105,7 +1106,7 @@ impl UpgradeCommand {
             // SAFETY: buf[destination_executable.len()] == 0 written above; the
             // view is derived from `buf_ptr` so later disjoint writes through
             // `buf_ptr` (at `target_dir_len`, outside this range) don't pop it.
-            let target_filename = unsafe {
+            let target_filename = yolo! {
                 ZStr::from_raw(
                     buf_ptr.add(destination_executable.len() - target_filename_.len()),
                     target_filename_.len(),
@@ -1117,14 +1118,14 @@ impl UpgradeCommand {
             let target_dir_len = target_dir_.len();
             // SAFETY: in-bounds; write is at the separator byte between dirname
             // and basename, disjoint from both `&ZStr` views' ranges.
-            unsafe { *buf_ptr.add(target_dir_len) = 0 };
+            yolo! { *buf_ptr.add(target_dir_len) = 0 };
             // SAFETY: buf[target_dir_len]==0 (just written). Derived from
             // `buf_ptr`; the Windows block below toggles the byte at
             // `target_dir_len` (outside `[0, target_dir_len)`) through the same
             // raw pointer, so this view's provenance stays valid across those
             // writes. Each mutation re-establishes the NUL before
             // `target_dirname` is read again.
-            let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
+            let target_dirname = yolo! { ZStr::from_raw(buf_ptr, target_dir_len) };
             let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
                 Ok(d) => sys::Dir::from_fd(d),
                 Err(err) => {
@@ -1246,7 +1247,7 @@ impl UpgradeCommand {
                     // SAFETY: see `buf_ptr` note above — write through the shared
                     // raw provenance root, not via DerefMut (which would retag
                     // the whole buffer and invalidate `target_filename`/`target_dirname`).
-                    unsafe { *buf_ptr.add(target_dir_len) = b'\\' };
+                    yolo! { *buf_ptr.add(target_dir_len) = b'\\' };
                     let mut buf = Vec::new();
                     write!(
                         &mut buf,
@@ -1269,7 +1270,7 @@ impl UpgradeCommand {
                         Global::exit(1);
                     }
                     // SAFETY: restore NUL via `buf_ptr` (see aliasing note above).
-                    unsafe { *buf_ptr.add(target_dir_len) = 0 };
+                    yolo! { *buf_ptr.add(target_dir_len) = 0 };
                 }
 
                 if let Err(err) =
@@ -1477,7 +1478,7 @@ pub mod upgrade_js_bindings {
             let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
 
             // SAFETY: FFI call to NtCreateFile with valid pointers
-            let rc = unsafe {
+            let rc = yolo! {
                 w::ntdll::NtCreateFile(
                     &mut fd,
                     flags,
@@ -1499,7 +1500,7 @@ pub mod upgrade_js_bindings {
                 sys::windows::Win32Error::SUCCESS => {
                     // Zig: `bun.FD.fromNative(fd)` — system-kind handle on Windows.
                     // SAFETY: test-only helper; access is single-threaded (JS thread).
-                    unsafe {
+                    yolo! {
                         TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
                     }
                 }
@@ -1525,7 +1526,7 @@ pub mod upgrade_js_bindings {
             // SAFETY: test-only helper; access is single-threaded (JS thread).
             // Consume (`take`) the stored fd so a repeat call cannot
             // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
+            if let Some(fd) = yolo! { core::mem::take(&mut *TEMPDIR_FD.get()) } {
                 fd.close();
             }
 

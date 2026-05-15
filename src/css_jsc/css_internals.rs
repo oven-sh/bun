@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
 use bun_collections::VecExt;
@@ -106,7 +107,7 @@ pub fn testing_impl(
     // because the rule tree stores lifetime-erased refs (see css_parser.rs PORT
     // NOTE on `'bump` threading). The arena strictly outlives every value parsed
     // out of it below.
-    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let alloc: &'static Arena = yolo! { bun_ptr::detach_lifetime_ref(&arena) };
 
     let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
@@ -139,7 +140,7 @@ pub fn testing_impl(
     // writes through it during parsing; `log` outlives the parsed stylesheet and
     // is not aliased for the duration. Erasing to `'static` matches the
     // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
-    let log_ref = unsafe { &mut *(&raw mut log) };
+    let log_ref = yolo! { &mut *(&raw mut log) };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
@@ -314,7 +315,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // erased crate-wide until 'bump threads through the rule tree — see
     // css_parser.rs PORT NOTE). The arena strictly outlives the parsed
     // `stylesheet` below.
-    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let alloc: &'static Arena = yolo! { bun_ptr::detach_lifetime_ref(&arena) };
 
     let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.

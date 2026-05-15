@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![allow(
     unused,
     non_snake_case,
@@ -66,7 +67,7 @@ pub unsafe fn ntop(
     // `in6_addr` matching `af`; `dst` is a Rust slice so `dst.as_mut_ptr()` is
     // valid for `dst.len()` writes, and `ares_inet_ntop` writes at most `size`
     // bytes (including the trailing NUL) per c-ares docs.
-    if unsafe {
+    if yolo! {
         c_ares::ares_inet_ntop(
             af,
             src,

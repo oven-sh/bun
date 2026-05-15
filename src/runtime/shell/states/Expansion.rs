@@ -4,6 +4,7 @@
 //! needs to be evaluated at runtime — this state node walks the atom and
 //! produces zero or more output strings.
 
+use bun_yolo::yolo;
 use crate::shell::ast;
 use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
@@ -98,7 +99,7 @@ impl Expansion {
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
+            node: yolo! { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
             io,
             state: ExpansionState::Idle,
             word_idx: 0,
@@ -129,7 +130,7 @@ impl Expansion {
             let command_ctx = interp.command_ctx;
             // SAFETY: single-JS-thread; `vm_args_utf8` and `nodes` are
             // disjoint `JsCell` fields (no aliasing between the two borrows).
-            let vm_args_utf8 = unsafe { &mut *interp.vm_args_utf8.as_ptr() };
+            let vm_args_utf8 = yolo! { &mut *interp.vm_args_utf8.as_ptr() };
             let me = interp.as_expansion_mut(this);
             match me.state {
                 ExpansionState::Idle => {
@@ -199,7 +200,7 @@ impl Expansion {
                 };
                 // SAFETY: `shell_ptr` is a live env owned by the parent state
                 // node and outlives this expansion.
-                let duped = match unsafe { &mut *shell_ptr }
+                let duped = match yolo! { &mut *shell_ptr }
                     .dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
                 {
                     Ok(d) => d,
@@ -462,7 +463,7 @@ impl Expansion {
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
         // SAFETY: single trampoline frame; the child script's env (and its
         // parent buffer in the `Borrowed` case) has no other live borrow.
-        let stdout = unsafe {
+        let stdout = yolo! {
             interp
                 .as_script_mut(child)
                 .base

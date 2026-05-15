@@ -17,6 +17,7 @@
 //!     // ... process ...
 //!     ctx.deref_();
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -209,7 +210,7 @@ impl DeferredDerefTask {
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
         // SAFETY: ctx was packed in `schedule` from a live intrusive-refcounted
         // pointer of the type indicated by `tag`; we are on the JS thread.
-        unsafe {
+        yolo! {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
                 Tag::HTTPSServerRequestContext => {

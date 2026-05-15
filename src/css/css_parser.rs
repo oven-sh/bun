@@ -4,6 +4,7 @@
 //! arena-backed in the Zig original. Phase A keeps `&'bump Bump` threading
 //! where it matters and drops `Allocator` params elsewhere.
 
+use bun_yolo::yolo;
 use bun_alloc::ArenaVecExt as _;
 use core::fmt;
 
@@ -505,7 +506,7 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
 
     // TODO(port): lifetime — `name` borrows the input arena. The detach is the
     // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
-    let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
+    let name: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(name) };
     options.warn(input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
@@ -901,7 +902,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
         // runs synchronously between parser accesses, so the fresh `&mut`
         // created here is the only live reference for its scope.
-        let import_records = unsafe { &mut *this.import_records };
+        let import_records = yolo! { &mut *this.import_records };
         let import_record_index = u32::try_from(import_records.len()).unwrap();
         import_rule.import_record_idx = import_record_index;
         import_records.push(ImportRecord {
@@ -1112,7 +1113,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
         // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
         // the arena outlives every `DeclarationList` produced here.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
+        let bump: &'static Bump = yolo! { bun_ptr::detach_lifetime_ref(self.arena) };
         NestedRuleParser {
             arena: self.arena,
             options: self.options,
@@ -1336,7 +1337,7 @@ mod rule_parsers {
                     // TODO(port): lifetime — arena-owned slice; same `'static` erasure
                     // as `Token` payloads.
                     let url_str: &'static [u8] =
-                        unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
+                        yolo! { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
 
                     let layer: Option<Option<LayerName>> =
                         if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
@@ -1371,11 +1372,11 @@ mod rule_parsers {
                     let prefix = input
                         .try_parse(|p| {
                             p.expect_ident()
-                                .map(|s| -> &'static [u8] { unsafe { &*std::ptr::from_ref::<[u8]>(s) } })
+                                .map(|s| -> &'static [u8] { yolo! { &*std::ptr::from_ref::<[u8]>(s) } })
                         })
                         .ok();
                     let namespace: &'static [u8] =
-                        unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
+                        yolo! { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
                     return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
                 },
                 b"charset" => {
@@ -1571,7 +1572,7 @@ mod rule_parsers {
             };
             // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
             // parser arena.
-            let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
+            let bump: &'static Bump = yolo! { bun_ptr::detach_lifetime_ref(self.arena) };
             let mut nested_parser = NestedRuleParser::<T> {
                 arena: self.arena,
                 options: self.options,
@@ -1682,7 +1683,7 @@ mod rule_parsers {
             // TODO(port): lifetime — `name` borrows the input arena. Detach to
             // `'static` to feed `BasicParseErrorKind::at_rule_invalid` (matches the
             // `Token` payload erasure throughout this file).
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
+            let name: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(name) };
             let result: Self::Prelude = 'brk: {
                 // Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
                 crate::match_ignore_ascii_case! { name, {
@@ -2155,7 +2156,7 @@ mod rule_parsers {
             let composes_refs_ptr: *mut SmallList<ast::Ref, 2> = &raw mut *this.composes_refs;
             scopeguard::defer! {
                 // SAFETY: see PORT NOTE above — no aliasing borrow live at drop.
-                unsafe { (*composes_refs_ptr).clear_retaining_capacity(); }
+                yolo! { (*composes_refs_ptr).clear_retaining_capacity(); }
             }
             // allow composes if:
             // - NOT in nested style rules
@@ -2266,7 +2267,7 @@ mod rule_parsers {
             // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
             // detach that borrow so `input` can be re-borrowed mutably below. The
             // arena outlives the parser (it owns all parsed allocations).
-            let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
+            let arena: &Bump = yolo! { bun_ptr::detach_lifetime_ref(input.arena()) };
             let mut ctx = NestedComposesCtx {
                 state: this.composes_state,
                 arena,
@@ -2489,7 +2490,7 @@ pub fn fill_property_bit_set(
                 // arena-owned `*const [u8]`; detach from `block`'s borrow so
                 // callers can move `block` afterwards. Re-thread once
                 // `PropertyUsage` carries the arena lifetime (TODO at field def).
-                let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
+                let name: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;
             }
@@ -2504,7 +2505,7 @@ pub fn fill_property_bit_set(
         let tag = match prop {
             Property::Custom(c) => {
                 // SAFETY: see above.
-                let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
+                let name: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;
             }
@@ -2689,7 +2690,7 @@ mod stylesheet_impl {
                 // Re-thread once `Printer<'a>` / `CssModule<'a>` split borrow vs.
                 // arena lifetimes (see rules/mod.rs `decl_block_static`).
                 let references_mut: &mut CssModuleReferences<'_> =
-                    unsafe { &mut *(&raw mut references) };
+                    yolo! { &mut *(&raw mut references) };
                 printer.css_module = Some(CssModule::new(
                     printer.arena,
                     config,
@@ -2714,12 +2715,12 @@ mod stylesheet_impl {
                 // lifetime threads (see field TODO at the struct def).
                 return Ok(ToCssResultInternal {
                     dependencies,
-                    exports: Some(unsafe {
+                    exports: Some(yolo! {
                         core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(
                             exports,
                         )
                     }),
-                    references: Some(unsafe {
+                    references: Some(yolo! {
                         core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
                             references,
                         )
@@ -2836,7 +2837,7 @@ mod stylesheet_impl {
                     Token::Comment(comment) => {
                         if comment.first() == Some(&b'!') {
                             // TODO(port): lifetime — arena slice; see erasure note.
-                            license_comments.push(unsafe { &*std::ptr::from_ref::<[u8]>(comment) });
+                            license_comments.push(yolo! { &*std::ptr::from_ref::<[u8]>(comment) });
                         }
                     }
                     _ => break,
@@ -3145,7 +3146,7 @@ mod stylesheet_impl {
             //   `Drop`, so both copies must not run their destructors.
             let options = core::mem::ManuallyDrop::new(options);
             // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
-            let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
+            let options_for_parse = yolo! { core::ptr::read(&raw const *options) };
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
@@ -3319,7 +3320,7 @@ impl<'a> ParserOptions<'a> {
             // SAFETY: `logger` was constructed from a unique `&'a mut Log` (see
             // `default`); the pointee outlives `'a` and no other borrow of the
             // Log exists for the duration of parsing. Zig mutated through `*Log`.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
+            let lg: &mut Log = yolo! { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col(
                 self.filename,
                 warning.location.line,
@@ -3333,7 +3334,7 @@ impl<'a> ParserOptions<'a> {
         if let Some(lg) = self.logger {
             // SAFETY: see `warn` — `logger` carries `*mut Log` provenance from a
             // unique `&'a mut Log`; no other borrow exists during this call.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
+            let lg: &mut Log = yolo! { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col(self.filename, line, column, args);
         }
     }
@@ -3347,7 +3348,7 @@ impl<'a> ParserOptions<'a> {
     ) {
         if let Some(lg) = self.logger {
             // SAFETY: see `warn`.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
+            let lg: &mut Log = yolo! { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col_with_notes(self.filename, line, column, args, notes);
         }
     }
@@ -3362,7 +3363,7 @@ impl<'a> ParserOptions<'a> {
     ) {
         if let Some(lg) = self.logger {
             // SAFETY: see `warn`.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
+            let lg: &mut Log = yolo! { &mut *lg.as_ptr() };
             lg.add_range_warning_fmt_with_note(
                 None,
                 bun_ast::Range {
@@ -3468,7 +3469,7 @@ impl<'a> Parser<'a> {
         // `StylesheetExtra` alongside the same arena). Detach the borrow so it
         // satisfies `Symbol.original_name: &'static [u8]` (Phase-A lifetime
         // erasure — see PORTING.md §Lifetimes).
-        let name_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
+        let name_static: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(name) };
 
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
             MapEntry::Vacant(v) => {
@@ -3507,13 +3508,13 @@ impl<'a> Parser<'a> {
         if let Some(ptr) = self.import_records {
             // SAFETY: see `Parser.import_records` field doc — sole live `&mut`
             // for this scope; provenance shared only with raw-pointer aliases.
-            let import_records = unsafe { &mut *ptr.as_ptr() };
+            let import_records = yolo! { &mut *ptr.as_ptr() };
             let idx = u32::try_from(import_records.len()).unwrap();
             // SAFETY: `url` borrows the parser source / arena which outlives
             // every `ImportRecord` produced by this parse. `bun.fs.Path` in
             // the Zig original stores the same borrowed slice; Phase-A
             // erases the lifetime to 'static (see PORTING.md §Lifetimes).
-            let url_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+            let url_static: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(url) };
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
@@ -3535,7 +3536,7 @@ impl<'a> Parser<'a> {
         } else {
             // SAFETY: same lifetime erasure as above; the error token is only
             // used for diagnostics borrowing the same source.
-            let url_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+            let url_static: &'static [u8] = yolo! { &*std::ptr::from_ref::<[u8]>(url) };
             Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url_static)))
         }
     }
@@ -3921,7 +3922,7 @@ impl<'a> Parser<'a> {
     //
     // These wrap `expect_*` / `slice_from` and return the slice with its
     // lifetime detached from `&mut self` (to `'static`, matching `Token`'s
-    // current `&'static [u8]` payload). All `unsafe { src_str(..) }` call
+    // current `&'static [u8]` payload). All `yolo! { src_str(..) }` call
     // sites in the CSS parser route through here instead of laundering the
     // lifetime locally.
     //
@@ -3938,7 +3939,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `s` is a sub-slice of `self.input.tokenizer.src` (`&'a [u8]`)
         // or arena-owned; the returned reference is only ever stored in
         // structures reachable through the same `Parser<'a>`. See `src_str`.
-        Ok(unsafe { src_str(s) })
+        Ok(yolo! { src_str(s) })
     }
 
     /// `expect_function` with the borrow detached. See [`expect_ident_cloned`].
@@ -3946,7 +3947,7 @@ impl<'a> Parser<'a> {
     pub fn expect_function_cloned(&mut self) -> CssResult<&'static [u8]> {
         let s = self.expect_function()?;
         // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
+        Ok(yolo! { src_str(s) })
     }
 
     /// `expect_string` with the borrow detached. See [`expect_ident_cloned`].
@@ -3954,7 +3955,7 @@ impl<'a> Parser<'a> {
     pub fn expect_string_cloned(&mut self) -> CssResult<&'static [u8]> {
         let s = self.expect_string()?;
         // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
+        Ok(yolo! { src_str(s) })
     }
 
     /// `expect_ident_or_string` with the borrow detached. See [`expect_ident_cloned`].
@@ -3962,7 +3963,7 @@ impl<'a> Parser<'a> {
     pub fn expect_ident_or_string_cloned(&mut self) -> CssResult<&'static [u8]> {
         let s = self.expect_ident_or_string()?;
         // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
+        Ok(yolo! { src_str(s) })
     }
 
     /// `expect_url` with the borrow detached. See [`expect_ident_cloned`].
@@ -3970,14 +3971,14 @@ impl<'a> Parser<'a> {
     pub fn expect_url_cloned(&mut self) -> CssResult<&'static [u8]> {
         let s = self.expect_url()?;
         // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
+        Ok(yolo! { src_str(s) })
     }
 
     /// `slice_from` with the borrow detached. See [`expect_ident_cloned`].
     #[inline]
     pub fn slice_from_cloned(&self, start_position: usize) -> &'static [u8] {
         // SAFETY: see `expect_ident_cloned`.
-        unsafe { src_str(self.slice_from(start_position)) }
+        yolo! { src_str(self.slice_from(start_position)) }
     }
 
     pub fn position(&self) -> usize {
@@ -4105,7 +4106,7 @@ impl<'a> Parser<'a> {
         if let Some(ptr) = self.import_records {
             // Roll back any speculatively-added @import/url() records.
             // SAFETY: see `Parser.import_records` field doc.
-            unsafe { &mut *ptr.as_ptr() }
+            yolo! { &mut *ptr.as_ptr() }
                 .shrink_retaining_capacity(state_.import_record_count as usize);
         }
     }
@@ -4119,7 +4120,7 @@ impl<'a> Parser<'a> {
             // SAFETY: see `Parser.import_records` field doc.
             import_record_count: self
                 .import_records
-                .map(|ptr| u32::try_from(unsafe { (*ptr.as_ptr()).len() }).unwrap())
+                .map(|ptr| u32::try_from(yolo! { (*ptr.as_ptr()).len() }).unwrap())
                 .unwrap_or(0),
         }
     }
@@ -4515,7 +4516,7 @@ const MAX_THREE_B: u32 = 0x10000;
 // is only ever stored in a `Token` reachable through that same `Parser<'a>`.
 #[inline(always)]
 pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
-    unsafe { bun_collections::detach_lifetime(s) }
+    yolo! { bun_collections::detach_lifetime(s) }
 }
 
 impl<'a> Tokenizer<'a> {
@@ -5396,7 +5397,7 @@ impl<'a> Tokenizer<'a> {
                     if self.next_byte() == Some(b'/') {
                         self.advance(1);
                         // SAFETY: see `src_str` — sub-slice of `self.src`.
-                        let contents = unsafe { src_str(&self.src[start_position..end_position]) };
+                        let contents = yolo! { src_str(&self.src[start_position..end_position]) };
                         self.check_for_source_map(contents);
                         return contents;
                     }
@@ -5548,7 +5549,7 @@ impl<'a> Tokenizer<'a> {
         // SAFETY: see `src_str` — slice borrows `self.src: &'a [u8]` which the
         // returned `Token` never outlives. `'static` is the Phase-A
         // placeholder for the not-yet-threaded `'bump`/`'input` lifetime.
-        unsafe { src_str(&self.src[start..self.position]) }
+        yolo! { src_str(&self.src[start..self.position]) }
     }
 }
 
@@ -5994,10 +5995,10 @@ impl<'a> CopyOnWriteStr<'a> {
         match self {
             // SAFETY: see `src_str` — both arms borrow either the source or
             // arena, neither of which the consuming `Token` outlives.
-            CopyOnWriteStr::Borrowed(b) => unsafe { src_str(b) },
+            CopyOnWriteStr::Borrowed(b) => yolo! { src_str(b) },
             // SAFETY: `into_bump_slice` leaks the buffer into the arena so it
             // lives for `'a`; otherwise dropping the Vec would `mi_free` it.
-            CopyOnWriteStr::Owned(o) => unsafe { src_str(o.into_bump_slice()) },
+            CopyOnWriteStr::Owned(o) => yolo! { src_str(o.into_bump_slice()) },
         }
     }
 }

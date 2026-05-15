@@ -47,6 +47,7 @@
 //! ```
 
 #[cfg(not(windows))]
+use bun_yolo::yolo;
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 
@@ -262,7 +263,7 @@ mod windows_impl {
             // SAFETY: `condition` and `srwlock` are UnsafeCell-wrapped OS sync primitives;
             // kernel32 mutates them internally and provides its own synchronization. The
             // mutex is locked by the caller per this function's contract.
-            let rc = unsafe {
+            let rc = yolo! {
                 kernel32::SleepConditionVariableSRW(
                     self.condition.get(),
                     // TODO(port): Mutex internals — debug build wraps an inner impl with `srwlock`.

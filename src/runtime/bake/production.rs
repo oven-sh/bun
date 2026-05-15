@@ -1,5 +1,6 @@
 //! Implements building a Bake application to production
 
+use bun_yolo::yolo;
 use bun_paths::strings;
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
@@ -117,7 +118,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     })?;
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
-    let vm = unsafe { &mut *vm_ptr };
+    let vm = yolo! { &mut *vm_ptr };
     // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
     // PORT NOTE: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
@@ -125,7 +126,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // re-borrows on the JSError path).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
         // SAFETY: p is the unique live VM on this thread.
-        unsafe { (*p).destroy() };
+        yolo! { (*p).destroy() };
     });
 
     // A special global object is used to allow registering virtual modules
@@ -222,7 +223,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // Declaration order matters: `_api_lock` is bound before `pt` so LIFO drop
     // detaches `pt` (a JSC FFI call) *while the API lock is still held*, then
     // releases the lock — matching Zig's `defer api_lock.release()` ordering.
-    let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
+    let _api_lock = yolo! { (*vm.jsc_vm).get_api_lock() };
 
     // PORT NOTE: `PerThread` owns its data in Rust (Zig held borrowed slices
     // into `buildWithVm` locals, which is fine in Zig but unrepresentable for a
@@ -238,15 +239,15 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         Err(e) if e == bun_core::err!("JSError") => {
             bun_crash_handler::handle_error_return_trace(e, None);
             // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
+            let global = yolo! { &*(*vm_ptr).global };
             let err_value = global.take_exception(jsc::JsError::Thrown);
             // SAFETY: see above.
-            unsafe {
+            yolo! {
                 (*vm_ptr)
                     .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
             };
             // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
+            let vm = yolo! { &mut *vm_ptr };
             if vm.exit_handler.exit_code == 0 {
                 vm.exit_handler.exit_code = 1;
             }
@@ -309,7 +310,7 @@ pub fn build_with_vm(
 ) -> Result<(), bun_core::Error> {
     // SAFETY: vm_ptr is the live per-thread VM passed from build_command;
     // exclusive access on this thread for the duration of the call.
-    let vm = unsafe { &mut *vm_ptr };
+    let vm = yolo! { &mut *vm_ptr };
     // Load and evaluate the configuration module. `global()` returns
     // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
     let global = vm.global();
@@ -447,7 +448,7 @@ pub fn build_with_vm(
     // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time setup
     // and `backing` is never moved (static storage), so the exclusive map borrow
     // self-borrow stored in `Loader` stays valid for process lifetime.
-    let loader = unsafe {
+    let loader = yolo! {
         let map = &mut *backing.map.get();
         (*backing.loader.get()).write(dotenv::Loader::init(map));
         (*backing.loader.get()).assume_init_mut()
@@ -504,9 +505,9 @@ pub fn build_with_vm(
         )?;
     }
     // SAFETY: written above by init_transpiler_with_options.
-    let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
+    let server_transpiler = yolo! { server_transpiler.assume_init_mut() };
     // SAFETY: written above by init_transpiler_with_options.
-    let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
+    let client_transpiler = yolo! { client_transpiler.assume_init_mut() };
     // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
     // inside `if separate_ssr_graph` blocks below — Rust forbids forming
     // `&mut T` to uninitialized memory regardless of later use.
@@ -516,7 +517,7 @@ pub fn build_with_vm(
             vec![&mut *client_transpiler, &mut *server_transpiler];
         if separate_ssr_graph {
             // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            targets.push(unsafe { ssr_transpiler.assume_init_mut() });
+            targets.push(yolo! { ssr_transpiler.assume_init_mut() });
         }
         for transpiler in targets {
             transpiler.options.minify_syntax = false;
@@ -546,7 +547,7 @@ pub fn build_with_vm(
         Err(_) => {
             if framework.is_built_in_react {
                 // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-                bake_body::Framework::add_react_install_command_note(unsafe {
+                bake_body::Framework::add_react_install_command_note(yolo! {
                     &mut *server_transpiler.log
                 })?;
             }
@@ -647,7 +648,7 @@ pub fn build_with_vm(
         let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
         let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
             // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
+            core::ptr::from_mut(yolo! { ssr_transpiler.assume_init_mut() })
         } else {
             server_ptr
         };
@@ -664,7 +665,7 @@ pub fn build_with_vm(
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
-            unsafe { &mut *server_ptr },
+            yolo! { &mut *server_ptr },
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
                 client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
@@ -1234,7 +1235,7 @@ pub fn build_with_vm(
 
     // SAFETY: C++ never returns null (allocates a `JSPromise` on the GC heap);
     // `JSPromise` is an opaque `UnsafeCell`-backed handle so `&mut *` is sound.
-    let render_promise = unsafe {
+    let render_promise = yolo! {
         &mut *BakeRenderRoutesForProdStatic(
             global,
             BunString::init(&*root_dir_path),
@@ -1336,7 +1337,7 @@ fn bake_get_on_module_namespace(
     // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
     // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
     // `&[u8]` for the call duration — discharges the ptr+len precondition above.
-    let result: JSValue = unsafe { f(global, module, property.as_ptr(), property.len()) };
+    let result: JSValue = yolo! { f(global, module, property.as_ptr(), property.len()) };
     debug_assert!(!result.is_empty());
     Some(result)
 }
@@ -1705,7 +1706,7 @@ pub extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString 
     // PERF(port): was stack-fallback alloc
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
+    let pt = yolo! { &*pt };
     let utf8 = key.to_utf8();
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
     if let Some(value) = pt.module_map.get(utf8.slice()) {
@@ -1724,7 +1725,7 @@ pub extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunSt
     // PERF(port): was stack-fallback alloc
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
+    let pt = yolo! { &*pt };
     let utf8 = key.to_utf8();
     if let Some(value) = pt.source_maps.get(utf8.slice()) {
         return pt.bundled_outputs[value.get() as usize]

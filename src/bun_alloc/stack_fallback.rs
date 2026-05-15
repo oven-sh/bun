@@ -25,6 +25,7 @@
 //! // `&sf` borrows ⇒ `sf` is pinned for `list`'s lifetime; `Vec` is 32 B.
 //! ```
 
+use bun_yolo::yolo;
 use core::alloc::{AllocError, Allocator, Layout};
 use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
@@ -155,7 +156,7 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
         // when `size == 0`, which `NonNull` still accepts and the caller
         // treats as a zero-length slice). `buf_base` is non-null (field of
         // `self`). `UnsafeCell` permits deriving a `*mut` from `&self`.
-        Some(unsafe { NonNull::new_unchecked(self.buf_base().add(start)) })
+        Some(yolo! { NonNull::new_unchecked(self.buf_base().add(start)) })
     }
 
     /// `bumpalo::Bump::alloc` parity — move `val` into the bump front (or the
@@ -169,7 +170,7 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
             .cast::<T>();
         // SAFETY: `p` is non-null, aligned for `T`, and points to ≥`size_of<T>`
         // uninitialized bytes owned either by `self.buf` or by `fallback`.
-        unsafe {
+        yolo! {
             p.as_ptr().write(val);
             &mut *p.as_ptr()
         }
@@ -223,7 +224,7 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
             }
         } else {
             // SAFETY: `!owns` ⇒ `ptr` came from `fallback.allocate` (only other source).
-            unsafe { self.fallback.deallocate(ptr, layout) }
+            yolo! { self.fallback.deallocate(ptr, layout) }
         }
     }
 
@@ -251,14 +252,14 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
             // `newp` came from `bump`, `is_last(ptr,..)` was false ⇒
             // `ptr+old.size() ≤ prev_cur < newp` ⇒ disjoint. If `newp` came from
             // `fallback`, disjoint by allocation.
-            unsafe {
+            yolo! {
                 ptr::copy_nonoverlapping(ptr.as_ptr(), newp.as_ptr().cast::<u8>(), old.size());
                 self.deallocate(ptr, old);
             }
             Ok(newp)
         } else {
             // SAFETY: `!owns` ⇒ `ptr` is a `fallback` block.
-            unsafe { self.fallback.grow(ptr, old, new) }
+            yolo! { self.fallback.grow(ptr, old, new) }
         }
     }
 
@@ -279,7 +280,7 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
             Ok(NonNull::slice_from_raw_parts(ptr, new.size()))
         } else {
             // SAFETY: `!owns` ⇒ `ptr` is a `fallback` block.
-            unsafe { self.fallback.shrink(ptr, old, new) }
+            yolo! { self.fallback.shrink(ptr, old, new) }
         }
     }
 }
@@ -336,7 +337,7 @@ impl ArenaPtr {
         // contract, a live `MimallocArena` that is not moved/reset/dropped
         // while any allocation made through this ref is live — i.e. it
         // outlives `&self`. Backref invariant: pointee outlives holder.
-        unsafe { self.arena.as_ref() }
+        yolo! { self.arena.as_ref() }
     }
 }
 
@@ -364,7 +365,7 @@ unsafe impl Allocator for ArenaPtr {
         // free path; `&MimallocArena::deallocate` is `mi_free` (heap-agnostic),
         // so the `Some` arm is correct even if `ptr` was allocated under a
         // different arena and later grown here.
-        unsafe {
+        yolo! {
             match self.arena_ref() {
                 Some(a) => a.deallocate(ptr, layout),
                 None => mimalloc::mi_free(ptr.as_ptr().cast()),
@@ -381,7 +382,7 @@ unsafe impl Allocator for ArenaPtr {
     ) -> Result<NonNull<[u8]>, AllocError> {
         // SAFETY: `ptr` is a live mimalloc block returned by this allocator
         // (caller contract); both arms forward it to the matching realloc.
-        unsafe {
+        yolo! {
             match self.arena_ref() {
                 Some(a) => a.grow(ptr, old, new),
                 None => alloc_result(
@@ -400,7 +401,7 @@ unsafe impl Allocator for ArenaPtr {
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         // SAFETY: same paths as `grow`.
-        unsafe { self.grow(ptr, old, new) }
+        yolo! { self.grow(ptr, old, new) }
     }
 }
 
@@ -461,7 +462,7 @@ unsafe impl Allocator for MimallocHeapRef {
             mimalloc::mi_malloc_auto_align(layout.size(), layout.align())
         } else {
             // SAFETY: `h` is live per the caller contract on `new`.
-            unsafe { mimalloc::mi_heap_malloc_auto_align(h, layout.size(), layout.align()) }
+            yolo! { mimalloc::mi_heap_malloc_auto_align(h, layout.size(), layout.align()) }
         };
         alloc_result(p, layout.size())
     }
@@ -470,7 +471,7 @@ unsafe impl Allocator for MimallocHeapRef {
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
         // SAFETY: `ptr` came from `mi_[heap_]malloc*` per `allocate`/`grow`;
         // `mi_free` is heap-agnostic and thread-safe.
-        unsafe { mimalloc::mi_free(ptr.as_ptr().cast()) }
+        yolo! { mimalloc::mi_free(ptr.as_ptr().cast()) }
     }
 
     #[inline]
@@ -482,7 +483,7 @@ unsafe impl Allocator for MimallocHeapRef {
     ) -> Result<NonNull<[u8]>, AllocError> {
         let h = self.heap;
         // SAFETY: see `allocate`; realloc accepts cross-heap pointers.
-        let p = unsafe {
+        let p = yolo! {
             if h.is_null() {
                 mimalloc::mi_realloc_aligned(ptr.as_ptr().cast(), new.size(), new.align())
             } else {
@@ -500,7 +501,7 @@ unsafe impl Allocator for MimallocHeapRef {
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         // SAFETY: same realloc path as `grow`.
-        unsafe { self.grow(ptr, old, new) }
+        yolo! { self.grow(ptr, old, new) }
     }
 }
 
@@ -530,7 +531,7 @@ mod tests {
         }
         unsafe fn deallocate(&self, p: NonNull<u8>, l: Layout) {
             self.deallocs.set(self.deallocs.get() + 1);
-            unsafe { Global.deallocate(p, l) }
+            yolo! { Global.deallocate(p, l) }
         }
     }
 
@@ -559,7 +560,7 @@ mod tests {
         let q = a.allocate(Layout::from_size_align(16, 1).unwrap()).unwrap();
         assert!(!sf.owns(q.cast::<u8>().as_ptr()));
         assert_eq!(sf.fallback().allocs.get(), 1);
-        unsafe { a.deallocate(q.cast(), Layout::from_size_align(16, 1).unwrap()) };
+        yolo! { a.deallocate(q.cast(), Layout::from_size_align(16, 1).unwrap()) };
         assert_eq!(sf.fallback().deallocs.get(), 1);
     }
 
@@ -572,10 +573,10 @@ mod tests {
         let q = a.allocate(l8).unwrap().cast::<u8>();
         assert_eq!(sf.cur.get(), 16);
         // freeing `p` (non-last) is a no-op leak bounded by N
-        unsafe { a.deallocate(p, l8) };
+        yolo! { a.deallocate(p, l8) };
         assert_eq!(sf.cur.get(), 16);
         // freeing `q` (last) rewinds
-        unsafe { a.deallocate(q, l8) };
+        yolo! { a.deallocate(q, l8) };
         assert_eq!(sf.cur.get(), 8);
         // neither touched the fallback
         assert_eq!(sf.fallback().deallocs.get(), 0);
@@ -588,7 +589,7 @@ mod tests {
         let old = Layout::from_size_align(8, 1).unwrap();
         let new = Layout::from_size_align(24, 1).unwrap();
         let p = a.allocate(old).unwrap().cast::<u8>();
-        let g = unsafe { a.grow(p, old, new) }.unwrap();
+        let g = yolo! { a.grow(p, old, new) }.unwrap();
         // last alloc → grew in place: same address, cursor advanced
         assert_eq!(g.cast::<u8>().as_ptr(), p.as_ptr());
         assert_eq!(sf.cur.get(), 24);
@@ -603,13 +604,13 @@ mod tests {
         let new = Layout::from_size_align(48, 1).unwrap();
         let p = a.allocate(old).unwrap().cast::<u8>();
         // write a pattern so we can verify the prefix copy
-        unsafe { ptr::write_bytes(p.as_ptr(), 0xAB, 16) };
-        let g = unsafe { a.grow(p, old, new) }.unwrap();
+        yolo! { ptr::write_bytes(p.as_ptr(), 0xAB, 16) };
+        let g = yolo! { a.grow(p, old, new) }.unwrap();
         assert!(!sf.owns(g.cast::<u8>().as_ptr()));
         assert_eq!(sf.fallback().allocs.get(), 1);
-        let bytes = unsafe { core::slice::from_raw_parts(g.cast::<u8>().as_ptr(), 16) };
+        let bytes = yolo! { core::slice::from_raw_parts(g.cast::<u8>().as_ptr(), 16) };
         assert!(bytes.iter().all(|&b| b == 0xAB));
-        unsafe { a.deallocate(g.cast(), new) };
+        yolo! { a.deallocate(g.cast(), new) };
     }
 
     #[test]
@@ -632,7 +633,7 @@ mod tests {
             .cast::<u8>();
         assert_eq!(q.as_ptr().addr() % 256, 0);
         assert!(!sf.owns(q.as_ptr()));
-        unsafe { a.deallocate(q, Layout::from_size_align(8, 256).unwrap()) };
+        yolo! { a.deallocate(q, Layout::from_size_align(8, 256).unwrap()) };
     }
 
     #[test]
@@ -643,7 +644,7 @@ mod tests {
         let new = Layout::from_size_align(8, 1).unwrap();
         let p = a.allocate(old).unwrap().cast::<u8>();
         assert_eq!(sf.cur.get(), 32);
-        let s = unsafe { a.shrink(p, old, new) }.unwrap();
+        let s = yolo! { a.shrink(p, old, new) }.unwrap();
         assert_eq!(s.cast::<u8>().as_ptr(), p.as_ptr());
         assert_eq!(sf.cur.get(), 8);
     }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 pub use _impl::{Context, NativeZstd};
 
 mod _impl {
@@ -210,7 +211,7 @@ mod _impl {
                 if err_.is_error() {
                     self.stream.with_mut(|s| s.close());
                     // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
-                    let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
+                    let msg = yolo! { bun_core::ffi::cstr(err_.msg) }.to_bytes();
                     return Err(global
                         .err(
                             jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
@@ -291,10 +292,10 @@ mod _impl {
                     self.state = Some(state.cast());
                     // SAFETY: state is non-null (checked above).
                     let result =
-                        unsafe { c::ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size as _) };
+                        yolo! { c::ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size as _) };
                     if c::ZSTD_isError(result) > 0 {
                         // SAFETY: state is a valid CCtx allocated above.
-                        let _ = unsafe { c::ZSTD_freeCCtx(state) };
+                        let _ = yolo! { c::ZSTD_freeCCtx(state) };
                         self.state = None;
                         return Error::init(
                             c"Could not set pledged src size".as_ptr(),
@@ -324,7 +325,7 @@ mod _impl {
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     // SAFETY: state is a valid CCtx set by init(); @bitCast u32→c_int is a same-size reinterpret.
-                    let result = unsafe {
+                    let result = yolo! {
                         c::ZSTD_CCtx_setParameter(self.state_ptr().cast(), key, value as c_int)
                     };
                     if c::ZSTD_isError(result) > 0 {
@@ -338,7 +339,7 @@ mod _impl {
                 }
                 NodeMode::ZSTD_DECOMPRESS => {
                     // SAFETY: state is a valid DCtx set by init().
-                    let result = unsafe {
+                    let result = yolo! {
                         c::ZSTD_DCtx_setParameter(self.state_ptr().cast(), key, value as c_int)
                     };
                     if c::ZSTD_isError(result) > 0 {
@@ -366,8 +367,8 @@ mod _impl {
         fn deinit_state(&mut self) {
             let _ = match self.mode {
                 // SAFETY: state was allocated by ZSTD_create{C,D}Ctx and not yet freed.
-                NodeMode::ZSTD_COMPRESS => unsafe { c::ZSTD_freeCCtx(self.state_ptr().cast()) },
-                NodeMode::ZSTD_DECOMPRESS => unsafe { c::ZSTD_freeDCtx(self.state_ptr().cast()) },
+                NodeMode::ZSTD_COMPRESS => yolo! { c::ZSTD_freeCCtx(self.state_ptr().cast()) },
+                NodeMode::ZSTD_DECOMPRESS => yolo! { c::ZSTD_freeDCtx(self.state_ptr().cast()) },
                 _ => unreachable!(),
             };
             self.state = None;
@@ -397,7 +398,7 @@ mod _impl {
         pub fn do_work(&mut self) {
             self.remaining = match self.mode {
                 // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
-                NodeMode::ZSTD_COMPRESS => unsafe {
+                NodeMode::ZSTD_COMPRESS => yolo! {
                     c::ZSTD_compressStream2(
                         self.state_ptr().cast(),
                         &raw mut self.output,
@@ -407,7 +408,7 @@ mod _impl {
                     )
                 },
                 // SAFETY: state is a valid DCtx.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
+                NodeMode::ZSTD_DECOMPRESS => yolo! {
                     c::ZSTD_decompressStream(
                         self.state_ptr().cast(),
                         &raw mut self.output,
@@ -491,13 +492,13 @@ mod _impl {
         pub fn close(&mut self) {
             let _ = match self.mode {
                 // SAFETY: state is a valid CCtx/DCtx for this mode.
-                NodeMode::ZSTD_COMPRESS => unsafe {
+                NodeMode::ZSTD_COMPRESS => yolo! {
                     c::ZSTD_CCtx_reset(
                         self.state_ptr().cast(),
                         c::ZSTD_reset_session_and_parameters,
                     )
                 },
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
+                NodeMode::ZSTD_DECOMPRESS => yolo! {
                     c::ZSTD_DCtx_reset(
                         self.state_ptr().cast(),
                         c::ZSTD_reset_session_and_parameters,

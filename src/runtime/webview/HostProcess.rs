@@ -14,6 +14,7 @@
 //! This file owns process lifetime only. The usockets client lives in C++
 //! (WebKitBackend.cpp) — usockets is a C API and the frame protocol is C structs.
 
+use bun_yolo::yolo;
 use core::ffi::c_char;
 use core::ptr::{self, NonNull};
 
@@ -49,7 +50,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
-    unsafe {
+    yolo! {
         if let Some(i) = INSTANCE
             .load(core::sync::atomic::Ordering::Relaxed)
             .as_mut()
@@ -153,7 +154,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.zig.
         // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
         // `transpiler.env` is set during VM init and lives for VM lifetime.
-        let base = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
+        let base = yolo! { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
         let base_slice = base.as_slice();
         // base_slice already has a trailing None sentinel; drop it, append our
         // var, then re-terminate.
@@ -190,18 +191,18 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr())??;
 
         // SAFETY: vm is valid for the call.
-        let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
+        let event_loop = EventLoopHandle::init(yolo! { (*vm).event_loop() }.cast());
         let process =
             NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
-        unsafe {
+        yolo! {
             (*process.as_ptr())
                 .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
         }
         // SAFETY: process is live and exclusively owned here.
-        match unsafe { (*process.as_ptr()).watch() } {
+        match yolo! { (*process.as_ptr()).watch() } {
             Ok(()) => {
                 // Weak handle: parent exits when no views + nothing pending,
                 // child gets socket EOF and exits, EVFILT_PROC fires into a
@@ -209,13 +210,13 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
                 // stay alive forever waiting on a child that is waiting on us.
                 // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
                 // SAFETY: process is live and exclusively owned here.
-                unsafe { (*process.as_ptr()).disable_keeping_event_loop_alive() };
+                yolo! { (*process.as_ptr()).disable_keeping_event_loop_alive() };
             }
             Err(e) => {
                 scoped_log!(WebViewHost, "watch failed: {}", e);
                 // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
                 // then reclaim the Box (Zig: `bun.destroy(self)`).
-                unsafe {
+                yolo! {
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
                 }

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::fmt;
 use std::io::Write as _;
 
@@ -132,7 +133,7 @@ impl PackageManager {
 pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
     // SAFETY: `&mut PackageManager` is exclusive over every field the raw
     // path projects.
-    unsafe { get_cache_directory_raw(this) }
+    yolo! { get_cache_directory_raw(this) }
 }
 
 /// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
@@ -149,12 +150,12 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
 pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Dir {
     // SAFETY: caller contract — `cache_directory_` is disjoint from any
     // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory_ } {
+    if let Some(d) = yolo! { (*this).cache_directory_ } {
         return d;
     }
-    let d = unsafe { ensure_cache_directory(this) };
+    let d = yolo! { ensure_cache_directory(this) };
     // SAFETY: as above; single writer.
-    unsafe { (*this).cache_directory_ = Some(d) };
+    yolo! { (*this).cache_directory_ = Some(d) };
     d
 }
 
@@ -378,31 +379,31 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         // SAFETY: field projections through the caller-provided provenance
         // root; see fn safety contract. Project `enable` narrowly so callers
         // may hold borrows into disjoint `options` sub-fields.
-        if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
+        if yolo! { (*this).options.enable.contains(Enable::CACHE) } {
             // SAFETY: caller-provided provenance root; `env_mut()` itself
             // encapsulates the BackRef deref + singleton-liveness invariant.
-            let env = unsafe { &*this }.env_mut();
+            let env = yolo! { &*this }.env_mut();
             // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
+            let cache_dir = fetch_cache_directory_path(env, Some(yolo! { &(*this).options }));
             // SAFETY: see fn safety contract.
-            unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+            yolo! { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                 Ok(d) => return d,
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
-                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
+                    yolo! { (*this).options.enable.set(Enable::CACHE, false) };
                     // PORT NOTE: allocator.free(this.cache_directory_path) — Box drop handles it
                     // SAFETY: see fn safety contract.
-                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
+                    yolo! { (*this).cache_directory_path = ZBox::from_bytes(b"") };
                     continue;
                 }
             }
         }
 
         // SAFETY: see fn safety contract.
-        unsafe {
+        yolo! {
             (*this).cache_directory_path =
                 ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
@@ -576,7 +577,7 @@ impl<'a> ByteCursor<'a> {
         debug_assert!(at < self.buf.len());
         // SAFETY: see `put`; one byte of headroom for the NUL is part of the
         // PathBuffer-size invariant.
-        unsafe { *self.buf.as_mut_ptr().add(at) = 0 };
+        yolo! { *self.buf.as_mut_ptr().add(at) = 0 };
         ZStr::from_buf(self.buf, at)
     }
 }
@@ -1201,7 +1202,7 @@ pub fn save_lockfile(
         this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         save_node = this.progress.start(ProgressStrings::save(), 0);
         // SAFETY: `save_node` was just set by `progress.start()` and is non-null.
-        unsafe { (*save_node).activate() };
+        yolo! { (*save_node).activate() };
 
         this.progress.refresh();
     }
@@ -1241,7 +1242,7 @@ pub fn save_lockfile(
         // SAFETY: `save_node` was set to a non-null `&mut Node` in the
         // matching `show_progress()` branch above and `this.progress` is
         // unchanged in between.
-        unsafe { (*save_node).end() };
+        yolo! { (*save_node).end() };
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();
@@ -1405,7 +1406,7 @@ fn cached_package_folder_name_buf() -> &'static mut [u8] {
     // SAFETY: single-threaded usage (install runs on one thread); the
     // thread-local cell outlives all callers and only one `&mut` is taken at a
     // time per call site (Zig also reused this buffer non-reentrantly).
-    unsafe { (*super::cached_package_folder_name_buf()).as_mut_slice() }
+    yolo! { (*super::cached_package_folder_name_buf()).as_mut_slice() }
 }
 
 /// `&'static ZStr` from a NUL-terminated literal.

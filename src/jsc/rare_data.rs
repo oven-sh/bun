@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -225,7 +226,7 @@ pub struct ErasedBox {
 impl Drop for ErasedBox {
     fn drop(&mut self) {
         // SAFETY: `dtor` was supplied by the same high-tier code that allocated `ptr`.
-        unsafe { (self.dtor)(self.ptr.as_ptr()) };
+        yolo! { (self.dtor)(self.ptr.as_ptr()) };
     }
 }
 
@@ -788,7 +789,7 @@ impl RareData {
                 core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
             );
             // SAFETY: `init` fully initialised the slot.
-            self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
+            self.spawn_sync_event_loop_ = Some(yolo! { boxed.assume_init() });
         }
         self.spawn_sync_event_loop_.as_mut().unwrap()
     }
@@ -874,20 +875,20 @@ impl RareData {
         loop {
             // SAFETY: `this` is the unique live `RareData` (boxed by VM);
             // momentary `&mut` only, ended before the re-entrant close.
-            let Some(w) = (unsafe { &mut (*this).fs_watchers_for_isolation }).pop() else {
+            let Some(w) = (yolo! { &mut (*this).fs_watchers_for_isolation }).pop() else {
                 break;
             };
             // SAFETY: registered via add_fs_watcher_for_isolation; still live.
-            unsafe { (w.close)(w.ptr) };
+            yolo! { (w.close)(w.ptr) };
             core::hint::black_box(this);
         }
         loop {
             // SAFETY: as above.
-            let Some(w) = (unsafe { &mut (*this).stat_watchers_for_isolation }).pop() else {
+            let Some(w) = (yolo! { &mut (*this).stat_watchers_for_isolation }).pop() else {
                 break;
             };
             // SAFETY: registered via add_stat_watcher_for_isolation; still live.
-            unsafe { (w.close)(w.ptr) };
+            yolo! { (w.close)(w.ptr) };
             core::hint::black_box(this);
         }
     }
@@ -1184,13 +1185,13 @@ impl Drop for RareData {
 
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.
-            unsafe { boring::ENGINE_free(engine) };
+            yolo! { boring::ENGINE_free(engine) };
         }
         debug_assert!(self.cron_jobs.is_empty());
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
+            yolo! { boring::SSL_CTX_free(s) };
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
@@ -1207,7 +1208,7 @@ impl Drop for RareData {
                 // SAFETY: embedded by-value group, previously `init`'d; the
                 // loop has already unlinked it (close_all_socket_groups ran),
                 // so destroy reduces to the empty-list debug asserts.
-                unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
+                yolo! { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
             }
         });
     }

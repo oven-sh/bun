@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use std::borrow::Cow;
 use std::io::Write as _;
@@ -76,7 +77,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
-            c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
+            c: yolo! { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
             chunks: bun_ptr::BackRef::new_mut(chunks),
         };
         // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
@@ -158,7 +159,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // stored in every ctx (Zig stores `[]Chunk` by value).
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
-                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
+                yolo! { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
             let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
@@ -195,7 +196,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // PERF(port): was c.arena().alloc — using Vec on global mimalloc
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
             // SAFETY: every slot is written via remaining_part_ranges[0] below.
-            unsafe { combined_part_ranges.set_len(total_count) };
+            yolo! { combined_part_ranges.set_len(total_count) };
             let mut remaining_part_ranges: &mut [PendingPartRange] = &mut combined_part_ranges[..];
             let mut batch = ThreadPoolLib::Batch::default();
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
@@ -235,7 +236,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
                                 // before `chunk_contexts` drops (we `wait_for_all` below).
-                                ctx: unsafe {
+                                ctx: yolo! {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             };
@@ -262,7 +263,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
                                 // before `chunk_contexts` drops (we `wait_for_all` below).
-                                ctx: unsafe {
+                                ctx: yolo! {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             };
@@ -287,7 +288,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe {
+                            ctx: yolo! {
                                 bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                             },
                         };
@@ -503,7 +504,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
-            unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
+            yolo! { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
         let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::default();
         for ch in chunks.iter() {
             if ch.unique_key.len() > 0 && ch.final_rel_path.len() > 0 {
@@ -619,12 +620,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bundler: &mut BundleV2 =
-        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
+        yolo! { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
     let mut static_route_visitor = StaticRouteVisitor {
         // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
         // long-lived shared borrow doesn't conflict with `c.log_disjoint()` inside
         // the chunk loop below. `c` outlives `static_route_visitor`.
-        c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
+        c: yolo! { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };

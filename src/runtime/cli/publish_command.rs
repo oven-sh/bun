@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use bun_collections::VecExt;
 use std::io::Write as _;
 
@@ -207,7 +208,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             let Some(next) = next else { break };
 
             // SAFETY: `next.entry` is valid until the next `iter.next()` call.
-            let entry = unsafe { &*next.entry };
+            let entry = yolo! { &*next.entry };
             #[cfg(windows)]
             let pathname: &[OSPathChar] = entry.pathname_w().as_slice();
             #[cfg(not(windows))]
@@ -469,7 +470,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
         let load_from_disk_result =
-            lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
+            lockfile.load_from_cwd::<false>(Some(yolo! { &mut *manager_ptr }), log);
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -508,7 +509,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
         // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
         let abs_pkg_json = bun_core::ZBox::from_bytes(
-            unsafe { &*manager_ptr }
+            yolo! { &*manager_ptr }
                 .original_package_json_path
                 .as_bytes(),
         );
@@ -517,7 +518,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             // SAFETY: `manager_ptr` came from `&'a mut PackageManager`; the
             // overlapping borrow with `lockfile_ref` mirrors Zig's freely-
             // aliased `*PackageManager`.
-            manager: unsafe { &mut *manager_ptr },
+            manager: yolo! { &mut *manager_ptr },
             command_ctx: ctx,
             lockfile: lockfile_ref,
             bundled_deps: Vec::new(),
@@ -588,7 +589,7 @@ impl PublishCommand {
                         }
                         FromTarballError::InvalidPackageJSON => {
                             // SAFETY: `manager.log` is set once at init.
-                            let _ = unsafe { &mut *(*manager_ptr).log }
+                            let _ = yolo! { &mut *(*manager_ptr).log }
                                 .print(std::ptr::from_mut(Output::error_writer()));
                             Output::err_generic("failed to parse tarball package.json", ());
                         }
@@ -723,7 +724,7 @@ impl PublishCommand {
             if let Some(publish_script) = &context.publish_script {
                 if let Err(e) = Run::run_package_script_foreground(
                     // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
+                    yolo! { &mut *cmd_ctx_ptr },
                     publish_script,
                     b"publish",
                     &abs_workspace_path,
@@ -731,7 +732,7 @@ impl PublishCommand {
                     &[],
                     context.manager.options.log_level == LogLevel::Silent,
                     // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    yolo! { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
                     if e == err!("MissingShell") {
                         Output::err_generic(
@@ -747,7 +748,7 @@ impl PublishCommand {
             if let Some(postpublish_script) = &context.postpublish_script {
                 if let Err(e) = Run::run_package_script_foreground(
                     // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
+                    yolo! { &mut *cmd_ctx_ptr },
                     postpublish_script,
                     b"postpublish",
                     &abs_workspace_path,
@@ -755,7 +756,7 @@ impl PublishCommand {
                     &[],
                     context.manager.options.log_level == LogLevel::Silent,
                     // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    yolo! { &*cmd_ctx_ptr }.debug.use_system_shell,
                 ) {
                     if e == err!("MissingShell") {
                         Output::err_generic(
@@ -1126,7 +1127,7 @@ impl PublishCommand {
         loop {
             // SAFETY: `buffered_stdin()` returns a process-global `*mut`; single-threaded
             // access here mirrors Zig's `Output.buffered_stdin().reader()`.
-            match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
+            match yolo! { (*Output::buffered_stdin()).reader().read_byte() } {
                 Ok(b'\n') => break,
                 Ok(_) => continue,
                 Err(_) => return,
@@ -1858,7 +1859,7 @@ impl PublishCommand {
                             let join_z = ZStr::from_buf(&interned[..], join_len);
                             let name_slice_start = join_len - name.len();
                             // SAFETY: name is the trailing segment of `interned`, NUL-terminated
-                            let name_z = unsafe {
+                            let name_z = yolo! {
                                 ZStr::from_raw(interned.as_ptr().add(name_slice_start), name.len())
                             };
                             (name_z, join_z)
@@ -2112,7 +2113,7 @@ impl PublishCommand {
             // SAFETY: `encode_raw` writes exactly `encoded_tarball_len`
             // (= `base64::encode_len(tarball_bytes.len(), false)`) bytes into the
             // reserved spare capacity; `fill_spare` commits exactly that count.
-            let count = unsafe {
+            let count = yolo! {
                 bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
                     let n =
                         simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);

@@ -3,6 +3,7 @@
 //! like source code
 //! not little ones
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -63,7 +64,7 @@ impl RefString {
     fn wtf_impl(&self) -> &bun_core::WTFStringImplStruct {
         // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of
         // `self` (set at construction; freed only after `destroy`).
-        unsafe { &*self.impl_ }
+        yolo! { &*self.impl_ }
     }
 
     pub fn ref_(&self) {
@@ -74,7 +75,7 @@ impl RefString {
         // Zig: `@setRuntimeSafety(false); return this.ptr[0..this.len];`
         // SAFETY: `ptr` points to a live allocation of `len` bytes for the
         // lifetime of `self` (freed only in `destroy`).
-        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
+        yolo! { bun_core::ffi::slice(self.ptr, self.len) }
     }
 
     pub fn deref(&self) {
@@ -98,7 +99,7 @@ impl RefString {
         // `Box<RefString>`-allocated value whose `ptr`/`len` describe a
         // `Box<[u8]>`-allocated buffer. All raw derefs and `from_raw` calls
         // below operate on those owned allocations.
-        unsafe {
+        yolo! {
             if let Some(on_before_deinit) = (*this).on_before_deinit {
                 // Zig does `this.ctx.?` — caller guarantees `ctx` is set
                 // whenever `on_before_deinit` is set.

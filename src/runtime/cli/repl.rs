@@ -11,6 +11,7 @@
 //!
 //! This replaces the TypeScript-based REPL for faster startup and better integration.
 
+use bun_yolo::yolo;
 use core::ffi::c_int;
 use core::fmt::Arguments;
 use std::io::Write as _;
@@ -66,7 +67,7 @@ fn global_clear_exception(global: &JSGlobalObject) {
         fn JSGlobalObject__clearException(this: *const JSGlobalObject);
     }
     // SAFETY: `global` is a live opaque JSGlobalObject handle.
-    unsafe { JSGlobalObject__clearException(global) }
+    yolo! { JSGlobalObject__clearException(global) }
 }
 
 #[inline]
@@ -81,7 +82,7 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
         fn JSC__VM__setExecutionForbidden(vm: *mut jsc::VM, forbidden: bool);
     }
     // SAFETY: `vm` is a live opaque JSC VM handle.
-    unsafe { JSC__VM__setExecutionForbidden(vm, forbidden) }
+    yolo! { JSC__VM__setExecutionForbidden(vm, forbidden) }
 }
 
 /// Reborrow `&VirtualMachine` as `&mut VirtualMachine`.
@@ -97,7 +98,7 @@ fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
     // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
     // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
     let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
-    unsafe { &mut *ptr }
+    yolo! { &mut *ptr }
 }
 
 // ============================================================================
@@ -974,7 +975,7 @@ impl<'a> Repl<'a> {
         {
             if let Some(mode) = self.original_windows_mode {
                 // SAFETY: stdin handle is valid console handle
-                unsafe {
+                yolo! {
                     let _ = bun_sys::windows::SetConsoleMode(Fd::stdin().native(), mode);
                 }
                 self.original_windows_mode = None;
@@ -999,7 +1000,7 @@ impl<'a> Repl<'a> {
             // TODO(port): wrap std.posix.Sigaction in bun_sys
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
             // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
-            unsafe {
+            yolo! {
                 let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 act.sa_sigaction = sigint_handler as *const () as usize;
                 act.sa_flags = 0;
@@ -1021,7 +1022,7 @@ impl<'a> Repl<'a> {
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
             // restores the default disposition. `act` is valid for the duration of the call.
-            unsafe {
+            yolo! {
                 let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 act.sa_sigaction = libc::SIG_DFL;
                 act.sa_flags = 0;
@@ -1262,7 +1263,7 @@ impl<'a> Repl<'a> {
         let mut exception: JSValue = JSValue::UNDEFINED;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
         // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
+        let result = yolo! {
             Bun__REPL__evaluate(
                 global,
                 transformed_code.as_ptr(),
@@ -1411,7 +1412,7 @@ impl<'a> Repl<'a> {
             let mut exception: JSValue = JSValue::UNDEFINED;
             // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
             // are valid for the duration of the call; `exception` is a stack local.
-            unsafe {
+            yolo! {
                 let _ = Bun__REPL__evaluate(
                     global,
                     code.as_ptr(),
@@ -1430,7 +1431,7 @@ impl<'a> Repl<'a> {
         let mut exception: JSValue = JSValue::UNDEFINED;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
         // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
+        let result = yolo! {
             Bun__REPL__evaluate(
                 global,
                 transformed_code.as_ptr(),
@@ -1518,7 +1519,7 @@ impl<'a> Repl<'a> {
         let mut exception: JSValue = JSValue::UNDEFINED;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
         // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
+        let result = yolo! {
             Bun__REPL__evaluate(
                 global,
                 code.as_ptr(),
@@ -1567,7 +1568,7 @@ impl<'a> Repl<'a> {
         let mut exception: JSValue = JSValue::UNDEFINED;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
         // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
+        let result = yolo! {
             Bun__REPL__evaluate(
                 global,
                 transformed_code.as_ptr(),
@@ -2326,7 +2327,7 @@ impl<'a> Repl<'a> {
         // Get completions from global object
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
         // are valid for the duration of the call.
-        let completions = unsafe {
+        let completions = yolo! {
             Bun__REPL__getCompletions(global, JSValue::UNDEFINED, prefix.as_ptr(), prefix.len())
         };
 
@@ -2442,7 +2443,7 @@ extern "C" fn sigint_handler(_: c_int) {
     if !vm.is_null() {
         // SAFETY: vm was a valid `*mut jsc::VM` when stored (JS thread is
         // blocked in wait while the handler runs, so it stays valid).
-        unsafe { vm_set_execution_forbidden(vm, true) };
+        yolo! { vm_set_execution_forbidden(vm, true) };
     }
 }
 

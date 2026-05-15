@@ -3,6 +3,7 @@
 //! lifecycle and delivery; everything that interprets bytes off the wire lives
 //! here.
 
+use bun_yolo::yolo;
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
@@ -707,9 +708,9 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         // delivery (it isn't — only ever appended to once per END_HEADERS).
         // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
         let name =
-            unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
+            yolo! { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
         let value =
-            unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
+            yolo! { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
         // PERF(port): was appendAssumeCapacity — profile in Phase B
         stream
             .decoded_headers

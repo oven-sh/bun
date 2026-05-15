@@ -46,6 +46,7 @@ pub mod immutable;
 #[path = "identifier.rs"]
 pub mod identifier;
 
+use bun_yolo::yolo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
@@ -148,7 +149,7 @@ impl String {
         // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string` is the
         // active union field. `ZigString` is `Copy`/POD so reading it is always
         // sound. `ZigString` is `#[repr(transparent)]` over `bun_alloc::ZigString`.
-        unsafe { &*(core::ptr::addr_of!(self.0.value.zig_string) as *const ZigString) }
+        yolo! { &*(core::ptr::addr_of!(self.0.value.zig_string) as *const ZigString) }
     }
 
     /// Borrow the live `WTF::StringImpl`. Every caller branches on
@@ -160,7 +161,7 @@ impl String {
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
         // union field and a non-null, live `*mut WTFStringImplStruct`
         // (refcount ≥ 1).
-        unsafe { &*self.0.value.wtf_string_impl }
+        yolo! { &*self.0.value.wtf_string_impl }
     }
 
     /// Read the raw `*mut WTFStringImplStruct` without dereferencing. Used
@@ -172,7 +173,7 @@ impl String {
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
         // union field; reading the pointer (not dereferencing) is always sound
         // for the POD `*mut` union arm.
-        unsafe { self.0.value.wtf_string_impl }
+        yolo! { self.0.value.wtf_string_impl }
     }
 
     /// `bun.String.init(anytype)` — polymorphic borrow constructor
@@ -227,13 +228,13 @@ impl String {
         }
         // BunString__fromBytes auto-detects all-ASCII → Latin1, else UTF-8.
         // SAFETY: s.as_ptr()/len describe a valid byte slice.
-        unsafe { BunString__fromBytes(s.as_ptr(), s.len()) }
+        yolo! { BunString__fromBytes(s.as_ptr(), s.len()) }
     }
     pub fn clone_latin1(s: &[u8]) -> Self {
         if s.is_empty() {
             return Self::EMPTY;
         }
-        unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }
+        yolo! { BunString__fromLatin1(s.as_ptr(), s.len()) }
     }
     /// `bun.String.cloneUTF16` — narrows to Latin-1 if all-ASCII (string.zig:207).
     pub fn clone_utf16(s: &[u16]) -> Self {
@@ -241,7 +242,7 @@ impl String {
             return Self::EMPTY;
         }
         // SAFETY: s.as_ptr()/len describe a valid u16 slice.
-        unsafe {
+        yolo! {
             if strings::first_non_ascii16(s).is_none() {
                 BunString__fromUTF16ToLatin1(s.as_ptr(), s.len())
             } else {
@@ -250,13 +251,13 @@ impl String {
         }
     }
     pub fn create_atom(s: &[u8]) -> Self {
-        unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
+        yolo! { BunString__createAtom(s.as_ptr(), s.len()) }
     }
     /// `bun.String.tryCreateAtom` — `None` if `bytes` is non-ASCII or too long
     /// to atomize (string.zig:270).
     pub fn try_create_atom(bytes: &[u8]) -> Option<Self> {
         // SAFETY: bytes describes a valid slice.
-        let atom = unsafe { BunString__tryCreateAtom(bytes.as_ptr(), bytes.len()) };
+        let atom = yolo! { BunString__tryCreateAtom(bytes.as_ptr(), bytes.len()) };
         if atom.0.tag == Tag::Dead {
             None
         } else {
@@ -318,19 +319,19 @@ impl String {
         let ctx = core::mem::ManuallyDrop::new(ctx);
         // SAFETY: Ctx is pointer-sized and pointer-aligned (const-asserted
         // above); read the bits as `*mut c_void`.
-        let ctx_erased: *mut c_void = unsafe {
+        let ctx_erased: *mut c_void = yolo! {
             core::ptr::from_ref::<Ctx>(&*ctx)
                 .cast::<*mut c_void>()
                 .read()
         };
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, usize)> =
             // SAFETY: same ABI; first param erased per the const-assert above.
-            Some(unsafe { crate::cast_fn_ptr::<
+            Some(yolo! { crate::cast_fn_ptr::<
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, usize),
             >(callback) });
         // SAFETY: bytes describes a valid slice; len < max_length checked.
-        let s = unsafe {
+        let s = yolo! {
             BunString__createExternal(
                 bytes.as_ptr(),
                 bytes.len(),
@@ -358,7 +359,7 @@ impl String {
         debug_assert!(!bytes.is_empty());
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
-        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
+        yolo! { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
     }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string. Port collapses Zig's
@@ -387,7 +388,7 @@ impl String {
         // `len`. `ptr` points at `len` writable bytes owned by the new WTF
         // impl; the `'static` lifetime mirrors Zig's `[]u8` return (lifetime
         // is actually tied to `s` — caller must not outlive it).
-        let buf = unsafe {
+        let buf = yolo! {
             let ptr = (*s.0.value.wtf_string_impl).m_ptr.latin1.cast_mut();
             core::slice::from_raw_parts_mut(ptr, len)
         };
@@ -400,7 +401,7 @@ impl String {
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
         // SAFETY: see `create_uninitialized_latin1`.
-        let buf = unsafe {
+        let buf = yolo! {
             let ptr = (*s.0.value.wtf_string_impl).m_ptr.utf16.cast_mut();
             core::slice::from_raw_parts_mut(ptr, len)
         };
@@ -427,7 +428,7 @@ impl String {
         let (ptr, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: ownership transferred to WTF::ExternalStringImpl, which frees
         // via mimalloc (the global allocator).
-        unsafe { BunString__createExternalGloballyAllocatedLatin1(ptr, len) }
+        yolo! { BunString__createExternalGloballyAllocatedLatin1(ptr, len) }
     }
 
     /// `bun.String.createExternalGloballyAllocated(.utf16, bytes)`.
@@ -443,7 +444,7 @@ impl String {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         let (ptr, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: see `create_external_globally_allocated_latin1`.
-        unsafe { BunString__createExternalGloballyAllocatedUTF16(ptr, len) }
+        yolo! { BunString__createExternalGloballyAllocatedUTF16(ptr, len) }
     }
 
     /// `bun.String.createFromOSPath` — clone an OS-native path slice into a
@@ -1364,7 +1365,7 @@ impl core::fmt::Display for OwnedString {
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = self.to_utf8_without_ref();
-        f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
+        f.write_str(yolo! { core::str::from_utf8_unchecked(s.slice()) })
     }
 }
 
@@ -1571,7 +1572,7 @@ impl ZigString {
         // which is `simdutf.length.utf8.from.latin1` for the latin1 case).
         let s = self.slice();
         // SAFETY: s describes a valid byte slice.
-        unsafe { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
+        yolo! { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
     }
 
     /// `ZigString.utf16ByteLength` — number of bytes the UTF-16LE encoding of
@@ -1580,7 +1581,7 @@ impl ZigString {
         if self.is_utf8() {
             let s = self.slice();
             // SAFETY: s describes a valid byte slice.
-            return unsafe {
+            return yolo! {
                 bun_simdutf_sys::simdutf::simdutf__utf16_length_from_utf8(s.as_ptr(), s.len())
             } * 2;
         }
@@ -1762,7 +1763,7 @@ impl ZigString {
     #[inline]
     pub fn deinit_global(&self) {
         // SAFETY: caller contract — `slice()` was allocated by global mimalloc.
-        unsafe {
+        yolo! {
             bun_alloc::mimalloc::mi_free(
                 self.slice().as_ptr().cast_mut().cast::<core::ffi::c_void>(),
             )
@@ -1777,7 +1778,7 @@ impl ZigString {
             return &[];
         }
         // SAFETY: untagged ptr valid for `self.len` bytes (constructor invariant).
-        unsafe { core::slice::from_raw_parts(Self::untagged(self.tagged_ptr()), self.len) }
+        yolo! { core::slice::from_raw_parts(Self::untagged(self.tagged_ptr()), self.len) }
     }
 
     /// `ZigString.trimmedSlice` — `full()` with leading/trailing
@@ -1887,7 +1888,7 @@ impl ZigString {
         // SAFETY: constructor stored a valid ptr for `len` elements of the
         // tagged width; `bytes` is exactly that element count times element
         // size. Flag bits stripped by `untagged`.
-        unsafe { core::slice::from_raw_parts(Self::untagged(self.tagged_ptr()), bytes) }
+        yolo! { core::slice::from_raw_parts(Self::untagged(self.tagged_ptr()), bytes) }
     }
     /// `ZigString.substringWithLen` (ZigString.zig:166) — re-wrap a sub-range
     /// of the underlying storage, preserving the UTF-8/16-bit/global tag bits.
@@ -2080,12 +2081,12 @@ impl ZigStringSlice {
         match self {
             Self::Static(p, l) if *l == 0 => &[],
             // SAFETY: constructor guarantees ptr/len describe a valid slice for self's lifetime.
-            Self::Static(p, l) => unsafe { core::slice::from_raw_parts(*p, *l) },
+            Self::Static(p, l) => yolo! { core::slice::from_raw_parts(*p, *l) },
             Self::Owned(v) => v.as_slice(),
             Self::WTF { ptr, len, .. } | Self::WtfBorrowed { ptr, len, .. } if *len == 0 => &[],
             // SAFETY: WTF/WtfBorrowed views are pinned (own ref / `underlying`
             // ref respectively); latin1 buffer valid while the pin is held.
-            Self::WTF { ptr, len, .. } | Self::WtfBorrowed { ptr, len, .. } => unsafe {
+            Self::WTF { ptr, len, .. } | Self::WtfBorrowed { ptr, len, .. } => yolo! {
                 core::slice::from_raw_parts(*ptr, *len)
             },
         }
@@ -2111,7 +2112,7 @@ impl Drop for ZigStringSlice {
     fn drop(&mut self) {
         if let Self::WTF { string_impl, .. } = *self {
             // SAFETY: constructor took a ref; we now release it.
-            unsafe { (*string_impl).deref() }
+            yolo! { (*string_impl).deref() }
         }
     }
 }
@@ -2274,7 +2275,7 @@ impl ZigStringSlice {
                 // `string_impl` points at a live `WTF::StringImpl` for as long
                 // as `self` exists; bumping its refcount yields a second owner
                 // whose `Drop` will pair with this ref.
-                unsafe { (**string_impl).r#ref() };
+                yolo! { (**string_impl).r#ref() };
                 Self::WTF {
                     string_impl: *string_impl,
                     ptr: *ptr,

@@ -1,5 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Body
 
+use bun_yolo::yolo;
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -40,7 +41,7 @@ use bun_jsc::{JsCell, StringJsc as _};
 #[inline(always)]
 pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     // SAFETY: see fn doc — non-null, intrusive-refcounted, live while held.
-    unsafe { &**s }
+    yolo! { &**s }
 }
 
 /// Mutable view of a [`Blob`]'s backing `Store` through its
@@ -58,7 +59,7 @@ fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
         // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
         // any `StoreRef` exists; single-threaded JS event-loop discipline
         // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
+        .map(|s| yolo! { &mut *s.as_ptr() })
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -122,7 +123,7 @@ impl Body {
         // SAFETY: single-JS-thread invariant — `Body` lives inside a
         // `Request`/`Response` JSC heap cell; concurrent access is impossible
         // and re-entrant host fns each form a fresh short-lived borrow.
-        unsafe { self.value.get_mut() }
+        yolo! { self.value.get_mut() }
     }
 
     // TODO(b2-blocked): Blob::get_size_for_bindings (gated in Blob.rs `_jsc_gated`).
@@ -704,7 +705,7 @@ impl Value {
     /// produced by `HiveRef::init`.
     pub unsafe fn unref(&mut self) -> Option<&mut Self> {
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        let parent = unsafe {
+        let parent = yolo! {
             &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
         };
         parent.unref().map(|h| &mut h.value)
@@ -713,7 +714,7 @@ impl Value {
     /// See [`Value::unref`] for the safety contract.
     pub unsafe fn ref_(&mut self) -> &mut Self {
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        let parent = unsafe {
+        let parent = yolo! {
             &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
         };
         &mut parent.ref_().value
@@ -1024,7 +1025,7 @@ impl Value {
         // until upstream wires `from_js`.
         if let Some(form_data) = as_dom_form_data(value) {
             // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
+            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, yolo! {
                 &mut *form_data
             })));
         }
@@ -1033,7 +1034,7 @@ impl Value {
             // SAFETY: shim returns a live JSC heap cell.
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                unsafe { &mut *search_params },
+                yolo! { &mut *search_params },
             )));
         }
 
@@ -1057,7 +1058,7 @@ impl Value {
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.
                 // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
-                let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
+                let owned: Box<[u8]> = Box::from(yolo! { encoded.bytes.as_ref() });
                 drop(encoded);
                 let mut blob = Blob::init(owned.into_vec(), global_this);
                 blob.content_type
@@ -1078,7 +1079,7 @@ impl Value {
                 webcore::readable_stream::Source::Blob(blob) => {
                     // SAFETY: `Source::Blob` holds a live *mut ByteBlobLoader for the
                     // lifetime of the ReadableStream JS wrapper.
-                    let result = if let Some(any_blob) = unsafe { (*blob).to_any_blob(global_this) }
+                    let result = if let Some(any_blob) = yolo! { (*blob).to_any_blob(global_this) }
                     {
                         match any_blob {
                             AnyBlob::Blob(b) => Value::Blob(b),
@@ -1209,7 +1210,7 @@ impl Value {
                     Action::None | Action::GetBlob => {
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
-                        let blob = unsafe { &mut *blob_ptr };
+                        let blob = yolo! { &mut *blob_ptr };
                         if let Some(fetch_headers) = headers {
                             // `headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
@@ -2223,7 +2224,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         let blob_ptr = Blob::new(value.use_());
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
-        let blob = unsafe { &mut *blob_ptr };
+        let blob = yolo! { &mut *blob_ptr };
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
                 // `fetch_headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
@@ -2404,7 +2405,7 @@ impl<'a> ValueBufferer<'a> {
                             ) {
                                 // SAFETY: `sink` was set from `self as *mut Self` below and
                                 // outlives the read (ValueBufferer is heap-pinned by caller).
-                                unsafe { &mut *sink }.on_finished_loading_file(bytes);
+                                yolo! { &mut *sink }.on_finished_loading_file(bytes);
                             }
                         }
                         let global = self.global;
@@ -2442,7 +2443,7 @@ impl<'a> ValueBufferer<'a> {
             blob::read_file::ReadFileResultType::Result(data) => {
                 // SAFETY: every producer sets `buf = heap::alloc(v.into_boxed_slice())`
                 // (read_file.rs); reclaim ownership here. Dropped at end of scope.
-                let buf = unsafe { Box::<[u8]>::from_raw(data.buf) };
+                let buf = yolo! { Box::<[u8]>::from_raw(data.buf) };
                 bun_core::scoped_log!(
                     BodyValueBufferer,
                     "onFinishedLoadingFile Data {}",
@@ -2491,7 +2492,7 @@ impl<'a> ValueBufferer<'a> {
     #[inline]
     fn take_ctx<'r>(cell: JSValue) -> Option<&'r mut Self> {
         // SAFETY: see fn doc — +1 ref transferred back; sole live `&mut`.
-        crate::api::NativePromiseContext::take::<Self>(cell).map(|mut p| unsafe { p.as_mut() })
+        crate::api::NativePromiseContext::take::<Self>(cell).map(|mut p| yolo! { p.as_mut() })
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
@@ -2579,7 +2580,7 @@ impl<'a> ValueBufferer<'a> {
         // and `buffer_stream as *mut JSSink<T>` are address-identical. Reborrow the
         // wrapper through the inner field via the transparent guarantee.
         // SAFETY: `JSSink<T>` is `#[repr(transparent)]` (single field `sink: T`).
-        let inner: &mut ArrayBufferSink = unsafe {
+        let inner: &mut ArrayBufferSink = yolo! {
             &mut *std::ptr::from_mut::<ArrayBufferJSSink>(buffer_stream).cast::<ArrayBufferSink>()
         };
         let assignment_result: JSValue =
@@ -2738,7 +2739,7 @@ impl<'a> ValueBufferer<'a> {
 
     fn on_receive_value(ctx: *mut c_void, value: &mut Value) {
         // SAFETY: ctx was set from `self as *mut Self` in buffer_locked_body_value.
-        let sink = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
+        let sink = yolo! { bun_ptr::callback_ctx::<Self>(ctx) };
         match value {
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");

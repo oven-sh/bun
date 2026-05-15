@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use core::mem::offset_of;
 use core::sync::atomic::Ordering;
@@ -27,7 +28,7 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =
-        unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
+        yolo! { crate::linker_context_mod::pending_part_range_prologue(task) };
 
     // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"
     #[cfg(feature = "show_crash_trace")]
@@ -58,8 +59,8 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // views into the same `LinkerContext`/`Chunk` for read-only printer use —
     // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
     let result = {
-        let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+        let c_mut: &mut LinkerContext = yolo! { &mut *c_ptr };
+        let chunk_mut: &mut Chunk = yolo! { &mut *chunk_ptr };
         generate_compile_result_for_js_chunk_impl(
             &mut **worker,
             c_mut,
@@ -71,7 +72,7 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
     // The slot write is routed through raw `addr_of_mut!` + `UnsafeCell` so it
     // never materializes `&mut Chunk` / `&mut [CompileResult]`.
-    unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
+    yolo! { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
 fn generate_compile_result_for_js_chunk_impl(
@@ -165,7 +166,7 @@ fn generate_compile_result_for_js_chunk_impl(
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
-        unsafe { (*renamer_ptr).as_renamer() },
+        yolo! { (*renamer_ptr).as_renamer() },
         chunk,
         part_range,
         to_common_js_ref,

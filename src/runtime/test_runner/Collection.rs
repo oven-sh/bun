@@ -1,5 +1,6 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
+use bun_yolo::yolo;
 use core::ptr::NonNull;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
@@ -50,7 +51,7 @@ impl Collection {
     pub fn init(bun_test_root: *mut BunTestRoot) -> Collection {
         let _g = group::begin();
         // SAFETY: caller (BunTest::init) passes a live pointer to its own `bun_test_root` field.
-        let bun_test_root = unsafe { &mut *bun_test_root };
+        let bun_test_root = yolo! { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {
             if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }
@@ -94,7 +95,7 @@ impl Collection {
     /// so the pointer is always valid while `self` is.
     #[inline]
     pub fn active_scope(&self) -> &DescribeScope {
-        unsafe { self.active_scope.as_ref() }
+        yolo! { self.active_scope.as_ref() }
     }
 
     /// Mutable view of the currently-active describe scope.
@@ -108,7 +109,7 @@ impl Collection {
     /// `step()`), so it carries write-capable provenance.
     #[inline]
     pub fn active_scope_mut(&mut self) -> &mut DescribeScope {
-        unsafe { self.active_scope.as_mut() }
+        yolo! { self.active_scope.as_mut() }
     }
 
     pub fn enqueue_describe_callback(
@@ -193,7 +194,7 @@ impl Collection {
         for item in this.current_scope_callback_queue.drain(..).rev() {
             // SAFETY: `new_scope` points into `root_scope`'s Box-allocated tree, which outlives
             // every queued item; short-lived read, no aliasing `&mut` is live here.
-            if unsafe { item.new_scope.as_ref() }.failed {
+            if yolo! { item.new_scope.as_ref() }.failed {
                 // if there was an error in the describe callback, don't run any describe callbacks in this scope
                 drop(item); // Zig: item.deinit() — Strong released here
             } else {
@@ -209,7 +210,7 @@ impl Collection {
 
             // SAFETY: `active_scope` points into `root_scope`'s Box-allocated tree, which outlives
             // every queued item; short-lived read, no aliasing `&mut` is live here.
-            if unsafe { first.active_scope.as_ref() }.failed {
+            if yolo! { first.active_scope.as_ref() }.failed {
                 continue; // do not execute callbacks that came from a failed describe scope
             }
 

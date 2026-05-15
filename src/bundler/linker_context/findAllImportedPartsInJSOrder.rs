@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, VecExt};
@@ -273,7 +274,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                 // column read through `self.c` / `self.flags` / `self.parts`),
                 // valid for `graph.files.len()` writes for the duration of the
                 // link step. No `&` to this column is live here.
-                unsafe {
+                yolo! {
                     (*self.entry_point_chunk_indices)[source_index as usize] = self.chunk_index;
                 }
             }

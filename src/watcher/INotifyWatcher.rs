@@ -1,6 +1,7 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
 
+use bun_yolo::yolo;
 use core::ffi::c_int;
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -114,7 +115,7 @@ impl Event {
         // SAFETY: kernel writes a NUL-terminated name immediately after the
         // fixed-size header when name_len > 0; the bytes live in eventlist_bytes
         // which outlives the returned borrow.
-        unsafe {
+        yolo! {
             let name_first_char_ptr = (&raw const self.name_len)
                 .cast::<u8>()
                 .add(size_of::<u32>());
@@ -136,7 +137,7 @@ impl INotifyWatcher {
         let watch_file_mask =
             IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
-        let rc = unsafe {
+        let rc = yolo! {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
         };
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
@@ -167,7 +168,7 @@ impl INotifyWatcher {
             | IN::MOVED_TO
             | IN::MODIFY;
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
-        let rc = unsafe {
+        let rc = yolo! {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_dir_mask)
         };
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
@@ -189,7 +190,7 @@ impl INotifyWatcher {
         debug_assert!(self.loaded);
         let _ = self.watch_count.fetch_sub(1, Ordering::Release);
         // SAFETY: fd is a valid inotify fd (loaded == true).
-        let _ = unsafe { bun_sys::linux::inotify_rm_watch(self.fd.native(), wd) };
+        let _ = yolo! { bun_sys::linux::inotify_rm_watch(self.fd.native(), wd) };
     }
 
     // PORT NOTE: kept as in-place &mut self init (not `-> Result<Self, _>`) because
@@ -206,7 +207,7 @@ impl INotifyWatcher {
 
         // TODO: convert to bun.sys.Error
         // SAFETY: IN::CLOEXEC is a valid flag combination for inotify_init1.
-        let raw = unsafe { bun_sys::linux::inotify_init1(IN::CLOEXEC) };
+        let raw = yolo! { bun_sys::linux::inotify_init1(IN::CLOEXEC) };
         if raw < 0 {
             // TODO(port): narrow error set — Zig propagated the std.posix error union here.
             return Err(bun_core::err!("InotifyInitFailed"));
@@ -242,7 +243,7 @@ impl INotifyWatcher {
                 Futex::wait_forever(&self.watch_count, 0);
 
                 // SAFETY: fd is a valid inotify fd; buffer is valid for eventlist_bytes.len() bytes.
-                let rc = unsafe {
+                let rc = yolo! {
                     system::read(
                         self.fd.native(),
                         self.eventlist_bytes.0.as_mut_ptr(),
@@ -274,7 +275,7 @@ impl INotifyWatcher {
                             };
                             // SAFETY: fds and timespec are valid stack locals; sigmask is null.
                             // Zig: `(std.posix.ppoll(&fds, &timespec, null) catch 0) > 0`.
-                            let poll_n = unsafe {
+                            let poll_n = yolo! {
                                 system::ppoll(
                                     fds.as_mut_ptr(),
                                     fds.len(),
@@ -287,7 +288,7 @@ impl INotifyWatcher {
                                     let rest = &mut self.eventlist_bytes.0[read_len..];
                                     debug_assert!(!rest.is_empty());
                                     // SAFETY: fd valid; rest is a valid mutable buffer.
-                                    let new_rc = unsafe {
+                                    let new_rc = yolo! {
                                         system::read(
                                             self.fd.native(),
                                             rest.as_mut_ptr(),
@@ -350,7 +351,7 @@ impl INotifyWatcher {
             // It is NOT aligned naturally. It is align 1!!!
             // SAFETY: i is within bounds; the bytes at this offset form a valid
             // inotify_event header written by the kernel. See TODO on Event re: alignment.
-            let event: *const Event = unsafe {
+            let event: *const Event = yolo! {
                 read_eventlist_bytes
                     .as_ptr()
                     .add(i as usize)
@@ -358,7 +359,7 @@ impl INotifyWatcher {
             };
             self.eventlist_ptrs[count as usize] = event;
             // SAFETY: event points to a valid header; size() reads name_len which the kernel set.
-            i += unsafe { (*event).size() };
+            i += yolo! { (*event).size() };
             count += 1;
 
             // when under high load with short file paths, it is very easy to
@@ -440,7 +441,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         while events_processed < events.len() {
             // SAFETY: events[i] is a pointer into platform.eventlist_bytes which lives for
             // the duration of this call (platform is a field of `this`).
-            let event = unsafe { &*events[events_processed] };
+            let event = yolo! { &*events[events_processed] };
 
             // Check if we're about to exceed the watch_events array capacity
             if event_id >= this.watch_events.len() {

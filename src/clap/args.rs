@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::convert::Infallible;
 use std::borrow::Cow;
 
@@ -120,7 +121,7 @@ fn os_argv() -> &'static [&'static [u8]] {
     // SAFETY: `#[repr(transparent)] struct ZStr([u8])` (bun_core/util.rs) ⇒
     // `&ZStr` and `&[u8]` have identical (ptr, len) layout, hence so do
     // `[&ZStr]` and `[&[u8]]`. The slice is process-static.
-    unsafe { core::slice::from_raw_parts(z.as_ptr().cast::<&'static [u8]>(), z.len()) }
+    yolo! { core::slice::from_raw_parts(z.as_ptr().cast::<&'static [u8]>(), z.len()) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]

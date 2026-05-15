@@ -19,6 +19,7 @@
 //! `ordered_remove`) drop and immediately rebuild it so lookups never
 //! silently degrade to O(n).
 
+use bun_yolo::yolo;
 use core::alloc::Allocator;
 use core::hash::{Hash, Hasher};
 use std::alloc::Global;
@@ -234,7 +235,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
         // SAFETY: `keys`/`values` point at `len`-element Vec backing arrays
         // borrowed mutably for `'a`; each index is yielded at most once so the
         // returned `&mut`s are disjoint.
-        unsafe {
+        yolo! {
             Some(Entry {
                 key_ptr: &mut *self.keys.add(i),
                 value_ptr: &mut *self.values.add(i),
@@ -522,7 +523,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         debug_assert!(n <= self.values.capacity());
         debug_assert!(n <= self.hashes.capacity());
         // SAFETY: caller contract above; matches Zig `.entries.len = n`.
-        unsafe {
+        yolo! {
             self.keys.set_len(n);
             self.values.set_len(n);
             self.hashes.set_len(n);
@@ -735,7 +736,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
                     // vecs either patches the index in place
                     // (`index_swap_remove`/`index_remove_tail`) or calls
                     // `drop_index()` first.
-                    unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
+                    yolo! { *hashes.add(i) == h && eq(&*keys.add(i), i) }
                 })
                 .map(|&i| i as usize);
         }
@@ -886,7 +887,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         // `index < self.keys.len() == self.values.len()` — every caller
         // (`get_or_put*`/`put_index`) passes the index just returned by
         // `push_entry` or `find_hash`.
-        let (key_ptr, value_ptr) = unsafe {
+        let (key_ptr, value_ptr) = yolo! {
             (
                 &mut *self.keys.as_mut_ptr().add(index),
                 &mut *self.values.as_mut_ptr().add(index),
@@ -1575,7 +1576,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     pub const fn borrowed(s: &'static [u8]) -> Self {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
         // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr() as *mut u8) };
+        let ptr = yolo! { core::ptr::NonNull::new_unchecked(s.as_ptr() as *mut u8) };
         Self {
             ptr,
             len_tag: s.len(),
@@ -1598,7 +1599,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         // nightly `Box::into_raw` is restricted to `Box<T, Global>`.
         let (raw, _alloc) = Box::into_raw_with_allocator(b);
         // SAFETY: `Box::into_raw_with_allocator` never returns null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
+        let ptr = yolo! { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
         Self {
             ptr,
             len_tag: len | SHMK_OWNED_BIT,
@@ -1616,7 +1617,7 @@ impl<A: Allocator + Default> Drop for StringHashMapKey<A> {
             // in `owned()`; reconstituting and dropping is the documented
             // round-trip. `A::default()` is sound for the ZST allocators in
             // use (see `owned()`).
-            unsafe {
+            yolo! {
                 let slice = core::ptr::slice_from_raw_parts_mut(self.ptr.as_ptr(), len);
                 drop(Box::<[u8], A>::from_raw_in(slice, A::default()));
             }
@@ -1631,7 +1632,7 @@ impl<A: Allocator + Default> Deref for StringHashMapKey<A> {
         // SAFETY: `ptr` points at `packed_len()` initialised bytes for the
         // lifetime of `self` — either a `'static`/arena slice (borrowed) or a
         // live `Box<[u8], A>` allocation (owned, freed only in `Drop`).
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.packed_len()) }
+        yolo! { core::slice::from_raw_parts(self.ptr.as_ptr(), self.packed_len()) }
     }
 }
 
@@ -1892,7 +1893,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         // SAFETY: caller contract above. Erase the borrow's lifetime so it can
         // be stored as `Static` without a heap copy; the map never inspects the
         // lifetime, only the (ptr, len) pair.
-        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        let key: &'static [u8] = yolo! { &*(key as *const [u8]) };
         self.inner.insert(StringHashMapKey::borrowed(key), value);
         Ok(())
     }
@@ -2004,7 +2005,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
         use hashbrown::hash_map::EntryRef;
         // SAFETY: caller contract above; see `put_borrowed`.
-        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        let key: &'static [u8] = yolo! { &*(key as *const [u8]) };
         match self.inner.entry_ref(key) {
             EntryRef::Occupied(o) => StringHashMapGetOrPut {
                 found_existing: true,

@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![feature(allocator_api)]
 #![allow(
     unused,
@@ -147,7 +148,7 @@ pub unsafe fn arena_str(p: Str) -> &'static [u8] {
     // SAFETY: caller contract (documented above) guarantees `p` is a non-null,
     // well-aligned fat pointer into the parser's immutable source/bump arena,
     // whose backing storage outlives the returned reference.
-    unsafe { &*p }
+    yolo! { &*p }
 }
 pub use compat::Feature;
 /// `css::ParseErrorKind` — Zig spelling. Alias of `error::ParserErrorKind`.

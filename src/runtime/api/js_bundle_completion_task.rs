@@ -8,6 +8,7 @@
 //! through the `bun_bundler::bundle_v2::CompletionStruct` trait
 //! (layout-agnostic).
 
+use bun_yolo::yolo;
 use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
@@ -90,7 +91,7 @@ impl JSBundleCompletionTask {
     fn deinit(this: *mut Self) {
         // SAFETY: refcount hit zero; `this` is the sole owner of a
         // `heap::alloc`'d allocation.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
+        let mut boxed = yolo! { bun_core::heap::take(this) };
         boxed.poll_ref.disable();
         if let Some(plugin) = boxed.plugins.take() {
             // `plugin` is the live FFI handle stashed at construction;
@@ -136,7 +137,7 @@ pub fn create_and_schedule_completion_task(
         started_at_ns: 0,
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
-    unsafe {
+    yolo! {
         (*completion).task =
             AnyTask::from_typed(completion, JSBundleCompletionTask::on_complete_anytask);
         if let Some(plugin) = (*completion).plugins {
@@ -151,7 +152,7 @@ pub fn create_and_schedule_completion_task(
     bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
 
     // SAFETY: `completion` is live (refcount==1); `vm` outlives this call.
-    unsafe {
+    yolo! {
         (*completion)
             .poll_ref
             .ref_(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm))
@@ -170,7 +171,7 @@ pub fn generate_from_javascript(
     let completion = create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
     // SAFETY: `completion` is the freshly-boxed allocation; sole owner on the JS
     // thread until the enqueued task runs.
-    unsafe {
+    yolo! {
         (*completion).promise = jsc::JSPromiseStrong::init(global_this);
         Ok((*completion).promise.value())
     }
@@ -213,7 +214,7 @@ impl JSBundleCompletionTask {
     fn plugins_mut(&mut self) -> Option<&mut Plugin> {
         // SAFETY: see fn doc — C++-heap opaque, live while `self.plugins` is
         // `Some`, disjoint from `*self`. Single JS-mutator thread.
-        self.plugins.map(|p| unsafe { &mut *p.as_ptr() })
+        self.plugins.map(|p| yolo! { &mut *p.as_ptr() })
     }
 
     fn to_js_error(
@@ -409,7 +410,7 @@ impl JSBundleCompletionTask {
 
         // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
         // construction; valid for the lifetime of the VirtualMachine.
-        let env = unsafe { &mut *self.env.cast::<bun_dotenv::Loader>() };
+        let env = yolo! { &mut *self.env.cast::<bun_dotenv::Loader>() };
 
         let result = match to_executable(
             &compile_options.compile_target,
@@ -501,7 +502,7 @@ impl JSBundleCompletionTask {
                     let bytes: &[u8] = match &output_files[i].value {
                         OutputFileValue::Buffer { bytes } => bytes,
                         // SAFETY: `Buffer` arm checked above.
-                        _ => unsafe { core::hint::unreachable_unchecked() },
+                        _ => yolo! { core::hint::unreachable_unchecked() },
                     };
                     let write_args = fs_args::WriteFile {
                         encoding: Encoding::Buffer,
@@ -555,10 +556,10 @@ impl JSBundleCompletionTask {
     /// thread posts back via `complete_on_bundle_thread`.
     fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
-        let this = unsafe { &mut *ctx };
+        let this = yolo! { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
-        let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
+        let _drop_ref = yolo! { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
 
         let vm = this.global_this.bun_vm_ptr();
         this.poll_ref
@@ -572,7 +573,7 @@ impl JSBundleCompletionTask {
             // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which
             // bumped its own refcount before scheduling and stays alive until this returns.
             // R-2: deref as shared — `on_complete` takes `&self`.
-            unsafe { html_bundle::Route::on_complete(&*html_build_task, this) };
+            yolo! { html_bundle::Route::on_complete(&*html_build_task, this) };
             return Ok(());
         }
 
@@ -586,7 +587,7 @@ impl JSBundleCompletionTask {
         // for `result`/`config`/`log` below — Zig stored `*JSPromise`.
         let promise: *mut JSPromise = this.promise.swap();
         // SAFETY: GC-owned cell; valid for the duration of this JS-thread callback.
-        let promise = unsafe { &mut *promise };
+        let promise = yolo! { &mut *promise };
 
         // PORT NOTE: reshaped for borrowck — `do_compilation` borrows
         // `&mut self` while needing `&mut output_files` from inside
@@ -596,7 +597,7 @@ impl JSBundleCompletionTask {
             let mut output_files = match &mut this.result {
                 BundleV2Result::Value(build) => core::mem::take(&mut build.output_files),
                 // SAFETY: arm checked above.
-                _ => unsafe { core::hint::unreachable_unchecked() },
+                _ => yolo! { core::hint::unreachable_unchecked() },
             };
             let compile_result = this.do_compilation(&mut output_files);
             // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
@@ -618,7 +619,7 @@ impl JSBundleCompletionTask {
                 match &mut this.result {
                     BundleV2Result::Value(build) => build.output_files = output_files,
                     // SAFETY: arm checked above.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
+                    _ => yolo! { core::hint::unreachable_unchecked() },
                 }
             }
         }
@@ -686,7 +687,7 @@ impl JSBundleCompletionTask {
                             // SAFETY: `as_` returned a live `*mut BuildArtifact`
                             // owned by the JS wrapper; the borrow lasts only for
                             // this `set` call (no other Rust alias exists).
-                            unsafe { (*artifact).sourcemap.set(global_this, result) };
+                            yolo! { (*artifact).sourcemap.set(global_this, result) };
                         }
                         to_assign_on_sourcemap = JSValue::ZERO;
                     }
@@ -752,7 +753,7 @@ impl JSBundleCompletionTask {
                 }
             }
             // SAFETY: Pending/Err already returned above.
-            _ => unsafe { core::hint::unreachable_unchecked() },
+            _ => yolo! { core::hint::unreachable_unchecked() },
         }
         Ok(())
     }
@@ -792,7 +793,7 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
     // `CompletionHandle.owner` (set from a `Box<JSBundleCompletionTask>` that
     // outlives every dispatch call). The opaque marker and the concrete struct
     // are the same allocation; only shared field reads follow.
-    unsafe { &*c.as_ptr().cast::<JSBundleCompletionTask>() }
+    yolo! { &*c.as_ptr().cast::<JSBundleCompletionTask>() }
 }
 
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
@@ -812,7 +813,7 @@ unsafe impl bun_threading::Linked for JSBundleCompletionTask {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
+        yolo! { core::ptr::addr_of!((*item).next) }
     }
 }
 
@@ -987,7 +988,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // SAFETY: `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
         transpiler.resolver.env_loader =
-            NonNull::new(unsafe { transpiler.env.cast::<bun_dotenv::Loader<'_>>() });
+            NonNull::new(yolo! { transpiler.env.cast::<bun_dotenv::Loader<'_>>() });
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options` (Zig assigned
         // the struct by value: `resolver.opts = transpiler.options`).
@@ -1084,10 +1085,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         // not `self`) to the trait method.
         let tp: *mut Transpiler<'a> = transpiler;
         // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
+        self.configure_bundler(yolo! { &mut *tp }, bump)?;
         // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
         // reborrow above has ended.
-        Ok(unsafe { &mut *tp })
+        Ok(yolo! { &mut *tp })
     }
 
     fn init_and_run<'a>(
@@ -1124,7 +1125,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // SAFETY: `file_map` returns a `NonNull` into `self.config.files`,
         // which outlives `bv2` (both live until `generate_in_new_thread`
         // returns). `BundleV2.file_map: Option<&'a FileMap>` — erase to `'a`.
-        bv2.file_map = self.file_map().map(|p| unsafe { &*p.as_ptr() });
+        bv2.file_map = self.file_map().map(|p| yolo! { &*p.as_ptr() });
 
         self.set_transpiler(&raw mut *bv2);
 

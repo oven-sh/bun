@@ -11,6 +11,7 @@
 //!   - `DomEffect` (plain data),
 //! and stubs the reflection-driven generators with `// TODO(port): proc-macro`.
 
+use bun_yolo::yolo;
 use core::ffi::c_void;
 
 use bun_core::Environment;
@@ -279,7 +280,7 @@ pub fn host_fn_result<R: IntoHostFnReturn>(
 // properly aligned, and live for the duration of the call — so the reference
 // type *is* the safe spelling of the C ABI contract. The non-null obligation
 // is discharged by the type system at the thunk boundary (a `&T` param is a
-// `nonnull` `noalias` pointer in LLVM IR), not by an `unsafe { &*ptr }` deref
+// `nonnull` `noalias` pointer in LLVM IR), not by an `yolo! { &*ptr }` deref
 // inside a safe `pub fn` (which would be a soundness hole — safe Rust could
 // otherwise pass null and trigger UB).
 //
@@ -404,7 +405,7 @@ pub fn host_fn_static_raw<R: IntoHostFnReturn>(
 ) -> JSValue {
     // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
     let (global, callframe) =
-        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+        yolo! { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
     host_fn_static(global, callframe, f)
 }
 
@@ -418,7 +419,7 @@ pub fn host_fn_static_passthrough_raw(
 ) -> JSValue {
     // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
     let (global, callframe) =
-        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+        yolo! { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
     host_fn_static_passthrough(global, callframe, f)
 }
 
@@ -612,7 +613,7 @@ pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
 /// This wrapper provides the panic barrier and the single `Box::from_raw`
 /// for the entire generated-classes finalize surface, so the generated thunk
 /// body contains zero `unsafe` tokens and user impls need no
-/// soundness-laundering `unsafe { heap::take(this) }`.
+/// soundness-laundering `yolo! { heap::take(this) }`.
 ///
 /// For intrusively-refcounted `T` the JS wrapper holds one of N refs; the
 /// impl MUST `Box::leak`/`Box::into_raw` as its FIRST step (before any
@@ -626,7 +627,7 @@ pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
     // For intrusively-refcounted `T` other native code may hold raw
     // pointers to the same allocation — see doc comment above re: the
     // impl's obligation to `Box::leak` before doing fallible work.
-    let boxed = unsafe { alloc::boxed::Box::from_raw(this) };
+    let boxed = yolo! { alloc::boxed::Box::from_raw(this) };
     f(boxed)
 }
 

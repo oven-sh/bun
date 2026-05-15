@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(macro_metavar_expr)] // `$$` in define_scoped_log! (nightly-2026-05-06)
@@ -104,7 +105,7 @@ pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
     // SAFETY: caller contract — `F` and `G` are ABI-identical fn pointers.
     // `read` of a pointer-sized `Copy` value through a same-size cast is the
     // bitwise reinterpretation `@ptrCast` performs.
-    unsafe { (&raw const f).cast::<G>().read() }
+    yolo! { (&raw const f).cast::<G>().read() }
 }
 
 /// Non-owning borrowed slice whose backing storage outlives the holder.
@@ -165,7 +166,7 @@ impl<T> RawSlice<T> {
         // `NonNull::dangling()` for EMPTY), `len` elements are initialized and
         // live for at least `'_` (the holder's borrow). No exclusive alias is
         // live: `RawSlice` only ever vends shared `&[T]`.
-        unsafe { &*self.0 }
+        yolo! { &*self.0 }
     }
 }
 impl<T> Copy for RawSlice<T> {}
@@ -232,19 +233,19 @@ pub mod os {
     pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
         // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
         // under rust_2024_compatibility, and we never need a borrow here.
-        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
+        yolo! { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
     }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
-        unsafe {
+        yolo! {
             core::ptr::write(&raw mut ENVIRON, (ptr, len));
         }
     }
     /// Borrowed view of the current envp slice (read side of `std.os.environ`).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
-        unsafe {
+        yolo! {
             let (p, n) = core::ptr::read(&raw const ENVIRON);
             if p.is_null() {
                 &[]
@@ -261,7 +262,7 @@ pub mod os {
 #[inline]
 pub fn os_environ_ptr() -> *const *mut core::ffi::c_char {
     // SAFETY: read of a process-global written once at startup.
-    let e = unsafe { os::environ() };
+    let e = yolo! { os::environ() };
     if e.is_empty() {
         core::ptr::null()
     } else {
@@ -371,7 +372,7 @@ pub fn pow(x: f64, y: f64) -> f64 {
 
 /// Safe `Vec` growth helpers — consolidate the
 /// `reserve(n); spare_capacity_mut(); MaybeUninit::write…; unsafe set_len(n)`
-/// pattern (S025) so the single `unsafe { set_len }` lives here behind a
+/// pattern (S025) so the single `yolo! { set_len }` lives here behind a
 /// locally-proven invariant instead of being open-coded at every fill site.
 pub mod vec {
     /// Extend `v` by `n` elements, each produced by `f(i)` for `i in 0..n`.
@@ -405,7 +406,7 @@ pub mod vec {
         // already-written prefix stays in spare capacity and is *leaked* (not
         // dropped) — sound, and acceptable for the constant/`Default`/index
         // fills this helper targets.
-        unsafe { v.set_len(prev + n) };
+        yolo! { v.set_len(prev + n) };
     }
 
     /// Append `n` copies of `value` to `v`. Zig: `std.ArrayList.appendNTimes` —
@@ -423,7 +424,7 @@ pub mod vec {
         // SAFETY: `reserve(n)` ⇒ `spare_capacity_mut().len() >= n`, so `[..n]`
         // is in-bounds; every slot in it was just initialized via `fill`, and
         // `T: Copy` means no drop obligations are skipped.
-        unsafe { v.set_len(prev + n) };
+        yolo! { v.set_len(prev + n) };
     }
 
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice
@@ -453,7 +454,7 @@ pub mod vec {
         v.reserve(additional);
         let prev = v.len();
         // SAFETY: caller contract — slice is fully written before any read.
-        unsafe { v.set_len(prev + additional) };
+        yolo! { v.set_len(prev + additional) };
         &mut v[prev..]
     }
 
@@ -469,7 +470,7 @@ pub mod vec {
         debug_assert!(v.len() + additional <= v.capacity());
         let prev = v.len();
         // SAFETY: caller contract — capacity asserted; slice fully written before any read.
-        unsafe { v.set_len(prev + additional) };
+        yolo! { v.set_len(prev + additional) };
         &mut v[prev..]
     }
 
@@ -514,7 +515,7 @@ pub mod vec {
     /// slice, call [`commit_spare`]`(v, n)` to expose them.
     #[inline]
     pub unsafe fn spare_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
-        unsafe {
+        yolo! {
             let spare = v.spare_capacity_mut();
             // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; the slice
             // covers exactly `[len, capacity)` of `v`'s allocation. Caller upholds
@@ -533,7 +534,7 @@ pub mod vec {
     /// Same as [`spare_bytes_mut`].
     #[inline]
     pub unsafe fn reserve_spare_bytes(v: &mut Vec<u8>, n: usize) -> &mut [u8] {
-        unsafe {
+        yolo! {
             v.reserve(n);
             spare_bytes_mut(v)
         }
@@ -553,7 +554,7 @@ pub mod vec {
         // SAFETY: `as_mut_ptr()` returns a pointer valid for `cap` bytes of
         // the backing allocation; caller upholds the write-only contract on
         // the uninitialized tail.
-        unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr(), cap) }
+        yolo! { core::slice::from_raw_parts_mut(v.as_mut_ptr(), cap) }
     }
 
     /// Advance `v.len()` by `n` after a producer has initialized the first
@@ -564,7 +565,7 @@ pub mod vec {
     /// fully initialized (typically by the FFI/syscall that just returned `n`).
     #[inline]
     pub unsafe fn commit_spare(v: &mut Vec<u8>, n: usize) {
-        unsafe {
+        yolo! {
             debug_assert!(n <= v.capacity() - v.len());
             v.set_len(v.len() + n);
         }
@@ -589,7 +590,7 @@ pub mod vec {
         min_spare: usize,
         f: impl FnOnce(&mut [u8]) -> (usize, R),
     ) -> R {
-        unsafe {
+        yolo! {
             if min_spare > 0 {
                 v.reserve(min_spare);
             }
@@ -790,14 +791,14 @@ pub use util::*;
 pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P {
     // SAFETY: per fn contract — `field` is interior to a `P`; `byte_sub`
     // preserves provenance and yields the allocation base.
-    unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
+    yolo! { field.byte_sub(offset).cast::<P>().cast_mut() }
 }
 
 /// `*const`-out variant of [`container_of`]. Same safety contract.
 #[inline(always)]
 pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
     // SAFETY: per fn contract.
-    unsafe { field.byte_sub(offset).cast::<P>() }
+    yolo! { field.byte_sub(offset).cast::<P>() }
 }
 
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
@@ -806,7 +807,7 @@ pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> 
 /// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
 /// an `extern "C" fn` thunk. Phase-A open-coded this as
-/// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
+/// `yolo! { &mut *ctx.cast::<T>() }` at every site; centralising it here
 /// makes the pattern grep-able, attaches a uniform safety contract, and
 /// debug-asserts the non-null precondition the C side guarantees.
 ///
@@ -828,7 +829,7 @@ pub unsafe fn callback_ctx<'a, T>(ctx: *mut core::ffi::c_void) -> &'a mut T {
     debug_assert!(!ctx.is_null(), "callback_ctx: null user-data pointer");
     // SAFETY: per fn contract — `ctx` is the `*mut T` the caller registered as
     // C user-data, non-null, live, and exclusively accessed for `'a`.
-    unsafe { &mut *ctx.cast::<T>() }
+    yolo! { &mut *ctx.cast::<T>() }
 }
 
 /// `from_field_ptr!(Parent, field, ptr)` → `*mut Parent`.
@@ -886,13 +887,13 @@ macro_rules! impl_field_parent {
                 // SAFETY: macro contract — `self` is the `$field` field of a
                 // live `$Parent`; recovering the parent and reborrowing as `&`
                 // for the lifetime of `&self` is sound.
-                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
+                yolo! { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
             }
             #[inline]
             $vm fn $mut_name(&mut self) -> *mut $Parent {
                 // SAFETY: macro contract — pointer arithmetic only; no
                 // reference is formed here.
-                unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
+                yolo! { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
             }
         }
     };
@@ -902,7 +903,7 @@ macro_rules! impl_field_parent {
             #[inline]
             $v fn $ref_name(&self) -> &$Parent {
                 // SAFETY: macro contract — see two-arm form above.
-                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
+                yolo! { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
             }
         }
     };
@@ -912,7 +913,7 @@ macro_rules! impl_field_parent {
             #[inline]
             $v fn $name(&mut self) -> *mut $Parent {
                 // SAFETY: macro contract — pointer arithmetic only.
-                unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
+                yolo! { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
             }
         }
     };
@@ -923,7 +924,7 @@ macro_rules! impl_field_parent {
             $v fn $name(&mut self) -> ::core::ptr::NonNull<$Parent> {
                 // SAFETY: macro contract — `self` is non-null, so the
                 // recovered parent pointer is too.
-                unsafe {
+                yolo! {
                     ::core::ptr::NonNull::new_unchecked(
                         $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)),
                     )
@@ -940,7 +941,7 @@ macro_rules! impl_field_parent {
             $v fn $name(&self) -> *mut $Parent {
                 // SAFETY: macro contract — pointer arithmetic only; the
                 // returned pointer is not dereferenced here.
-                unsafe {
+                yolo! {
                     $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self).cast_mut())
                 }
             }
@@ -971,7 +972,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
         // SAFETY: `OFFSET` is `offset_of!(Self, <field>)` per impl contract;
         // `&mut self` covers the whole `Self`, so the field reborrow is in-bounds
         // and uniquely borrowed for the returned lifetime.
-        unsafe { &mut *core::ptr::from_mut(self).byte_add(Self::OFFSET).cast::<F>() }
+        yolo! { &mut *core::ptr::from_mut(self).byte_add(Self::OFFSET).cast::<F>() }
     }
 
     /// `*mut Self` → `*mut self.<field>` (Zig: `&self.<field>` from raw `*Self`).
@@ -982,7 +983,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
     #[inline(always)]
     unsafe fn field_of(this: *mut Self) -> *mut F {
         // SAFETY: per fn contract.
-        unsafe { this.byte_add(Self::OFFSET).cast::<F>() }
+        yolo! { this.byte_add(Self::OFFSET).cast::<F>() }
     }
 
     /// Recover `*mut Self` from a pointer to its embedded `F` (Zig:
@@ -994,7 +995,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
     #[inline(always)]
     unsafe fn from_field_ptr(field: *mut F) -> *mut Self {
         // SAFETY: per fn contract.
-        unsafe { container_of::<Self, F>(field, Self::OFFSET) }
+        yolo! { container_of::<Self, F>(field, Self::OFFSET) }
     }
 }
 
@@ -1544,12 +1545,12 @@ pub(crate) mod strings_impl {
 
         // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
         #[cfg(not(windows))]
-        unsafe {
+        yolo! {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
         // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
         #[cfg(windows)]
-        unsafe {
+        yolo! {
             unsafe extern "C" {
                 fn _strnicmp(
                     a: *const core::ffi::c_char,
@@ -1682,7 +1683,7 @@ pub(crate) mod strings_impl {
             return slice.iter().all(|&b| b < 0x80);
         }
         // SAFETY: FFI reads exactly slice.len() bytes.
-        unsafe { simdutf::simdutf__validate_ascii(slice.as_ptr(), slice.len()) }
+        yolo! { simdutf::simdutf__validate_ascii(slice.as_ptr(), slice.len()) }
     }
 
     /// Index of first non-ASCII byte, or None if all-ASCII. simdutf-backed.
@@ -1695,7 +1696,7 @@ pub(crate) mod strings_impl {
         }
         // SAFETY: FFI reads exactly slice.len() bytes.
         let r =
-            unsafe { simdutf::simdutf__validate_ascii_with_errors(slice.as_ptr(), slice.len()) };
+            yolo! { simdutf::simdutf__validate_ascii_with_errors(slice.as_ptr(), slice.len()) };
         if r.status == simdutf::Status::SUCCESS {
             None
         } else {
@@ -1887,7 +1888,7 @@ pub(crate) mod strings_impl {
     pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
         // SAFETY: simdutf writes only initialized bytes into the spare slice and
         // reports the count; on SURROGATE we commit 0 and fall back below.
-        let r = unsafe {
+        let r = yolo! {
             crate::vec::fill_spare(list, 0, |spare| {
                 let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                     utf16.as_ptr(),
@@ -1948,7 +1949,7 @@ pub(crate) mod strings_impl {
         // `n_u16 * 2` readable bytes) into it as raw `u8`, then expose them as
         // initialized `u16` via `set_len`. No `&[u16]` is ever formed over the
         // possibly-misaligned source.
-        unsafe {
+        yolo! {
             core::ptr::copy_nonoverlapping(
                 le_bytes.as_ptr(),
                 aligned.as_mut_ptr().cast::<u8>(),
@@ -2007,7 +2008,7 @@ pub(crate) mod strings_impl {
         let need = simdutf::length::utf8::from::utf16::le(utf16);
         if need > 0 && need <= buf.len() {
             // SAFETY: buf has `need` writable bytes; simdutf reads exactly utf16.len() u16.
-            let r = unsafe {
+            let r = yolo! {
                 simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                     utf16.as_ptr(),
                     utf16.len(),
@@ -2245,7 +2246,7 @@ pub(crate) mod strings_impl {
         buf[..input.len()].copy_from_slice(input);
         let mut dst = [0u8; 28];
         // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-        unsafe {
+        yolo! {
             ares_inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
                 || ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
         }
@@ -2263,7 +2264,7 @@ pub(crate) mod strings_impl {
         buf[..input.len()].copy_from_slice(input);
         let mut dst = [0u8; 28];
         // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-        unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
+        yolo! { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
     }
 
     pub fn starts_with_uuid(s: &[u8]) -> bool {
@@ -2810,7 +2811,7 @@ pub mod ffi {
     pub unsafe fn cstr<'a>(p: *const core::ffi::c_char) -> &'a core::ffi::CStr {
         debug_assert!(!p.is_null(), "ffi::cstr: null pointer");
         // SAFETY: caller contract above — non-null, NUL-terminated, valid for 'a.
-        unsafe { core::ffi::CStr::from_ptr(p) }
+        yolo! { core::ffi::CStr::from_ptr(p) }
     }
 
     /// Convenience: `cstr(p).to_bytes()`. Dominant shape at call sites
@@ -2821,7 +2822,7 @@ pub mod ffi {
     #[inline(always)]
     pub unsafe fn cstr_bytes<'a>(p: *const core::ffi::c_char) -> &'a [u8] {
         // SAFETY: forwarded to `cstr`.
-        unsafe { cstr(p) }.to_bytes()
+        yolo! { cstr(p) }.to_bytes()
     }
 
     #[cfg(unix)]
@@ -2855,7 +2856,7 @@ pub mod ffi {
     #[inline]
     pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
         // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
-        unsafe { Box::<T>::new_zeroed().assume_init() }
+        yolo! { Box::<T>::new_zeroed().assume_init() }
     }
 
     /// Heap-allocate a `T` filled with zero bytes without the [`Zeroable`]
@@ -2867,7 +2868,7 @@ pub mod ffi {
     #[inline]
     pub unsafe fn boxed_zeroed_unchecked<T>() -> Box<T> {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
-        unsafe { Box::<T>::new_zeroed().assume_init() }
+        yolo! { Box::<T>::new_zeroed().assume_init() }
     }
 
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return
@@ -2918,7 +2919,7 @@ pub mod ffi {
         // SAFETY: `T: Zeroable` is exactly the assertion that the all-zero bit
         // pattern is a valid `T` (no `NonNull`/`NonZero`/ref/fn-ptr fields, no
         // niche enums). `core::mem::zeroed` is therefore sound for `T`.
-        unsafe { core::mem::zeroed() }
+        yolo! { core::mem::zeroed() }
     }
 
     /// Marker: the all-zero bit pattern is a valid value of `Self`.
@@ -2949,7 +2950,7 @@ pub mod ffi {
     #[inline(always)]
     pub const unsafe fn zeroed_unchecked<T>() -> T {
         // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
-        unsafe { core::mem::zeroed() }
+        yolo! { core::mem::zeroed() }
     }
 
     // ── Zeroable impls ──────────────────────────────────────────────────────
@@ -3115,7 +3116,7 @@ pub mod ffi {
         // site bounds `H: Fn*` (fn items / capture-less closures), and those
         // are always inhabited — uninhabited ZSTs (`!`, `Infallible`) do not
         // implement the `Fn` traits and so cannot reach a real instantiation.
-        unsafe { core::mem::zeroed() }
+        yolo! { core::mem::zeroed() }
     }
 
     /// Pointer to the calling thread's libc `errno` (Zig: `std.c._errno()`).
@@ -3175,7 +3176,7 @@ pub mod ffi {
     pub fn errno() -> core::ffi::c_int {
         // SAFETY: `errno_ptr()` returns a valid thread-local int* for the
         // calling thread's lifetime on every supported target.
-        unsafe { *errno_ptr() }
+        yolo! { *errno_ptr() }
     }
 }
 
@@ -3271,7 +3272,7 @@ pub mod asan {
 #[unsafe(no_mangle)]
 pub extern "C" fn __wrap_gettid() -> libc::pid_t {
     // SAFETY: SYS_gettid takes no arguments and never fails.
-    unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
+    yolo! { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }
 
 /// `bun.getTotalMemorySize()` (bun.zig:3498) — process-wide RAM budget,
@@ -3309,7 +3310,7 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     if out.is_null() || cap == 0 {
         return 0;
     }
-    unsafe {
+    yolo! {
         // FreeBSD's libexecinfo backtrace() takes/returns size_t; glibc/macOS use int.
         #[cfg(any(
             target_os = "freebsd",
@@ -3364,7 +3365,7 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     // `FramesToCapture` is bounded at `u16::MAX` by the API; clamp.
     let cap_u32 = cap.min(u16::MAX as usize) as u32;
     // SAFETY: FFI; `out` is valid for `cap` writes, hash ptr may be null.
-    let n = unsafe {
+    let n = yolo! {
         RtlCaptureStackBackTrace(
             0,
             cap_u32,
@@ -3377,7 +3378,7 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     // here, which is always > n and so a no-op).
     if begin > 0 && begin < n {
         // SAFETY: `begin < n ≤ cap`; copying `n - begin` words within `out[..n]`.
-        unsafe {
+        yolo! {
             core::ptr::copy(out.add(begin), out, n - begin);
         }
         return n - begin;

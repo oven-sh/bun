@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -36,7 +37,7 @@ impl bun_jsc::work_task::WorkTaskContext for WriteFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
         // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
-        unsafe { (*this).run(task) }
+        yolo! { (*this).run(task) }
     }
     fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
         WriteFile::then(this, global)
@@ -181,10 +182,10 @@ impl FileCloser for WriteFile {
 
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
-        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        let this = yolo! { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
+            let this = yolo! { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
         // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
@@ -204,7 +205,7 @@ impl FileCloser for WriteFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
         // recover parent.
-        let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
+        let this = yolo! { &mut *WriteFile::from_task_ptr(task) };
         this.close_after_io = false;
         WriteFile::update(this);
     }
@@ -218,7 +219,7 @@ impl WriteFile {
 
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request
-        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        let this = yolo! { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
         this.on_ready();
     }
 
@@ -234,7 +235,7 @@ impl WriteFile {
     pub fn on_io_error(this: *mut (), err: sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
-        let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
+        let this = yolo! { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
         this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask {
@@ -248,7 +249,7 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
         request.scheduled = false;
         // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
-        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        let this = yolo! { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
             ctx: std::ptr::from_mut::<WriteFile>(this).cast::<()>(),
@@ -374,7 +375,7 @@ impl WriteFile {
         let cb_ctx;
         let system_error;
         let total_written;
-        unsafe {
+        yolo! {
             cb = (*this).on_complete_callback;
             cb_ctx = (*this).on_complete_ctx;
             system_error = (*this).system_error.take();
@@ -438,7 +439,7 @@ impl WriteFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 // SAFETY: io_task is a backref set in run(); WorkTask owns lifetime.
-                unsafe { bun_jsc::work_task::WorkTask::on_finish(io_task) };
+                yolo! { bun_jsc::work_task::WorkTask::on_finish(io_task) };
             }
         }
     }
@@ -518,7 +519,7 @@ impl WriteFile {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_writable`/`init`;
         // recover parent.
-        let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
+        let this = yolo! { &mut *WriteFile::from_task_ptr(task) };
         // On macOS, we use one-shot mode, so we don't need to unregister.
         #[cfg(target_os = "macos")]
         {
@@ -690,7 +691,7 @@ mod windows_impl {
             // so we operate through the raw `write_file` pointer rather than
             // holding a `&mut` across those calls (Stacked Borrows: a `&mut`
             // local would dangle once `deinit` reclaims the Box).
-            unsafe {
+            yolo! {
                 (*write_file).io_request.loop_ = (*event_loop).uv_loop();
                 (*write_file).io_request.data = write_file.cast::<c_void>();
 
@@ -759,7 +760,7 @@ mod windows_impl {
         #[inline]
         pub fn loop_(&self) -> *mut uv::Loop {
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
-            unsafe { (*self.event_loop).uv_loop() }
+            yolo! { (*self.event_loop).uv_loop() }
         }
 
         /// # Safety
@@ -768,10 +769,10 @@ mod windows_impl {
         /// and must not be accessed again.
         pub unsafe fn open(this: *mut Self) -> Result<(), WriteFileWindowsError> {
             // SAFETY: caller contract — `this` is live.
-            unsafe { (*this).io_request.data = this.cast::<c_void>() };
+            yolo! { (*this).io_request.data = this.cast::<c_void>() };
             // SAFETY: caller contract — `this` is live; the borrow is released
             // before any path that may free `*this`.
-            let path = unsafe { &(*this).file_blob }
+            let path = yolo! { &(*this).file_blob }
                 .store
                 .get()
                 .as_ref()
@@ -785,7 +786,7 @@ mod windows_impl {
                 Ok(p) => p,
                 Err(_) => {
                     // SAFETY: caller contract — `this` is live; `throw` consumes it.
-                    return Err(unsafe {
+                    return Err(yolo! {
                         Self::throw(
                             this,
                             sys::Error {
@@ -799,7 +800,7 @@ mod windows_impl {
             };
             // SAFETY: (*this).io_request is a valid uv_fs_t embedded in a Box-allocated WriteFileWindows;
             // (*this).loop_() is the VM's libuv loop which outlives this request; posix_path is NUL-terminated.
-            let rc = unsafe {
+            let rc = yolo! {
                 uv::uv_fs_open(
                     (*this).loop_(),
                     &mut (*this).io_request,
@@ -821,7 +822,7 @@ mod windows_impl {
 
                 let path = path.into();
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
-                return Err(unsafe {
+                return Err(yolo! {
                     Self::throw(
                         this,
                         sys::Error {
@@ -834,7 +835,7 @@ mod windows_impl {
                 });
             } else {
                 // SAFETY: caller contract — `this` is live on the Ok path.
-                unsafe { (*this).owned_fd = true };
+                yolo! { (*this).owned_fd = true };
             }
             Ok(())
         }
@@ -844,21 +845,21 @@ mod windows_impl {
             // pointer (NOT `&mut`) because the paths below may free `*this`
             // (`throw`/`do_write_loop` → `deinit`), and a `&mut` argument/local
             // would be invalidated by that deallocation (Stacked Borrows).
-            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
+            let this: *mut WriteFileWindows = yolo! { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
                 this,
                 // SAFETY: req == &(*this).io_request; data was set to `this` in create_with_ctx/open.
-                unsafe { (*req).data }.cast::<WriteFileWindows>()
+                yolo! { (*req).data }.cast::<WriteFileWindows>()
             ));
             // SAFETY: `this` is live (libuv invokes us with the req we registered).
-            let rc = unsafe { (*this).io_request.result };
+            let rc = yolo! { (*this).io_request.result };
             #[cfg(debug_assertions)]
             bun_output::scoped_log!(
                 WriteFile,
                 "onOpen({}) = {}",
                 bstr::BStr::new(
                     // SAFETY: `this` is live.
-                    unsafe { &(*this).file_blob }
+                    yolo! { &(*this).file_blob }
                         .store
                         .get()
                         .as_ref()
@@ -874,20 +875,20 @@ mod windows_impl {
 
             if let Some(err) = rc.err_enum_e() {
                 // SAFETY: `this` is live.
-                if err == sys::E::NOENT && unsafe { (*this).mkdirp_if_not_exists } {
+                if err == sys::E::NOENT && yolo! { (*this).mkdirp_if_not_exists } {
                     // cleanup the request so we can reuse it later.
                     // SAFETY: req points to (*this).io_request (valid uv_fs_t); libuv permits cleanup
                     // between uses to reuse the same req struct.
-                    unsafe { (*req).deinit() };
+                    yolo! { (*req).deinit() };
 
                     // attempt to create the directory on another thread
                     // SAFETY: `this` is live; `mkdirp` does not free `*this`.
-                    unsafe { (*this).mkdirp() };
+                    yolo! { (*this).mkdirp() };
                     return;
                 }
 
                 // SAFETY: `this` is live; borrow released before `throw` consumes `*this`.
-                let path = unsafe { &(*this).file_blob }
+                let path = yolo! { &(*this).file_blob }
                     .store
                     .get()
                     .as_ref()
@@ -899,7 +900,7 @@ mod windows_impl {
                     .slice()
                     .into();
                 // SAFETY: `this` is live; `throw` consumes it.
-                match unsafe {
+                match yolo! {
                     Self::throw(
                         this,
                         sys::Error {
@@ -917,11 +918,11 @@ mod windows_impl {
             }
 
             // SAFETY: `this` is live.
-            unsafe { (*this).fd = i32::try_from(rc.int()).expect("int cast") };
+            yolo! { (*this).fd = i32::try_from(rc.int()).expect("int cast") };
 
             // the loop must be copied
             // SAFETY: `this` is live; on `Err`, `*this` has been freed and is not accessed again.
-            if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
+            if let Err(e) = yolo! { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
@@ -977,12 +978,12 @@ mod windows_impl {
         /// `*this` may be freed by the time this returns (via `throw`/`open` → `deinit`).
         unsafe fn on_mkdirp_complete(this: *mut Self) {
             // SAFETY: caller contract — `this` is live.
-            let err = unsafe { (*this).err.take() };
+            let err = yolo! { (*this).err.take() };
             if let Some(err_) = err {
                 // PORT NOTE: Zig `defer bun.default_allocator.free(err_.path)` — handled by Drop of
                 // sys::Error.path (owned Box<[u8]>); no explicit free needed.
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
-                match unsafe { Self::throw(this, err_) } {
+                match yolo! { Self::throw(this, err_) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
                 }
@@ -990,7 +991,7 @@ mod windows_impl {
             }
 
             // SAFETY: caller contract — `this` is live; on `Err`, `*this` has been freed.
-            if let Err(e) = unsafe { Self::open(this) } {
+            if let Err(e) = yolo! { Self::open(this) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
@@ -1006,14 +1007,14 @@ mod windows_impl {
             // pointer was stashed in `on_mkdirp_complete_concurrent` below;
             // the JS thread is the sole accessor at this point. `*this` may be
             // freed inside; not accessed afterward.
-            unsafe { Self::on_mkdirp_complete(this) };
+            yolo! { Self::on_mkdirp_complete(this) };
             Ok(())
         }
 
         fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
             // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
             // by `mkdirp` above; sole owner on this concurrent path.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
+            let this = yolo! { bun_ptr::callback_ctx::<WriteFileWindows>(ctx.cast()) };
             bun_output::scoped_log!(WriteFile, "mkdirp complete");
             debug_assert!(this.err.is_none());
             this.err = match err_ {
@@ -1021,7 +1022,7 @@ mod windows_impl {
                 bun_sys::Result::Ok(()) => None,
             };
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
-            unsafe {
+            yolo! {
                 (*this.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
                     ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
                 ));
@@ -1033,17 +1034,17 @@ mod windows_impl {
             // pointer (NOT `&mut`) because the paths below may free `*this`
             // (`throw`/`do_write_loop` → `deinit`), and a `&mut` would be
             // invalidated by that deallocation (Stacked Borrows).
-            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
+            let this: *mut WriteFileWindows = yolo! { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
                 this,
                 // SAFETY: req == &(*this).io_request; data was set to `this` in do_write_loop.
-                unsafe { (*req).data }.cast::<WriteFileWindows>()
+                yolo! { (*req).data }.cast::<WriteFileWindows>()
             ));
             // SAFETY: `this` is live (libuv invokes us with the req we registered).
-            let rc = unsafe { (*this).io_request.result };
+            let rc = yolo! { (*this).io_request.result };
             if let Some(err) = rc.errno() {
                 // SAFETY: `this` is live; `throw` consumes it.
-                match unsafe {
+                match yolo! {
                     Self::throw(
                         this,
                         sys::Error {
@@ -1060,9 +1061,9 @@ mod windows_impl {
             }
 
             // SAFETY: `this` is live.
-            unsafe { (*this).total_written += usize::try_from(rc.int()).expect("int cast") };
+            yolo! { (*this).total_written += usize::try_from(rc.int()).expect("int cast") };
             // SAFETY: `this` is live; on `Err`, `*this` has been freed and is not accessed again.
-            if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {
+            if let Err(e) = yolo! { Self::do_write_loop(this, (*this).loop_()) } {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
@@ -1077,11 +1078,11 @@ mod windows_impl {
             // SAFETY: VM-owned EventLoop lives for process lifetime; the guard
             // forms short-lived `&mut` only at the enter/exit call sites (see
             // EventLoopEnterGuard docs) so it does not alias `*this`.
-            let _exit = unsafe { jsc::event_loop::EventLoop::enter_scope((*this).event_loop) };
+            let _exit = yolo! { jsc::event_loop::EventLoop::enter_scope((*this).event_loop) };
 
             // We don't need to enqueue task since this is already in a task.
             // SAFETY: caller contract — `this` is live; consumed here.
-            unsafe { Self::run_from_js_thread(this) }
+            yolo! { Self::run_from_js_thread(this) }
         }
 
         /// # Safety
@@ -1090,20 +1091,20 @@ mod windows_impl {
         pub unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
             // SAFETY: caller contract — `this` is live; copy out everything we
             // need before `deinit` frees the allocation.
-            let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
+            let (cb, cb_ctx) = yolo! { ((*this).on_complete_callback, (*this).on_complete_ctx) };
 
             // SAFETY: caller contract — `this` is live.
-            if let Some(err) = unsafe { (*this).to_system_error() } {
+            if let Some(err) = yolo! { (*this).to_system_error() } {
                 // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
+                yolo! { Self::deinit(this) };
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(err)) {
                     return e.into();
                 }
             } else {
                 // SAFETY: caller contract — `this` is live.
-                let wrote = unsafe { (*this).total_written };
+                let wrote = yolo! { (*this).total_written };
                 // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
+                yolo! { Self::deinit(this) };
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Result(wrote as SizeType)) {
                     return e.into();
                 }
@@ -1117,7 +1118,7 @@ mod windows_impl {
         /// On return, `*this` has been freed and must not be accessed again.
         pub unsafe fn throw(this: *mut Self, err: sys::Error) -> WriteFileWindowsError {
             // SAFETY: caller contract — `this` is live.
-            unsafe {
+            yolo! {
                 debug_assert!((*this).err.is_none());
                 (*this).err = Some(err);
                 Self::on_finish(this)
@@ -1155,29 +1156,29 @@ mod windows_impl {
             uv_loop: *mut uv::Loop,
         ) -> Result<(), WriteFileWindowsError> {
             // SAFETY: caller contract — `this` is live.
-            let remain_full = unsafe { (*this).bytes_blob.shared_view() };
+            let remain_full = yolo! { (*this).bytes_blob.shared_view() };
             // SAFETY: caller contract — `this` is live.
-            let off = unsafe { (*this).total_written }.min(remain_full.len());
+            let off = yolo! { (*this).total_written }.min(remain_full.len());
             let remain = &remain_full[off..];
 
             // SAFETY: caller contract — `this` is live.
-            if remain.is_empty() || unsafe { (*this).err.is_some() } {
+            if remain.is_empty() || yolo! { (*this).err.is_some() } {
                 // SAFETY: caller contract — `this` is live; consumed here.
-                return Err(unsafe { Self::on_finish(this) });
+                return Err(yolo! { Self::on_finish(this) });
             }
 
             // SAFETY: caller contract — `this` is live.
-            unsafe {
+            yolo! {
                 (*this).uv_bufs[0].base = remain.as_ptr().cast_mut();
                 (*this).uv_bufs[0].len = remain.len() as u32;
             }
 
             // SAFETY: (*this).io_request is a valid uv_fs_t embedded in this Box-allocated struct;
             // cleanup is safe to call between uses of the same req.
-            unsafe { uv::uv_fs_req_cleanup(&mut (*this).io_request) };
+            yolo! { uv::uv_fs_req_cleanup(&mut (*this).io_request) };
             // SAFETY: uv_loop is the VM's libuv loop (outlives `*this`); io_request/uv_bufs are
             // embedded in `*this` which stays alive until on_write_complete fires; fd is open.
-            let rc = unsafe {
+            let rc = yolo! {
                 uv::uv_fs_write(
                     uv_loop,
                     &mut (*this).io_request,
@@ -1189,7 +1190,7 @@ mod windows_impl {
                 )
             };
             // SAFETY: caller contract — `this` is live.
-            unsafe { (*this).io_request.data = this.cast::<c_void>() };
+            yolo! { (*this).io_request.data = this.cast::<c_void>() };
             if rc.int() == 0 {
                 // EINPROGRESS
                 return Ok(());
@@ -1197,7 +1198,7 @@ mod windows_impl {
 
             if let Some(err) = rc.errno() {
                 // SAFETY: caller contract — `this` is live; consumed here.
-                return Err(unsafe {
+                return Err(yolo! {
                     Self::throw(
                         this,
                         sys::Error {
@@ -1233,7 +1234,7 @@ mod windows_impl {
         /// points into is UB even if the reference is never used again).
         pub unsafe fn deinit(this: *mut Self) {
             // SAFETY: caller contract — `this` is live.
-            unsafe {
+            yolo! {
                 let fd = (*this).fd;
                 if fd > 0 && (*this).owned_fd {
                     aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
@@ -1285,7 +1286,7 @@ impl WriteFilePromise {
         // SAFETY: handler is a Box-allocated WriteFilePromise (see Blob.zig:1172); consumed here.
         // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`,
         // which stays valid past `drop(heap::take(handler))`.
-        let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = unsafe {
+        let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = yolo! {
             let h = &mut *handler;
             let promise = std::ptr::from_mut::<JSPromise>(h.promise.swap());
             let global_this = &*h.global_this;
@@ -1293,7 +1294,7 @@ impl WriteFilePromise {
             (promise, global_this)
         };
         // SAFETY: GC-owned cell; sole `&mut` borrow at each call site.
-        let promise = unsafe { &mut *promise };
+        let promise = yolo! { &mut *promise };
         let value = promise.to_js();
         value.ensure_still_alive();
         match count {
@@ -1334,12 +1335,12 @@ impl WriteFileWaitFromLockedValueTask {
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {
         // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
-        let this_ref = unsafe { &mut *this };
+        let this_ref = yolo! { &mut *this };
         // `get()` returns a GC-owned cell, valid past `heap::take(this)`.
         // SAFETY: GC-heap allocation (not inside `*this`); sole `&mut` borrow on
         // the single JS thread. Hoisted once so each match arm calls through it
-        // safely instead of repeating `unsafe { &mut *promise }` per site.
-        let promise: &mut JSPromise = unsafe { &mut *this_ref.promise.get() };
+        // safely instead of repeating `yolo! { &mut *promise }` per site.
+        let promise: &mut JSPromise = yolo! { &mut *this_ref.promise.get() };
         // Copy the `BackRef` out so the borrow is detached from `this_ref`
         // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
         let global_ref = this_ref.global_this;
@@ -1360,14 +1361,14 @@ impl WriteFileWaitFromLockedValueTask {
                 file_blob.detach();
                 let _ = value.use_();
                 // SAFETY: consume Box allocation (drops `promise`/`file_blob` Strongs).
-                unsafe { drop(bun_core::heap::take(this)) };
+                yolo! { drop(bun_core::heap::take(this)) };
                 promise.reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
                 file_blob.detach();
                 let _ = value.use_();
                 // SAFETY: consume Box allocation.
-                unsafe { drop(bun_core::heap::take(this)) };
+                yolo! { drop(bun_core::heap::take(this)) };
                 promise.reject(
                     global_this,
                     Ok(ZigString::init(b"Body was used after it was consumed")
@@ -1394,7 +1395,7 @@ impl WriteFileWaitFromLockedValueTask {
                     Err(err) => {
                         file_blob.detach();
                         // SAFETY: consume Box allocation.
-                        unsafe { drop(bun_core::heap::take(this)) };
+                        yolo! { drop(bun_core::heap::take(this)) };
                         promise.reject(global_this, Err(err))?;
                         return Ok(());
                     }
@@ -1406,7 +1407,7 @@ impl WriteFileWaitFromLockedValueTask {
                 // declared after) drops first.
                 // SAFETY: `this` was Box-allocated (see Self::new). `this_ref` is dead
                 // past this point — all further field access goes through `_this_box`.
-                let _this_box = unsafe { bun_core::heap::take(this) };
+                let _this_box = yolo! { bun_core::heap::take(this) };
                 let _g = scopeguard::guard((), |()| file_blob.detach());
 
                 if let Some(p) = new_promise.as_any_promise() {

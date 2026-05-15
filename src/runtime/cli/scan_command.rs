@@ -1,3 +1,4 @@
+use bun_yolo::yolo;
 use crate::Command;
 use bun_core::{Global, Output, err};
 use bun_install::lockfile::LoadResult;
@@ -65,14 +66,14 @@ impl ScanCommand {
         {
             let pm_ptr: *mut PackageManager = manager;
             // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-            let log: &mut bun_ast::Log = unsafe { &mut *(*pm_ptr).log };
+            let log: &mut bun_ast::Log = yolo! { &mut *(*pm_ptr).log };
             // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
             // no other live `&mut Lockfile` exists at this point.
-            let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
+            let lockfile: &mut Lockfile = yolo! { &mut *(*pm_ptr).lockfile };
             match lockfile.load_from_cwd::<true>(
                 // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
                 // fields disjoint from `lockfile` (Zig invariant).
-                Some(unsafe { &mut *pm_ptr }),
+                Some(yolo! { &mut *pm_ptr }),
                 log,
             ) {
                 LoadResult::NotFound => {

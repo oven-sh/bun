@@ -4,6 +4,7 @@
 //! so that mid-tier crates (`bun_install`) can call them directly. The
 //! `bun_runtime` crate re-exports these for its own callers.
 
+use bun_yolo::yolo;
 use bstr::BStr;
 use bun_bundler::options;
 use bun_core::ZStr;
@@ -70,12 +71,12 @@ fn load_bunfig(
     debug_assert!(!log_ptr.is_null());
     // SAFETY: `ctx.log` is the process-global Log written once during
     // single-threaded CLI startup; no other `&mut` to it is live here.
-    let original_level = unsafe { (*log_ptr).level };
+    let original_level = yolo! { (*log_ptr).level };
     // SAFETY: see above.
-    unsafe { (*log_ptr).level = bun_ast::Level::Warn };
+    yolo! { (*log_ptr).level = bun_ast::Level::Warn };
     let _guard = scopeguard::guard(original_level, move |lvl| {
         // SAFETY: same as above; runs on the same thread.
-        unsafe { (*log_ptr).level = lvl };
+        yolo! { (*log_ptr).level = lvl };
     });
     ctx.debug.loaded_bunfig = true;
     Bunfig::parse(cmd, &source, ctx)
@@ -124,7 +125,7 @@ pub fn load_config_path(
 #[cold]
 fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: bun_core::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
-    let log = unsafe { &mut *log };
+    let log = yolo! { &mut *log };
     if log.has_any() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Output::print_error("\n");
@@ -143,7 +144,7 @@ pub fn load_config(
     if user_config_path_.is_none() {
         if let Some(graph) = StandaloneModuleGraph::get() {
             // SAFETY: `get()` returns a non-null process-global pointer when Some.
-            if unsafe { (*graph).flags }.contains(
+            if yolo! { (*graph).flags }.contains(
                 bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG,
             ) {
                 return Ok(());

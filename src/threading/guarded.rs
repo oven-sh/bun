@@ -1,5 +1,6 @@
 //! A wrapper around a mutex, and a value protected by the mutex.
 
+use bun_yolo::yolo;
 use core::cell::UnsafeCell;
 
 use crate::Mutex;
@@ -153,7 +154,7 @@ impl<'a, Value, M: RawMutex> core::ops::Deref for GuardedLock<'a, Value, M> {
         // SAFETY: the mutex is held for the lifetime of this guard; no other access to
         // `unsynchronized_value` can exist until `Drop` releases it. `UnsafeCell` provides the
         // interior-mutability provenance for this `&self → &Value` projection.
-        unsafe { &*self.guarded.unsynchronized_value.get() }
+        yolo! { &*self.guarded.unsynchronized_value.get() }
     }
 }
 
@@ -161,7 +162,7 @@ impl<'a, Value, M: RawMutex> core::ops::DerefMut for GuardedLock<'a, Value, M> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Value {
         // SAFETY: see `Deref::deref`.
-        unsafe { &mut *self.guarded.unsynchronized_value.get() }
+        yolo! { &mut *self.guarded.unsynchronized_value.get() }
     }
 }
 

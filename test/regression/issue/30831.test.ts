@@ -2,7 +2,7 @@
 //
 // `child_process.spawn` was unable to pipe one subprocess's stdio stream into
 // another: `spawn(..., { stdio: [..., otherProc.stdin, ...] })` threw
-// `TODO: stream.Readable stdio @ N` because `nodeToBun()` in
+// `stream.Readable stdio @ N` (unsupported) because `nodeToBun()` in
 // `node:child_process` looked for `.fd` / `_handle.fd` on the stream (Node's
 // `subprocess.stdin` is a `net.Socket` that exposes its pipe fd there), but
 // Bun's `subprocess.stdin` is a `WriteStream` wrapping a `FileSink` and
@@ -82,8 +82,8 @@ test("spawn({ stdio: [..., childB.stdin, ...] }) pipes A's stdout into B's stdin
 test("spawn({ stdio: [otherProc.stdout, ...] }) pipes A's stdout into B's stdin (reverse direction)", async () => {
   // Flip the direction: pSource owns the pipe (its stdout is piped), and
   // pFilter is spawned with pSource.stdout as its stdin. Node supports both
-  // shapes; before the fix Bun threw `TODO: stream.Readable stdio @ 0` here
-  // too.
+  // shapes; before the fix Bun raised the same unsupported-stream-stdio
+  // error here too.
   using pSource = spawn(bunExe(), ["-e", 'process.stdout.write("hello world")'], {
     stdio: ["ignore", "pipe", "pipe"],
     env: bunEnv,

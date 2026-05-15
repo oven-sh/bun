@@ -1677,7 +1677,7 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
  *   - `item._handle.fd` is a number (Node's `net.Socket`-backed subprocess
  *     streams expose the pipe fd here — we don't emit this but accept it)
  * Returns `undefined` when no fd is available so the caller can raise the
- * `TODO: stream.Readable/Writable stdio` error.
+ * stream-stdio-unsupported error.
  */
 function extractStreamFd(item: any): number | undefined {
   if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;

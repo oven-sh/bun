@@ -31,6 +31,10 @@ pub mod js_bindings {
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
+            (
+                "getFaultSignalHandlers",
+                __jsc_host_js_get_fault_signal_handlers,
+            ),
         ];
         for &(name, func) in ENTRIES {
             obj.put(
@@ -121,6 +125,62 @@ pub mod js_bindings {
     ) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
+    }
+
+    /// Snapshot the currently-installed `sa_sigaction` for each CPU-fault
+    /// signal. Returned as `{ SIGSEGV, SIGBUS, SIGILL, SIGFPE }` with hex
+    /// strings so JS can compare exact addresses across snapshots without
+    /// f64 rounding.
+    ///
+    /// Used to verify that JSC's `jscSignalHandler` — which handles VMTraps'
+    /// HLT-breakpoint SIGSEGV on DFG/FTL code — survives the CLI sync-spawn
+    /// signal-forwarding scope (`SignalForwarding` in `src/spawn/process.rs`).
+    /// The forwarding set excludes these signals by construction, so the
+    /// handlers must be identical before and after; a regression here means
+    /// something in that scope reinstalled a fault handler with `oldact=NULL`
+    /// and VMTraps will route its next HLT to the wrong place.
+    #[bun_jsc::host_fn]
+    pub fn js_get_fault_signal_handlers(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(unix)]
+        {
+            // Query via libc rather than duplicating the per-libc struct
+            // layout (`sa_flags` offset differs across glibc/musl/Darwin) in
+            // the JS caller. `sa_handler` / `sa_sigaction` are a union at
+            // offset 0 everywhere we ship, but going through libc keeps this
+            // honest.
+            fn handler(sig: libc::c_int) -> usize {
+                // SAFETY: zeroed sigaction is a valid query buffer; `act=NULL`
+                // is the documented "read current disposition" form.
+                let mut current: libc::sigaction = unsafe { core::mem::zeroed() };
+                // SAFETY: out-pointer to stack-local, act=NULL.
+                if unsafe { libc::sigaction(sig, core::ptr::null(), &raw mut current) } != 0 {
+                    return 0;
+                }
+                current.sa_sigaction
+            }
+            let obj = JSValue::create_empty_object(global, 4);
+            for (name, sig) in [
+                ("SIGSEGV", libc::SIGSEGV),
+                ("SIGBUS", libc::SIGBUS),
+                ("SIGILL", libc::SIGILL),
+                ("SIGFPE", libc::SIGFPE),
+            ] {
+                // Hex string: 64-bit addresses survive the trip through JS
+                // without losing precision, and equal strings ⇔ equal
+                // pointers.
+                let mut s = BunString::create_format(format_args!("{:x}", handler(sig)));
+                obj.put(global, name, s.transfer_to_js(global)?);
+            }
+            Ok(obj)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = global;
+            Ok(JSValue::UNDEFINED)
+        }
     }
 
     #[bun_jsc::host_fn]

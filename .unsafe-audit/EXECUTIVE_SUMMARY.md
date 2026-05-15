@@ -21,7 +21,7 @@ A blanket "Bun has too much unsafe" critique doesn't survive the audit. The work
 
 ### 2. Bun's maintainers have already removed thousands of unsafe blocks
 
-The audit's [soundness archeology](audit/synthesis/PASS4-soundness-archeology.md) mined the project's commit history and found **2,989 unsafe blocks already removed** in tagged "unsafe -N: \<category\>" commits, plus **17+ commits in a 6-day window** fixing the exact `&mut self` × re-entrant-FFI noalias miscompile family the audit highlights. **Every Tier-1 finding the audit reports maps to a maintainer commit class** — the audit is the next batch of bugs the project's own remediation campaign hasn't reached yet, not novel hypothesis from outsiders.
+The audit's [soundness archeology](audit/synthesis/PASS4-soundness-archeology.md) mined the project's commit history and found **2,989 unsafe blocks already removed** in tagged "unsafe -N: \<category\>" commits, plus **17+ commits in a 6-day window** fixing the exact `&mut self` × re-entrant-FFI noalias miscompile family the audit highlights. **Most major Tier-1 finding classes map to maintainer-authored fix classes, with exceptions explicitly noted in the archeology table** — the audit is the next batch of bugs in classes the project's own remediation campaign has already treated as real, not a pile of outsider hypotheticals.
 
 A smoking-gun maintainer commit message: *"Zig has UB here; one SIMD scan is cheap, panic beats heap corruption."* The Zig parent had UB; the Rust port is strengthening, not faithfully replicating.
 

@@ -607,16 +607,19 @@ For each Pass-2/3 finding, the matching maintainer commit class:
 | **RT-DOC-001** 'static widening on borrowed byte slice | `9f64cf2c1d phase-h: unsafe-wrap r4 — diff-review caught 1 UB: ContextData::log_mut(&self)->&mut Log mut_from_ref anti-pattern — made unsafe fn` — same class, same fix recommendation |
 | **CODEX-PASS2-safety-comment-gap** | `87764d73fa` and `12e47d4571` SAFETY-comment-LIED |
 
-**Every tier-1 and tier-2 audit finding has at least one matching
-maintainer-authored commit message in tree.** That is the strongest possible
-corroborating evidence short of a CVE.
+**Most major tier-1 and tier-2 audit finding classes have matching
+maintainer-authored commit messages in tree.** Rows without an exact prior
+commit are marked explicitly in the table above. This is strong corroborating
+evidence that the audit is finding the next batch of bugs in classes the
+project has already treated as real, not proof that every individual finding
+has a one-to-one historical predecessor.
 
 ## 11. Final framing for marketing / report exec summary
 
 Useful sentences the report can quote:
 
-> "Pass 4 confirmed that **every tier-1 audit finding maps to a class of bug
-> the Bun maintainers have already documented and fixed elsewhere in the
+> "Pass 4 confirmed that **most major tier-1 audit finding classes map to bug
+> classes the Bun maintainers have already documented and fixed elsewhere in the
 > codebase**. The audit is not discovering speculative hazards — it is
 > identifying the *next batch* of sites in classes the project's own
 > commit log calls *unsound*, *LIED about*, *Zig has UB here*, *cross-

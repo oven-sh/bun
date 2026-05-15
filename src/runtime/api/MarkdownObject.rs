@@ -2,6 +2,7 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
+use bun_paths::{self as paths, PathBuffer};
 // PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
@@ -47,8 +48,10 @@ pub fn create(global_this: &JSGlobalObject) -> JSValue {
 
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
-/// light?, columns? }`. By default colors are enabled, hyperlinks are
-/// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
+/// kittyGraphics?, light?, columns?, cwd? }`. By default colors are enabled,
+/// hyperlinks are disabled (the caller doesn't know if stdout is a TTY), and
+/// columns is 80. `cwd` is the base directory used to resolve relative image
+/// `src` paths when rendering Kitty graphics — defaults to the process cwd.
 #[bun_jsc::host_fn]
 pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
@@ -75,6 +78,15 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
         remote_image_paths: None,
         image_base_dir: None,
     };
+    // `cwd` storage lives on this stack frame so the `&[u8]` slice inside
+    // `theme.image_base_dir` stays valid until `render_to_ansi` returns.
+    // The resolved-absolute form is stored in `cwd_abs_buf`; the `Vec` is
+    // a heap fallback only used when the user-supplied value is already
+    // absolute (so we don't need to join it with the process cwd).
+    let mut cwd_abs_buf = PathBuffer::uninit();
+    let mut cwd_owned: Vec<u8> = Vec::new();
+    let mut cwd_abs_len: usize = 0;
+    let mut cwd_is_owned = false;
     if theme_value.is_object() {
         if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
             theme.colors = v;
@@ -98,6 +110,56 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                 };
             }
         }
+        // `cwd` is the base directory used to resolve relative image
+        // `src` paths when kittyGraphics is on. Must be stored as an
+        // absolute path — downstream, `resolve_local_image_path` feeds
+        // it to `bun_paths::resolve_path::join_abs_string_buf`, which
+        // takes its `cwd` argument as already-absolute (on Windows it
+        // even asserts `is_absolute_windows(cwd)` in debug). A relative
+        // value like `"./assets"` would otherwise resolve against `/`
+        // on POSIX or panic on Windows debug. Resolve against the
+        // process cwd here, mirroring the CLI caller in
+        // `src/runtime/cli/run_command.rs:render_markdown_file_and_exit`.
+        if let Some(cwd_val) = theme_value.get(global_this, "cwd")? {
+            if cwd_val.is_string() {
+                let cwd_str = cwd_val.to_slice(global_this)?;
+                let cwd_bytes = cwd_str.slice();
+                if !cwd_bytes.is_empty() {
+                    if paths::is_absolute(cwd_bytes) {
+                        // Dupe into an owned Vec so the `ZigString::Slice`
+                        // backing `cwd_str` can be dropped safely.
+                        cwd_owned = cwd_bytes.to_vec();
+                        cwd_is_owned = true;
+                    } else {
+                        let mut proc_cwd_buf = PathBuffer::uninit();
+                        match bun_core::getcwd(&mut proc_cwd_buf) {
+                            Ok(proc_cwd) => {
+                                let joined = paths::resolve_path::join_abs_string_buf::<
+                                    paths::resolve_path::platform::Auto,
+                                >(
+                                    proc_cwd,
+                                    &mut cwd_abs_buf,
+                                    &[cwd_bytes],
+                                );
+                                cwd_abs_len = joined.len();
+                            }
+                            // getcwd failure: leave image_base_dir None so
+                            // the renderer falls back to the process cwd
+                            // (same as if `cwd` wasn't passed).
+                            Err(_) => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Wire the absolutized cwd slice into the theme. We can't do this
+    // inside the `if theme_value.is_object()` block because the borrow
+    // of `cwd_owned` / `cwd_abs_buf` would outlive the block.
+    if cwd_is_owned {
+        theme.image_base_dir = Some(cwd_owned.as_slice());
+    } else if cwd_abs_len > 0 {
+        theme.image_base_dir = Some(&cwd_abs_buf[..cwd_abs_len]);
     }
 
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {

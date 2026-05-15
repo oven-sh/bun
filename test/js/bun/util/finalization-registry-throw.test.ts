@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test.concurrent("FinalizationRegistry callback that throws is reported as uncaughtException", async () => {

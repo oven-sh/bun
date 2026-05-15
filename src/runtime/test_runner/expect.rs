@@ -1361,7 +1361,7 @@ impl Expect {
                 bun_jsc::JSPropertyIteratorOptions {
                     skip_empty_name: false,
                     include_value: true,
-                    own_properties_only: false,
+                    own_properties_only: true,
                     observable: true,
                     only_non_index_properties: false,
                 },

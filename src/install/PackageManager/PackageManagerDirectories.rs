@@ -1108,31 +1108,63 @@ pub fn linked_package_path<'a>(
         return None;
     }
     // Cache must be populated before any worker calls this (asserted
-    // at the top of install_isolated_packages). On Windows the cache
-    // stores no names — fall through to the &mut path below.
-    if !this.linked_names_populated || cfg!(windows) {
+    // at the top of install_isolated_packages).
+    if !this.linked_names_populated {
         return None;
     }
-    if this.linked_names.is_empty() {
-        return None;
-    }
-    if !this.linked_names.contains_key(pkg_name) {
-        return None;
-    }
-    // Populate guarantees global_link_dir_path is set whenever at least
-    // one link was registered (we recorded names from its readdir);
-    // if we got here via a populated map with entries, the path is
-    // non-empty.
+    // Populate couldn't set up the global link dir — no links on
+    // this machine. Don't try to re-init; that path needs `&mut`
+    // and `Global::exit(1)`s on failure.
     if this.global_link_dir_path.is_empty() {
         return None;
     }
-    let dir_path_ref: &[u8] = &this.global_link_dir_path;
-    let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-        dir_path_ref,
-        buf,
-        &[pkg_name],
-    );
-    Some(joined)
+
+    // POSIX: hashmap keyed by UTF-8 name.
+    #[cfg(not(windows))]
+    {
+        if this.linked_names.is_empty() {
+            return None;
+        }
+        if !this.linked_names.contains_key(pkg_name) {
+            return None;
+        }
+        let dir_path_ref: &[u8] = &this.global_link_dir_path;
+        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            dir_path_ref,
+            buf,
+            &[pkg_name],
+        );
+        Some(joined)
+    }
+
+    // Windows: readdir yielded WTF-16 we couldn't key into the UTF-8
+    // map; `linked_names_any_on_windows` records whether any
+    // link-shaped entry was seen. Short-circuit if none; otherwise
+    // re-probe via GetFileAttributesW (read-only, safe on workers —
+    // `global_link_dir_path` is immutable post-populate).
+    #[cfg(windows)]
+    {
+        if !this.linked_names_any_on_windows {
+            return None;
+        }
+        let dir_path_ref: &[u8] = &this.global_link_dir_path;
+        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            dir_path_ref,
+            buf,
+            &[pkg_name],
+        );
+        match sys::get_file_attributes(joined) {
+            Some(attrs) if attrs.is_reparse_point => {}
+            _ => return None,
+        }
+        match bun_sys::open_dir_for_iteration(Fd::cwd(), joined) {
+            bun_sys::Result::Ok(fd) => {
+                let _close = bun_sys::CloseOnDrop::new(fd);
+                Some(joined)
+            }
+            bun_sys::Result::Err(_) => None,
+        }
+    }
 }
 
 /// Non-cached fallback: main-thread-only. Must hold `&mut PackageManager`

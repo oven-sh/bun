@@ -515,7 +515,7 @@ function installTimerHooks() {
   const origClearImmediate = g.clearImmediate;
 
   function wrapTimer(type: string, orig: Function, isInterval: boolean) {
-    return function wrappedTimerCreate(this: any, callback: any, ...rest: any[]) {
+    const wrapped = function wrappedTimerCreate(this: any, callback: any, ...rest: any[]) {
       if (!$isCallable(callback) || activeHooks.length === 0) {
         return orig.$apply(this, arguments);
       }
@@ -555,6 +555,19 @@ function installTimerHooks() {
       }
       return timer;
     };
+    // Forward `util.promisify.custom` (and `customPromisifyArgs`, `.name`,
+    // `.length`) from the native so `util.promisify(setTimeout)` keeps
+    // returning `timers/promises.setTimeout` after hooks are enabled. Without
+    // this, promisify's custom-symbol lookup misses and it falls back to the
+    // generic errback wrapper, which calls `setTimeout(delay, nodeCallback)`
+    // — argument order is wrong and the promise never resolves. See
+    // `src/js/internal/promisify.ts` for how the custom symbols are wired.
+    const kCustomPromisify = Symbol.for("nodejs.util.promisify.custom");
+    const customPromisify = (orig as any)[kCustomPromisify];
+    if (customPromisify !== undefined) {
+      Object.defineProperty(wrapped, kCustomPromisify, { value: customPromisify, configurable: true });
+    }
+    return wrapped;
   }
 
   // `expectedKind` mirrors Node's strict pairing: `clearTimeout`/

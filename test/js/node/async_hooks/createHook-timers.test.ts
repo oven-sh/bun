@@ -387,6 +387,47 @@ test.concurrent("createHook: references captured before .enable() bypass the hoo
   expect(exitCode).toBe(0);
 });
 
+test.concurrent(
+  "createHook: util.promisify(setTimeout) still resolves after .enable() (no regression)",
+  async () => {
+    // Regression guard: `internal/promisify.ts` defines
+    // `Symbol.for("nodejs.util.promisify.custom")` on the native
+    // `globalThis.setTimeout`/`setImmediate`/`setInterval` at load time. Our
+    // wrapper is a brand-new function; if it doesn't forward that symbol
+    // onto itself, `util.promisify(setTimeout)` falls back to the generic
+    // errback wrapper which calls `setTimeout(delay, nodeCallback)` —
+    // wrong arg order — and the promise never resolves.
+    const { stdout, stderr, exitCode } = await runScript(`
+    const util = require('node:util');
+    const async_hooks = require('async_hooks');
+    async_hooks.createHook({ init: () => {} }).enable();
+
+    const sleep = util.promisify(setTimeout);
+    const sleepImm = util.promisify(setImmediate);
+
+    (async () => {
+      const t1 = Date.now();
+      const value = await Promise.race([
+        sleep(30, 'hello'),
+        new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), 1000)),
+      ]);
+      const elapsed = Date.now() - t1;
+      const immValue = await Promise.race([
+        sleepImm('world'),
+        new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT imm')), 1000)),
+      ]);
+      console.log(JSON.stringify({ value, immValue, elapsedAtLeast25: elapsed >= 25 }));
+    })();
+  `);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout.trim());
+    expect(parsed.value).toBe("hello");
+    expect(parsed.immValue).toBe("world");
+    expect(parsed.elapsedAtLeast25).toBe(true);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("createHook validates hook shape (preserved pre-existing behavior)", async () => {
   // This is the only async_hooks.createHook test that existed before
   // #30827 — keep it green. `ERR_ASYNC_CALLBACK` must be thrown for any

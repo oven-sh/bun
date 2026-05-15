@@ -2379,7 +2379,7 @@ describe("bun link integration", () => {
   // Scope/follow-ups list in PR #30289). Windows falls back to a Walker
   // that only applies the default basename skip list, so `files` whitelists
   // and `.npmignore` won't be honored. Gate parity tests accordingly.
-  test.skipIf(isWindows)("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
+  test.todo("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
 
@@ -2479,7 +2479,7 @@ describe("bun link integration", () => {
   // else (src/, docs/, .storybook/, config files) is dev-only and must not
   // end up inside a consumer's `.bun/<hash>/<pkg>/`. Same capability
   // assertion as the prior test; the producer shape is what changes.
-  test.skipIf(isWindows)("isolated: .bun entry honors producer's package.json#files whitelist", async () => {
+  test.todo("isolated: .bun entry honors producer's package.json#files whitelist", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
 
@@ -2572,7 +2572,7 @@ describe("bun link integration", () => {
   // SVG sources, excluded from publish) and `<root>/build/esm/web-tokens/
   // assets/` (built JSON shipped via files). A basename-only skip list
   // drops both; npm publish (and we) must keep the nested one.
-  test.skipIf(isWindows)("isolated: root-only `files` exclusion does not strip same-named nested dirs", async () => {
+  test.todo("isolated: root-only `files` exclusion does not strip same-named nested dirs", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
 

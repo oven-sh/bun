@@ -902,6 +902,292 @@ pub fn global_link_dir_and_path(this: &mut PackageManager) -> (Fd, &[u8]) {
     (dir, &this.global_link_dir_path)
 }
 
+/// Returns true when `entry` at `dir_fd` should be treated as a
+/// `bun link` registration: a symlink whose target is an existing
+/// directory. On filesystems that don't populate `getdents64`'s
+/// `d_type` field (NFS / FUSE / XFS with ftype=0), `kind` arrives as
+/// `Unknown`; disambiguate with `lstatat` before following. A
+/// dangling link (producer dir moved/deleted without `bun unlink`)
+/// would otherwise make the installer skip the registry download
+/// and then fail ENOENT in the worker with no fallback.
+fn is_linked_entry(kind: sys::EntryKind, dir_fd: Fd, name: &bun_core::ZStr) -> bool {
+    let is_symlink = match kind {
+        sys::EntryKind::SymLink => true,
+        sys::EntryKind::Unknown => match sys::lstatat(dir_fd, name) {
+            Ok(st) => sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap_or(0)),
+            Err(_) => false,
+        },
+        _ => return false,
+    };
+    if !is_symlink {
+        return false;
+    }
+    // Follow the symlink and confirm it resolves to a readable directory.
+    // Matches what the installer worker will do (open_dir_for_iteration on the
+    // producer path) — same success/failure outcome here as there.
+    match bun_sys::openat(dir_fd, name, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
+        bun_sys::Result::Ok(fd) => {
+            let _close = bun_sys::CloseOnDrop::new(fd);
+            true
+        }
+        bun_sys::Result::Err(_) => false,
+    }
+}
+
+/// Read the global link dir once and populate `this.linked_names` with
+/// every registered package name (including scoped names as
+/// `@scope/name`). Must be called on the main thread before any install
+/// worker touches `linked_package_path`; after that the map is
+/// read-only and lock-free.
+///
+/// Safe to call repeatedly; subsequent calls are no-ops.
+pub fn populate_linked_names_cache(this: &mut PackageManager) {
+    if this.linked_names_populated {
+        return;
+    }
+    this.linked_names_populated = true;
+
+    // Best-effort: for users who have never run `bun link`, the global
+    // link dir may not exist (or may be unreadable). The full `global_link_dir`
+    // path `Global::exit(1)`s on setup failure — treat that same failure
+    // here as "no links on this machine" instead, and leave the cache
+    // empty so `linked_package_path` short-circuits to null.
+    if this.global_link_dir_path.is_empty() {
+        let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
+            Ok(d) => Dir::from_fd(d),
+            Err(_) => return,
+        };
+        let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
+            Ok(d) => d,
+            Err(_) => {
+                global_dir.close();
+                return;
+            }
+        };
+        let mut buf = PathBuffer::uninit();
+        let path_ = match sys::get_fd_path(Fd::from_std_dir(&link_dir), &mut buf) {
+            Ok(p) => p,
+            Err(_) => {
+                link_dir.close();
+                global_dir.close();
+                return;
+            }
+        };
+        this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
+            FileSystem::instance().dirname_store().append(path_),
+        ));
+        this.global_dir = Some(global_dir);
+        this.global_link_dir = Some(link_dir);
+    }
+
+    let dir_path = &this.global_link_dir_path;
+    let root_fd = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir_path) {
+        bun_sys::Result::Ok(fd) => fd,
+        // Dir missing / unreadable → empty set. Every linked_package_path
+        // lookup will short-circuit to null with no further syscalls.
+        bun_sys::Result::Err(_) => return,
+    };
+    let _close_root = bun_sys::CloseOnDrop::new(root_fd);
+
+    let mut iter = bun_sys::dir_iterator::iterate(root_fd);
+    loop {
+        let entry = match iter.next() {
+            bun_sys::Result::Err(_) => return,
+            bun_sys::Result::Ok(None) => return,
+            bun_sys::Result::Ok(Some(e)) => e,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() {
+            continue;
+        }
+
+        // Scope dirs (`@scope`) contain the actual links nested one level
+        // deeper; flatten to `@scope/name` in the cache. Accept `Unknown`
+        // too: readdir on NFS / FUSE / XFS-ftype=0 returns `DT_UNKNOWN`
+        // for every entry, and rejecting it here would drop real scope
+        // dirs. `open_dir_for_iteration` below will reject non-dirs as
+        // EACCES/ENOTDIR and we'll just skip them.
+        if name[0] == b'@'
+            && (entry.kind == sys::EntryKind::Directory
+                || entry.kind == sys::EntryKind::Unknown)
+        {
+            #[cfg(windows)]
+            {
+                // WTF-16 name; skip scope flattening on Windows for now.
+                // Falls through to the GetFileAttributesW path in
+                // `linked_package_path`. Record the scope dir as a
+                // potential link parent for the Windows fast path.
+                this.linked_names_any_on_windows = true;
+                continue;
+            }
+            #[cfg(not(windows))]
+            {
+                let scope_name_z = entry.name.as_zstr();
+                let scope_fd = match bun_sys::open_dir_for_iteration(root_fd, scope_name_z) {
+                    bun_sys::Result::Ok(fd) => fd,
+                    bun_sys::Result::Err(_) => continue,
+                };
+                let _close_scope = bun_sys::CloseOnDrop::new(scope_fd);
+
+                let mut scope_iter = bun_sys::dir_iterator::iterate(scope_fd);
+                loop {
+                    let scope_entry = match scope_iter.next() {
+                        bun_sys::Result::Err(_) => break,
+                        bun_sys::Result::Ok(None) => break,
+                        bun_sys::Result::Ok(Some(e)) => e,
+                    };
+                    let sub_name = scope_entry.name.slice_u8();
+                    if sub_name.is_empty() {
+                        continue;
+                    }
+                    // Only symlinks — the global link dir is shared
+                    // with `bun add -g`, which drops real directories
+                    // under the same path. A real directory there means
+                    // a global install, not a link.
+                    if !is_linked_entry(
+                        scope_entry.kind,
+                        scope_fd,
+                        scope_entry.name.as_zstr(),
+                    ) {
+                        continue;
+                    }
+                    let mut full: Vec<u8> = Vec::with_capacity(name.len() + 1 + sub_name.len());
+                    full.extend_from_slice(name);
+                    full.push(b'/');
+                    full.extend_from_slice(sub_name);
+                    let _ = this.linked_names.put(&full, ());
+                }
+                continue;
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            // Over-approximate: any reparse-point entry at this level is a
+            // candidate link. `linked_package_path`'s per-call
+            // GetFileAttributesW will still reject false positives by
+            // path. We just need enough signal to skip the syscall when
+            // zero links exist.
+            if entry.kind == sys::EntryKind::SymLink {
+                this.linked_names_any_on_windows = true;
+            }
+            continue;
+        }
+        #[cfg(not(windows))]
+        {
+            if !is_linked_entry(entry.kind, root_fd, entry.name.as_zstr()) {
+                continue;
+            }
+            let _ = this.linked_names.put(name, ());
+        }
+    }
+}
+
+/// If `<globalLinkDir>/<pkg_name>` exists (typically a symlink created
+/// by `bun link` from the producer dir), write its absolute path into
+/// `buf` and return it. Otherwise `None`. Scoped names (`@scope/name`)
+/// are handled because `join_abs_string_buf_z` preserves the `/`.
+///
+/// Performance: when `linked_names` has been populated (via
+/// `populate_linked_names_cache` at install start), this is a single
+/// hashmap check with no syscalls on POSIX. On Windows the readdir
+/// yields WTF-16 names we can't key into the UTF-8 map, but
+/// `linked_names_any_on_windows` preserves the zero-syscall fast
+/// path for the "no links on this machine" case.
+pub fn linked_package_path<'a>(
+    this: &'a mut PackageManager,
+    pkg_name: &[u8],
+    buf: &'a mut PathBuffer,
+) -> Option<&'a bun_core::ZStr> {
+    if pkg_name.is_empty() {
+        return None;
+    }
+
+    let use_cache = this.linked_names_populated && !cfg!(windows);
+    if use_cache {
+        if this.linked_names.is_empty() {
+            return None;
+        }
+        if !this.linked_names.contains_key(pkg_name) {
+            return None;
+        }
+        let dir_path: Vec<u8> = this.global_link_dir_path.to_vec();
+        if dir_path.is_empty() {
+            let _ = global_link_dir(this);
+        }
+        let dir_path_ref: &[u8] = &this.global_link_dir_path;
+        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            dir_path_ref,
+            buf,
+            &[pkg_name],
+        );
+        return Some(joined);
+    }
+
+    // If populate ran and left the cache empty because the global link
+    // dir couldn't be set up (no writable profile, locked-down
+    // container, etc.), don't re-attempt via `global_link_dir` — that
+    // path `Global::exit(1)`s on setup failure, which would turn a
+    // plain npm-only install on Windows into a hard exit.
+    if this.linked_names_populated && this.global_link_dir_path.is_empty() {
+        return None;
+    }
+
+    // Windows fast path. `use_cache` is always false on Windows, so
+    // without this every call falls through to GetFileAttributesW.
+    // `populate_linked_names_cache` already paid the readdir cost.
+    #[cfg(windows)]
+    {
+        if this.linked_names_populated && !this.linked_names_any_on_windows {
+            return None;
+        }
+    }
+
+    let _ = global_link_dir(this);
+    let dir_path_ref: &[u8] = &this.global_link_dir_path;
+    let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+        dir_path_ref,
+        buf,
+        &[pkg_name],
+    );
+
+    // The global link dir is shared with `bun add -g` (same root —
+    // `<globalDir>/node_modules/`), and on POSIX a hoisted global
+    // install lands here as a real directory. Treat only symlinks /
+    // reparse-points as registered links.
+    let is_link: bool = {
+        #[cfg(windows)]
+        {
+            match sys::get_file_attributes(joined) {
+                Some(attrs) => attrs.is_reparse_point,
+                None => return None,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            match sys::lstat(joined) {
+                Ok(st) => sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap_or(0)),
+                Err(_) => return None,
+            }
+        }
+    };
+    if !is_link {
+        return None;
+    }
+
+    // Follow the symlink and confirm it resolves to a readable
+    // directory. A dangling symlink (producer deleted without
+    // `bun unlink`) would otherwise make the installer skip the
+    // registry download and fail ENOENT in the worker.
+    match bun_sys::open_dir_for_iteration(Fd::cwd(), joined) {
+        bun_sys::Result::Ok(fd) => {
+            let _close = bun_sys::CloseOnDrop::new(fd);
+            Some(joined)
+        }
+        bun_sys::Result::Err(_) => None,
+    }
+}
+
 // ────────────────────────── cached path resolution ────────────────────────────
 
 pub fn path_for_cached_npm_path<'a>(

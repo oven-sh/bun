@@ -1058,6 +1058,119 @@ impl Task {
                         }
 
                         tag => {
+                            // If an active `bun link` is registered for this package name
+                            // and the user did not opt into the symlink backend, source
+                            // the body from the producer dir instead of the registry
+                            // tarball cache. Under isolated linking the top-level
+                            // symlink-only contract isn't available, so without this the
+                            // `.bun/<storepath>` body stays pinned to the (stale) tarball
+                            // cache while the top-level symlink points at the producer.
+                            if InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed)) != InstallMethod::Symlink {
+                                let mut linked_buf = PathBuffer::uninit();
+                                let producer_path_opt = {
+                                    // SAFETY: matches how `manager_ref.get()` /
+                                    // `assume_mut` are used elsewhere in this file —
+                                    // the raw pointer is live for the whole
+                                    // Step::LinkPackage arm, and no other thread
+                                    // holds a borrow here on the main loop.
+                                    let manager = unsafe { manager_ref.assume_mut() };
+                                    match directories::linked_package_path(
+                                        manager,
+                                        pkg_name.slice(string_buf),
+                                        &mut linked_buf,
+                                    ) {
+                                        Some(p) => {
+                                            // Copy bytes so we don't hold &manager across
+                                            // the install work below.
+                                            let bytes = p.as_bytes();
+                                            Some((bytes.as_ptr(), bytes.len()))
+                                        }
+                                        None => None,
+                                    }
+                                };
+                                if let Some((ptr, len)) = producer_path_opt {
+                                    // SAFETY: `linked_buf` is on this stack frame and lives
+                                    // until the end of this arm; the pointer is valid for
+                                    // the remainder of the Step::LinkPackage match arm.
+                                    let producer_path: &[u8] = unsafe {
+                                        core::slice::from_raw_parts(ptr, len)
+                                    };
+
+                                    let folder_dir = match bun_sys::open_dir_for_iteration(
+                                        Fd::cwd(),
+                                        producer_path,
+                                    ) {
+                                        sys::Result::Ok(fd) => fd,
+                                        sys::Result::Err(err) => {
+                                            return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                        }
+                                    };
+                                    let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
+
+                                    // Force copyfile here — producer tree is mutable and
+                                    // lifecycle scripts would otherwise propagate back
+                                    // through a shared inode. The backend switch falls
+                                    // back to copyfile on EXDEV in any case.
+                                    let mut src_path = OsAutoAbsPath::init();
+                                    #[cfg(windows)]
+                                    {
+                                        let buf = src_path.buf();
+                                        let cap = buf.len();
+                                        let ptr = buf.as_mut_ptr();
+                                        // SAFETY: FFI — valid handle + writable buffer.
+                                        let src_path_len = unsafe {
+                                            bun_sys::windows::GetFinalPathNameByHandleW(
+                                                folder_dir.native(),
+                                                ptr,
+                                                u32::try_from(cap).expect("int cast"),
+                                                0,
+                                            )
+                                        };
+                                        if src_path_len == 0 || src_path_len as usize >= cap {
+                                            use bun_sys::windows::Win32ErrorExt as _;
+                                            let err: sys::SystemErrno = if src_path_len == 0 {
+                                                bun_sys::windows::Win32Error::get()
+                                                    .to_system_errno()
+                                                    .unwrap_or(sys::SystemErrno::EUNKNOWN)
+                                            } else {
+                                                sys::SystemErrno::ENAMETOOLONG
+                                            };
+                                            return Ok(Yield::failure(TaskError::LinkPackage(
+                                                sys::Error {
+                                                    errno: err as _,
+                                                    syscall: sys::Tag::copyfile,
+                                                    ..Default::default()
+                                                },
+                                            )));
+                                        }
+                                        src_path.set_length(src_path_len as usize);
+                                    }
+                                    #[cfg(not(windows))]
+                                    {
+                                        let _ = src_path.append_join(producer_path);
+                                    }
+
+                                    let mut dest = OsAutoPath::init();
+                                    installer.append_store_path(&mut dest, self.entry_id);
+
+                                    let mut file_copier = FileCopier::init(
+                                        folder_dir,
+                                        src_path.into_sep::<{ PathSeparators::AUTO }>(),
+                                        dest.into_sep::<{ PathSeparators::AUTO }>(),
+                                        &[bun_paths::os_path_literal!("node_modules")],
+                                    )?;
+                                    match file_copier.copy() {
+                                        sys::Result::Ok(()) => {}
+                                        sys::Result::Err(err) => {
+                                            return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                        }
+                                    }
+
+                                    step = self.next_step(current_step);
+                                    continue;
+                                }
+                            }
+
                             let patch_info =
                                 installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
 

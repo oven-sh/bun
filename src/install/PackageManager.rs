@@ -437,6 +437,24 @@ pub struct PackageManager {
     pub global_dir: Option<bun_sys::Dir>,
     pub global_link_dir_path: Box<[u8]>,
 
+    /// Names of packages registered via `bun link`, read from
+    /// `<globalLinkDir>/` once per install. Populated on the main thread
+    /// before any install worker starts; after that it's read-only and can
+    /// be accessed lock-free from worker threads. Lookups return early
+    /// when the set is empty (no active links) — the common case on dev
+    /// machines without `bun link` configured, and unconditional on CI.
+    /// See `populate_linked_names_cache` / `linked_package_path`.
+    pub linked_names: bun_collections::StringHashMap<()>,
+    pub linked_names_populated: bool,
+    /// Windows-only fast-path companion to `linked_names`: on Windows the
+    /// readdir entry is WTF-16 so we can't key it into the UTF-8 hashmap,
+    /// but we *can* record whether the global link dir is nonempty during
+    /// the same readdir pass. `linked_package_path` consults this to skip
+    /// the per-call `GetFileAttributesW` when no links exist — restoring
+    /// the "zero syscalls when no packages are linked" guarantee that the
+    /// POSIX fast path in `linked_names` provides.
+    pub linked_names_any_on_windows: bool,
+
     pub on_wake: WakeHandler,
     pub ci_mode: LazyBool<fn(&PackageManager) -> bool>,
 
@@ -2014,6 +2032,9 @@ pub fn init(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
+        wr!(linked_names, bun_collections::StringHashMap::<()>::default());
+        wr!(linked_names_populated, false);
+        wr!(linked_names_any_on_windows, false);
         wr!(on_wake, WakeHandler::default());
         wr!(
             ci_mode,
@@ -2457,6 +2478,9 @@ pub(crate) fn init_with_runtime_once(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
+        wr!(linked_names, bun_collections::StringHashMap::<()>::default());
+        wr!(linked_names_populated, false);
+        wr!(linked_names_any_on_windows, false);
         wr!(on_wake, WakeHandler::default());
         wr!(
             ci_mode,

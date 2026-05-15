@@ -756,7 +756,12 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
                 ];
                 #[cfg(windows)]
                 const PATHS_TO_TRY: &[&core::ffi::CStr] = &[c"tracy.dll"];
-                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
+                #[cfg(not(any(
+                    target_os = "macos",
+                    target_os = "linux",
+                    target_os = "android",
+                    windows
+                )))]
                 const PATHS_TO_TRY: &[&core::ffi::CStr] = &[];
 
                 // TODO(port): RTLD flags — Zig used `@bitCast(@as(i32, -2))` on

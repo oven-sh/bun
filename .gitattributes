@@ -30,6 +30,7 @@ fixture.*.c linguist-generated
 src/api/schema.js linguist-generated
 *-fixture* linguist-generated
 src/jsc/bindings/headers.h linguist-generated
+src/jsc/bindings/BunGeneratedCode.cpp linguist-generated
 
 packages/bun-uws/fuzzing/seed-corpus/**/* linguist-generated
 

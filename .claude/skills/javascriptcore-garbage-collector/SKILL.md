@@ -166,7 +166,7 @@ void JSFoo::visitOutputConstraints(JSCell* cell, Visitor& visitor) {
 
 **Why two entry points?** `visitChildren` runs once when the cell turns grey. But marking may later discover that some _other_ native object (an opaque root) is live, which retroactively makes more of _this_ cell's references live. `visitOutputConstraints` is re-invoked by `DOMGCOutputConstraint` during the constraint fixpoint to catch that.
 
-To make a class participate, its IsoSubspace must be registered as an **output-constraint subspace** (`clientSubspaceFor*` with `outputConstraint` in `BunClientData` / generated `ZigGeneratedClasses.cpp`). The codegen does this automatically when `.classes.ts` has `hasPendingActivity`, `own` properties, or event-target semantics.
+To make a class participate, its IsoSubspace must be registered as an **output-constraint subspace** (`clientSubspaceFor*` with `outputConstraint` in `BunClientData` / generated `BunGeneratedClasses.cpp`). The codegen does this automatically when `.classes.ts` has `hasPendingActivity`, `own` properties, or event-target semantics.
 
 ## Opaque roots — liveness through non-JSCell pointers
 
@@ -363,4 +363,4 @@ If GC runs constantly with little garbage → missing `reportExtraMemoryVisited`
 - `vendor/WebKit/Source/JavaScriptCore/heap/HeapAnalyzer.h`, `vendor/WebKit/Source/JavaScriptCore/heap/HeapSnapshotBuilder.cpp`, Bun: `vendor/WebKit/Source/JavaScriptCore/heap/BunV8HeapSnapshotBuilder.cpp`
 - `vendor/WebKit/Source/JavaScriptCore/heap/DeferGC.h`, `vendor/WebKit/Source/JavaScriptCore/heap/Strong.h`, `vendor/WebKit/Source/JavaScriptCore/heap/HandleSet.h`
 - `runtime/JSCell.h` / `JSCellInlines.h` — header layout, `visitChildren` base
-- Bun: `src/jsc/bindings/BunGCOutputConstraint.cpp`, `ZigGeneratedClasses.cpp` (codegen'd `visitChildren` / `visitOutputConstraints`)
+- Bun: `src/jsc/bindings/BunGCOutputConstraint.cpp`, `BunGeneratedClasses.cpp` (codegen'd `visitChildren` / `visitOutputConstraints`)

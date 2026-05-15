@@ -15,7 +15,7 @@
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
 
-#define ZIG_REPR_TYPE int64_t
+#define BUN_FFI_REPR_TYPE int64_t
 
 #ifdef _WIN32
 #define BUN_FFI_IMPORT __declspec(dllimport)
@@ -124,7 +124,7 @@ napi_value asNapiValue;
   void* asPtr;
   double asDouble;
 
-  ZIG_REPR_TYPE asZigRepr;
+  BUN_FFI_REPR_TYPE asBunFFIRepr;
 } EncodedJSValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
@@ -143,12 +143,12 @@ typedef void* JSContext;
 
 #ifdef IS_CALLBACK
 void* callback_ctx;
-BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
+BUN_FFI_IMPORT BUN_FFI_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, BUN_FFI_REPR_TYPE* args);
 // We wrap 
-static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
-static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
+static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, BUN_FFI_REPR_TYPE* args)  __attribute__((__always_inline__));
+static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, BUN_FFI_REPR_TYPE* args) {
   EncodedJSValue return_value;
-  return_value.asZigRepr = FFI_Callback_call(ctx, argCount, args);
+  return_value.asBunFFIRepr = FFI_Callback_call(ctx, argCount, args);
   return return_value;
 }
 #endif
@@ -358,7 +358,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
 }
 
 #ifndef IS_CALLBACK
-BUN_FFI_IMPORT ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
+BUN_FFI_IMPORT BUN_FFI_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
 #endif
 
@@ -371,8 +371,8 @@ bool my_callback_function(void* arg0) {
 #ifdef INJECT_BEFORE
 INJECT_BEFORE;
 #endif
- ZIG_REPR_TYPE arguments[1];
-arguments[0] = PTR_TO_JSVALUE(arg0).asZigRepr;
+ BUN_FFI_REPR_TYPE arguments[1];
+arguments[0] = PTR_TO_JSVALUE(arg0).asBunFFIRepr;
   return (bool)JSVALUE_TO_BOOL(_FFI_Callback_call((void*)0x0000000000000000ULL, 1, arguments));
 }
 

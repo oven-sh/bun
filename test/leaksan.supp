@@ -5,7 +5,7 @@ leak:resolver.package_json.PackageJSON.parse__anon
 leak:resolver.resolver.Resolver.parseTSConfig
 leak:JSC::Identifier::fromString
 leak:jsc.JSGlobalObject.JSGlobalObject.create
-leak:Zig__GlobalObject__create
+leak:Bun__GlobalObject__create
 leak:_objc_msgSend_uncached
 leak:WTF::fastMalloc
 leak:WTF::AutomaticThread::start
@@ -25,8 +25,8 @@ leak:CRYPTO_set_thread_local
 leak:BIO_new
 leak:_tlv_get_addr
 leak:Bun::generateModule
-leak:Zig::ImportMetaObject::createFromSpecifier
-leak:Zig::GlobalObject::moduleLoaderResolve
+leak:Bun::ImportMetaObject::createFromSpecifier
+leak:Bun::GlobalObject::moduleLoaderResolve
 leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
@@ -44,7 +44,7 @@ leak:runtime.node.fs_events.InitLibrary
 leak:runtime.node.fs_events.FSEventsLoop._schedule
 leak:Bun__Path__join
 leak:Bun__Path__resolve
-leak:Zig::GlobalObject::moduleLoaderImportModule
+leak:Bun::GlobalObject::moduleLoaderImportModule
 leak:bake.FrameworkRouter.JSFrameworkRouter.getFileIdForRouter
 leak:js_parser_jsc.Macro.MacroContext.call
 leak:runtime.webcore.Blob.findOrCreateFileFromPath__anon
@@ -53,14 +53,14 @@ leak:runtime.node.node_fs_binding.Bindings(.mkdtemp).runSync
 leak:jsc.ModuleLoader.fetchBuiltinModule
 leak:boringssl.boringssl.checkX509ServerIdentity
 leak:cli.pack_command.bindings.jsReadTarball
-leak:ZigString__toErrorInstance
+leak:UnsafeStringView__toErrorInstance
 leak:JSC::moduleLoaderModuleDeclarationInstantiation
 leak:JSC::arrayProtoFuncSort
 leak:bindgen_Fmt_jsFmtString
 leak:runtime.dns_jsc.dns.GetAddrInfoRequest.run
 leak:tcc_sys.tcc.State.init__anon
 leak:runtime.api.bun.dynamic_library.DlDynLib.open
-leak:Zig::ImportMetaObject::finishCreation
+leak:Bun::ImportMetaObject::finishCreation
 leak:uws_add_server_name_with_options
 leak:runtime.webcore.Body.Value.fromJS
 leak:sys_jsc.error_jsc.errorToSystemError
@@ -104,12 +104,12 @@ leak:Bun__canonicalizeIP
 leak:dlopen
 leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop
-leak:Zig::NapiClass_ConstructorFunction
+leak:Bun::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse
 leak:JSC::jsonProtoFuncStringify
 leak:lolhtml_sys.lol_html.HTMLString.toString
 leak:libarchive_sys.bindings.Archive.readNew
-leak:Zig::SourceProvider::create
+leak:Bun::SourceProvider::create
 
 leak:fromErrorInstance
 

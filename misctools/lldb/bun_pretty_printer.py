@@ -288,10 +288,13 @@ def bun_String_SummaryProvider(value, _=None):
             value_union = value.GetChildMemberWithName('value')
             if not value_union or not value_union.IsValid():
                 return '<no value field>'
-            field_name = 'UnsafeStringView' if tag_name == 'UnsafeStringView' else 'StaticUnsafeStringView'
-            view_value = value_union.GetChildMemberWithName(field_name)
+            # Both tags alias the same union member: `unsafe_string_view` in the
+            # Rust `StringImpl` union (`view` on the C++ `BunStringImpl` side).
+            view_value = value_union.GetChildMemberWithName('unsafe_string_view')
             if not view_value or not view_value.IsValid():
-                return '<no %s field>' % field_name
+                view_value = value_union.GetChildMemberWithName('view')
+            if not view_value or not view_value.IsValid():
+                return '<no unsafe_string_view field>'
             result = UnsafeStringView_SummaryProvider(view_value, _)
             # Add static marker if needed
             if tag_name == 'StaticUnsafeStringView':

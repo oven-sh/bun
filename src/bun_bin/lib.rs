@@ -107,8 +107,8 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
-    // Keep this list 1:1 with the legacy-named entries in `test/leaksan.supp`;
-    // C/C++ symbol entries stay in that file (their names did not change).
+    // Keep this list 1:1 with the Rust-side entries; the C/C++ symbol entries
+    // (`Bun__*`, `Bun::*`, `UnsafeStringView__*`, …) live in `test/leaksan.supp`.
     concat!(
         // Rust std false positive — detached threads' Arc<thread::Inner>.
         "leak:std::thread::thread::Thread>::new\n",

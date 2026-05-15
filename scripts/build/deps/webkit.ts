@@ -232,7 +232,10 @@ export const webkit: Dependency = {
     // PIC codegen here is pure overhead (GOT indirections + ~550 KB of
     // RW-segment vtables that would otherwise be shared RO). Android stays
     // PIC because bionic mandates PIE.
-    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie");
+    // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
+    // PIE-default distros — without it the driver still passes -pie and the
+    // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
+    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
     if (cfg.lto) optFlags.push("-flto=full");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {

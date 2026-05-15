@@ -2184,7 +2184,7 @@ impl StandaloneModuleGraph {
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             let Some((base, len)) = elf::get_data() else {
                 return Ok(None);
@@ -2218,6 +2218,7 @@ impl StandaloneModuleGraph {
             target_os = "macos",
             windows,
             target_os = "linux",
+            target_os = "android",
             target_os = "freebsd"
         )))]
         {
@@ -2247,14 +2248,14 @@ impl StandaloneModuleGraph {
                         None => return,
                     }
                 }
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     match elf::get_data() {
                         Some(b) => b,
                         None => return,
                     }
                 }
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
                 {
                     return;
                 }

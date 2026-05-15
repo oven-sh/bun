@@ -817,12 +817,12 @@ pub use bun_sys::copy_file::{
 pub use bun_core::fmt::parse_double;
 
 pub fn is_missing_io_uring() -> bool {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         // it is not missing when it was not supposed to be there in the first place
         return false;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         static IS_MISSING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *IS_MISSING.get_or_init(|| {
@@ -894,7 +894,7 @@ pub fn get_fd_path<'a>(fd: FD, buf: &'a mut PathBuffer) -> Result<&'a mut [u8], 
             );
         }
     }
-    #[cfg(all(not(debug_assertions), not(target_os = "linux")))]
+    #[cfg(all(not(debug_assertions), not(any(target_os = "linux", target_os = "android"))))]
     {
         return bun_sys::get_fd_path(fd.native(), buf);
     }
@@ -1034,9 +1034,9 @@ pub fn open_file_for_path(file_path: &bun_core::ZStr) -> Result<bun_sys::File, b
     }
     #[cfg(not(windows))]
     {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let o_path = O::PATH;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let o_path = O::RDONLY;
         let flags: u32 = O::CLOEXEC | O::NOCTTY | o_path;
         let fd = bun_sys::open_z(file_path, O::to_packed(flags), 0)?;
@@ -1051,9 +1051,9 @@ pub fn open_dir_for_path(file_path: &bun_core::ZStr) -> Result<bun_sys::Dir, bun
     }
     #[cfg(not(windows))]
     {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let o_path = O::PATH;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let o_path = O::RDONLY;
         let flags: u32 = O::CLOEXEC | O::NOCTTY | O::DIRECTORY | o_path;
         let fd = bun_sys::open_z(file_path, O::to_packed(flags), 0)?;
@@ -1105,7 +1105,7 @@ pub type Stat = bun_sys::Stat;
 
 #[cfg(target_os = "macos")]
 pub type StatFS = bun_sys::c::struct_statfs;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type StatFS = bun_sys::c::struct_statfs;
 #[cfg(target_os = "freebsd")]
 pub type StatFS = bun_sys::c::struct_statfs;
@@ -1436,7 +1436,7 @@ pub fn mark_posix_only() -> ! {
     panic!("Assertion failure: this function should only be accessible on POSIX.");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn linux_kernel_version() -> bun_semver::Version {
     bun_analytics::GenerateHeader::GeneratePlatform::kernel_version()
 }

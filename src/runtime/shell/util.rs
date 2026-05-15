@@ -22,9 +22,9 @@ impl OutKind {
 // `bun_spawn` *crate* re-exports under the same name.
 pub use crate::api::bun_spawn::stdio::Stdio;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type WatchFd = core::ffi::c_int; // std.posix.fd_t
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub type WatchFd = i32;
 
 // ported from: src/shell/util.zig

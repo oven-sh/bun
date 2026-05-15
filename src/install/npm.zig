@@ -1355,13 +1355,53 @@ pub const PackageManifest = struct {
         return null;
     }
 
+    /// Split an entry from `minimumReleaseAgeExcludes` into `(name, version)`.
+    /// A null version means a bare entry (whitelists all versions). A dangling
+    /// `@` (e.g. `"foo@"`) is treated as a no-op rather than a bare name, so
+    /// malformed input can't silently widen the whitelist.
+    fn parseAgeFilterExclusion(entry: string) struct { string, ?string } {
+        if (entry.len > 0 and entry[entry.len - 1] == '@') return .{ entry, null };
+        return Dependency.splitNameAndMaybeVersion(entry);
+    }
+
+    /// Whether any bare `"name"` entry in `exclusions` matches this manifest.
+    /// `"name@version"` pins are handled by `isVersionExplicitlyExcluded`.
     pub fn shouldExcludeFromAgeFilter(this: *const PackageManifest, exclusions: ?[]const []const u8) bool {
-        if (exclusions) |excl| {
-            const pkg_name = this.name();
-            for (excl) |excluded| {
-                if (strings.eql(pkg_name, excluded)) {
-                    return true;
-                }
+        const excl = exclusions orelse return false;
+        const pkg_name = this.name();
+        for (excl) |entry| {
+            const entry_name, const entry_version = parseAgeFilterExclusion(entry);
+            if (entry_version != null) continue;
+            if (strings.eql(pkg_name, entry_name)) return true;
+        }
+        return false;
+    }
+
+    /// Whether `exclusions` contains a `"name@version"` pin matching this
+    /// manifest and `version` exactly. Non-exact pins (ranges, dist-tags,
+    /// unparseable values) are silently ignored.
+    pub fn isVersionExplicitlyExcluded(
+        this: *const PackageManifest,
+        version: Semver.Version,
+        exclusions: ?[]const []const u8,
+    ) bool {
+        const excl = exclusions orelse return false;
+        const pkg_name = this.name();
+        for (excl) |entry| {
+            const entry_name, const maybe_version = parseAgeFilterExclusion(entry);
+            const version_str = maybe_version orelse continue;
+            if (!strings.eql(pkg_name, entry_name)) continue;
+            const parsed = Semver.Version.parseUTF8(version_str);
+            // `parseUTF8` stops at the first whitespace/range operator so
+            // `"1.0.0 || 2.0.0"` would otherwise silently match `1.0.0` only.
+            // Require the parser to have consumed the entire pin — anything
+            // short of that is treated as malformed and skipped, failing
+            // closed.
+            if (!parsed.valid or parsed.wildcard != .none or parsed.len != version_str.len) continue;
+            // Build metadata is ignored in semver precedence (§10); match
+            // `findByVersion`'s `eql` semantics by excluding build tags too.
+            if (parsed.version.min().orderWithoutBuild(version, version_str, this.string_buf) == .eq) {
+                return true;
             }
         }
         return false;
@@ -1375,6 +1415,18 @@ pub const PackageManifest = struct {
         return package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms;
     }
 
+    /// `isPackageVersionTooRecent` minus versions explicitly pinned in `exclusions`.
+    pub inline fn isVersionFilteredByAge(
+        this: *const PackageManifest,
+        version: Semver.Version,
+        package_version: *const PackageVersion,
+        minimum_release_age_ms: f64,
+        exclusions: ?[]const []const u8,
+    ) bool {
+        if (!isPackageVersionTooRecent(package_version, minimum_release_age_ms)) return false;
+        return !this.isVersionExplicitlyExcluded(version, exclusions);
+    }
+
     fn searchVersionList(
         this: *const PackageManifest,
         versions: []const Semver.Version,
@@ -1382,6 +1434,7 @@ pub const PackageManifest = struct {
         group: Semver.Query.Group,
         group_buf: string,
         minimum_release_age_ms: f64,
+        exclusions: ?[]const []const u8,
         newest_filtered: *?Semver.Version,
     ) ?FindVersionResult {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
@@ -1397,6 +1450,15 @@ pub const PackageManifest = struct {
             const version = versions[i];
             if (group.satisfies(version, group_buf, this.string_buf)) {
                 const package = &packages[i];
+                // Pinned versions bypass both the age gate and the stability walk.
+                if (this.isVersionExplicitlyExcluded(version, exclusions)) {
+                    const pinned: FindResult = .{ .version = version, .package = package };
+                    if (newest_filtered.*) |nf| {
+                        return .{ .found_with_filter = .{ .result = pinned, .newest_filtered = nf } };
+                    }
+                    return .{ .found = pinned };
+                }
+                // Explicit-exclusion already ruled out above, so a plain age check is enough.
                 if (isPackageVersionTooRecent(package, minimum_release_age_ms)) {
                     if (newest_filtered.* == null) newest_filtered.* = version;
                     prev_package_blocked_from_age = package;
@@ -1500,7 +1562,7 @@ pub const PackageManifest = struct {
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
         const stability_window_ms = @min(min_age_ms, seven_days_ms);
 
-        const dist_too_recent = isPackageVersionTooRecent(dist_result.package, min_age_ms);
+        const dist_too_recent = this.isVersionFilteredByAge(dist_result.version, dist_result.package, min_age_ms, exclusions);
         if (!dist_too_recent) {
             return .{ .found = dist_result };
         }
@@ -1535,6 +1597,15 @@ pub const PackageManifest = struct {
                 if (!strings.eql(actual_tag, expected_tag)) continue;
             }
 
+            // Pinned versions bypass both the age gate and the stability walk.
+            if (this.isVersionExplicitlyExcluded(version, exclusions)) {
+                return .{ .found_with_filter = .{
+                    .result = .{ .version = version, .package = package },
+                    .newest_filtered = dist_result.version,
+                } };
+            }
+
+            // Explicit-exclusion already ruled out above, so a plain age check is enough.
             if (isPackageVersionTooRecent(package, min_age_ms)) {
                 prev_package_blocked_from_age = package;
                 continue;
@@ -1603,7 +1674,7 @@ pub const PackageManifest = struct {
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);
             if (result) |r| {
-                if (isPackageVersionTooRecent(r.package, min_age_ms)) {
+                if (this.isVersionFilteredByAge(r.version, r.package, min_age_ms, exclusions)) {
                     return .{ .err = .too_recent };
                 }
                 return .{ .found = r };
@@ -1613,7 +1684,7 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (isPackageVersionTooRecent(result.package, min_age_ms)) {
+                if (this.isVersionFilteredByAge(result.version, result.package, min_age_ms, exclusions)) {
                     newest_filtered = result.version;
                 }
                 if (newest_filtered == null) {
@@ -1634,6 +1705,7 @@ pub const PackageManifest = struct {
             group,
             group_buf,
             min_age_ms,
+            exclusions,
             &newest_filtered,
         )) |result| {
             return result;
@@ -1646,6 +1718,7 @@ pub const PackageManifest = struct {
                 group,
                 group_buf,
                 min_age_ms,
+                exclusions,
                 &newest_filtered,
             )) |result| {
                 return result;
@@ -2744,6 +2817,7 @@ const ObjectPool = @import("../collections/pool.zig").ObjectPool;
 const URL = @import("../url/url.zig").URL;
 
 const Aligner = @import("./install.zig").Aligner;
+const Dependency = @import("./install.zig").Dependency;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalStringMap = @import("./install.zig").ExternalStringMap;

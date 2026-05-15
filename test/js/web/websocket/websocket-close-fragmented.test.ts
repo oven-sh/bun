@@ -139,27 +139,23 @@ describe("WebSocket", () => {
   // itself and leave no JUnit output. Spawning a child isolates the
   // expected crash so the parent test can assert on the child's exit
   // code.
-  test(
-    "close() with reason that transcodes beyond 125 UTF-8 bytes does not crash",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", CLOSE_LONG_REASON_FIXTURE],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // With the fix: the fixture completes normally and prints the close
-      // event code. Without the fix: the process aborts before reaching
-      // the close listener and exitCode is non-zero (SIGILL from the panic).
-      expect({ stdout: stdout.trim(), exitCode, panicked: stderr.includes("panic") }).toEqual({
-        stdout: "close:1000",
-        exitCode: 0,
-        panicked: false,
-      });
-    },
-    15_000,
-  );
+  test("close() with reason that transcodes beyond 125 UTF-8 bytes does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", CLOSE_LONG_REASON_FIXTURE],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // With the fix: the fixture completes normally and prints the close
+    // event code. Without the fix: the process aborts before reaching
+    // the close listener and exitCode is non-zero (SIGILL from the panic).
+    expect({ stdout: stdout.trim(), exitCode, panicked: stderr.includes("panic") }).toEqual({
+      stdout: "close:1000",
+      exitCode: 0,
+      panicked: false,
+    });
+  }, 15_000);
 });
 
 // Raw-socket WebSocket handshake + close(1000, reason-transcoding-to-126-UTF-8-bytes).

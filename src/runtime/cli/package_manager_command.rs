@@ -331,26 +331,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             // slashes and ASCII case are normalized too.
                             // PORT NOTE: `std.mem.tokenizeScalar` skips empty
                             // segments; mirror with `split` + `filter`.
-                            let debug_pm_bin = std::env::var_os("BUN_DEBUG_PM_BIN_MATCH").is_some();
-                            if debug_pm_bin {
-                                eprintln!(
-                                    "BUN_DEBUG_PM_BIN_MATCH: output_path={:?}",
-                                    bstr::BStr::new(output_path)
-                                );
-                            }
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
-                                let eq = path_entries_equal(entry, output_path);
-                                if debug_pm_bin {
-                                    eprintln!(
-                                        "BUN_DEBUG_PM_BIN_MATCH: entry={:?} eq={}",
-                                        bstr::BStr::new(entry),
-                                        eq
-                                    );
-                                }
-                                if eq {
+                                if path_entries_equal(entry, output_path) {
                                     break 'warner;
                                 }
                             }
@@ -729,55 +714,27 @@ fn trim_trailing_path_separators(s: &[u8]) -> &[u8] {
 /// Compare two path slices for equality, tolerant of the differences that
 /// show up between a canonical `output_path` and a raw `$PATH` entry:
 /// - trailing `/` and `\` are ignored;
-/// - on Windows, `/` and `\` are interchangeable and ASCII case is ignored;
-///   as a last resort, both sides are canonicalized through the filesystem
-///   so that e.g. a raw `C:\Temp` entry still matches the canonical
-///   `C:\Users\u\AppData\Local\Temp` form that `get_fd_path_z` returns.
+/// - on Windows, `/` and `\` are interchangeable and ASCII case is ignored.
+///
+/// We deliberately do *not* fall back to `std::fs::canonicalize` here: every
+/// PATH entry gets compared on every `bun pm bin -g`, and canonicalize on
+/// Windows issues `CreateFileW` + `GetFinalPathNameByHandleW` — which blocks
+/// for the SMB timeout (~20–60s) on a disconnected mapped drive or
+/// unreachable UNC share. The byte-level fast path (plus the case/slash
+/// normalization on Windows) covers the case #28771 actually reported.
 fn path_entries_equal(a: &[u8], b: &[u8]) -> bool {
     let a = trim_trailing_path_separators(a);
     let b = trim_trailing_path_separators(b);
-
-    let fast_match = if cfg!(windows) {
+    if cfg!(windows) {
         a.len() == b.len()
             && a.iter().zip(b.iter()).all(|(&x, &y)| {
-                let nx = if x == b'/' {
-                    b'\\'
-                } else {
-                    x.to_ascii_lowercase()
-                };
-                let ny = if y == b'/' {
-                    b'\\'
-                } else {
-                    y.to_ascii_lowercase()
-                };
+                let nx = if x == b'/' { b'\\' } else { x.to_ascii_lowercase() };
+                let ny = if y == b'/' { b'\\' } else { y.to_ascii_lowercase() };
                 nx == ny
             })
     } else {
         strings::eql(a, b)
-    };
-    if fast_match {
-        return true;
     }
-
-    #[cfg(windows)]
-    {
-        // On Windows the fast path misses when the two sides took different
-        // routes to the same directory: `output_path` comes from
-        // `GetFinalPathNameByHandle` (with `\\?\` stripped), while the PATH
-        // entry is the raw string the user typed — which may still go through
-        // a SUBST, junction, short 8.3 name, or different drive letter case.
-        // Falling back to `std::fs::canonicalize` resolves all of those to
-        // the same form when the entry really is the bin dir.
-        if let (Ok(a_str), Ok(b_str)) = (core::str::from_utf8(a), core::str::from_utf8(b)) {
-            if let (Ok(a_canon), Ok(b_canon)) =
-                (std::fs::canonicalize(a_str), std::fs::canonicalize(b_str))
-            {
-                return a_canon == b_canon;
-            }
-        }
-    }
-
-    false
 }
 
 fn print_node_modules_folder_structure(

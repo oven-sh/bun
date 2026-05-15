@@ -1,14 +1,12 @@
 // https://github.com/oven-sh/bun/issues/28771
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, mergeWindowEnvs, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 // FORCE_COLOR=1 is needed because the "not in $PATH" warning is gated
 // on enable_ansi_colors_stderr, which is false when stderr is piped.
-// BUN_DEBUG_PM_BIN_MATCH=1 emits stderr lines showing the exact bytes
-// we compare — useful when this test fails on Windows CI.
-const baseEnv = { ...bunEnv, FORCE_COLOR: "1", BUN_DEBUG_PM_BIN_MATCH: "1" };
+const baseEnv = { ...bunEnv, FORCE_COLOR: "1" };
 
 function setupGlobalDirs(dirStr: string) {
   const binDir = join(dirStr, "bin");
@@ -31,18 +29,21 @@ describe.concurrent("global bin path warnings", () => {
       cmd: [bunExe(), "pm", "bin", "-g"],
       stdout: "pipe",
       stderr: "pipe",
-      env: {
-        ...baseEnv,
-        BUN_INSTALL_BIN: binDir,
-        BUN_INSTALL_GLOBAL_DIR: globalDir,
-        PATH: pathWithTrailing + delimiter + (process.env.PATH ?? ""),
-      },
+      // `mergeWindowEnvs` folds case-insensitive dupes (Windows treats `Path`
+      // and `PATH` as the same var, but JS object keys are case-sensitive —
+      // a plain spread leaves both entries and the child picks the wrong one).
+      env: mergeWindowEnvs([
+        baseEnv,
+        {
+          BUN_INSTALL_BIN: binDir,
+          BUN_INSTALL_GLOBAL_DIR: globalDir,
+          PATH: pathWithTrailing + delimiter + (process.env.PATH ?? ""),
+        },
+      ]),
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    console.log("[test1] binDir =", JSON.stringify(binDir));
-    console.log("[test1] stderr =\n" + stderr);
     expect(stdout).toContain(binDir);
     expect(stderr).not.toContain("not in $PATH");
     expect(exitCode).toBe(0);
@@ -56,18 +57,18 @@ describe.concurrent("global bin path warnings", () => {
       cmd: [bunExe(), "pm", "bin", "-g"],
       stdout: "pipe",
       stderr: "pipe",
-      env: {
-        ...baseEnv,
-        BUN_INSTALL_BIN: binDir,
-        BUN_INSTALL_GLOBAL_DIR: globalDir,
-        PATH: binDir + delimiter + (process.env.PATH ?? ""),
-      },
+      env: mergeWindowEnvs([
+        baseEnv,
+        {
+          BUN_INSTALL_BIN: binDir,
+          BUN_INSTALL_GLOBAL_DIR: globalDir,
+          PATH: binDir + delimiter + (process.env.PATH ?? ""),
+        },
+      ]),
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    console.log("[test2] binDir =", JSON.stringify(binDir));
-    console.log("[test2] stderr =\n" + stderr);
     expect(stdout).toContain(binDir);
     expect(stderr).not.toContain("not in $PATH");
     expect(exitCode).toBe(0);
@@ -78,16 +79,20 @@ describe.concurrent("global bin path warnings", () => {
     const { binDir, globalDir } = setupGlobalDirs(String(dir));
 
     // Use a PATH that does NOT contain the bin dir.
+    const fakePath = ["/usr/bin", "/usr/local/bin"].join(delimiter);
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "bin", "-g"],
       stdout: "pipe",
       stderr: "pipe",
-      env: {
-        ...baseEnv,
-        BUN_INSTALL_BIN: binDir,
-        BUN_INSTALL_GLOBAL_DIR: globalDir,
-        PATH: "/usr/bin:/usr/local/bin",
-      },
+      env: mergeWindowEnvs([
+        baseEnv,
+        {
+          BUN_INSTALL_BIN: binDir,
+          BUN_INSTALL_GLOBAL_DIR: globalDir,
+          PATH: fakePath,
+        },
+      ]),
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

@@ -37,7 +37,7 @@ function css(file: string, is_development: boolean): string {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (!success) throw new Error(stderr.toString("utf-8"));
-  return stdout.toString("utf-8");
+  return stdout.toString("utf-8").trimEnd();
 }
 
 async function run() {
@@ -53,7 +53,7 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

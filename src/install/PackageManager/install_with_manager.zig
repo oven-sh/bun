@@ -383,17 +383,16 @@ pub fn installWithManager(
                         // Build a temporary DependencyID -> PackageID map so that when we
                         // re-enqueue dependencies whose overrides changed, we can pass the
                         // correct parent context to scoped override lookup.
-                        const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
                         var map = try bun.default_allocator.alloc(?PackageID, dependencies_len);
                         @memset(map, null);
                         const packages_len = manager.lockfile.packages.len;
                         for (0..packages_len) |pkg_id| {
                             const dep_slice = manager.lockfile.packages.items(.dependencies)[pkg_id];
-                            const off = dep_slice.off;
-                            const len = dep_slice.len;
-                            if (len == 0) continue;
-                            for (0..len) |j| {
-                                const dep_id = off + j;
+                            const dep_off = dep_slice.off;
+                            const dep_len = dep_slice.len;
+                            if (dep_len == 0) continue;
+                            for (0..dep_len) |j| {
+                                const dep_id = dep_off + j;
                                 if (dep_id < dependencies_len) {
                                     map[dep_id] = @truncate(pkg_id);
                                 }

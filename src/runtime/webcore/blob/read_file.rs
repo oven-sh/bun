@@ -679,13 +679,21 @@ impl ReadFile {
         };
 
         if let Some(store) = &self.store {
-            // SAFETY: `ReadFile` owns the `StoreRef` (moved in at construction);
-            // this worker thread is the sole holder for the duration of `run`.
-            // No other borrow of the `Store` is live at this point — the JS
-            // thread is blocked on the backing promise until `then` fires.
-            if let Data::File(file) = unsafe { store.data_mut() } {
+            // Route through `StoreRef: Deref<Target = Store>` (shared
+            // borrow), not `data_mut()` — the only field this worker
+            // writes is `file.last_modified`, an `AtomicU64` whose
+            // `store(Relaxed)` takes `&self`. Avoiding `&mut Data`
+            // eliminates the Rust aliasing hazard entirely: N sibling
+            // `ReadFile` tasks (each `StoreRef`-cloned from the same
+            // JS-thread `Blob` via `do_read_file`) concurrently reaching
+            // this code hold `&Data` to the same allocation, which is
+            // always sound.
+            if let Data::File(file) = &store.data {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
-                file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
+                file.last_modified.store(
+                    jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize),
+                    core::sync::atomic::Ordering::Relaxed,
+                );
             }
         }
 
@@ -1213,13 +1221,19 @@ impl<'a> ReadFileUV<'a> {
         let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        // SAFETY: `this` (a `ReadFileUV`) exclusively owns `store` for the
-        // duration of the libuv fs callback; no other borrow is live.
-        if let Data::File(file) = unsafe { this.store.data_mut() } {
+        // Shared borrow through `StoreRef: Deref<Target = Store>` — the
+        // only field written is `file.last_modified` (an `AtomicU64`
+        // whose `store(Relaxed)` takes `&self`), so we never materialize
+        // `&mut Data`. Libuv fs callbacks here run on the JS event-loop
+        // thread; the atomic is kept for structural consistency with the
+        // POSIX writer (where sibling worker tasks can race).
+        if let Data::File(file) = &this.store.data {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.
-            file.last_modified =
-                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize);
+            file.last_modified.store(
+                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize),
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {

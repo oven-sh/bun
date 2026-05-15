@@ -208,7 +208,7 @@ Every file in here is a concrete, reviewable artifact for a specific finding.
 
 | File | What |
 |------|------|
-| `miri-confirmed-summary.md` | Index of all 5 miri-confirmed bugs. |
+| `miri-confirmed-summary.md` | Index of the 5 miri-backed UB witnesses. |
 | `miri-confirmed-linear-fifo-niche-ub.md` | F-1 reproducer + miri trace. |
 | `miri-confirmed-linux-errno-transmute.md` | pre-existing-ub-001 reproducer + miri trace. |
 | `miri-confirmed-pub-install-1.md` | P0 supply-chain reproducer + miri trace. |
@@ -326,7 +326,7 @@ For the curious: the audit exercises many of the skill's major capabilities acro
 - Multi-pass adversarial reclassification ✓ (Codex P2 + P3 + Pass 4 closure)
 - 5 passes total, with artifact history preserved in the contributor branch and the current reviewable artifacts in this PR
 
-The skill is designed to be the ENTIRE audit workflow, not a checklist. This audit shows what that looks like at scale on a 108-crate workspace with ~11,044 unsafe sites.
+The skill is designed to support an end-to-end audit workflow, not a checklist. This audit shows what that looks like at scale on a 108-crate workspace with ~11,044 unsafe sites.
 
 ---
 

@@ -78,7 +78,7 @@ error: aborting due to 1 previous error
 
 When the maintainer asks "is this bug real?", the answer is: yes, here is the miri output. The audit isn't relying on type-system inference alone — there's a runtime trace.
 
-This converts the linear_fifo finding from "static-analysis hypothesis" to "miri-confirmed concrete UB." It is now a confirmed Tier-1 finding by the strongest possible standard.
+This converts the linear_fifo finding from "static-analysis hypothesis" to "miri-confirmed concrete UB." It is now a confirmed Tier-1 finding with direct runtime evidence.
 
 ## Why the existing bun_collections test suite doesn't catch it
 

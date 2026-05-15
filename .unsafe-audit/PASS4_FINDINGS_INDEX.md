@@ -111,4 +111,4 @@ After the user's "I want defensible artifacts" critique + Codex's tight tier dis
 9. **linux_errno SystemErrno::from_raw fix** — `strum::FromRepr`.
 10. **StoreSlice Send/Sync bounds** — add `<T: Send>`/`<T: Sync>` matching StoreRef pattern. Track `JsCell<T>` / `RacyCell<T>` in the Tier-2 contract-hardening tranche unless a concrete current bad caller is shown.
 
-These 10 PRs alone, if landed, close out the entire P0 + most of P1 surface from the audit.
+These 10 PRs, if landed, should close the current P0-band set and most of the P1 surface from the audit.

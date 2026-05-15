@@ -682,9 +682,9 @@ Format: `(file:line) — operation, secret, comparison, zeroed-on-drop, RNG`
 **None.** Every HMAC/signature verification path that an attacker can drive
 flows through `bun_boringssl_sys::constant_time_eq` (= `CRYPTO_memcmp`).
 
-This is the strongest possible negative finding for a crypto audit:
-**there is no Rust unsafe-tier code path in Bun that allows an attacker
-to recover an HMAC/signature byte-by-byte via timing observations.**
+This is a strong negative finding for the reviewed crypto surface:
+the audited Rust HMAC/signature verification paths that an attacker can drive
+flow through constant-time comparison rather than byte-by-byte equality.
 
 ### T2 — architecture defect (recommended fixes)
 

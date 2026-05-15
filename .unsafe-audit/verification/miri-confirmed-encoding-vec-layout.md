@@ -75,7 +75,7 @@ The pass-2 finding's classification as P1 (with miri trace now elevating it towa
 
 ## What this means for the audit's defensibility
 
-- **Miri's "incorrect layout on deallocation" is the strongest possible evidence** for this class of bug. It's not a static-analysis hypothesis; it's a runtime trace.
+- **Miri's "incorrect layout on deallocation" is direct runtime evidence** for this class of bug. It's not a static-analysis hypothesis.
 - Bun's existing `Buffer.from(x).toString("ucs2")` tests don't hit this because:
   - mimalloc accepts the mismatched layout silently
   - the global allocator is not exercised under miri-like strictness in the test suite

@@ -65,7 +65,7 @@ The current Bun source has NO LIVE CALLERS today (Bun's Linux raw-syscall layer 
 
 ## What this means for the audit's defensibility
 
-This is the strongest possible standard of evidence for a latent-UB finding:
+This is strong runtime evidence for a latent-UB finding:
 1. A concrete miri trace
 2. Reproduced from the exact arithmetic Bun's source uses
 3. Triggering UB at the same line (`core::mem::transmute::<u16, _>`) Bun has
@@ -77,4 +77,4 @@ The proposed fix (`strum::FromRepr` + `unwrap_or(SUCCESS)`) is what the audit's 
 - Pass 2 found this via static analysis. The agent identified the niche-violation potential by reading the SAFETY comment's claimed range and comparing to the enum's discriminant set.
 - Pass 4 (this verification) confirms the same UB with a runtime trace.
 
-The audit can now say with full confidence: "this is a latent UB bug; the fix is the proposed 6-line patch; here's the miri output that proves it."
+The audit can now say: "this is a latent UB bug; the proposed checked conversion fixes the reproduced failure mode; here is the miri output that demonstrates it."

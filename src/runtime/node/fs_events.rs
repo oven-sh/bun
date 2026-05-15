@@ -580,7 +580,9 @@ impl FSEventsLoop {
             // `cf_loop_callback` recovers this as `&FSEventsLoop`. Derived
             // from the same shared `&'static` as everything else, so CF's
             // later deref cannot invalidate any other alias.
-            info: core::ptr::from_ref::<FSEventsLoop>(this).cast_mut().cast::<c_void>(),
+            info: core::ptr::from_ref::<FSEventsLoop>(this)
+                .cast_mut()
+                .cast::<c_void>(),
             retain: None,
             release: None,
             copy_description: None,
@@ -821,7 +823,9 @@ impl FSEventsLoop {
             let mut ctx = FSEventStreamContext {
                 // `_events_cb` recovers this as `&FSEventsLoop`. Same pointer
                 // as the `&'static` in `FSEVENTS_DEFAULT_LOOP`.
-                info: core::ptr::from_ref::<FSEventsLoop>(self).cast_mut().cast::<c_void>(),
+                info: core::ptr::from_ref::<FSEventsLoop>(self)
+                    .cast_mut()
+                    .cast::<c_void>(),
                 ..Default::default()
             };
 

@@ -725,8 +725,16 @@ fn path_entries_equal(a: &[u8], b: &[u8]) -> bool {
     let fast_match = if cfg!(windows) {
         a.len() == b.len()
             && a.iter().zip(b.iter()).all(|(&x, &y)| {
-                let nx = if x == b'/' { b'\\' } else { x.to_ascii_lowercase() };
-                let ny = if y == b'/' { b'\\' } else { y.to_ascii_lowercase() };
+                let nx = if x == b'/' {
+                    b'\\'
+                } else {
+                    x.to_ascii_lowercase()
+                };
+                let ny = if y == b'/' {
+                    b'\\'
+                } else {
+                    y.to_ascii_lowercase()
+                };
                 nx == ny
             })
     } else {
@@ -746,10 +754,9 @@ fn path_entries_equal(a: &[u8], b: &[u8]) -> bool {
         // Falling back to `std::fs::canonicalize` resolves all of those to
         // the same form when the entry really is the bin dir.
         if let (Ok(a_str), Ok(b_str)) = (core::str::from_utf8(a), core::str::from_utf8(b)) {
-            if let (Ok(a_canon), Ok(b_canon)) = (
-                std::fs::canonicalize(a_str),
-                std::fs::canonicalize(b_str),
-            ) {
+            if let (Ok(a_canon), Ok(b_canon)) =
+                (std::fs::canonicalize(a_str), std::fs::canonicalize(b_str))
+            {
                 return a_canon == b_canon;
             }
         }

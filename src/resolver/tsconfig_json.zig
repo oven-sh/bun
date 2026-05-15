@@ -152,10 +152,10 @@ pub const TSConfigJSON = struct {
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
         if (json.asProperty("extends")) |extends_value| {
-            if (!source.path.isNodeModule()) {
-                if (extends_value.expr.asString(allocator) orelse null) |str| {
-                    result.extends = str;
-                }
+            // Parse extends regardless of whether the config is in node_modules,
+            // so that chained extends (e.g., app -> @org/base -> @org/preset) work.
+            if (extends_value.expr.asString(allocator) orelse null) |str| {
+                result.extends = str;
             }
         }
         var has_base_url = false;

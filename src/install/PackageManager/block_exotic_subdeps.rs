@@ -112,9 +112,7 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
             };
 
             let key = ((parent_id as u64) << 32) | (dep_pkg_id as u64);
-            let gop = seen
-                .get_or_put(key)
-                .expect("OOM: block_exotic_subdeps dedup map");
+            let gop = bun_core::handle_oom(seen.get_or_put(key));
             if gop.found_existing {
                 continue;
             }

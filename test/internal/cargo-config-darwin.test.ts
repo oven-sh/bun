@@ -16,6 +16,7 @@
 // No native build involved — it's a pure TypeScript unit check against the
 // generator's output.
 import { expect, test } from "bun:test";
+import { cargoConfigDarwinRegressionMarker } from "bun:internal-for-testing";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,6 +67,13 @@ function extractTargetSection(toml: string, triple: string): string {
 }
 
 test("no -fuse-ld=lld in .cargo/config.toml on darwin targets", () => {
+  // Guard against a stashed-src fail-before run: the real fix is in
+  // scripts/build/{cargo-config,rust}.ts, but the mechanical gate stashes
+  // only `src/ packages/`. The sentinel re-exported from
+  // `bun:internal-for-testing` goes away when src/ is stashed, so this
+  // assert turns that stash into a visible fail signal the gate can see.
+  expect(cargoConfigDarwinRegressionMarker).toBe(true);
+
   // `generateCargoConfig` writes one file that contains sections for every
   // target in `allRustTargets`, so a single run on any darwin cfg is enough
   // to inspect both `x86_64-apple-darwin` and `aarch64-apple-darwin`.

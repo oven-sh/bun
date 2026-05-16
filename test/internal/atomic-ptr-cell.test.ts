@@ -16,9 +16,10 @@ import { join } from "path";
 // straight to `AtomicPtr` with identical orderings — so there is no
 // runtime-observable difference to assert. The observable change is at
 // compile time: pointer types are no longer `Atom`. This test enforces
-// that invariant at the source level so the pattern can't regress.
+// that invariant at the source level (same spirit as `ban-words.test.ts`)
+// so the pattern can't regress.
 
-const atomicCellPath = join(import.meta.dir, "../../../src/bun_core/atomic_cell.rs");
+const atomicCellPath = join(import.meta.dir, "../../src/bun_core/atomic_cell.rs");
 const src = readFileSync(atomicCellPath, "utf8");
 
 test("pointer types are not Atom (use AtomicPtrCell instead)", () => {

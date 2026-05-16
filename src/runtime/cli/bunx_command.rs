@@ -1364,7 +1364,21 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        // TODO(port): Zig used std.fs.cwd().makeOpenPath; map to bun_sys recursive mkdir + open.
+        // Under an active `--minimum-release-age`, wipe any stale bunx cache
+        // before re-resolving. `--no-cache --force` to `bun add` alone is
+        // insufficient: a surviving `bun.lock` pins the previous resolution
+        // and `bun add` reuses it, silently bypassing the age filter for
+        // ranged specifiers (empirically verified with
+        // `bunx @nestjs/cli@^11` against a warm cache). Centralizing the
+        // wipe here covers all three age-gate paths (`'find` stale-cache
+        // break, `'find2` cache-hit break, and the `get_bin_name_from_temp_directory`
+        // force_stale return) with a single call — no need to duplicate it
+        // at every `break 'try_run_existing` site. `delete_tree` is a
+        // best-effort recursive rm (same as the force_stale path at
+        // line 531); failures will be caught by `make_open_path` just below.
+        if opts.has_active_age_gate() {
+            let _ = bun_sys::Dir::cwd().delete_tree(bunx_cache_dir);
+        }
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {

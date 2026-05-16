@@ -293,8 +293,16 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     const decoder = new TextDecoder();
     let output = "";
     let sawPrompt = false;
+    let sawRestore = false;
     const promptReady = Promise.withResolvers<void>();
-    const exited = Promise.withResolvers<void>();
+    // Resolved inside data() when the cursor-restore sequence arrives. We
+    // MUST wait on this and not on proc.exited alone: on Windows ConPTY the
+    // child-exit IOCP and the final pipe-data IOCP are independent, so
+    // proc.exited can resolve before the final bytes have been delivered to
+    // data(). See the note in terminal-platform-gaps.test.ts. The exit()
+    // callback also does not fire on child exit for an externally-created
+    // Bun.Terminal (same file documents this), so we can't use that either.
+    const cursorRestored = Promise.withResolvers<void>();
 
     await using terminal = new Bun.Terminal({
       cols: 120,
@@ -308,9 +316,10 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
           sawPrompt = true;
           promptReady.resolve();
         }
-      },
-      exit() {
-        exited.resolve();
+        if (!sawRestore && output.includes("\x1b[?25h")) {
+          sawRestore = true;
+          cursorRestored.resolve();
+        }
       },
     });
 
@@ -324,10 +333,18 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     try {
       // Wait for the prompt to render before sending Ctrl+C, otherwise
       // we may write the byte before the raw-mode guard is installed and
-      // the shell would still be line-buffered.
-      await Promise.race([promptReady.promise, exited.promise]);
+      // the shell would still be line-buffered. Race against proc.exited
+      // so we don't hang if the subprocess dies before rendering.
+      await Promise.race([promptReady.promise, proc.exited]);
       terminal.write("\x03");
 
+      // Wait for the cursor-restore bytes to reach the PTY master read
+      // callback, OR for the subprocess to exit. If the fix regresses on
+      // Windows (ENABLE_PROCESSED_INPUT reintroduced, ExitProcess path
+      // taken), the child dies without emitting `\x1b[?25h`, cursorRestored
+      // never fires, and proc.exited wins the race — the assertion below
+      // then fails with a diagnostic instead of the test timing out.
+      await Promise.race([cursorRestored.promise, proc.exited]);
       const exitCode = await proc.exited;
       output += decoder.decode();
 

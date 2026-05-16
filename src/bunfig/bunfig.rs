@@ -1387,7 +1387,10 @@ impl<'a> Parser<'a> {
             install.global_store = Some(v);
         }
 
-        if let Some(v) = install_obj.get(b"blockExoticSubdeps").and_then(|e| e.as_bool()) {
+        if let Some(v) = install_obj
+            .get(b"blockExoticSubdeps")
+            .and_then(|e| e.as_bool())
+        {
             install.block_exotic_subdeps = Some(v);
         }
 

@@ -461,7 +461,8 @@ impl Options {
             }
 
             if let Some(block_exotic_subdeps) = config.block_exotic_subdeps {
-                self.enable.set(Enable::BLOCK_EXOTIC_SUBDEPS, block_exotic_subdeps);
+                self.enable
+                    .set(Enable::BLOCK_EXOTIC_SUBDEPS, block_exotic_subdeps);
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {

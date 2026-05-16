@@ -640,7 +640,11 @@ pub fn install_with_manager(
 
         manager.verify_resolutions(log_level);
 
-        if manager.options.enable.contains(Enable::BLOCK_EXOTIC_SUBDEPS) {
+        if manager
+            .options
+            .enable
+            .contains(Enable::BLOCK_EXOTIC_SUBDEPS)
+        {
             let violations = block_exotic_subdeps::enforce_block_exotic_subdeps(manager);
             if violations > 0 {
                 Global::exit(1);

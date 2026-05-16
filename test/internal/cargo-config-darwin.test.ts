@@ -16,19 +16,18 @@
 // No native build involved — it's a pure TypeScript unit check against the
 // generator's output.
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { generateCargoConfig } from "../../scripts/build/cargo-config.ts";
 import type { Config, OS } from "../../scripts/build/config.ts";
 
-function mockConfig(overrides: { os: OS; arch: "x64" | "aarch64" }): Config {
+function mockConfig(cwd: string, overrides: { os: OS; arch: "x64" | "aarch64" }): Config {
   const { os, arch } = overrides;
   const darwin = os === "darwin";
   const linux = os === "linux";
   const windows = os === "windows";
   const freebsd = os === "freebsd";
-  const cwd = tempDirWithFiles("cargo-config-test", {});
   // Only fields that `generateCargoConfig` and its helpers read. Cast through
   // `unknown` because the full `Config` type has ~50 required fields — the
   // generator touches a tiny subset (`cwd`, `cxx`, `host.os`, + the platform
@@ -67,36 +66,40 @@ function extractTargetSection(toml: string, triple: string): string {
 }
 
 test("no -fuse-ld=lld in .cargo/config.toml on darwin targets", () => {
-  for (const arch of ["x64", "aarch64"] as const) {
-    const cfg = mockConfig({ os: "darwin", arch });
-    const outPath = generateCargoConfig(cfg);
-    expect(outPath).toBe(join(cfg.cwd, ".cargo", "config.toml"));
-    const generated = readFileSync(outPath, "utf8");
+  // `generateCargoConfig` writes one file that contains sections for every
+  // target in `allRustTargets`, so a single run on any darwin cfg is enough
+  // to inspect both `x86_64-apple-darwin` and `aarch64-apple-darwin`.
+  // `using tempDir` ensures the cargo-config dir gets removed at scope exit.
+  using tmpDir = tempDir("cargo-config-test", {});
+  const cfg = mockConfig(tmpDir + "", { os: "darwin", arch: "aarch64" });
+  const outPath = generateCargoConfig(cfg);
+  expect(outPath).toBe(join(cfg.cwd, ".cargo", "config.toml"));
+  const generated = readFileSync(outPath, "utf8");
 
-    // Scan each darwin target section individually — the file also contains
-    // linux/freebsd/android sections that legitimately carry the lld flag.
-    for (const darwinArch of ["x86_64", "aarch64"] as const) {
-      const triple = `${darwinArch}-apple-darwin`;
-      const section = extractTargetSection(generated, triple);
+  // Scan each darwin target section individually — the file also contains
+  // linux/freebsd/android sections that legitimately carry the lld flag.
+  for (const darwinArch of ["x86_64", "aarch64"] as const) {
+    const triple = `${darwinArch}-apple-darwin`;
+    const section = extractTargetSection(generated, triple);
 
-      // linker must still be set to the discovered `cfg.cxx`.
-      expect(section).toContain(`linker = "/opt/homebrew/opt/llvm@21/bin/clang++"`);
+    // linker must still be set to the discovered `cfg.cxx`.
+    expect(section).toContain(`linker = "/opt/homebrew/opt/llvm@21/bin/clang++"`);
 
-      // The flag must not appear in this darwin section. macOS uses ld64 by
-      // default, and a Homebrew clang++ without the `lld` driver alias
-      // rejects `-fuse-ld=lld` outright ("invalid linker name in argument
-      // '-fuse-ld=lld'").
-      expect(section).not.toContain("-fuse-ld=lld");
-      expect(section).not.toContain("link-arg=-fuse-ld=lld");
-      expect(section).not.toContain("rustflags");
-    }
+    // The flag must not appear in this darwin section. macOS uses ld64 by
+    // default, and a Homebrew clang++ without the `lld` driver alias
+    // rejects `-fuse-ld=lld` outright ("invalid linker name in argument
+    // '-fuse-ld=lld'").
+    expect(section).not.toContain("-fuse-ld=lld");
+    expect(section).not.toContain("link-arg=-fuse-ld=lld");
+    expect(section).not.toContain("rustflags");
   }
 });
 
 test("linux targets keep -fuse-ld=lld in .cargo/config.toml", () => {
   // Parity check: the darwin fix must not regress the linux path, where
   // forcing lld IS the intent (the C++ side also passes --ld-path=...).
-  const cfg = mockConfig({ os: "linux", arch: "x64" });
+  using tmpDir = tempDir("cargo-config-test", {});
+  const cfg = mockConfig(tmpDir + "", { os: "linux", arch: "x64" });
   const outPath = generateCargoConfig(cfg);
   const generated = readFileSync(outPath, "utf8");
 

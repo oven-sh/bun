@@ -20,10 +20,10 @@ use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt, Symbol};
 
 // ── local EString shims ────────────────────────────────────────────────────
-// E.rs currently carries two `impl EString` blocks (live + round-C draft) with
-// overlapping inherent methods, so calls like `EString::init`/`javascript_length`
-// /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
-// public fields directly and are removed once E.rs is deduped.
+// Thin wrappers around `E::EString` field access. Added when `e.rs` carried
+// duplicate `impl EString` blocks and `EString::init` / `javascript_length` /
+// `eql_bytes` were E0034-ambiguous from here. The duplicates have since been
+// merged, so these can be replaced with the inherent methods.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {

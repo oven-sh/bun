@@ -2367,25 +2367,22 @@ pub mod cache {
         ) -> Result<Entry, bun_core::Error> {
             let rfs = &_fs.fs;
 
-            let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
-
-            let file_handle: bun_sys::File = if let Some(fd) = cached_file_descriptor {
+            let mut owned: Option<bun_sys::File> = None;
+            let fd: Fd = if let Some(fd) = cached_file_descriptor {
                 // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
                 bun_sys::lseek(fd, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
-                bun_sys::File::from_fd(fd)
+                fd
             } else {
-                bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(bun_core::Error::from)?
+                let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(bun_core::Error::from)?;
+                let raw = f.handle();
+                owned = Some(f);
+                raw
             };
-            let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if !will_close {
-                    let _ = fh.into_raw();
-                }
-            });
-            let fd = file_handle.handle();
+            let file_handle = bun_sys::File::borrow(&fd);
 
             let contents = match fs_mod::read_file_contents(
-                &file_handle,
+                file_handle,
                 path.as_bytes(),
                 true,
                 shared,
@@ -2406,13 +2403,18 @@ pub mod cache {
                 }
             };
 
+            // Caller-supplied fds stay open and always publish; freshly-opened
+            // ones publish only when they survive (escape into the cache).
+            let will_close = cached_file_descriptor.is_none() && rfs.need_to_close_files();
+            let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
+            if publish_fd {
+                if let Some(f) = owned.take() {
+                    let _ = f.into_raw();
+                }
+            }
             Ok(Entry {
                 contents,
-                fd: if feature_flags::STORE_FILE_DESCRIPTORS {
-                    fd
-                } else {
-                    Fd::INVALID
-                },
+                fd: if publish_fd { fd } else { Fd::INVALID },
                 external_free_function: ExternalFreeFunction::NONE,
             })
         }
@@ -2497,15 +2499,11 @@ pub mod cache {
                     .map_err(bun_core::Error::from)?
             };
 
-            let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if will_close {
-                    bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());
-                } else {
-                    let _ = fh.into_raw();
-                }
-            });
-
-            let fd = file_handle.handle();
+            // Hold ownership through the read; on error `Drop` closes. Disarm
+            // only on the success path where the fd escapes via `Entry.fd`.
+            let mut owned: Option<bun_sys::File> = (_file_handle.is_none()).then_some(file_handle);
+            let fd: Fd = _file_handle.unwrap_or_else(|| owned.as_ref().unwrap().handle());
+            let file_handle = bun_sys::File::borrow(&fd);
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
             bun_core::scoped_log!(
@@ -2526,7 +2524,7 @@ pub mod cache {
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
                 (false, Some(arena)) => {
-                    match fs_mod::read_file_contents_in_arena(&file_handle, path, arena) {
+                    match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
                         Err(err) => {
@@ -2544,7 +2542,7 @@ pub mod cache {
                 _ => {
                     let shared = self.shared_buffer();
                     match fs_mod::read_file_contents(
-                        &file_handle,
+                        file_handle,
                         path,
                         use_shared_buffer,
                         shared,
@@ -2567,13 +2565,17 @@ pub mod cache {
                 }
             };
 
+            let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
+            if publish_fd {
+                if let Some(f) = owned.take() {
+                    let _ = f.into_raw();
+                }
+            } else if will_close {
+                bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fd);
+            }
             Ok(Entry {
                 contents,
-                fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close {
-                    fd
-                } else {
-                    Fd::INVALID
-                },
+                fd: if publish_fd { fd } else { Fd::INVALID },
                 external_free_function: ExternalFreeFunction::NONE,
             })
         }

@@ -1199,15 +1199,15 @@ impl<'a> Lexer<'a> {
                             iter.width = 0;
                             continue;
                         }
-                        c if ALLOW_MULTILINE && (c == ' ' as CodePoint || c == '\t' as CodePoint) => {
+                        c if ALLOW_MULTILINE
+                            && (c == ' ' as CodePoint || c == '\t' as CodePoint) =>
+                        {
                             // TOML v1.0.0 ABNF: `mlb-escaped-nl = escape ws newline *( wschar / newline )`
                             // — a backslash may have trailing spaces/tabs before the newline.
                             // Peek past them: if the run ends in a newline it's a line-ending
                             // backslash; otherwise fall through and emit the whitespace char.
                             let mut peek = iter.i as usize + iter.width as usize;
-                            while peek < text.len()
-                                && (text[peek] == b' ' || text[peek] == b'\t')
-                            {
+                            while peek < text.len() && (text[peek] == b' ' || text[peek] == b'\t') {
                                 peek += 1;
                             }
                             if peek < text.len() && (text[peek] == b'\n' || text[peek] == b'\r') {

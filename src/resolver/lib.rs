@@ -1103,7 +1103,10 @@ pub mod fs {
             }
 
             let mut filename_store = FilenameStoreAppender::new();
-            while let Some(entry_) = iter.next()? {
+            // SAFETY: `entry_.name` borrows the iterator's scratch buffer.
+            // `add_entry_with_store` copies the name into `filename_store`
+            // (process-lifetime arena) before this loop iteration ends.
+            while let Some(entry_) = unsafe { iter.next() }? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
                 dir.add_entry_with_store(
                     prev_map.as_deref_mut(),
@@ -1449,7 +1452,11 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink = PathString::init(FilenameStore::instance().append_slice(real)?);
+                    // SAFETY: `FilenameStore::instance().append_slice` returns
+                    // a slice into the process-lifetime filename arena.
+                    cache.symlink = unsafe {
+                        PathString::init(FilenameStore::instance().append_slice(real)?)
+                    };
                 }
                 return Ok(cache);
             }
@@ -1510,8 +1517,11 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        PathString::init(FilenameStore::instance().append_slice(symlink)?);
+                    // SAFETY: `FilenameStore::instance().append_slice` returns
+                    // a slice into the process-lifetime filename arena.
+                    cache.symlink = unsafe {
+                        PathString::init(FilenameStore::instance().append_slice(symlink)?)
+                    };
                 }
 
                 Ok(cache)
@@ -1883,7 +1893,10 @@ pub mod dir_entry_accessor {
         type Entry = DirEntryIterResult;
 
         #[inline]
-        fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
+        // Entry name borrows the EntryStore key — this impl doesn't actually
+        // need `unsafe`, but the trait method is `unsafe fn` (to encode the
+        // streaming-iterator contract for other impls like `SyscallDirIter`).
+        unsafe fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
             if let Some(value) = &mut self.value {
                 let Some((key, val)) = value.next() else {
                     return Ok(None);

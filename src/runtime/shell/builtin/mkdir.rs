@@ -323,7 +323,13 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_core::PathString::init(filepath.as_bytes())),
+            // SAFETY: `filepath` borrows either `this.filepath: Vec<u8>` (abs
+            // branch) or `resolve_path::join_z`'s thread-local buffer (rel
+            // branch); both outlive `args` through the synchronous mkdir
+            // calls below.
+            path: PathLike::String(unsafe {
+                bun_core::PathString::init(filepath.as_bytes())
+            }),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,

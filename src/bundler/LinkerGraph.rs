@@ -553,9 +553,14 @@ impl LinkerGraph {
 
                 // Check if this entry point has an original name (from virtual entry resolution)
                 if let Some(original_name) = entry_point_original_names.get(i.get()) {
-                    *path_string = PathString::init(original_name);
+                    // SAFETY: `original_name` is an arena-owned string whose
+                    // backing allocation lives for the bundle's duration —
+                    // past this EntryPoint list.
+                    *path_string = unsafe { PathString::init(original_name) };
                 } else {
-                    *path_string = PathString::init(source.path.text);
+                    // SAFETY: `source.path.text` is `&'static [u8]` (see
+                    // `bun_paths::fs::Path<'static>`).
+                    *path_string = unsafe { PathString::init(source.path.text) };
                 }
 
                 *source_index = source.index.0;
@@ -574,7 +579,9 @@ impl LinkerGraph {
 
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,
-                    output_path: PathString::init(source.path.text),
+                    // SAFETY: `source.path.text` is `&'static [u8]` (see
+                    // `bun_paths::fs::Path<'static>`).
+                    output_path: unsafe { PathString::init(source.path.text) },
                     output_path_was_auto_generated: true,
                 });
             }

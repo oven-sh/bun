@@ -1795,7 +1795,11 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(path.text())
                             ));
                         }
-                        query.entry().set_cache_symlink(PathString::init(symlink));
+                        // SAFETY: `symlink` is `FilenameStore::append_slice`'s
+                        // return — process-lifetime arena.
+                        query
+                            .entry()
+                            .set_cache_symlink(unsafe { PathString::init(symlink) });
                         if !result.file_fd.is_valid() && store_fd {
                             result.file_fd = query.entry().cache().fd;
                         }
@@ -3437,7 +3441,26 @@ impl<'a> Resolver<'a> {
             // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
             // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
             let mut filename_store = FilenameStoreAppender::new();
-            while let Ok(Some(_value)) = dir_iterator.next() {
+            loop {
+                // SAFETY: `_value.name` borrows the iterator's scratch buffer.
+                // `add_entry_with_store` copies the name into `filename_store`
+                // (process-lifetime arena) before this loop iteration ends.
+                let _value = match unsafe { dir_iterator.next() } {
+                    Ok(Some(v)) => v,
+                    Ok(None) => break,
+                    // Propagate readdir failures rather than caching a partial
+                    // directory — a truncated cache can hide `package.json` /
+                    // `index.*` / symlink entries from later resolution.
+                    // Close `open_dir` first: this function is the sole owner
+                    // until ownership transfers into `new_entry.fd` (below,
+                    // `self.store_fd`) or `dir_info_uncached`'s `open_dir`
+                    // argument further down. Both transfer sites sit AFTER this
+                    // loop, so bailing here leaks the fd unless we close it.
+                    Err(err) => {
+                        open_dir.close();
+                        return Err(err.into());
+                    }
+                };
                 new_entry
                     .add_entry_with_store(
                         // SAFETY: see block-wide note above.
@@ -3792,12 +3815,16 @@ impl<'a> Resolver<'a> {
                     if entry_query.entry().abs_path.is_empty() {
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *entry_query.entry }.abs_path = PathString::init(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(abs_esm_path)
-                                .expect("unreachable"),
-                        );
+                        // SAFETY (PathString::init): `dirname_store.append_slice`
+                        // returns a slice into the process-lifetime arena.
+                        unsafe { &mut *entry_query.entry }.abs_path = unsafe {
+                            PathString::init(
+                                self.fs_ref()
+                                    .dirname_store
+                                    .append_slice(abs_esm_path)
+                                    .expect("unreachable"),
+                            )
+                        };
                     }
                     entry_query.entry().abs_path.slice()
                 };
@@ -4502,10 +4529,39 @@ impl<'a> Resolver<'a> {
                 // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
                 let mut filename_store = FilenameStoreAppender::new();
                 loop {
-                    let _value = match dir_iterator.next() {
+                    // SAFETY: `_value.name` borrows the iterator's scratch
+                    // buffer. `add_entry_with_store` copies the name into
+                    // `filename_store` (process-lifetime arena) before the
+                    // next iteration.
+                    let _value = match unsafe { dir_iterator.next() } {
                         Ok(Some(v)) => v,
                         Ok(None) => break,
-                        Err(_) => break,
+                        // Propagate readdir failures rather than caching a
+                        // partial directory — a truncated cache can hide
+                        // `package.json` / `index.*` / symlink entries from
+                        // later resolution.
+                        //
+                        // `open_dir` was either inherited from `queue_top.fd`
+                        // (in which case the queue still owns it — don't touch)
+                        // or freshly opened above and pushed onto
+                        // `bufs!(open_dirs)[..open_dir_count]`. The outer
+                        // `defer!` only closes those fds when
+                        // `!store_fd || need_to_close_files()`; in the
+                        // `store_fd && !need_to_close_files()` case the fd
+                        // would normally transfer into `new_entry.fd`
+                        // (a few lines below) but we're returning before that
+                        // assign, so pop-and-close to cover all branches
+                        // without risking a double-close via the defer.
+                        Err(err) => {
+                            if !queue_top.fd.is_valid() {
+                                let prev = open_dir_count.get();
+                                debug_assert!(prev > 0);
+                                debug_assert_eq!(bufs!(open_dirs)[prev - 1], open_dir);
+                                open_dir_count.set(prev - 1);
+                                open_dir.close();
+                            }
+                            return Err(err.into());
+                        }
                     };
                     new_entry
                         .add_entry_with_store(
@@ -5153,12 +5209,16 @@ impl<'a> Resolver<'a> {
                             let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                             // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *lookup.entry }.abs_path = PathString::init(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(out_buf_)
-                                    .expect("unreachable"),
-                            );
+                            // SAFETY (PathString::init): `dirname_store.append_slice`
+                            // returns a slice into the process-lifetime arena.
+                            unsafe { &mut *lookup.entry }.abs_path = unsafe {
+                                PathString::init(
+                                    self.fs_ref()
+                                        .dirname_store
+                                        .append_slice(out_buf_)
+                                        .expect("unreachable"),
+                                )
+                            };
                         }
                         lookup.entry().abs_path.slice()
                     };
@@ -5634,12 +5694,16 @@ impl<'a> Resolver<'a> {
                         let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *query.entry }.abs_path = PathString::init(
-                            self.fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable"),
-                        );
+                        // SAFETY (PathString::init): `dirname_store.append_slice`
+                        // returns a slice into the process-lifetime arena.
+                        unsafe { &mut *query.entry }.abs_path = unsafe {
+                            PathString::init(
+                                self.fs_ref()
+                                    .dirname_store
+                                    .append_slice(joined)
+                                    .expect("unreachable"),
+                            )
+                        };
                     }
                     crate::path_string_static(&query.entry().abs_path)
                 };
@@ -5744,22 +5808,32 @@ impl<'a> Resolver<'a> {
                                             && entry_dir[entry_dir.len() - 1] == SEP
                                         {
                                             let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                            PathString::init(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
+                                            // SAFETY: `filename_store.append_parts`
+                                            // returns a slice into the process-lifetime
+                                            // arena.
+                                            unsafe {
+                                                PathString::init(
+                                                    self.fs_ref()
+                                                        .filename_store
+                                                        .append_parts(&parts)
+                                                        .expect("unreachable"),
+                                                )
+                                            }
                                             // the trailing path CAN be missing here
                                         } else {
                                             let parts: [&[u8]; 3] =
                                                 [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            PathString::init(
-                                                self.fs_ref()
-                                                    .filename_store
-                                                    .append_parts(&parts)
-                                                    .expect("unreachable"),
-                                            )
+                                            // SAFETY: `filename_store.append_parts`
+                                            // returns a slice into the process-lifetime
+                                            // arena.
+                                            unsafe {
+                                                PathString::init(
+                                                    self.fs_ref()
+                                                        .filename_store
+                                                        .append_parts(&parts)
+                                                        .expect("unreachable"),
+                                                )
+                                            }
                                         };
                                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS
                                         // fully evaluated above — sole `&mut Entry` for this write.
@@ -5843,14 +5917,18 @@ impl<'a> Resolver<'a> {
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS is fully
                         // evaluated (shared reads) before the LHS `&mut Entry` is
                         // materialized for the write — no overlapping unique borrow.
+                        // SAFETY (PathString::init): `dirname_store.append_slice`
+                        // returns a slice into the process-lifetime arena.
                         unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty()
                         {
-                            PathString::init(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(&buffer[..])
-                                    .expect("unreachable"),
-                            )
+                            unsafe {
+                                PathString::init(
+                                    self.fs_ref()
+                                        .dirname_store
+                                        .append_slice(&buffer[..])
+                                        .expect("unreachable"),
+                                )
+                            }
                         } else {
                             query.entry().abs_path
                         };
@@ -6120,7 +6198,11 @@ impl<'a> Resolver<'a> {
                                 .ok();
                                 logs.add_note(buf);
                             }
-                            lookup.entry().set_cache_symlink(PathString::init(symlink));
+                            // SAFETY: `symlink` is `dirname_store.append_slice`'s
+                            // return — process-lifetime arena.
+                            lookup
+                                .entry()
+                                .set_cache_symlink(unsafe { PathString::init(symlink) });
                             info.abs_real_path = symlink;
                         }
                     }

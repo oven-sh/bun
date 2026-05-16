@@ -135,7 +135,9 @@ impl<'a> Scanner<'a> {
                         .filename_store
                         .append_slice(path)
                         .map_err(|_| ScanError::OutOfMemory)?;
-                    let rel_path = PathString::init(stored);
+                    // SAFETY: `stored` is interned into the filename store,
+                    // a process-lifetime arena (see `FilenameStore`).
+                    let rel_path = unsafe { PathString::init(stored) };
                     self.test_files.push(rel_path);
                 }
             } else if e == err!("ENOENT") {
@@ -438,7 +440,9 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = PathString::init(stored);
+                // SAFETY: `stored` is interned into the filename store, a
+                // process-lifetime arena (see `FilenameStore`).
+                entry.abs_path = unsafe { PathString::init(stored) };
                 self.test_files.push(entry.abs_path);
             }
         }

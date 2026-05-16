@@ -919,9 +919,12 @@ impl BuildCommand {
                                     },
                                     encoding: bun_sys::WriteFileEncoding::Buffer,
                                     dirfd: root_dir.fd,
-                                    file: bun_sys::PathOrFileDescriptor::Path(
-                                        bun_core::PathString::init(map_basename),
-                                    ),
+                                    // SAFETY: `map_basename` borrows a caller-owned
+                                    // buffer that outlives this synchronous
+                                    // `write_file_with_path_buffer` call.
+                                    file: bun_sys::PathOrFileDescriptor::Path(unsafe {
+                                        bun_core::PathString::init(map_basename)
+                                    }),
                                     ..Default::default()
                                 },
                             ) {

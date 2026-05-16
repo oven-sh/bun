@@ -549,7 +549,10 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     let mut abs_buf = path::path_buffer_pool::get();
     let mut rel_buf = path::path_buffer_pool::get();
     loop {
-        let entry = match it.next() {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; used
+        // within this loop iteration (joined into `abs_buf`/`rel_buf`, then
+        // watched via `add_directory`) before the next `it.next()` call.
+        let entry = match unsafe { it.next() } {
             Err(_) => return,
             Ok(None) => return,
             Ok(Some(e)) => e,

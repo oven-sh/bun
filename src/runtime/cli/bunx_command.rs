@@ -337,7 +337,11 @@ impl BunxCommand {
                     // Zig: `defer bin_dir.close()` — Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
                     let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
-                    let mut entry = iterator.next();
+                    // SAFETY: `current.name` borrows the iterator's scratch
+                    // buffer; on the file-found path we `Box::from` it (copy)
+                    // before returning, and on the continue path we drop
+                    // `current` before the next `iterator.next()` call.
+                    let mut entry = unsafe { iterator.next() };
                     loop {
                         let current = match entry {
                             bun_sys::Result::Err(_) => break,
@@ -349,13 +353,15 @@ impl BunxCommand {
 
                         if current.kind == bun_sys::EntryKind::File {
                             if current.name.slice().is_empty() {
-                                entry = iterator.next();
+                                // SAFETY: previous `current` borrow not reused.
+                                entry = unsafe { iterator.next() };
                                 continue;
                             }
                             return Ok(Box::<[u8]>::from(current.name.slice_u8()));
                         }
 
-                        entry = iterator.next();
+                        // SAFETY: previous `current` borrow not reused.
+                        entry = unsafe { iterator.next() };
                     }
                 }
             }

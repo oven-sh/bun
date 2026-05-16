@@ -444,7 +444,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                     let mut deleted: usize = 0;
                     loop {
-                        let entry = match iter.next() {
+                        // SAFETY: `entry.name` borrows the iterator's scratch
+                        // buffer; consumed within this iteration (via
+                        // `tmp_dir.delete_tree(name)`) before the next
+                        // `iter.next()` call.
+                        let entry = match unsafe { iter.next() } {
                             Ok(Some(e)) => e,
                             Ok(None) => break,
                             Err(err) => {

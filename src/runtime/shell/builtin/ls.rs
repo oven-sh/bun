@@ -520,7 +520,10 @@ impl ShellLsTask {
             this.add_dot_entries_if_needed(fd);
 
             loop {
-                match iterator.next() {
+                // SAFETY: `current.name` borrows the iterator's scratch
+                // buffer; `add_entry` / `enqueue` copy it into owned storage
+                // before the next `iterator.next()` call.
+                match unsafe { iterator.next() } {
                     Err(e) => {
                         this.err = Some(this.error_with_path(e));
                         return;

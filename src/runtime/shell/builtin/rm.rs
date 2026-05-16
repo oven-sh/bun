@@ -1108,7 +1108,10 @@ impl ShellRmTask {
 
         let mut i: usize = 0;
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer;
+            // consumed (via `remove_entry_*` copying) before the next
+            // `iterator.next()` call.
+            let current = match unsafe { iterator.next() } {
                 Err(e) => return Err(self.error_with_path(e, path.as_bytes())),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,

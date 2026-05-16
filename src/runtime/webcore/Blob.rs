@@ -4213,7 +4213,12 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_core::PathString::init(dirname)),
+                // SAFETY: `dirname` borrows `path_string` which outlives this
+                // synchronous `mkdir_recursive` call; the PathString does not
+                // escape.
+                path: node::PathLike::String(unsafe {
+                    bun_core::PathString::init(dirname)
+                }),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4348,9 +4353,13 @@ fn write_file_with_empty_source_to_destination(
                                 };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: node::PathLike::String(bun_core::PathString::init(
-                                            dirpath,
-                                        )),
+                                        // SAFETY: `dirpath` borrows the file's
+                                        // pathlike which outlives this synchronous
+                                        // `mkdir_recursive` call; the PathString
+                                        // does not escape.
+                                        path: node::PathLike::String(unsafe {
+                                            bun_core::PathString::init(dirpath)
+                                        }),
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()

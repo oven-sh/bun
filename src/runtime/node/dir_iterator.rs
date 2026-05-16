@@ -111,9 +111,12 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        /// Memory such as file names referenced in this returned entry becomes invalid
-        /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> Result {
+        /// # Safety
+        /// The returned [`IteratorResult::name`] borrows the iterator's internal
+        /// dirent scratch buffer (`self.buf`). It is invalidated by the next
+        /// call to [`next`](Self::next) and by this iterator's drop. The caller
+        /// must consume or `.slice().to_vec()`-copy the name before either.
+        pub unsafe fn next(&mut self) -> Result {
             self.next_darwin()
         }
 
@@ -222,7 +225,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -261,7 +267,12 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        pub fn next(&mut self) -> Result {
+        /// # Safety
+        /// The returned [`IteratorResult::name`] borrows the iterator's internal
+        /// dirent scratch buffer (`self.buf`). It is invalidated by the next
+        /// call to [`next`](Self::next) and by this iterator's drop. The caller
+        /// must consume or `.slice().to_vec()`-copy the name before either.
+        pub unsafe fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // SAFETY: dir is a valid open fd; buf is dirent-aligned scratch.
@@ -322,7 +333,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -355,9 +369,12 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        /// Memory such as file names referenced in this returned entry becomes invalid
-        /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> Result {
+        /// # Safety
+        /// The returned [`IteratorResult::name`] borrows the iterator's internal
+        /// dirent scratch buffer (`self.buf`). It is invalidated by the next
+        /// call to [`next`](Self::next) and by this iterator's drop. The caller
+        /// must consume or `.slice().to_vec()`-copy the name before either.
+        pub unsafe fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // glibc doesn't expose getdents64; go straight to the
@@ -428,7 +445,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -491,7 +511,10 @@ mod platform {
             // Trust that Windows gives us valid UTF-16LE
             let name_utf8 = strings::paths::from_w_path(&mut name_data[..], dir_info_name);
             IteratorResult {
-                name: PathString::init(name_utf8.as_bytes()),
+                // SAFETY: `name_utf8` borrows the caller-owned `name_data` buffer;
+                // the returned IteratorResult is bound to that borrow in the
+                // streaming-iterator call.
+                name: unsafe { PathString::init(name_utf8.as_bytes()) },
                 kind,
             }
         }
@@ -561,9 +584,13 @@ mod platform {
     where
         (): SelectImpl<USE_WINDOWS_OSPATH>,
     {
-        /// Memory such as file names referenced in this returned entry becomes invalid
-        /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(
+        /// # Safety
+        /// The returned [`IteratorResult::name`] / [`IteratorResultW::name`]
+        /// borrows the iterator's internal dirent scratch buffer. It is
+        /// invalidated by the next call to [`next`](Self::next) and by this
+        /// iterator's drop. The caller must consume or copy the name before
+        /// either.
+        pub unsafe fn next(
             &mut self,
         ) -> sys::Result<Option<<Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::Entry>> {
             loop {
@@ -771,9 +798,12 @@ mod platform {
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        /// Memory such as file names referenced in this returned entry becomes invalid
-        /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> Result {
+        /// # Safety
+        /// The returned [`IteratorResult::name`] borrows the iterator's internal
+        /// dirent scratch buffer (`self.buf`). It is invalidated by the next
+        /// call to [`next`](Self::next) and by this iterator's drop. The caller
+        /// must consume or `.slice().to_vec()`-copy the name before either.
+        pub unsafe fn next(&mut self) -> Result {
             // We intentinally use fd_readdir even when linked with libc,
             // since its implementation is exactly the same as below,
             // and we avoid the code complexity here.
@@ -844,7 +874,10 @@ mod platform {
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
-                    name: PathString::init(name),
+                    // SAFETY: `name` borrows the iterator's dirent scratch buffer.
+                    // Streaming-iterator contract: the returned PathString is
+                    // valid until the next `next()` call or the iterator's drop.
+                    name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
             }
@@ -878,24 +911,39 @@ where
 }
 
 impl NewWrappedIterator<false> {
+    /// # Safety
+    /// Inherits the borrow contract of [`NewIterator::next`]: the returned
+    /// name is invalidated by the next `next()` call (or this iterator's
+    /// drop). Copy it out before either.
     #[inline]
-    pub fn next(&mut self) -> Result {
-        self.iter.next()
+    pub unsafe fn next(&mut self) -> Result {
+        // SAFETY: caller upholds the same contract.
+        unsafe { self.iter.next() }
     }
 }
 
 impl NewWrappedIterator<true> {
+    /// # Safety
+    /// Inherits the borrow contract of [`NewIterator::next`]: the returned
+    /// name is invalidated by the next `next()` call (or this iterator's
+    /// drop). Copy it out before either.
     #[cfg(not(windows))]
     #[inline]
-    pub fn next(&mut self) -> Result {
+    pub unsafe fn next(&mut self) -> Result {
         // On POSIX the underlying iterator ignores `USE_WINDOWS_OSPATH` and
         // always yields UTF-8 `IteratorResult`s.
-        self.iter.next()
+        // SAFETY: caller upholds the same contract.
+        unsafe { self.iter.next() }
     }
+    /// # Safety
+    /// Inherits the borrow contract of [`NewIterator::next`]: the returned
+    /// name is invalidated by the next `next()` call (or this iterator's
+    /// drop). Copy it out before either.
     #[cfg(windows)]
     #[inline]
-    pub fn next(&mut self) -> ResultW {
-        self.iter.next()
+    pub unsafe fn next(&mut self) -> ResultW {
+        // SAFETY: caller upholds the same contract.
+        unsafe { self.iter.next() }
     }
 }
 

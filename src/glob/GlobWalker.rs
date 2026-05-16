@@ -167,7 +167,12 @@ pub trait Accessor {
 pub trait AccessorDirIter {
     type Handle;
     type Entry: AccessorDirEntry;
-    fn next(&mut self) -> Maybe<Option<Self::Entry>>;
+    /// # Safety
+    /// The returned [`Self::Entry`] may borrow this iterator's internal scratch
+    /// buffer (e.g. `SyscallDirIter` → `IteratorResult.name: PathString`). It
+    /// is invalidated by the next `next()` call and by this iterator's drop.
+    /// The caller must copy or consume each entry before advancing.
+    unsafe fn next(&mut self) -> Maybe<Option<Self::Entry>>;
     fn iterate(dir: Self::Handle) -> Self;
     #[allow(unused_variables)]
     fn set_name_filter(&mut self, filter: Option<&[u16]>) {
@@ -212,8 +217,10 @@ impl AccessorDirIter for SyscallDirIter {
     type Entry = DirIterator::IteratorResult;
 
     #[inline]
-    fn next(&mut self) -> Maybe<Option<DirIterator::IteratorResult>> {
-        self.value.next()
+    unsafe fn next(&mut self) -> Maybe<Option<DirIterator::IteratorResult>> {
+        // SAFETY: caller upholds the streaming-iterator contract forwarded
+        // from `WrappedIterator::next`.
+        unsafe { self.value.next() }
     }
 
     #[inline]
@@ -1072,7 +1079,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     }
                 }
                 IterState::Directory(dir) => {
-                    let entry = match dir.iter.next() {
+                    // SAFETY: the `entry.name_slice()` / `entry.kind()` reads
+                    // below consume the borrow (into `entry_name` then copied
+                    // via `prepare_matched_path` / `self.walker.join`) before
+                    // the outer loop calls `dir.iter.next()` again.
+                    let entry = match unsafe { dir.iter.next() } {
                         Err(err) => {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;

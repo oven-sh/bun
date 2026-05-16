@@ -459,7 +459,11 @@ impl OutputFile {
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(PathString::init(rel_path)),
+                        // SAFETY: `rel_path` is a local reference that outlives
+                        // this synchronous write call.
+                        file: bun_sys::PathOrFileDescriptor::Path(unsafe {
+                            PathString::init(rel_path)
+                        }),
                     },
                 )?;
             }

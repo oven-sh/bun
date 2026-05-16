@@ -2271,7 +2271,10 @@ impl Example {
                 if folder.fd() != bun_sys::Fd::invalid() {
                     let mut iter = bun_sys::dir_iterator::iterate(folder.fd());
 
-                    'loop_: while let Some(entry) = iter.next().ok().flatten() {
+                    // SAFETY: `entry.name` borrows the iterator's scratch
+                    // buffer; copied into `home_dir_buf` below before the
+                    // next `iter.next()` (loop iteration).
+                    'loop_: while let Some(entry) = unsafe { iter.next() }.ok().flatten() {
                         let entry_name = entry.name.slice_u8();
                         match entry.kind {
                             bun_sys::FileKind::Directory => {

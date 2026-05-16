@@ -376,9 +376,13 @@ pub fn write_output_files_to_disk(
                                     0o644
                                 },
                                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(PathString::init(
-                                    &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
-                                )),
+                                // SAFETY: `fdpath` is a local buffer that
+                                // outlives this synchronous write call.
+                                file: PathOrFileDescriptor::Path(unsafe {
+                                    PathString::init(
+                                        &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
+                                    )
+                                }),
                             },
                         ) {
                             Ok(_) => {}
@@ -449,7 +453,11 @@ pub fn write_output_files_to_disk(
                     0o644
                 },
                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                file: PathOrFileDescriptor::Path(PathString::init(&chunk.final_rel_path)),
+                // SAFETY: `chunk.final_rel_path` lives on `chunk` which
+                // outlives this synchronous write call.
+                file: PathOrFileDescriptor::Path(unsafe {
+                    PathString::init(&chunk.final_rel_path)
+                }),
             },
         ) {
             Err(e) => {

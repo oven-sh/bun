@@ -618,15 +618,29 @@ impl<'a> NamesIterator<'a> {
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();
-        if let Some(entry) = iter.next().unwrap_or(None) {
-            self.i += 1;
-            let name = entry.name.slice_u8();
-            Ok(Some(strings::copy(&mut self.buf[..], name)))
-        } else {
-            self.done = true;
-            let dir = self.dir_iterator.take().unwrap().dir();
-            dir.close();
-            Ok(None)
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; copied
+        // into `self.buf` via `strings::copy` before returning (next call to
+        // this fn's `iter.next()` overwrites the borrow).
+        match unsafe { iter.next() } {
+            Ok(Some(entry)) => {
+                self.i += 1;
+                let name = entry.name.slice_u8();
+                Ok(Some(strings::copy(&mut self.buf[..], name)))
+            }
+            Ok(None) => {
+                self.done = true;
+                let dir = self.dir_iterator.take().unwrap().dir();
+                dir.close();
+                Ok(None)
+            }
+            Err(err) => {
+                // Propagate OS iteration errors instead of silently ending —
+                // a failed readdir could otherwise hide bin entries.
+                self.done = true;
+                let dir = self.dir_iterator.take().unwrap().dir();
+                dir.close();
+                Err(err.into())
+            }
         }
     }
 
@@ -1577,6 +1591,15 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
+                    // SAFETY: `entry.name` borrows the iterator's scratch
+                    // buffer; `entry_name = entry.name.slice_u8()` is copied
+                    // into `self.abs_target_buf` via `join_abs_string_buf_z`
+                    // below within this iteration before the next
+                    // `iter.next()` call.
+                    // Note: this sits inside a larger `unsafe { match
+                    // self.bin.tag { ... } }` whose SAFETY comment covers the
+                    // `Bin.value` union access; the streaming-iterator
+                    // contract is documented here instead.
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
@@ -1710,6 +1733,14 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
+                    // SAFETY: `entry.name` borrows the iterator's scratch
+                    // buffer; `entry_name = entry.name.slice_u8()` is copied
+                    // into `self.abs_dest_buf` below within this iteration
+                    // before the next `iter.next()` call.
+                    // Note: this sits inside a larger `unsafe { match
+                    // self.bin.tag { ... } }` whose SAFETY comment covers the
+                    // `Bin.value` union access; the streaming-iterator
+                    // contract is documented here instead.
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {

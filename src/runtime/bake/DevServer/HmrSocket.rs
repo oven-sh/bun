@@ -19,6 +19,27 @@ pub use super::ResponseLike;
 // single type (no cross-type pointer casts).
 pub use super::HmrSocket;
 
+/// Echoes browser-relayed `console.log` payloads to the terminal with control
+/// bytes (ESC/CSI/OSC, C0/C1) stripped to prevent terminal escape injection.
+struct SanitizedBrowserLog<'a>(&'a [u8]);
+
+impl core::fmt::Display for SanitizedBrowserLog<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use bstr::ByteSlice;
+        use core::fmt::Write;
+        for ch in self.0.chars() {
+            // Drop C0 (except `\n`/`\t`), DEL, and C1 controls.
+            let is_control = matches!(ch, '\u{00}'..='\u{1f}' | '\u{7f}'..='\u{9f}');
+            if is_control && ch != '\n' && ch != '\t' {
+                f.write_char('\u{fffd}')?;
+            } else {
+                f.write_char(ch)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl HmrSocket {
     // `res: anytype` — only `.getRemoteSocketInfo()` is called on it.
     // Bound matches the caller in `DevServer::on_web_socket_upgrade`.
@@ -295,13 +316,13 @@ impl HmrSocket {
                         ConsoleLogKind::Log => {
                             Output::pretty(format_args!(
                                 "<r><d>[browser]<r> {}<r>\n",
-                                bstr::BStr::new(data)
+                                SanitizedBrowserLog(data)
                             ));
                         }
                         ConsoleLogKind::Err => {
                             Output::pretty_error(format_args!(
                                 "<r><d>[browser]<r> {}<r>\n",
-                                bstr::BStr::new(data)
+                                SanitizedBrowserLog(data)
                             ));
                         }
                     }

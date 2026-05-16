@@ -3096,13 +3096,26 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
 pub struct MappingProps {
     list: G::PropertyList,
+    /// Pointers of `E::Object`s already folded in via `<<` merge keys, so
+    /// repeated `*anchor` references aren't re-merged (avoids cubic blowup).
+    merged_objects: Vec<*const E::Object>,
 }
 
 impl MappingProps {
     pub fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
+            merged_objects: Vec::new(),
         }
+    }
+
+    /// Records `obj` and returns `true` if not seen before (caller skips on `false`).
+    fn note_merged(&mut self, obj: *const E::Object) -> bool {
+        if self.merged_objects.contains(&obj) {
+            return false;
+        }
+        self.merged_objects.push(obj);
+        true
     }
 
     pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
@@ -3154,13 +3167,21 @@ impl MappingProps {
         }
 
         match &value.data {
-            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice()),
+            ast::ExprData::EObject(value_obj) => {
+                if !self.note_merged(value_obj.as_ptr()) {
+                    return Ok(());
+                }
+                self.merge(value_obj.properties.slice())
+            }
             ast::ExprData::EArray(value_arr) => {
                 for item in value_arr.items.slice() {
                     let item_obj = match &item.data {
                         ast::ExprData::EObject(obj) => obj,
                         _ => continue,
                     };
+                    if !self.note_merged(item_obj.as_ptr()) {
+                        continue;
+                    }
                     self.merge(item_obj.properties.slice())?;
                 }
                 Ok(())

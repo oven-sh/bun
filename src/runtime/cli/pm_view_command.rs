@@ -424,19 +424,19 @@ pub fn view(
 
     prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
-        BStr::new(pkg_name),
-        BStr::new(pkg_version),
-        BStr::new(license),
+        Sanitized(pkg_name),
+        Sanitized(pkg_version),
+        Sanitized(license),
         dep_count,
         versions_len,
     );
 
     // Get description and homepage from the top-level package manifest, not the version-specific one
     if let Some(desc) = json.get_string_cloned(&bump, b"description").ok().flatten() {
-        prettyln!("{}", BStr::new(desc));
+        prettyln!("{}", Sanitized(desc));
     }
     if let Some(hp) = json.get_string_cloned(&bump, b"homepage").ok().flatten() {
-        prettyln!("<blue>{}<r>", BStr::new(hp));
+        prettyln!("<blue>{}<r>", Sanitized(hp));
     }
 
     if let Some(mut iter) = json.get_array(b"keywords") {
@@ -453,7 +453,7 @@ pub fn view(
             }
         }
         if !keywords.list.is_empty() {
-            prettyln!("<d>keywords:<r> {}", BStr::new(keywords.list.as_slice()));
+            prettyln!("<d>keywords:<r> {}", Sanitized(keywords.list.as_slice()));
         }
     }
 
@@ -487,8 +487,8 @@ pub fn view(
             };
             prettyln!(
                 "- <cyan>{}<r><d>:<r> {}",
-                BStr::new(dep_name),
-                BStr::new(dep_version),
+                Sanitized(dep_name),
+                Sanitized(dep_version),
             );
         }
     }
@@ -496,13 +496,13 @@ pub fn view(
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
         if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
-            prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
+            prettyln!(" <d>.<r>tarball<d>:<r> {}", Sanitized(t));
         }
         if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
-            prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));
+            prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", Sanitized(s));
         }
         if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
-            prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", BStr::new(i));
+            prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", Sanitized(i));
         }
         if let Some(u) = dist.get_number(b"unpackedSize") {
             prettyln!(
@@ -529,11 +529,11 @@ pub fn view(
             if let Some(tag) = tagname_expr.as_string(&bump) {
                 if let Some(val) = val_expr.as_string(&bump) {
                     if tag == b"latest" {
-                        prettyln!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+                        prettyln!("<cyan>{}<r><d>:<r> {}", Sanitized(tag), Sanitized(val));
                     } else if tag == b"beta" {
-                        prettyln!("<blue>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+                        prettyln!("<blue>{}<r><d>:<r> {}", Sanitized(tag), Sanitized(val));
                     } else {
-                        prettyln!("<magenta>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+                        prettyln!("<magenta>{}<r><d>:<r> {}", Sanitized(tag), Sanitized(val));
                     }
                 }
             }
@@ -554,9 +554,9 @@ pub fn view(
                 .flatten()
                 .unwrap_or(b"");
             if !em.is_empty() {
-                prettyln!("<d>-<r> {} <d>\\<{}\\><r>", BStr::new(nm), BStr::new(em));
+                prettyln!("<d>-<r> {} <d>\\<{}\\><r>", Sanitized(nm), Sanitized(em));
             } else if !nm.is_empty() {
-                prettyln!("<d>-<r> {}", BStr::new(nm));
+                prettyln!("<d>-<r> {}", Sanitized(nm));
             }
         }
     }
@@ -569,17 +569,36 @@ pub fn view(
             .ok()
             .flatten()
         {
-            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time));
+            prettyln!("\n<b>Published<r><d>:<r> {}", Sanitized(published_time));
         } else if let Some(modified_time) = time_obj
             .get_string_cloned(&bump, b"modified")
             .ok()
             .flatten()
         {
-            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(modified_time));
+            prettyln!("\n<b>Published<r><d>:<r> {}", Sanitized(modified_time));
         }
     }
 
     Ok(())
+}
+
+/// Displays registry-derived metadata with control characters stripped so
+/// malicious package fields can't inject terminal escape sequences.
+struct Sanitized<'a>(&'a [u8]);
+
+impl core::fmt::Display for Sanitized<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use bstr::ByteSlice;
+        use core::fmt::Write;
+        // Lossy-decode UTF-8 and drop control chars except `\n` / `\t`.
+        for ch in self.0.chars() {
+            if ch.is_control() && ch != '\n' && ch != '\t' {
+                continue;
+            }
+            f.write_char(ch)?;
+        }
+        Ok(())
+    }
 }
 
 // ported from: src/cli/pm_view_command.zig

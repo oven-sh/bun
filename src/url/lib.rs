@@ -1303,10 +1303,13 @@ impl<'a> Iterator<'a> {
     where
         'a: 't,
     {
-        while self.visited.is_set(self.i) {
+        // Clamp to the fixed 2048-bit `VisitedMap` so an oversized query-string
+        // param list can't index past the end of `visited.masks`.
+        let limit = self.map.list.len().min(VisitedMap::BIT_LENGTH);
+        while self.i < limit && self.visited.is_set(self.i) {
             self.i += 1;
         }
-        if self.i >= self.map.list.len() {
+        if self.i >= limit {
             return None;
         }
 
@@ -1320,7 +1323,7 @@ impl<'a> Iterator<'a> {
         self.visited.set(self.i);
         self.i += 1;
 
-        let remainder = &list[self.i..];
+        let remainder = &list[self.i..limit];
 
         let mut target_i: usize = 1;
         let mut current_i: usize = 0;
@@ -1345,7 +1348,7 @@ impl<'a> Iterator<'a> {
                     values: &mut target[0..target_i],
                 });
             }
-            if real_i + 1 >= self.map.list.len() {
+            if real_i + 1 >= limit {
                 return Some(IteratorResult {
                     name,
                     values: &mut target[0..target_i],

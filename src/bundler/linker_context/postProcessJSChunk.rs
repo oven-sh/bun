@@ -681,8 +681,26 @@ pub fn post_process_js_chunk(
                 }
             }
 
-            j.push_static(pretty);
-            line_offset.advance(pretty);
+            // Escape `*/` so a hostile package path can't terminate the multiline
+            // comment and inject JS. (Single-line is safe: no line terminators above.)
+            if matches!(comment_type, CommentType::Multiline) && strings::contains(pretty, b"*/") {
+                let mut escaped: Vec<u8> = Vec::with_capacity(pretty.len() + 1);
+                let mut i = 0;
+                while i < pretty.len() {
+                    if pretty[i] == b'*' && pretty.get(i + 1) == Some(&b'/') {
+                        escaped.extend_from_slice(b"*\\/");
+                        i += 2;
+                    } else {
+                        escaped.push(pretty[i]);
+                        i += 1;
+                    }
+                }
+                line_offset.advance(&escaped);
+                j.push_owned(escaped.into_boxed_slice());
+            } else {
+                j.push_static(pretty);
+                line_offset.advance(pretty);
+            }
 
             if emit_targets_in_commands {
                 j.push_static(b" (");

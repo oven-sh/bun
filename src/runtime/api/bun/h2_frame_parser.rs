@@ -4028,19 +4028,36 @@ impl H2FrameParser {
             );
             return Ok(data.len());
         }
+
+        let settings = self
+            .remote_settings
+            .get()
+            .unwrap_or(self.local_settings.get());
+        if frame.length > settings.max_frame_size {
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid Continuation frame size",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(data.len());
+        }
+
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let payload = content.data();
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
-            stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
             stream = match self.decode_header_block(payload, stream, frame.flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
             };
-            if stream.end_after_headers {
+            // RFC 9113 §6.10: CONTINUATION carries END_HEADERS only; END_STREAM
+            // was captured from the originating HEADERS frame in `end_after_headers`.
+            if frame.flags & HeadersFrameFlags::END_HEADERS as u8 != 0 {
                 stream.is_waiting_more_headers = false;
-                if frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0 {
+                if stream.end_after_headers {
                     let identifier = stream.get_identifier();
                     identifier.ensure_still_alive();
                     if stream.state == StreamState::HALF_CLOSED_REMOTE {
@@ -4465,6 +4482,37 @@ impl H2FrameParser {
         Some(stream)
     }
 
+    /// Like [`Self::handle_received_stream_id`], but bounds new-stream allocation
+    /// from inbound frames so a peer can't force unbounded `Stream` creation (RFC 7540 §5.1.2).
+    fn handle_remote_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
+        // Default SETTINGS_MAX_CONCURRENT_STREAMS is "unlimited"; apply a cap when
+        // the user hasn't explicitly configured `maxConcurrentStreams`.
+        const MAX_REMOTE_STREAMS_DEFAULT_CAP: u32 = 1000;
+        if stream_identifier != 0 && !self.streams.get().contains_key(&stream_identifier) {
+            let configured = self.local_settings.get().max_concurrent_streams;
+            let max = if configured == u32::MAX {
+                MAX_REMOTE_STREAMS_DEFAULT_CAP
+            } else {
+                configured
+            };
+            // Count open streams; CLOSED ones stay in the map for pointer stability.
+            let mut open: u32 = 0;
+            for (_, stream) in self.streams.get().iter() {
+                // SAFETY: boxed Stream outlives the iteration (entries are never removed).
+                if unsafe { (**stream).state } != StreamState::CLOSED {
+                    open += 1;
+                    if open >= max {
+                        return None;
+                    }
+                }
+            }
+            if max == 0 {
+                return None;
+            }
+        }
+        self.handle_received_stream_id(stream_identifier)
+    }
+
     fn read_bytes(&self, bytes: &[u8]) -> JsResult<usize> {
         bun_output::scoped_log!(H2FrameParser, "read {}", bytes.len());
         if self.is_server.get() && self.preface_received_len.get() < 24 {
@@ -4507,7 +4555,7 @@ impl H2FrameParser {
                 header.stream_identifier
             );
 
-            let stream = self.handle_received_stream_id(header.stream_identifier);
+            let stream = self.handle_remote_stream_id(header.stream_identifier);
             return self.dispatch_frame(header, bytes, stream, 0);
         }
 
@@ -4554,7 +4602,7 @@ impl H2FrameParser {
                 header.flags,
                 header.stream_identifier
             );
-            let stream = self.handle_received_stream_id(header.stream_identifier);
+            let stream = self.handle_remote_stream_id(header.stream_identifier);
 
             return self.dispatch_frame(header, &bytes[needed..], stream, needed);
         }
@@ -4589,7 +4637,7 @@ impl H2FrameParser {
         );
         self.current_frame.set(Some(header));
         self.remaining_length.set(header.length as i32);
-        let stream = self.handle_received_stream_id(header.stream_identifier);
+        let stream = self.handle_remote_stream_id(header.stream_identifier);
         self.dispatch_frame(
             header,
             &bytes[FrameHeader::BYTE_SIZE..],
@@ -7144,11 +7192,17 @@ impl H2FrameParser {
 
         if end_stream {
             stream.end_after_headers = true;
-            stream.state = StreamState::HALF_CLOSED_LOCAL;
-
             if wait_for_trailers {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
                 this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
                 return Ok(JSValue::js_number(stream_id as f64));
+            }
+            // RFC 7540 §5.1: both sides END_STREAM → CLOSED, not HALF_CLOSED_LOCAL
+            // (mirrors `flush_queue_after_data_frame`).
+            if stream.state == StreamState::HALF_CLOSED_REMOTE {
+                stream.state = StreamState::CLOSED;
+            } else {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
             }
         } else {
             stream.wait_for_trailers = wait_for_trailers;

@@ -3784,6 +3784,27 @@ struct FormDataContext<'a> {
     global_this: &'a JSGlobalObject,
 }
 
+/// WHATWG `multipart/form-data` escape for field names/filenames: `"` → `%22`,
+/// `\r` → `%0D`, `\n` → `%0A` to prevent quoted-string/CRLF header injection.
+fn escape_form_data_header_value(bytes: Vec<u8>) -> Box<[u8]> {
+    if !bytes
+        .iter()
+        .any(|&b| b == b'"' || b == b'\r' || b == b'\n')
+    {
+        return bytes.into_boxed_slice();
+    }
+    let mut out = Vec::with_capacity(bytes.len() + 8);
+    for &b in &bytes {
+        match b {
+            b'"' => out.extend_from_slice(b"%22"),
+            b'\r' => out.extend_from_slice(b"%0D"),
+            b'\n' => out.extend_from_slice(b"%0A"),
+            _ => out.push(b),
+        }
+    }
+    out.into_boxed_slice()
+}
+
 impl FormDataContext<'_> {
     pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
@@ -3804,7 +3825,7 @@ impl FormDataContext<'_> {
         // the optional allocator. `StringJoiner::push_owned` is the Rust
         // equivalent; `ZigStringSlice::into_vec` moves out the buffer if owned
         // or copies if borrowed (matching Zig's `null`-allocator borrow case).
-        joiner.push_owned(name.to_slice().into_vec().into_boxed_slice());
+        joiner.push_owned(escape_form_data_header_value(name.to_slice().into_vec()));
 
         match entry {
             FormDataEntry::String(value) => {
@@ -3813,7 +3834,9 @@ impl FormDataContext<'_> {
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
+                joiner.push_owned(escape_form_data_header_value(
+                    filename.to_slice().into_vec(),
+                ));
                 joiner.push_static(b"\"\r\n");
 
                 let content_type: &[u8] = if !blob.content_type_slice().is_empty() {

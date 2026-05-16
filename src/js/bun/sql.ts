@@ -744,8 +744,11 @@ const SQL: typeof Bun.SQL = function SQL(
         if (!$isCallable(savepoint_callback)) {
           throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");
         }
-        // matchs the format of the savepoint name in postgres package
-        const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
+        // matchs the format of the savepoint name in postgres package.
+        // Strip non-[A-Za-z0-9_] from the user-supplied name; it is interpolated
+        // unquoted into SAVEPOINT / RELEASE / ROLLBACK statements.
+        const safe_name = name ? String(name).replace(/[^A-Za-z0-9_]/g, "") : "";
+        const save_point_name = `s${savepoints++}${safe_name ? `_${safe_name}` : ""}`;
         const promise = run_internal_savepoint(save_point_name, savepoint_callback);
         transactionSavepoints.add(promise);
         return await promise.finally(onSavepointFinished.bind(null, promise));

@@ -3452,18 +3452,33 @@ where
             if let Some(filename) = self.blob.get_file_name() {
                 let basename = bun_paths::basename(filename);
                 if !basename.is_empty() {
+                    // Strip control bytes and escape `"` / `\` (RFC 7230 quoted-string)
+                    // so a crafted filename can't inject response headers.
                     let mut filename_buf = [0u8; 1024];
+                    let prefix = b"filename=\"";
+                    filename_buf[..prefix.len()].copy_from_slice(prefix);
+                    let mut written = prefix.len();
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    let header_value = {
-                        let mut w = &mut filename_buf[..];
-                        if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
-                            let written = 1024 - w.len();
-                            &filename_buf[..written]
-                        } else {
-                            &b""[..]
+                    for &b in truncated {
+                        if b < 0x20 || b == 0x7F {
+                            continue;
                         }
-                    };
-                    resp.write_header(b"content-disposition", header_value);
+                        let escape = b == b'"' || b == b'\\';
+                        let need = if escape { 2 } else { 1 };
+                        // Reserve one byte for the closing quote.
+                        if written + need >= filename_buf.len() {
+                            break;
+                        }
+                        if escape {
+                            filename_buf[written] = b'\\';
+                            written += 1;
+                        }
+                        filename_buf[written] = b;
+                        written += 1;
+                    }
+                    filename_buf[written] = b'"';
+                    written += 1;
+                    resp.write_header(b"content-disposition", &filename_buf[..written]);
                 }
             }
         }

@@ -2599,10 +2599,21 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
         };
 
         match field {
-            PlaceholderField::Dir => PathTemplate::write_replacing_slashes_on_windows(
-                writer,
-                if !dir.is_empty() { dir } else { b"." },
-            )?,
+            PlaceholderField::Dir => {
+                // Rewrite leading `..` segments to `_.._` so `[dir]` can't place
+                // output above `outdir` (mirrors esbuild's `outbase` behavior).
+                let mut d: &[u8] = if !dir.is_empty() { dir } else { b"." };
+                while d.starts_with(b"../") || d.starts_with(b"..\\") {
+                    writer.write_all(b"_.._")?;
+                    PathTemplate::write_replacing_slashes_on_windows(writer, &d[2..3])?;
+                    d = &d[3..];
+                }
+                if d == b".." {
+                    writer.write_all(b"_.._")?;
+                } else {
+                    PathTemplate::write_replacing_slashes_on_windows(writer, d)?;
+                }
+            }
             PlaceholderField::Name => {
                 PathTemplate::write_replacing_slashes_on_windows(writer, name)?
             }

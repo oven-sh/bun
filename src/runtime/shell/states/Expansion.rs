@@ -168,12 +168,16 @@ impl Expansion {
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
                 let shell = me.base.shell();
+                // When the word will be re-tokenized by the brace lexer, escape
+                // interpolated bytes so user-supplied `{` `,` `}` `\` stay literal.
+                let escape_for_braces = atom.has_brace_expansion();
                 let is_cmd_subst = Self::expand_simple_no_io(
                     shell,
                     simple,
                     &mut me.current_out,
                     &mut me.has_quoted_empty,
                     true,
+                    escape_for_braces,
                     event_loop,
                     command_ctx,
                     vm_args_utf8,
@@ -334,22 +338,44 @@ impl Expansion {
         Yield::suspended()
     }
 
+    /// Append `bytes`, backslash-escaping `\` `{` `,` `}` so interpolated data
+    /// can't introduce brace metacharacters during the second-pass brace lexer.
+    fn extend_brace_escaped(out: &mut Vec<u8>, bytes: &[u8]) {
+        for &b in bytes {
+            if matches!(b, b'\\' | b'{' | b',' | b'}') {
+                out.push(b'\\');
+            }
+            out.push(b);
+        }
+    }
+
     /// Spec: Expansion.zig `expandSimpleNoIO`. Appends the no-IO expansion of
     /// one [`ast::SimpleAtom`] to `out`. Returns `true` for `CmdSubst` so the
     /// caller spawns a `Script` for it.
+    ///
+    /// When `escape_for_braces`, interpolated bytes are escaped via
+    /// [`Self::extend_brace_escaped`] so they stay literal in the brace re-lexer.
     fn expand_simple_no_io(
         shell: &ShellExecEnv,
         atom: &ast::SimpleAtom,
         out: &mut Vec<u8>,
         has_quoted_empty: &mut bool,
         expand_tilde: bool,
+        escape_for_braces: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
+        let push = |out: &mut Vec<u8>, bytes: &[u8]| {
+            if escape_for_braces {
+                Self::extend_brace_escaped(out, bytes);
+            } else {
+                out.extend_from_slice(bytes);
+            }
+        };
         match atom {
-            ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
+            ast::SimpleAtom::Text(txt) => push(out, txt),
             ast::SimpleAtom::QuotedEmpty => {
                 // Spec: Expansion.zig `expandSimpleNoIO` sets
                 // `has_quoted_empty = true` so an empty word is still pushed
@@ -362,15 +388,22 @@ impl Expansion {
                 // Spec `expandVar`: shell_env first, then export_env, else "".
                 let key = EnvStr::init_slice(label);
                 if let Some(v) = shell.shell_env.get(key) {
-                    out.extend_from_slice(v.slice());
+                    push(out, v.slice());
                     v.deref();
                 } else if let Some(v) = shell.export_env.get(EnvStr::init_slice(label)) {
-                    out.extend_from_slice(v.slice());
+                    push(out, v.slice());
                     v.deref();
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
-                Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                if escape_for_braces {
+                    let pre = out.len();
+                    Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                    let appended: Vec<u8> = out.split_off(pre);
+                    Self::extend_brace_escaped(out, &appended);
+                } else {
+                    Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                }
             }
             ast::SimpleAtom::Asterisk => out.push(b'*'),
             ast::SimpleAtom::DoubleAsterisk => out.extend_from_slice(b"**"),
@@ -380,7 +413,7 @@ impl Expansion {
             ast::SimpleAtom::Tilde => {
                 if expand_tilde {
                     let home = shell.get_homedir();
-                    out.extend_from_slice(home.slice());
+                    push(out, home.slice());
                     home.deref();
                 } else {
                     out.push(b'~');

@@ -310,16 +310,21 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // null is well-defined (BoringSSL returns null).
                 let servername =
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
-                if !servername.is_null() {
+                // SNI may be null (e.g. IP literal); with no hostname there is nothing
+                // to verify the certificate against, so reject rather than skip verification.
+                let hostname: &[u8] = if !servername.is_null() {
                     // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
-                    let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                    // SAFETY: ssl_ptr is non-null (connected SSL socket on the handshake path).
-                    if !ssl_ptr.is_null()
-                        && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
-                    {
-                        self.outgoing_websocket = None;
-                        ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
-                    }
+                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes()
+                } else {
+                    b""
+                };
+                if ssl_ptr.is_null()
+                    || hostname.is_empty()
+                    // SAFETY: ssl_ptr is non-null (checked above) for the open socket's lifetime.
+                    || !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
+                {
+                    self.outgoing_websocket = None;
+                    ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
                 }
             }
             // If reject_unauthorized is false, we accept the connection regardless of SSL errors

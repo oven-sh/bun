@@ -204,13 +204,20 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
       return `"${arrayEscape(JSON.stringify(value))}"`;
   }
 }
+// `arrayType` is interpolated unquoted as `$N::<arrayType>[]`; restrict to
+// PostgreSQL type-name characters to prevent SQL injection.
+const VALID_ARRAY_TYPE_RE = /^[A-Z_][A-Z0-9_]*(?:[ .][A-Z_][A-Z0-9_]*)*$/;
 function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined): ArrayType {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
     return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
   }
   if (typeOfType === "string") {
-    return (typeNameOrID as string)?.toUpperCase();
+    const arrayType = (typeNameOrID as string).toUpperCase();
+    if (!VALID_ARRAY_TYPE_RE.test(arrayType)) {
+      throw new Error(`Invalid PostgreSQL array type: ${JSON.stringify(typeNameOrID)}`);
+    }
+    return arrayType;
   }
   // default to JSON so we accept most of the types
   return "JSON";
@@ -766,8 +773,15 @@ class PostgresAdapter
     };
   }
 
-  validateTransactionOptions(_options: string): { valid: boolean; error?: string } {
-    // PostgreSQL accepts any transaction options
+  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+    // Options are interpolated unquoted into `BEGIN ${options}` (simple-query
+    // protocol allows stacked statements); restrict to letters/spaces/commas.
+    if (options && !/^[a-zA-Z, ]+$/.test(options)) {
+      return {
+        valid: false,
+        error: "Transaction options may only contain letters, spaces, and commas.",
+      };
+    }
     return { valid: true };
   }
 

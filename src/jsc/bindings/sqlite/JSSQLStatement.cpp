@@ -1225,14 +1225,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
     status = sqlite3_deserialize(db, "main", reinterpret_cast<unsigned char*>(data), byteLength, byteLength, deserializeFlags);
+    // SQLITE_DESERIALIZE_FREEONCLOSE means sqlite3_deserialize() already frees
+    // `data` on failure; freeing it again here would be a double-free.
     if (status == SQLITE_BUSY) {
-        sqlite3_free(data);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLITE_BUSY"_s));
         return {};
     }
 
     if (status != SQLITE_OK) {
-        sqlite3_free(data);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, status == SQLITE_ERROR ? "unable to deserialize database"_s : sqliteString(sqlite3_errstr(status))));
         return {};
     }
@@ -1804,7 +1804,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    int resultInt = -1;
+    // sqlite3_file_control() may write a pointer/int64/pointer-array through pArg
+    // depending on opcode; a 4-byte stack int would be a stack overflow. Reserve
+    // a max-aligned buffer wide enough for any documented opcode.
+    union {
+        int i;
+        sqlite3_int64 i64;
+        void* ptr;
+        unsigned char raw[64];
+    } numericScratch = {};
     void* resultPtr = nullptr;
     if (resultValue.isObject()) {
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(resultValue.getObject())) {
@@ -1818,12 +1826,52 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected buffer"_s));
                 return {};
             }
+
+            // These opcodes write through pArg; reject undersized typed arrays.
+            switch (op) {
+            // 8-byte outputs (pointer / sqlite3_int64 / int[2]).
+            case SQLITE_FCNTL_FILE_POINTER:
+            case SQLITE_FCNTL_VFS_POINTER:
+            case SQLITE_FCNTL_JOURNAL_POINTER:
+            case SQLITE_FCNTL_VFSNAME:
+            case SQLITE_FCNTL_TEMPFILENAME:
+            case SQLITE_FCNTL_GET_LOCKPROXYFILE:
+            case SQLITE_FCNTL_WIN32_GET_HANDLE:
+            case SQLITE_FCNTL_WIN32_AV_RETRY:
+            case SQLITE_FCNTL_SIZE_HINT:
+            case SQLITE_FCNTL_MMAP_SIZE:
+            case SQLITE_FCNTL_SIZE_LIMIT: {
+                constexpr size_t minSize = sizeof(void*) > sizeof(sqlite3_int64) ? sizeof(void*) : sizeof(sqlite3_int64);
+                if (view->byteLength() < minSize) {
+                    throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is too small for this file control opcode"_s));
+                    return {};
+                }
+                break;
+            }
+            // `int` outputs (4 bytes).
+            case SQLITE_FCNTL_LOCKSTATE:
+            case SQLITE_FCNTL_LAST_ERRNO:
+            case SQLITE_FCNTL_PERSIST_WAL:
+            case SQLITE_FCNTL_POWERSAFE_OVERWRITE:
+            case SQLITE_FCNTL_HAS_MOVED:
+            case SQLITE_FCNTL_DATA_VERSION:
+            case SQLITE_FCNTL_RESERVE_BYTES:
+            case SQLITE_FCNTL_EXTERNAL_READER: {
+                if (view->byteLength() < sizeof(int)) {
+                    throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is too small for this file control opcode"_s));
+                    return {};
+                }
+                break;
+            }
+            default:
+                break;
+            }
         }
     } else if (resultValue.isNumber()) {
-        resultInt = resultValue.toInt32(lexicalGlobalObject);
+        numericScratch.i = resultValue.toInt32(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        resultPtr = &resultInt;
+        resultPtr = &numericScratch;
     } else if (resultValue.isNull()) {
 
     } else {

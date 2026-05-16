@@ -727,6 +727,21 @@ impl UpgradeCommand {
 
             let version_name = version.name().unwrap();
 
+            // Random per-invocation subdir name; a predictable `<tmpdir>/<version>/`
+            // lets another local user pre-stage the path and tamper with the binary.
+            let tmp_subdir: Vec<u8> = {
+                let mut out = Vec::with_capacity(version_name.len() + 1 + 16);
+                out.extend_from_slice(&version_name);
+                out.push(b'-');
+                write!(
+                    &mut out,
+                    "{}",
+                    bun_fmt::hex_int_lower::<16>(bun_core::fast_random()),
+                )
+                .expect("oom");
+                out
+            };
+
             let save_dir_: sys::Dir = match filesystem.tmpdir() {
                 Ok(d) => d,
                 Err(err) => {
@@ -735,7 +750,7 @@ impl UpgradeCommand {
                 }
             };
 
-            let save_dir_it = match save_dir_.make_open_path(&version_name, Default::default()) {
+            let save_dir_it = match save_dir_.make_open_path(&tmp_subdir, Default::default()) {
                 Ok(d) => d,
                 Err(err) => {
                     Output::err_generic("Failed to open temporary directory: {}", (err.name(),));
@@ -1007,7 +1022,7 @@ impl UpgradeCommand {
                     };
 
                     scopeguard::defer! {
-                        let _ = save_dir_.delete_tree(&version_name);
+                        let _ = save_dir_.delete_tree(&tmp_subdir);
                     }
 
                     // Zig matched `error.FileNotFound`; the bun.sys spawn path tags
@@ -1038,7 +1053,7 @@ impl UpgradeCommand {
                 };
 
                 if !result.status.is_ok() {
-                    let _ = save_dir_.delete_tree(&version_name);
+                    let _ = save_dir_.delete_tree(&tmp_subdir);
                     let exit_code: u32 = match &result.status {
                         Status::Exited(e) => u32::from(e.code),
                         Status::Signaled(sig) => 128 + u32::from(*sig),
@@ -1066,7 +1081,7 @@ impl UpgradeCommand {
 
                     let trimmed = bun_core::trim(version_string, b" \n\r\t");
                     if trimmed != version_name.as_slice() {
-                        let _ = save_dir_.delete_tree(&version_name);
+                        let _ = save_dir_.delete_tree(&tmp_subdir);
 
                         Output::pretty_errorln(format_args!(
                             "<r><red>error<r>: The downloaded version of Bun (<red>{}<r>) doesn't match the expected version (<b>{}<r>)<r>. Cancelled upgrade",
@@ -1133,7 +1148,7 @@ impl UpgradeCommand {
             let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
                 Ok(d) => sys::Dir::from_fd(d),
                 Err(err) => {
-                    let _ = save_dir_.delete_tree(&version_name);
+                    let _ = save_dir_.delete_tree(&tmp_subdir);
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> Failed to open Bun's install directory {}",
                         bstr::BStr::new(err.name())
@@ -1156,7 +1171,7 @@ impl UpgradeCommand {
                 let target_stat = match sys::fstatat(target_dir.fd(), target_filename) {
                     Ok(s) => s,
                     Err(err) => {
-                        let _ = save_dir_.delete_tree(&version_name);
+                        let _ = save_dir_.delete_tree(&tmp_subdir);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> {} while trying to stat target {} ",
                             bstr::BStr::new(err.name()),
@@ -1169,7 +1184,7 @@ impl UpgradeCommand {
                 let dest_stat = match sys::fstatat(save_dir.fd(), exe_z) {
                     Ok(s) => s,
                     Err(err) => {
-                        let _ = save_dir_.delete_tree(&version_name);
+                        let _ = save_dir_.delete_tree(&tmp_subdir);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> {} while trying to stat source {}",
                             bstr::BStr::new(err.name()),
@@ -1197,7 +1212,7 @@ impl UpgradeCommand {
                         }) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
-                                let _ = save_dir_.delete_tree(&version_name);
+                                let _ = save_dir_.delete_tree(&tmp_subdir);
                                 Output::pretty_errorln(format_args!(
                                     "<r><red>error:<r> Failed to read target bun {}",
                                     bstr::BStr::new(err.name())
@@ -1217,7 +1232,7 @@ impl UpgradeCommand {
                         ) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
-                                let _ = save_dir_.delete_tree(&version_name);
+                                let _ = save_dir_.delete_tree(&tmp_subdir);
                                 Output::pretty_errorln(format_args!(
                                     "<r><red>error:<r> Failed to read source bun {}",
                                     bstr::BStr::new(err.name())
@@ -1228,7 +1243,7 @@ impl UpgradeCommand {
                     );
 
                     if target_hash == source_hash {
-                        let _ = save_dir_.delete_tree(&version_name);
+                        let _ = save_dir_.delete_tree(&tmp_subdir);
                         Output::pretty_errorln(format_args!(
                             "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun\n\nTo downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>\n"
                         ));
@@ -1266,7 +1281,7 @@ impl UpgradeCommand {
                         destination_executable_z,
                         outdated_filename.as_deref().unwrap(),
                     ) {
-                        let _ = save_dir_.delete_tree(&version_name);
+                        let _ = save_dir_.delete_tree(&tmp_subdir);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to rename current executable {}",
                             bstr::BStr::new(err.name())
@@ -1281,7 +1296,7 @@ impl UpgradeCommand {
                     sys::move_file_z(save_dir.fd(), exe_z, target_dir.fd(), target_filename)
                 {
                     scopeguard::defer! {
-                        let _ = save_dir_.delete_tree(&version_name);
+                        let _ = save_dir_.delete_tree(&tmp_subdir);
                     }
 
                     #[cfg(windows)]

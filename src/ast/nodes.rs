@@ -936,15 +936,13 @@ pub struct DeclaredSymbol {
 }
 
 pub struct DeclaredSymbolList {
-    // SoA slab is `AstAlloc`-backed (like `Scope::members`, `G::DeclList`) so it's
-    // reclaimed on arena reset; a global slab strands when the owning `Part` is forgotten.
-    pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
+    pub entries: MultiArrayList<DeclaredSymbol>,
 }
 
 impl Default for DeclaredSymbolList {
     fn default() -> Self {
         Self {
-            entries: MultiArrayList::new_in(bun_alloc::AstAlloc),
+            entries: MultiArrayList::default(),
         }
     }
 }
@@ -1020,7 +1018,7 @@ impl DeclaredSymbolList {
     pub fn init_capacity(
         capacity: usize,
     ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut entries = MultiArrayList::new_in(bun_alloc::AstAlloc);
+        let mut entries = MultiArrayList::<DeclaredSymbol>::default();
         entries.ensure_unused_capacity(capacity)?;
         Ok(DeclaredSymbolList { entries })
     }
@@ -1036,8 +1034,10 @@ impl DeclaredSymbolList {
         Ok(this)
     }
 }
-// Arena threading: the SoA slab is `AstAlloc`-backed (thread-local AST mi_heap),
-// matching Zig's allocator-threaded `MultiArrayList` and the other AST collections.
+// TODO(port): arena threading — Zig passes `std.mem.Allocator` to every
+// MultiArrayList op. bun_collections::MultiArrayList owns its arena (global
+// mimalloc); if Phase B needs arena-backed SoA storage, add a `&'bump Bump`
+// param here.
 
 impl DeclaredSymbol {
     fn for_each_top_level_symbol_with_type<C>(

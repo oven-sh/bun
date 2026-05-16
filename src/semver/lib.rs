@@ -579,7 +579,7 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
-        // PORT NOTE: `toJS` deleted — lives in bun_semver_jsc (tier-6; deferred to Pass C).
+        // PORT NOTE: `toJS` deleted — lives in bun_semver_jsc (tier-6).
 
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]

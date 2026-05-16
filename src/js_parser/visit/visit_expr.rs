@@ -38,7 +38,7 @@ use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
 
 // Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// — file-split mixin pattern. `const JSX: JSXTransformType` was lowered to `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 

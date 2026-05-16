@@ -9,9 +9,8 @@ use crate::p::P;
 use crate::parser::{ReactRefresh, Ref, TempRef};
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 
-// PORT NOTE: `P::generate_temp_ref` is ``-gated in P.rs (round-6
-// re-gate); replicate it here so this file can un-gate independently. Body is
-// a 1:1 port of P.zig `generateTempRefWithScope` with `scope = current_scope`.
+// PORT NOTE: local copy of `P::generate_temp_ref`. Body is a 1:1 port of
+// P.zig `generateTempRefWithScope` with `scope = current_scope`.
 // `P::will_use_renamer` is private — its body is inlined.
 fn generate_temp_ref<'p, const TS: bool, const SCAN: bool>(
     p: &mut P<'p, TS, SCAN>,

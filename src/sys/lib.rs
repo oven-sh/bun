@@ -9041,7 +9041,7 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
+// OUTPUT_SINK — bun_core's stderr vtable, installed by us at init.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun_core::output::QuietWriter` is an opaque `[*mut (); 4]`. We stash the

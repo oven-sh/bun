@@ -197,7 +197,7 @@ pub type gid_t = bun_sys::windows::libuv::uv_gid_t;
 /// We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
 /// and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 ///
-/// Phase F: collapsed from a bespoke `enum Maybe { Err, Result }` into a plain
+/// Collapsed from a bespoke `enum Maybe { Err, Result }` into a plain
 /// `core::result::Result` alias. The Zig-parity helper methods (`todo`,
 /// `success`, `errno_sys*`, `to_js`, …) move to the [`MaybeExt`] /
 /// [`MaybeSysExt`] / [`MaybeToJsExt`] extension traits below so call sites can

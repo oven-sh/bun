@@ -77,7 +77,7 @@ mod ext {
     }
 
     /// Inline of `Url::to_css` (gated in `values/url.rs` on `WriteAll for
-    /// Vec<u8>`, which this round adds in css_parser.rs).
+    /// Vec<u8>`, defined in css_parser.rs).
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
             // PORT NOTE: reshaped for borrowck — `get_import_records` borrows

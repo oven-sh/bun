@@ -12,8 +12,8 @@ use bun_core::Output;
 use bun_wyhash::Wyhash;
 
 // Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
-// Round-C: stub the still-gated submodules so the helper *types* in this file
-// compile; the real bodies arrive in rounds D/E.
+// Stub modules so the helper *types* in this file compile; the real bodies live
+// in their own files.
 #[allow(non_snake_case)]
 pub mod ConvertESMExportsForHmr {
     pub type Ctx = ();

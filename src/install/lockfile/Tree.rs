@@ -191,7 +191,7 @@ pub enum IteratorPathStyle {
 // PORT NOTE: reshaped — Zig stores `lockfile: *const Lockfile`; here we store
 // the four buffer slices the iterator actually reads so callers from both
 // `crate::lockfile` (stub) and `crate::lockfile_real` can drive the same
-// iterator without a unified `Lockfile` type (reconciler-6).
+// iterator without a unified `Lockfile` type.
 pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
     pub tree_id: Id,
     pub path_buf: PathBuffer,

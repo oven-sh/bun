@@ -10,12 +10,11 @@
 // by `properties_generated.rs`, `declaration.rs`, and
 // `rules/{font_face,font_palette_values}.rs`.
 //
-// Most `parse` / `to_css` *bodies* remain ``-gated below
-// because they bottom out on still-unported leaf surface (DeriveParse /
-// DeriveToCss proc-macros, EnumProperty derive over strum, Vec::parse,
-// parse_utility::parse_string, generics::is_compatible blanket). Each gate
-// carries a `blocked_on:` note so the next round can lift bodies as their
-// deps land.
+// Most `parse` / `to_css` *bodies* remain gated below because they bottom out
+// on still-unported leaf surface (DeriveParse / DeriveToCss proc-macros,
+// EnumProperty derive over strum, Vec::parse, parse_utility::parse_string,
+// generics::is_compatible blanket). Each gate carries a `blocked_on:` note so
+// the bodies can be lifted as their deps land.
 
 #![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]

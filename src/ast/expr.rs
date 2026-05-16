@@ -282,11 +282,9 @@ impl Expr {
     }
 }
 
-// Expr — property/object/string accessor methods.
-// TODO(port): these call into `E::Object::as_property` / `EString`
-// methods that need `bun_core::utf16_eql_string`/`to_utf8_alloc` (track-A
-// blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
-// the parser round once those land.
+// Expr — property/object/string accessor methods. These call into
+// `E::Object::as_property` / `EString` methods backed by
+// `bun_core::utf16_eql_string` / `to_utf8_alloc` and `Vec::deep_clone`.
 
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {

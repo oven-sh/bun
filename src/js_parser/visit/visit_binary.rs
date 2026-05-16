@@ -14,7 +14,7 @@ use bun_ast::{
 
 // PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
 // returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
-// Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
+// `const JSX: JSXTransformType` was lowered to `J: JsxT`, so `BinaryExpressionVisitor` carries
 // the parser generics directly.
 // Diff readers should map:
 //   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor

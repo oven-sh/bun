@@ -259,8 +259,8 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
 pub mod defines_table;
 
 // ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
-// B-3 UNIFIED: canonical `Define` / `DefineData` / `DotDefine` live here so the
-// parser (`P.define: &'a Define`) and the bundler (`BundleOptions.define:
+// Canonical `Define` / `DefineData` / `DotDefine` live here so the parser
+// (`P.define: &'a Define`) and the bundler (`BundleOptions.define:
 // Box<Define>`) share one nominal type. `bun_bundler::defines` re-exports these
 // and layers the json-parse / dotenv `init` on top via an extension trait. The
 // pure-global fallback table also lives at this tier (`defines_table`) so
@@ -963,7 +963,7 @@ pub mod renamer {
     use bun_ast::symbol::{self, INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
 
-    // Round-C alias kept for P.rs/Parser.rs callers.
+    // Alias kept for P.rs/Parser.rs callers.
     pub type SymbolMap = bun_ast::symbol::Map;
 
     pub fn assign_nested_scope_slots(

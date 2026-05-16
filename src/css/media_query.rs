@@ -1237,8 +1237,8 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 
 // ───────────────────────── deep_clone ─────────────────────────
 // Arena-aware `deep_clone` — port of Zig's per-type `deepClone(arena)`
-// bodies. Un-gated this round so `rules::dc::{media_list,query_feature}` can
-// route through real impls instead of `#[derive(Clone)]` passthroughs.
+// bodies, so `rules::dc::{media_list,query_feature}` can route through real
+// impls instead of `#[derive(Clone)]` passthroughs.
 //
 // PORT NOTE: written as **inherent** methods (not `#[derive(DeepClone)]`) to
 // match the Zig hand-written bodies exactly: Zig copies `name`/`qualifier`/

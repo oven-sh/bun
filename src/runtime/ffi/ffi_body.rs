@@ -1,4 +1,4 @@
-#![allow(unexpected_cfgs)] // `feature = "tinycc"` is a Phase-C placeholder; `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
+#![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
@@ -21,7 +21,7 @@ use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
-// ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
+// ─── Local shims for upstream surfaces not yet wired ─────────────────────────
 
 /// `bun.sys.directoryExistsAt(FD.cwd(), path).isTrue()` — local helper while
 /// `bun_core::Fd` lacks an inherent forwarder.

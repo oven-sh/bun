@@ -3907,7 +3907,7 @@ impl<'a> Parser<'a> {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // `*_cloned` helpers — C-7 in PORT_NOTES_PLAN.
+    // `*_cloned` helpers.
     //
     // These wrap `expect_*` / `slice_from` and return the slice with its
     // lifetime detached from `&mut self` (to `'static`, matching `Token`'s
@@ -3915,7 +3915,7 @@ impl<'a> Parser<'a> {
     // sites in the CSS parser route through here instead of laundering the
     // lifetime locally.
     //
-    // Once C-9 threads `'i` through `Token<'i>`, these become safe
+    // Once `'i` is threaded through `Token<'i>`, these become safe
     // `-> CssResult<&'i [u8]>` and the body drops the `unsafe` — no caller
     // changes needed.
     // ──────────────────────────────────────────────────────────────────────

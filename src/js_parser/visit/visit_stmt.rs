@@ -67,9 +67,9 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 }
 
 // Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// — file-split mixin pattern. `const JSX: JSXTransformType` was lowered to `J: JsxT`, so this is
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
-// `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
+// `visit_and_append_stmt` is surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.

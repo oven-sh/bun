@@ -26,10 +26,10 @@ use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, sco
 type PResult<T> = core::result::Result<T, bun_core::Error>;
 
 // Zig: `fn ParsePrefix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// — file-split mixin pattern. `const JSX: JSXTransformType` was lowered to `J: JsxT`, so this is
 // a direct `impl P` block. The 30+ per-token `t_*` helpers are private; only `parse_prefix` is
-// surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs); helper
-// names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
+// surfaced. Helper names are pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs
+// mixins on the same `P`.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {

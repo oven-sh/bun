@@ -442,7 +442,7 @@ pub mod api {
         internal = 8,
     }
 
-    // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
+    // ─── hand-expanded peechy schema types ───────────────────────────────
     // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
     // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
     // PackagesMode / CssInJsBehavior / LoaderMap / LoadedFramework.

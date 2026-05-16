@@ -355,7 +355,7 @@ pub struct KeyframesListParser;
 // trait impls on `KeyframesListParser`.
 //
 // blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
-// RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
+// RuleBodyItemParser} trait signatures in css_parser.rs,
 // Parser::parse_comma_separated, DeclarationBlock::parse, ParserOptions::default
 // arena threading.
 

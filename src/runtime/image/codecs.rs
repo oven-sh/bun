@@ -43,9 +43,6 @@ pub use super::codec_avif as avif;
 /// `true` on platforms where `system_backend` is present.
 pub(crate) const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
-/// `true` on platforms where the dlopen'd libavif codec is compiled in.
-pub const HAS_AVIF_CODEC: bool = cfg!(target_os = "linux");
-
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:

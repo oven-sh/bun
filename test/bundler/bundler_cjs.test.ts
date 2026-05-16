@@ -612,4 +612,26 @@ describe("bundler", () => {
       stdout: "function",
     },
   });
+
+  // Test 30: falsy "module.exports" named export (e.g. `false`) is still
+  // returned directly — pins the cache check at `entry !== undefined`.
+  // A regression to `if (entry) return entry;` would re-read the live
+  // binding on every require() call, so two calls must still === the
+  // same primitive value.
+  itBundled("cjs/__toCommonJS_module_exports_named_export_falsy", {
+    files: {
+      "/entry.js": /* js */ `
+        const m1 = require('./m.js');
+        const m2 = require('./m.js');
+        console.log(m1, m2, m1 === m2);
+      `,
+      "/m.js": /* js */ `
+        const value = false;
+        export { value as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "false false true",
+    },
+  });
 });

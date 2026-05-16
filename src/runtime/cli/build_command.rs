@@ -130,6 +130,13 @@ impl BuildCommand {
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
+        // The arena is a mimalloc heap LSan never scans, so the global-heap
+        // BundleOptions strings reachable only through this struct read as
+        // false-positive leaks at exit. Register the struct as a root.
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
+            core::mem::size_of::<transpiler::Transpiler>(),
+        );
         if let Some(fetch) = fetcher.as_deref() {
             this_transpiler.options.entry_points = fetch.entry_points.clone();
             // resolver.opts is a distinct subset type; entry_points / IMRE live

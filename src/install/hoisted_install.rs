@@ -423,7 +423,7 @@ pub fn install_hoisted_packages(
 
         installer.node_modules.path.push(SEP);
 
-        // `defer installer.deinit()` — handled by Drop.
+        // `defer installer.deinit()`
 
         let top_level_len =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;

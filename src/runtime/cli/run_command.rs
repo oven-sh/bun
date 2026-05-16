@@ -3422,8 +3422,6 @@ impl RunCommand {
                 Ok(f) => f,
                 Err(_) => continue,
             };
-            // `File::from_fd` takes ownership of `fd` and closes it when the
-            // temporary drops at the end of this statement.
             let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
                 // openA + TRUNC leaves an orphan even on zero-byte

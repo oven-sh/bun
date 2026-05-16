@@ -133,7 +133,6 @@ pub fn dump_source_string_failiable(
         } else {
             b"/".len()
         };
-        // `Dir`'s `Drop` closes `parent` at end of scope (was `defer parent.close()`).
         let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
 
         let base = bun_paths::basename(specifier);

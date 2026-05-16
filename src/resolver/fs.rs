@@ -1498,9 +1498,7 @@ impl RealFS {
         }
         #[cfg(not(windows))]
         {
-            bun_sys::open_dir_absolute(Self::tmpdir_path())
-                .map(bun_sys::Dir::from_fd)
-                .map_err(Into::into)
+            bun_sys::Dir::open(Self::tmpdir_path()).map_err(Into::into)
         }
     }
 
@@ -1549,7 +1547,8 @@ impl RealFS {
                 // / `existing.entries.data` go through one `*DirEntry`; mirror that.
                 let prev_map_ptr: *mut dir_entry::EntryMap =
                     unsafe { core::ptr::addr_of_mut!((*entries_ptr).data) };
-                let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir_path) {
+                // Zig: defer handle.close() — `Dir` is an owning RAII handle.
+                let handle_dir = match bun_sys::Dir::open(dir_path) {
                     Ok(h) => h,
                     Err(err) => {
                         // SAFETY: `entries_mutex` held; sole access to this slot.
@@ -1560,9 +1559,6 @@ impl RealFS {
                         );
                     }
                 };
-                // `Dir` is an owning RAII handle — `Drop` closes the fd on
-                // every exit path below (matches Zig `defer handle.close()`).
-                let handle_dir = bun_sys::Dir::from_fd(handle);
                 let new_entry = match self.readdir(
                     false,
                     // SAFETY: `entries_mutex` held; `readdir` does not touch
@@ -1981,9 +1977,7 @@ impl TmpfileWindows {
 
     pub(crate) fn create(&mut self, rfs: &mut RealFS, name: &ZStr) -> Result<(), bun_core::Error> {
         // `open_tmp_dir()` opens a *fresh* directory handle every call (it is not the
-        // cached `FileSystem::tmpdir()`). `Dir` is an owning RAII handle, so `Drop`
-        // closes the kernel HANDLE on both success and the `?` early-returns below.
-        // Zig had a leak here (fs.zig:709-717); the RAII `Dir` fixes it.
+        // cached `FileSystem::tmpdir()`).
         let tmp_dir = rfs.open_tmp_dir()?;
         let tmp_dir_fd = tmp_dir.fd();
 

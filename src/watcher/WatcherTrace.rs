@@ -197,8 +197,6 @@ pub fn write_events(
 // PORT NOTE: free-function `deinit` (no `self`), so this stays a plain fn
 // rather than `impl Drop`.
 pub fn deinit() {
-    // `bun_sys::File` is now an owning RAII handle; dropping the taken `Option`
-    // closes the descriptor.
     let _ = TRACE_FILE.lock().take();
 }
 

@@ -161,7 +161,7 @@ impl PackageManager {
             }
             Err(e) => return Err(e),
         };
-        // Zig `defer dir.close()` — `Dir`'s `Drop` covers it on every exit.
+        // Zig: `defer dir.close()`
         let mut iter = bun_sys::iterate_dir(dir.fd);
 
         loop {

@@ -657,9 +657,8 @@ impl TarballStream {
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
         // `make_open_path` returns an owning `Dir`; `dest` stores a raw `Fd`
-        // closed manually in `Drop`/`close_output_file`, so disarm the `Dir`
-        // drop guard with `into_raw()` instead of letting it close the fd
-        // immediately (it used to be a non-owning view via `Fd::from_std_dir`).
+        // closed manually in `Drop`/`close_output_file`, so take the raw fd
+        // with `into_raw()` instead of letting the `Dir` close it immediately.
         self.dest = Some(
             bun_sys::make_path::make_open_path(
                 Dir::borrow(&tarball.temp_dir),

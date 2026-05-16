@@ -609,9 +609,7 @@ impl CreateCommand {
                     iterate: true,
                     ..Default::default()
                 };
-                let template_dir = match bun_sys::open_dir_absolute(abs_template_path)
-                    .map(bun_sys::Dir::from_fd)
-                {
+                let template_dir = match bun_sys::Dir::open(abs_template_path) {
                     Ok(d) => d,
                     Err(err) => {
                         node.end();
@@ -689,13 +687,9 @@ impl CreateCommand {
                     &mut template_path_buf,
                 )?;
 
-                package_json_file = bun_sys::File::openat(
-                    destination_dir.fd(),
-                    b"package.json",
-                    bun_sys::O::RDWR,
-                    0,
-                )
-                .ok();
+                package_json_file = destination_dir
+                    .open_file(b"package.json", bun_sys::O::RDWR, 0)
+                    .ok();
 
                 'read_package_json: {
                     if let Some(ref pkg) = package_json_file {
@@ -784,7 +778,7 @@ impl CreateCommand {
 
         {
             // TODO(port): std.fs.openDirAbsolute — use bun_sys
-            let parent_dir = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(destination)?);
+            let parent_dir = bun_sys::Dir::open(destination)?;
             #[cfg(windows)]
             {
                 let _ = parent_dir.copy_file(
@@ -2247,24 +2241,21 @@ impl Example {
             if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                 let parts = [home_dir];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[0] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
-                    .map(bun_sys::Dir::from_fd)
+                folders[0] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             {
                 let parts = [filesystem.top_level_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[1] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
-                    .map(bun_sys::Dir::from_fd)
+                folders[1] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             if let Some(home_dir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
                 let parts = [home_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[2] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
-                    .map(bun_sys::Dir::from_fd)
+                folders[2] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 

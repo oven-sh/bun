@@ -266,8 +266,7 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer extract_destination.close()` — `Dir` is now an owning RAII handle;
-            // `Drop` closes the fd at the end of this block.
+            // `defer extract_destination.close()`
 
             use bun_libarchive::Archiver;
             use bun_zlib as Zlib;
@@ -692,8 +691,7 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer final_dir.close()` — `Dir` is an owning RAII handle; `Drop`
-            // closes the fd on every return path.
+            // `defer final_dir.close()`
             // and get the fd path
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,
@@ -837,7 +835,7 @@ impl ExtractTarball {
                             ) else {
                                 break 'create_index;
                             };
-                            // `defer index_dir.close()` → `Dir::Drop` closes at end of block.
+                            // `defer index_dir.close()`
 
                             let mut dest_buf = PathBuffer::uninit();
                             dest_buf[..dest_name.len()].copy_from_slice(dest_name);

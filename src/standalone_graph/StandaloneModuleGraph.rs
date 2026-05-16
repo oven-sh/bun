@@ -886,7 +886,6 @@ pub fn to_bytes(
                         ));
                         break 'dump;
                     }
-                    // `file` (owning `bun_sys::File`) closes on Drop at end of scope.
                 }
             }
         }

@@ -290,7 +290,6 @@ impl History {
             content.push(b'\n');
         }
 
-        // `File` owns the fd and closes on Drop.
         let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
             sys::Result::Ok(fd) => sys::File::from_fd(fd),
             sys::Result::Err(_) => return,
@@ -768,7 +767,6 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         content.push(b'\n');
     }
 
-    // `File` owns the fd and closes on Drop.
     let file = match sys::open_a(
         filename,
         sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,

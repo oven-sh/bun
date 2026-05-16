@@ -1,34 +1,22 @@
 //! `bun.sys.File` — high-level file handle. Port of `src/sys/File.zig`.
 //!
-//! Thin `#[repr(transparent)]` wrapper over [`crate::Fd`]. Like `std::fs::File`,
-//! this **owns the descriptor and closes it on Drop**. All methods preserve OS
-//! errno via [`crate::Maybe`].
-//!
-//! For descriptors that escape the current scope — handed to FFI, stored in a
-//! struct that does its own lifecycle, sent across a channel — call
-//! [`File::into_raw`] to disarm the close and take the raw [`Fd`]. The raw
-//! `bun_sys::open*()` functions still return a bare `Fd` for call sites that
-//! genuinely need to manage the descriptor by hand; new code should default to
-//! `File::open*()`.
+//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio
+//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
+//! are safe to drop). Use [`File::into_raw`] to hand the fd off,
+//! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
+//! All methods preserve OS errno via [`crate::Maybe`].
 #![allow(clippy::module_inception)]
 
 use super::*;
 
 #[repr(transparent)]
 pub struct File {
-    /// The wrapped descriptor. Reading this is safe (the `Fd` is `Copy` and
-    /// only peeks); writing it leaks the previous descriptor and is almost
-    /// always wrong — use [`File::from_fd`] / [`File::into_raw`] instead.
     pub handle: Fd,
 }
 
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {
-        // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
-        // descriptors the caller does not own; `File::INVALID` and
-        // default-constructed handles are sentinels. Closing any of those on
-        // drop would either tear down the process's stdio or hit EBADF.
         if self.handle != Fd::INVALID && !self.handle.is_stdio() {
             let _ = close(self.handle);
         }
@@ -63,8 +51,7 @@ impl File {
     pub fn from_fd(fd: Fd) -> Self {
         Self { handle: fd }
     }
-    /// The underlying [`Fd`]. Does not affect ownership — `self` still
-    /// closes the descriptor on drop.
+    /// The underlying [`Fd`]. Does not affect ownership.
     #[inline]
     pub fn handle(&self) -> Fd {
         self.handle
@@ -74,20 +61,15 @@ impl File {
     pub fn fd(&self) -> Fd {
         self.handle
     }
-    /// Disarm the close-on-drop and return the raw [`Fd`]. The caller takes
-    /// over the descriptor's lifecycle: either it crosses an ownership
-    /// boundary (FFI, struct field, channel send) or another scope will
-    /// close it.
+    /// Disarm the drop guard and return the raw [`Fd`]. The caller takes over
+    /// the descriptor's lifecycle.
     #[inline]
     pub fn into_raw(self) -> Fd {
         let fd = self.handle;
         core::mem::forget(self);
         fd
     }
-    /// Borrow a `File` view of an [`Fd`] without taking ownership. The
-    /// returned reference cannot be moved out of, so dropping it does not
-    /// close the descriptor — use this to call `&self` `File` methods on a
-    /// descriptor someone else owns. Mirrors `Path::new(&OsStr) -> &Path`.
+    /// Non-owning `&File` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]
     pub fn borrow(fd: &Fd) -> &File {
         // SAFETY: `File` is `#[repr(transparent)]` over `Fd`.
@@ -353,9 +335,8 @@ impl File {
             })
         }
     }
-    /// Close the descriptor now and surface the syscall result. Equivalent to
-    /// dropping `self` except that the close error is observable. Disarms the
-    /// drop guard so the descriptor isn't closed twice.
+    /// Close now. Equivalent to dropping `self` but the syscall result is
+    /// observable.
     pub fn close(self) -> Maybe<()> {
         close(self.into_raw())
     }

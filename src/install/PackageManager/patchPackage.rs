@@ -149,7 +149,7 @@ pub fn do_patch_commit(
             Global::crash();
         }
     };
-    // Zig: `defer root_node_modules.close()` — `Dir`'s `Drop` covers it.
+    // Zig: `defer root_node_modules.close()`
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let mut resolution_buf = [0u8; 1024];
@@ -377,7 +377,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
-            // Zig: `defer new_folder_handle.close()` — `Dir`'s `Drop` covers it.
+            // Zig: `defer new_folder_handle.close()`
 
             if sys::renameat_concurrently_a(
                 new_folder_handle.fd,
@@ -433,7 +433,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
-            // Zig: `defer new_folder_handle.close()` — `Dir`'s `Drop` covers it.
+            // Zig: `defer new_folder_handle.close()`
 
             if let Err(e) = sys::renameat_concurrently_a(
                 new_folder_handle.fd,
@@ -467,7 +467,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
-                // Zig: `defer new_folder_handle.close()` — `Dir`'s `Drop` covers it.
+                // Zig: `defer new_folder_handle.close()`
 
                 if has_nested_node_modules {
                     if let Err(e) = sys::renameat_concurrently_a(
@@ -1238,7 +1238,7 @@ fn overwrite_package_in_node_modules_folder(
             ..Default::default()
         },
     )?;
-    // Zig: `defer cached_package_folder.close()` — `Dir`'s `Drop` covers it.
+    // Zig: `defer cached_package_folder.close()`
 
     let ignore_directories: &[&bun_paths::OSPathSlice] = &[
         bun_paths::os_path_literal!("node_modules"),

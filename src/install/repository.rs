@@ -919,9 +919,6 @@ impl RepositoryExt for Repository {
                 break 'brk dir;
             }
         };
-        // `defer package_dir.close()` — `Dir::Drop` covers all return paths.
-        // Explicit `.close()` calls below are kept for parity but disarm the
-        // drop guard (`Dir::close(self)` forgets), so they are not double-closes.
 
         let (json_file, json_buf) =
             match bun_sys::File::read_file_from(package_dir.fd(), b"package.json") {

@@ -414,8 +414,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
-                    let tmp_dir = match bun_sys::open_dir_absolute(tmp) {
-                        Ok(d) => Dir::from_fd(d),
+                    let tmp_dir = match Dir::open(tmp) {
+                        Ok(d) => d,
                         Err(err) => {
                             Output::err(
                                 bun_core::Error::from(err),

@@ -42,17 +42,15 @@ use bun_sys::{
 // local shims for upstream-stub gaps
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })` — `bun_sys::Dir` has no
-/// such inherent method; route through `bun_sys::open_dir_at`.
+/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })` — thin shim over
+/// `Dir::open_at`; the opts are ignored to match the original behavior.
 #[inline]
 fn dir_open_dir_z(
     dir: &Dir,
     path: &ZStr,
     _opts: bun_sys::OpenDirOptions,
 ) -> Result<Dir, bun_core::Error> {
-    bun_sys::open_dir_at(dir.fd, path.as_bytes())
-        .map(Dir::from_fd)
-        .map_err(Into::into)
+    dir.open_at(path.as_bytes()).map_err(Into::into)
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
@@ -752,7 +750,6 @@ fn add_entire_tree(
     }
 
     while let Some(dir_info) = dirs.pop() {
-        // `dir` owns its fd; `Dir::Drop` closes it at end of this iteration.
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
 
         while let Some(last) = ignores.last() {
@@ -933,7 +930,6 @@ fn iterate_bundled_deps(
             Global::crash();
         }
     };
-    // `dir` owns its fd; `Dir::Drop` closes it on function exit.
 
     // A set of bundled dependency locations
     // - node_modules/is-even
@@ -966,7 +962,6 @@ fn iterate_bundled_deps(
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            // `scoped_dir` owns its fd; `Dir::Drop` closes it at end of this block.
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
@@ -1081,7 +1076,6 @@ fn add_bundled_dep(
     dirs.push(bundled_dir_info);
 
     while let Some(dir_info) = dirs.pop() {
-        // `dir` owns its fd; `Dir::Drop` closes it at end of this iteration.
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
@@ -2338,7 +2332,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     };
-    // `root_dir` owns its fd; `Dir::Drop` closes it on function exit.
 
     // Scan for a README file so the registry receives the same
     // `readme` / `readmeFilename` metadata that `npm publish` sends.
@@ -2771,12 +2764,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
 
         while let Some(item) = bundled_pack_queue.remove_or_null() {
-            let file = match File::openat(
-                Fd::from_std_dir(&root_dir),
-                &item.path,
-                bun_sys::O::RDONLY,
-                0,
-            ) {
+            let file = match root_dir.open_file(&item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
                     if item.optional {
@@ -3831,7 +3819,7 @@ impl IgnorePatterns {
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
 
-        let ignore_file: File = match File::openat(dir.fd(), b".npmignore", bun_sys::O::RDONLY, 0) {
+        let ignore_file: File = match dir.open_file(b".npmignore", bun_sys::O::RDONLY, 0) {
             Ok(f) => f,
             Err(err) => 'ignore_file: {
                 if err.get_errno() != bun_sys::E::ENOENT {
@@ -3845,7 +3833,7 @@ impl IgnorePatterns {
                     );
                 }
                 ignore_kind = IgnorePatternsKind::Gitignore;
-                match File::openat(dir.fd(), b".gitignore", bun_sys::O::RDONLY, 0) {
+                match dir.open_file(b".gitignore", bun_sys::O::RDONLY, 0) {
                     Ok(f) => break 'ignore_file f,
                     Err(err2) => {
                         if err2.get_errno() != bun_sys::E::ENOENT {

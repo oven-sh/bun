@@ -1132,8 +1132,7 @@ pub mod package_manifest {
                 )?
             };
 
-            // Zig: `errdefer file.close()` — `File::Drop` covers the early
-            // return on write error.
+            // Zig: `errdefer file.close()`
             file.write_all(&buffer)?;
 
             #[cfg(windows)]

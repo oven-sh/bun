@@ -1251,7 +1251,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    // Zig: `defer node_gyp_tempdir.close()` — `Dir`'s `Drop` covers it now.
+    // Zig: `defer node_gyp_tempdir.close()`
 
     #[cfg(windows)]
     const FILE_NAME: &str = "node-gyp.cmd";
@@ -1682,11 +1682,7 @@ pub fn init(
                             continue;
                         }
                     };
-                    // Zig: `defer if (!found) json_file.close()`. The only path
-                    // that sets `found = true` immediately hands the file out
-                    // via `break :root_package_json_file` (which moves `json_file`
-                    // and disarms its drop). On every other path `json_file`
-                    // drops at end of this iteration and `Drop` closes the fd.
+                    // Zig: `defer if (!found) json_file.close()`
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
@@ -1788,9 +1784,6 @@ pub fn init(
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
-                                // Zig sets `found = true` here so the deferred close is
-                                // skipped; the `break 'root_package_json_file` below
-                                // moves `json_file` out so its `Drop` never fires here.
                                 #[cfg(windows)]
                                 {
                                     json_file.seek_to(0)?;

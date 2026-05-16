@@ -160,7 +160,7 @@ impl InstallCompletionsCommand {
             // TODO: fix this zig bug, it is one line change to a few functions.
             // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
-            // zig: `defer file.close()` — `File` now owns the fd and closes on Drop.
+            // zig: `defer file.close()`
             file.write_all(SCRIPT)?;
         }
         Ok(())
@@ -210,7 +210,7 @@ impl InstallCompletionsCommand {
         )?;
 
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
-        // zig: `defer file.close()` — `File` now owns the fd and closes on Drop.
+        // zig: `defer file.close()`
         file.write_all(CONTENT)?;
         Ok(())
     }
@@ -659,7 +659,7 @@ impl InstallCompletionsCommand {
                 };
                 let input_size = end_pos.max(64 * 1024);
 
-                // defer dot_zshrc.close() — handled by Drop
+                // defer dot_zshrc.close()
                 let mut buf: Vec<u8> = vec![
                     0u8;
                     usize::try_from(input_size).expect("int cast")

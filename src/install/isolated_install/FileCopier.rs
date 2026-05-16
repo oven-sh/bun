@@ -134,7 +134,7 @@ impl FileCopier {
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
             }
         };
-        // Zig: `defer dest_dir.close();` — `Dir`'s `Drop` covers it on every exit path.
+        // Zig: `defer dest_dir.close();`
 
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
@@ -240,7 +240,6 @@ impl FileCopier {
                         return sys::Result::Err(err);
                     }
                 };
-                // `defer src.close()` → handled by Drop on `src`.
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
@@ -267,7 +266,6 @@ impl FileCopier {
                         }
                     }
                 };
-                // `defer dest.close()` → handled by Drop on `dest`.
 
                 #[cfg(unix)]
                 {

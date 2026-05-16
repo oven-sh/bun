@@ -285,7 +285,7 @@ impl Entry {
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
-        // Zig: `defer tmpfile.fd.close()` — close on all exit paths.
+        // Zig: `defer tmpfile.fd.close()`
         let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
             // Zig: `errdefer if (!tmpfile.using_tmpfile) unlinkat(...)` — disarmed
@@ -818,9 +818,9 @@ impl RuntimeTranspilerCache {
     ) -> Result<Entry, bun_core::Error> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
         let cache_fd = sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
-        // Zig: `defer cache_fd.close()` — `File`'s `Drop` closes on all exit
-        // paths. Declared before `unlink_guard` so the unlink (errdefer) runs
-        // before the close (defer), matching Zig's LIFO defer order.
+        // Zig: `defer cache_fd.close()`. Declared before `unlink_guard` so the
+        // unlink (errdefer) runs before the close (defer), matching Zig's LIFO
+        // defer order.
         let file = sys::File::from_fd(cache_fd);
         // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
         // cache file. Disarmed via `into_inner` on the success path below.

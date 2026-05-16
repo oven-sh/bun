@@ -521,8 +521,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     #[cfg(feature = "bake_debugging_features")]
     let dump_dir = if let Some(dir) = options.dump_sources {
-        // Zig: `std.fs.cwd().makeOpenPath(dir, .{})` — `Dir` now owns and
-        // closes on Drop (covers Zig's `errdefer dump_dir.close()` below).
+        // Zig: `std.fs.cwd().makeOpenPath(dir, .{})`
         match sys::Dir::cwd().make_open_path(dir, Default::default()) {
             Ok(d) => Some(d),
             Err(err) => {
@@ -5564,8 +5563,7 @@ pub fn dump_bundle(
     }
 
     bufw.flush()?;
-    // Zig: `defer file.close()` / `defer inner_dir.close()` — both handled by
-    // Drop now that `File`/`Dir` are owning RAII handles.
+    // Zig: `defer file.close()` / `defer inner_dir.close()`
     Ok(())
 }
 

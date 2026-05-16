@@ -898,9 +898,6 @@ impl<'a> Linker<'a> {
             else {
                 return;
             };
-            // `File::Drop` closes `bin_for_reading` at end of this block; the
-            // previous explicit scopeguard close is redundant.
-
             let Ok(read) = bin_for_reading.read_all(&mut shebang_buf) else {
                 return;
             };
@@ -998,9 +995,6 @@ impl<'a> Linker<'a> {
             ) else {
                 return;
             };
-            // `File::Drop` closes `tmpfile` at end of this block; the previous
-            // explicit scopeguard close is redundant.
-
             // Write the corrected shebang (without \r)
             if tmpfile
                 .write_all(&chunk_without_newline[0..chunk_without_newline.len() - 1])

@@ -262,12 +262,6 @@ impl Fs {
     ) -> Result<Entry, bun_core::Error> {
         let rfs = &_fs.fs;
 
-        // `bun_sys::File` now owns its fd (closes on `Drop`). The original code
-        // only closed when `need_to_close_files()` AND the fd was freshly opened
-        // (`cached_file_descriptor.is_none()`); otherwise the fd is either owned
-        // by the caller (cached) or escapes via `Entry.fd`. Borrow the cached
-        // fd, own the freshly-opened one, and disarm the drop guard when the fd
-        // must outlive this scope.
         let _owned: Option<bun_sys::File>;
         let fd: Fd = if let Some(fd) = cached_file_descriptor {
             // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
@@ -281,7 +275,6 @@ impl Fs {
                 .map_err(bun_core::Error::from)?;
             let raw = f.handle();
             if rfs.need_to_close_files() {
-                // Closed by `Drop` at end of scope (replaces `CloseOnDrop`).
                 _owned = Some(f);
             } else {
                 // The fd escapes via `Entry.fd`; disarm the drop guard.
@@ -368,13 +361,6 @@ impl Fs {
         // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
         // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
         // type that may have niche (NonZero) fields.
-        //
-        // `bun_sys::File` now owns its fd (closes on `Drop`). The original code
-        // only closed when `need_to_close_files()` AND the fd was freshly opened
-        // (`_file_handle.is_none()`); otherwise the fd is either owned by the
-        // caller (cached `_file_handle`) or escapes via `Entry.fd`. Borrow the
-        // cached fd, own the freshly-opened one, and disarm the drop guard when
-        // the fd must outlive this scope.
         let _owned: Option<bun_sys::File>;
         let will_close: bool;
         let fd: Fd = if let Some(f) = _file_handle {
@@ -412,7 +398,6 @@ impl Fs {
             let raw = opened.handle();
             will_close = rfs.need_to_close_files();
             if will_close {
-                // Closed by `Drop` at end of scope (replaces `CloseOnDrop`).
                 _owned = Some(opened);
             } else {
                 // The fd escapes via `Entry.fd`; disarm the drop guard.

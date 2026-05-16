@@ -200,7 +200,6 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
                         Global::crash();
                     }
                 };
-            // `defer node_modules_path.deinit()` — handled by Drop.
 
             let mut bin_linker = bin::Linker {
                 target_node_modules_path: &raw const target_node_modules_path,

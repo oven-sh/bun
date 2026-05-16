@@ -43,10 +43,9 @@ pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len()
 pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 // `std.fs.Dir` aliases on `PatchTask`/`ApplyPatch` are *borrowed views* of the
-// `PackageManager`-owned cache/temp directory descriptors. Now that
-// `bun_sys::Dir` is an owning RAII handle, store the raw `Fd` instead so the
-// task's drop never closes a descriptor it doesn't own. Use `Dir::borrow(&fd)`
-// where a `&Dir` is needed.
+// `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
+// so the task's drop never closes a descriptor it doesn't own. Use
+// `Dir::borrow(&fd)` where a `&Dir` is needed.
 
 pub struct PatchTask {
     /// BACKREF (Zig: `*PackageManager`). Stored as `BackRef` because the task

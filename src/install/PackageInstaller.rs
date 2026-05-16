@@ -161,8 +161,7 @@ impl NodeModulesFolder {
     ) -> bun_sys::Result<bun_sys::File> {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-        bun_sys::File::openat(
-            root_node_modules_dir.fd(),
+        root_node_modules_dir.open_file(
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
             bun_sys::O::RDONLY,
             0,
@@ -229,7 +228,7 @@ impl NodeModulesFolder {
         }
 
         let dir = self.open_dir(root_node_modules_dir)?;
-        let res = bun_sys::File::openat(dir.fd(), file_path, bun_sys::O::RDONLY, 0);
+        let res = dir.open_file(file_path, bun_sys::O::RDONLY, 0);
         // `Dir::Drop` closes `dir`.
         res.map_err(|e| e.to_zig_err())
     }
@@ -241,10 +240,9 @@ impl NodeModulesFolder {
             // PORT NOTE: std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
             let mut path_buf = PathBuffer::uninit();
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
-            return Ok(Dir::from_fd(
-                bun_sys::openat(root.fd(), path_z, bun_sys::O::DIRECTORY, 0)
-                    .map_err(|e| e.to_zig_err())?,
-            ));
+            return Ok(root
+                .open_at_with(path_z.as_bytes(), 0)
+                .map_err(|e| e.to_zig_err())?);
         }
 
         #[cfg(not(unix))]
@@ -1638,8 +1636,6 @@ impl<'a> PackageInstaller<'a> {
             };
 
             // `defer { if (cwd().fd != destination_dir.fd) destination_dir.close(); }`
-            // — `Dir::Drop` closes `destination_dir` at end of scope and already
-            // skips the cwd sentinel, so the explicit scopeguard is no longer needed.
 
             let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir.fd());
 

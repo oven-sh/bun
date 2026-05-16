@@ -1,32 +1,20 @@
 //! `bun.sys.Dir` — directory handle + helpers. Port of the `Dir` half of
 //! `src/sys/sys.zig` (Zig: `bun.sys.Dir` ≈ `std.fs.Dir`).
 //!
-//! `Dir` owns the wrapped descriptor and closes it on Drop, like
-//! [`bun_sys::File`](crate::File). Drop skips the cwd sentinel
-//! (`AT_FDCWD`) and `Fd::INVALID` so `Dir::cwd()` and default-constructed
-//! handles remain safe to drop. For descriptors that escape — handed to FFI,
-//! stashed in a struct that does its own lifecycle, sent across a channel —
-//! [`Dir::into_raw`] disarms the close and returns the raw [`Fd`].
+//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the
+//! `AT_FDCWD` sentinel). Use [`Dir::into_raw`] to hand the fd off,
+//! [`Dir::borrow`] for a non-owning `&Dir` view of someone else's fd.
 
 use super::*;
 
-// ──────────────────────────────────────────────────────────────────────────
-// `Dir` — `std.fs.Dir` replacement. Owns the fd; closes on Drop.
-// ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 pub struct Dir {
-    /// The wrapped descriptor. Reading is safe (`Fd` is `Copy` and only
-    /// peeks); writing it leaks the previous descriptor and is almost always
-    /// wrong — use [`Dir::from_fd`] / [`Dir::into_raw`] instead.
     pub fd: Fd,
 }
 
 impl Drop for Dir {
     #[inline]
     fn drop(&mut self) {
-        // `Dir::cwd()` wraps `AT_FDCWD`, a sentinel that doesn't refer to an
-        // open descriptor. `Fd::INVALID` is what default-constructed handles
-        // hold. Neither must be passed to `close()`.
         if self.fd != Fd::INVALID && self.fd != Fd::cwd() {
             let _ = close(self.fd);
         }
@@ -61,28 +49,48 @@ impl Dir {
     pub fn cwd() -> Self {
         Self { fd: Fd::cwd() }
     }
-    /// Close the descriptor now. Equivalent to dropping `self` except that the
-    /// drop guard is disarmed — the descriptor isn't closed twice. Like
-    /// `File::close()`, but discards the syscall result (matches the Zig
-    /// `Dir.close()` signature).
+    /// Open `path` relative to cwd. `O_DIRECTORY | O_RDONLY | O_CLOEXEC`.
+    #[inline]
+    pub fn open(path: &[u8]) -> Maybe<Self> {
+        open_dir_at(Fd::cwd(), path).map(Self::from_fd)
+    }
+    /// Open `path` relative to cwd with explicit flags. `O_DIRECTORY` is
+    /// always added.
+    #[inline]
+    pub fn open_with(path: &[u8], flags: i32) -> Maybe<Self> {
+        openat_a(Fd::cwd(), path, flags | O::DIRECTORY, 0).map(Self::from_fd)
+    }
+    /// Open `sub_path` relative to this dir.
+    #[inline]
+    pub fn open_at(&self, sub_path: &[u8]) -> Maybe<Self> {
+        open_dir_at(self.fd, sub_path).map(Self::from_fd)
+    }
+    /// Open `sub_path` relative to this dir with explicit flags. `O_DIRECTORY`
+    /// is always added.
+    #[inline]
+    pub fn open_at_with(&self, sub_path: &[u8], flags: i32) -> Maybe<Self> {
+        openat_a(self.fd, sub_path, flags | O::DIRECTORY, 0).map(Self::from_fd)
+    }
+    /// Open `sub_path` relative to this dir as a [`File`].
+    #[inline]
+    pub fn open_file(&self, sub_path: &[u8], flags: i32, mode: Mode) -> Maybe<File> {
+        File::openat(self.fd, sub_path, flags, mode)
+    }
+    /// Close now. Equivalent to dropping `self` but discards the syscall
+    /// result (matches Zig's `Dir.close()`).
     #[inline]
     pub fn close(self) {
         let _ = close(self.into_raw());
     }
-    /// Disarm the close-on-drop and return the raw [`Fd`]. The caller takes
-    /// over the descriptor's lifecycle: either it crosses an ownership
-    /// boundary (FFI, struct field, channel send) or another scope will
-    /// close it.
+    /// Disarm the drop guard and return the raw [`Fd`]. The caller takes over
+    /// the descriptor's lifecycle.
     #[inline]
     pub fn into_raw(self) -> Fd {
         let fd = self.fd;
         core::mem::forget(self);
         fd
     }
-    /// Borrow a `Dir` view of an [`Fd`] without taking ownership. The returned
-    /// reference cannot be moved out of, so dropping it does not close the
-    /// descriptor — use this to call `&self` `Dir` methods on a descriptor
-    /// someone else owns. Mirrors `Path::new(&OsStr) -> &Path`.
+    /// Non-owning `&Dir` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]
     pub fn borrow(fd: &Fd) -> &Dir {
         // SAFETY: `Dir` is `#[repr(transparent)]` over `Fd`.

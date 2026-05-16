@@ -485,8 +485,6 @@ impl<'a> Task<'a> {
 
                     this.err = None;
                     this.data = Data {
-                        // `dir` (from `Repository::download`) escapes as an `Fd` stored
-                        // in `git_clone`; disarm its `Drop` so the descriptor stays open.
                         git_clone: ManuallyDrop::new(dir.into_raw()),
                     };
                     this.status = Status::Success;

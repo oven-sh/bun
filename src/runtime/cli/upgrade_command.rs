@@ -53,9 +53,7 @@ pub trait FileSystemTmpdirExt {
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
     fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error> {
-        sys::open_dir_absolute(fs::RealFS::tmpdir_path())
-            .map(sys::Dir::from_fd)
-            .map_err(Into::into)
+        sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
 
@@ -772,15 +770,12 @@ impl UpgradeCommand {
             };
 
             // PORT NOTE: Zig used std.fs.Dir.createFileZ(.{ .truncate = true }); mapped to
-            // bun_sys::openat with WRONLY|CREAT|TRUNC and wrapped in sys::File for write_all.
-            let zip_file = match sys::openat_a(
-                save_dir.fd(),
+            // Dir::open_file with WRONLY|CREAT|TRUNC.
+            let zip_file = match save_dir.open_file(
                 tmpname.as_bytes(),
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o644,
-            )
-            .map(sys::File::from_fd)
-            {
+            ) {
                 Ok(f) => f,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
@@ -1130,8 +1125,8 @@ impl UpgradeCommand {
             // writes. Each mutation re-establishes the NUL before
             // `target_dirname` is read again.
             let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
-            let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
-                Ok(d) => sys::Dir::from_fd(d),
+            let target_dir_it = match sys::Dir::open(target_dirname.as_bytes()) {
+                Ok(d) => d,
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
                     Output::pretty_errorln(format_args!(
@@ -1184,8 +1179,7 @@ impl UpgradeCommand {
 
                     // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
                     let target_hash = hash(
-                        match sys::File::openat(
-                            target_dir.fd(),
+                        match target_dir.open_file(
                             target_filename.as_bytes(),
                             sys::O::RDONLY,
                             0,
@@ -1208,7 +1202,7 @@ impl UpgradeCommand {
                     );
 
                     let source_hash = hash(
-                        match sys::File::openat(save_dir.fd(), exe, sys::O::RDONLY, 0).and_then(
+                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(
                             |f| {
                                 let n = f.read_all(&mut input_buf);
                                 let _ = f.close(); // close error is non-actionable (Zig parity: discarded)

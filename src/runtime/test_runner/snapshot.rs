@@ -438,9 +438,7 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            // Zig: `errdefer file.file.close()` — `bun_sys::File` is now an owning
-            // RAII handle, so its Drop covers every exit path (error `?`, `continue`,
-            // and the success fall-through). No scopeguard needed.
+            // Zig: `errdefer file.file.close()`
             let mut file = File { id: file_id, file: bun_sys::File::from_fd(fd) };
 
             let file_text: Vec<u8> = file
@@ -849,8 +847,6 @@ impl<'a> Snapshots<'a> {
                     );
                 }
             }
-
-            // `file` drops at end of iteration — `bun_sys::File::Drop` closes the fd.
         }
         Ok(success.get())
     }
@@ -947,7 +943,6 @@ impl<'a> Snapshots<'a> {
                 }
             }
 
-            // errdefer is implicit: if `parse_file` errors, `file` drops and closes the fd.
             self.parse_file(&file)?;
             self._current_file = Some(file);
         }

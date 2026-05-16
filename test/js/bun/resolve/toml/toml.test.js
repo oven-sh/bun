@@ -169,7 +169,7 @@ str = """\\
 // — trailing spaces/tabs between the backslash and the newline are part of
 // the line-ending continuation.
 it("TOML multi-line basic string allows whitespace between backslash and newline", () => {
-  const toml = "str = \"\"\"hello\\   \n   world\"\"\"";
+  const toml = 'str = """hello\\   \n   world"""';
 
   const result = Bun.TOML.parse(toml);
   expect(result.str).toBe("helloworld");

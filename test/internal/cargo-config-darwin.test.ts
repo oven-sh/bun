@@ -75,7 +75,8 @@ test("no -fuse-ld=lld in .cargo/config.toml on darwin targets", () => {
   // export surfaces as an explicit test failure (the JUnit reporter
   // otherwise counts a top-level `SyntaxError` as 0 failures — same
   // pattern as test/internal/sigaction-layout.test.ts).
-  const { cargoConfigDarwinRegressionMarker } = require("bun:internal-for-testing") as typeof import("bun:internal-for-testing");
+  const { cargoConfigDarwinRegressionMarker } =
+    require("bun:internal-for-testing") as typeof import("bun:internal-for-testing");
   expect(cargoConfigDarwinRegressionMarker).toBe(true);
 
   // `generateCargoConfig` writes one file that contains sections for every

@@ -233,12 +233,16 @@ mod prompt_signal {
                 // handle is reentrant-safe for plain VT sequences.
                 const RESTORE: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1006l\r\n";
                 let mut written: windows::DWORD = 0;
-                let h = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE);
-                if h != windows::INVALID_HANDLE_VALUE {
-                    // SAFETY: `h` is a kernel handle returned by
-                    // `GetStdHandle`; `RESTORE` is a 'static 24-byte
-                    // buffer; `written` is a valid stack out-pointer; the
-                    // overlapped pointer is nullable for sync I/O.
+                // bun_core::windows_sys::GetStdHandle returns `None` for
+                // INVALID_HANDLE_VALUE and for null handles (no console
+                // attached, handle closed, etc.). Skip the write in those
+                // cases — we still need to ExitProcess either way.
+                if let Some(h) = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
+                    // SAFETY: `h` is a non-null, non-INVALID kernel handle
+                    // returned by `GetStdHandle`; `RESTORE` is a 'static
+                    // 24-byte buffer; `written` is a valid stack
+                    // out-pointer; the overlapped pointer is nullable for
+                    // synchronous I/O.
                     unsafe {
                         windows::kernel32::WriteFile(
                             h,

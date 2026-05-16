@@ -139,17 +139,22 @@ describe.skipIf(isWindows)("issue 28800", () => {
     });
 
     const { output, exitCode } = await runFilter(String(dir), 10, 80, ["--elide-lines", "0"]);
-    expect(exitCode).toBe(0);
     // Last synchronized-update frame is the final dump — it must contain
     // every output line of every package without eliding anything.
     const frames = [...output.matchAll(/\x1b\[\?2026h([\s\S]*?)\x1b\[\?2026l/g)].map(m => m[1]);
     expect(frames.length).toBeGreaterThan(0);
-    const lastFrame = frames[frames.length - 1];
+    // Strip ANSI escapes so matching works on the rendered text. Content
+    // lines are rendered with a leading "│ " prefix, distinct from the
+    // script header which includes the literal printf argument, so checking
+    // for "│ a-1" (etc.) actually verifies the line was rendered as content
+    // rather than appearing incidentally in the printed script_content.
+    const plainLastFrame = frames[frames.length - 1].replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
     for (const prefix of ["a", "b"]) {
       for (let i = 1; i <= 12; i++) {
-        expect(lastFrame).toContain(`${prefix}-${i}`);
+        expect(plainLastFrame).toContain(`│ ${prefix}-${i}\r\n`);
       }
     }
-    expect(lastFrame).not.toContain("lines elided");
+    expect(plainLastFrame).not.toContain("lines elided");
+    expect(exitCode).toBe(0);
   });
 });

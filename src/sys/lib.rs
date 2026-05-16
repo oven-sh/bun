@@ -7543,7 +7543,7 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
 
 /// `bun.makePath` — free-fn form taking a `Dir` (Zig: `bun.makePath(dir, sub)`).
 #[inline]
-pub fn make_path(dir: Dir, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+pub fn make_path(dir: &Dir, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
     mkdir_recursive_at(dir.fd, sub_path).map_err(Into::into)
 }
 /// `bun.mkdirRecursive` — like `make_path` but cwd-relative, taking a slice.
@@ -8358,26 +8358,17 @@ pub mod freebsd {
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
 
-/// RAII guard that closes an [`Fd`] on drop.
-///
-/// `Fd`/`Dir`/`File` are intentionally non-owning `Copy` handles (matching
-/// Zig). When a scope owns one and must close it on every exit path
-/// (Zig: `defer fd.close()`), wrap the fd in this guard — do not hand-roll a
-/// `scopeguard` closure.
+/// RAII guard that closes a raw [`Fd`] on drop. Most code should prefer
+/// [`File`] / [`Dir`], which are owning RAII handles already; reach for this
+/// only when working with a bare `Fd` in a context where a typed wrapper
+/// would be misleading (e.g. an fd that is sometimes a file, sometimes a
+/// directory, sometimes a pipe).
 #[must_use = "dropping immediately closes the fd; bind to `let _close = ...`"]
 pub struct CloseOnDrop(Fd);
 impl CloseOnDrop {
     #[inline]
     pub fn new(fd: Fd) -> Self {
         Self(fd)
-    }
-    #[inline]
-    pub fn dir(dir: Dir) -> Self {
-        Self(dir.fd)
-    }
-    #[inline]
-    pub fn file(file: &File) -> Self {
-        Self(file.handle)
     }
     /// Disarm the guard and return the fd without closing it.
     #[inline]
@@ -8400,7 +8391,7 @@ pub mod make_path {
     use super::*;
     #[inline]
     pub fn make_open_path(
-        dir: Dir,
+        dir: &Dir,
         sub_path: &[u8],
         opts: OpenDirOptions,
     ) -> core::result::Result<Dir, bun_core::Error> {
@@ -8429,14 +8420,14 @@ pub mod make_path {
     /// width so callers can pass `OSPathChar` slices unchanged.
     #[inline]
     pub fn make_path<T: MakePathUnit>(
-        dir: Dir,
+        dir: &Dir,
         sub_path: &[T],
     ) -> core::result::Result<(), bun_core::Error> {
         T::make_path_at(dir.fd, sub_path)
     }
     /// Explicit UTF-16 form (Windows). On POSIX transcodes via `make_path_w`.
     #[inline]
-    pub fn make_path_u16(dir: Dir, sub_path: &[u16]) -> core::result::Result<(), bun_core::Error> {
+    pub fn make_path_u16(dir: &Dir, sub_path: &[u16]) -> core::result::Result<(), bun_core::Error> {
         make_path_w(dir.fd, sub_path).map_err(Into::into)
     }
 }

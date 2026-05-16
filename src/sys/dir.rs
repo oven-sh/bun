@@ -1,17 +1,36 @@
 //! `bun.sys.Dir` — directory handle + helpers. Port of the `Dir` half of
 //! `src/sys/sys.zig` (Zig: `bun.sys.Dir` ≈ `std.fs.Dir`).
 //!
-//! `Dir` is `Copy` and does not close on Drop; use [`OwnedDir`] for RAII close.
+//! `Dir` owns the wrapped descriptor and closes it on Drop, like
+//! [`bun_sys::File`](crate::File). Drop skips the cwd sentinel
+//! (`AT_FDCWD`) and `Fd::INVALID` so `Dir::cwd()` and default-constructed
+//! handles remain safe to drop. For descriptors that escape — handed to FFI,
+//! stashed in a struct that does its own lifecycle, sent across a channel —
+//! [`Dir::into_raw`] disarms the close and returns the raw [`Fd`].
 
 use super::*;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `Dir` — `std.fs.Dir` replacement. Thin wrapper over `Fd`; close on Drop is
-// NOT done (matches Zig — callers explicitly `.close()` or hold for lifetime).
+// `Dir` — `std.fs.Dir` replacement. Owns the fd; closes on Drop.
 // ──────────────────────────────────────────────────────────────────────────
-#[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Dir {
+    /// The wrapped descriptor. Reading is safe (`Fd` is `Copy` and only
+    /// peeks); writing it leaks the previous descriptor and is almost always
+    /// wrong — use [`Dir::from_fd`] / [`Dir::into_raw`] instead.
     pub fd: Fd,
+}
+
+impl Drop for Dir {
+    #[inline]
+    fn drop(&mut self) {
+        // `Dir::cwd()` wraps `AT_FDCWD`, a sentinel that doesn't refer to an
+        // open descriptor. `Fd::INVALID` is what default-constructed handles
+        // hold. Neither must be passed to `close()`.
+        if self.fd != Fd::INVALID && self.fd != Fd::cwd() {
+            let _ = close(self.fd);
+        }
+    }
 }
 
 /// Options for `Dir::copy_file` (Zig: `std.fs.Dir.CopyFileOptions`).
@@ -42,9 +61,32 @@ impl Dir {
     pub fn cwd() -> Self {
         Self { fd: Fd::cwd() }
     }
+    /// Close the descriptor now. Equivalent to dropping `self` except that the
+    /// drop guard is disarmed — the descriptor isn't closed twice. Like
+    /// `File::close()`, but discards the syscall result (matches the Zig
+    /// `Dir.close()` signature).
     #[inline]
     pub fn close(self) {
-        let _ = close(self.fd);
+        let _ = close(self.into_raw());
+    }
+    /// Disarm the close-on-drop and return the raw [`Fd`]. The caller takes
+    /// over the descriptor's lifecycle: either it crosses an ownership
+    /// boundary (FFI, struct field, channel send) or another scope will
+    /// close it.
+    #[inline]
+    pub fn into_raw(self) -> Fd {
+        let fd = self.fd;
+        core::mem::forget(self);
+        fd
+    }
+    /// Borrow a `Dir` view of an [`Fd`] without taking ownership. The returned
+    /// reference cannot be moved out of, so dropping it does not close the
+    /// descriptor — use this to call `&self` `Dir` methods on a descriptor
+    /// someone else owns. Mirrors `Path::new(&OsStr) -> &Path`.
+    #[inline]
+    pub fn borrow(fd: &Fd) -> &Dir {
+        // SAFETY: `Dir` is `#[repr(transparent)]` over `Fd`.
+        unsafe { &*(core::ptr::from_ref(fd).cast::<Dir>()) }
     }
 
     /// `std.fs.Dir.makePath` — `mkdir -p` relative to this dir.
@@ -269,45 +311,6 @@ fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
     unlinkat_with_flags(dirfd, z, flags)
 }
 
-/// RAII owner for a `Dir` — closes the fd on `Drop`. Use when a directory is
-/// opened for a bounded scope and must be closed on every exit path (Zig:
-/// `defer dir.close()`). `Dir` itself stays `Copy` and never closes implicitly.
-pub struct OwnedDir(Dir);
-impl OwnedDir {
-    #[inline]
-    pub fn new(dir: Dir) -> Self {
-        Self(dir)
-    }
-    #[inline]
-    pub fn dir(&self) -> Dir {
-        self.0
-    }
-    #[inline]
-    pub fn fd(&self) -> Fd {
-        self.0.fd
-    }
-    /// Take the inner `Dir` without closing it.
-    #[inline]
-    pub fn into_inner(self) -> Dir {
-        let d = self.0;
-        core::mem::forget(self);
-        d
-    }
-}
-impl Drop for OwnedDir {
-    #[inline]
-    fn drop(&mut self) {
-        let _ = close(self.0.fd);
-    }
-}
-impl core::ops::Deref for OwnedDir {
-    type Target = Dir;
-    #[inline]
-    fn deref(&self) -> &Dir {
-        &self.0
-    }
-}
-
 /// `std.fs.File.CreateFlags` — subset used by `Dir::createFileZ` callers
 /// (e.g. `repository.zig:649`, `PackageManagerDirectories.zig`).
 #[derive(Clone, Copy, Default)]
@@ -477,7 +480,7 @@ impl Dir {
 /// bun.zig — `bun.openDir(dir, path)`. Opens `path` relative to `dir` as a
 /// directory `Dir` handle.
 #[inline]
-pub fn open_dir(dir: Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
+pub fn open_dir(dir: &Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
     open_dir_at(dir.fd, path)
         .map(Dir::from_fd)
         .map_err(Into::into)
@@ -498,7 +501,7 @@ impl FdDirExt for Fd {
     }
     #[inline]
     fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
-        Dir::from_fd(self).make_open_path(sub_path, OpenDirOptions::default())
+        Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::default())
     }
     #[inline]
     fn from_std_dir(dir: &Dir) -> Fd {

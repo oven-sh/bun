@@ -683,13 +683,17 @@ fn patch_commit_get_version<'a>(
     buf: &'a mut [u8; 1024],
     patch_tag_path: &ZStr,
 ) -> sys::Maybe<&'a [u8]> {
-    // Unlink runs after `patch_tag` drops (closes), since `patch_tag` is
-    // declared later (LIFO drop order). Unlinking a never-opened path on the
-    // early-return-from-open path is a harmless ENOENT.
-    scopeguard::defer! { let _ = sys::unlink(patch_tag_path); }
     let patch_tag = sys::File::open(patch_tag_path, sys::O::RDONLY, 0)?;
+    // Zig: `defer { patch_tag_fd.close(); unlink(patch_tag_path); }` — close
+    // then unlink, on every exit path after a successful open. `_cleanup`
+    // declared after `patch_tag` so it drops first (LIFO); the closure takes
+    // ownership of `patch_tag` and closes it before the unlink.
+    let _cleanup = scopeguard::guard(patch_tag, |f| {
+        drop(f);
+        let _ = sys::unlink(patch_tag_path);
+    });
 
-    let version = patch_tag.read_fill_buf(&mut buf[..])?;
+    let version = _cleanup.read_fill_buf(&mut buf[..])?;
 
     // maybe if someone opens it in their editor and hits save a newline will be inserted,
     // so trim that off

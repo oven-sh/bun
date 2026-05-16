@@ -169,6 +169,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
+                    Self::validate_minimum_release_age(argv[i].as_bytes());
                     opts.minimum_release_age = Some(argv[i].as_bytes());
                 } else if positional.starts_with(b"--minimum-release-age=") {
                     let value = &positional[b"--minimum-release-age=".len()..];
@@ -179,6 +180,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
+                    Self::validate_minimum_release_age(value);
                     opts.minimum_release_age = Some(value);
                 }
             } else {
@@ -237,17 +239,34 @@ impl Options {
     /// Whether `--minimum-release-age=<N>` represents an active supply-chain
     /// gate. A value of `0` (the documented disable spelling — see the
     /// `handles 0 value to disable` test in `minimum-release-age.test.ts`)
-    /// or any other non-positive number is treated as "no gate"; we avoid
-    /// forcing cache re-resolution or hard-erroring `--no-install` in that
-    /// case. Parse failures fall through to the subprocess, which reports
-    /// a proper error.
+    /// is treated as "no gate"; we avoid forcing cache re-resolution or
+    /// hard-erroring `--no-install` in that case. Unparseable or negative
+    /// values are rejected in `validate_minimum_release_age` before parse
+    /// returns, so we never see them here.
     fn has_active_age_gate(&self) -> bool {
         match self.minimum_release_age {
             None => false,
-            Some(v) => match bun_core::parse_double(v) {
-                Ok(secs) => secs > 0.0,
-                Err(_) => true,
-            },
+            Some(v) => bun_core::parse_double(v).map(|s| s > 0.0).unwrap_or(false),
+        }
+    }
+
+    /// Match `bun add`'s validation of `--minimum-release-age=<N>` (see
+    /// `CommandLineArguments.rs`'s handler): reject non-numeric values and
+    /// negative numbers with the same message, before bunx does any
+    /// filesystem mutation (the install-path cache wipe, the `force_stale`
+    /// cache wipe inside `get_bin_name_from_temp_directory`). Without this,
+    /// a typo'd value like `--minimum-release-age=7d` would wipe a fresh
+    /// cache before `bun add` reports the parse error.
+    fn validate_minimum_release_age(value: &[u8]) {
+        match bun_core::parse_double(value) {
+            Ok(secs) if secs >= 0.0 => {}
+            _ => {
+                Output::err_generic(
+                    "Expected --minimum-release-age to be a positive number: {}",
+                    (BStr::new(value),),
+                );
+                Global::exit(1);
+            }
         }
     }
 }

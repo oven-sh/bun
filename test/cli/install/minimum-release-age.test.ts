@@ -2563,6 +2563,77 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(exitCode).not.toBe(0);
     });
 
+    // Value validation must happen in `Options::parse`, matching `bun add`'s
+    // validation at `CommandLineArguments.rs` exactly, BEFORE bunx does any
+    // filesystem mutation or cache-execution decisions.
+    //
+    // Pre-fix, `has_active_age_gate()` had two leaky edge cases:
+    //   - Unparseable values (`=abc`) returned true via `Err(_) => true`, so
+    //     a fresh mismatched-bin cache got `force_stale`-wiped before
+    //     `bun add` surfaced the parse error.
+    //   - Negative values (`=-5`) parsed to `Ok(-5.0)` and returned false, so
+    //     on a warm cache the cached binary ran and the flag was silently
+    //     ignored — a supply-chain footgun for a typo'd sign. Cold cache
+    //     rejected the same input via `bun add`, yielding state-dependent
+    //     error reporting.
+    //
+    // Both are now rejected up-front in `Options::parse` with the same error
+    // text `bun add` uses. The warm cache must survive (no side effect) and
+    // the cached binary must not run.
+    test.skipIf(isWindows).each([
+      ["abc", "non-numeric"],
+      ["-5", "negative integer"],
+      ["-0.5", "negative float"],
+    ])("--minimum-release-age=%s rejected before filesystem mutation (%s)", async (bad, _label) => {
+      using dir = tempDir(`bunx-min-age-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
+      using cacheDir = tempDir(`bunx-min-age-cache-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
+      using tmp = tempDir(`bunx-min-age-tmp-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
+
+      // Seed a warm mismatched-bin cache so both pre-fix regressions
+      // (cache wipe under `=abc`, cached binary run under `=-5`) would
+      // be observable without the fix.
+      const pkgName = "@fake-scope/validation-guard";
+      const realBin = "mytool";
+      const uid = process.getuid?.() ?? 0;
+      const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@latest`);
+      const pkgDir = join(cacheRoot, "node_modules", pkgName);
+      const binDir = join(cacheRoot, "node_modules", ".bin");
+      mkdirSync(pkgDir, { recursive: true });
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
+      writeFileSync(
+        join(pkgDir, "package.json"),
+        JSON.stringify({ name: pkgName, version: "1.0.0", bin: { [realBin]: `./bin/${realBin}.js` } }),
+      );
+      const binPath = join(binDir, realBin);
+      writeFileSync(binPath, "#!/bin/sh\necho VALIDATION_LEAKED\nexit 0\n");
+      chmodSync(binPath, 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", `--minimum-release-age=${bad}`, pkgName],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      // Same error text `bun add` uses — user sees a single consistent message.
+      expect(stderr).toContain("Expected --minimum-release-age to be a positive number");
+      expect(stderr).toContain(bad);
+      expect(exitCode).not.toBe(0);
+      // No cached binary ran (catches the negative-value silent-bypass
+      // regression).
+      expect(stdout).not.toContain("VALIDATION_LEAKED");
+      // Cache must not have been wiped before the parse error surfaced.
+      expect(existsSync(binPath)).toBe(true);
+      expect(existsSync(join(pkgDir, "package.json"))).toBe(true);
+    });
+
     // The pre-seeded cache layout here is unix-specific: the cache key uses
     // `process.getuid()` (undefined on Windows, where bunx keys on
     // `user_unique_id()`), the bin path has no `.exe` suffix (bunx probes with

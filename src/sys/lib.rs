@@ -9300,6 +9300,7 @@ mod owned_handle_tests {
     /// `to_dir_fd` would be closed out from under the caller.
     #[test]
     fn renameat_concurrently_does_not_close_caller_fd() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
         tmp.extend_from_slice(b"/bun_sys_renameat_test");
         // Set up: create a dir tree with `from/sub`, `to/sub`.

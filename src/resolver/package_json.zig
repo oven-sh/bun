@@ -102,7 +102,7 @@ pub const PackageJSON = struct {
 
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
-    pub fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    fn normalizePathForGlob(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
         const normalized = try allocator.dupe(u8, path);
         for (normalized) |*char| {
             if (char.* == '\\') {
@@ -183,8 +183,7 @@ pub const PackageJSON = struct {
         }
 
         /// Build the absolute, slash-normalized pattern that is stored in
-        /// `SideEffects.map` / `SideEffects.glob`. Both `parse` and the
-        /// testing API funnel through here so they can't drift.
+        /// `SideEffects.map` / `SideEffects.glob`.
         ///
         /// Uses `r.fs.abs` (`_joinAbsStringBuf`) rather than `r.fs.join`
         /// (`joinStringBufT`) because the runtime path fed to
@@ -193,7 +192,7 @@ pub const PackageJSON = struct {
         /// prepends an extra leading `/` before a Windows drive letter
         /// (e.g. `/C:/pkg/foo.js`) and would never match the `C:/pkg/foo.js`
         /// the resolver produces. See #30320.
-        pub fn buildAbsolutePattern(
+        fn buildAbsolutePattern(
             allocator: std.mem.Allocator,
             r: *resolver.Resolver,
             package_dir_with_trailing_slash: string,

@@ -210,6 +210,16 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // slots). LSAN does not scan other threads' TLS roots at exit (same
         // category as the `std::thread::Thread>::new` false positive above).
         "leak:bun_js_parser::parser::StringVoidMap\n",
+        // `intern_location_file` `Box::leak`s a `CString` per `src!()` callsite
+        // into a thread-local cache (debug/ASAN-only — release uses static
+        // `c"…"` literals). Bounded leak by design; the per-thread `HashMap`
+        // is also a TLS root LSAN doesn't scan.
+        "leak:bun_jsc::top_exception_scope::intern_location_file\n",
+        // `AnyEventLoop` for `Bun.build()` is `bump.alloc()`'d in the bundler
+        // thread (`js_bundle_completion_task::generate_in_new_thread`); the
+        // arena is bulk-freed without running `Drop`, so the `MiniEventLoop`
+        // task queue's `Box<[…]>` slab strands. Bounded (one slab per build).
+        "leak:bun_event_loop::MiniEventLoop\n",
         "\0",
     )
     .as_ptr()

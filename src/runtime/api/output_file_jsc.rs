@@ -44,18 +44,11 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
             (*store_ptr).mime_type.value.as_ref()
         }));
     } else {
-        // No store (empty bytes). Loader-derived `mime.value` is `'static` — point at it
-        // directly; boxing it leaked because `BuildArtifact`'s drop never runs `Blob::deinit`.
-        match mime.value {
-            std::borrow::Cow::Borrowed(s) => {
-                blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
-            }
-            std::borrow::Cow::Owned(s) => {
-                blob.content_type
-                    .set(bun_core::heap::into_raw(s.into_boxed_slice()));
-                blob.content_type_allocated.set(true);
-            }
-        }
+        // No store (empty bytes). Zig still assigns `blob.content_type` from the
+        // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
+        let owned: Box<[u8]> = Box::from(mime.value.as_ref());
+        blob.content_type.set(bun_core::heap::into_raw(owned));
+        blob.content_type_allocated.set(true);
     }
 }
 

@@ -519,9 +519,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Accept it here and rely on the visit pass to raise a
                 // targeted error if a live `for await` survives.
                 let at_module_scope = p.is_at_module_scope();
-                let tolerate_top_level =
-                    p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowIdent
-                        && at_module_scope;
+                let tolerate_top_level = p.fn_or_arrow_data_parse.allow_await
+                    == AwaitOrYield::AllowIdent
+                    && at_module_scope;
                 if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr
                     && !tolerate_top_level
                 {

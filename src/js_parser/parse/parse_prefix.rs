@@ -234,12 +234,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `await` is left alone because `await\nfoo` can be two
                 // statements via ASI.)
                 let at_module_scope = p.is_at_module_scope();
-                let should_upgrade_to_await_expr =
-                    p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowIdent
-                        && at_module_scope
-                        && !p.lexer.has_newline_before
-                        && AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAwait
-                        && token_starts_await_expr(p);
+                let should_upgrade_to_await_expr = p.fn_or_arrow_data_parse.allow_await
+                    == AwaitOrYield::AllowIdent
+                    && at_module_scope
+                    && !p.lexer.has_newline_before
+                    && AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAwait
+                    && token_starts_await_expr(p);
                 let effective_allow_await = if should_upgrade_to_await_expr {
                     AwaitOrYield::AllowExpr
                 } else {

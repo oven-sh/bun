@@ -2013,7 +2013,7 @@ fn file_copier_copy(
                 Err(_) => 'brk: {
                     let entry_dirname = bun_resolver::Dirname::dirname(entry.path.as_bytes());
                     if !entry_dirname.is_empty() {
-                        let _ = bun_sys::make_path(destination_dir_, entry_dirname);
+                        let _ = destination_dir_.make_path(entry_dirname);
                     }
                     match bun_sys::openat(
                         destination_dir_.fd,

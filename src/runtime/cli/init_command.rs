@@ -377,7 +377,7 @@ impl InitCommand {
 
         if let Some(ifdir) = initialize_in_folder {
             // TODO(port): std.fs.cwd().makePath → bun_sys::make_path / bun.makePath
-            if let Err(err) = bun_sys::make_path(&bun_sys::Dir::cwd(), ifdir) {
+            if let Err(err) = bun_sys::Dir::cwd().make_path(ifdir) {
                 Output::pretty_errorln(format_args!(
                     "Failed to create directory {}: {}",
                     bstr::BStr::new(ifdir),
@@ -893,7 +893,7 @@ impl InitCommand {
                 {
                     if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
                         if dirname != b"." {
-                            let _ = bun_sys::make_path(&bun_sys::Dir::cwd(), dirname);
+                            let _ = bun_sys::Dir::cwd().make_path(dirname);
                         }
                     }
 
@@ -1042,7 +1042,7 @@ impl Assets {
         // Zig: bun.sys.File.makeOpen — creates parent dirs then opens.
         if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
             if !dir.is_empty() && dir != b"." {
-                let _ = bun_sys::make_path(&bun_sys::Dir::cwd(), dir);
+                let _ = bun_sys::Dir::cwd().make_path(dir);
             }
         }
         let file = bun_sys::File::openat(
@@ -1602,7 +1602,7 @@ impl Template {
                 if did_create_agent_rule && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
-                        let _ = bun_sys::make_path(&bun_sys::Dir::cwd(), b".cursor/rules");
+                        let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
                         // bun_sys::symlinkat takes &ZStr; build NUL-terminated copies.
                         let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
                         target_z.push(0);

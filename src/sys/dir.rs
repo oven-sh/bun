@@ -491,15 +491,6 @@ impl Dir {
     }
 }
 
-/// bun.zig — `bun.openDir(dir, path)`. Opens `path` relative to `dir` as a
-/// directory `Dir` handle.
-#[inline]
-pub fn open_dir(dir: &Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
-    open_dir_at(dir.fd, path)
-        .map(Dir::from_fd)
-        .map_err(Into::into)
-}
-
 // `Fd` parity: `Fd::cwd().make_open_path(..)` / `.make_path(..)` are used by
 // `bun_install` and `bun_bundler` directly on `Fd`. Extension trait so we
 // don't fight with `bun_core`'s inherent impl.

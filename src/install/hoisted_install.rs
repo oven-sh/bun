@@ -199,7 +199,7 @@ pub fn install_hoisted_packages(
                 Global::crash();
             }
         }
-        match sys::open_dir(Dir::borrow(&cwd), b"node_modules") {
+        match Dir::borrow(&cwd).open_at(b"node_modules") {
             Ok(dir) => break 'brk dir,
             Err(err) => {
                 Output::err(

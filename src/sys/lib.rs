@@ -7541,12 +7541,7 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     }
 }
 
-/// `bun.makePath` — free-fn form taking a `Dir` (Zig: `bun.makePath(dir, sub)`).
-#[inline]
-pub fn make_path(dir: &Dir, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-    mkdir_recursive_at(dir.fd, sub_path).map_err(Into::into)
-}
-/// `bun.mkdirRecursive` — like `make_path` but cwd-relative, taking a slice.
+/// `bun.mkdirRecursive` — `make_path` cwd-relative, taking a slice.
 #[inline]
 pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
     mkdir_recursive_at(Fd::cwd(), sub_path)

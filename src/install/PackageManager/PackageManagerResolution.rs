@@ -149,7 +149,10 @@ impl PackageManager {
         let mut list: Vec<semver::Version> = Vec::new();
         // Zig: `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
         let cache_dir = super::get_cache_directory(self);
-        let dir = match bun_sys::open_dir(bun_sys::Dir::borrow(&cache_dir), package_name) {
+        let dir = match bun_sys::Dir::borrow(&cache_dir)
+            .open_at(package_name)
+            .map_err(bun_core::Error::from)
+        {
             Ok(d) => d,
             Err(e)
                 if e == bun_core::err!("FileNotFound")

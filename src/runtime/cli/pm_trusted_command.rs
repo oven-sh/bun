@@ -353,10 +353,10 @@ impl TrustCommand {
             let nm_saved = node_modules_path.len();
             let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
-            let node_modules_dir = match bun_sys::open_dir(
-                &bun_sys::Dir::cwd(),
-                node_modules.relative_path.as_bytes(),
-            ) {
+            let node_modules_dir = match bun_sys::Dir::cwd()
+                .open_at(node_modules.relative_path.as_bytes())
+                .map_err(bun_core::Error::from)
+            {
                 Ok(d) => d,
                 Err(e) if e == bun_core::err!(ENOENT) => {
                     node_modules_path.set_length(nm_saved);

@@ -2627,7 +2627,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         dest_buf[abs_tarball_dest_dir_end] = 0;
         // SAFETY: NUL written above
         let abs_tarball_dest_dir = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_dir_end);
-        let _ = bun_sys::make_path(&Dir::cwd(), abs_tarball_dest_dir.as_bytes());
+        let _ = bun_sys::Dir::cwd().make_path(abs_tarball_dest_dir.as_bytes());
         dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
     }
 

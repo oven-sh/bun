@@ -676,7 +676,10 @@ impl ExtractTarball {
 
             // We return a resolved absolute absolute file path to the cache dir.
             // To get that directory, we open the directory again.
-            let final_dir = match bun_sys::open_dir(cache_dir, folder_name) {
+            let final_dir = match cache_dir
+                .open_at(folder_name)
+                .map_err(bun_core::Error::from)
+            {
                 Ok(d) => d,
                 Err(err) => {
                     log.add_error_fmt(

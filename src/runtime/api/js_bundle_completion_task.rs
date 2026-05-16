@@ -368,7 +368,7 @@ impl JSBundleCompletionTask {
             #[cfg(windows)]
             {
                 // On Windows, ensure directories exist but don't change root_dir
-                if let Err(err) = sys::make_path(&root_dir, dirname) {
+                if let Err(err) = root_dir.make_path(dirname) {
                     return CompileResult::fail_fmt(format_args!(
                         "Failed to create output directory {}: {}",
                         bstr::BStr::new(dirname),

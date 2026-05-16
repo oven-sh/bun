@@ -134,7 +134,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
     if !dirname.is_empty() {
-        let _ = bun_sys::make_path(&bun_sys::Dir::cwd(), dirname);
+        let _ = bun_sys::Dir::cwd().make_path(dirname);
     }
 
     // Open file for writing

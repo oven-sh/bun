@@ -616,7 +616,10 @@ impl<'a> NamesIterator<'a> {
             let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
             // `into_raw()` hands the fresh directory fd off to the iterator,
             // which owns it until `dir.close()` below (or the caller drops it).
-            let child_dir = sys::open_dir(sys::Dir::borrow(&dir), joined_)?.into_raw();
+            let child_dir = sys::Dir::borrow(&dir)
+                .open_at(joined_)
+                .map_err(Error::from)?
+                .into_raw();
             self.dir_iterator = Some(sys::iterate_dir(child_dir));
         }
 
@@ -1092,7 +1095,7 @@ impl<'a> Linker<'a> {
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
-                    let _ = sys::make_path(&sys::Dir::cwd(), self.node_modules_path.slice());
+                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::File::openat_os_path(
@@ -1226,7 +1229,7 @@ impl<'a> Linker<'a> {
                     // can be re-borrowed for `append`/`slice` in between.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
-                    let _ = sys::make_path(&sys::Dir::cwd(), self.node_modules_path.slice());
+                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {

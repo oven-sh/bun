@@ -263,12 +263,19 @@ impl Fs {
         let rfs = &_fs.fs;
 
         let _owned: Option<bun_sys::File>;
+        // Whether `_owned` will close the fd on return — if so, do not publish
+        // it via `Entry.fd` (the caller would cache a dead descriptor).
+        // cache.zig:131 publishes the handle unconditionally, which is the
+        // same latent bug; gating on `will_close` here mirrors the fix the
+        // sibling `readFileWithAllocator` already has (cache.zig:209).
+        let will_close: bool;
         let fd: Fd = if let Some(fd) = cached_file_descriptor {
             // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
             bun_sys::File::borrow(&fd)
                 .seek_to(0)
                 .map_err(bun_core::Error::from)?;
             _owned = None;
+            will_close = false;
             fd
         } else {
             let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
@@ -277,8 +284,10 @@ impl Fs {
             if !rfs.need_to_close_files() && feature_flags::STORE_FILE_DESCRIPTORS {
                 let _ = f.into_raw();
                 _owned = None;
+                will_close = false;
             } else {
                 _owned = Some(f);
+                will_close = true;
             }
             raw
         };
@@ -308,7 +317,7 @@ impl Fs {
 
         Ok(Entry {
             contents,
-            fd: if feature_flags::STORE_FILE_DESCRIPTORS {
+            fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close {
                 fd
             } else {
                 Fd::INVALID

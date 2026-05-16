@@ -171,6 +171,8 @@ impl BuildCommand {
         this_transpiler.options.supports_multiple_outputs =
             !(output_to_stdout || !outfile.is_empty());
 
+        // LEAK(intentional): these `Box<[u8]>` clones live in the arena-alloc'd
+        // `this_transpiler` whose Drop never runs (process-lifetime CLI config).
         this_transpiler.options.public_path = ctx.bundler_options.public_path.clone();
         this_transpiler.options.entry_naming = ctx.bundler_options.entry_naming.clone();
         this_transpiler.options.chunk_naming = ctx.bundler_options.chunk_naming.clone();
@@ -277,6 +279,8 @@ impl BuildCommand {
                         b"root/",
                     );
 
+                // LEAK(intentional): `'static` literal copied into a `Box<[u8]>`
+                // held by the arena-alloc'd transpiler (Drop never runs).
                 this_transpiler.options.public_path = base_public_path.into();
 
                 if outfile.is_empty() {
@@ -390,6 +394,8 @@ impl BuildCommand {
             break 'brk1 &*result;
         };
 
+        // LEAK(intentional): `Box<[u8]>` stored in the arena-alloc'd transpiler;
+        // process-lifetime — `exec` diverges via `exit_or_watch`/`Global::exit`.
         this_transpiler.options.root_dir = src_root_dir.into();
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;

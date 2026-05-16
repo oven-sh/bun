@@ -824,7 +824,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn configure_bundler<'a>(
         &mut self,
         transpiler: &mut Transpiler<'a>,
-        bump: &'a Arena,
+        _bump: &'a Arena,
     ) -> Result<(), bun_core::Error> {
         let config = &mut self.config;
 
@@ -962,12 +962,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.metafile_markdown_path =
             Box::from(config.metafile_markdown_path.list.as_slice());
         if config.optimize_imports.count() > 0 {
-            // PORT NOTE: Zig `&config.optimize_imports` is a borrow into
-            // `*JSBundleCompletionTask` (lives for the bundle). The Rust
-            // `BundleOptions.optimize_imports: Option<&'a StringSet>` borrows
-            // arena lifetime — bump-alloc a copy so `'a == 'bump`.
+            // SAFETY: `self.config` outlives `bump` and `optimize_imports` is not mutated
+            // during the bundle; a bump.alloc'd clone leaked (arena never runs Drop).
             transpiler.options.optimize_imports =
-                Some(&*bump.alloc(config.optimize_imports.clone()?));
+                Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
         }
 
         if transpiler.options.compile {

@@ -1255,6 +1255,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call.
             let this = unsafe { &mut *ctx.cast::<Run>() };
+            // LEAK(intentional): `start()` is `-> !`; allocations made there are
+            // process-lifetime by construction (`Global::exit` ends the process).
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for

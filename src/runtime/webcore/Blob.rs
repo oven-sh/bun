@@ -4216,9 +4216,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
                 // SAFETY: `dirname` borrows `path_string` which outlives this
                 // synchronous `mkdir_recursive` call; the PathString does not
                 // escape.
-                path: node::PathLike::String(unsafe {
-                    bun_core::PathString::init(dirname)
-                }),
+                path: node::PathLike::String(unsafe { bun_core::PathString::init(dirname) }),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()

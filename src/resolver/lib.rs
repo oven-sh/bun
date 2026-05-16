@@ -1454,9 +1454,8 @@ pub mod fs {
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
                     // SAFETY: `FilenameStore::instance().append_slice` returns
                     // a slice into the process-lifetime filename arena.
-                    cache.symlink = unsafe {
-                        PathString::init(FilenameStore::instance().append_slice(real)?)
-                    };
+                    cache.symlink =
+                        unsafe { PathString::init(FilenameStore::instance().append_slice(real)?) };
                 }
                 return Ok(cache);
             }

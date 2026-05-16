@@ -2845,9 +2845,7 @@ impl RealFS {
         if !symlink.is_empty() {
             // SAFETY: `FilenameStore::instance().append` returns a slice into
             // the process-lifetime filename arena.
-            cache.symlink = unsafe {
-                PathString::init(FilenameStore::instance().append(symlink)?)
-            };
+            cache.symlink = unsafe { PathString::init(FilenameStore::instance().append(symlink)?) };
         }
 
         Ok(cache)
@@ -2965,9 +2963,8 @@ impl RealFS {
                 bun_sys::Result::Ok(real) => {
                     // SAFETY: `FilenameStore::instance().append` returns a
                     // slice into the process-lifetime filename arena.
-                    cache.symlink = unsafe {
-                        PathString::init(FilenameStore::instance().append(real)?)
-                    };
+                    cache.symlink =
+                        unsafe { PathString::init(FilenameStore::instance().append(real)?) };
                 }
                 bun_sys::Result::Err(_) => {}
             }
@@ -3028,9 +3025,8 @@ impl RealFS {
             if !symlink.is_empty() {
                 // SAFETY: `FilenameStore::instance().append` returns a slice
                 // into the process-lifetime filename arena.
-                cache.symlink = unsafe {
-                    PathString::init(FilenameStore::instance().append(symlink)?)
-                };
+                cache.symlink =
+                    unsafe { PathString::init(FilenameStore::instance().append(symlink)?) };
             }
 
             Ok(cache)

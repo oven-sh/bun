@@ -9216,9 +9216,7 @@ impl NodeFS {
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
                         // SAFETY: `bytes` borrows `dest`, which outlives this
                         // synchronous `mkdir_recursive` call.
-                        path: PathLike::String(unsafe {
-                            PathString::init(&bytes[..len])
-                        }),
+                        path: PathLike::String(unsafe { PathString::init(&bytes[..len]) }),
                         recursive: true,
                         ..Default::default()
                     });

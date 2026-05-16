@@ -296,9 +296,8 @@ pub fn encode(
     // (wrapped in `bun_avif_free_output`) — same zero-copy ownership model
     // as WebPFree / tj3Free.
     // SAFETY: `out` is non-null and `out_size` bytes are valid as returned by the shim.
-    let bytes = unsafe {
-        NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out, out_size))
-    };
+    let bytes =
+        unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out, out_size)) };
     Ok(codecs::Encoded {
         bytes,
         free: encoded_wrap_free!(bun_avif_free_output),

@@ -423,19 +423,21 @@ impl FileReader {
             // SAFETY: see `parent()`.
             unsafe { (*self.parent()).increment_count() };
             self.waiting_for_on_reader_done.set(true);
-            if let Some(offset) = self.start_offset {
-                match self
-                    .reader()
+            let start_result = if let Some(offset) = self.start_offset {
+                self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
-                {
-                    Ok(()) => {}
-                    Err(e) => return streams::Start::Err(e),
-                }
             } else {
-                match self.reader().start(self.fd.get(), pollable) {
-                    Ok(()) => {}
-                    Err(e) => return streams::Start::Err(e),
-                }
+                self.reader().start(self.fd.get(), pollable)
+            };
+            if let Err(e) = start_result {
+                // The reader never started, so `on_reader_done`/`on_reader_error`
+                // will never fire to release the ref we just took.
+                self.waiting_for_on_reader_done.set(false);
+                let parent = self.parent();
+                // SAFETY: `parent()` is the live Source owning `self`; the JS
+                // finalizer still holds its own ref, so this cannot free it.
+                let _ = unsafe { Source::decrement_count(parent) };
+                return streams::Start::Err(e);
             }
         } else {
             #[cfg(unix)]

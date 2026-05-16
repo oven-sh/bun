@@ -2543,28 +2543,32 @@ pub mod parse_worker {
         // reads (Parser.zig:1415,1433) into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
         opts.framework = topts.framework.map(|f| {
+            // `Framework` is bump-allocated below, so `Drop` never runs —
+            // use arena-owned `Cow::Borrowed` slices, not `Cow::Owned(Vec)`.
             let projected = js_parser::options::Framework {
                 is_built_in_react: f.is_built_in_react,
                 server_components: f.server_components.as_ref().map(|sc| {
                     js_parser::options::FrameworkServerComponents {
                         separate_ssr_graph: sc.separate_ssr_graph,
-                        server_runtime_import: std::borrow::Cow::Owned(
-                            sc.server_runtime_import.to_vec(),
+                        server_runtime_import: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_runtime_import),
                         ),
-                        server_register_client_reference: std::borrow::Cow::Owned(
-                            sc.server_register_client_reference.to_vec(),
+                        server_register_client_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_register_client_reference),
                         ),
-                        server_register_server_reference: std::borrow::Cow::Owned(
-                            sc.server_register_server_reference.to_vec(),
+                        server_register_server_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_register_server_reference),
                         ),
-                        client_register_server_reference: std::borrow::Cow::Owned(
-                            sc.client_register_server_reference.to_vec(),
+                        client_register_server_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.client_register_server_reference),
                         ),
                     }
                 }),
                 react_fast_refresh: f.react_fast_refresh.as_ref().map(|rfr| {
                     js_parser::options::ReactFastRefresh {
-                        import_source: std::borrow::Cow::Owned(rfr.import_source.to_vec()),
+                        import_source: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&rfr.import_source),
+                        ),
                     }
                 }),
             };

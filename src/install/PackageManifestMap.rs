@@ -89,11 +89,14 @@ impl PackageManifestMap {
     pub fn insert(
         &mut self,
         name_hash: PackageNameHash,
-        manifest: &npm::PackageManifest,
+        manifest: npm::PackageManifest,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Zig: `.{ .manifest = manifest.* }` — struct copy; `PackageManifest: Clone`.
-        self.hash_map
-            .insert(name_hash, Value::Manifest(manifest.clone()));
+        // PORT NOTE: Zig copies (`.{ .manifest = manifest.* }`) and leaves the
+        // source in `task.data.package_manifest` to be reclaimed-without-drop by
+        // the resolve-task pool. Rust takes ownership instead so the boxed
+        // slices inside `PackageManifest` aren't leaked when the pool slot is
+        // recycled (and so we don't deep-clone hundreds of KB per package).
+        self.hash_map.insert(name_hash, Value::Manifest(manifest));
         Ok(())
     }
 

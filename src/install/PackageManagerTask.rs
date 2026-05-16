@@ -182,7 +182,9 @@ impl<'a> Task<'a> {
 
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: data;
-        PackageManifest => data_package_manifest @ package_manifest: npm::PackageManifest;
+        // PackageManifest: no `data_package_manifest` accessor — `runTasks`
+        // moves the manifest out of `task.data` directly (see the
+        // `ManuallyDrop::take` there) so the cache owns it instead of leaking.
         GitCheckout     => data_git_checkout     @ git_checkout:     ExtractData, mut data_git_checkout_mut;
     }
 

@@ -1009,9 +1009,34 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     continue;
                 }
-                let manifest: &npm::PackageManifest = task.data_package_manifest();
+                // PORT NOTE: Zig copies the manifest into the cache and leaves
+                // the original in `task.data.package_manifest`, where the
+                // resolve-task pool reclaims the slot without running drop —
+                // a deliberate leak (see the no-`Drop` note on `Task`). Rust
+                // moves it out instead so the boxed slices inside
+                // `PackageManifest` are owned by the long-lived cache and the
+                // pool slot is left holding an empty placeholder, avoiding both
+                // the leak and a redundant ~hundreds-of-KB deep clone.
+                debug_assert!(task.tag == Task::Tag::PackageManifest);
+                // SAFETY: tag-guarded read of the active union arm. `take`
+                // leaves the storage logically uninitialized; immediately write
+                // a default `PackageManifest` back so the slot stays well-formed
+                // for `HiveArray::put`'s `drop_in_place::<Task>` and reuse.
+                let manifest: npm::PackageManifest = unsafe {
+                    let m = core::mem::ManuallyDrop::take(&mut task.data.package_manifest);
+                    task.data.package_manifest =
+                        core::mem::ManuallyDrop::new(npm::PackageManifest::default());
+                    m
+                };
+                let name_hash = manifest.pkg.name.hash;
+                // Capture the display name before `manifest` moves into the
+                // cache; only needed for the progress node below.
+                let progress_name: Option<Vec<u8>> = (!C::MANIFESTS_ONLY
+                    && log_level.show_progress()
+                    && !has_updated_this_run.get())
+                .then(|| manifest.name().to_vec());
 
-                manager.manifests.insert(manifest.pkg.name.hash, manifest)?;
+                manager.manifests.insert(name_hash, manifest)?;
 
                 if C::MANIFESTS_ONLY {
                     continue;
@@ -1030,15 +1055,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     install_peer,
                 )?;
 
-                if log_level.show_progress() {
-                    if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            manifest.name(),
-                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                        );
-                        has_updated_this_run.set(true);
-                    }
+                if let Some(name) = progress_name {
+                    manager.set_node_name::<true>(
+                        manager.downloads_node_mut(),
+                        &name,
+                        ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                    );
+                    has_updated_this_run.set(true);
                 }
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {

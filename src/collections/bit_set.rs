@@ -1745,7 +1745,6 @@ impl DynamicBitSet {
     }
 }
 
-
 // ───────────────────────────── IteratorOptions ─────────────────────────────
 
 /// Options for configuring an iterator over a bit set

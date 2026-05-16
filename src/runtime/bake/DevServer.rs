@@ -421,6 +421,9 @@ pub struct DevServer {
     pub bundles_since_last_error: usize,
 
     pub framework: bake::Framework,
+    /// Arena-allocated `bake_types::Framework` projections; the arena bulk-frees
+    /// without running `Drop`, so these are `drop_in_place`d in `Drop`.
+    pub bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
     pub bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // PORT NOTE: `'static` is the DevServer-self lifetime stand-in (see
@@ -730,12 +733,15 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    // Tracked for `drop_in_place` in `Drop` (arena bulk-frees without destructors).
+    let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
+        Vec::with_capacity(4);
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
 
-        if let Err(err) = framework.init_transpiler(
+        match framework.init_transpiler(
             arena,
             log,
             bake::Mode::Development,
@@ -743,9 +749,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
         ) {
-            return Err(global.throw_error(err, generic_action));
+            Ok(view) => bundler_framework_views.push(view),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
-        if let Err(err) = framework.init_transpiler(
+        match framework.init_transpiler(
             arena,
             log,
             bake::Mode::Development,
@@ -753,10 +760,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
         ) {
-            return Err(global.throw_error(err, generic_action));
+            Ok(view) => bundler_framework_views.push(view),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
         if separate_ssr_graph {
-            if let Err(err) = framework.init_transpiler(
+            match framework.init_transpiler(
                 arena,
                 log,
                 bake::Mode::Development,
@@ -764,7 +772,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {
-                return Err(global.throw_error(err, generic_action));
+                Ok(view) => bundler_framework_views.push(view),
+                Err(err) => return Err(global.throw_error(err, generic_action)),
             }
         } else {
             // PORT NOTE: Zig left `ssr_transpiler` `undefined` when
@@ -779,6 +788,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 1,
             );
         }
+
+        w!(bundler_framework_views, bundler_framework_views);
     }
 
     // ── every field is now written ───────────────────────────────────────────
@@ -851,8 +862,12 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
     {
+        let resolved_ptr: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(dev.framework.as_bundler_view());
+        dev.bundler_framework_views.push(resolved_ptr);
+        // SAFETY: `resolved_ptr` is a fresh arena slot, no aliasing borrows.
         let resolved_view: &'static bun_bundler::bake_types::Framework =
-            &*arena.alloc(dev.framework.as_bundler_view());
+            unsafe { &*resolved_ptr };
         dev.server_transpiler_mut().options.framework = Some(resolved_view);
         dev.client_transpiler_mut().options.framework = Some(resolved_view);
         if separate_ssr_graph {
@@ -1191,6 +1206,14 @@ impl Drop for DevServer {
                 self.ssr_transpiler.assume_init_drop();
             }
         }
+
+        // Arena bulk-frees without destructors; these projections own heap, and
+        // `BundleOptions::framework` is a borrow, so drop them explicitly here.
+        // SAFETY: each ptr is a unique arena slot written once in `init()`.
+        for &ptr in &self.bundler_framework_views {
+            unsafe { ::core::ptr::drop_in_place(ptr) };
+        }
+        self.bundler_framework_views.clear();
 
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.

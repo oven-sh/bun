@@ -542,23 +542,23 @@ pub mod BunInfo {
         pub platform: Platform,
     }
 
-    fn os_tag_name(os: OperatingSystem) -> &'static [u8] {
+    const fn os_tag_name(os: OperatingSystem) -> &'static str {
         match os {
-            OperatingSystem::_none => b"_none",
-            OperatingSystem::linux => b"linux",
-            OperatingSystem::macos => b"macos",
-            OperatingSystem::windows => b"windows",
-            OperatingSystem::wsl => b"wsl",
-            OperatingSystem::android => b"android",
-            OperatingSystem::freebsd => b"freebsd",
+            OperatingSystem::_none => "_none",
+            OperatingSystem::linux => "linux",
+            OperatingSystem::macos => "macos",
+            OperatingSystem::windows => "windows",
+            OperatingSystem::wsl => "wsl",
+            OperatingSystem::android => "android",
+            OperatingSystem::freebsd => "freebsd",
         }
     }
 
-    fn arch_tag_name(arch: Architecture) -> &'static [u8] {
+    const fn arch_tag_name(arch: Architecture) -> &'static str {
         match arch {
-            Architecture::_none => b"_none",
-            Architecture::x64 => b"x64",
-            Architecture::arm => b"arm",
+            Architecture::_none => "_none",
+            Architecture::x64 => "x64",
+            Architecture::arm => "arm",
         }
     }
 
@@ -587,8 +587,8 @@ pub mod BunInfo {
 
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
         let platform_props = bun_alloc::AstAlloc::vec_from_iter([
-            prop(b"os", str_expr(os_tag_name(info.platform.os))),
-            prop(b"arch", str_expr(arch_tag_name(info.platform.arch))),
+            prop(b"os", str_expr(os_tag_name(info.platform.os).as_bytes())),
+            prop(b"arch", str_expr(arch_tag_name(info.platform.arch).as_bytes())),
             prop(b"version", str_expr(info.platform.version)),
         ]);
         let platform_expr = Expr::init(

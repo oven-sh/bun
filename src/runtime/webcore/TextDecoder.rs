@@ -103,7 +103,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        ZigString::init(EncodingLabel::get_label(self.encoding).as_bytes()).to_js(global_this)
     }
 
     // const Vector16 = std.meta.Vector(16, u16);
@@ -425,7 +425,7 @@ impl TextDecoder {
 
             // Handle all other encodings using WebKit's TextCodec
             _ => {
-                let encoding_name = EncodingLabel::get_label(self.encoding);
+                let encoding_name = EncodingLabel::get_label(self.encoding).as_bytes();
 
                 // Create codec if we don't have one cached
                 // Note: In production, we might want to cache these per-encoding

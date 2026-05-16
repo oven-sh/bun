@@ -188,7 +188,7 @@ where
                 output::pretty_fmt_args(
                     "<r><b>{}<r>\"",
                     ENABLE_ANSI_COLORS,
-                    (BStr::new(acl_value.to_string()),),
+                    (acl_value.to_string(),),
                 )
             )?;
             formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;

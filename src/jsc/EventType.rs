@@ -26,14 +26,14 @@ impl EventType {
         b"open" => EventType::OpenEvent,
     };
 
-    pub fn label(self) -> &'static [u8] {
+    pub const fn label(self) -> &'static str {
         match self {
-            Self::Event => b"event",
-            Self::MessageEvent => b"message",
-            Self::CloseEvent => b"close",
-            Self::ErrorEvent => b"error",
-            Self::OpenEvent => b"open",
-            _ => b"event",
+            Self::Event => "event",
+            Self::MessageEvent => "message",
+            Self::CloseEvent => "close",
+            Self::ErrorEvent => "error",
+            Self::OpenEvent => "open",
+            _ => "event",
         }
     }
 }

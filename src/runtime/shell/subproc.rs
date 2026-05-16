@@ -647,7 +647,7 @@ impl ShellSubprocess {
         let mut stdin_opt = match stdio_guard[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
-                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str().as_bytes())));
             }
         };
         #[cfg_attr(not(windows), allow(unused_mut))]
@@ -656,7 +656,7 @@ impl ShellSubprocess {
             stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
                 stdin_opt.deinit();
-                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str().as_bytes())));
             }
         };
         let stderr_opt = match stdio_guard[2].as_spawn_option(2) {
@@ -667,7 +667,7 @@ impl ShellSubprocess {
                     stdin_opt.deinit();
                     stdout_opt.deinit();
                 }
-                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str().as_bytes())));
             }
         };
 

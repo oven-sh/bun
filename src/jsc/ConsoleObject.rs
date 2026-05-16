@@ -5137,7 +5137,7 @@ pub mod formatter {
                         "{}type: {}\"{}\"{}{},{} ",
                         pf!("<r>"),
                         pf!("<green>"),
-                        bstr::BStr::new(event_type.label()),
+                        event_type.label(),
                         pf!("<r>"),
                         pf!("<d>"),
                         pf!("<r>")
@@ -5148,7 +5148,7 @@ pub mod formatter {
                         "{}type: {}\"{}\"{}{},{}\n",
                         pf!("<r>"),
                         pf!("<green>"),
-                        bstr::BStr::new(event_type.label()),
+                        event_type.label(),
                         pf!("<r>"),
                         pf!("<d>"),
                         pf!("<r>")
@@ -5790,14 +5790,15 @@ pub mod formatter {
                 if array_buffer.typed_array_type == jsc::JSType::Uint8Array
                     && array_buffer.value.is_buffer(self.global_this)
                 {
-                    b"Buffer"
+                    "Buffer"
                 } else if array_buffer.typed_array_type == jsc::JSType::ArrayBuffer
                     && array_buffer.shared
                 {
-                    b"SharedArrayBuffer"
+                    "SharedArrayBuffer"
                 } else {
                     array_buffer.typed_array_type.typed_array_name()
-                },
+                }
+                .as_bytes(),
             );
             if slice.is_empty() {
                 writer.print(format_args!("({}) []", array_buffer.len));

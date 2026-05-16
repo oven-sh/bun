@@ -538,7 +538,7 @@ impl PatchTask {
                     format_args!(
                         "{} while executing step: {}",
                         reason.err.name(),
-                        BStr::new(reason.step.name())
+                        reason.step.name()
                     ),
                     Default::default(),
                 );

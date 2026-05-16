@@ -230,14 +230,14 @@ pub enum Step {
 
 impl Step {
     /// "error: failed {s} for package"
-    pub fn name(self) -> &'static [u8] {
+    pub const fn name(self) -> &'static str {
         match self {
-            Step::Copyfile | Step::CopyingFiles => b"copying files from cache to destination",
-            Step::OpeningCacheDir => b"opening cache/package/version dir",
-            Step::OpeningDestDir => b"opening node_modules/package dir",
-            Step::Linking => b"linking bins",
-            Step::LinkingDependency => b"linking dependency/workspace to node_modules",
-            Step::Patching => b"patching dependency",
+            Step::Copyfile | Step::CopyingFiles => "copying files from cache to destination",
+            Step::OpeningCacheDir => "opening cache/package/version dir",
+            Step::OpeningDestDir => "opening node_modules/package dir",
+            Step::Linking => "linking bins",
+            Step::LinkingDependency => "linking dependency/workspace to node_modules",
+            Step::Patching => "patching dependency",
         }
     }
 }

@@ -9086,7 +9086,9 @@ pub fn write_file_with_path_buffer(
             )?
         }
     };
-    let r = File::from_fd(fd).write_all(buffer);
+    let r = File::borrow(&fd).write_all(buffer);
+    // Caller-supplied fds (`PathOrFileDescriptor::Fd`) are caller-owned;
+    // freshly-opened ones are ours to close.
     if !matches!(args.file, PathOrFileDescriptor::Fd(_)) {
         let _ = close(fd);
     }

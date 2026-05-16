@@ -1492,6 +1492,12 @@ mod draft {
             }
         }
 
+        if let Some(block_exotic_subdeps) = out.get(b"block-exotic-subdeps") {
+            if let Some(value) = block_exotic_subdeps.as_bool() {
+                install.block_exotic_subdeps = Some(value);
+            }
+        }
+
         if let Some(install_strategy_expr) = out.get(b"install-strategy") {
             if let Some(install_strategy_str) = install_strategy_expr.as_string(bump) {
                 if install_strategy_str == b"hoisted" {

@@ -130,6 +130,8 @@ pub mod process_dependency_list;
 pub mod progress_strings;
 #[path = "PackageManager/runTasks.rs"]
 pub mod run_tasks;
+#[path = "PackageManager/block_exotic_subdeps.rs"]
+pub mod block_exotic_subdeps;
 #[path = "PackageManager/security_scanner.rs"]
 pub mod security_scanner;
 #[path = "PackageManager/updatePackageJSONAndInstall.rs"]

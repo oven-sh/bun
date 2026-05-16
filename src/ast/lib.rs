@@ -787,6 +787,28 @@ pub struct Location {
 // every `Clone` of a `Location` deep-dupes its borrowed bytes.
 impl Clone for Location {
     fn clone(&self) -> Self {
+        // LSan(bun_asan): the `to_vec()`s below are flagged as leaks. They are
+        // **not** leaked by this impl — `Cow::Owned(Vec<u8>)` runs `Drop`
+        // normally. The reports come from holders of the cloned `Location`
+        // whose own `Drop` never runs:
+        //   - `BuildMessage::create` / `ResolveMessage::create` (`bun_jsc`)
+        //     clone a `Msg` into a JSC-GC-managed wrapper. LSan checks at
+        //     process exit *before* the final GC sweep, so any
+        //     not-yet-finalized message reports its `Msg`'s `Cow::Owned` heap
+        //     blocks.
+        //   - The main-thread default `Log` from `VirtualMachine::init`
+        //     (`heap::into_raw(Box::new(Log::default()))`) is intentionally
+        //     never freed on the main thread; any `Msg` pushed into it leaks
+        //     by design at exit.
+        // The GC-sweep holders are suppressed by frame in
+        // `__lsan_default_suppressions` (`bun_bin`); the never-freed `Log`'s
+        // messages have no single alloc-stack frame to pin and are bounded.
+        // The fix for either belongs at the holder, not here. Routing through
+        // `bun_alloc::AstAlloc` is not possible — `Cow<'static, [u8]>` has no
+        // allocator parameter, and `Location` is *not* arena-stored on these
+        // paths (the bundler-worker `Log` arena slot is drained back into a
+        // heap `Log` via `Log::append_to_maybe_recycled` before the arena
+        // resets).
         Location {
             file: Cow::Owned(self.file.to_vec()),
             namespace: self.namespace,
@@ -1003,6 +1025,14 @@ impl Data {
                 // `Cow::clone` only deep-copies the `Owned` arm; force the dupe
                 // so a `Borrowed` `text` (rare today, but the type permits it)
                 // can't alias recycled storage in the cloned `Msg`.
+                //
+                // LSan(bun_asan): flagged when the cloned `Data` ends up inside
+                // a `BuildMessage`/`ResolveMessage` (JSC-GC-managed; LSan runs
+                // before the final sweep) or the never-freed main-thread `Log`
+                // from `VirtualMachine::init`. The `Cow::Owned` itself drops
+                // correctly — the holder is what's missing `Drop`. See the
+                // matching note on `impl Clone for Location` above for the
+                // suppressions.
                 Cow::Owned(self.text.to_vec())
             } else {
                 Cow::Borrowed(b"")

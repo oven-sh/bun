@@ -54,6 +54,13 @@ pub fn post_process_css_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
+    // OOM aborts (matching Zig's `bun.handleOom`). Aborting here is also a
+    // *safety* requirement: the loop below appends `Chunk::alias()` bitwise
+    // copies into this MAL, and if `append` were ever allowed to fail-and-drop
+    // the just-built element it would double-free the aliased buffer. Reserving
+    // up front means `append` never reallocates, and wrapping the `append` in
+    // `handle_oom` (see below) closes the door entirely. Mirrors the JS path
+    // (`postProcessJSChunk.rs`).
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
@@ -94,7 +101,23 @@ pub fn post_process_css_chunk(
             if c.options.source_maps != options::SourceMapOption::None {
                 bun_core::handle_oom(compile_results_for_source_map.append(
                     CompileResultForSourceMap {
-                        source_map_chunk: source_map_chunk.clone(),
+                        // SAFETY: bitwise alias, not a deep clone — Zig's
+                        // struct-copy semantics (postProcessCSSChunk.zig). The
+                        // original `bun_sourcemap::Chunk` lives in
+                        // `chunk.compile_results_for_chunk` (borrowed as
+                        // `compile_results` above), which is read-only for the
+                        // rest of this fn and outlives the
+                        // `generate_source_map_for_chunk` call below that
+                        // consumes `compile_results_for_source_map`.
+                        // `MultiArrayList::Drop` is slab-only (no element
+                        // destructors), so the alias's `MutableString` is never
+                        // freed — `chunk.compile_results_for_chunk` keeps the
+                        // single owner. A `.clone()` here deep-copied
+                        // `buffer.list`, and that copy stranded when the slab
+                        // dropped without running destructors. See the LEAK
+                        // NOTE on `bun_sourcemap::Chunk` and the matching
+                        // pattern in `postProcessJSChunk.rs`.
+                        source_map_chunk: unsafe { source_map_chunk.alias() },
                         // Zig reads `.value` payload directly — guaranteed `Value` here
                         // because `source_maps != None` implies `line_offset` was
                         // initialised to `Value(_)` above.

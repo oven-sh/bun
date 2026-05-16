@@ -231,6 +231,17 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // strand when the `PackageManager` is `mem::forget`'d at process exit
         // (see `install/PackageManager/mod.rs`). Bounded; OS reclaims at exit.
         "leak:bun_install::package_manager_real::update_request::UpdateRequest\n",
+        // ── LSan-fires-before-final-GC-sweep ────────────────────────────────
+        // These wrap a Rust allocation in a JSC GC cell (or leak it to JSC as
+        // an external string). Ownership is correct — the cell finalizer /
+        // external-string finalizer frees the allocation — but LSan checks at
+        // process exit *before* the final GC sweep, so any not-yet-collected
+        // wrapper reports its inner allocation. See the matching `LSan` notes
+        // on `bun_ast::Location::clone`, `bun_ast::Data::clone`, and
+        // `bun_core::strings::to_utf16_alloc_maybe_buffered`.
+        "leak:BuildMessage>::create\n",
+        "leak:ResolveMessage>::create\n",
+        "leak:TextDecoder>::decode_slice\n",
         "\0",
     )
     .as_ptr()

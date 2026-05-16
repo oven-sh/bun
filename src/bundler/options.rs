@@ -368,22 +368,27 @@ impl TargetExt for Target {
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
         ];
 
-        // PERF(port): keys were `&'static` in Zig; `StringHashMap` owns keys via
-        // `Box<[u8]>` so `put` copies — tiny startup cost.
+        // Keys were `&'static` in Zig; mirror that with `put_static_key` so the
+        // map borrows the literals instead of `Box`-copying each one. Beyond
+        // matching Zig's zero-copy cost model, this also avoids stranding ~9
+        // small `Box<[u8]>`s when the holding `BundleOptions` lives inside an
+        // arena-allocated `Transpiler` (CLI path) whose `Drop` never runs —
+        // LSan flags those under `bun_asan`. The hashbrown table backing
+        // buffer is the only remaining heap allocation here.
         if self == Target::Node {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
                 .expect("OOM");
-            for ext in OUT_EXTENSIONS_LIST {
-                exts.put(ext, b".mjs").expect("OOM");
+            for &ext in OUT_EXTENSIONS_LIST {
+                exts.put_static_key(ext, b".mjs").expect("OOM");
             }
         } else {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
                 .expect("OOM");
-            exts.put(b".mjs", b".js").expect("OOM");
+            exts.put_static_key(b".mjs", b".js").expect("OOM");
         }
 
-        for ext in OUT_EXTENSIONS_LIST {
-            exts.put(ext, b".js").expect("OOM");
+        for &ext in OUT_EXTENSIONS_LIST {
+            exts.put_static_key(ext, b".js").expect("OOM");
         }
 
         exts

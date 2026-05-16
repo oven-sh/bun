@@ -92,7 +92,15 @@ preload = ["./preload.ts"]
   });
 
   const cachePath = join(String(dir), ".bun-cache");
-  const extraEnv = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: cachePath };
+  // `BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE=1` is required on debug
+  // builds so `RuntimeTranspilerCache::get()` actually returns the loaded
+  // entry instead of discarding it; without it the cache-HIT branch in
+  // `RuntimeTranspilerStore` is never taken (precedent:
+  // `test/cli/run/transpiler-cache.test.ts`).
+  const extraEnv = {
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: cachePath,
+    BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+  };
 
   // First run populates the cache.
   const first = await runTest(String(dir), ["--isolate"], extraEnv);
@@ -138,7 +146,10 @@ preload = ["./preload.ts"]
   });
 
   const cachePath = join(String(dir), ".bun-cache");
-  const extraEnv = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: cachePath };
+  const extraEnv = {
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: cachePath,
+    BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+  };
 
   // First run populates the cache (so the filename and path layout exist).
   const first = await runTest(String(dir), ["--isolate"], extraEnv);
@@ -146,20 +157,27 @@ preload = ["./preload.ts"]
   expect(first.exitCode).toBe(0);
 
   // Locate the written `.pile` file(s) (covers `.debug.pile` on debug builds
-  // and `.pile` on release builds) and rewrite the 4-byte LE cache_version
-  // header to 20 — the previous `EXPECTED_VERSION`. A binary that still has
-  // `EXPECTED_VERSION == 20` would accept this stale entry verbatim; the
-  // fix in this PR bumps to 21, so the decode must fail and the file must
-  // be re-transpiled (and rewritten with version=21).
+  // and `.pile` on release builds). Read the current cache version from the
+  // first file, then downgrade every entry's 4-byte LE version header to
+  // `current - 1`. A binary that reverted the #30888 bump (back to 20)
+  // would accept a `has_tla=false` entry verbatim; the fix requires the
+  // decode to fail and the file to be re-transpiled and rewritten at the
+  // current version. Reading the current version from the file (rather
+  // than hardcoding 21) means this test doesn't need editing on every
+  // future `EXPECTED_VERSION` bump — it still fails iff the version is
+  // ever reverted to ≤ 20.
   const entries = readdirSync(cachePath).filter(n => n.endsWith(".pile"));
   expect(entries.length).toBeGreaterThan(0);
+  const firstBytes = readFileSync(join(cachePath, entries[0]));
+  expect(firstBytes.length).toBeGreaterThan(4);
+  const currentVersion = firstBytes.readUInt32LE(0);
+  // Guard against an accidental revert of the #30888 bump (20 → 21).
+  expect(currentVersion).toBeGreaterThan(20);
   for (const name of entries) {
     const p = join(cachePath, name);
     const bytes = readFileSync(p);
-    expect(bytes.length).toBeGreaterThan(4);
-    // Sanity check: the version we just wrote should be the current one (21).
-    expect(bytes.readUInt32LE(0)).toBe(21);
-    bytes.writeUInt32LE(20, 0);
+    expect(bytes.readUInt32LE(0)).toBe(currentVersion);
+    bytes.writeUInt32LE(currentVersion - 1, 0);
     writeFileSync(p, bytes);
   }
 
@@ -169,10 +187,10 @@ preload = ["./preload.ts"]
   expect(second.stderr).toContain("0 fail");
   expect(second.exitCode).toBe(0);
 
-  // The cache file must now carry the bumped version byte, proving the
+  // The cache file must now carry the current version byte, proving the
   // decode path rejected the stale header and forced a rewrite.
   for (const name of entries) {
     const bytes = readFileSync(join(cachePath, name));
-    expect(bytes.readUInt32LE(0)).toBe(21);
+    expect(bytes.readUInt32LE(0)).toBe(currentVersion);
   }
 });

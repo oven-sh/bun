@@ -263,8 +263,8 @@ impl hooks::AutoInstaller for PackageManager {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
                     // Zig: `defer string_builder.clamp()` — must run on the
-                    // error path too. Restore the buffer length so the
-                    // lockfile stays consistent (`Dependency` is no-op Drop).
+                    // error path too. `truncate` drops the default-filled tail
+                    // (and any already-written deps) before restoring length.
                     dependencies_list.truncate(dep_start);
                     string_builder.clamp();
                     return Err(e);

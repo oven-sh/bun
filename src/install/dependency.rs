@@ -313,11 +313,8 @@ impl DependencyExt for Dependency {
     }
 }
 
-// PORT NOTE: Zig copies `Dependency`/`Version` by value (POD struct semantics);
-// the linked-list memory under `Semver::query::Group` is arena-owned and never
-// freed through these handles. Rust can't `derive(Clone)` because `Value` is
-// an untagged union with `ManuallyDrop` fields, so we implement a shallow
-// bitwise clone matching Zig's copy semantics.
+// PORT NOTE: the `Semver::query::Group` chain under `Version.value.npm` is
+// `Box`-owned and freed by `DependencyVersion::Drop`; `Clone` deep-copies it.
 
 // `comptime StringBuilder: type` param maps onto `bun_semver::StringBuilder`
 // (count / append<T> / append_string). The only extra method needed here is
@@ -644,7 +641,6 @@ impl VersionExt for Version {
         Ok(Version {
             tag: self.tag,
             literal: builder.append_string(self.literal.slice(buf)),
-            // TODO(port): Value::clone not defined in this file; assumed on Value
             value: self.value.clone_in(self.tag, buf, builder)?,
         })
     }
@@ -746,11 +742,8 @@ impl VersionExt for Version {
     }
 }
 
-// PORT NOTE: no `Drop for Version`. Zig treats `Version` as POD — the
-// `Semver::query::Group` linked list under `.npm` is arena-allocated and
-// outlives any individual `Version` copy. Adding `Drop` here would make
-// `Dependency`/`Version` non-clonable and break the shallow-copy contract
-// the lockfile buffers rely on.
+// PORT NOTE: `Version` (`bun_install_types::DependencyVersion`) has tag-aware
+// `Drop`/`Clone` impls — the `.npm` `Group` chain is `Box`-owned and freed there.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Version::Tag
@@ -1165,18 +1158,22 @@ pub trait ValueExt {
 }
 
 impl ValueExt for Value {
-    // TODO(port): `clone` is called in Version::clone but not defined in
-    // dependency.zig — likely lives elsewhere or relies on Zig copy semantics.
     fn clone_in<SB: StringBuilderLike>(
         &self,
-        _tag: Tag,
+        tag: Tag,
         _buf: &[u8],
         _builder: &mut SB,
     ) -> Result<Value, bun_core::Error> {
-        // Zig copies the union by value into the new builder context; the only
-        // builder-dependent piece is `literal`, which `Version::clone_in`
-        // already re-appends. Match Zig's shallow copy here.
-        Ok(Clone::clone(self))
+        // Tag-aware deep clone: only `npm` owns heap (`Group` Box chain).
+        Ok(match tag {
+            // SAFETY: `tag == Npm` selects the `npm` union arm.
+            Tag::Npm => Value {
+                npm: ManuallyDrop::new(unsafe { (*self.npm).clone() }),
+            },
+            // SAFETY: every other arm is `Copy` (no heap), so a bitwise read
+            // is a true clone.
+            _ => unsafe { core::ptr::read(self) },
+        })
     }
 }
 

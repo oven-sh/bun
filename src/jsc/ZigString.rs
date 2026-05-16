@@ -95,11 +95,12 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
     let s = unsafe { bun_core::ffi::slice(raw, len) };
     let ptr = ZigString::init(s).slice().as_ptr();
-    // Probe only when the default allocator is mimalloc — under ASAN it's libc
-    // (`std::alloc::System`), so the buffer is not in mimalloc's heap region.
-    #[cfg(all(debug_assertions, not(bun_asan)))]
-    // SAFETY: read-only heap-region probe.
-    debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    // Probe only when mimalloc is the global allocator — under ASAN it's
+    // `std::alloc::System` (libc), so the buffer is not in mimalloc's heap region.
+    if bun_alloc::USE_MIMALLOC {
+        // SAFETY: read-only heap-region probe.
+        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    }
     let _ = len;
     // SAFETY: ptr was allocated by the default allocator; `default_alloc::free`
     // is layout-agnostic and agrees with the `#[global_allocator]`.
@@ -115,11 +116,12 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
         .as_ptr()
         .cast_mut()
         .cast::<c_void>();
-    // Probe only when the default allocator is mimalloc — under ASAN it's libc
-    // (`std::alloc::System`), so the buffer is not in mimalloc's heap region.
-    #[cfg(all(debug_assertions, not(bun_asan)))]
-    // SAFETY: read-only heap-region probe.
-    debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    // Probe only when mimalloc is the global allocator — under ASAN it's
+    // `std::alloc::System` (libc), so the buffer is not in mimalloc's heap region.
+    if bun_alloc::USE_MIMALLOC {
+        // SAFETY: read-only heap-region probe.
+        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    }
     // we must untag the string pointer
     // SAFETY: untagged ptr was allocated by the default allocator.
     unsafe { bun_alloc::default_alloc::free(untagged) };

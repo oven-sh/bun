@@ -486,7 +486,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // `-fuse-ld=`. RUSTFLAGS only reach *target* crates when `--target` is given,
   // and the `bun_bin` staticlib has no link step, so it's normally dead — but
   // if a target cdylib ever appears it'd fail with "could not open '-fuse-ld=lld'".
-  if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
+  if (!cfg.windows && !cfg.darwin) {
+    rustflags.push(`-Clink-arg=-fuse-ld=lld`);
+  }
   if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
     // so the final lld `-flto=full` link sees through Rust↔C++ call edges.

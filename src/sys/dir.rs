@@ -518,38 +518,37 @@ impl FdDirExt for Fd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::file::tests::FD_TEST_LOCK;
 
-    /// Open a real directory fd for tests that need one.
-    fn open_self() -> Dir {
-        // Opens the test process's cwd.
+    fn open_cwd() -> Dir {
         Dir::open(b".").unwrap()
     }
 
     #[test]
     fn drop_closes_fd() {
+        let _g = FD_TEST_LOCK.lock();
         let raw = {
-            let dir = open_self();
+            let dir = open_cwd();
             dir.fd()
         };
-        // After `dir` drops, the fd is closed: `fstat` fails with EBADF.
         assert!(fstat(raw).is_err());
     }
 
     #[test]
     fn close_disarms_drop() {
-        let dir = open_self();
+        let _g = FD_TEST_LOCK.lock();
+        let dir = open_cwd();
         let raw = dir.fd();
         dir.close();
-        // The same fd value may be re-allocated by the next `open()`. Open a
-        // canary, then drop `dir` (already disarmed) — the canary must survive.
-        let canary = open_self();
+        let canary = open_cwd();
         assert!(fstat(canary.fd()).is_ok());
         let _ = raw;
     }
 
     #[test]
     fn into_raw_disarms_drop() {
-        let dir = open_self();
+        let _g = FD_TEST_LOCK.lock();
+        let dir = open_cwd();
         let raw = dir.into_raw();
         // `dir` has been forgotten; the fd is still open.
         assert!(fstat(raw).is_ok());
@@ -558,7 +557,8 @@ mod tests {
 
     #[test]
     fn borrow_does_not_close() {
-        let dir = open_self();
+        let _g = FD_TEST_LOCK.lock();
+        let dir = open_cwd();
         let raw = dir.fd();
         {
             let view = Dir::borrow(&raw);
@@ -570,6 +570,7 @@ mod tests {
 
     #[test]
     fn dropping_cwd_sentinel_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
         // `Dir::cwd()` wraps `AT_FDCWD`. Dropping it must be a no-op — it must
         // not close fd 0 (or any other low fd that `AT_FDCWD` could collide
         // with after a wraparound).
@@ -582,6 +583,7 @@ mod tests {
 
     #[test]
     fn dropping_invalid_fd_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
         for _ in 0..16 {
             let _ = Dir::from_fd(Fd::INVALID);
         }

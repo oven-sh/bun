@@ -464,18 +464,24 @@ impl File {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn open_self() -> File {
-        // `/proc/self/exe` on Linux, the test binary itself.
+    /// Serialize fd-touching tests: `cargo test` runs `#[test]` fns as
+    /// threads in one process; a sibling test's `open()` between a `Drop`
+    /// close and the `fstat` assertion could be allocated the just-closed fd
+    /// (POSIX lowest-fd guarantee), making the assertion spuriously fail.
+    pub(crate) static FD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn open_cwd() -> File {
         File::open(ZStr::from_static(b".\0"), O::RDONLY, 0).unwrap()
     }
 
     #[test]
     fn drop_closes_fd() {
+        let _g = FD_TEST_LOCK.lock();
         let raw = {
-            let f = open_self();
+            let f = open_cwd();
             f.fd()
         };
         assert!(fstat(raw).is_err());
@@ -483,12 +489,14 @@ mod tests {
 
     #[test]
     fn close_disarms_drop() {
-        let f = open_self();
+        let _g = FD_TEST_LOCK.lock();
+        let f = open_cwd();
         f.close().unwrap();
     }
 
     #[test]
     fn close_skips_invalid_sentinel() {
+        let _g = FD_TEST_LOCK.lock();
         // `File::close()` must not call the syscall on `Fd::INVALID`.
         let f = File::from_fd(Fd::INVALID);
         assert!(f.close().is_ok());
@@ -496,7 +504,8 @@ mod tests {
 
     #[test]
     fn into_raw_disarms_drop() {
-        let f = open_self();
+        let _g = FD_TEST_LOCK.lock();
+        let f = open_cwd();
         let raw = f.into_raw();
         assert!(fstat(raw).is_ok());
         let _ = close(raw);
@@ -504,7 +513,8 @@ mod tests {
 
     #[test]
     fn borrow_does_not_close() {
-        let f = open_self();
+        let _g = FD_TEST_LOCK.lock();
+        let f = open_cwd();
         let raw = f.fd();
         {
             let view = File::borrow(&raw);
@@ -515,6 +525,7 @@ mod tests {
 
     #[test]
     fn dropping_stdio_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
         // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
         // descriptors that the caller does not own. Dropping the wrapper must
         // not tear down the test harness's output.
@@ -528,6 +539,7 @@ mod tests {
 
     #[test]
     fn dropping_invalid_fd_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
         for _ in 0..16 {
             let _ = File::from_fd(Fd::INVALID);
         }

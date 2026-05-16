@@ -5,18 +5,18 @@ off the JS thread.
 
 ## Layout
 
-| file                                     | owns                                                                                                            | touch when                               |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Image.classes.ts`                       | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
-| `Image.zig`                              | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                    | new options, new chainable, new terminal |
-| `codecs.zig` / `codecs.rs`               | thin wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard             | bumping a codec, adding a format         |
-| `codec_avif.rs`                          | Rust wrapper over `bun_avif_*` in `image_avif_shim.cpp`. Linux only.                                            | bumping pinned libavif ABI               |
-| `exif.zig`                               | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
-| `quantize.zig`                           | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
-| `backend_coregraphics.zig`               | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
-| `backend_wic.zig`                        | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
-| `../../jsc/bindings/image_resize.cpp`    | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
-| `../../jsc/bindings/image_avif_shim.cpp` | dlopen'd libavif.so.16 loader + decode/encode wrapper; pinned v1.0.0 struct layout                              | libavif ABI bumps                        |
+| file                                     | owns                                                                                                | touch when                               |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Image.classes.ts`                       | JS surface (codegen input)                                                                          | adding/renaming a JS method              |
+| `Image.zig`                              | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery        | new options, new chainable, new terminal |
+| `codecs.zig` / `codecs.rs`               | thin wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `codec_avif.rs`                          | Rust wrapper over `bun_avif_*` in `image_avif_shim.cpp`. Linux only.                                | bumping pinned libavif ABI               |
+| `exif.zig`                               | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                 | extending EXIF coverage                  |
+| `quantize.zig`                           | median-cut RGBA → palette for `png({palette})`                                                      | dithering, perceptual weighting          |
+| `backend_coregraphics.zig`               | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                           | macOS-specific behaviour                 |
+| `backend_wic.zig`                        | Windows WIC, COM                                                                                    | Windows-specific behaviour               |
+| `../../jsc/bindings/image_resize.cpp`    | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                   | new filter, perf work                    |
+| `../../jsc/bindings/image_avif_shim.cpp` | dlopen'd libavif.so.16 loader + decode/encode wrapper; pinned v1.0.0 struct layout                  | libavif ABI bumps                        |
 
 `system_backend` in `codecs.zig` is `?type` — `null` on Linux so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns

@@ -809,15 +809,60 @@ pub mod zig_base64 {
             test_decode_ignore_space(codecs, b"foobar", b" Z m 9 v Y m F y ");
 
             // test getting some api errors
-            test_error(codecs, b"A", Error::InvalidPadding, Some(Error::InvalidPadding));
-            test_error(codecs, b"AA", Error::InvalidPadding, Some(Error::InvalidPadding));
-            test_error(codecs, b"AAA", Error::InvalidPadding, Some(Error::InvalidPadding));
-            test_error(codecs, b"A..A", Error::InvalidCharacter, Some(Error::InvalidCharacter));
-            test_error(codecs, b"AA=A", Error::InvalidPadding, Some(Error::InvalidPadding));
-            test_error(codecs, b"AA/=", Error::InvalidPadding, Some(Error::InvalidPadding));
-            test_error(codecs, b"A/==", Error::InvalidPadding, Some(Error::InvalidPadding));
-            test_error(codecs, b"A===", Error::InvalidPadding, Some(Error::InvalidPadding));
-            test_error(codecs, b"====", Error::InvalidPadding, Some(Error::InvalidPadding));
+            test_error(
+                codecs,
+                b"A",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AA",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AAA",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"A..A",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"AA=A",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AA/=",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"A/==",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"A===",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"====",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
 
             test_no_space_left_error(codecs, b"AA==");
             test_no_space_left_error(codecs, b"AAA=");
@@ -859,14 +904,49 @@ pub mod zig_base64 {
             //     `b"AAA="`) decodes successfully.
             //
             // Inputs without `=` produce the same error for both.
-            test_error(codecs, b"A", Error::InvalidPadding, Some(Error::InvalidPadding));
+            test_error(
+                codecs,
+                b"A",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
             test_error(codecs, b"AAA=", Error::InvalidCharacter, None);
-            test_error(codecs, b"A..A", Error::InvalidCharacter, Some(Error::InvalidCharacter));
-            test_error(codecs, b"AA=A", Error::InvalidCharacter, Some(Error::InvalidPadding));
-            test_error(codecs, b"AA/=", Error::InvalidCharacter, Some(Error::InvalidCharacter));
-            test_error(codecs, b"A/==", Error::InvalidCharacter, Some(Error::InvalidCharacter));
-            test_error(codecs, b"A===", Error::InvalidCharacter, Some(Error::InvalidPadding));
-            test_error(codecs, b"====", Error::InvalidCharacter, Some(Error::InvalidPadding));
+            test_error(
+                codecs,
+                b"A..A",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"AA=A",
+                Error::InvalidCharacter,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AA/=",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"A/==",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"A===",
+                Error::InvalidCharacter,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"====",
+                Error::InvalidCharacter,
+                Some(Error::InvalidPadding),
+            );
 
             test_no_space_left_error(codecs, b"AA");
             test_no_space_left_error(codecs, b"AAA");

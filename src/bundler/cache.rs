@@ -262,33 +262,21 @@ impl Fs {
     ) -> Result<Entry, bun_core::Error> {
         let rfs = &_fs.fs;
 
-        let _owned: Option<bun_sys::File>;
-        // Whether `_owned` will close the fd on return — if so, do not publish
-        // it via `Entry.fd` (the caller would cache a dead descriptor).
-        // cache.zig:131 publishes the handle unconditionally, which is the
-        // same latent bug; gating on `will_close` here mirrors the fix the
-        // sibling `readFileWithAllocator` already has (cache.zig:209).
-        let will_close: bool;
+        // Hold ownership of a freshly-opened fd until the read succeeds; on
+        // error `Drop` closes it. Disarm only on the success path where the
+        // fd actually escapes via `Entry.fd`.
+        let mut owned: Option<bun_sys::File> = None;
         let fd: Fd = if let Some(fd) = cached_file_descriptor {
             // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
             bun_sys::File::borrow(&fd)
                 .seek_to(0)
                 .map_err(bun_core::Error::from)?;
-            _owned = None;
-            will_close = false;
             fd
         } else {
             let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
                 .map_err(bun_core::Error::from)?;
             let raw = f.handle();
-            if !rfs.need_to_close_files() && feature_flags::STORE_FILE_DESCRIPTORS {
-                let _ = f.into_raw();
-                _owned = None;
-                will_close = false;
-            } else {
-                _owned = Some(f);
-                will_close = true;
-            }
+            owned = Some(f);
             raw
         };
         let file_handle = bun_sys::File::borrow(&fd);
@@ -315,13 +303,19 @@ impl Fs {
             }
         };
 
+        // Publish the fd only when it stays open — i.e. it was freshly opened
+        // and the resolver caches descriptors. Keep `owned` (Drop closes) when
+        // descriptors must close, or when the fd was caller-supplied (caller
+        // owns it).
+        let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !rfs.need_to_close_files();
+        if publish_fd {
+            if let Some(f) = owned.take() {
+                let _ = f.into_raw();
+            }
+        }
         Ok(Entry {
             contents,
-            fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close {
-                fd
-            } else {
-                Fd::INVALID
-            },
+            fd: if publish_fd { fd } else { Fd::INVALID },
             external_free_function: ExternalFreeFunction::NONE,
         })
     }
@@ -369,7 +363,7 @@ impl Fs {
         // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
         // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
         // type that may have niche (NonZero) fields.
-        let _owned: Option<bun_sys::File>;
+        let mut _owned: Option<bun_sys::File> = None;
         let will_close: bool;
         let fd: Fd = if let Some(f) = _file_handle {
             bun_sys::File::borrow(&f)
@@ -405,12 +399,10 @@ impl Fs {
             };
             let raw = opened.handle();
             will_close = rfs.need_to_close_files();
-            if !will_close && feature_flags::STORE_FILE_DESCRIPTORS {
-                let _ = opened.into_raw();
-                _owned = None;
-            } else {
-                _owned = Some(opened);
-            }
+            // Hold ownership until the read succeeds; on error `Drop` closes.
+            // Disarm at the end of this fn only when the fd escapes via
+            // `Entry.fd`.
+            _owned = Some(opened);
             raw
         };
         let file_handle = bun_sys::File::borrow(&fd);
@@ -477,13 +469,15 @@ impl Fs {
             }
         };
 
+        let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
+        if publish_fd {
+            if let Some(f) = _owned.take() {
+                let _ = f.into_raw();
+            }
+        }
         Ok(Entry {
             contents,
-            fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close {
-                fd
-            } else {
-                Fd::INVALID
-            },
+            fd: if publish_fd { fd } else { Fd::INVALID },
             external_free_function: ExternalFreeFunction::NONE,
         })
     }

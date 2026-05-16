@@ -262,9 +262,6 @@ impl Fs {
     ) -> Result<Entry, bun_core::Error> {
         let rfs = &_fs.fs;
 
-        // Hold ownership of a freshly-opened fd until the read succeeds; on
-        // error `Drop` closes it. Disarm only on the success path where the
-        // fd actually escapes via `Entry.fd`.
         let mut owned: Option<bun_sys::File> = None;
         let fd: Fd = if let Some(fd) = cached_file_descriptor {
             // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
@@ -303,10 +300,6 @@ impl Fs {
             }
         };
 
-        // Publish the fd only when it stays open — i.e. it was freshly opened
-        // and the resolver caches descriptors. Keep `owned` (Drop closes) when
-        // descriptors must close, or when the fd was caller-supplied (caller
-        // owns it).
         let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !rfs.need_to_close_files();
         if publish_fd {
             if let Some(f) = owned.take() {
@@ -399,9 +392,6 @@ impl Fs {
             };
             let raw = opened.handle();
             will_close = rfs.need_to_close_files();
-            // Hold ownership until the read succeeds; on error `Drop` closes.
-            // Disarm at the end of this fn only when the fd escapes via
-            // `Entry.fd`.
             _owned = Some(opened);
             raw
         };

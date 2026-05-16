@@ -1654,10 +1654,7 @@ impl<'a> PackageInstaller<'a> {
                             }
                         };
 
-                        // `installer.cache_dir` is a borrowed `Fd`; bind the owning
-                        // `Dir` to a local that outlives the install call so the fd
-                        // closes when this arm is done. Zig leaked it
-                        // (PackageInstaller.zig:1131, no `defer`).
+                        // Zig (PackageInstaller.zig:1131) leaked this fd — no `defer`.
                         let owned_cache_dir = match self.root_node_modules_folder.open_dir(
                             dir_name,
                             bun_sys::OpenDirOptions {

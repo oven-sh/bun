@@ -1808,9 +1808,7 @@ impl RealFS {
     }
 
     pub fn mod_key(&mut self, path: &[u8]) -> Result<ModKey, bun_core::Error> {
-        // Zig (fs.zig:920) leaked the fd when `!needToCloseFiles()`, but
-        // nothing receives it — `mod_key_with_file` only `fstat`s. `Drop`
-        // closing on every path here is a strict improvement.
+        // Zig (fs.zig:920) leaked this fd — `mod_key_with_file` only `fstat`s.
         let file = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
         self.mod_key_with_file(path, &file)
     }

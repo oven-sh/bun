@@ -19,9 +19,10 @@ use js_parser::defines::Define;
 // so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
 // `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
 // nominal type. This crate adds the env-var-gated `disabled`/`set_disabled` via
-// the `RuntimeTranspilerCacheExt` trait below — those need `bun_core::env_var`
-// which sits a tier above js_parser. `Entry` / `Metadata` stay concrete here;
-// the canonical struct stores them type-erased as `*mut ()`.
+// the `RuntimeTranspilerCacheExt` trait below; the disk-I/O / `js_printer`
+// dispatch also lives here because it needs `bun_js_printer`, which sits a
+// tier above `bun_ast`. `Entry` / `Metadata` stay concrete here; the canonical
+// struct stores them type-erased as `*mut ()`.
 // ══════════════════════════════════════════════════════════════════════════
 use bun_ast::RuntimeTranspilerCache;
 

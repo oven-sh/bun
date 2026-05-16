@@ -17,24 +17,9 @@ use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 #[allow(unused_imports)]
 use bun_url::URL;
 use std::borrow::Cow;
-// TODO(port): bun_analytics — Cargo.toml does not yet list the dep
-// (adding it triggers upstream rebuilds with in-progress breakage). The
-// `analytics::features::*` counters are pure telemetry side effects; the
-// increment call-sites below write into the local `mod analytics` mirror
-// until the dep is wired, so the no-op is explicit rather than silent.
-
-mod analytics {
-    #[allow(non_upper_case_globals)]
-    pub mod features {
-        use core::sync::atomic::AtomicUsize;
-        // Zig: `analytics.Features.{define,loaders,macros,external} += n`.
-        // Real statics live in `bun_analytics::features::*` (AtomicUsize).
-        pub static define: AtomicUsize = AtomicUsize::new(0);
-        pub static loaders: AtomicUsize = AtomicUsize::new(0);
-        pub static macros: AtomicUsize = AtomicUsize::new(0);
-        pub static external: AtomicUsize = AtomicUsize::new(0);
-    }
-}
+// Zig: `analytics.Features.{define,loaders,macros,external} += n` — the real
+// `bun_analytics::features::*` `AtomicUsize` counters.
+use bun_analytics as analytics;
 use enum_map::{Enum, EnumMap};
 
 pub use crate::defines;
@@ -1900,13 +1885,10 @@ impl<'a> BundleOptions<'a> {
             optimize_imports: None,
         };
 
-        // TODO(port): bun_analytics dep not yet wired in bundler/Cargo.toml
-        {
-            analytics::features::define
-                .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
-            analytics::features::loaders
-                .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
-        }
+        analytics::features::define
+            .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
+        analytics::features::loaders
+            .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
 
         opts.serve_plugins = transform
             .serve_plugins
@@ -2047,17 +2029,14 @@ impl<'a> BundleOptions<'a> {
             opts.tsconfig_override = Some(tsconfig.clone());
         }
 
-        // TODO(port): bun_analytics dep not yet wired in bundler/Cargo.toml
-        {
-            analytics::features::macros.fetch_add(
-                usize::from(opts.target == Target::BunMacro),
-                Ordering::Relaxed,
-            );
-            analytics::features::external.fetch_add(
-                usize::from(!transform.external.is_empty()),
-                Ordering::Relaxed,
-            );
-        }
+        analytics::features::macros.fetch_add(
+            usize::from(opts.target == Target::BunMacro),
+            Ordering::Relaxed,
+        );
+        analytics::features::external.fetch_add(
+            usize::from(!transform.external.is_empty()),
+            Ordering::Relaxed,
+        );
         Ok(opts)
     }
 }

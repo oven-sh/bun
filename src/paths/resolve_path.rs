@@ -376,31 +376,46 @@ pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
 // thread-locals so that `relative_platform_buf` can hold disjoint `&mut` to
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
-// of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
+// of 3×PathBuffer (see test/js/bun/binary/tls-segment-size). The wrapper carries
+// a TLS destructor so worker threads reclaim their buffer at thread exit.
+struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
+
+impl Drop for LazyPathBuf {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: `p` was produced by `heap::into_raw(Box::new(..))` in
+            // `lazy_path_buf`; this is the thread's sole accessor.
+            unsafe { drop(bun_core::heap::take(p)) };
+        }
+    }
+}
+
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_FROM_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_TO_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_FROM_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_TO_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
 /// `unsafe` site for all `RELATIVE_*_BUF` accessors (nonnull-asref reduction:
 /// 5 sites → 1).
 #[inline]
-fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuffer {
-    let mut p = c.get();
+fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
+    let mut p = c.0.get();
     if p.is_null() {
         p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.set(p);
+        c.0.set(p);
     }
     // SAFETY: `p` is non-null after the init branch above and points at a
-    // leaked `Box<PathBuffer>` (process-lifetime heap allocation). The `Cell`
-    // lives in a `thread_local!`, so this thread is the sole accessor; callers
-    // uphold the single-live-borrow-per-thread invariant documented at the
-    // thread-local declaration.
+    // `Box<PathBuffer>` owned by the TLS wrapper (freed by `LazyPathBuf::drop`
+    // on thread exit). The `Cell` lives in a `thread_local!`, so this thread
+    // is the sole accessor; callers uphold the single-live-borrow-per-thread
+    // invariant documented at the thread-local declaration and never hold the
+    // returned reference past thread exit.
     unsafe { &mut *p }
 }
 

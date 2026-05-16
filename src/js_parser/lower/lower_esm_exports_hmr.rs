@@ -7,7 +7,7 @@ use bun_collections::VecExt;
 
 use crate::p::P;
 use crate::parser::{ReactRefresh, Ref, TempRef};
-use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
+use bun_ast::{self as js_ast, B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 // PORT NOTE: `P::generate_temp_ref` is ``-gated in P.rs (round-6
 // re-gate); replicate it here so this file can un-gate independently. Body is
@@ -45,7 +45,13 @@ pub struct ConvertESMExportsForHmr<'a> {
     /// can be a bit more concise for re-exports
     pub is_in_node_modules: bool,
     pub imports_seen: StringArrayHashMap<ImportRef>,
-    pub export_star_props: Vec<G::Property>,
+    /// Namespace refs for each `export * from '...'` statement. Each
+    /// produces an `hmr.esmStar(() => ns)` call after the direct-export
+    /// assignment so that property reads on the barrel module forward
+    /// live into the re-exported module's bindings (including through
+    /// `updateImport` on HMR updates). Fixes issue #29747 — the previous
+    /// spread-based emission snapshotted getter values at init time.
+    pub export_star_namespaces: Vec<Ref>,
     pub export_props: Vec<G::Property>,
     pub stmts: Vec<Stmt>,
 }
@@ -411,23 +417,47 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 )?;
 
                 if let Some(alias) = &st.alias {
-                    // 'export * as ns from' creates one named property.
+                    // 'export * as ns from' emits `get ns() { return ns_local }`
+                    // so the barrel's namespace member reads through the
+                    // reassignable local. A plain data property would snapshot
+                    // the source's exports object at init, and an HMR update to
+                    // the source — which replaces its `exports` wholesale —
+                    // would leave the barrel pointing at the stale object.
+                    let body_stmts = p.arena.alloc_slice_copy(&[Stmt::alloc(
+                        S::Return {
+                            value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
+                        },
+                        stmt.loc,
+                    )]);
                     self.export_props.push(G::Property {
+                        kind: G::PropertyKind::Get,
                         // SAFETY: arena-owned name slice valid for the parse.
                         key: Some(Expr::init(
                             E::EString::init(alias.original_name.slice()),
                             stmt.loc,
                         )),
-                        value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
+                        value: Some(Expr::init(
+                            E::Function {
+                                func: G::Fn {
+                                    body: G::FnBody {
+                                        stmts: bun_ast::StoreSlice::new_mut(body_stmts),
+                                        loc: stmt.loc,
+                                    },
+                                    ..Default::default()
+                                },
+                            },
+                            stmt.loc,
+                        )),
                         ..Default::default()
                     });
                 } else {
-                    // 'export * from' creates a spread, hoisted at the top.
-                    self.export_star_props.push(G::Property {
-                        kind: G::PropertyKind::Spread,
-                        value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
-                        ..Default::default()
-                    });
+                    // 'export * from' forwards every non-'default' key of the
+                    // re-exported module through a live getter. A spread here
+                    // would invoke the source's getters once at init time and
+                    // snapshot their values (bug #29747). Emission is deferred
+                    // to finalize() so the forwarding calls follow
+                    // `hmr.exports = { ... }`.
+                    self.export_star_namespaces.push(deduped.namespace_ref);
                 }
                 return Ok(());
             }
@@ -705,15 +735,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         // prefix obtained via `split_last_mut`, disjoint from `self.last_part`.
         head_parts: &mut [js_ast::Part],
     ) -> Result<(), AllocError> {
-        if !self.export_star_props.is_empty() {
-            if self.export_props.is_empty() {
-                core::mem::swap(&mut self.export_props, &mut self.export_star_props);
-            } else {
-                bun_collections::prepend_from(&mut self.export_props, &mut self.export_star_props);
-            }
-        }
+        let has_stars = !self.export_star_namespaces.is_empty();
 
-        if !self.export_props.is_empty() {
+        if !self.export_props.is_empty() || has_stars {
             let obj = Expr::init(
                 E::Object {
                     properties: G::PropertyList::move_from_list(core::mem::take(
@@ -724,7 +748,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 bun_ast::Loc::EMPTY,
             );
 
-            // `hmr.exports = ...`
+            // `hmr.exports = { ...direct exports... };`
             self.stmts.push(Stmt::alloc(
                 S::SExpr {
                     value: Expr::assign(
@@ -756,6 +780,16 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 })?;
         }
 
+        // `hmr.reactRefreshAccept()` must run BEFORE `hmr.esmStar(...)` when
+        // both are emitted. The accept check calls `isReactRefreshBoundary` on
+        // `this.exports`, which bails with `return false` on any own accessor
+        // descriptor — and `esmStar` below installs exactly those descriptors
+        // for every non-`default` key of each star-re-exported module. If this
+        // call ran after the loop, a file that defines a React component AND
+        // bare-re-exports from another would stop being a self-accepting
+        // boundary, falling back to a full page reload on edit. Keeping it
+        // here means the check only sees the direct exports — which are the
+        // ones that decide whether THIS file is a component module.
         if p.options.features.react_fast_refresh && p.react_refresh.register_used {
             self.stmts.push(Stmt::alloc(
                 S::SExpr {
@@ -782,6 +816,65 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 },
                 bun_ast::Loc::EMPTY,
             ));
+        }
+
+        // Emit one `hmr.esmStar(() => ns)` per `export * from '...'`
+        // statement. The thunk closes over the reassignable namespace
+        // local, so when the re-exported module is HMR-updated and
+        // `updateImport` rebinds the local, subsequent reads on the
+        // barrel's exports see the fresh bindings.
+        for &namespace_ref in &self.export_star_namespaces {
+            let loc = bun_ast::Loc::EMPTY;
+            let body_stmts = p.arena.alloc_slice_copy(&[Stmt::alloc(
+                S::Return {
+                    value: Some(Expr::init_identifier(namespace_ref, loc)),
+                },
+                loc,
+            )]);
+            let thunk = Expr::init(
+                E::Arrow {
+                    prefer_expr: true,
+                    body: G::FnBody {
+                        loc,
+                        stmts: bun_ast::StoreSlice::new_mut(body_stmts),
+                    },
+                    ..Default::default()
+                },
+                loc,
+            );
+            let call_args =
+                ExprNodeList::from_arena_slice(p.arena.alloc_slice_copy(&[thunk]));
+            self.stmts.push(Stmt::alloc(
+                S::SExpr {
+                    value: Expr::init(
+                        E::Call {
+                            target: Expr::init(
+                                E::Dot {
+                                    target: Expr::init_identifier(p.hmr_api_ref, loc),
+                                    name: b"esmStar".into(),
+                                    name_loc: loc,
+                                    ..Default::default()
+                                },
+                                loc,
+                            ),
+                            args: call_args,
+                            ..Default::default()
+                        },
+                        loc,
+                    ),
+                    ..Default::default()
+                },
+                loc,
+            ));
+
+            // Each reference bumps the namespace_ref's use count so it
+            // survives symbol renaming and does not get stripped.
+            let gop = self.last_part.symbol_uses.get_or_put(namespace_ref)?;
+            if !gop.found_existing {
+                *gop.value_ptr = js_ast::symbol::Use { count_estimate: 1 };
+            } else {
+                gop.value_ptr.count_estimate += 1;
+            }
         }
 
         // Merge all part metadata into the first part.

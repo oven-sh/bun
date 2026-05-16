@@ -2499,10 +2499,17 @@ pub mod cache {
                     .map_err(bun_core::Error::from)?
             };
 
-            // Hold ownership through the read; on error `Drop` closes. Disarm
-            // only on the success path where the fd escapes via `Entry.fd`.
-            let mut owned: Option<bun_sys::File> = (_file_handle.is_none()).then_some(file_handle);
-            let fd: Fd = _file_handle.unwrap_or_else(|| owned.as_ref().unwrap().handle());
+            // Hold ownership of a freshly-opened fd through the read; on error
+            // `Drop` closes. Caller-supplied fds are borrowed (caller closes) —
+            // `into_raw()` immediately so dropping the unowned `File` is a no-op.
+            let mut owned: Option<bun_sys::File> = None;
+            let fd: Fd = if _file_handle.is_some() {
+                file_handle.into_raw()
+            } else {
+                let raw = file_handle.handle();
+                owned = Some(file_handle);
+                raw
+            };
             let file_handle = bun_sys::File::borrow(&fd);
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.

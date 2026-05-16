@@ -1174,11 +1174,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"from")?;
-                    path = p.parse_path()?;
+                    // `declare module "x" { export * as n from "p" with { ... } }`
+                    // gets erased to `S::TypeScript{}` — suppress the
+                    // unsupported-attribute error in that case.
+                    path = if opts.is_typescript_declare {
+                        p.parse_type_only_path()?
+                    } else {
+                        p.parse_path()?
+                    };
                 } else {
                     // "export * from 'path'"
                     p.lexer.expect_contextual_keyword(b"from")?;
-                    path = p.parse_path()?;
+                    path = if opts.is_typescript_declare {
+                        p.parse_type_only_path()?
+                    } else {
+                        p.parse_path()?
+                    };
                     // Zig: `fs.PathName.init(path.text).nonUniqueNameString(arena)` —
                     // sanitize the basename into an identifier and copy into the arena.
                     let name: &'a [u8] = {
@@ -1581,7 +1592,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let path = p.parse_path()?;
+        // `declare module "x" { import X from "p" with { ... } }` gets erased
+        // to `S::TypeScript{}` in `parse_type_script_namespace_stmt` — so
+        // suppress the unsupported-attribute error here (matches how erased
+        // `import type ...` is routed through `parse_type_only_path`).
+        let path = if opts.is_typescript_declare {
+            p.parse_type_only_path()?
+        } else {
+            p.parse_path()?
+        };
         p.lexer.expect_or_insert_semicolon()?;
 
         p.process_import_statement(stmt, path, loc, was_originally_bare_import)

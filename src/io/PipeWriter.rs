@@ -1649,7 +1649,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // Launder `*this` (see bun_ptr::LaunderedSelf) for the same reason as the
         // Streaming sibling above — `close()` → `Parent::on_close` → JS may
         // re-enter via `with_mut(|w| ..)`; the post-call `(*this).parent()`
-        // must reload. NOALIAS_HUNT cluster E.
+        // must reload.
         // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
         // this callback on the single-threaded event loop with no other Rust
         // borrow of `*this` live, so this is the sole access path.
@@ -2223,7 +2223,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // error path (`close()` → `on_error(this.parent())` → guard deref)
         // reads `this.parent` after re-entry; route those through a
         // black-boxed raw ptr so any inlined call chain cannot
-        // store-forward across the JS re-entry. NOALIAS_HUNT cluster E.
+        // store-forward across the JS re-entry.
         // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
         // invokes this callback on the single-threaded event loop with no other
         // Rust borrow of `*this` live, so this is the sole access path.

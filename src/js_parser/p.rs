@@ -7645,7 +7645,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // wrap_inlined_enum / value_for_define / is_dot_define_match: see the
-    // earlier impl block above (~6600).
+    // earlier impl block above.
 
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
@@ -7736,7 +7736,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // runtime_identifier_ref / runtime_identifier / call_runtime: see the
-    // earlier impl block above (~6630).
+    // earlier impl block above.
 
     pub fn extract_decls_for_binding(
         binding: Binding,

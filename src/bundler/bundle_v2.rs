@@ -370,7 +370,7 @@ pub mod bv2_impl {
     // TODO(port): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
     use self::bake_types as bake;
 
-    /// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs without
+    /// CYCLEBREAK TYPE_ONLY: pure value types from bake that bundler needs without
     /// depending on the full DevServer. Move-in pass keeps these as the canonical defs;
     /// bun_bake (post tier-6 collapse: bun_runtime::bake) re-exports from here.
     pub mod bake_types {
@@ -742,7 +742,7 @@ pub mod bv2_impl {
     // TODO(port): jsc::api arrives from move-in (TYPE_ONLY → bundler)
     use self::api as jsc_api;
 
-    /// CYCLEBREAK(b0) TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
+    /// CYCLEBREAK TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
     /// `jsc::api::BuildArtifact` that the bundler reads/constructs without touching
     /// JSC. The JS-thread halves (dispatch onto the JS event loop, `toJS`, plugin
     /// FFI bodies) stay in tier-6 (`bun_runtime::api`) and re-export these.

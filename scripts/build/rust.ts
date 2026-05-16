@@ -522,23 +522,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_*.rs"))` and
     // `include_bytes!` in `bun_js_parser`/`bun_runtime` resolve against this.
     // Set in cargo's env so it reaches every crate's `rustc` invocation
-    // (not just those with a `build.rs` re-export).
+    // (not just those with a `build.rs` re-export). `bun_core::build_options`
+    // is also `include!()`'d from here — its values come from
+    // `buildOptionsRs.ts` (written at configure time), not env vars.
     BUN_CODEGEN_DIR: cfg.codegenDir,
-
-    // ── build_options (version / sha / feature flags) ──
-    // Read at compile time by `bun_core::build_options` via `option_env!`.
-    // Values come straight from `Config`, so `process.versions.bun` /
-    // `bun --revision` reflect the configured build.
-    BUN_GIT_SHA: cfg.revision,
-    BUN_VERSION_MAJOR: cfg.version.split(".")[0]!,
-    BUN_VERSION_MINOR: cfg.version.split(".")[1]!,
-    BUN_VERSION_PATCH: cfg.version.split(".")[2]!,
-    BUN_REPORTED_NODEJS_VERSION: cfg.nodejsVersion,
-    BUN_RELEASE_SAFE: String(cfg.assertions),
-    BUN_BASELINE: String(cfg.baseline),
-    BUN_IS_CANARY: String(cfg.canary),
-    BUN_CANARY_REVISION: String(cfg.canaryRevision ?? 0),
-    BUN_BASE_PATH: cfg.cwd,
 
     // ── toolchain forwarding (cc-rs / build scripts) ──
     // build.rs of vendored crates (lol-html, anything using `cc`) and rustc's

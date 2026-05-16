@@ -202,19 +202,15 @@ impl List {
     }
 
     pub fn sort(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `MultiArrayList::sort(&self, ctx)` takes
-        // `&self` (it swaps via raw column ptrs internally), so the `generated` column
-        // borrow does not conflict. The `Slice` is captured by-value so its lifetime
-        // is detached from `list`.
-        both_lists!(&self.r#impl, |list| {
-            // SAFETY: column borrow is read-only; `sort` swaps via raw ptrs.
-            let generated = unsafe {
-                core::slice::from_raw_parts(
-                    list.items_raw::<"generated", LineColumnOffset>(),
-                    list.len(),
-                )
-            };
-            list.sort(SortContext { generated });
+        // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
+        // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
+        // it (that aliased the swap before this rewrite). Instead capture the
+        // raw column base + len; the column is never reallocated during sort.
+        both_lists!(&mut self.r#impl, |list| {
+            let generated: *const LineColumnOffset =
+                list.items_raw::<"generated", LineColumnOffset>();
+            let len = list.len();
+            list.sort(SortContext { generated, len });
         })
     }
 
@@ -309,14 +305,18 @@ impl List {
     }
 }
 
-struct SortContext<'a> {
-    generated: &'a [LineColumnOffset],
+struct SortContext {
+    generated: *const LineColumnOffset,
+    len: usize,
 }
 
-impl<'a> bun_collections::multi_array_list::SortContext for SortContext<'a> {
+impl bun_collections::multi_array_list::SortContext for SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool {
-        let a = self.generated[a_index];
-        let b = self.generated[b_index];
+        debug_assert!(a_index < self.len && b_index < self.len);
+        // SAFETY: indices are `< len`; `generated` is the column base pointer
+        // captured before sort, which swaps elements in place but never
+        // reallocates, so it remains valid for `len` reads throughout.
+        let (a, b) = unsafe { (*self.generated.add(a_index), *self.generated.add(b_index)) };
 
         if a.lines.zero_based() != b.lines.zero_based() {
             return a.lines.zero_based() < b.lines.zero_based();

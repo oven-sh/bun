@@ -531,11 +531,17 @@ unsafe fn configure_debugger(
 /// # Safety
 /// `state` must be the exact pointer returned by [`init_runtime_state`] for
 /// this thread (or null), and must not be used again after this call.
-unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
-    RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
+unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
     if state.is_null() {
+        RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
         return;
     }
+    // Drain `TimeoutObject`s still in `All.timers` so their refs are released
+    // (LSan leak fix). Must run BEFORE the TLS clear — `cancel()` re-enters `runtime_state()`.
+    let rs = state.cast::<RuntimeState>();
+    // SAFETY: `state` is the live boxed `RuntimeState` for this thread; `vm` is the live VM.
+    unsafe { timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*rs).timer), vm) };
+    RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
     // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
     // from `init_runtime_state`; the TLS was just cleared so no other live
     // alias exists on this thread.

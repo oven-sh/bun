@@ -211,14 +211,17 @@ impl WTFTimer {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             );
+        }
 
-            if t.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-                // SAFETY: `t.vm` is the VM that owns this timer's heap; may be
-                // called off the JS thread — `All::remove` locks.
-                // `addr_of_mut!` through the original `*mut` preserves write
-                // provenance for the heap-node mutation inside `remove`.
-                unsafe {
-                    let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
+        // Always unlink from `All.timers`, even when the script context is gone:
+        // `threadWillExit()` calls `~TimerBase` after `gcUnprotect` (so `valid()`
+        // is false), and skipping the unlink would leave a freed node in the heap.
+        if t.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            // SAFETY: `t.vm` owns this timer's heap; `All::remove` locks (may run off-JS-thread).
+            // `addr_of_mut!` through `*mut this` keeps write provenance for the heap node.
+            unsafe {
+                let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
+                if !state.is_null() {
                     (*state)
                         .timer
                         .remove(ptr::addr_of_mut!((*this).event_loop_timer));

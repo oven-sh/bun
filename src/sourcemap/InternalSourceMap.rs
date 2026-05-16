@@ -197,13 +197,18 @@ impl InternalSourceMap {
         }
     }
 
-    /// Only call this when the blob was heap-allocated by `Builder`/`from_vlq` (e.g.
-    /// entries in `SavedSourceMap`). Do NOT call on views over the standalone
-    /// module graph section or any other borrowed memory.
-    // TODO(port): conditional ownership — intentionally NOT `impl Drop` because
-    // `InternalSourceMap` is a Copy view and may borrow non-owned memory. Phase B
-    // should split into an owning newtype with `impl Drop`.
-    pub fn free_owned(self) {
+    /// Free the heap-allocated blob backing `self`.
+    ///
+    /// # Safety
+    ///
+    /// The blob MUST have been heap-allocated by `Builder`/`from_vlq` (e.g.
+    /// entries in `SavedSourceMap` via `put_mappings`). Do NOT call on views
+    /// over the standalone module graph section or any other borrowed memory.
+    ///
+    /// TODO(port): conditional ownership — intentionally NOT `impl Drop` because
+    /// `InternalSourceMap` is a Copy view and may borrow non-owned memory. Phase B
+    /// should split into an owning newtype with `impl Drop`.
+    pub unsafe fn free_owned(self) {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
         unsafe {

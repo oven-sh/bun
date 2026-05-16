@@ -272,10 +272,12 @@ impl Drop for SavedSourceMap {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
                     // the blob's data pointer (InternalSourceMap is a thin view).
-                    (InternalSourceMap {
-                        data: ism as *const u8,
-                    })
-                    .free_owned();
+                    unsafe {
+                        (InternalSourceMap {
+                            data: ism as *const u8,
+                        })
+                        .free_owned();
+                    }
                 }
             }
             self.unlock();
@@ -365,10 +367,12 @@ impl SavedSourceMap {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
                     // the blob's data pointer (InternalSourceMap is a thin view).
-                    (InternalSourceMap {
-                        data: ism as *const u8,
-                    })
-                    .free_owned();
+                    unsafe {
+                        (InternalSourceMap {
+                            data: ism as *const u8,
+                        })
+                        .free_owned();
+                    }
                 }
                 *o.get_mut() = value.ptr();
             }

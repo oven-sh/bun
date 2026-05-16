@@ -29,33 +29,36 @@ test.concurrent("dynamic import with unsupported attribute throws ERR_IMPORT_ATT
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("dynamic import with only unsupported attribute (no type) throws ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", async () => {
-  using dir = tempDir("28510-no-type", {
-    "data.json": JSON.stringify({ life: 42 }),
-    "test.mjs": `
+test.concurrent(
+  "dynamic import with only unsupported attribute (no type) throws ERR_IMPORT_ATTRIBUTE_UNSUPPORTED",
+  async () => {
+    using dir = tempDir("28510-no-type", {
+      "data.json": JSON.stringify({ life: 42 }),
+      "test.mjs": `
       const result = await import('./data.json', { with: { notARealAssertion: 'value' } })
         .then(() => 'should not reach')
         .catch(err => ({ code: err.code, name: err.name }));
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const result = JSON.parse(stdout.trim());
-  expect(result).toEqual({
-    code: "ERR_IMPORT_ATTRIBUTE_UNSUPPORTED",
-    name: "TypeError",
-  });
-  expect(exitCode).toBe(0);
-});
+    const result = JSON.parse(stdout.trim());
+    expect(result).toEqual({
+      code: "ERR_IMPORT_ATTRIBUTE_UNSUPPORTED",
+      name: "TypeError",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("dynamic import with only type attribute succeeds", async () => {
   using dir = tempDir("28510-valid", {
@@ -147,9 +150,11 @@ test.concurrent("TypeScript type-only imports and exports allow arbitrary attrib
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("ambient `declare module` allows arbitrary import attribute keys (entire block is erased)", async () => {
-  using dir = tempDir("28510-declare-module", {
-    "test.ts": `
+test.concurrent(
+  "ambient `declare module` allows arbitrary import attribute keys (entire block is erased)",
+  async () => {
+    using dir = tempDir("28510-declare-module", {
+      "test.ts": `
       declare module "some-pkg" {
         import X from "pkg-a" with { "resolution-mode": "require" };
         export * from "pkg-b" with { arbitrary: "val" };
@@ -157,20 +162,21 @@ test.concurrent("ambient `declare module` allows arbitrary import attribute keys
       }
       console.log("ok");
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("ok");
-  expect(exitCode).toBe(0);
-});
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("dynamic import rejection fires unhandledRejection", async () => {
   using dir = tempDir("28510-unhandled", {

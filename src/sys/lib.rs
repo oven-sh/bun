@@ -967,7 +967,7 @@ pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind
 /// `std::os::fd::AsFd`. Implemented for references only (not owned `File` /
 /// `Dir`) so syscall wrappers can't accidentally consume and drop-close an
 /// owned handle.
-pub trait AsFd {
+pub trait AsFd: Copy {
     fn as_fd(&self) -> Fd;
 }
 impl AsFd for Fd {
@@ -988,19 +988,7 @@ impl AsFd for &File {
         self.handle
     }
 }
-impl AsFd for &mut File {
-    #[inline]
-    fn as_fd(&self) -> Fd {
-        self.handle
-    }
-}
 impl AsFd for &Dir {
-    #[inline]
-    fn as_fd(&self) -> Fd {
-        self.fd
-    }
-}
-impl AsFd for &mut Dir {
     #[inline]
     fn as_fd(&self) -> Fd {
         self.fd

@@ -1192,8 +1192,7 @@ impl Writable {
                                 event_loop.global_object().cast::<JSGlobalObject>(),
                             );
                             // SAFETY: `pipe_ptr` is live with refcount 1.
-                            let assign_result =
-                                unsafe { (*pipe_ptr).assign_to_stream(rs, global) };
+                            let assign_result = unsafe { (*pipe_ptr).assign_to_stream(rs, global) };
                             if let Some(err) = assign_result.to_error() {
                                 // Surface to the caller; a still-valid Writable is returned
                                 // so spawn_maybe_sync_impl can tear down the subprocess via

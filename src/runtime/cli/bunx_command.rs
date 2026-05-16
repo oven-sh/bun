@@ -540,13 +540,15 @@ impl BunxCommand {
             if is_stale {
                 let _ = target_package_json.close();
                 // If delete fails, oh well. Hope installation takes care of it.
-                // Under `force_stale` (age gate), the wipe is REQUIRED — a
-                // surviving `bun.lock` would let the subsequent `bun add`
-                // reuse the previous resolution even under `--force`,
-                // silently bypassing the age filter for ranged specifiers
-                // like `@scope/pkg@^N`. The wipe is harmless under
-                // `--no-install` because that path errors out in `exec`
-                // anyway without installing.
+                // Under the 24h-mtime stale branch this wipe is the only one
+                // that runs; under `force_stale` (age gate) it's defense in
+                // depth — the install path in `exec` also wipes the cache
+                // before `bun add` (gated on `has_active_age_gate()`), because
+                // a surviving `bun.lock` would let `bun add` reuse the
+                // previous resolution even under `--force` and silently
+                // bypass the age filter for ranged specifiers like
+                // `@scope/pkg@^N`. Wiping here is harmless under `--no-install`
+                // because that path errors out in `exec` without installing.
                 let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 return Err(bun_core::err!("NeedToInstall"));
             }
@@ -1393,8 +1395,9 @@ impl BunxCommand {
         // break, `'find2` cache-hit break, and the `get_bin_name_from_temp_directory`
         // force_stale return) with a single call — no need to duplicate it
         // at every `break 'try_run_existing` site. `delete_tree` is a
-        // best-effort recursive rm (same as the force_stale path at
-        // line 531); failures will be caught by `make_open_path` just below.
+        // best-effort recursive rm (same as the `is_stale` wipe in
+        // `get_bin_name_from_temp_directory`); failures will be caught by
+        // `make_open_path` just below.
         if opts.has_active_age_gate() {
             let _ = bun_sys::Dir::cwd().delete_tree(bunx_cache_dir);
         }

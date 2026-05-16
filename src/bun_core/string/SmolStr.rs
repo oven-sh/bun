@@ -64,7 +64,7 @@ impl SmolStr {
     // ---- public API -------------------------------------------------------
 
     // TODO(port): Zig `jsonStringify` participates in std.json's structural protocol;
-    // map to whatever bun's JSON-serialize trait becomes in Phase B.
+    // map to bun's JSON-serialize trait once one exists.
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), crate::Error>
     where
         W: JsonWriter,
@@ -144,7 +144,7 @@ impl SmolStr {
             // TODO(port): verify Vec::<u8>::init_capacity / append_slice_assume_capacity API.
             let mut baby_list = Vec::<u8>::with_capacity(values.len());
             baby_list.extend_from_slice(values);
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+            // PERF(port): was appendSliceAssumeCapacity — profile if hot.
             return Ok(SmolStr::from_baby_list(baby_list));
         }
 
@@ -169,7 +169,7 @@ impl SmolStr {
             if inlined.len() as usize + 1 > Inlined::MAX_LEN {
                 let mut baby_list = Vec::<u8>::with_capacity(inlined.len() as usize + 1);
                 baby_list.extend_from_slice(inlined.slice());
-                // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                // PERF(port): was appendSliceAssumeCapacity — profile if hot.
                 baby_list.push(char);
                 // Old value is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
                 *self = SmolStr::from_baby_list(baby_list);
@@ -203,7 +203,7 @@ impl SmolStr {
                 let mut baby_list = Vec::<u8>::with_capacity(old_len + values.len());
                 baby_list.extend_from_slice(inlined.slice());
                 baby_list.extend_from_slice(values);
-                // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                // PERF(port): was appendSliceAssumeCapacity — profile if hot.
                 // Old `*self` is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
                 *self = SmolStr::from_baby_list(baby_list);
                 return Ok(());

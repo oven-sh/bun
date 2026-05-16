@@ -100,7 +100,7 @@ impl SocketGroup {
     // TODO(port): Zig accepted `owner_ptr: anytype` (any single-item pointer or
     // null) with comptime @typeInfo validation. Rust callers cast at the call
     // site; consider a typed `init_with_owner<T>(&mut self, ..., owner: &mut T)`
-    // helper in Phase B if ergonomics warrant.
+    // helper if ergonomics warrant.
     pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.

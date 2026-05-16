@@ -136,8 +136,7 @@ impl Tag {
     // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
-/// `.rodata` flag table indexed by [`Tag`] discriminant. Replaces the
-/// `LazyLock<EnumMap<Tag, _>>` Phase-A scaffolding so these tables cost zero
+/// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero
 /// init code on the startup path (matches Zig `std.EnumArray.initDefault`).
 #[repr(transparent)]
 pub struct TagTable<V: 'static>(pub [V; Tag::COUNT]);

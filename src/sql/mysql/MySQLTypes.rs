@@ -1,10 +1,10 @@
 use strum::IntoStaticStr;
 
 // TODO(port): Zig source is `enum(u8) { ..., _ }` (non-exhaustive — any u8 is a valid
-// CharacterSet). A Rust `#[repr(u8)] enum` is UB for unnamed discriminants. Phase B must
-// decide: either (a) keep this enum and guarantee all decode sites range-check before
-// `from_raw`, or (b) switch to `#[repr(transparent)] pub struct CharacterSet(pub u8)` with
-// associated consts. `label()` below already assumes out-of-range values are possible.
+// CharacterSet). A Rust `#[repr(u8)] enum` is UB for unnamed discriminants. Either
+// (a) keep this enum and guarantee all decode sites range-check before `from_raw`, or
+// (b) switch to `#[repr(transparent)] pub struct CharacterSet(pub u8)` with associated
+// consts. `label()` below already assumes out-of-range values are possible.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr)]
 pub enum CharacterSet {
@@ -254,7 +254,7 @@ impl Default for CharacterSet {
 // MySQL field types
 // https://dev.mysql.com/doc/dev/mysql-server/latest/binary__log__types_8h.html#a8935f33b06a3a88ba403c63acd806920
 // TODO(port): Zig source is `enum(u8) { ..., _ }` (non-exhaustive). See note on CharacterSet
-// above — same Phase B decision applies (range-checked `from_raw` vs newtype-over-u8).
+// above — same decision applies (range-checked `from_raw` vs newtype-over-u8).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr)]
 pub enum FieldType {
@@ -368,7 +368,7 @@ pub type MySQLInt64 = Int8;
 pub type Int1 = u8;
 pub type Int2 = u16;
 // TODO(port): Zig `u24` — Rust has no native u24. Aliased to u32 here; wire-protocol
-// encode/decode sites must mask/read exactly 3 bytes. Phase B: verify all int3 users.
+// encode/decode sites must mask/read exactly 3 bytes. Verify all Int3 users do so.
 pub type Int3 = u32;
 pub type Int4 = u32;
 pub type Int8 = u64;

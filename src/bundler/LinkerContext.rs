@@ -17,7 +17,7 @@ use bun_sourcemap::{
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use bun_ast::{ImportKind, ImportRecord};
 use bun_threading::{self as sync, WaitGroup, thread_pool as ThreadPoolLib};
-// TODO(b0): bake_types arrives from move-in (TYPE_ONLY → bundler)
+// TODO(port): bake_types arrives from move-in (TYPE_ONLY → bundler)
 use crate::bake_types as bake;
 use crate::bun_css as css;
 
@@ -440,13 +440,13 @@ impl<'a> LinkerContext<'a> {
     pub fn check_for_memory_corruption(&self) {
         // For this to work, you need mimalloc's debug build enabled.
         //    make mimalloc-debug
-        // TODO(b3): `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
+        // TODO(port): `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
         // once `Graph.heap: MimallocArena`.
     }
 }
 
-// Local re-exports for the un-gated tree-shaking impl below. `EntryPoint::Kind`
-// and `SideEffects` live in sibling modules; the Phase-A draft referenced them
+// Local re-exports for the tree-shaking impl below. `EntryPoint::Kind`
+// and `SideEffects` live in sibling modules; code here used to reference them
 // via Zig-style nested paths. The real `EntryPoint` lives in
 // `ungate_support::entry_point`; re-export so `EntryPoint::Kind` here is the
 // *same type* `items_entry_point_kind()` returns (was a duplicate enum before).
@@ -461,7 +461,7 @@ use crate::ungate_support::{CompileResultForSourceMapColumns as _, EntryPointCol
 use bun_ast::SideEffects as _GraphSideEffects;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
-// TODO(b2-blocked): method bodies depend on `LinkerGraph` SoA accessors
+// TODO(port): method bodies depend on `LinkerGraph` SoA accessors
 // (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
 // `crate::thread_pool::Worker`, `generic_path_with_pretty_initialized`, and the gated
 // `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
@@ -1471,7 +1471,7 @@ impl SourceMapDataTask {
     }
 }
 
-// TODO(b2-blocked): see SourceMapDataTask above.
+// TODO(port): see SourceMapDataTask above.
 
 impl SourceMapData {
     /// Runs concurrently across the worker pool (one task per `source_index`).
@@ -1741,7 +1741,7 @@ struct SubstituteChunkFinalPathResult {
     shifts: Box<[SourceMapShifts]>,
 }
 
-// TODO(b2-blocked): scan/tree-shake/link method bodies. These reach into
+// TODO(port): scan/tree-shake/link method bodies. These reach into
 // `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
 // gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
 // and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
@@ -2186,7 +2186,7 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: `Options.arena` / `source_map_allocator` were removed in
         // the Rust port (printer uses global mimalloc + the explicit `bump`
         // argument to `print_with_writer`). The dev-server source-map-arena
-        // selection is folded into TODO(b3) until arena threading lands.
+        // selection is folded into TODO(port) until arena threading lands.
         let _ = self.dev_server.is_some()
             && parse_graph.input_files.items_loader()[source_index.get() as usize]
                 .is_javascript_like();
@@ -2290,7 +2290,7 @@ impl<'a> LinkerContext<'a> {
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
         let result = if enable_source_maps {
             js_printer::print_with_writer::<&mut js_printer::BufferPrinter, true>(
                 &mut printer,
@@ -2578,7 +2578,7 @@ impl<'a> LinkerContext<'a> {
             }
         });
     }
-} // end  — split: tree-shaking trio un-gated below (B-2 second pass)
+} // end — split: tree-shaking trio below
 
 /// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
 /// can call back into `LinkerContext::require_or_import_meta_for_source`.
@@ -2594,11 +2594,9 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// B-2 second pass: un-gated tree-shaking primitives. These reach into
-// `LinkerGraph` SoA columns (`files_live`, `meta.items_flags()`) and the
-// `Graph::InputFileColumns` accessors. `LinkerGraph` real fields land via the
-// concurrent `LinkerGraph.rs` un-gate; until lib.rs flips its module gate the
-// stub `LinkerGraph(())` will surface here — expected and tracked.
+// Tree-shaking primitives. These reach into `LinkerGraph` SoA columns
+// (`files_live`, `meta.items_flags()`) and the `Graph::InputFileColumns`
+// accessors.
 // ══════════════════════════════════════════════════════════════════════════
 impl<'a> LinkerContext<'a> {
     pub fn mark_file_reachable_for_code_splitting(
@@ -2968,19 +2966,18 @@ impl<'a> LinkerContext<'a> {
             );
         }
     }
-} // end un-gated tree-shaking impl (B-2 second pass)
+} // end tree-shaking impl
 
 // ══════════════════════════════════════════════════════════════════════════
-// `scanImportsAndExports.rs` callees — un-gated (B-2 third pass).
+// `scanImportsAndExports.rs` callees.
 //
 // `linker_context/scanImportsAndExports.rs` calls these `LinkerContext`
 // methods inherently. Real ports of the `LinkerContext.zig` /
 // `linker_context/doStep5.zig` / `linker_context/generateCodeForLazyExport.zig`
-// bodies. The `` impl block immediately below retains the
-// Phase-A drafts (now duplicated) until the next sweep removes them.
+// bodies.
 // ══════════════════════════════════════════════════════════════════════════
 
-// Local imports for the un-gated bodies. `AstFlags` / `DeclaredSymbolList`
+// Local imports. `AstFlags` / `DeclaredSymbolList`
 // already imported at the top of the file.
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
@@ -4293,7 +4290,7 @@ impl InsideWrapperPrefix {
     }
 }
 
-// TODO(b2-blocked): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
+// TODO(port): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
 // — bun_js_parser AST builder surface not yet stable.
 
 impl InsideWrapperPrefix {

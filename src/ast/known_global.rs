@@ -33,7 +33,7 @@ pub enum KnownGlobal {
 // `pub const map = bun.ComptimeEnumMap(KnownGlobal);`
 //
 // PERF(port): Zig's `ComptimeEnumMap` lowers to a comptime-generated switch.
-// Phase A used `phf::Map<&[u8], _>`, which on every probe computes a 128-bit
+// An earlier port used `phf::Map<&[u8], _>`, which on every probe computes a 128-bit
 // SipHash of the name, two modular reductions, a bounds check, and a final
 // slice compare. `minify_global_constructor` calls this for every `new Ident`
 // expression in the input, and the overwhelming majority of probes are
@@ -113,7 +113,7 @@ impl KnownGlobal {
     }
 
     // PORT NOTE: `_bump` is kept for call-site shape parity with the Zig
-    // `std.mem.Allocator` arg. Phase-A `Vec` uses the global arena.
+    // `std.mem.Allocator` arg. The `Vec` uses the global arena.
     #[inline(never)]
     pub fn minify_global_constructor(
         _bump: &Bump,

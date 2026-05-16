@@ -95,7 +95,7 @@ pub type GenString = bun_core::String;
 /// `bun.bun_js.jsc.JSCArrayBuffer.Ref` — adopted `*mut JSC::ArrayBuffer` (refcount
 /// already +1 from C++); deref via `JSC__ArrayBuffer__deref` on drop.
 // TODO(port): wrap in `bun_ptr::ExternalShared<JSCArrayBuffer>` once that crate
-// exposes `adopt(*mut T)`. Raw ptr for now (Phase A — leak on drop).
+// exposes `adopt(*mut T)`. Raw ptr for now (leaks on drop).
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
 /// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
@@ -451,9 +451,9 @@ impl SSLConfigFile {
                         out.push(SSLConfigSingleFile::convert_from_extern(elem));
                     }
                     // PORT NOTE: Zig `BindgenArray` reuses the allocation in-place
-                    // when `ZigType == ExternType`. Phase A copies-then-frees the
+                    // when `ZigType == ExternType`. This path copies-then-frees the
                     // source buffer; in-place reuse deferred.
-                    // PERF(port): was BindgenArray in-place convert — profile in Phase B
+                    // PERF(port): was BindgenArray in-place convert — profile if it shows up on a hot path.
                     // `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
                     // (per crate prereq); `mi_free` is size-agnostic.
                     bun_alloc::basic::free_without_size(arr.data.cast());

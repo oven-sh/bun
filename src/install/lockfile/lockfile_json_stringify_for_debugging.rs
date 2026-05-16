@@ -15,9 +15,9 @@ use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
 use super::{FormatVersion, Lockfile, Package, package_index, tree};
 
-// TODO(port): `w: anytype` is a `std.json.WriteStream`-shaped writer. Phase B should
-// introduce a `JsonWriter` trait in bun_core (or bun_collections) with the methods
-// used below: begin_object/end_object/begin_array/end_array/object_field/write/write_null/print.
+// TODO(refactor): `w: anytype` is a `std.json.WriteStream`-shaped writer. Introduce a
+// `JsonWriter` trait in bun_core (or bun_collections) with the methods used below:
+// begin_object/end_object/begin_array/end_array/object_field/write/write_null/print.
 // `write` is generic over JSON-encodable scalars (bool, integers, &[u8]).
 //
 // PORT NOTE: Zig used `defer w.endObject() catch {}` so that closing braces are emitted

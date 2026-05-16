@@ -169,8 +169,8 @@ pub struct Symbol {
 }
 
 // TODO(port): Zig asserts @sizeOf(Symbol) == 88 and @alignOf(Symbol) == @alignOf([]const u8).
-// Rust default repr reorders fields and Option<NamespaceAlias> niche may differ; verify in
-// Phase B (likely needs #[repr(C)] or manual packing if the size is load-bearing).
+// Rust default repr reorders fields and Option<NamespaceAlias> niche may differ
+// (likely needs #[repr(C)] or manual packing if the size is load-bearing).
 // const _: () = assert!(core::mem::size_of::<Symbol>() == 88);
 // const _: () = assert!(core::mem::align_of::<Symbol>() == core::mem::align_of::<crate::StoreStr>());
 
@@ -641,7 +641,7 @@ impl Map {
     }
 
     pub fn follow_all(&mut self) {
-        // TODO(b2-blocked): bun_perf::trace("Symbols.followAll") — RAII guard
+        // TODO(port): bun_perf::trace("Symbols.followAll") — RAII guard
         // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
         // mutate `link` in place; `follow()` only takes `&self` and only touches
         // `link`, so the nested shared borrows coexist.

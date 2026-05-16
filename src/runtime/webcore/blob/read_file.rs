@@ -823,7 +823,7 @@ impl ReadFile {
                     } else {
                         self.buffer.reserve(read.len());
                     }
-                    // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                    // PERF(port): was appendSliceAssumeCapacity — profile if hot.
                     self.buffer.extend_from_slice(read);
                 } else {
                     // record the amount of data read

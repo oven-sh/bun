@@ -28,9 +28,7 @@ bun_core::declare_scope!(FileSink, visible);
 // ───────────────────────────────────────────────────────────────────────────
 
 // R-2 (`&mut self` host-fn re-entrancy → noalias UB): JS-reachable host-fns
-// take `&self` and mutate via `Cell`/`JsCell`. The codegen shim (Phase 1)
-// still passes `&mut T`, but `&mut T` auto-derefs to `&T`, so this compiles
-// today and becomes sound once the shim flips. Init-time / `finalize` paths
+// take `&self` and mutate via `Cell`/`JsCell`. Init-time / `finalize` paths
 // keep `&mut self` for write+dealloc provenance (they reach `FileSink::deref`
 // which may `heap::take`) — those derive `&mut self` from the codegen shim's
 // `&mut T`, which carries a Unique tag over the whole allocation, so dealloc
@@ -1200,7 +1198,7 @@ impl FileSink {
     }
 
     // TODO(port): in-place init — `construct` is called by JSSink codegen on a
-    // pre-allocated `m_ctx` slot. Phase B may need `&mut MaybeUninit<Self>`.
+    // pre-allocated `m_ctx` slot. May need `&mut MaybeUninit<Self>`.
     pub fn construct() -> FileSink {
         let this = FileSink {
             ref_count: Cell::new(1),
@@ -1755,8 +1753,8 @@ impl FileSink {
 // exports the address of an 8-byte data slot, which never equals the shim's
 // code address → RELEASE_ASSERT_NOT_REACHED at runtime.
 //
-// TODO(port): gate on `export_cpp_apis` feature in Phase B; replace with
-// `#[bun_jsc::host_fn]` once the proc-macro lands.
+// TODO(refactor): replace with `#[bun_jsc::host_fn]` and gate on an
+// `export_cpp_apis` feature.
 bun_jsc::jsc_host_abi! {
     #[unsafe(export_name = "Bun__FileSink__onResolveStream")]
     unsafe fn on_resolve_stream_shim(

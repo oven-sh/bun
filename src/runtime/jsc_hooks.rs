@@ -3374,8 +3374,10 @@ fn get_hardcoded_module(
             use bun_jsc::resolved_source::Tag;
             Some(OwnedResolvedSource::new(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(&ep.contents),
-                specifier: *specifier,
-                source_url: *specifier,
+                // +1 each: ~SourceProvider() derefs `specifier` and
+                // `source_url` once all uses are done (see ZigSourceProvider.cpp).
+                specifier: specifier.dupe_ref(),
+                source_url: specifier.dupe_ref(),
                 tag: Tag::Esm,
                 source_code_needs_deref: true,
                 ..ResolvedSource::default()
@@ -3401,8 +3403,9 @@ fn get_hardcoded_module(
             {
                 return Some(OwnedResolvedSource::new(ResolvedSource {
                     source_code: bun_core::String::init(bun_ast::runtime::Runtime::source_code()),
-                    specifier: *specifier,
-                    source_url: *specifier,
+                    // +1 each: ~SourceProvider() derefs both.
+                    specifier: specifier.dupe_ref(),
+                    source_url: specifier.dupe_ref(),
                     ..ResolvedSource::default()
                 }));
             }
@@ -3474,7 +3477,8 @@ unsafe fn fetch_builtin_module(
             unsafe {
                 *out = ErrorableResolvedSource::ok(ResolvedSource {
                     source_code: bun_core::String::clone_utf8(&(*entry).source.contents),
-                    specifier: *specifier,
+                    // +1 each: ~SourceProvider() derefs both.
+                    specifier: specifier.dupe_ref(),
                     source_url: specifier.dupe_ref(),
                     ..ResolvedSource::default()
                 });
@@ -3520,7 +3524,8 @@ export default db;
                 unsafe {
                     *out = ErrorableResolvedSource::ok(ResolvedSource {
                         source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
-                        specifier: *specifier,
+                        // +1 each: ~SourceProvider() derefs both.
+                        specifier: specifier.dupe_ref(),
                         source_url: specifier.dupe_ref(),
                         source_code_needs_deref: false,
                         ..ResolvedSource::default()
@@ -3538,7 +3543,8 @@ export default db;
             unsafe {
                 *out = ErrorableResolvedSource::ok(ResolvedSource {
                     source_code: file.to_wtf_string(),
-                    specifier: *specifier,
+                    // +1 each: ~SourceProvider() derefs both.
+                    specifier: specifier.dupe_ref(),
                     source_url: specifier.dupe_ref(),
                     bytecode_origin_path: if !file.bytecode_origin_path.is_empty() {
                         bun_core::String::from_bytes(file.bytecode_origin_path)

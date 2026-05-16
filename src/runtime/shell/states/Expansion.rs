@@ -265,7 +265,16 @@ impl Expansion {
                 braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str),
             )
         };
-        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]) as usize;
+        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
+        // Hard cap before preallocation: `calculate_expanded_amount` saturates
+        // to `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
+        const MAX_BRACE_EXPANSIONS: u32 = 65536;
+        if count > MAX_BRACE_EXPANSIONS {
+            let msg = format!("too many brace expansions ({count} > {MAX_BRACE_EXPANSIONS})");
+            me.state = ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
+            return;
+        }
+        let count = count as usize;
         let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
 
         let arena = bun_alloc::Arena::new();

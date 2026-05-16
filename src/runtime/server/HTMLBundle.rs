@@ -130,7 +130,7 @@ impl HTMLBundle {
     // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
+    // TODO(port): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
     pub fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
@@ -479,7 +479,7 @@ impl Route {
             // PORT NOTE: Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
             // `StringArrayHashMap`; Rust `StringMap` exposes only put/insert. Same
             // result, slightly more hash work.
-            // PERF(port): was bulk reIndex — profile in Phase B.
+            // PERF(port): was bulk reIndex — profile if hot.
             for (k, v) in define.keys.iter().zip(define.values.iter()) {
                 config.define.put(k, v)?;
             }

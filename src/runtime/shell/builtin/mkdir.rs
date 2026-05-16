@@ -205,7 +205,7 @@ impl OutputTaskVTable for Mkdir {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // TODO(b2-blocked): IOWriter ChildPtr for OutputTask — needs a
+            // TODO(port): IOWriter ChildPtr for OutputTask — needs a
             // dedicated WriterTag once OutputTask is dispatchable. Until then
             // stash `child` on `output_queue` so `on_io_writer_chunk` can
             // route the completion back to the OutputTask state machine and

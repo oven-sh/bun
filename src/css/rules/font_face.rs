@@ -235,7 +235,7 @@ impl UnicodeRange {
             Ok(vv) => vv.clone(),
             Err(e) => return Err(e),
         };
-        // TODO(port): exact `Token` variant shapes (Dimension/Number payloads) may differ in Phase B.
+        // TODO(port): verify exact `Token` variant shapes (Dimension/Number payloads).
         match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
@@ -440,7 +440,7 @@ pub enum FontFormat {
     /// An SVG font.
     Svg,
     /// An unknown format.
-    // PORT NOTE: arena-owned slice from parser input; Phase B threads `'i`.
+    // PORT NOTE: arena-owned slice from parser input; TODO(refactor): thread `'i`.
     String(&'static [u8]),
 }
 

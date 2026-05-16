@@ -18,7 +18,7 @@ use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
 // TODO(port): Zig had two `Output.scoped(.HTTPThread, ...)` with different visibilities (.hidden + .visible).
-// Rust scope registry keys on name; pick one visibility in Phase B or split scope names.
+// Rust scope registry keys on name; pick one visibility or split scope names.
 
 /// SSL context cache keyed by interned SSLConfig pointer.
 /// Since configs are interned via SSLConfig.GlobalRegistry, pointer equality
@@ -185,7 +185,7 @@ impl HttpThread {
 pub struct HeapRequestBodyBuffer {
     pub buffer: [u8; 512 * 1024],
     // TODO(port): was `std.heap.FixedBufferAllocator` borrowing `buffer` —
-    // self-referential. Phase B: bun_alloc::FixedBufferAllocator or just a cursor.
+    // self-referential. Use bun_alloc::FixedBufferAllocator or just a cursor.
     pub cursor: usize,
 }
 
@@ -215,7 +215,7 @@ pub enum RequestBodyBuffer {
     // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
     Heap(Option<Box<HeapRequestBodyBuffer>>),
     // PERF(port): was std.heap.StackFallbackAllocator(32KB) — inline stack buffer with heap fallback.
-    // TODO(b2-blocked): bun_alloc::StackFallbackAllocator<REQUEST_BODY_SEND_STACK_BUFFER_SIZE>
+    // TODO(port): bun_alloc::StackFallbackAllocator<REQUEST_BODY_SEND_STACK_BUFFER_SIZE>
     Stack(Box<[u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]>),
 }
 
@@ -239,8 +239,8 @@ impl RequestBodyBuffer {
 
     pub fn to_array_list(&mut self) -> Vec<u8> {
         // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
-        // Rust Vec cannot adopt a foreign allocator+buffer; Phase B should expose a cursor type instead.
-        // PERF(port): was FixedBufferAllocator/StackFallback — redesign in Phase B (allocator() accessor
+        // Rust Vec cannot adopt a foreign allocator+buffer; expose a cursor type instead.
+        // PERF(port): was FixedBufferAllocator/StackFallback (allocator() accessor
         // dropped per PORTING.md non-AST rule; callers should write into allocated_slice() directly).
         let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
         arraylist.clear();
@@ -292,7 +292,7 @@ impl LibdeflateState {
 
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
-// TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode field offset in Phase B.
+// TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode the field offset.
 pub type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
 // Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
@@ -1050,7 +1050,7 @@ use core::cell::Cell;
 // above uses the raw `*mut uws::Loop` directly so the rest of the thread
 // machinery compiles; the actual event-loop drive stays gated until the tier
 // boundary is resolved.
-// TODO(b2-blocked): MiniEventLoop is in bun_event_loop (not in bun_http deps).
+// TODO(port): MiniEventLoop is in bun_event_loop (not in bun_http deps).
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod _event_loop_draft {

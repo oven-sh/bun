@@ -442,7 +442,7 @@ pub fn install_isolated_packages(
                         if dep_id == invalid_dependency_id && entry.dep_id == invalid_dependency_id
                         {
                             node_nodes[entry.parent_id.get() as usize].push(curr_id);
-                            // PERF(port): was appendAssumeCapacity — profile in Phase B
+                            // PERF(port): was appendAssumeCapacity — profile if hot.
                             continue 'next_node;
                         }
 
@@ -464,7 +464,7 @@ pub fn install_isolated_packages(
                             curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
                         {
                             node_nodes[entry.parent_id.get() as usize].push(curr_id);
-                            // PERF(port): was appendAssumeCapacity — profile in Phase B
+                            // PERF(port): was appendAssumeCapacity — profile if hot.
                             continue 'next_node;
                         }
                     }
@@ -621,7 +621,7 @@ pub fn install_isolated_packages(
                         }
 
                         node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
-                        // PERF(port): was appendAssumeCapacity — profile in Phase B
+                        // PERF(port): was appendAssumeCapacity — profile if hot.
                         continue 'next_node;
                     }
 
@@ -658,7 +658,7 @@ pub fn install_isolated_packages(
 
             if let Some(parent_id) = entry.parent_id.try_get() {
                 node_nodes[parent_id as usize].push(node_id);
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if hot.
             }
 
             if skip_dependencies {
@@ -672,7 +672,7 @@ pub fn install_isolated_packages(
             for _dep_id in pkg_deps.begin()..pkg_deps.end() {
                 let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                 dep_ids_sort_buf.push(dep_id);
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if hot.
             }
 
             // TODO: make this sort in an order that allows peers to be resolved last
@@ -707,7 +707,7 @@ pub fn install_isolated_packages(
                                 if package_to_install == pkg_id {
                                     node_dependencies[node_id.get() as usize]
                                         .push(store::node::DependencyIds { dep_id, pkg_id });
-                                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                                    // PERF(port): was appendAssumeCapacity — profile if hot.
                                     node_queue.push(QueuedNode {
                                         parent_id: node_id,
                                         dep_id,
@@ -746,7 +746,7 @@ pub fn install_isolated_packages(
                         // - queue it
                         node_dependencies[node_id.get() as usize]
                             .push(store::node::DependencyIds { dep_id, pkg_id });
-                        // PERF(port): was appendAssumeCapacity — profile in Phase B
+                        // PERF(port): was appendAssumeCapacity — profile if hot.
                         node_queue.push(QueuedNode {
                             parent_id: node_id,
                             dep_id,
@@ -885,7 +885,7 @@ pub fn install_isolated_packages(
                         dep_id: peer_dep_id,
                         pkg_id: resolved_pkg_id,
                     });
-                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                    // PERF(port): was appendAssumeCapacity — profile if hot.
                     node_queue.push(QueuedNode {
                         parent_id: node_id,
                         dep_id: peer_dep_id,
@@ -1048,7 +1048,7 @@ pub fn install_isolated_packages(
 
             let mut new_entry_parents: Vec<store::entry::Id> = Vec::with_capacity(1);
             new_entry_parents.push(entry.entry_parent_id);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if hot.
 
             let hoisted = 'hoisted: {
                 if new_entry_dep_id == invalid_dependency_id {
@@ -1957,7 +1957,7 @@ pub fn install_isolated_packages(
 
     {
         // TODO(port): Progress.Node locals are conditionally initialized in Zig;
-        // model with Option in Phase B.
+        // model with Option.
         let mut download_node: ProgressNode = ProgressNode::default();
         let mut install_node: ProgressNode = ProgressNode::default();
         let mut scripts_node: ProgressNode = ProgressNode::default();
@@ -2195,7 +2195,7 @@ pub fn install_isolated_packages(
                     // PORT NOTE: Zig used `inline ... => |pkg_res_tag|` to monomorphize the
                     // body per-tag. Rust collapses to a single arm with a runtime
                     // `pkg_res.tag` re-match where the body branches. // PERF(port): was
-                    // comptime monomorphization — profile in Phase B.
+                    // comptime monomorphization — profile if hot.
                     let pkg_res_tag = pkg_res.tag;
 
                     let patch_info =

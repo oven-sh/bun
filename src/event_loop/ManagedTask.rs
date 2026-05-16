@@ -47,7 +47,7 @@ impl ManagedTask {
     // to `*Type` and `@call(bun.callmod_inline, Callback, ...)`) is folded away by storing
     // the type-erased fn pointer directly — `fn(*mut T)` and `fn(*mut c_void)` share ABI.
     // Callers: `ManagedTask.New(T, cb).init(ctx)` → `ManagedTask::new(ctx, cb)`.
-    // PERF(port): was comptime monomorphization (callmod_inline) — profile in Phase B
+    // PERF(port): was comptime monomorphization (callmod_inline).
     pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
         let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
             // SAFETY: `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical

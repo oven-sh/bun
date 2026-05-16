@@ -136,7 +136,7 @@ impl CompileTarget {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
                 // TODO(port): lifetime — Zig returns the env var slice directly (`return url;`),
-                // which is not tied to `buf`. Phase B: change return type to allow returning a
+                // which is not tied to `buf`. Could change the return type to allow returning a
                 // non-buf slice (e.g. Cow<'_, [u8]>). For now copy into buf without truncation.
                 if url.len() > buf.len() {
                     return Err(bun_core::err!("BufferTooSmall"));
@@ -444,7 +444,7 @@ impl CompileTarget {
 
     pub fn define_values(&self) -> &'static [&'static [u8]] {
         // PERF(port): was comptime monomorphization (inline else over os/arch/libc returning
-        // anonymous struct const). Phase B: generate static tables via macro_rules! or
+        // anonymous struct const). Could generate static tables via macro_rules! or
         // const_format::concatcp! over OperatingSystem::name_string().
         // TODO(port): this needs a static [&[u8]; 3] per (os, arch, libc) combo — the os
         // string is `"\"" ++ os.nameString() ++ "\""` and the version is

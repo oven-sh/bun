@@ -154,7 +154,7 @@ where
     fn get_fallbacks(&mut self, arena: &Bump, targets: Targets) -> SmallList<Self, 2> {
         use css::generics::DeepClone as _;
         let fallbacks = self.color.get_fallbacks(arena, targets);
-        // PERF(port): was arena bulk-free (fallbacks.deinit) — profile in Phase B
+        // PERF(port): was arena bulk-free (fallbacks.deinit) — profile if it shows up on a hot path
         let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
         for color in fallbacks.slice() {
             out.append_assume_capacity(Self {
@@ -478,7 +478,7 @@ impl BorderShorthand {
     }
 
     fn reset(&mut self, _arena: &Bump) {
-        // PERF(port): was arena bulk-free via bun.clear — profile in Phase B
+        // PERF(port): was arena bulk-free via bun.clear — profile if it shows up on a hot path
         self.width = None;
         self.style = None;
         self.color = None;

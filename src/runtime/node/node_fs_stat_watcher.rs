@@ -232,7 +232,7 @@ impl StatWatcherScheduler {
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn set_timer(this: *mut Self, interval: i32) {
-        // b2-cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
+        // jsc/runtime crate cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
         // not as a value field on the low-tier `VirtualMachine`. Recover it via
         // the per-thread `runtime_state()` (single JS thread; see jsc_hooks.rs).
         // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null

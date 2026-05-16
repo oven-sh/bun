@@ -1,7 +1,7 @@
 //! Node-API (N-API) implementation.
 //! Port of src/napi/napi.zig.
 //!
-//! B-2: full draft (2962 lines, preserved in `napi_body.rs`) depends on
+//! The full implementation lives in `napi_body.rs` and depends on
 //! `bun_jsc::{AnyTask, ConcurrentTask, Debugger, EventLoop, Strong, Task,
 //! VirtualMachine}` method surface, `bun_jsc::c_api::ExceptionRef`,
 //! `bun_collections::LinearFifo`, `bun_threading::{Condvar, Mutex, WorkPool}`,
@@ -9,8 +9,6 @@
 
 use core::ffi::c_void;
 use core::ptr;
-
-// ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
 
 #[path = "napi_body.rs"]
 mod napi_body;
@@ -59,10 +57,10 @@ pub enum NapiStatus {
 }
 
 // ─── opaque type surface ─────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_jsc::EventLoop (method surface)
-// TODO(b2-blocked): bun_jsc::c_api::ExceptionRef
-// TODO(b2-blocked): bun_collections::LinearFifo
-// TODO(b2-blocked): bun_threading::Condvar
+// TODO(blocked): bun_jsc::EventLoop (method surface)
+// TODO(blocked): bun_jsc::c_api::ExceptionRef
+// TODO(blocked): bun_collections::LinearFifo
+// TODO(blocked): bun_threading::Condvar
 pub struct ThreadsafeFunction(());
 pub struct AsyncWork(());
 pub struct Ref(());

@@ -44,7 +44,7 @@ pub const CACHE_LINE_LENGTH: usize = 64;
 /// the given ordering. `item` is always a valid, non-null, properly aligned
 /// pointer when called by `UnboundedQueue`.
 // TODO(port): the Zig `has_custom_accessors` comptime branch is folded into
-// this trait — verify each concrete `T` picks the right impl in Phase B.
+// this trait — verify each concrete `T` picks the right impl.
 pub unsafe trait Node: Sized {
     /// Zig: `getNext(item: *T) ?*T`
     unsafe fn get_next(item: *mut Self) -> *mut Self;

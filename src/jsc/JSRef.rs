@@ -229,7 +229,7 @@ impl JsRef {
         // PORT NOTE: Zig calls `self.deinit()` then sets `.finalized`. In Rust,
         // overwriting `*self` drops the prior variant (releasing the `Strong`
         // HandleSlot via its `Drop`), so the explicit deinit step is elided.
-        // Phase B: external `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
+        // External `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
         *self = JsRef::Finalized;
     }
 

@@ -110,8 +110,8 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     /// monomorphized into an `extern "C"` trampoline. Rust cannot const-generic
     /// over a fn value, so we tunnel `(ctx, callback)` through the user-data
     /// pointer instead.
-    // TODO(port): comptime-callback monomorphization — Phase B may want a
-    // per-callsite `extern "C" fn` to avoid the indirect call.
+    // TODO(perf): comptime-callback monomorphization — a per-callsite
+    // `extern "C" fn` would avoid the indirect call.
     pub fn cork<C>(&mut self, ctx: &mut C, callback: fn(&mut C)) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -119,7 +119,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
             // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
             // which outlives the synchronous uws_ws_cork call.
             let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
-            // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+            // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
             (data.1)(unsafe { &mut *data.0 });
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
@@ -188,7 +188,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn get_buffered_amount(&mut self) -> u32 {
         // TODO(port): C decl returns usize but Zig wrapper types this as u32 —
-        // verify which is correct in Phase B.
+        // verify which is correct.
         u32::try_from(c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw())).unwrap()
     }
 
@@ -335,7 +335,7 @@ impl AnyWebSocket {
             // SAFETY: user_data points at a stack tuple alive for the duration
             // of the synchronous uws_ws_cork call.
             let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
-            // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+            // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
             (data.1)(unsafe { &mut *data.0 });
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
@@ -592,7 +592,7 @@ where
         if this.is_null() {
             return;
         }
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
         unsafe { T::on_open(this, ws) };
     }
 

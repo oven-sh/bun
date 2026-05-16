@@ -48,7 +48,7 @@ impl BorderRadius {
 
     // TODO(port): PropertyFieldMap / VendorPrefixMap were Zig anonymous-struct decl literals
     // consumed by comptime DefineShorthand reflection. Represent as assoc consts for now;
-    // Phase B should wire these into the shorthand trait/derive.
+    // wire these into the shorthand trait/derive once it exists.
     pub const PROPERTY_FIELD_MAP: [(&'static str, &'static str); 4] = [
         ("top_left", "border-top-left-radius"),
         ("top_right", "border-top-right-radius"),

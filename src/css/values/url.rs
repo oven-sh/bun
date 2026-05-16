@@ -112,12 +112,12 @@ impl Url {
         let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile in Phase B
+            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile if hot
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             // PORT NOTE: inlined `Token::to_css_generic(UnquotedUrl(url))` —
-            // `Token` payloads are `&'static [u8]` placeholders in Phase A and
-            // we only have `&'a [u8]` here.
+            // `Token` payloads are `&'static [u8]` placeholders and we only
+            // have `&'a [u8]` here.
             use css::WriteAll;
             if buf
                 .write_all(b"url(")

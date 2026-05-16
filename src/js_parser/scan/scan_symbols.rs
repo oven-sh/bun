@@ -10,7 +10,7 @@ use bun_ast::{Ref, Scope};
 // `impl<const ...> P<...> { }` block — multiple impl blocks on the same type across files in one
 // crate are allowed.
 //
-// adt_const_params: round-C lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
+// adt_const_params: lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn find_symbol(
@@ -134,7 +134,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
             // TODO(port): the line above conflates key_ptr/value_ptr writes from Zig's
             // `gpe.key_ptr.* = name; gpe.value_ptr.* = Scope.Member{...}` — verify
-            // get_or_put_member_with_hash's Rust API shape in Phase B.
+            // get_or_put_member_with_hash's Rust API shape.
 
             declare_loc = loc;
 

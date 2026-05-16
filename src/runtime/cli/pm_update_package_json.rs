@@ -43,7 +43,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
     // TODO(port): narrow error set
     // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
     // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
-    // `parse` requires `<const CMD: Subcommand>`, expand to a `match` in Phase B.
+    // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
     let mut cli = CommandLineArguments::parse(subcommand)?;
 
     // The way this works:

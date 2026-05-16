@@ -3,8 +3,8 @@
 // reconstructs the enum from the u8 via `decode_opts!` so the original
 // `match Kind::Abs => ..` arms stay unchanged. The optimizer sees through the
 // `const fn from_u8` so monomorphization is preserved.
-// Phase B: either enable the feature crate-wide or lower the const-generic enums to a
-// trait-per-option encoding if nightly is unacceptable.
+// TODO(refactor): either enable the feature crate-wide or lower the const-generic
+// enums to a trait-per-option encoding if nightly is unacceptable.
 
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
@@ -148,7 +148,7 @@ pub mod options {
     // TODO(port): Rust cannot vary a fn's return type on a const-generic value.
     // All `Result(T)` call sites below return `Result<T, Error>` unconditionally;
     // callers configured with `AssumeAlwaysLessThanMaxPath` should treat the
-    // `Err` arm as unreachable. Phase B may split into two inherent impls via
+    // `Err` arm as unreachable. Could split into two inherent impls via
     // `where` bounds on `CHECK_LENGTH` once `generic_const_exprs` lands, or
     // expose `_unchecked` variants.
     pub type Result<T> = core::result::Result<T, Error>;
@@ -449,7 +449,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
 
         // TODO(port): the Zig branches on `opts.inputChildType(@TypeOf(characters))` to pick
         // convertUTF8toUTF16InBuffer vs convertUTF16toUTF8InBuffer. Rust cannot match on a
-        // type parameter at runtime; route through a helper trait in Phase B. For now this
+        // type parameter at runtime; could route through a helper trait. For now this
         // dispatches via TypeId-equivalent specialization on the two concrete impls.
         let converted_len = convert_into_buffer::<U>(&mut buf[self.len..], characters);
         if SEP_OPT != PathSeparators::ANY {
@@ -1158,7 +1158,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // TODO(port): the Zig dispatches on `@TypeOf(part)` × `opts.pathUnit()` to pick
         // joinStringBuf vs joinStringBufW vs a transcode-then-recurse path. Rust cannot
         // match on type identity in a fn body without specialization. The four arms are
-        // reproduced below via TypeId checks; Phase B should replace with a sealed-trait
+        // reproduced below via TypeId checks; could be replaced with a sealed-trait
         // dispatch on (C, U).
         use core::any::TypeId;
         let c_is_u8 = TypeId::of::<C>() == TypeId::of::<u8>();
@@ -1240,8 +1240,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // U == u16: transcode from/to → u8 scratch buffers, compute the
             // relative path in u8-space, then transcode back into the u16
             // output buffer. Mirrors the cross-width arms in `append_join`.
-            // PERF(port): three pooled buffers + two transcodes — profile in
-            // Phase B; only ever reached on Windows wide-path callers.
+            // PERF(port): three pooled buffers + two transcodes — profile if
+            // hot; only ever reached on Windows wide-path callers.
             let from_u16: &[u16] = U::id_u16(self.slice());
             let to_u16: &[u16] = U::id_u16(to.slice());
 

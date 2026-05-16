@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 /// # Safety
 /// Implementors guarantee that `ext_ref`/`ext_deref` operate on a valid externally-owned
 /// reference count, and that the pointee remains alive while the count is > 0.
-// TODO(port): Zig names are `ref`/`deref`; renamed to avoid the `ref` keyword and
-// `core::ops::Deref::deref` confusion. Revisit naming in Phase B.
+// PORT NOTE: Zig names are `ref`/`deref`; renamed to avoid the `ref` keyword and
+// `core::ops::Deref::deref` confusion.
 pub unsafe trait ExternalSharedDescriptor {
     unsafe fn ext_ref(this: *mut Self);
     unsafe fn ext_deref(this: *mut Self);

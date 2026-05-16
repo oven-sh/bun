@@ -373,7 +373,7 @@ impl Task {
 
     /// Zig: `Task.New(comptime Type, comptime Callback).init(ctx)`
     /// Rust: `Task::new(ctx, Callback)`
-    // PERF(port): was @call(.always_inline) on the wrapper — profile in Phase B
+    // PERF(port): was @call(.always_inline) on the wrapper.
     pub fn new<T>(ctx: &mut T, callback: fn(&mut T)) -> Task {
         // SAFETY: fn(&mut T) and fn(*mut ()) have identical single-pointer ABI;
         // ctx is always a valid &mut T at call time (see run()).

@@ -7,8 +7,8 @@ use crate::{PrintErr, Printer};
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
 // PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
-// the source). Phase A keeps `&'static [u8]` per PORTING.md §AST crates; Phase
-// B re-threads `'i` once `PropertyId<'i>` and the parser arena are real.
+// the source). Currently uses `&'static [u8]` per PORTING.md §AST crates;
+// TODO(refactor): re-thread `'i` once `PropertyId<'i>` and the parser arena are real.
 pub enum SupportsCondition {
     /// A `not` expression.
     Not(Box<SupportsCondition>),
@@ -91,7 +91,7 @@ impl SupportsCondition {
 impl SupportsCondition {
     // blocked_on: generics::CssHash for PropertyId — `#[derive(CssHash)]` /
     // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
-    // `PropertyId` only impls `core::hash::Hash` today. Phase B: add
+    // `PropertyId` only impls `core::hash::Hash` today. TODO(refactor): add
     // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
@@ -266,7 +266,7 @@ impl SupportsCondition {
 
         let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
-        // PERF(port): was arena-backed ArrayListUnmanaged — profile in Phase B
+        // PERF(port): was arena-backed ArrayListUnmanaged — profile if it shows up on a hot path
         let mut conditions: Vec<SupportsCondition> = Vec::new();
         // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;
         // SeenDeclKey below carries equivalent Hash/Eq impls.
@@ -300,7 +300,7 @@ impl SupportsCondition {
             match _condition {
                 Ok(condition) => {
                     if conditions.is_empty() {
-                        // PERF(port): was arena alloc via input.arena() — profile in Phase B
+                        // PERF(port): was arena alloc via input.arena() — profile if it shows up on a hot path
                         conditions.push(in_parens.deep_clone(input.arena()));
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;
@@ -416,7 +416,7 @@ struct SeenDeclKey(PropertyId, &'static [u8]);
 impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         // TODO(port): Zig used std.array_hash_map.hashString (wyhash, 32-bit) +% @intFromEnum.
-        // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity in Phase B.
+        // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity.
         // PORT NOTE: hash_string returns u32 directly (mirrors Zig hashString) — no narrowing cast.
         let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
         state.write_u32(h.wrapping_add(self.0.tag() as u32));

@@ -21,9 +21,9 @@
 /// The Zig version stamped out a `pub fn deinit` on each arity that dispatched to
 /// the active field's `deinit`. Rust enums drop their active variant automatically,
 /// so no explicit `Drop` impl is emitted here.
-// TODO(port): Zig's `TaggedUnion` returns an *anonymous* type usable inline as an
+// PORT NOTE: Zig's `TaggedUnion` returns an *anonymous* type usable inline as an
 // expression. Rust macros can only mint named item-position types, so callers must
-// supply a name: `tagged_union!(pub MyUnion; A, B, C);`. Adjust call sites in Phase B.
+// supply a name: `tagged_union!(pub MyUnion; A, B, C);`.
 #[macro_export]
 macro_rules! tagged_union {
     // 0 types — compile error, matching `@compileError("cannot create an empty tagged union")`

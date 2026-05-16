@@ -3454,16 +3454,23 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    let header_value = {
-                        let mut w = &mut filename_buf[..];
-                        if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
-                            let written = 1024 - w.len();
-                            &filename_buf[..written]
-                        } else {
-                            &b""[..]
+                    if !truncated
+                        .iter()
+                        .any(|&b| matches!(b, b'\r' | b'\n' | 0 | b'"'))
+                    {
+                        let header_value = {
+                            let mut w = &mut filename_buf[..];
+                            if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
+                                let written = 1024 - w.len();
+                                &filename_buf[..written]
+                            } else {
+                                &b""[..]
+                            }
+                        };
+                        if !header_value.is_empty() {
+                            resp.write_header(b"content-disposition", header_value);
                         }
-                    };
-                    resp.write_header(b"content-disposition", header_value);
+                    }
                 }
             }
         }

@@ -138,7 +138,7 @@ impl<'a> ProcessHandle<'a> {
         self.start_time = Instant::now().into();
         // TODO(port): narrow error set
         // PERF(port): was arena bulk-free — envp built into a temporary arena freed at scope
-        // end. Phase A uses heap; profile in Phase B.
+        // end; allocates on heap here. Profile if it shows up on a hot path.
         let envp;
         let env_ptr = state.env;
         // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`;

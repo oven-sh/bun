@@ -2,7 +2,7 @@
 //!
 //! Spec: src/runtime/bake/DevServer/SourceMapStore.zig
 //!
-//! DISSOLVED — the Phase-A draft that lived here duplicated every public type
+//! DISSOLVED — the original draft that lived here duplicated every public type
 //! (`Key`, `SourceId`, `Entry`, `WeakRef`, `SourceMapStore`, `GetResult`, …)
 //! against `dev_server/source_map_store.rs`, with no call sites resolving to
 //! this module. The duplicate carried three spec divergences:

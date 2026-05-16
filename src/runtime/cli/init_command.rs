@@ -141,7 +141,7 @@ impl InitCommand {
             initial_draw = false;
 
             // Print options vertically
-            // PERF(port): was `inline for` — profile in Phase B
+            // PERF(port): was `inline for`.
             for (i, option) in choices.iter().enumerate() {
                 if i == selected.to_index() {
                     if colors {

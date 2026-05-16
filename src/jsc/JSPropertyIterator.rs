@@ -11,7 +11,7 @@ use bun_core as bstr;
 /// `observable = true`, `only_non_index_properties = false`.
 // PERF(port): was comptime monomorphization (`fn JSPropertyIterator(comptime options) type`).
 // Demoted to runtime flags because the branches gate per-property work, not a hot inner
-// loop, and the monomorphization fan-out would be 32 instantiations. Profile in Phase B.
+// loop, and the monomorphization fan-out would be 32 instantiations. Profile if hot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSPropertyIteratorOptions {
     pub skip_empty_name: bool,

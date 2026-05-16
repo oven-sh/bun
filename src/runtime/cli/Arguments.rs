@@ -747,7 +747,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// other arms; here `command::tag_params(cmd)` does the runtime lookup, and the
 /// per-`cmd` blocks below are guarded by `if matches!(cmd, …)` instead of
 /// `if comptime cmd == …`.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF(port): was comptime monomorphization.
 pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);

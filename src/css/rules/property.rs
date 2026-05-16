@@ -159,8 +159,8 @@ impl PropertyRule {
 }
 
 // PORT NOTE: borrows the parser input buffer for `initial_value` (arena-backed
-// in CSS crate). Phase A keeps `&'static [u8]` per PORTING.md §AST crates;
-// Phase B re-threads `'i`.
+// in CSS crate). Kept as `&'static [u8]` per PORTING.md §AST crates;
+// TODO(refactor): re-thread `'i`.
 pub struct PropertyRuleDeclarationParser {
     pub syntax: Option<SyntaxString>,
     pub inherits: Option<bool>,

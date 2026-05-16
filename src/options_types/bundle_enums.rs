@@ -77,7 +77,7 @@ impl Format {
 pub struct WindowsOptions {
     pub hide_console: bool,
     // TODO(port): lifetime — Zig `?[]const u8` fields with no `deinit` in this
-    // file; conservatively owned as Box<[u8]> for Phase A.
+    // file; conservatively owned as Box<[u8]> here.
     pub icon: Option<Box<[u8]>>,
     pub title: Option<Box<[u8]>>,
     pub publisher: Option<Box<[u8]>>,

@@ -13,7 +13,7 @@ pub struct Order {
     // TODO(port): Zig stored `arena: std.mem.Allocator` here. test_runner is not an
     // AST/arena crate per PORTING.md, so the field is dropped and `bun.create(arena, ...)`
     // calls below become `heap::alloc(Box::new(...))`. In Zig these ExecutionEntry
-    // clones were bulk-freed by the arena; revisit ownership in Phase B.
+    // clones were bulk-freed by the arena; revisit ownership.
     pub previous_group_was_concurrent: bool,
     pub cfg: Config,
 }
@@ -141,8 +141,8 @@ impl Order {
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
                     // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
-                    // TODO(port): ownership — heap::alloc leaks without the arena; Phase B must
-                    // decide whether test_runner keeps an arena or tracks these for cleanup.
+                    // TODO(port): ownership — heap::alloc leaks without the arena; decide whether
+                    // test_runner keeps an arena or tracks these for cleanup.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];

@@ -87,7 +87,7 @@ pub mod sliced_string {
 
     // TODO(port): lifetime — PORTING.md says "no lifetime param on struct for []const u8 fields",
     // but SlicedString is purely a borrowed (ptr+len) view used for offset arithmetic into a
-    // backing buffer; Box/&'static/raw are all wrong here. Phase B: confirm `'a` threading or
+    // backing buffer; Box/&'static/raw are all wrong here. Confirm `'a` threading or
     // swap to raw `*const [u8]` if borrowck fights at call sites.
     #[derive(Copy, Clone)]
     pub struct SlicedString<'a> {
@@ -552,7 +552,7 @@ pub mod semver_string {
                     match self.bytes[0] {
                         0 => 0,
                         _ => {
-                            // PERF(port): was `inline while` (manually unrolled) — profile in Phase B
+                            // PERF(port): was `inline while` (manually unrolled) — profile if hot.
                             let mut i: usize = 0;
                             while i < self.bytes.len() {
                                 if self.bytes[i] == 0 {
@@ -590,7 +590,7 @@ pub mod semver_string {
                     match self.bytes[0] {
                         0 => b"",
                         _ => {
-                            // PERF(port): was `inline while` (manually unrolled) — profile in Phase B
+                            // PERF(port): was `inline while` (manually unrolled) — profile if hot.
                             let mut i: usize = 0;
                             while i < self.bytes.len() {
                                 if self.bytes[i] == 0 {
@@ -1023,7 +1023,7 @@ pub mod semver_string {
         }
 
         pub fn allocate(&mut self) -> Result<(), AllocError> {
-            // PERF(port): Zig used uninitialized alloc; using zeroed Box<[u8]> here — profile in Phase B
+            // PERF(port): Zig used uninitialized alloc; using zeroed Box<[u8]> here — profile if hot.
             let ptr_ = vec![0u8; self.cap].into_boxed_slice();
             self.ptr = Some(ptr_);
             Ok(())

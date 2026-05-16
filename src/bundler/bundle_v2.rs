@@ -151,6 +151,11 @@ pub struct BundleV2<'a> {
     /// Persists across calls to `scheduleBarrelDeferredImports` so cross-file
     /// deduplication is free.
     pub requested_exports: ArrayHashMap<u32, RequestedExports>,
+
+    /// Every arena-allocated `ParseTask`. The arena bulk-free never runs `Drop`,
+    /// so `ParseTaskStage::NeedsParse(entry)`'s `Contents::Owned(Vec<u8>)` would
+    /// strand; `deinit_without_freeing_arena` drains this and resets each `stage`.
+    pub parse_tasks: Vec<*mut ParseTask>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2626,7 +2631,7 @@ pub mod bv2_impl {
             // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
             let task_val = ParseTask::init(&result, source_index.into(), self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task: &mut ParseTask = self.arena_create_parse_task(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;
@@ -2743,7 +2748,7 @@ pub mod bv2_impl {
             // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
             let task_val = ParseTask::init(result, source_index.into(), self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task: &mut ParseTask = self.arena_create_parse_task(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;
@@ -2840,6 +2845,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: ArrayHashMap::new(),
+                parse_tasks: Vec::new(),
             });
             if let Some(bo) = bake_options {
                 this.client_transpiler = Some(bo.client_transpiler.into());
@@ -2967,6 +2973,15 @@ pub mod bv2_impl {
         fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
             // SAFETY: arena slot is fresh + pinned for the bundle pass; see fn doc.
             unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
+        }
+
+        /// Allocate a `ParseTask` in the arena AND record it in `parse_tasks` so
+        /// `deinit_without_freeing_arena` can free its global-heap-owning `stage`.
+        #[inline]
+        fn arena_create_parse_task<'r>(&mut self, value: ParseTask) -> &'r mut ParseTask {
+            let task: &'r mut ParseTask = self.arena_create(value);
+            self.parse_tasks.push(std::ptr::from_mut(&mut *task));
+            task
         }
 
         pub fn increment_scan_counter(&mut self) {
@@ -3254,6 +3269,7 @@ pub mod bv2_impl {
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
             let runtime_parse_task: *mut ParseTask = self.arena().alloc(rt.parse_task);
+            self.parse_tasks.push(runtime_parse_task);
             unsafe {
                 // BACKREF — lifetime erased per ParseTask::ctx convention.
                 (*runtime_parse_task).ctx = Some(bun_ptr::ParentRef::from_raw_mut(
@@ -3580,7 +3596,7 @@ pub mod bv2_impl {
                 self,
             );
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task: &mut ParseTask = self.arena_create_parse_task(task_val);
             task.loader = Some(loader);
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
@@ -3679,6 +3695,7 @@ pub mod bv2_impl {
                 known_target,
                 ..Default::default()
             });
+            self.parse_tasks.push(task);
             unsafe {
                 // BACKREF — lifetime erased per ParseTask::ctx convention.
                 (*task).ctx = Some(bun_ptr::ParentRef::from_raw_mut(
@@ -4814,7 +4831,7 @@ pub mod bv2_impl {
                             };
                             // Arena-owned (Zig: `arena.create(ParseTask)`).
                             // SAFETY: arena outlives the bundle pass.
-                            let task: &mut ParseTask = this.arena_create(task_val);
+                            let task: &mut ParseTask = this.arena_create_parse_task(task_val);
                             task.task.node.next = core::ptr::null_mut();
                             task.io_task.node.next = core::ptr::null_mut();
                             this.increment_scan_counter();
@@ -5095,6 +5112,17 @@ pub mod bv2_impl {
 
             for free in self.free_list.drain(..) {
                 drop(free);
+            }
+
+            // Free the `Contents::Owned(Vec<u8>)` parked in each arena `ParseTask.stage`
+            // (arena bulk-free skips `Drop`); all `Cow::Borrowed` aliases were cleared above.
+            for task in self.parse_tasks.drain(..) {
+                // SAFETY: arena chunks outlive this fn (caller drops heap later);
+                // pool is deinit'd, so no worker still touches `task.stage`.
+                drop(core::mem::replace(
+                    unsafe { &mut (*task).stage },
+                    parse_task::ParseTaskStage::NeedsSourceCode,
+                ));
             }
         }
 
@@ -6747,6 +6775,9 @@ pub mod bv2_impl {
 
                 if !found_existing {
                     let new_task: &mut ParseTask = value;
+                    // Track for stage cleanup in `deinit_without_freeing_arena`;
+                    // the `found_existing` branch `drop_in_place`s the task instead.
+                    self.parse_tasks.push(std::ptr::from_mut(&mut *new_task));
                     let mut new_input_file = crate::Graph::InputFile {
                         source: bun_ast::Source::init_empty_file(&new_task.path.text[..]),
                         side_effects: new_task.side_effects,

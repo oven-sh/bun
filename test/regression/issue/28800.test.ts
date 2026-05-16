@@ -52,12 +52,15 @@ function assertFramesFit(output: string, rows: number) {
   const maxUp = upRuns.reduce((max, run) => Math.max(max, run.length / UP_SEQ.length), 0);
   expect(maxUp).toBeLessThanOrEqual(rows);
 
-  // Each rendered frame should also fit the terminal (so nothing scrolls off
-  // past the cleared region).
+  // Each rendered frame must fit in `rows - 1` lines. Every emitted line
+  // ends in `\n`, so N lines advance the cursor N rows from row 1 → row
+  // N+1; a frame of exactly `rows` lines still scrolls the top line into
+  // scrollback, which over many redraws stacks up the same stale header
+  // and re-introduces the #28800 duplication.
   const frames = [...output.matchAll(/\x1b\[\?2026h([\s\S]*?)\x1b\[\?2026l/g)].map(m => m[1]);
   expect(frames.length).toBeGreaterThan(0);
   const maxFrameLines = frames.reduce((max, f) => Math.max(max, countRenderedLines(f)), 0);
-  expect(maxFrameLines).toBeLessThanOrEqual(rows);
+  expect(maxFrameLines).toBeLessThanOrEqual(rows - 1);
 }
 
 function script(prefix: string, count: number): string {

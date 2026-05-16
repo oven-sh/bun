@@ -32,6 +32,7 @@ const repo = resolve(import.meta.dirname, "..");
 // `unsupported operation: can't call foreign function` if it does.
 const MIRI_CRATES = [
   "bun_ast",
+  "bun_base64",
   "bun_clap",
   "bun_collections",
   "bun_dispatch",

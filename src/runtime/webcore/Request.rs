@@ -1021,7 +1021,7 @@ impl Request {
     ) -> JsResult<Request> {
         let mut success = false;
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
-        let body = body::hive_alloc(global_this.bun_vm(), BodyValue::Null);
+        let body = body::hive_alloc(BodyValue::Null);
         // Snapshot the seed slot pointer for the repoint check below; `body`
         // (the +1) is moved into `req.body` next.
         let body_seed_ptr = body.as_ptr();
@@ -1541,7 +1541,7 @@ impl Request {
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(global_this)?;
         // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
-        let body = body::hive_alloc(global_this.bun_vm(), body_);
+        let body = body::hive_alloc(body_);
         // Last fallible call. Zig hoists `url` above this with an
         // `errdefer if (!preserve_url) url.deref()`; we instead sink the url
         // computation below it so no guard is needed at all — `BunString` is

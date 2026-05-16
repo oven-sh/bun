@@ -2532,7 +2532,7 @@ where
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
-                crate::webcore::body::hive_alloc(self.vm(), body),
+                crate::webcore::body::hive_alloc(body),
                 method,
             ))
         } else if let Some(request_) = first_arg
@@ -3179,7 +3179,7 @@ where
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — pooled body slot,
         // ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(self.vm(), BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
         // Zig: `.body = body.ref()` — ctx and Request each own a +1 on the
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.set_request_body(Some(body_hive.clone()));
@@ -3416,7 +3416,7 @@ where
         let ctx = unsafe { &mut *ctx_slot };
 
         // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(this.vm(), BodyValue::Null);
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
         // Zig: `.body = body.ref()` — ctx and Request each own a +1 on the
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.request_body = Some(body_hive.clone());

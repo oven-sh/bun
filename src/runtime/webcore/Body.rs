@@ -559,8 +559,7 @@ pub type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
 
 /// Spec `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
 /// pooled `HiveRef` slot and returns an owning handle (ref_count = 1).
-pub fn hive_alloc(vm: &VirtualMachine, value: Value) -> BodyHiveHandle {
-    let _ = vm;
+pub fn hive_alloc(value: Value) -> BodyHiveHandle {
     let state = crate::jsc_hooks::runtime_state();
     debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
     // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a

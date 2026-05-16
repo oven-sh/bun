@@ -730,11 +730,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
 
         // Allocate the pooled body slot (ref_count = 1).
-        // SAFETY: vm backref live for the JS thread's lifetime.
-        let body_hive = crate::webcore::body::hive_alloc(
-            unsafe { &*vm_ptr },
-            crate::webcore::body::Value::Null,
-        );
+        let body_hive = crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null);
         // Raw payload pointer for the deferred Locked write below.
         // SAFETY: slot stays live — both `ctx.request_body` and `Request.body` hold a +1.
         let body_value: *mut crate::webcore::body::Value =

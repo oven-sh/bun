@@ -2089,6 +2089,7 @@ pub mod formatter {
                     | Tag::Error
                     | Tag::Class
                     | Tag::Event
+                    | Tag::JSX
             )
         }
     }

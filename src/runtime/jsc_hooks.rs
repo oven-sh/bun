@@ -1961,9 +1961,7 @@ fn transpile_source_code_inner(
         | L::Json5
         | L::Text
         | L::Md => {
-            // TODO(port): `bun_ast::ASTMemoryAllocator::Scope` — gated in
-            // `bun_js_parser`. Spec :117-119.
-
+            // Spec :117-119.
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
 

@@ -15,7 +15,7 @@ use bun_sys::{self, Fd};
 use js_parser::defines::Define;
 
 // ══════════════════════════════════════════════════════════════════════════
-// `RuntimeTranspilerCache` is canonical in `bun_js_parser` (a lower-tier crate)
+// `RuntimeTranspilerCache` is canonical in `bun_ast` (a lower-tier crate)
 // so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
 // `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
 // nominal type. This crate adds the env-var-gated `disabled`/`set_disabled` via
@@ -36,7 +36,7 @@ pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
 pub static DISABLED: AtomicBool = AtomicBool::new(false);
 
 /// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
-/// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
+/// `bun_ast`). Separate trait so the env-var-dependent bodies stay in
 /// this crate without an orphan-rule violation.
 pub trait RuntimeTranspilerCacheExt {
     /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an

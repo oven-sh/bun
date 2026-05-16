@@ -69,8 +69,9 @@ impl SASL {
         // Zig: `jsc.API.Bun.Crypto.EVP.pbkdf2` (src/runtime/api/crypto.zig).
         // PORT NOTE: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
         // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
-        // avoid the `bun_runtime` dep (which would create a cycle through
-        // `bun_jsc`); `bun_boringssl_sys` is already a direct dependency.
+        // avoid a `bun_runtime` dep — `bun_runtime` already depends on
+        // `bun_sql_jsc`, so that would be a direct cycle; `bun_boringssl_sys`
+        // is already a direct dependency.
         use bun_boringssl_sys as boringssl;
         use core::ffi::c_uint;
 

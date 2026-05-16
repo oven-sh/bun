@@ -1474,8 +1474,11 @@ pub mod bv2_impl {
             /// `BundleV2` (Zig: `Watcher.enableHotModuleReloading(this, null)` in
             /// `BundleV2.init` — bundle_v2.zig:994). The bundler can't name the
             /// reloader generic (T6), so this is a definer-prefixed extern hook.
-            /// `'static` matches the impl side: the only caller (`bun build
-            /// --watch`) leaks the CLI arena, so the pointee is process-lifetime.
+            /// `'static` matches the impl-side signature; the sole caller
+            /// (`bun build --watch`) leaks the `Box<BundleV2>` via `mem::forget`
+            /// once `generate_from_cli` succeeds. Watch-mode error exits before
+            /// that point drop the box (pre-existing — same as the prior
+            /// `*mut ()` form).
             fn __bun_jsc_enable_hot_module_reloading_for_bundler(
                 bv2: core::ptr::NonNull<super::BundleV2<'static>>,
             );
@@ -1487,7 +1490,8 @@ pub mod bv2_impl {
             // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
             // Not `safe fn`: the callee dereferences `bv2`, so it must point to a
             // live `BundleV2` whose backing allocation outlives the watcher (sole
-            // caller is `BundleV2::init` with the leaked CLI arena — `'static`).
+            // caller is `BundleV2::init`; the box is leaked on the success path —
+            // see the watch-mode caveat above).
             let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
                 .expect("BundleV2 watcher: bv2 is non-null");
             unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }

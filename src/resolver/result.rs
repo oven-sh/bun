@@ -8,6 +8,7 @@ use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
+use bun_alloc as allocators;
 use bun_ast::Msg;
 use bun_collections::MultiArrayList;
 use bun_core::MutableString;
@@ -17,9 +18,9 @@ use bun_sys::Fd as FD;
 
 use crate::dir_info::DirInfoRef;
 use crate::fs as Fs;
+use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
-use crate::{allocators, options};
 
 // PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
@@ -388,7 +389,7 @@ impl Default for DirEntryResolveQueueItem {
             result: allocators::Result {
                 hash: 0,
                 index: allocators::NOT_FOUND,
-                status: allocators::Status::Unknown,
+                status: allocators::ItemStatus::Unknown,
             },
             unsafe_path: bun_ptr::RawSlice::EMPTY,
             safe_path: bun_ptr::RawSlice::EMPTY,

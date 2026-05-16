@@ -952,7 +952,7 @@ pub mod fs {
         pub fn get_or_put(
             &mut self,
             key: &[u8],
-        ) -> core::result::Result<crate::allocators::Result, bun_core::Error> {
+        ) -> core::result::Result<bun_alloc::Result, bun_core::Error> {
             self.inner()
                 .get_or_put(key)
                 .map_err(|_| bun_core::err!("OutOfMemory"))
@@ -962,7 +962,7 @@ pub mod fs {
         }
         pub fn put(
             &mut self,
-            result: &mut crate::allocators::Result,
+            result: &mut bun_alloc::Result,
             value: EntriesOption,
         ) -> core::result::Result<*mut EntriesOption, bun_core::Error> {
             // PORT NOTE: `BSSMapInner::put` mutates `result.index` to record placement; callers
@@ -973,7 +973,7 @@ pub mod fs {
                 .map(|v| std::ptr::from_mut::<EntriesOption>(v))
                 .map_err(|_| bun_core::err!("OutOfMemory"))
         }
-        pub fn mark_not_found(&mut self, result: crate::allocators::Result) {
+        pub fn mark_not_found(&mut self, result: bun_alloc::Result) {
             self.inner().mark_not_found(result)
         }
         pub fn remove(&mut self, key: &[u8]) -> bool {
@@ -2608,7 +2608,6 @@ pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.
-pub mod allocators;
 pub mod options;
 pub mod resolver;
 pub mod result;

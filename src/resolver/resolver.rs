@@ -305,13 +305,14 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 
 // Sibling resolver modules. They retain the same item names so cross-references
 // inside `impl Resolver` resolve unchanged.
+use crate::options;
 use crate::result::{
     DebugLogs, DebugMeta, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult,
     MatchResultUnion, PathPair, PathPairIter, PendingResolution, PendingResolutionList,
     PendingResolutionTag, Result, ResultFlags, ResultUnion, SideEffectsData, SuggestionRange,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
-use crate::{allocators, options};
+use bun_alloc as allocators;
 // `bun.resolver.SideEffects` — same type as `Result.primary_side_effects_data`
 // (re-exported from `bun_ast`; see `result.rs`).
 use bun_ast::SideEffects;
@@ -3362,7 +3363,7 @@ impl<'a> Resolver<'a> {
         // whole `BSSMapInner` would otherwise pop it).
         let dc = self.dir_cache_mut();
         let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
-        if dir_cache_info_result.status == allocators::Status::Exists {
+        if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
             return Ok(dc
                 .at_index(dir_cache_info_result.index)
@@ -4096,7 +4097,7 @@ impl<'a> Resolver<'a> {
         let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        if top_result.status != allocators::Status::Unknown {
+        if top_result.status != allocators::ItemStatus::Unknown {
             return Ok(self
                 .dir_cache_mut()
                 .at_index(top_result.index)
@@ -4126,7 +4127,7 @@ impl<'a> Resolver<'a> {
         let mut top_parent = allocators::Result {
             index: allocators::NOT_FOUND,
             hash: 0,
-            status: allocators::Status::NotFound,
+            status: allocators::ItemStatus::NotFound,
         };
         #[cfg(windows)]
         let root_path = strings::without_trailing_slash_windows_path(
@@ -4159,7 +4160,7 @@ impl<'a> Resolver<'a> {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_cache_mut().get_or_put(top)?;
 
-            if result.status != allocators::Status::Unknown {
+            if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
                 break;
             }
@@ -4206,7 +4207,7 @@ impl<'a> Resolver<'a> {
 
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
-            if result.status != allocators::Status::Unknown {
+            if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
                 bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(

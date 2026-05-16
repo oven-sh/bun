@@ -255,8 +255,11 @@ impl Options {
     /// negative numbers with the same message, before bunx does any
     /// filesystem mutation (the install-path cache wipe, the `force_stale`
     /// cache wipe inside `get_bin_name_from_temp_directory`). Without this,
-    /// a typo'd value like `--minimum-release-age=7d` would wipe a fresh
-    /// cache before `bun add` reports the parse error.
+    /// an unparseable or negative value like `--minimum-release-age=abc`
+    /// or `=-5` would wipe a fresh cache before `bun add` reports the
+    /// parse error. (Note: `parse_double` is a prefix-match parser, so a
+    /// value like `7d` is accepted as `7` here and by `bun add` — same
+    /// behavior, intentional.)
     fn validate_minimum_release_age(value: &[u8]) {
         match bun_core::parse_double(value) {
             Ok(secs) if secs >= 0.0 => {}

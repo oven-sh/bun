@@ -3066,8 +3066,18 @@ impl BlobExt for Blob {
                     return Err(global.throw_out_of_memory());
                 }
                 // SAFETY: `Temporary` ⇒ `buf` is a leaked `Box<[u8]>` we exclusively own;
-                // ownership is transferred to JSC via `to_js` (Zig: `JSC.MarkedArrayBuffer.fromBytes`).
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js(global)
+                // ownership is transferred to JSC (Zig: `JSC.MarkedArrayBuffer.fromBytes`).
+                //
+                // `to_js_unchecked` (not `to_js`) — `to_js`'s `mi_is_in_heap_region`
+                // probe returns false for a `std::alloc::System`-allocated buffer
+                // (the global allocator under ASAN), which would skip the
+                // `MarkedArrayBuffer_deallocator` and strand the read buffer.
+                // `Temporary` guarantees `buf` is a default-allocator heap
+                // allocation, so the deallocator (`default_alloc::free`, which
+                // routes to `mi_free`/`libc::free` to match the global allocator)
+                // is always correct here.
+                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
+                    .to_js_unchecked(global)
             }
         }
     }

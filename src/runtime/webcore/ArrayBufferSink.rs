@@ -214,10 +214,14 @@ impl ArrayBufferSink {
         // `defer this.bytes = bun.Vec<u8>.empty` + `try toOwnedSlice` →
         // take ownership, leave empty in place.
         let mut bytes = core::mem::take(&mut self.bytes);
-        // Ownership transfers to JSC — `to_js` installs
-        // `MarkedArrayBuffer_deallocator` which `mi_free`s the buffer when the
-        // JS object is collected. Bun's global allocator is mimalloc, so the
-        // `mi_is_in_heap_region` check in `to_js` succeeds.
+        // Ownership transfers to JSC — `to_js_unchecked` installs
+        // `MarkedArrayBuffer_deallocator` which frees the buffer (via
+        // `default_alloc::free`, matching the global allocator) when the JS
+        // object is collected. `to_js`'s `mi_is_in_heap_region` probe is wrong
+        // under ASAN where the global allocator is `std::alloc::System` (the
+        // buffer isn't in mimalloc's heap region, so `to_js` would skip the
+        // deallocator and strand it). `from_owned_bytes` always wraps a
+        // default-allocator `Box<[u8]>`, so the deallocator is always correct.
         let owned = bytes.to_owned_slice();
         ArrayBuffer::from_owned_bytes(
             owned,
@@ -227,7 +231,7 @@ impl ArrayBufferSink {
                 JSType::ArrayBuffer
             },
         )
-        .to_js(global_this)
+        .to_js_unchecked(global_this)
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<ArrayBuffer> {
@@ -302,7 +306,10 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, global) {
-            bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js(global) {
+            // `to_js_unchecked` — see the `to_js` comment above; the
+            // `ArrayBuffer` returned by `end_from_js` always wraps an
+            // owned default-allocator `Box<[u8]>`.
+            bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(global) {
                 Ok(v) => v,
                 Err(_) => JSValue::ZERO,
             }),

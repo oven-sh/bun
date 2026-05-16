@@ -16,11 +16,11 @@
 // No native build involved — it's a pure TypeScript unit check against the
 // generator's output.
 import { expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDirWithFiles } from "harness";
-import type { Config, OS } from "../../scripts/build/config.ts";
 import { generateCargoConfig } from "../../scripts/build/cargo-config.ts";
+import type { Config, OS } from "../../scripts/build/config.ts";
 
 function mockConfig(overrides: { os: OS; arch: "x64" | "aarch64" }): Config {
   const { os, arch } = overrides;

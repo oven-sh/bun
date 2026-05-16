@@ -1132,11 +1132,12 @@ impl<'a> LinkerContext<'a> {
                 *gop.value_ptr = next_mapping_source_index;
                 // `1` for the intermediate input, plus one slot per inner
                 // source listed in its `sourceMappingURL`.
-                let inner: Option<&bun_sourcemap::InputSourceMap> = input_source_maps
-                    .and_then(|m| m[index as usize].as_deref());
+                let inner: Option<&bun_sourcemap::InputSourceMap> =
+                    input_source_maps.and_then(|m| m[index as usize].as_deref());
                 let expansion: i32 = 1 + match inner {
-                    Some(ism) => i32::try_from(ism.map.external_source_names.len())
-                        .expect("int cast"),
+                    Some(ism) => {
+                        i32::try_from(ism.map.external_source_names.len()).expect("int cast")
+                    }
                     None => 0,
                 };
                 next_mapping_source_index += expansion;
@@ -1173,9 +1174,7 @@ impl<'a> LinkerContext<'a> {
                     emitted_contents += 1;
                 }
                 // Slots 1..N: inner sources' contents, if any.
-                if let Some(ism) =
-                    input_source_maps.and_then(|m| m[index as usize].as_deref())
-                {
+                if let Some(ism) = input_source_maps.and_then(|m| m[index as usize].as_deref()) {
                     for content in ism.sources_content.iter() {
                         j.push_static(b",\n    ");
                         if !content.is_empty() {
@@ -1295,8 +1294,7 @@ fn write_sources_for(
     // 1) the intermediate input.
     let rel_path_storage;
     let pretty: &[u8] = if outer_path.is_file() {
-        rel_path_storage =
-            bun_paths::resolve_path::relative_alloc(chunk_abs_dir, outer_path.text)?;
+        rel_path_storage = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, outer_path.text)?;
         &rel_path_storage
     } else {
         outer_path.pretty
@@ -1316,9 +1314,9 @@ fn write_sources_for(
     // the emitted JSON. Absolute inner paths stay absolute before
     // relativization.
     if let Some(ism) = input_map {
-        let base_dir = bun_paths::resolve_path::dirname::<
-            bun_paths::resolve_path::platform::Auto,
-        >(outer_path.text);
+        let base_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
+            outer_path.text,
+        );
         for name in ism.map.external_source_names.iter() {
             let name: &[u8] = name.as_ref();
             // Use `join_abs` to produce an absolute inner path (when the
@@ -2294,14 +2292,12 @@ impl<'a> LinkerContext<'a> {
         // DevServer uses a separate sourcemap stitcher that hard-codes one
         // `sources[]` slot per file; passing `input_source_map` would
         // corrupt its output. Gate the whole feature on the Bun.build path.
-        let input_source_map: Option<&bun_sourcemap::InputSourceMap> =
-            if self.dev_server.is_none() {
-                parse_graph.input_files.items_input_source_map()
-                    [source_index.get() as usize]
-                    .as_deref()
-            } else {
-                None
-            };
+        let input_source_map: Option<&bun_sourcemap::InputSourceMap> = if self.dev_server.is_none()
+        {
+            parse_graph.input_files.items_input_source_map()[source_index.get() as usize].as_deref()
+        } else {
+            None
+        };
 
         let print_options = js_printer::Options {
             bundling: true,

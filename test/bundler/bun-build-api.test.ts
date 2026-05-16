@@ -1334,7 +1334,15 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
 // `//# sourceMappingURL=` comments on input files. A `.vue` / `.svelte` /
 // `.ts` file compiled to an intermediate `.js` with an inline sourcemap
 // should have its authored sources surface in the final bundle's map.
-describe("Bun.build chains inline input sourcemaps", () => {
+//
+// `describe.todo` because the bundler is being ported from Zig to Rust
+// (#30412). The feature is implemented end-to-end in the `.zig` tree as
+// the porting reference (see PR #30539 description for the file-by-file
+// port plan), but `.zig` files no longer compile or ship — the active
+// bundler path is Rust and has not been extended yet. These tests pin
+// the intended behavior for when the Rust port lands; flip back to
+// `describe(...)` at that point.
+describe.todo("Bun.build chains inline input sourcemaps", () => {
   // Build a tiny intermediate `.js` that carries an inline base64 sourcemap
   // pointing at a fake "authored" source, then bundle an entry that imports
   // it. The output map's `sources[]` should include the authored source,

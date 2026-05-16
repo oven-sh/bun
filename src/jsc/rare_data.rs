@@ -1019,12 +1019,6 @@ impl RareData {
 // defined in `bun_runtime::webcore::blob`). Zig built `Blob.Store` inline.
 // ──────────────────────────────────────────────────────────────────────────
 
-unsafe extern "Rust" {
-    /// Releases a stdio `Store` minted by `__bun_stdio_blob_store_new` (balances
-    /// the ctor's +2). Defined in `bun_runtime::jsc_hooks`; no-ops on null.
-    safe fn __bun_stdio_blob_store_deinit(ptr: *mut ());
-}
-
 impl RareData {
     #[inline]
     fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
@@ -1200,19 +1194,6 @@ impl Drop for RareData {
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
-
-        // Release the +2 from `stdio_ctor` so the `Box<Store>` drops once any
-        // outstanding retained `StoreRef`s go.
-        for store in [
-            self.stderr_store.take(),
-            self.stdout_store.take(),
-            self.stdin_store.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            __bun_stdio_blob_store_deinit(store.as_ptr().cast());
-        }
 
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.

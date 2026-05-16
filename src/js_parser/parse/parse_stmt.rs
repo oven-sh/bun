@@ -1280,7 +1280,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let export_clause = p.parse_export_clause()?;
                 if p.lexer.is_contextual_keyword(b"from") {
                     p.lexer.expect_contextual_keyword(b"from")?;
-                    let parsed_path = p.parse_path()?;
+                    // If this whole `export { type ... } from` gets erased
+                    // (all clauses are type-only), allow arbitrary attribute
+                    // keys for TypeScript's `resolution-mode` support.
+                    let parsed_path = if Self::IS_TYPESCRIPT_ENABLED
+                        && export_clause.clauses.is_empty()
+                        && export_clause.had_type_only_exports
+                    {
+                        p.parse_type_only_path()?
+                    } else {
+                        p.parse_path()?
+                    };
 
                     p.lexer.expect_or_insert_semicolon()?;
 
@@ -1460,7 +1470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if import_clause.had_type_only_imports && import_clause.items.is_empty() {
                         p.lexer.expect_contextual_keyword(b"from")?;
-                        let _ = p.parse_path()?;
+                        let _ = p.parse_type_only_path()?;
                         p.lexer.expect_or_insert_semicolon()?;
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
@@ -1561,7 +1571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     } else {
                                         // "import type foo from 'bar';"
                                         p.lexer.expect_contextual_keyword(b"from")?;
-                                        let _ = p.parse_path()?;
+                                        let _ = p.parse_type_only_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
                                         return Ok(p.s(S::TypeScript {}, loc));
                                     }
@@ -1573,7 +1583,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.expect_contextual_keyword(b"as")?;
                                 p.lexer.expect(T::TIdentifier)?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                let _ = p.parse_path()?;
+                                let _ = p.parse_type_only_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
@@ -1582,7 +1592,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "import type {foo} from 'bar';"
                                 let _ = p.parse_import_clause()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                let _ = p.parse_path()?;
+                                let _ = p.parse_type_only_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }

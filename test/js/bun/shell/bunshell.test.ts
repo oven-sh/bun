@@ -2475,6 +2475,7 @@ describe("subshell", () => {
   (echo 1; echo 2; echo 3; echo 4) >sub_out
   cat sub_out
   `
+      .ensureTempDir()
       .stdout("1\n2\n3\n4\n")
       .runAsTest("redirection on subshell");
 

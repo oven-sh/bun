@@ -179,4 +179,171 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       throw err;
     }
   });
+
+  // Issue #30890: on Windows the multi-select prompt hides the cursor with
+  // `\x1b[?25l` and enables mouse tracking, then registers a `scopeguard::defer!`
+  // that re-shows the cursor on exit. The prompt previously set
+  // `ENABLE_PROCESSED_INPUT` on stdin, which made the Windows console
+  // intercept Ctrl+C and terminate the process via `ExitProcess`, bypassing
+  // the defer so the cursor stayed hidden after the prompt died. The fix
+  // stops setting `ENABLE_PROCESSED_INPUT` so Ctrl+C arrives as byte `\x03`
+  // and takes the byte-3 graceful-cancel path that runs the defer.
+  //
+  // This piped-stdin variant covers the cross-platform byte-3 → cleanup path
+  // (Unix raw mode already delivers Ctrl+C as byte 3; pipes on Windows never
+  // go through console mode flags at all).
+  test("Ctrl+C during multi-select prompt restores the cursor and exits cleanly", async () => {
+    using dir = tempDir("update-interactive-ctrlc", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "is-even": "0.1.0",
+        },
+      }),
+    });
+
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    await using updateProc = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: String(dir),
+      env: { ...bunEnv, FORCE_COLOR: "1" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    try {
+      // Byte 0x03 is Ctrl+C. On the interactive prompt's input loop this
+      // takes the `3 | 4` (ctrl+c / ctrl+d) arm, which calls
+      // `cleanup_and_reprint!(false)` and returns `EndOfStream`. The
+      // scopeguard defer then emits `\x1b[?25h` to restore the cursor
+      // before the "Cancelled" line prints and the process exits 0.
+      updateProc.stdin.write("\x03");
+      updateProc.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        updateProc.stdout.text(),
+        updateProc.stderr.text(),
+        updateProc.exited,
+      ]);
+
+      if (exitCode !== 0 || !stdout.includes("\x1b[?25h")) {
+        console.log("STDOUT (hex preview):", Buffer.from(stdout).toString("hex").slice(0, 400));
+        console.log("STDERR:", stderr);
+      }
+
+      // The defer must have re-shown the cursor before exit.
+      expect(stdout).toContain("\x1b[?25h");
+      // And disabled mouse tracking that the prompt had enabled.
+      expect(stdout).toContain("\x1b[?1000l");
+      expect(stdout).toContain("\x1b[?1006l");
+      // Graceful cancel message.
+      expect(stdout).toContain("Cancelled");
+      // Clean exit — not killed by signal, not a non-zero code.
+      expect(exitCode).toBe(0);
+
+      // package.json must be untouched — Ctrl+C cancels the update.
+      const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
+      expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+    } catch (err) {
+      updateProc.stdin.end();
+      updateProc.kill();
+      throw err;
+    }
+  });
+
+  // PTY variant of the above. On Windows this uses a real ConPTY, which is
+  // the only configuration where the original bug (ENABLE_PROCESSED_INPUT
+  // swallowing Ctrl+C into a signal before the cursor-restore defer can
+  // run) actually reproduces — piped stdin on Windows bypasses console mode
+  // flags entirely. On POSIX this is the same "raw-mode TTY delivers byte 3
+  // directly" path the piped test above already covers, so both platforms
+  // are exercised.
+  test("Ctrl+C through a real PTY restores the cursor and exits cleanly", async () => {
+    using dir = tempDir("update-interactive-ctrlc-pty", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "is-even": "0.1.0",
+        },
+      }),
+    });
+
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    const decoder = new TextDecoder();
+    let output = "";
+    let sawPrompt = false;
+    const promptReady = Promise.withResolvers<void>();
+    const exited = Promise.withResolvers<void>();
+
+    await using terminal = new Bun.Terminal({
+      cols: 120,
+      rows: 30,
+      data(_t, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        // The multi-select prompt emits `\x1b[?25l` (hide cursor) once it
+        // starts drawing the package list; at that point it is definitely
+        // listening for input.
+        if (!sawPrompt && output.includes("\x1b[?25l")) {
+          sawPrompt = true;
+          promptReady.resolve();
+        }
+      },
+      exit() {
+        exited.resolve();
+      },
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: String(dir),
+      env: { ...bunEnv, FORCE_COLOR: "1" },
+      terminal,
+    });
+
+    try {
+      // Wait for the prompt to render before sending Ctrl+C, otherwise
+      // we may write the byte before the raw-mode guard is installed and
+      // the shell would still be line-buffered.
+      await Promise.race([promptReady.promise, exited.promise]);
+      terminal.write("\x03");
+
+      const exitCode = await proc.exited;
+      output += decoder.decode();
+
+      if (exitCode !== 0 || !output.includes("\x1b[?25h")) {
+        console.log("PTY output (hex preview):", Buffer.from(output).toString("hex").slice(0, 800));
+      }
+
+      // The cursor-restore sequence must be present — this is the whole
+      // point of the issue.
+      expect(output).toContain("\x1b[?25h");
+      expect(output).toContain("Cancelled");
+      expect(exitCode).toBe(0);
+
+      // package.json must be untouched.
+      const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
+      expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+    } finally {
+      proc.kill();
+    }
+  });
 });

@@ -1,7 +1,7 @@
 use core::cell::{Cell, UnsafeCell};
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit, size_of};
-use core::ops::{Deref, DerefMut};
+use core::ops::Deref;
 use core::ptr::NonNull;
 
 use bun_core::asan;
@@ -705,19 +705,18 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// `this` must point at a live `HiveRef` produced by [`init`](Self::init).
     /// On `None` the slot has been recycled — do not use `this` afterward.
     pub unsafe fn unref(this: *mut Self) -> Option<*mut Self> {
-        // SAFETY: caller contract — `this` is a live HiveRef slot.
-        let ref_count = unsafe { (*this).ref_count.get() };
-        unsafe { (*this).ref_count.set(ref_count - 1) };
-        if ref_count == 1 {
-            // SAFETY: `pool` outlives every slot it hands out (init contract).
-            // Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps to
-            // `T::drop`, which `Fallback::put` runs (drops the whole `HiveRef`
-            // in place before recycling/freeing the slot).
-            unsafe {
+        // SAFETY: caller contract — `this` is a live `HiveRef` slot, and
+        // `(*this).pool` outlives every slot it hands out (`init` contract).
+        // Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps to `T::drop`,
+        // which `Fallback::put` runs (drops the whole `HiveRef` in place).
+        unsafe {
+            let ref_count = (*this).ref_count.get();
+            (*this).ref_count.set(ref_count - 1);
+            if ref_count == 1 {
                 let pool = (*this).pool;
                 (*pool).put(this);
+                return None;
             }
-            return None;
         }
         Some(this)
     }
@@ -731,6 +730,15 @@ pub struct HiveRefHandle<T, const CAP: usize> {
 }
 
 impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
+    /// The one place the type-level invariant is asserted: a handle exists
+    /// ⇒ `ref_count >= 1` ⇒ the slot is live and initialized. `Deref`/`Clone`
+    /// route through here so they're plain safe code.
+    #[inline]
+    fn slot(&self) -> &HiveRef<T, CAP> {
+        // SAFETY: type invariant (above).
+        unsafe { self.ptr.as_ref() }
+    }
+
     /// Allocate a slot from `pool` with refcount 1.
     ///
     /// # Safety
@@ -739,8 +747,7 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
         // SAFETY: caller contract — `pool` is dereferenceable + outlives the slot.
         let ptr = unsafe { HiveRef::init(value, pool) };
         Self {
-            // SAFETY: `Fallback::get_init` never returns null.
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
+            ptr: NonNull::new(ptr).expect("Fallback::get_init returned null"),
         }
     }
 
@@ -756,9 +763,8 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
     /// `ptr` must be a live slot whose `+1` has not already been released.
     #[inline]
     pub unsafe fn from_raw(ptr: *mut HiveRef<T, CAP>) -> Self {
-        // SAFETY: caller contract — `ptr` is non-null and live.
         Self {
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
+            ptr: NonNull::new(ptr).expect("HiveRefHandle::from_raw(null)"),
         }
     }
 
@@ -767,30 +773,34 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
     pub fn as_ptr(&self) -> *mut HiveRef<T, CAP> {
         self.ptr.as_ptr()
     }
+
+    /// Exclusive access to the payload. `None` if there are other live handles
+    /// — same shape as [`Rc::get_mut`](std::rc::Rc::get_mut). A blanket
+    /// `DerefMut` would be unsound: `Clone` takes `&self`, so a second handle
+    /// could be made while a `&mut T` from `deref_mut()` is outstanding.
+    #[inline]
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        if self.slot().ref_count.get() != 1 {
+            return None;
+        }
+        // SAFETY: refcount == 1 ⇒ this handle is the only owner; `&mut self`
+        // proves no other access path through it.
+        Some(unsafe { &mut (*self.ptr.as_ptr()).value })
+    }
 }
 
 impl<T, const CAP: usize> Deref for HiveRefHandle<T, CAP> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY: a handle exists ⇒ refcount >= 1 ⇒ slot is live and initialized.
-        unsafe { &(*self.ptr.as_ptr()).value }
-    }
-}
-
-impl<T, const CAP: usize> DerefMut for HiveRefHandle<T, CAP> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: a handle exists ⇒ refcount >= 1 ⇒ slot is live and initialized.
-        unsafe { &mut (*self.ptr.as_ptr()).value }
+        &self.slot().value
     }
 }
 
 impl<T, const CAP: usize> Clone for HiveRefHandle<T, CAP> {
     #[inline]
     fn clone(&self) -> Self {
-        // SAFETY: a handle exists ⇒ slot is live.
-        unsafe { (*self.ptr.as_ptr()).ref_() };
+        self.slot().ref_();
         Self { ptr: self.ptr }
     }
 }
@@ -798,7 +808,7 @@ impl<T, const CAP: usize> Clone for HiveRefHandle<T, CAP> {
 impl<T, const CAP: usize> Drop for HiveRefHandle<T, CAP> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: a handle exists ⇒ slot is live; `unref` recycles on count==0.
+        // SAFETY: type invariant — `ptr` is live; `unref` recycles on count==0.
         unsafe { HiveRef::unref(self.ptr.as_ptr()) };
     }
 }
@@ -1199,10 +1209,13 @@ mod tests {
             )
         };
         assert_eq!(h.v, 1);
-        h.v = 11;
+        // Sole owner: `get_mut` succeeds.
+        h.get_mut().unwrap().v = 11;
         assert_eq!(h.v, 11);
         let h2 = h.clone();
         assert_eq!(h2.v, 11);
+        // Shared: `get_mut` is `None` while another handle is live.
+        assert!(h.get_mut().is_none());
         drop(h);
         assert_eq!(drops.get(), 0);
         drop(h2);

@@ -1392,9 +1392,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if string_literal_text == b"bunBakeGraph" {
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
-                        unsupported_key = Some(unsafe {
-                            bun_collections::detach_lifetime(string_literal_text)
-                        });
+                        unsupported_key =
+                            Some(unsafe { bun_collections::detach_lifetime(string_literal_text) });
                     } else {
                         p.lexer.expect(T::TIdentifier)?;
                     }

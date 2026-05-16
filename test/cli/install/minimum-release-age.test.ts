@@ -2617,11 +2617,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // Same error text `bun add` uses — user sees a single consistent message.
       expect(stderr).toContain("Expected --minimum-release-age to be a positive number");
       expect(stderr).toContain(bad);

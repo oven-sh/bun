@@ -3509,12 +3509,23 @@ lexer_impl_header! {
 
         let mut text: &[u8] = b"";
 
+        // Error-recovery guard: the `(start, end)` span can be shorter than a
+        // well-formed template literal when this is reached after an upstream
+        // error (e.g. JSX's `expected(TGreaterThan)` logs a diagnostic but
+        // returns `Ok`, so `parse_suffix` can land here with a malformed span).
+        // Without the checks below, `end - 1` / `end - 2` underflow and the
+        // slice indexing panics. The error has already been logged; returning
+        // empty raw contents lets recovery continue.
         match self.token {
             T::TNoSubstitutionTemplateLiteral | T::TTemplateTail => {
-                text = &self.contents[self.start + 1..self.end - 1];
+                if self.end >= self.start + 2 {
+                    text = &self.contents[self.start + 1..self.end - 1];
+                }
             }
             T::TTemplateMiddle | T::TTemplateHead => {
-                text = &self.contents[self.start + 1..self.end - 2];
+                if self.end >= self.start + 3 {
+                    text = &self.contents[self.start + 1..self.end - 2];
+                }
             }
             _ => {}
         }

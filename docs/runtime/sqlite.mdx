@@ -86,11 +86,11 @@ import { Database } from "bun:sqlite";
 const strict = new Database(":memory:", { strict: true });
 
 // throws error because of the typo:
-const query = strict.query("SELECT $message;").all({ messag: "Hello world" });
+const query = strict.query("SELECT $message;").all({ message: "Hello world" });
 
 const notStrict = new Database(":memory:");
 // does not throw error:
-notStrict.query("SELECT $message;").all({ messag: "Hello world" });
+notStrict.query("SELECT $message;").all({ message: "Hello world" });
 ```
 
 ### Load via ES module import

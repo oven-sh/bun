@@ -203,22 +203,6 @@ pub const PackageJSON = struct {
             const pattern = r.fs.abs(&joined);
             return try normalizePathForGlob(allocator, pattern);
         }
-
-        /// Pre-fix version of `buildAbsolutePattern` — kept for the testing
-        /// API so a JS test can drive the exact wrong behaviour and prove
-        /// it differs from the fixed path. Not used by production code.
-        pub fn buildAbsolutePatternPreFix(
-            allocator: std.mem.Allocator,
-            r: *resolver.Resolver,
-            package_dir_with_trailing_slash: string,
-            name: string,
-        ) ![]u8 {
-            var joined = [_]string{ package_dir_with_trailing_slash, name };
-            const pattern = r.fs.join(&joined);
-            return try normalizePathForGlob(allocator, pattern);
-        }
-
-        pub const TestingAPIs = @import("../resolver_jsc/package_json_jsc.zig").TestingAPIs;
     };
 
     fn loadDefineDefaults(

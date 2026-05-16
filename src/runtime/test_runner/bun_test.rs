@@ -616,6 +616,15 @@ pub struct BunTest {
     pub default_concurrent: bool,
     pub first_last: FirstLast,
     pub extra_execution_entries: Vec<*mut ExecutionEntry>,
+    /// Heap-boxed bitwise *clones* of `before_each`/`after_each` entries created
+    /// by `Order::generate_order_test` (Zig allocated them in the test arena and
+    /// bulk-freed; the Rust port `Box`es them — see the `LEAK(LSan)` note in
+    /// `Order.rs`). They are linked into `Execution::sequences` for the whole
+    /// run, so they can only be reclaimed at `BunTest::Drop`. Because each is a
+    /// `ptr::read` bitwise copy of a `DescribeScope`-owned entry, only the Box
+    /// header may be freed — running `ExecutionEntry::Drop` would double-free
+    /// the original's `Strong`/`Box` fields.
+    pub cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub wants_wakeup: bool,
 
     pub phase: Phase,
@@ -650,6 +659,7 @@ impl BunTest {
             default_concurrent,
             first_last,
             extra_execution_entries: Vec::new(),
+            cloned_hook_entries: Vec::new(),
             // PORT NOTE: `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING` (matches Zig's zero-init).
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
@@ -1044,7 +1054,55 @@ impl BunTest {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
+                let describe_seq_start = order.sequences.len();
+                // KNOWN RESIDUAL: if `generate_order_describe` errors after it
+                // has already `Box`'d some hook clones, `?` returns before the
+                // walk below registers them and they strand exactly as before
+                // this fix. Only the happy path is leak-free; the error path
+                // would need `generate_order_test` to track its own clones.
                 order.generate_order_describe(&mut self.collection.root_scope)?;
+                let describe_seq_end = order.sequences.len();
+                // Collect the heap-boxed `before_each`/`after_each` clones that
+                // `Order::generate_order_test` `Box`'d and `into_raw`'d into
+                // `ExecutionSequence` linked lists (Zig: arena-allocated and
+                // bulk-freed). The originals live in `DescribeScope.before_each`
+                // / `.after_each`; the clones strand once `Execution::sequences`
+                // is dropped without a walk. Capture them now — before
+                // `Phase::Execution` splices `extra_execution_entries` into the
+                // same lists — so `BunTest::Drop` can reclaim the Box headers
+                // (LSan: `bun_test.rs:_advance`).
+                //
+                // Sequences from `generate_all_order` (per-describe and root
+                // `before_all`/`after_all`) have `test_entry == None` and only
+                // contain pointers into `DescribeScope`/`hook_scope` Boxes —
+                // skip them. Sequences from `generate_order_test` always set
+                // `test_entry` to the original test entry; every other node in
+                // its `first_entry` chain is a clone.
+                //
+                // The walk depends on the invariant that nothing has spliced
+                // `extra_execution_entries` nodes into these chains yet —
+                // `add_extra_entry` runs only during `Phase::Execution`
+                // (`generic_hook` is unreachable from `Collection`). Assert it
+                // so a future change that lets a hook fire during collection
+                // trips here instead of double-freeing a `DescribeScope` entry
+                // in `BunTest::Drop`.
+                debug_assert!(
+                    self.extra_execution_entries.is_empty(),
+                    "extra_execution_entries must be spliced after the cloned-hook walk"
+                );
+                for seq in &order.sequences[describe_seq_start..describe_seq_end] {
+                    let Some(test_entry) = seq.test_entry else { continue };
+                    let mut cur = seq.first_entry;
+                    while let Some(p) = cur {
+                        if p != test_entry {
+                            self.cloned_hook_entries.push(p.as_ptr());
+                        }
+                        // SAFETY: linked list nodes are live `ExecutionEntry`s
+                        // built by `generate_order_test`; traversal terminates
+                        // at `next == None`.
+                        cur = unsafe { p.as_ref() }.next.and_then(NonNull::new);
+                    }
+                }
                 beforeall_order.set_failure_skip_to(&mut order);
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
                     order.generate_all_order(&root.hook_scope.after_all)?
@@ -1298,6 +1356,17 @@ impl Drop for BunTest {
         for entry in self.extra_execution_entries.drain(..) {
             // SAFETY: entries were heap-allocated in generic_hook; we own them
             unsafe { drop(bun_core::heap::take(entry)); }
+        }
+        for entry in self.cloned_hook_entries.drain(..) {
+            // Reclaim only the Box header: each entry is a `ptr::read` bitwise
+            // copy of a `DescribeScope`-owned `before_each`/`after_each` entry
+            // (see `Order::generate_order_test`), so its `Strong`/`Box` fields
+            // are aliased with the original and must not be dropped here.
+            // SAFETY: heap-boxed by `Order::generate_order_test` via
+            // `heap::into_raw(Box::new(ptr::read(..)))`; same `Layout` as the
+            // `ManuallyDrop` newtype; nothing dereferences these pointers
+            // after `BunTest` Drop begins.
+            let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
         // execution, collection, result_queue: dropped automatically
         // PERF(port): was arena bulk-free (arena_allocator.deinit)

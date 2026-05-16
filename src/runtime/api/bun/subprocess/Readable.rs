@@ -217,6 +217,59 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
+                // Finalize on a still-pending reader is only reachable at VM
+                // shutdown — `compute_has_pending_activity()` otherwise keeps the
+                // JS wrapper (and therefore this `Readable`) alive (asserted in
+                // `Subprocess::finalize`). The +1 ref `PipeReader::start()` took
+                // is unbalanced in that case: `on_reader_done`/`on_reader_error`
+                // (the paths that release it) are gated on `process.take()`
+                // returning `Some`, and `pipe_detach()` clears `process` below —
+                // so a late close callback skips its deref and the ~3 KiB
+                // `PipeReader` Box strands (LSan: `Readable.rs:169`). Tear down
+                // the buffered reader without firing `on_reader_done` (which
+                // would re-enter the half-finalized `Subprocess` and touch the
+                // already-finalized `JsRef`) and release the start ref.
+                // `ref_count > 1` ⇔ a ref beyond ours exists (the start ref);
+                // guard so we don't over-deref if `start()` was never reached
+                // (e.g. an earlier spawn-setup error path).
+                //
+                // `cfg(unix)`: `WindowsBufferedReader::deinit()` schedules an
+                // async `uv_close` and may leave `source` set, which trips the
+                // `PipeReader::deinit` Windows debug-assert when the deref below
+                // brings the count to zero. The orphaned start ref still leaks
+                // on Windows; fixing it there needs the libuv teardown reworked
+                // so the late `uv_close` callback can release it.
+                #[cfg(unix)]
+                {
+                    // Scope the `&mut PipeReader` so it is fully released before
+                    // we call `PipeReader::deref` through the raw pointer —
+                    // `deref`'s docs forbid live `&self`/`&mut self`-derived
+                    // borrows across the call, and even though this `deref` only
+                    // goes 2→1 (cannot free), keeping the borrow scoped avoids a
+                    // Stacked-Borrows hazard that would become real UB if the
+                    // refcount math ever changed.
+                    let release_start_ref = {
+                        let reader = Self::pipe_reader_mut(&pipe);
+                        if reader.process.is_some()
+                            && matches!(
+                                reader.state,
+                                super::subprocess_pipe_reader::State::Pending
+                            )
+                            && reader.ref_count.get() > 1
+                        {
+                            reader.reader.deinit();
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if release_start_ref {
+                        // SAFETY: `pipe` (deref'd in `pipe_detach` below) still
+                        // holds a ref, and the guard above proved a *second* ref
+                        // exists, so this deref cannot reach zero or free.
+                        unsafe { PipeReader::deref(pipe.as_ptr()) };
+                    }
+                }
                 Self::pipe_detach(pipe);
             }
             Readable::Buffer(_) => {

@@ -1215,6 +1215,21 @@ impl Drop for DevServer {
         }
         self.bundler_framework_views.clear();
 
+        // `client_bundle` / `cached_response` are `BackRef<StaticRoute>` (Copy,
+        // no Drop) holding an intrusive ref taken at store time — release here.
+        for rb in &mut self.route_bundles {
+            if let Some(bundle) = rb.client_bundle.take() {
+                // SAFETY: stored ref from `StaticRoute::init_*`; no live borrow.
+                unsafe { StaticRoute::deref_(bundle.as_ptr()) };
+            }
+            if let route_bundle::Data::Html(html) = &mut rb.data {
+                if let Some(cached) = html.cached_response.take() {
+                    // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
+                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
+                }
+            }
+        }
+
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.
     }

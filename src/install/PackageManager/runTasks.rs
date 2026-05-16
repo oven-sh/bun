@@ -942,7 +942,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         scopeguard::defer! {
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
-            unsafe { (*manager_ptr).preallocated_resolve_tasks.put(task_ptr) };
+            unsafe {
+                // Drop the active request/data union arms before re-pooling so
+                // heap-owned payloads (ExtractData, PackageManifest, …) don't
+                // strand. Body code that moves out an arm restores a Default
+                // placeholder per the `deinit_payload` contract.
+                (*task_ptr).deinit_payload();
+                (*manager_ptr).preallocated_resolve_tasks.put(task_ptr);
+            }
         };
         manager.decrement_pending_tasks();
 

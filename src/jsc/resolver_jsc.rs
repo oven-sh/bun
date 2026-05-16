@@ -176,8 +176,7 @@ pub mod side_effects_testing {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let [dir_val, patterns_val, path_val, use_pre_fix_val] =
-            frame.arguments_as_array::<4>();
+        let [dir_val, patterns_val, path_val, use_pre_fix_val] = frame.arguments_as_array::<4>();
         if dir_val.is_undefined() || patterns_val.is_undefined() || path_val.is_undefined() {
             return Err(global.throw(format_args!(
                 "sideEffectsHasSideEffects(dir, patterns, path, usePreFix?) takes 3 or 4 arguments"

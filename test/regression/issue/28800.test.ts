@@ -26,9 +26,9 @@ function countRenderedLines(frame: string): number {
   return (stripped.match(/\n/g) ?? []).length;
 }
 
-async function runFilter(cwd: string, rows: number, cols = 80) {
+async function runFilter(cwd: string, rows: number, cols = 80, extraArgs: string[] = []) {
   const chunks: Uint8Array[] = [];
-  const proc = Bun.spawn([bunExe(), "--filter", "*", "build"], {
+  const proc = Bun.spawn([bunExe(), ...extraArgs, "--filter", "*", "build"], {
     cwd,
     env: { ...bunEnv, TERM: "xterm-256color", FORCE_COLOR: "1" },
     terminal: {
@@ -52,15 +52,20 @@ function assertFramesFit(output: string, rows: number) {
   const maxUp = upRuns.reduce((max, run) => Math.max(max, run.length / UP_SEQ.length), 0);
   expect(maxUp).toBeLessThanOrEqual(rows);
 
-  // Each rendered frame must fit in `rows - 1` lines. Every emitted line
-  // ends in `\n`, so N lines advance the cursor N rows from row 1 → row
-  // N+1; a frame of exactly `rows` lines still scrolls the top line into
-  // scrollback, which over many redraws stacks up the same stale header
-  // and re-introduces the #28800 duplication.
+  // Every *live* rendered frame must fit in `rows - 1` lines. Each emitted
+  // line ends in `\n`, so N lines advance the cursor N rows from row 1 →
+  // row N+1; a frame of exactly `rows` lines still scrolls the top line
+  // into scrollback, which over many redraws stacks up the same stale
+  // header and re-introduces the #28800 duplication. The final frame on
+  // clean exit is intentionally uncapped (no subsequent redraw to corrupt
+  // it, so we honor --elide-lines / dump everything for debugging), so it's
+  // excluded from this check.
   const frames = [...output.matchAll(/\x1b\[\?2026h([\s\S]*?)\x1b\[\?2026l/g)].map(m => m[1]);
   expect(frames.length).toBeGreaterThan(0);
-  const maxFrameLines = frames.reduce((max, f) => Math.max(max, countRenderedLines(f)), 0);
-  expect(maxFrameLines).toBeLessThanOrEqual(rows - 1);
+  const liveFrames = frames.slice(0, -1);
+  for (const frame of liveFrames) {
+    expect(countRenderedLines(frame)).toBeLessThanOrEqual(rows - 1);
+  }
 }
 
 function script(prefix: string, count: number): string {
@@ -115,5 +120,36 @@ describe.skipIf(isWindows)("issue 28800", () => {
     const { output, exitCode } = await runFilter(String(dir), 10);
     assertFramesFit(output, 10);
     expect(exitCode).toBe(0);
+  });
+
+  test("--elide-lines=0 honors 'show all' on clean exit even in a short TTY", async () => {
+    // During live redraws the terminal cap applies (otherwise #28800 returns),
+    // but the final frame on a clean successful exit is uncapped so that the
+    // documented `--elide-lines=0` = "show all lines" contract actually holds.
+    using dir = tempDir("issue-28800-elide0", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "packages/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        scripts: { build: script("a", 12) },
+      }),
+      "packages/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        scripts: { build: script("b", 12) },
+      }),
+    });
+
+    const { output, exitCode } = await runFilter(String(dir), 10, 80, ["--elide-lines", "0"]);
+    expect(exitCode).toBe(0);
+    // Last synchronized-update frame is the final dump — it must contain
+    // every output line of every package without eliding anything.
+    const frames = [...output.matchAll(/\x1b\[\?2026h([\s\S]*?)\x1b\[\?2026l/g)].map(m => m[1]);
+    expect(frames.length).toBeGreaterThan(0);
+    const lastFrame = frames[frames.length - 1];
+    for (const prefix of ["a", "b"]) {
+      for (let i = 1; i <= 12; i++) {
+        expect(lastFrame).toContain(`${prefix}-${i}`);
+      }
+    }
+    expect(lastFrame).not.toContain("lines elided");
   });
 });

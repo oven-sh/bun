@@ -64,11 +64,6 @@ unsafe extern "C" {
     fn bun_avif_free_output(data: *mut c_void);
 }
 
-// libc `free()` for the malloc'd ICC buffer the shim hands us.
-unsafe extern "C" {
-    fn free(p: *mut c_void);
-}
-
 fn map_decode_err(rc: i32) -> codecs::Error {
     match rc {
         AVIF_UNAVAILABLE => codecs::Error::UnsupportedOnPlatform,
@@ -123,8 +118,8 @@ impl IccBuf {
 impl Drop for IccBuf {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            // SAFETY: the shim allocates via std::malloc; free() is the matching deallocator.
-            unsafe { free(self.ptr.cast::<c_void>()) };
+            // SAFETY: the shim allocates via std::malloc; libc::free is the matching deallocator.
+            unsafe { libc::free(self.ptr.cast::<c_void>()) };
         }
     }
 }

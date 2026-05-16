@@ -529,14 +529,24 @@ impl<'a> State<'a> {
         // the clear loop can't emit more cursor-ups than the terminal can
         // hold. The content cap below is skipped during abort so we still
         // dump every line for debugging.
+        //
+        // Every emitted line ends in `\n`, so writing N newlines advances
+        // the cursor N rows from its starting position. With the cursor at
+        // row 1 and a `rows`-tall viewport, writing exactly `rows` lines
+        // scrolls the top line off into scrollback (the cursor would need
+        // row `rows + 1` to land on). Budget against `rows - 1` so the
+        // frame always fits without scrolling — otherwise the top line of
+        // every redraw accumulates in scrollback, re-introducing the
+        // #28800 duplication after enough redraws.
         let terminal_rows = Self::get_terminal_rows();
+        let usable_rows: Option<usize> = terminal_rows.map(|r| r.saturating_sub(1));
         // `show_indicator` reserves an extra line per handle for the
         // "[N lines elided]" marker. When the terminal is too short even for
         // that, we drop the marker so the frame still fits.
         let show_indicator = if is_abort {
             true
         } else {
-            match terminal_rows {
+            match usable_rows {
                 Some(rows) => rows > 3 * self.handles.len(),
                 None => true,
             }
@@ -544,7 +554,7 @@ impl<'a> State<'a> {
         let terminal_cap: Option<usize> = if is_abort {
             None
         } else {
-            match terminal_rows {
+            match usable_rows {
                 Some(rows) if !self.handles.is_empty() => {
                     let n = self.handles.len();
                     // Per-handle overhead: header + footer (+ indicator if

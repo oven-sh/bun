@@ -201,7 +201,7 @@ pub mod vlq {
             &self.bytes[0..self.len as usize]
         }
 
-        // TODO(port): Zig took `writer: anytype`. `std::io::Write` is the Phase-A
+        // PORT NOTE: Zig took `writer: anytype`. `std::io::Write` is used as the
         // byte-sink trait; base64 stays a tier-0 leaf with no bun_io dep.
         pub fn write_to(self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
             writer.write_all(&self.bytes[0..self.len as usize])?;
@@ -265,7 +265,7 @@ pub mod vlq {
         };
 
         // source mappings are limited to i32
-        // PERF(port): was `inline for` (unrolled) — profile in Phase B
+        // PERF(port): was `inline for` (unrolled) — profile if hot.
         let mut iter = 0;
         while iter < VLQ_MAX_IN_BYTES {
             let mut digit = vlq & 31;
@@ -315,7 +315,7 @@ pub mod vlq {
     // (src/sourcemap/VLQ.zig:104/135) differ only by two `bun.assert` lines;
     // const-generic `ASSERT_VALID` is const-folded so codegen matches the
     // hand-duplicated bodies.
-    // PERF(port): loop was `inline for` (unrolled) — profile in Phase B.
+    // PERF(port): loop was `inline for` (unrolled) — profile if hot.
     #[inline(always)]
     fn decode_impl<const ASSERT_VALID: bool>(encoded: &[u8], start: usize) -> VLQResult {
         let mut shift: u8 = 0;
@@ -956,7 +956,7 @@ pub fn wyhash_url_safe<'a>(
 ) -> &'a [u8] {
     use std::io::Write as _;
 
-    // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile in Phase B
+    // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile if hot.
     let mut hasher = bun_wyhash::Wyhash11::init(0);
     // PORT NOTE: std.fmt.count + allocPrint collapsed; write into a scratch
     // Vec then hash. Freed immediately (Zig used stack-fallback for this).
@@ -971,7 +971,7 @@ pub fn wyhash_url_safe<'a>(
 
     // PORT NOTE: Zig reused fmt_str buffer when encode_len > 128 - at_start; arena makes the
     // distinction moot (both arms allocate from bump). Always alloc fresh slice here.
-    // PERF(port): was buffer reuse for large encode_len — profile in Phase B
+    // PERF(port): was buffer reuse for large encode_len — profile if hot.
     let slice_to_write: &mut [u8] =
         bump.alloc_slice_fill_default(encode_len + usize::from(at_start));
 

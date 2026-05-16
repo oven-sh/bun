@@ -34,8 +34,8 @@ pub struct BunxCommand;
 
 /// bunx-specific options parsed from argv.
 //
-// PORT NOTE: string fields borrow from `argv` (process-lifetime). Phase A forbids
-// struct lifetime params, so they are typed `&'static [u8]`.
+// PORT NOTE: string fields borrow from `argv` (process-lifetime). The porting
+// convention forbids struct lifetime params, so they are typed `&'static [u8]`.
 // TODO(port): lifetime — these borrow argv, not true 'static.
 pub struct Options {
     /// CLI arguments to pass to the command being run.
@@ -99,7 +99,7 @@ impl Options {
 
             if maybe_package_name.is_some() {
                 opts.passthrough_list.push(Box::<[u8]>::from(positional));
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
                 i += 1;
                 continue;
             }
@@ -812,7 +812,7 @@ impl BunxCommand {
 
         // PORT NOTE: Zig used `switch (PATH.len > 0) { inline else => |path_is_nonzero| ... }`
         // to monomorphize the format string. Collapsed to a runtime branch.
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();

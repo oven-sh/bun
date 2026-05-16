@@ -26,7 +26,7 @@ use core::ptr;
 // is folded into a trait on `Context` (`HeapContext<T>::less`). This preserves
 // monomorphization (no indirect call) at the cost of requiring the caller to impl the
 // trait instead of passing a free fn.
-// PERF(port): was comptime fn-pointer monomorphization — profile in Phase B.
+// PERF(port): was comptime fn-pointer monomorphization — profile if hot.
 pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
     pub root: *mut T,
     pub context: Context,

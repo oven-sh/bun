@@ -1051,7 +1051,7 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
-        // PERF(port): include_scripts_ was a comptime enum param — profile in Phase B
+        // PERF(port): include_scripts_ was a comptime enum param — profile if hot
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
@@ -1559,7 +1559,7 @@ impl PackageJSON {
                 } else {
                     &[DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL]
                 };
-                // PERF(port): was comptime monomorphization (inline for over comptime array) — profile in Phase B
+                // PERF(port): was comptime monomorphization (inline for over comptime array) — profile if hot
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
@@ -2001,7 +2001,7 @@ pub struct Resolution {
     // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
     // buffer. In Rust the source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
     // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
-    // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
+    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub path: Box<[u8]>,
     pub debug: ResolutionDebug,
 }
@@ -2325,7 +2325,7 @@ fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -
 pub struct ReverseResolution {
     // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
     // buffer. Copy out into an owned buffer (see `Resolution.path` note above).
-    // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
+    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub subpath: Box<[u8]>,
     pub token: bun_ast::Range,
 }
@@ -2460,7 +2460,7 @@ impl<'a> ESModule<'a> {
         }
 
         // PORT NOTE: Zig returned a slice into the threadlocal resolved_path_buf_percent.
-        // Copy out — see `Resolution.path` note. PERF(port): avoid alloc in Phase B.
+        // Copy out — see `Resolution.path` note. PERF(port): avoid the alloc if hot.
         result.path = Box::<[u8]>::from(resolved_path);
         result
     }
@@ -2902,7 +2902,7 @@ impl<'a> ESModule<'a> {
                 let mut did_find_map_entry = false;
                 let mut last_map_entry_i: usize = 0;
 
-                // PORT NOTE: Zig used MultiArrayList column slices; Phase-A `EntryDataMapList`
+                // PORT NOTE: Zig used MultiArrayList column slices; `EntryDataMapList`
                 // is `Vec<MapEntry>` so iterate AoS directly.
                 for (i, entry) in object.list.iter().enumerate() {
                     let key: &[u8] = &entry.key;

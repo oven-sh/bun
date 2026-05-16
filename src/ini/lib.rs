@@ -2,10 +2,9 @@
 #![allow(unused, dead_code, non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
-// Phase B-2 un-gate: pieces that do not transitively need the JS-AST
-// (`Expr`/`E::Object`/`Rope`) or the schema (`BunInstall`/`NpmRegistry`)
-// now compile for real. Everything that touches those types stays re-gated
-// with a `// TODO(b2-blocked):` pointing at the missing lower-tier symbol.
+// Pieces that transitively need the JS-AST (`Expr`/`E::Object`/`Rope`) or the
+// schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(b2-blocked):`
+// markers pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
 use bun_collections::VecExt;
@@ -285,7 +284,7 @@ mod draft {
     //
     // PORT NOTE: `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
     // Dropped to a runtime arg (the body never uses USAGE in a type position).
-    // PERF(port): was comptime monomorphization — profile in Phase B.
+    // PERF(port): was comptime monomorphization.
     #[derive(PartialEq, Eq, Clone, Copy)]
     enum Usage {
         Section,
@@ -593,9 +592,9 @@ mod draft {
                     // `bun_ast::Expr` (via the `From` impl in
                     // `bun_ast::expr`) so the rest of this body works
                     // against a single `ExprData`.
-                    // Phase-A `Str = &'static [u8]` lifetime erasure (see
-                    // PORTING.md §Allocators / `Parser::init` above). `val` is a
-                    // sub-slice of `self.src` and outlives the temporary `Source`.
+                    // `Str = &'static [u8]` lifetime erasure (see PORTING.md
+                    // §Allocators / `Parser::init` above). `val` is a sub-slice
+                    // of `self.src` and outlives the temporary `Source`.
                     let val_s: &'static [u8] = val.into_str();
                     let src = Source::init_path_string(self.source.path.text, val_s);
                     let mut log = Log::init();
@@ -1361,7 +1360,7 @@ mod draft {
         let env = unsafe { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
         let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
         // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
-        // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
+        // SAFETY: arena outlives all bump-allocated slices used below. TODO(refactor):
         // restructure Parser so the bump is passed externally or split borrows.
         let bump: &Arena = unsafe { &*(&raw const parser.arena) };
         parser.parse(bump)?;

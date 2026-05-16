@@ -64,7 +64,7 @@ pub struct NetworkTask {
     pub response: HTTPClientResult<'static>,
     pub task_id: crate::package_manager_task::Id,
     // TODO(port): owned in `for_manifest` (toOwnedSlice) but borrowed from
-    // `tarball.url` in `for_tarball`; Zig leaks/aliases — verify ownership in Phase B.
+    // `tarball.url` in `for_tarball`; Zig leaks/aliases — verify ownership.
     pub url_buf: Box<[u8]>,
     pub retried: u16,
     // Zig: `std.mem.Allocator param` — dropped (global mimalloc); see §Allocators.
@@ -419,7 +419,7 @@ impl NetworkTask {
             // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
             // Other registries like AWS codeartifact only support the former.
             // "npm" CLI requests the manifest with the encoded name.
-            // PERF(port): was ArenaAllocator + stackFallback(512) — profile in Phase B
+            // PERF(port): was ArenaAllocator + stackFallback(512) — profile if hot
             let encoded_name_storage;
             let encoded_name: &[u8] = if strings::index_of_char(name, b'/').is_some() {
                 encoded_name_storage = name.replace(b"/", b"%2f");

@@ -626,7 +626,7 @@ pub struct Gap {
 
 impl Gap {
     // TODO(port): PropertyFieldMap was a comptime struct mapping fields → CSS property names
-    // (.row = "row-gap", .column = "column-gap"). Encode as derive attrs in Phase B.
+    // (.row = "row-gap", .column = "column-gap"); could encode as derive attrs.
 
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let row = GapValue::parse(input)?;
@@ -989,8 +989,8 @@ pub struct AlignHandler {
 //
 // TODO(port): the Zig source threads field names as comptime strings into helper fns
 // and uses @field/@unionInit for reflection. Rust cannot pass field names as values, so
-// these are macro_rules! that expand at each call site. Phase B may want to dedupe via
-// a small proc-macro if maintenance burden is high.
+// these are macro_rules! that expand at each call site; a small proc-macro could dedupe
+// if maintenance burden is high.
 
 macro_rules! handle_property_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
@@ -1152,7 +1152,7 @@ macro_rules! flush_shorthand_helper {
                         justify_actual.clone(),
                     )));
                     // TODO(port): Zig built `prop.ty{ .align = ..., .justify = ... }` directly.
-                    // Using a `from_align_justify` ctor here; Phase B can inline struct init.
+                    // Using a `from_align_justify` ctor here; could inline the struct init.
 
                     *$align_val = None;
                     *$justify_val = None;
@@ -1482,7 +1482,7 @@ impl AlignHandler {
     }
 
     /// Gets prefixes for standard properties.
-    // PERF(port): was comptime monomorphization (`comptime feature: Feature`) — profile in Phase B
+    // PERF(port): was comptime monomorphization (`comptime feature: Feature`) — profile if hot.
     fn flush_prefixes_helper(
         &self,
         context: &PropertyHandlerContext<'_>,

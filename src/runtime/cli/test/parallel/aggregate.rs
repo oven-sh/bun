@@ -21,7 +21,7 @@ use crate::test_command;
 use crate::test_runner::jest::Summary;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
-    // PERF(port): was comptime `" " ++ name ++ "=\""` concat — profile in Phase B
+    // PERF(port): was comptime `" " ++ name ++ "=\""` concat.
     let needle = [b" ", name, b"=\""].concat();
     let Some(idx) = strings::index_of(head, &needle) else {
         return 0;
@@ -160,7 +160,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
+    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
 
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 

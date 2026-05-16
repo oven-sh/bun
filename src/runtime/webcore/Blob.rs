@@ -818,7 +818,7 @@ impl BlobExt for Blob {
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B.
+        // PERF(port): was arena bulk-free + stack-fallback alloc — profile if it shows up on a hot path.
 
         let mut hex_buf = [0u8; 70];
         let boundary = {
@@ -2887,7 +2887,7 @@ impl BlobExt for Blob {
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            // PERF(port): was stack-fallback alloc — profile in Phase B.
+            // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
             if let Some(external) = strings::to_utf16_alloc(buf, false, false).ok().flatten() {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
@@ -4374,7 +4374,7 @@ fn write_file_with_empty_source_to_destination(
                                         break 'err;
                                     }
                                     bun_sys::Result::Ok(f) => {
-                                        f.close();
+                                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
                                         return Ok(JSPromise::resolved_promise_value(
                                             ctx,
                                             JSValue::js_number(0.0),

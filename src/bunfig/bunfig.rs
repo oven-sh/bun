@@ -232,7 +232,7 @@ impl<'a> Parser<'a> {
 
     fn load_log_level(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         self.expect_string(expr)?;
-        // PERF(port): Zig used strings.ExactSizeMatcher(8) — profile in Phase B
+        // PERF(port): Zig used strings.ExactSizeMatcher(8).
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
             b"debug" => api::MessageLevel::Debug,
             b"error" => api::MessageLevel::Err,

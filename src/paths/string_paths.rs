@@ -286,7 +286,7 @@ pub fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS
 
 // TODO(port): `desired_slash` was `comptime u8` in Zig; kept as runtime arg here since
 // const-generic value can't be forwarded from a runtime call site without duplication.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF(port): was comptime monomorphization.
 pub fn normalize_slashes_only<'a>(
     buf: &'a mut [u8],
     utf8: &'a [u8],

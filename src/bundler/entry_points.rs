@@ -11,8 +11,8 @@ use crate::Transpiler;
 use bun_js_parser as js_ast;
 
 // PORT NOTE: `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
-// (lifetime-erased `'static` slices, Phase-A) so `bun_ast::Source` field types
-// line up; `FileSystem` is the real `bun_resolver::fs` singleton now that
+// (lifetime-erased `'static` slices) so `bun_ast::Source` field types line up;
+// `FileSystem` is the real `bun_resolver::fs` singleton now that
 // `bun_resolver` is in this crate's dep set.
 pub mod Fs {
     pub use bun_paths::fs::{Path, PathName};
@@ -83,7 +83,7 @@ impl FallbackEntryPoint {
             ($prefix:expr, $suffix:expr) => {{
                 let prefix: &[u8] = $prefix;
                 let suffix: &[u8] = $suffix;
-                // PERF(port): was std.fmt.count + bufPrint/allocPrint stack-fallback — profile in Phase B
+                // PERF(port): was std.fmt.count + bufPrint/allocPrint stack-fallback — profile if hot.
                 let count = prefix.len() + input_path.len() + suffix.len();
                 if count < entry.code_buffer.len() {
                     let buf = &mut entry.code_buffer;
@@ -524,8 +524,8 @@ impl MacroEntryPoint {
         };
 
         // TODO(port): self-referential — `macro_label`/`code` borrow `entry.code_buffer`
-        // and are stored into `entry.source` (lifetime erased via `IntoStr`). Phase B:
-        // raw-ptr slice or restructure so Source owns its bytes.
+        // and are stored into `entry.source` (lifetime erased via `IntoStr`); restructure
+        // so Source owns its bytes (or use a raw-ptr slice).
         let macro_label: &[u8] = &entry.code_buffer[..label_len];
         let code: &[u8] = &entry.code_buffer[label_len..label_len + code_len];
         entry.source = bun_ast::Source::init_path_string(macro_label, code);
@@ -537,8 +537,7 @@ impl MacroEntryPoint {
 
 // TODO(port): `TranspilerLike` is a placeholder for the duck-typed
 // `comptime TranspilerType: type` param used by FallbackEntryPoint/ClientEntryPoint.
-// Phase B: replace with the concrete `Transpiler` type or a real trait once
-// `bun_bundler::options` is ported.
+// Replace with the concrete `Transpiler` type or a real trait.
 pub trait TranspilerLike {
     fn options(&self) -> &crate::options::Options<'_>;
 }

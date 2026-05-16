@@ -590,7 +590,7 @@ impl Request {
 unsafe extern "C" {
     #[link_name = "Bun__getParamsIfBunRequest"]
     safe fn Bun__getParamsIfBunRequest(this_value: JSValue) -> JSValue;
-    // Zig: `extern "JS"` — JS-side builtin; Phase B wires the actual link section.
+    // Zig: `extern "JS"` — JS-side builtin.
 }
 
 impl Request {
@@ -707,8 +707,6 @@ impl Request {
                     formatter.write_indent(writer)?;
                     let size = self.body_value_mut().size();
                     if size == 0 {
-                        // TODO(port): Blob.initEmpty(undefined) — `undefined` global ptr;
-                        // Phase B should pass a real global or make initEmpty not need one.
                         let mut empty = Blob::init_empty(formatter.global_this());
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     } else {

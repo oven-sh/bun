@@ -514,8 +514,8 @@ pub mod hash_map {
 
 pub mod array_list;
 // TODO(port): per PORTING.md the managed/unmanaged ArrayList split collapses to
-// `Vec<T>` (global mimalloc) outside AST crates; Phase B may drop most of these
-// aliases once callers are migrated.
+// `Vec<T>` (global mimalloc) outside AST crates; most of these aliases can be
+// dropped once callers are migrated.
 pub use array_list::ArrayList; // any `std.mem.Allocator`
 pub use array_list::ArrayListAligned;
 pub use array_list::ArrayListAlignedDefault;

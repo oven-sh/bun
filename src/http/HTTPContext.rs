@@ -509,7 +509,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub fn init_with_client_config(&mut self, client: &mut HTTPClient) -> Result<(), InitError> {
         // TODO(port): `if (!comptime ssl) @compileError("ssl only")` — Rust
         // cannot @compileError on a const-generic bool branch without nightly;
-        // debug_assert until Phase B splits impls.
+        // debug_assert until the SSL/non-SSL impls are split.
         debug_assert!(SSL, "ssl only");
         let opts = client
             .tls_props

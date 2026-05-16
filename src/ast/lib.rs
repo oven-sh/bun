@@ -12,10 +12,10 @@
 //! mixed/ambiguous ownership in the Zig original (see the comment on
 //! `Location::deinit`: "don't really know what's safe to deinit here!"). Strings
 //! are sometimes literals, sometimes `allocator.dupe` results, sometimes slices
-//! into `Source.contents` or a `StringBuilder` arena. Phase A keeps them as
+//! into `Source.contents` or a `StringBuilder` arena. They are kept as
 //! `&'static [u8]` to mirror the Zig `[]const u8` shape without lifetime params;
-//! Phase B must decide on a real ownership story (likely `bun_core::String` or a
-//! `'source` lifetime threaded through `Location`/`Data`/`Msg`).
+//! a real ownership story (likely `bun_core::String` or a `'source` lifetime
+//! threaded through `Location`/`Data`/`Msg`) is still needed.
 
 #![warn(unreachable_pub)]
 use core::fmt;
@@ -510,17 +510,17 @@ pub mod api {
     }
 }
 
-/// Phase-A `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
+/// `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
 /// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
 /// string flavour compile against the same Zig-shaped signatures.
-/// TODO(port): lifetime — remove with `Str` once Phase B threads `'source`.
+/// TODO(port): lifetime — remove with `Str` once `'source` is threaded through.
 pub trait IntoStr {
     fn into_str(self) -> Str;
 }
 impl IntoStr for &[u8] {
     #[inline]
     fn into_str(self) -> Str {
-        // SAFETY: Phase-A lifetime erasure; see module-level OWNERSHIP note.
+        // SAFETY: lifetime erasure; see module-level OWNERSHIP note.
         unsafe { bun_collections::detach_lifetime(self) }
     }
 }
@@ -1572,7 +1572,7 @@ impl Log {
     /// Port of Zig's `log.msgs.allocator.dupe(u8, s)` pattern: copy `s` into
     /// storage owned by this `Log` and return a `&'static [u8]` view. The
     /// returned slice is valid for as long as `self` lives (the box is never
-    /// moved out of `owned_strings`); `'static` is a Phase-A erasure matching
+    /// moved out of `owned_strings`); `'static` is a lifetime erasure matching
     /// the `Str` alias used by `Location`/`Msg`. NOT a leak — the bytes free
     /// when the `Log` drops.
     pub fn dupe(&mut self, s: &[u8]) -> &'static [u8] {
@@ -2150,8 +2150,8 @@ impl Log {
         let data = Data {
             text: alloc_print(args),
             location: Some(Location {
-                // TODO(port): lifetime — Phase A keeps `Location.file` borrowing
-                // `Str`; Phase B threads real ownership (see module doc).
+                // TODO(port): lifetime — `Location.file` borrows `Str`; thread
+                // real ownership through (see module doc).
                 file: Cow::Borrowed(filepath),
                 line: i32::try_from(line).expect("int cast"),
                 column: i32::try_from(col).expect("int cast"),
@@ -2500,7 +2500,7 @@ pub struct AddErrorOptions<'a> {
     pub redact_sensitive_information: bool,
 }
 
-/// Downstream-compat alias: B-1 callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
+/// Downstream-compat alias: some callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
 /// the option-struct as `bun_ast::ErrorOpts { .. }` (Zig: `Log.addError*` opts
 /// param). Same layout as `AddErrorOptions`; the canonical name is kept while
 /// the Zig side still calls it `addErrorOpts`.
@@ -2982,7 +2982,7 @@ pub struct ToSourceOptions {
     pub convert_bom: bool,
 }
 
-/// Downstream-compat alias: B-1 callers (`ini::load_npmrc_config`) spell the
+/// Downstream-compat alias: some callers (`ini::load_npmrc_config`) spell the
 /// option-struct as `bun_ast::ToSourceOpts { convert_bom: true }`.
 pub type ToSourceOpts = ToSourceOptions;
 
@@ -3012,7 +3012,7 @@ pub fn source_from_file_at(
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
         }
     }
-    // `path` is caller-owned; goes through the Phase-A `IntoStr` borrow shim
+    // `path` is caller-owned; goes through the `IntoStr` borrow shim
     // (same as every other `Source` constructor). `bytes` is owned by the
     // returned `Source` via `Cow::Owned` — no leaking.
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))

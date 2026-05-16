@@ -393,7 +393,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — drop deflate borrow before re-borrowing self
         let items = decompressed.as_slice();
         // TODO(port): borrowck — `decompressed` borrows `deflate.rare_data`; may need to
-        // copy out or restructure. Leaving as-is for Phase B.
+        // copy out or restructure.
         self.dispatch_data(items, kind);
     }
 
@@ -1102,7 +1102,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // For compressed messages, we need to compress the content first
             let mut temp_buffer: Option<Vec<u8>> = None;
             // PORT NOTE: Zig used deflate.rare_data.arena(); in Rust we use global mimalloc.
-            // PERF(port): was rare_data arena allocator — profile in Phase B
+            // PERF(port): was rare_data arena allocator
             let content_to_compress: &[u8] = match bytes {
                 Copy::Utf16(utf16) => 'brk: {
                     // Convert UTF16 to UTF8 for compression
@@ -1139,7 +1139,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             {
                 // Compress the content
                 let mut compressed: Vec<u8> = Vec::new();
-                // PERF(port): was rare_data allocator — profile in Phase B
+                // PERF(port): was rare_data allocator
 
                 if self
                     .deflate
@@ -2165,7 +2165,6 @@ pub struct InitialDataHandler<const SSL: bool> {
 
 impl<const SSL: bool> InitialDataHandler<SSL> {
     // pub const Handle = jsc.AnyTask.New(@This(), handle);
-    // TODO(port): jsc::AnyTask::new wrapper — Phase B wires queue_microtask_callback signature.
 
     pub fn handle_without_deinit(&mut self) {
         let Some(this_socket_ptr) = self.adopted.take() else {

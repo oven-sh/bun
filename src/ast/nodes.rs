@@ -1036,7 +1036,7 @@ impl DeclaredSymbolList {
 }
 // TODO(port): arena threading — Zig passes `std.mem.Allocator` to every
 // MultiArrayList op. bun_collections::MultiArrayList owns its arena (global
-// mimalloc); if Phase B needs arena-backed SoA storage, add a `&'bump Bump`
+// mimalloc); if arena-backed SoA storage is ever needed, add a `&'bump Bump`
 // param here.
 
 impl DeclaredSymbol {

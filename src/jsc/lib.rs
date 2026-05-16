@@ -66,12 +66,8 @@ pub const CONV: &str = "sysv64";
 pub const CONV: &str = "C";
 
 // ──────────────────────────────────────────────────────────────────────────
-// Gated Phase-A draft modules (preserved on disk, not compiled in B-1).
-// Each `#[path]` points at the actual PascalCase / snake_case .rs file so the
-// draft body is addressable for B-2 un-gating.
-// ──────────────────────────────────────────────────────────────────────────
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gated modules (real Phase-A draft code, now compiling).
+// Submodules. Each `#[path]` points at the actual PascalCase / snake_case
+// .rs file.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
@@ -490,9 +486,8 @@ pub use self::zig_stack_frame_position::ZigStackFramePosition;
 pub mod garbage_collection_controller;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Phase-D un-gated `#[no_mangle]` export modules. These were B-1 gated; now
-// compiled so the C++ side links against the real symbols (43 exports per
-// /tmp/hw_defined_but_unlinked.txt). Remaining drafts stay in `_gated` below.
+// `#[no_mangle]` export modules — compiled so the C++ side links against the
+// real symbols.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "AbortSignal.rs"]
 pub mod abort_signal;
@@ -1065,9 +1060,9 @@ impl Default for IntegerRange {
 pub type IntegerRangeOptions = IntegerRange;
 
 // ──────────────────────────────────────────────────────────────────────────
-// ResolvedSource — un-gated (B-2). `#[repr(C)]` mirror of the C struct in
+// ResolvedSource — `#[repr(C)]` mirror of the C struct in
 // src/jsc/bindings/headers-handwritten.h:115. Passed by value across the
-// Zig/Rust → C++ module-loader boundary (`ErrorableResolvedSource`).
+// Rust → C++ module-loader boundary (`ErrorableResolvedSource`).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "ResolvedSource.rs"]
 pub mod resolved_source;
@@ -1294,8 +1289,8 @@ pub mod resolved_source_tag {
 pub use self::resolved_source_tag::ResolvedSourceTag;
 
 // ──────────────────────────────────────────────────────────────────────────
-// FetchHeaders — un-gated (B-2). Opaque C++ `WebCore::FetchHeaders` handle
-// plus the `HTTPHeaderName` enum used by `fast_get`/`fast_has`/`put`.
+// FetchHeaders — opaque C++ `WebCore::FetchHeaders` handle plus the
+// `HTTPHeaderName` enum used by `fast_get`/`fast_has`/`put`.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
@@ -1340,8 +1335,8 @@ pub enum BuiltinName {
 
 #[allow(non_upper_case_globals)]
 impl BuiltinName {
-    // PascalCase aliases for downstream Phase-A drafts (Response.rs / Request.rs
-    // / streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
+    // PascalCase aliases for downstream callers (Response.rs / Request.rs /
+    // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
     pub const Status: Self = Self::status;
@@ -1563,14 +1558,14 @@ pub struct ValidateObjectOpts {
 pub use self::js_global_object::BunPluginTarget;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — JSObject (un-gated; real module in JSObject.rs).
+// JSObject (real module in JSObject.rs).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
 pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — CallFrame / ArgumentsSlice (un-gated; real module in CallFrame.rs).
+// CallFrame / ArgumentsSlice (real module in CallFrame.rs).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CallFrame.rs"]
 pub mod call_frame;
@@ -1661,7 +1656,7 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 // `URL::path_from_file_url` / `URL::href_from_js` live in `URL.rs` (the
 // dedicated port file); the lib.rs copies were duplicate definitions.
 
-// B-2 Track A — JSString (un-gated; real module in JSString.rs).
+// JSString (real module in JSString.rs).
 #[path = "JSString.rs"]
 pub mod js_string;
 pub use self::js_string::JSString;
@@ -1680,9 +1675,7 @@ pub mod saved_source_map;
 pub use self::saved_source_map as SavedSourceMap;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gated: VirtualMachine / ModuleLoader / event_loop now compile from
-// their real Phase-A draft files. The stub `pub mod` blocks that lived here
-// in B-1 are replaced with `#[path]` decls; downstream-compat re-exports
+// VirtualMachine / ModuleLoader / event_loop. Downstream-compat re-exports
 // (`VirtualMachine`, `ModuleLoader`, `EventLoop`, `VirtualMachineInitOptions`)
 // are preserved.
 // ──────────────────────────────────────────────────────────────────────────
@@ -2156,7 +2149,7 @@ impl<V: Copy> ComptimeStringMapExt<V> for phf::Map<&'static [u8], V> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
+// BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "BuildMessage.rs"]
 pub mod build_message;

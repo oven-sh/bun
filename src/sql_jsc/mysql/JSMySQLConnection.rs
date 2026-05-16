@@ -43,8 +43,8 @@ use bun_core::time::NS_PER_MS;
 // switching to the derive is a mechanical follow-up, not a layering blocker.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut JSMySQLConnection` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
+// to `&T` so the impls below compile against either.
 // `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
 // (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
 // offsets.

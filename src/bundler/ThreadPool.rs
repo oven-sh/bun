@@ -2,8 +2,6 @@
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
-//! Un-gated B-2: structural surface (struct fields, schedule, IO pool, worker
-//! map) is real so `ParseTask` / `bundle_v2` / `Graph` can name and drive it.
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
 //! bitwise struct copy); the `linker.resolver` backref is wired by
@@ -26,8 +24,8 @@ use crate::linker_context_mod::StmtList;
 // PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
 // file-backed `options_impl::Target`. Compare against the latter so
-// `primary.options.target == target` type-checks. The two enums collapse in
-// Phase B-3 (see lib.rs `pub mod options` shadow note).
+// `primary.options.target == target` type-checks. TODO(refactor): collapse
+// the two enums into one (see lib.rs `pub mod options` shadow note).
 use crate::BundleV2;
 use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};

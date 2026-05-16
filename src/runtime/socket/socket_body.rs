@@ -246,8 +246,8 @@ extern "C" fn select_alpn_callback(
 // hand-dispatched per-monomorphisation in the `impl` block below instead.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut NewSocket` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. With every
+// shim still emits `this: &mut NewSocket` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either. With every
 // mutated field behind `UnsafeCell`, `&NewSocket` carries no LLVM `noalias`
 // for those fields, so a re-entrant `socket.write()`/`socket.end()` (which
 // re-derives `&Self` from `m_ctx`) cannot be miscompiled by a stale cached
@@ -500,7 +500,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         use super::listener::UnixOrHost;
         match self.connection.get() {
             Some(UnixOrHost::Host { host, port }) => {
-                // PERF(port): was stack-fallback alloc — profile in Phase B.
+                // PERF(port): was stack-fallback alloc — profile if hot.
                 // getaddrinfo doesn't accept bracketed IPv6.
                 let raw: &[u8] = host;
                 let clean = if raw.len() > 1 && raw[0] == b'[' && raw[raw.len() - 1] == b']' {
@@ -540,7 +540,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 );
             }
             Some(UnixOrHost::Unix(u)) => {
-                // PERF(port): was stack-fallback alloc — profile in Phase B.
+                // PERF(port): was stack-fallback alloc — profile if hot.
                 let s = group.connect_unix(
                     kind,
                     ssl_ctx,
@@ -1958,7 +1958,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return self.write_or_end::<IS_END>(global, &mut values, true);
         }
 
-        // PERF(port): was stack-fallback alloc — profile in Phase B.
+        // PERF(port): was stack-fallback alloc — profile if hot.
         let allow_string_object = true;
         let buffer: StringOrBuffer = if data_value.is_undefined() {
             StringOrBuffer::EMPTY
@@ -2064,7 +2064,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             let _ = self
                                 .buffered_data_for_node_net
                                 .with_mut(|b| b.append_slice(remaining_in_input_data));
-                            // PERF(port): was assume_capacity — profile in Phase B.
+                            // PERF(port): was assume_capacity — profile if hot.
                         }
 
                         break 'brk rc;
@@ -2143,7 +2143,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        // PERF(port): was stack-fallback alloc — profile in Phase B.
+        // PERF(port): was stack-fallback alloc — profile if hot.
         let buffer: BlobOrStringOrBuffer = if args[0].is_undefined() {
             BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
         } else {
@@ -3033,8 +3033,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     // ──────────────────────────────────────────────────────────────────────
     // TLS-only accessor methods. In Zig these are `pub const X = if (ssl) ...
     // else fallback`. Rust cannot const-select inherent methods on a const
-    // generic bool, so Phase A defines all of them as forwarding methods that
-    // branch on `SSL` at runtime (monomorphised away).
+    // generic bool, so these are all forwarding methods that branch on `SSL`
+    // at runtime (monomorphised away).
     //
     // PORT NOTE: rustc does not unify `NewSocket<SSL>` with `NewSocket<true>`
     // inside an `if SSL { .. }` block. The cast is sound because both

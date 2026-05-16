@@ -993,7 +993,7 @@ impl IoRequestLoop {
         self.update_now();
 
         loop {
-            // PERF(port): was StackFallbackAllocator(256*sizeof(EventType)) — profile in Phase B.
+            // PERF(port): was StackFallbackAllocator(256*sizeof(EventType)) — profile if it shows up on a hot path.
             let mut events_list: Vec<EventType> = Vec::with_capacity(256);
 
             // Process pending requests
@@ -2026,8 +2026,8 @@ pub mod waker {
         }
 
         pub fn init() -> Result<Self, bun_core::Error> {
-            // TODO(port): std.posix.eventfd(0, 0) → bun_sys::eventfd. Phase B
-            // should confirm bun_sys exposes the wrapper; falls back to libc.
+            // TODO(port): migrate to bun_sys::eventfd (the wrapper exists);
+            // currently falls back to crate::safe_c::eventfd.
             let raw = crate::safe_c::eventfd(0, 0);
             if raw < 0 {
                 return Err(bun_core::Error::from_errno(bun_sys::last_errno()));

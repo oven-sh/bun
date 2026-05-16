@@ -257,8 +257,8 @@ impl OwnedURL {
     // PERF(port): re-parses on each call. Zig parsed once into a borrowing
     // struct the caller held alongside the buffer; Rust cannot express that
     // self-reference without unsafe lifetime extension (PORTING.md §Forbidden).
-    // Callers in practice call this once and hold the borrow — profile in
-    // Phase B; if hot, store component `(u32, u32)` offsets here instead.
+    // Callers in practice call this once and hold the borrow — if this shows
+    // up on a hot path, store component `(u32, u32)` offsets here instead.
     #[inline]
     pub fn url(&self) -> URL<'_> {
         URL::parse(&self.href)
@@ -995,7 +995,7 @@ impl QueryStringMap {
 
     pub fn get_all<'s>(&'s self, input: &[u8], target: &mut [&'s [u8]]) -> usize {
         let hash = wyhash(input);
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
         self.get_all_with_hash_from_offset(target, hash, 0)
     }
 
@@ -1200,7 +1200,7 @@ impl QueryStringMap {
             return Ok(Some(QueryStringMap {
                 list,
                 buffer: Vec::new(),
-                // TODO(port): borrows external query_string; lifetime not tracked in Phase A
+                // TODO(port): borrows external query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
                 name_count: None,
             }));
@@ -1387,7 +1387,7 @@ impl From<DecodeError> for bun_core::Error {
 
 impl PercentEncoding {
     pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
         Self::decode_fault_tolerant::<_, false>(writer, input, None)
     }
 

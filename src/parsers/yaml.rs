@@ -883,13 +883,13 @@ impl<Enc: Encoding> YamlString<Enc> {
 // `String.Builder` — owns a back-reference into the parser. The Zig code stored
 // `parser: *Parser(enc)` and mutated `parser.whitespace_buf`. In Rust this is a
 // borrow-checker hazard (the builder borrows `&mut Parser` while the parser also
-// drives scanning). For Phase A we keep a raw pointer with SAFETY notes;
+// drives scanning). We keep a raw pointer with SAFETY notes.
 // TODO(port): refactor whitespace_buf out of Parser or pass &mut explicitly.
 pub struct StringBuilder<'a, Enc: Encoding> {
-    // PORT NOTE: was `&'a mut Parser<'a, Enc>` in the Phase-A draft. That ties the
-    // borrow lifetime to Parser's input lifetime (invariant under &mut), which
-    // both fails borrowck at `string_builder()` and is exactly the aliasing the
-    // Zig already had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
+    // PORT NOTE: a `&'a mut Parser<'a, Enc>` field would tie the borrow lifetime
+    // to Parser's input lifetime (invariant under &mut), which both fails
+    // borrowck at `string_builder()` and is exactly the aliasing the Zig already
+    // had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
     // Private — invariant-bearing raw backref; reach via `parser()`/`parser_mut()`.
     parser: *mut Parser<'a, Enc>,
     pub str: YamlString<Enc>,
@@ -1929,7 +1929,7 @@ impl<Enc: Encoding> Clone for TokenData<Enc> {
             TokenData::DocumentStart => TokenData::DocumentStart,
             TokenData::DocumentEnd => TokenData::DocumentEnd,
             TokenData::Scalar(_) => {
-                // TODO(port): Scalar contains Vec; Zig copied by value. Phase B reshape.
+                // TODO(port): Scalar contains a Vec; Zig copied by value. Reshape to make it Copy.
                 unreachable!("Token<Scalar> should not be cloned")
             }
         }
@@ -3390,9 +3390,6 @@ impl Escape {
     }
 }
 
-// PORT NOTE: FirstChar is defined once above (alongside ScalarResolverCtx); the
-// Phase-A draft duplicated it here for tryResolveNumber. Removed.
-
 // ───────────────────────────────────────────────────────────────────────────
 // Parser methods (continued)
 // ───────────────────────────────────────────────────────────────────────────
@@ -4285,8 +4282,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // TODO(port): Another large labeled-switch state machine (yaml.zig:2703-2979)
     // with an inner `LiteralScalarCtx` struct. The two-phase loop (find
     // content_indent, then scan body) with `ctx.append`/`ctx.done` and chomp
-    // handling is preserved structurally below but Phase B must verify the
-    // nested `newlines:` switch translation.
+    // handling is preserved structurally below; verify the nested `newlines:`
+    // switch translation against the Zig original.
 
     fn scan_auto_indented_literal_scalar(
         &mut self,

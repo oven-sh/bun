@@ -80,7 +80,7 @@ pub struct FlexFlow {
 
 // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow", PropertyFieldMap);
 // TODO(port): PropertyFieldMap / VendorPrefixMap are comptime shorthand metadata consumed by
-// css::DefineShorthand reflection. Port as part of the shorthand derive in Phase B.
+// css::DefineShorthand reflection. Port as part of the shorthand derive.
 //   PropertyFieldMap = { direction: PropertyIdTag::FlexDirection, wrap: PropertyIdTag::FlexWrap }
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
@@ -879,7 +879,7 @@ impl FlexHandler {
         // TODO(port): single_property! macro encodes Zig's comptime `prop_2009`/`prop_2012` branches.
         // The Zig version gates the entire 2009 block on `comptime prop_2009 != null`; here the macro
         // arms with `prop_2009 = None` pass a no-op closure, so the `prefix.contains(NONE)` check
-        // still runs but has no effect. Phase B should verify this matches behavior exactly.
+        // still runs but has no effect. Verify this matches behavior exactly.
 
         single_property!(
             FlexDirection,

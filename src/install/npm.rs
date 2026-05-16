@@ -872,7 +872,7 @@ pub mod package_manifest {
 
         // TODO(port): `sizes` was a comptime block iterating PackageManifest's fields by alignment.
         // Rust cannot reflect struct fields. Hardcode the field order produced by the Zig sort
-        // (descending alignment) and verify in Phase B against the Zig output.
+        // (descending alignment); re-verify against the Zig output if the layout changes.
         pub const SIZES_FIELDS: &'static [&'static str] = &[
             "pkg",
             "string_buf",
@@ -956,8 +956,8 @@ pub mod package_manifest {
 
             pos += 128 / 8;
 
-            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Phase B: verify field
-            // order matches Zig comptime sort (descending alignment).
+            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Verify field
+            // order matches Zig comptime sort (descending alignment) if the layout changes.
             {
                 // "pkg"
                 // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
@@ -997,7 +997,7 @@ pub mod package_manifest {
             outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if hot.
             let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
             Serializer::write(this, scope, &mut buffer)?;
             // --- Perf Improvement #1 ----
@@ -1250,7 +1250,7 @@ pub mod package_manifest {
             }
 
             // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
-            // the Registry.Scope outlives the threadpool task. Phase B: prove or change to owned.
+            // the Registry.Scope outlives the threadpool task. Prove or change to owned.
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
                 manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
                 scope,
@@ -1941,9 +1941,9 @@ impl PackageManifest {
         // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
         // pushed/popped the AST arena around the parse so the JSON AST is
         // bulk-freed on return. `initialize_mini_store` already does the push;
-        // the pop is handled by resetting on the next call. Phase B should wire
-        // an explicit RAII guard once `ASTMemoryAllocator::pop` is exposed.
-        // PERF(port): was arena bulk-free — profile in Phase B
+        // the pop is handled by resetting on the next call. Wire an explicit
+        // RAII guard once `ASTMemoryAllocator::pop` is exposed.
+        // PERF(port): was arena bulk-free — profile if hot.
         let bump = bun_alloc::Arena::new();
         let json = match JSON::parse_utf8(&source, log, &bump) {
             Ok(j) => j,
@@ -2175,7 +2175,7 @@ impl PackageManifest {
                 }
 
                 for pair in &DEPENDENCY_GROUPS {
-                    // PERF(port): was comptime monomorphization — profile in Phase B
+                    // PERF(port): was comptime monomorphization — profile if hot.
                     if let Some(versioned_deps) = prop
                         .value
                         .as_ref()
@@ -2331,7 +2331,7 @@ impl PackageManifest {
             release_versions_len..release_versions_len + pre_versions_len;
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
         // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
-        // TODO(port): use split_at_mut chain instead of raw pointers in Phase B.
+        // TODO(port): use split_at_mut chain instead of raw pointers.
         let all_semver_versions_ptr: *mut Semver::Version = all_semver_versions.as_mut_ptr();
         let mut release_versions_cursor: usize = 0;
         let mut prerelease_versions_cursor: usize = release_versions_len;
@@ -2731,7 +2731,7 @@ impl PackageManifest {
 
                 let mut non_optional_peer_dependency_offset: usize = 0;
 
-                // PERF(port): was comptime monomorphization (`inline for`) — profile in Phase B
+                // PERF(port): was comptime monomorphization (`inline for`) — profile if hot.
                 for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
                     let is_peer = pair.prop == b"peerDependencies";
                     // For peer deps, fall through with an empty `items`
@@ -3079,7 +3079,7 @@ impl PackageManifest {
 
                         // TODO(port): debug-assertions block (Zig lines 2478-2522) elided —
                         // it re-reads `this_names`/`this_versions` via `mut()` after dedupe.
-                        // Phase B can re-add with cursor-based slicing.
+                        // Re-add with cursor-based slicing if needed.
                         let _ = (this_names, this_versions);
                     }
                 }
@@ -3249,7 +3249,7 @@ impl PackageManifest {
         };
 
         // PERF(port): was comptime monomorphization over Int width — using a macro to expand
-        // the 1..=8 byte cases. Phase B may collapse to a single usize path if profiling allows.
+        // the 1..=8 byte cases. Could collapse to a single usize path if profiling allows.
         macro_rules! sort_with_int {
             ($Int:ty) => {{
                 type Int = $Int;
@@ -3382,14 +3382,14 @@ impl PackageManifest {
 
         if let Some(buf) = string_builder.ptr.take() {
             // TODO(port): string_builder owns this allocation; copy out the
-            // written prefix. Phase B can add a `Builder::into_owned()` that
-            // yields `Box<[u8]>` without the truncate copy.
+            // written prefix. Add a `Builder::into_owned()` that yields
+            // `Box<[u8]>` without the truncate copy.
             let mut v = buf.into_vec();
             v.truncate(string_builder.len);
             result.string_buf = v.into_boxed_slice();
         }
 
-        let _ = all_tarball_url_strings; // suppress unused-mut warnings in Phase A
+        let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
         Ok(Some(result))
     }

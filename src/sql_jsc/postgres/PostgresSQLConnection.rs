@@ -2451,7 +2451,7 @@ impl PostgresSQLConnection {
                 };
 
                 let mut stack_buf = [DataCell::SQLDataCell::default(); 70];
-                // PERF(port): was stack-fallback alloc — profile in Phase B
+                // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                 let max_inline = jsc::JSObject::max_inline_capacity() as usize;
                 let mut heap_cells: Vec<DataCell::SQLDataCell>;
                 let mut free_cells = false;

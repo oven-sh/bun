@@ -98,7 +98,7 @@ impl AnyRequestContext {
 /// Mirrors Zig's `inline fn dispatch(..., comptime cb: anytype, args)` which
 /// `inline for`s over `Pointer.type_map`. Rust closures cannot be generic over
 /// `T`, so a macro is the closest structural equivalent.
-// TODO(port): if Phase B gives all six ctx types a shared `RequestContextLike`
+// TODO(refactor): if all six ctx types gain a shared `RequestContextLike`
 // trait (with `const IS_H3: bool` + `type Resp`), this macro can become a
 // method taking `impl FnOnce(&mut dyn RequestContextLike)` for the simple arms.
 macro_rules! dispatch {

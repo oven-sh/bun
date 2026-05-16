@@ -36,7 +36,7 @@ pub use js::to_js;
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut PostgresSQLQuery` until Phase 1 lands —
+// shim still emits `this: &mut PostgresSQLQuery` —
 // `&mut T` auto-derefs to `&T` so the impls below compile against either.
 // `UnsafeCell` (which both `Cell` and `JsCell` wrap) suppresses LLVM `noalias`
 // on `&T`, structurally eliminating the PROVEN_CACHED miscompiles that the

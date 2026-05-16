@@ -35,10 +35,10 @@ use crate::selector::parser::{
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
 // PORT NOTE: Zig threaded `arena: Allocator` and built `components` into
-// an arena `ArrayList`. Phase A: `GenericSelector.components` is a std `Vec`
+// an arena `ArrayList`. `GenericSelector.components` is a std `Vec`
 // (see parser.rs `// PERF(port): was arena ArrayList`), so the builder uses
-// std `Vec` for the result and drops the `&'bump Arena` field. Phase B
-// re-threads `'bump` once `GenericSelector.components` becomes
+// std `Vec` for the result and drops the `&'bump Arena` field.
+// TODO(refactor): re-thread `'bump` once `GenericSelector.components` becomes
 // `bun_alloc::ArenaVec<'bump, _>`.
 pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The entire sequence of simple selectors, from left to right, without combinators.

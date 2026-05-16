@@ -16,7 +16,7 @@ use bun_ast::{
 // returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
 // Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
 // the parser generics directly.
-// Phase B diff readers should map:
+// Diff readers should map:
 //   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
 //   Rust: BinaryExpressionVisitor<'arena, TS, J, SCAN>
 

@@ -76,7 +76,7 @@ impl Percentage {
     }
 
     pub fn into_calc(self) -> Calc<Percentage> {
-        // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+        // PERF(port): was arena alloc (bun.create) — profile if hot.
         Calc::Value(Box::new(self))
     }
 
@@ -171,7 +171,6 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
     }
 }
 
-// ─── B-2 round 5: generic-D method block un-gated ─────────────────────────
 // `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
 // `crate::values::protocol` until `generics::parse_tocss_numeric_gated`
 // un-gates. The bound set below mirrors the full Zig comptime-method surface
@@ -179,7 +178,7 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
 // `DimensionPercentage<D>` (no behavior) needs only `D: Clone`.
 impl<D> DimensionPercentage<D>
 where
-    // TODO(port): narrow these bounds in Phase B; mirroring methods called on D below.
+    // TODO(port): narrow these bounds; mirroring methods called on D below.
     D: Clone,
 {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self>
@@ -191,7 +190,7 @@ where
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
             }
-            // PERF(port): was arena alloc (bun.create with input.arena()) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create with input.arena()) — profile if hot.
             return Ok(Self::Calc(Box::new(calc_value)));
         }
 
@@ -234,7 +233,7 @@ where
     where
         D: PartialEq,
     {
-        // TODO(port): Zig used css.implementEql (reflection). Phase B: #[derive(PartialEq)] on enum.
+        // PORT NOTE: Zig used css.implementEql (reflection); Rust uses the manual PartialEq impl above.
         self == other
     }
 
@@ -244,7 +243,7 @@ where
             // In Rust, D: Clone covers both — Copy types' clone is a bitwise copy.
             Self::Dimension(d) => Self::Dimension(d.clone()),
             Self::Percentage(p) => Self::Percentage(*p),
-            // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create) — profile if hot.
             Self::Calc(calc) => Self::Calc(Box::new(calc.deep_clone())),
         }
     }
@@ -256,7 +255,7 @@ where
     where
         D: protocol::Zero,
     {
-        // TODO(port): Zig special-cased D == f32 → 0.0. Handle via trait impl on f32 in Phase B.
+        // TODO(port): Zig special-cased D == f32 → 0.0. Handle via trait impl on f32.
         Self::Dimension(D::zero())
     }
 
@@ -288,7 +287,7 @@ where
         match self {
             Self::Dimension(d) => Self::Dimension(Self::mul_value_f32(d, other)),
             Self::Percentage(p) => Self::Percentage(p.mul_f32(other)),
-            // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create) — profile if hot.
             Self::Calc(c) => Self::Calc(Box::new(c.mul_f32(other))),
         }
     }
@@ -308,7 +307,7 @@ where
                 Calc::Value(l) => *l,
                 Calc::Function(f) => {
                     if !matches!(*f, MathFunction::Calc(_)) {
-                        // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+                        // PERF(port): was arena alloc (bun.create) — profile if hot.
                         Self::Calc(Box::new(Calc::Function(f)))
                     } else {
                         Self::Calc(Box::new(Calc::Function(Box::new(MathFunction::Calc(
@@ -425,7 +424,7 @@ where
                 a.add_impl(*v)
             }
             (a, b) => {
-                // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+                // PERF(port): was arena alloc (bun.create) — profile if hot.
                 Self::Calc(Box::new(Calc::Sum {
                     left: Box::new(a.into_calc()),
                     right: Box::new(b.into_calc()),
@@ -462,7 +461,7 @@ where
         match self {
             Self::Calc(calc) => match *calc {
                 Calc::Function(f) => match *f {
-                    // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+                    // PERF(port): was arena alloc (bun.create) — profile if hot.
                     MathFunction::Calc(c2) => Self::Calc(Box::new(c2)),
                     other_fn => Self::Calc(Box::new(Calc::Function(Box::new(other_fn)))),
                 },
@@ -553,7 +552,7 @@ where
     pub fn into_calc(self) -> Calc<DimensionPercentage<D>> {
         match self {
             Self::Calc(calc) => *calc,
-            // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create) — profile if hot.
             other => Calc::Value(Box::new(other)),
         }
     }

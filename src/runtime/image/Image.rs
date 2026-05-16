@@ -57,9 +57,7 @@ fn format_name(f: codecs::Format) -> &'static str {
 pub use crate::generated_classes::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Image` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `max_pixels`
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 #[bun_jsc::JsClass]
 pub struct Image {
@@ -673,7 +671,7 @@ impl Image {
     /// here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
     fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
         // TODO(port): lifetime — JsBuffer arm returns a borrow into the JS heap,
-        // not into `self`. Phase B may need a different return type.
+        // not into `self`; may need a different return type.
         match self.source.get() {
             Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
@@ -1793,7 +1791,7 @@ impl<'a> PipelineTask<'a> {
                         promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
-                        // PERF(port): was comptime tag dispatch — profile in Phase B.
+                        // PERF(port): was comptime tag dispatch — profile if it shows up on a hot path.
                         // This arm copies the bytes out — re-arm `Encoded::drop` so
                         // the codec allocation is freed at scope exit (RAII), not by
                         // a JS finalizer.

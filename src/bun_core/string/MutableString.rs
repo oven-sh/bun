@@ -159,7 +159,7 @@ impl MutableString {
         // TODO(port): Zig returned `[]const u8` which could be either the input
         // borrow or a fresh allocation. Rust cannot express that without a
         // lifetime + Cow; for now we always return owned `Box<[u8]>` and copy
-        // on the borrow paths. Phase B: consider `Cow<'a, [u8]>`.
+        // on the borrow paths. Consider `Cow<'a, [u8]>`.
         if str.is_empty() {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }

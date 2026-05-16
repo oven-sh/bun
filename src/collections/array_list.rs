@@ -105,8 +105,8 @@ impl<T> ArrayListAlignedIn<T> {
 
     pub fn init_capacity_in(num: usize /* allocator dropped */) -> Result<Self, AllocError> {
         // Zig: `try .initCapacity(bun.allocators.asStd(allocator_), num)`
-        // PERF(port): Vec::with_capacity aborts on OOM rather than returning Err — Phase B may
-        // swap to `Vec::try_with_capacity` (nightly) or a fallible wrapper if OOM recovery matters.
+        // PERF(port): Vec::with_capacity aborts on OOM rather than returning Err. Could swap to
+        // `Vec::try_with_capacity` (nightly) or a fallible wrapper if OOM recovery matters.
         Ok(Self {
             unmanaged: Vec::with_capacity(num),
         })
@@ -131,7 +131,7 @@ impl<T> ArrayListAlignedIn<T> {
 
     // TODO(port): `writer()` — Zig returns an `std.io.Writer` that appends bytes. For `T = u8`
     // this is `impl std::io::Write for Vec<u8>` (already in std). For other `T` there is no
-    // meaningful writer. Expose only on `ArrayListAlignedIn<u8>` in Phase B.
+    // meaningful writer. TODO(port): expose only on `ArrayListAlignedIn<u8>`.
     pub fn writer(&mut self) -> &mut Vec<T> {
         &mut self.unmanaged
     }
@@ -187,7 +187,7 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn insert_assume_capacity(&mut self, i: usize, item: T) {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.insert(i, item);
     }
 
@@ -212,7 +212,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged
             .splice(index..index, core::iter::repeat_n(value, count));
         &mut self.unmanaged[index..index + count]
@@ -225,7 +225,7 @@ impl<T> ArrayListAlignedIn<T> {
     {
         // TODO(port): Zig takes `[]const T` and bit-copies, transferring ownership. Rust must
         // `Clone` from a borrowed slice. If callers own the data, change signature to
-        // `impl IntoIterator<Item = T>` in Phase B to avoid the clone.
+        // `impl IntoIterator<Item = T>` to avoid the clone.
         self.unmanaged
             .splice(index..index, new_items.iter().cloned());
         Ok(())
@@ -255,7 +255,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         let _ = self.replace_range(start, len, new_items);
     }
 
@@ -265,7 +265,7 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn append_assume_capacity(&mut self, item: T) {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.push(item);
     }
 
@@ -292,7 +292,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.extend_from_slice(new_items);
     }
 
@@ -313,7 +313,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.extend_from_slice(new_items);
     }
 
@@ -333,7 +333,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.extend(core::iter::repeat_n(value, n));
     }
 

@@ -32,8 +32,8 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut JSMySQLQuery` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either.
+// shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {

@@ -363,7 +363,7 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-// TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper in Phase B.
+// TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper.
 pub type Timer = bun_core::time::Timer;
 
 impl<'a> LifecycleScriptSubprocess<'a> {

@@ -155,8 +155,8 @@ impl ColumnDefinition41 {
         Ok(())
     }
 
-    // TODO(port): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
-    // type-generator that produces a `.decode` wrapper. Phase B: express as a trait impl
+    // TODO(refactor): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
+    // type-generator that produces a `.decode` wrapper. Consider expressing as a trait impl
     // (e.g. `impl Decode for ColumnDefinition41`) or a macro from `new_reader`.
     pub fn decode<Context: ReaderContext>(
         &mut self,

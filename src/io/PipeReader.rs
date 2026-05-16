@@ -802,7 +802,7 @@ impl PosixBufferedReader {
 
     // PERF(port): `file_type` and `sys_fn` were comptime in Zig (monomorphization).
     // adt_const_params is unstable, so `file_type` is a runtime arg; `sys_fn` is
-    // generic so it still monomorphizes — profile in Phase B.
+    // generic so it still monomorphizes — profile if hot.
     fn read_with_fn(
         parent: &mut PosixBufferedReader,
         file_type: FileType,

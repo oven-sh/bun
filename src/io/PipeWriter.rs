@@ -78,7 +78,7 @@ pub trait PosixPipeWriter {
     /// `self.outgoing.slice()`) without raw-pointer aliasing escapes.
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF(port): Zig used `switch { inline else }` to monomorphize
-        // try_write_with_write_fn per FileType — profile in Phase B.
+        // try_write_with_write_fn per FileType — profile if hot.
         let ft = if !force_sync {
             self.get_file_type()
         } else {
@@ -286,7 +286,7 @@ pub trait PosixBufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_writable(_this: *mut Self) {}
-    // TODO(port): Zig calls `parent.eventLoop()` (returns anytype). Phase B: pin concrete type.
+    // TODO(port): Zig calls `parent.eventLoop()` (returns anytype); pin a concrete type.
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
@@ -568,7 +568,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     /// Zig accepts `bun.FD`, `*bun.MovableIfWindowsFd`, or `bun.MovableIfWindowsFd`.
-    // TODO(port): MovableIfWindowsFd overload — Phase B add Into<Fd> bound or separate fn.
+    // TODO(port): MovableIfWindowsFd overload — add an Into<Fd> bound or a separate fn.
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         self.pollable = pollable;
@@ -1327,7 +1327,7 @@ pub trait BaseWindowsPipeWriter {
     }
 
     /// Zig accepts `bun.FD` or `*bun.MovableIfWindowsFd`.
-    // TODO(port): MovableIfWindowsFd overload — Phase B add a separate start_movable().
+    // TODO(port): MovableIfWindowsFd overload — add a separate start_movable().
     fn start(&mut self, rawfd: Fd, _pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         debug_assert!(self.source().is_none());
@@ -1343,7 +1343,7 @@ pub trait BaseWindowsPipeWriter {
         // TODO: Change the type of the parameter and update all places to
         //       use MovableFD
         // TODO(port): Zig branch `if (source is pipe|tty) and FDType == *MovableIfWindowsFd { rawfd.take() }`
-        // dropped — Phase B handles via the MovableFd overload.
+        // dropped — handle via a MovableFd overload.
         let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
@@ -1792,7 +1792,7 @@ impl StreamBuffer {
     }
 
     pub fn maybe_shrink(&mut self) {
-        // TODO(port): std.heap.pageSize() — using 4096; Phase B: query actual page size.
+        // TODO(port): std.heap.pageSize() — using 4096; query the actual page size.
         let page = 4096usize;
         if self.list.capacity() > page {
             // Zig: expandToCapacity() then shrinkAndFree(page) — i.e. truncate the
@@ -1829,7 +1829,7 @@ impl StreamBuffer {
     }
 
     pub fn write_assume_capacity(&mut self, buffer: &[u8]) {
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if hot.
         self.list.extend_from_slice(buffer);
     }
 
@@ -1856,7 +1856,7 @@ impl StreamBuffer {
         buffer_u16: Option<&[u16]>,
         kind: WriteKind,
     ) -> Result<&'a [u8], OOM> {
-        // TODO(port): comptime fn-ptr identity dispatch → enum tag; Phase B unify with write_internal.
+        // TODO(refactor): comptime fn-ptr identity dispatch → enum tag; consider unifying with write_internal.
         match kind {
             WriteKind::Latin1 => {
                 let buffer = buffer_u8.unwrap();

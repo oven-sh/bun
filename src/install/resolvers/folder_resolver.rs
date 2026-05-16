@@ -94,7 +94,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 
 // Zig: std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80)
 // PORT NOTE: bun_collections::HashMap currently ignores the context/load-factor
-// type params (backed by std HashMap); identity hashing is a Phase-B perf item.
+// type params (backed by std HashMap); identity hashing is a TODO(perf).
 pub type Map = HashMap<u64, FolderResolution, IdentityContext<u64>>;
 
 pub fn normalize(path: &[u8]) -> &[u8] {
@@ -271,7 +271,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     abs: &ZStr,
     version: dependency::Version,
     features: Features,
-    // PERF(port): was comptime monomorphization (features + ResolverType) — profile in Phase B
+    // PERF(port): was comptime monomorphization (features + ResolverType) — profile if hot
     resolver: &mut R,
 ) -> Result<LockfilePackage, bun_core::Error> {
     let mut body = npm::Registry::BodyPool::get();

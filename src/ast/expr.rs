@@ -9,8 +9,8 @@ use core::fmt;
 use crate::Loc;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::{ArrayHashMap, VecExt};
+use bun_core::ZStr;
 use bun_core::{self};
-use bun_core::{ZStr, strings};
 
 use crate::{DebugOnlyDisabler, E, G, Op, Ref, S, Stmt};
 use bun_alloc::ArenaVecExt as _;
@@ -708,12 +708,11 @@ impl ArrayIterator {
     }
 }
 
-// TODO(b2-ast-round-C): same as above (string/array accessors).
-// PORT NOTE: the Phase-A draft of `as_array`/`is_string`/`as_utf8_string_literal`/
+// PORT NOTE: earlier drafts of `as_array`/`is_string`/`as_utf8_string_literal`/
 // `as_string`/`as_string_cloned`/`as_bool`/`as_number` duplicated the live `&self`
 // implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
-// raw-ptr returns). Those drafts were dropped during un-gating; only the methods
-// without a live counterpart remain.
+// raw-ptr returns). Those drafts were dropped; only the methods without a live
+// counterpart remain.
 impl Expr {
     #[inline]
     pub fn as_string_literal<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
@@ -960,8 +959,8 @@ impl Expr {
     }
 }
 
-// TODO(port): jsonStringify protocol — replace with serde or custom trait in
-// Phase B. Kept gated; `Serializable` is its payload shape.
+// TODO(refactor): jsonStringify protocol — replace with serde or a custom trait.
+// `Serializable` is its payload shape.
 
 impl Expr {
     // PORT NOTE: Zig's `jsonStringify` fed `Serializable` to `std.json.stringify`.
@@ -3387,7 +3386,7 @@ pub mod data {
     crate::thread_local_ast_store!(expr_store::Store, "Expr");
 }
 
-/// Compatibility shim: Phase-A draft callers in this file used `Store::method()`
+/// Compatibility shim: callers in this file use `Store::method()`
 /// (impl-on-struct namespace). Forward to the real `data::Store` module.
 pub use data::Store;
 

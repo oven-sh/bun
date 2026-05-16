@@ -297,10 +297,6 @@ pub const STDERR_NO: usize = 2;
 // another `ShellInterpreter` host fn (or, via `Yield::run`, another
 // interpreter entirely — see `DbgDepthGuard::MAX_DEPTH`). With every field
 // behind `UnsafeCell`, an overlapping `&Interpreter` is sound.
-//
-// The codegen shim still emits `this: &mut Interpreter` until R-2 Phase 1
-// lands; `&mut T` auto-derefs to `&T` so the impls below compile against
-// either.
 pub struct Interpreter {
     /// Flat arena of state-machine nodes. Indices are `NodeId`s; freed slots
     /// are recycled via `free_list`.
@@ -315,8 +311,8 @@ pub struct Interpreter {
     /// `ArrayList(JSValue).items` borrow becomes `Vec` ownership in the port —
     /// `create_shell_interpreter` moves the parsed-script's vec in here).
     // TODO(port): GC root — bare JSValue heap storage is invisible to the
-    // conservative stack scan. Phase B: switch to MarkedArgumentBuffer or root
-    // via wrapper visitChildren.
+    // conservative stack scan. Switch to MarkedArgumentBuffer or root via the
+    // wrapper's visitChildren.
     pub jsobjs: Vec<crate::jsc::JSValue>,
 
     pub root_shell: JsCell<ShellExecEnv>,
@@ -1568,7 +1564,7 @@ impl Interpreter {
             let slice = value_str.to_owned_slice();
             // PORT NOTE: Zig `initRefCounted` adopts the slice; the Rust
             // `init_ref_counted` dups (see EnvStr.rs TODO), so the `Vec`s drop
-            // here without leaking. Phase B revisits the ownership contract.
+            // here without leaking. TODO(refactor): revisit the ownership contract.
             let keyref = EnvStr::init_ref_counted(&keyslice);
             let valueref = EnvStr::init_ref_counted(&slice);
             self.root_shell

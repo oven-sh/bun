@@ -445,8 +445,8 @@ impl<'a> LinkerContext<'a> {
     }
 }
 
-// Local re-exports for the un-gated tree-shaking impl below. `EntryPoint::Kind`
-// and `SideEffects` live in sibling modules; the Phase-A draft referenced them
+// Local re-exports for the tree-shaking impl below. `EntryPoint::Kind`
+// and `SideEffects` live in sibling modules; code here used to reference them
 // via Zig-style nested paths. The real `EntryPoint` lives in
 // `ungate_support::entry_point`; re-export so `EntryPoint::Kind` here is the
 // *same type* `items_entry_point_kind()` returns (was a duplicate enum before).
@@ -2290,7 +2290,7 @@ impl<'a> LinkerContext<'a> {
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
         let result = if enable_source_maps {
             js_printer::print_with_writer::<&mut js_printer::BufferPrinter, true>(
                 &mut printer,
@@ -2578,7 +2578,7 @@ impl<'a> LinkerContext<'a> {
             }
         });
     }
-} // end  — split: tree-shaking trio un-gated below (B-2 second pass)
+} // end — split: tree-shaking trio below
 
 /// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
 /// can call back into `LinkerContext::require_or_import_meta_for_source`.
@@ -2594,11 +2594,9 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// B-2 second pass: un-gated tree-shaking primitives. These reach into
-// `LinkerGraph` SoA columns (`files_live`, `meta.items_flags()`) and the
-// `Graph::InputFileColumns` accessors. `LinkerGraph` real fields land via the
-// concurrent `LinkerGraph.rs` un-gate; until lib.rs flips its module gate the
-// stub `LinkerGraph(())` will surface here — expected and tracked.
+// Tree-shaking primitives. These reach into `LinkerGraph` SoA columns
+// (`files_live`, `meta.items_flags()`) and the `Graph::InputFileColumns`
+// accessors.
 // ══════════════════════════════════════════════════════════════════════════
 impl<'a> LinkerContext<'a> {
     pub fn mark_file_reachable_for_code_splitting(
@@ -2968,19 +2966,18 @@ impl<'a> LinkerContext<'a> {
             );
         }
     }
-} // end un-gated tree-shaking impl (B-2 second pass)
+} // end tree-shaking impl
 
 // ══════════════════════════════════════════════════════════════════════════
-// `scanImportsAndExports.rs` callees — un-gated (B-2 third pass).
+// `scanImportsAndExports.rs` callees.
 //
 // `linker_context/scanImportsAndExports.rs` calls these `LinkerContext`
 // methods inherently. Real ports of the `LinkerContext.zig` /
 // `linker_context/doStep5.zig` / `linker_context/generateCodeForLazyExport.zig`
-// bodies. The `` impl block immediately below retains the
-// Phase-A drafts (now duplicated) until the next sweep removes them.
+// bodies.
 // ══════════════════════════════════════════════════════════════════════════
 
-// Local imports for the un-gated bodies. `AstFlags` / `DeclaredSymbolList`
+// Local imports. `AstFlags` / `DeclaredSymbolList`
 // already imported at the top of the file.
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};

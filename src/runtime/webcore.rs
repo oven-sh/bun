@@ -434,7 +434,7 @@ pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
 // TODO(port): Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
 // generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`
-// for their type instead of passing a free fn. Phase B should audit call sites
+// for their type instead of passing a free fn. TODO(refactor): audit call sites
 // (`Wrap(Foo, Foo.onPipe).init(self)` → `Wrap::<Foo>::init(self)`).
 pub trait PipeHandler {
     fn on_pipe(&mut self, stream: streams::Result);

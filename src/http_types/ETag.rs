@@ -193,7 +193,7 @@ impl Headers {
             offset,
             length: u32::try_from(name.len()).unwrap(),
         };
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity.
         self.buf.extend_from_slice(name);
         offset = u32::try_from(self.buf.len()).unwrap();
         self.buf.extend_from_slice(value);

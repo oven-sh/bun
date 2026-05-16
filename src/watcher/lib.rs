@@ -9,11 +9,9 @@
 #![allow(unexpected_cfgs)]
 //! Bun's cross-platform filesystem watcher.
 //!
-//! B-2 un-gate: the Phase-A draft modules now compile against the real T0/T1
-//! crate surface where it exists. Function bodies that still depend on
-//! lower-tier surface that hasn't landed yet (e.g. `bun_sys::linux` raw
-//! inotify syscalls, `bun_collections::MultiArrayElement` derive, `bun_fs`)
-//! are individually re-gated with `// TODO(b2-blocked): bun_X::Y` markers.
+//! Function bodies that depend on crate surface that hasn't landed yet
+//! (e.g. `bun_sys::linux` raw inotify syscalls, `bun_collections::MultiArrayElement`
+//! derive, `bun_fs`) are individually gated with `// TODO(b2-blocked): bun_X::Y` markers.
 
 // ─── platform impls ───────────────────────────────────────────────────────
 //

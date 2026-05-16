@@ -5,7 +5,7 @@ use crate::{Location, SourceLocation, Token};
 
 // Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
 // slices point into the parser arena / source text and are never individually freed.
-// TODO(port): arena slice lifetime — Phase B may thread <'bump> or switch to StoreRef.
+// TODO(port): arena slice lifetime — thread `<'bump>` or switch to StoreRef.
 use crate::Str;
 
 #[inline(always)]

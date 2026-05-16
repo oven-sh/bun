@@ -134,7 +134,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
             // TODO(port): the line above conflates key_ptr/value_ptr writes from Zig's
             // `gpe.key_ptr.* = name; gpe.value_ptr.* = Scope.Member{...}` — verify
-            // get_or_put_member_with_hash's Rust API shape in Phase B.
+            // get_or_put_member_with_hash's Rust API shape.
 
             declare_loc = loc;
 

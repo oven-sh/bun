@@ -260,7 +260,7 @@ impl OutputBuffer {
             return;
         }
         // PERF(port): was appendSlice with latched OOM — Vec::extend aborts
-        // on OOM under the global mimalloc allocator. Phase B may revisit.
+        // on OOM under the global mimalloc allocator.
         self.list.extend_from_slice(data);
     }
 

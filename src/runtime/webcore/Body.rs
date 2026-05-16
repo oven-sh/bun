@@ -249,8 +249,8 @@ pub struct PendingValue {
 
     // PORT NOTE: LIFETIMES.tsv JSC_BORROW → `&JSGlobalObject`, but `Value::Locked`
     // is stored on heap (Body in Request/Response m_ctx). Dropped the `<'a>`
-    // lifetime per PORTING.md §Type map ("never put a lifetime param on a struct
-    // in Phase A"); raw ptr until Phase B picks `&'static` vs JSC handle.
+    // lifetime per PORTING.md §Type map (no lifetime params on structs);
+    // raw ptr until we pick `&'static` vs a JSC handle.
     pub global: *const JSGlobalObject,
     pub task: Option<*mut c_void>,
 
@@ -1752,7 +1752,7 @@ pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
 /// and optionally override `get_body_readable_stream` (Zig `@hasDecl` check).
 ///
 /// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
-/// codegen shim still emits `this: &mut T` until Phase 1 lands — `&mut T`
+/// codegen shim still emits `this: &mut T` — `&mut T`
 /// auto-derefs to `&T` so the impls below compile against either.
 pub trait BodyMixin: BodyOwnerJs + Sized {
     /// R-2 interior-mutability boundary: implementors project `&mut Value`

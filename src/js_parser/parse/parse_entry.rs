@@ -585,7 +585,7 @@ impl<'a> Parser<'a> {
         // PORT NOTE: Zig `moveToListManaged(arena)` rebinds the same
         // backing storage to an `ArrayList(arena)`. The Rust Vec
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
-        // copy elements into the arena. Phase B may grow a zero-copy adapter.
+        // copy elements into the arena. TODO(perf): consider a zero-copy adapter.
         p.symbols =
             bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
 
@@ -616,7 +616,7 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if hot
         parts.push(ns_export_part);
         parts.push(part);
 
@@ -710,7 +710,7 @@ impl<'a> Parser<'a> {
                 // If the logger is backed by console.log, every print appends a newline.
                 // so buffering is kind of mandatory here
                 // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
-                // buffered writer over it. Phase B should provide a `bun_core::Output::buffered()`
+                // buffered writer over it. Provide a `bun_core::Output::buffered()`
                 // that returns an `impl core::fmt::Write` flushed on drop.
                 for msg in p.log().msgs.as_slice() {
                     let mut m: bun_ast::Msg = *msg;
@@ -736,8 +736,8 @@ impl<'a> Parser<'a> {
 
     fn _parse<const TS: bool>(self) -> Result<crate::Result, Error> {
         // TODO(port): narrow error set
-        // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
-        // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
+        // TODO(port): bun_crash_handler::current_action — `Action` stores
+        // `&'static [u8]` but `self.source.path.text` is `'a`; widen
         // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
         //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
         // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
@@ -778,9 +778,9 @@ impl<'a> Parser<'a> {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
+        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile if hot
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
-        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
+        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile if hot
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
         // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)

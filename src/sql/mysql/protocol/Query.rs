@@ -7,11 +7,10 @@ use crate::shared::data::Data;
 
 bun_core::declare_scope!(MySQLQuery, visible);
 
-// TODO(port): lifetime param on struct (Phase B) — Execute is a transient
-// builder that borrows query/params/param_types from the caller for the
-// duration of a single write() call (no LIFETIMES.tsv entry; BORROW_PARAM
-// candidate). Phase A rule forbids struct lifetimes; revisit and either
-// confirm BORROW_PARAM in LIFETIMES.tsv or restructure as fn params.
+// PORT NOTE: Execute is a transient builder that borrows query/params/param_types
+// from the caller for the duration of a single write() call. Most protocol
+// message structs avoid lifetime params; this one carries an explicit `'a`
+// because none of Box / &'static / raw fit a borrow-only message builder.
 pub struct Execute<'a> {
     pub query: &'a [u8],
     /// Parameter values to bind to the prepared statement

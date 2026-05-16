@@ -715,7 +715,7 @@ impl Package<u64> {
 
         let package_version = *package_version_ptr;
 
-        // PERF(port): was comptime-computed array — profile in Phase B
+        // PERF(port): was comptime-computed array — profile if hot.
         let dependency_groups: &[DependencyGroup] = &{
             let mut out: Vec<DependencyGroup> = Vec::with_capacity(4);
             if FEATURES.dependencies {
@@ -745,7 +745,7 @@ impl Package<u64> {
             string_builder.count(manifest.name());
             version.count(&manifest.string_buf, &mut string_builder);
 
-            // PERF(port): was `inline for` — profile in Phase B
+            // PERF(port): was `inline for` — profile if hot.
             for group in dependency_groups {
                 // Zig uses `@field(package_version, group.field)` reflection;
                 // ported as `PackageVersion::dep_group(field) -> ExternalStringMap`.
@@ -816,7 +816,7 @@ impl Package<u64> {
             let dependencies = &mut dependencies_list[dep_start..total_len];
 
             total_dependencies_count = 0;
-            // PERF(port): was `inline for` — profile in Phase B
+            // PERF(port): was `inline for` — profile if hot.
             for group in dependency_groups {
                 // TODO(port): @field reflection — see note above
                 let map: ExternalStringMap = package_version.dep_group(group.field);
@@ -1595,7 +1595,7 @@ impl Diff {
             as u32;
 
         if from.resolution.tag != ResolutionTag::Root {
-            // PERF(port): was `inline for` over Lockfile.Scripts.names — profile in Phase B
+            // PERF(port): was `inline for` over Lockfile.Scripts.names — profile if hot.
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
                 if !String::eql(
                     **to_hook,
@@ -1685,7 +1685,7 @@ impl Package<u64> {
     }
 
     // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
-    // PERF(port): was comptime monomorphization on `group`/`tag` — profile in Phase B
+    // PERF(port): was comptime monomorphization on `group`/`tag` — profile if hot.
     //
     // PORT NOTE: Zig took `lockfile: *Lockfile`, but the live `StringBuilder`
     // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
@@ -2237,7 +2237,7 @@ impl Package<u64> {
             resolver.count(&mut string_builder, &json);
         }
 
-        // PERF(port): was comptime-computed array — profile in Phase B
+        // PERF(port): was comptime-computed array — profile if hot.
         let dependency_groups: Vec<DependencyGroup> = {
             let mut out: Vec<DependencyGroup> = Vec::with_capacity(5);
             if FEATURES.workspaces {
@@ -2313,7 +2313,7 @@ impl Package<u64> {
             }
         }
 
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for group in &dependency_groups {
             if let Some(dependencies_q) = json.as_property(group.prop) {
                 'brk: {
@@ -2764,7 +2764,7 @@ impl Package<u64> {
 
         total_dependencies_count = 0;
 
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for group in &dependency_groups {
             if group.behavior.is_workspace() {
                 let mut seen_workspace_names = TrustedDependenciesSet::default();
@@ -3195,7 +3195,7 @@ pub mod serializer {
         // Zig used a SIMD @Vector reduction over `sizes.bytes`; equivalent
         // scalar dot-product. Order is irrelevant for the sum, so use the
         // declaration-order size table directly.
-        // PERF(port): comptime @Vector reduce — profile in Phase B.
+        // PERF(port): comptime @Vector reduce — profile if hot.
         let len = list.len();
         let mut sum: usize = 0;
         for fi in 0..FIELD_COUNT {
@@ -3239,7 +3239,7 @@ pub mod serializer {
         let really_begin_at = stream.get_pos()?;
         let mut sliced = list.slice();
 
-        // PERF(port): was `inline for (FieldsEnum.fields)` — profile in Phase B
+        // PERF(port): was `inline for (FieldsEnum.fields)` — profile if hot.
         for field in PackageField::ALL {
             // SAFETY: each `PackageField` discriminant corresponds to a column
             // whose element size matches `SIZES_BYTES[field as usize]`; we
@@ -3446,7 +3446,7 @@ pub mod serializer {
         let n = list.len();
         let mut sliced = list.slice();
 
-        // PERF(port): was `inline for (FieldsEnum.fields)` — profile in Phase B
+        // PERF(port): was `inline for (FieldsEnum.fields)` — profile if hot.
         for field in PackageField::ALL {
             let sz = bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
                 field as usize,

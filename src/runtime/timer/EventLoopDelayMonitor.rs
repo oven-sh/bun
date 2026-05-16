@@ -12,7 +12,7 @@ pub struct EventLoopDelayMonitor {
     /// I don't think having a single event loop delay monitor histogram instance
     /// /will cause any issues? Let's find out.
     // TODO(port): bare JSValue heap field — kept alive by JS-side closure scope per the
-    // comment above; revisit whether this should be a Strong/JsRef in Phase B.
+    // comment above; revisit whether this should be a Strong/JsRef.
     js_histogram: JSValue,
 
     event_loop_timer: EventLoopTimer,

@@ -125,19 +125,19 @@ pub use css_parser::{
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
 // The selector grammar references these via `bun_css::*` (Zig's flat `css.*`
-// namespace). `Str` is the arena-borrowed `[]const u8` slice alias; in Phase A
+// namespace). `Str` is the arena-borrowed `[]const u8` slice alias; here
 // it's `*const [u8]` (matches `error.rs` / `values::ident` field shape) and
 // becomes `&'bump [u8]` once the arena lifetime is plumbed.
 pub type Str = *const [u8];
 
 /// Dereference an arena-owned [`Str`] into a slice borrow.
 ///
-/// This is the **single** named entry point for the Phase-A `&*(p: *const [u8])`
+/// This is the **single** named entry point for the `&*(p: *const [u8])`
 /// pattern; every call site shares the same invariant (parser source/arena is
 /// immutable for the session and outlives every value constructed from it), so
 /// the SAFETY justification lives here once instead of being repeated ~70×.
-/// The `'static` return lifetime is the Phase-A placeholder — Phase B threads
-/// `'bump`, `Str` becomes `&'bump [u8]`, and this fn is deleted.
+/// The `'static` return lifetime is a placeholder — once `'bump` is threaded
+/// through, `Str` becomes `&'bump [u8]` and this fn is deleted.
 ///
 /// # Safety
 /// `p` must be a non-null fat pointer into the parser's source text or bump
@@ -447,7 +447,7 @@ pub struct Dimension {
 /// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
 /// depend on `serializer::*` and `generics`.
 // TODO(port): every &'static [u8] payload borrows the parser arena/source;
-// Phase B threads `<'a>` once the bumpalo arena lifetime is plumbed.
+// thread `<'a>` once the bumpalo arena lifetime is plumbed.
 #[derive(Clone, Debug)]
 pub enum Token {
     Ident(&'static [u8]),

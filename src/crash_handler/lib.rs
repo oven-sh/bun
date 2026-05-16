@@ -18,12 +18,6 @@
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 UN-GATE
-// Phase-A draft compiles as `mod draft` and is re-exported. Function bodies
-// that depend on T0/T1 surface not yet available are individually re-gated
-// with `` and a `// TODO(b2-blocked): bun_X::Y` marker.
-// ──────────────────────────────────────────────────────────────────────────
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![allow(
@@ -628,7 +622,7 @@ mod draft {
     pub enum CrashReason {
         /// From @panic()
         Panic(&'static [u8]),
-        // TODO(port): lifetime — Zig holds a borrowed []const u8; using &'static here for Phase A.
+        // TODO(port): lifetime — Zig holds a borrowed []const u8; using &'static here as a placeholder.
         /// "reached unreachable code"
         Unreachable,
 
@@ -710,7 +704,7 @@ mod draft {
         Parse(&'static [u8]),
         Visit(&'static [u8]),
         Print(&'static [u8]),
-        // TODO(port): lifetime — these slices borrow caller-owned paths; &'static is a Phase A placeholder.
+        // TODO(port): lifetime — these slices borrow caller-owned paths; &'static is a placeholder.
         #[cfg(feature = "show_crash_trace")]
         BundleGenerateChunk(BundleGenerateChunk),
         #[cfg(not(feature = "show_crash_trace"))]
@@ -1766,7 +1760,12 @@ mod draft {
                     .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
             }
         }
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd"
+        ))]
         {
             reset_on_posix();
         }
@@ -2907,7 +2906,12 @@ mod draft {
             let _ = spawn_result;
             let _ = url;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd"
+        ))]
         {
             let mut buf = bun_core::PathBuffer::default();
             let mut buf2 = bun_core::PathBuffer::default();
@@ -3085,8 +3089,8 @@ mod draft {
         err: bun_core::Error,
         maybe_trace: Option<&StackTrace>,
     ) {
-        // TODO(port): builtin.have_error_return_tracing — Rust has no error-return tracing.
-        // Phase B should decide whether to keep this entire mechanism or strip it.
+        // TODO(port): builtin.have_error_return_tracing — Rust has no error-return tracing;
+        // decide whether to keep this entire mechanism or strip it.
         if !debug::HAVE_ERROR_RETURN_TRACING {
             return;
         }
@@ -3226,7 +3230,7 @@ mod draft {
             ]
         };
         for &program in programs {
-            // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator in Phase A
+            // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator here.
             match spawn_symbolizer(program, trace) {
                 // try next program if this one wasn't found
                 Err(e) if e == bun_core::err!("FileNotFound") => continue,
@@ -3407,7 +3411,7 @@ mod draft {
         pub source_location: Option<SourceLocation>,
         pub symbol_name: Box<[u8]>,
         pub compile_unit_name: Box<[u8]>,
-        // TODO(port): Zig stores borrowed slices owned by debug_info; using Box<[u8]> for Phase A.
+        // TODO(port): Zig stores borrowed slices owned by debug_info; using Box<[u8]> here.
     }
 
     // PORT NOTE: Zig's `SourceAtAddress.deinit` only freed `source_location.file_name`;

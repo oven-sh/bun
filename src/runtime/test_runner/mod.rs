@@ -4,8 +4,8 @@
 //! Module layout: every matcher resolves `Expect`, `get_signature`, `mock`,
 //! `DiffFormatter`, `ExpectAny` via `super::*` from the `expect` façade
 //! below. The `JSValueTestExt` / `JSGlobalObjectTestExt` extension traits are
-//! thin call-convention adapters (Phase-A drafts used a different argument
-//! order / arity than the `bun_jsc` inherents that have since landed); every
+//! thin call-convention adapters (the matcher modules were written against a
+//! different argument order / arity than the `bun_jsc` inherents that have since landed); every
 //! body forwards to the canonical `bun_jsc::JSValue` / `JSGlobalObject`
 //! inherent so there is exactly one FFI declaration per symbol.
 
@@ -99,10 +99,10 @@ pub mod expect {
         ::bun_jsc::codegen_cached_accessors!("Expect"; capturedValue, resultValue);
     }
 
-    /// Free-fn alias for `Expect::get_signature` — many Phase-A matcher
-    /// drafts imported it as a path item (`use super::get_signature`),
-    /// which Rust does not allow for associated fns. Thin shim keeps the
-    /// drafts unmodified.
+    /// Free-fn alias for `Expect::get_signature` — many matcher modules
+    /// import it as a path item (`use super::get_signature`),
+    /// which Rust does not allow for associated fns. Thin shim keeps those
+    /// modules unmodified.
     #[inline]
     pub fn get_signature(
         matcher_name: &'static str,
@@ -136,7 +136,7 @@ pub mod expect {
     pub(crate) use __get_signature as get_signature;
 
     // ── call-convention adapters over `bun_jsc` inherents ────────────
-    // The Phase-A matcher drafts were written against a slightly different
+    // The matcher modules were written against a slightly different
     // `bun_jsc` surface (argument order, builder-style setters, two-arg
     // `throw_*`). Rather than touch 75 files we provide thin extension
     // traits / aliases here that forward to the now-landed inherents — no
@@ -230,7 +230,7 @@ pub mod expect {
         }
         #[inline]
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare {
-            // Trait kept the Phase-A `(other, global)` ordering; the upstream
+            // Trait keeps the matcher modules' `(other, global)` ordering; the upstream
             // inherent is `(global, other)` — adapt here so 75 matcher
             // call-sites stay untouched.
             use bun_jsc::ComparisonResult as R;
@@ -314,7 +314,7 @@ pub mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// Two-argument `throw_*` adapters — Phase-A matcher drafts called
+    /// Two-argument `throw_*` adapters — matcher modules call
     /// `global.throw_pretty(FMT, format_args!(FMT, ..))` (Zig's `comptime fmt`
     /// + `args`). Rust's `Arguments<'_>` already encloses the format string,
     /// so the leading `&str` is redundant; these shims drop it and forward to
@@ -487,7 +487,7 @@ pub mod expect {
 
     /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
     /// exposes `quote_strings` as a public field, not a chained setter. A
-    /// handful of Phase-A matcher drafts wrote
+    /// handful of matcher modules write
     /// `Formatter::new(g).with_quote_strings(true)`.
     pub trait FormatterTestExt: Sized {
         fn with_quote_strings(self, b: bool) -> Self;

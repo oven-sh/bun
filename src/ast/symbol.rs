@@ -169,8 +169,8 @@ pub struct Symbol {
 }
 
 // TODO(port): Zig asserts @sizeOf(Symbol) == 88 and @alignOf(Symbol) == @alignOf([]const u8).
-// Rust default repr reorders fields and Option<NamespaceAlias> niche may differ; verify in
-// Phase B (likely needs #[repr(C)] or manual packing if the size is load-bearing).
+// Rust default repr reorders fields and Option<NamespaceAlias> niche may differ
+// (likely needs #[repr(C)] or manual packing if the size is load-bearing).
 // const _: () = assert!(core::mem::size_of::<Symbol>() == 88);
 // const _: () = assert!(core::mem::align_of::<Symbol>() == core::mem::align_of::<crate::StoreStr>());
 

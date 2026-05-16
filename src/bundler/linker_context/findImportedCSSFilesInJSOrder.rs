@@ -30,7 +30,7 @@ pub fn find_imported_css_files_in_js_order(
     _temp: &Arena,
     entry_point: Index,
 ) -> Vec<Index> {
-    // PERF(port): was arena bulk-free (DynamicBitSet now Box<[usize]>-backed) — profile in Phase B
+    // PERF(port): was arena bulk-free (DynamicBitSet now Box<[usize]>-backed).
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     let mut order: Vec<Index> = Vec::new();
 

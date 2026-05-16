@@ -75,7 +75,7 @@ pub fn write_output_files_to_disk(
 
     // Optimization: when writing to disk, we can re-use the memory
     // PERF(port): MaxHeapAllocator reuses the largest allocation between
-    // iterations. Phase B should verify bun_alloc::MaxHeapAllocator semantics
+    // iterations. Verify bun_alloc::MaxHeapAllocator semantics
     // match (init/reset/deinit). DynAlloc is currently `()` so the arena
     // handles below are placeholders; allocation routes through global mimalloc.
     let mut max_heap_allocator = MaxHeapAllocator::init();
@@ -125,8 +125,8 @@ pub fn write_output_files_to_disk(
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
         // PERF(port): Zig `defer max_heap_allocator.reset()` — reset the reusable
         // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
-        // guard that resets on drop and derefs to the arena, so when Phase B
-        // wires up `code_allocator` it can borrow through `_code_allocator`.
+        // guard that resets on drop and derefs to the arena, so when
+        // `code_allocator` is wired up it can borrow through `_code_allocator`.
         let _code_allocator = max_heap_allocator.scope();
 
         let rel_parent =

@@ -4,8 +4,8 @@ use core::marker::PhantomData;
 // (two `type` fields + two string literals) used to drive `@export` generation.
 // Rust has no `type`-valued fields; the closest shape is a generic struct with
 // PhantomData markers. In practice this whole mechanism is superseded in Rust by
-// `#[unsafe(no_mangle)] pub extern "C" fn ...` at the definition site — Phase B
-// may delete this type outright once callers are migrated.
+// `#[unsafe(no_mangle)] pub extern "C" fn ...` at the definition site.
+// TODO(refactor): delete this type outright once callers are migrated.
 
 pub struct StaticExport<T, P> {
     // Zig: `Type: type`
@@ -32,9 +32,9 @@ impl<T, P> StaticExport<T, P> {
     // lifetime — `Box::leak` is forbidden per docs/PORTING.md (it would leak a
     // fresh allocation on every call, whereas the Zig original is a single
     // comptime-interned constant). Callers holding a literal should prefer
-    // `const_format::concatcp!("wrap", SYM)` to recover the comptime semantics;
-    // Phase B replaces this whole mechanism with `#[no_mangle]` + proc-macro.
-    // PERF(port): was comptime `++` (zero-cost) — profile in Phase B
+    // `const_format::concatcp!("wrap", SYM)` to recover the comptime semantics.
+    // TODO(refactor): replace this whole mechanism with `#[no_mangle]` + proc-macro.
+    // PERF(port): was comptime `++` (zero-cost) — profile if it shows up on a hot path.
     pub fn wrapped_name(&self) -> String {
         let mut s = String::with_capacity(4 + self.symbol_name.len());
         s.push_str("wrap");

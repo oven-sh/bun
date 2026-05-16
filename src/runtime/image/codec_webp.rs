@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 use super::codecs;
 use crate::encoded_wrap_free;
 
-// TODO(port): move to libwebp_sys (or runtime_sys) — extern fns left in place for Phase A.
+// TODO(port): move to libwebp_sys (or runtime_sys); extern fns declared inline here for now.
 unsafe extern "C" {
     pub fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
     fn WebPDecodeRGBA(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> *mut u8;

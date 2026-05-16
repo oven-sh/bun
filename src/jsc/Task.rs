@@ -22,7 +22,7 @@ use crate::{JSGlobalObject, JsError};
 pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 
 /// `Task::new<T: Taskable>(ptr)` — typed constructor. Kept as a free fn for
-/// back-compat with earlier Phase-A call sites; equivalent to [`Task::init`].
+/// back-compat with existing call sites; equivalent to [`Task::init`].
 /// Zig: `Task.init(of: anytype)` derived the tag at comptime from `@TypeOf(of)`;
 /// in Rust the tag comes from the [`Taskable`] impl.
 #[inline]
@@ -59,9 +59,9 @@ pub fn report_error_or_terminate(
     Ok(())
 }
 
-// The Phase-A draft of the full ~96-arm `match` (previously in this file) has
-// been hoisted to `bun_runtime::dispatch::run_tasks` per §Dispatch hot-path —
-// every arm names a `bun_runtime`/`bun_shell`/`bun_s3` type and so cannot
-// compile at this tier. See git history of this file for the verbatim draft.
+// The full ~96-arm `match` (previously in this file) has been hoisted to
+// `bun_runtime::dispatch::run_tasks` per §Dispatch hot-path — every arm names
+// a `bun_runtime`/`bun_shell`/`bun_s3` type and so cannot compile at this tier.
+// See git history of this file for the original draft.
 
 // ported from: src/jsc/Task.zig

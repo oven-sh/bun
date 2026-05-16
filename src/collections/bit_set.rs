@@ -133,8 +133,8 @@ pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(b2): cal
 ///
 // TODO(port): Zig uses `std.meta.Int(.unsigned, size)` for an exact-width
 // backing integer (u0..u65535). Rust has no arbitrary-width ints; we back with
-// `usize` and rely on `SIZE <= usize::BITS`. Phase B may swap to a trait that
-// picks u8/u16/u32/u64/u128.
+// `usize` and rely on `SIZE <= usize::BITS`. Could swap to a trait that picks
+// u8/u16/u32/u64/u128 if narrower storage matters.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntegerBitSet<const SIZE: usize> {
@@ -453,10 +453,7 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
 /// more bytes than necessary if your set is small.
 ///
 // TODO(port): Zig is generic over `MaskIntType`; every in-tree caller uses
-// `usize`. Dropped the type parameter. Phase B can re-generify if needed.
-// TODO(port): `[usize; NUM_MASKS]` requires
-// `#![feature(generic_const_exprs)]`. Phase B may instead take NUM_MASKS as a
-// second const generic and assert `NUM_MASKS == num_masks_for(SIZE)`.
+// `usize`. Dropped the type parameter; re-generify if needed.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
@@ -775,8 +772,8 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 // the true allocation length (needed because Zig's allocator API requires the
 // original length on free). The Rust port keeps the same layout because
 // `List` constructs borrowed views into a shared buffer that must look like
-// freestanding `DynamicBitSetUnmanaged`s. Phase B may refactor to `Vec<usize>`
-// once `List` is reworked.
+// freestanding `DynamicBitSetUnmanaged`s. Could refactor to `Vec<usize>` once
+// `List` is reworked.
 pub struct DynamicBitSetUnmanaged {
     /// The number of valid items in this bit set
     pub bit_length: usize,
@@ -1570,8 +1567,8 @@ impl Drop for AutoBitSet {
 /// track of the allocator instance.
 ///
 // TODO(port): in Rust the managed/unmanaged split disappears (global
-// allocator). This wrapper is kept for diff parity; Phase B may collapse it
-// into `DynamicBitSetUnmanaged` and re-export under both names.
+// allocator). This wrapper is kept for diff parity; could collapse it into
+// `DynamicBitSetUnmanaged` and re-export under both names.
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
     pub unmanaged: DynamicBitSetUnmanaged,
@@ -1888,14 +1885,14 @@ pub struct Range {
 // TODO(port): the Zig source defines test helper fns (`testEql`, `testBitSet`,
 // `testPureBitSet`, `testStaticBitSet`, ...) but no `test "..." {}` blocks
 // actually invoke them — dead code carried from the std fork. Ported as
-// `#[cfg(test)]` helpers; Phase B should add `#[test]` entry points or delete.
+// `#[cfg(test)]` helpers; either add `#[test]` entry points or delete.
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // TODO(port): these helpers used `anytype` to accept Integer/Array/Dynamic
-    // bit sets uniformly. Rust would need a common trait. Stubbed pending
-    // Phase B trait extraction.
+    // bit sets uniformly. Rust would need a common trait. Stubbed pending a
+    // `BitSet` trait extraction.
 
     #[allow(dead_code)]
     fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
@@ -1920,7 +1917,8 @@ mod tests {
     // TODO(port): `testEql`, `testSubsetOf`, `testSupersetOf`, `testBitSet`,
     // `testPureBitSet`, `testStaticBitSet` omitted — they rely on Zig
     // `anytype` duck-typing across all bitset variants and `@hasField`
-    // reflection (`needs_ptr`). Re-author in Phase B against a `BitSet` trait.
+    // reflection (`needs_ptr`). Re-author against a `BitSet` trait if test
+    // coverage is needed.
 }
 
 // ported from: src/collections/bit_set.zig

@@ -57,8 +57,8 @@ pub const BASE_PATH: &str = "B:\\~BUN\\";
 
 // TODO(port): Zig version takes `target: Environment.OperatingSystem` + `comptime suffix`
 // and concatenates at comptime. Rust cannot const-concat with a runtime enum branch
-// nor across a `const fn` boundary. Phase B: expose as a `macro_rules!` over
-// `const_format::concatcp!`. For now we materialize the two call-sites directly.
+// nor across a `const fn` boundary. Could expose as a `macro_rules!` over
+// `const_format::concatcp!`; for now we materialize the two call-sites directly.
 #[cfg(windows)]
 pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 #[cfg(not(windows))]
@@ -72,7 +72,7 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 // TODO(port): Zig used a nested `Instance` struct holding a static var. Model
 // as a process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut` to mirror Zig's `?*StandaloneModuleGraph`; callers
-// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. Phase-B follow-up:
+// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. TODO(refactor):
 // push interior mutability down to those per-`File` fields (`UnsafeCell<…>`) so
 // read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
@@ -144,7 +144,7 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 impl StandaloneModuleGraph {
     // TODO(port): interior mutability — Zig returns `*File` and callers mutate
     // `wtf_string` / `cached_blob`. Using `&mut self` here may force callers to
-    // hold `&mut StandaloneModuleGraph`; Phase B may switch to `UnsafeCell` fields.
+    // hold `&mut StandaloneModuleGraph`; could switch to `UnsafeCell` fields.
     pub fn entry_point(&mut self) -> &mut File {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
@@ -460,8 +460,8 @@ impl LazySourceMap {
                 // the first half as `[][]const u8` for file_names. Rust splits into two
                 // separate Vecs to avoid the punning.
                 // PERF(port): `external_source_names` is `Vec<Box<[u8]>>` so we
-                // copy the section bytes; Zig held a borrowed slice. Phase B may
-                // switch the field to `Vec<&'static [u8]>` for the standalone path.
+                // copy the section bytes; Zig held a borrowed slice. Could switch
+                // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
                 let mut decompressed_contents_slice: Vec<Option<Vec<u8>>> =
                     vec![None; source_files_count];
@@ -1314,8 +1314,8 @@ pub fn inject(
                 return Fd::INVALID;
             }
 
-            // TODO(port): Zig used writer.adaptToNewApi(&buffer) with 512KB stack buffer.
-            // `std::io::BufWriter` heap-allocates the buffer; PERF parity is Phase B.
+            // PERF(port): Zig used writer.adaptToNewApi(&buffer) with a 512KB stack
+            // buffer. `std::io::BufWriter` heap-allocates the buffer instead.
             let mut buffered_writer = std::io::BufWriter::with_capacity(
                 512 * 1024,
                 bun_sys::FileWriter(cloned_executable_fd),
@@ -1637,7 +1637,7 @@ pub fn download_to_path(
         {
             // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
             // borrowing `refresher`, so a scopeguard capturing it would alias.
-            // Phase B: reshape with a guard that re-borrows on drop.
+            // Could reshape with a guard that re-borrows on drop.
             // PORT NOTE: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
@@ -1791,8 +1791,6 @@ pub fn download(
     if needs_download {
         if let Err(e) = download_to_path(target, env, dest_z) {
             // For CLI, provide detailed error messages and exit
-            // TODO(port): `err!()` is a Phase-A stub (all variants compare equal);
-            // branch dispatch is correct once `bun_core::Error::from_name` interns.
             if e == err!("TargetNotFound") {
                 Output::err_fmt(format_args!(
                     "Does this target and version of Bun exist?\n\n404 downloading {} from npm registry",

@@ -739,7 +739,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
-        // PERF(port): was arena-backed ArrayList — profile in Phase B
         let mut items: bun_alloc::ArenaVec<'_, Expr> = bun_alloc::ArenaVec::new_in(p.arena);
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread = bun_ast::Loc::default();
@@ -833,7 +832,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
-        // PERF(port): was arena-backed ArrayList — profile in Phase B
         let mut properties: bun_alloc::ArenaVec<'_, G::Property> =
             bun_alloc::ArenaVec::new_in(p.arena);
         let mut self_errors = DeferredErrors::default();
@@ -966,7 +964,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //     <A[]>(x)
         //     <A>(x) => {}
         //     <A = B>(x) => {}
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization
         if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
                 let _ =
@@ -1075,7 +1073,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TNew => Self::pfx_t_new(p, flags),
             T::TSuper => Self::pfx_t_super(p, level),
             _ => {
-                // PERF(port): @branchHint(.cold) — profile in Phase B
+                // PERF(port): @branchHint(.cold)
                 p.lexer.unexpected()?;
                 Err(bun_core::err!("SyntaxError"))
             }

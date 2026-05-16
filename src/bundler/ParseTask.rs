@@ -74,7 +74,7 @@ mod EventLoop {
 pub enum ContentsOrFd {
     Fd { dir: Fd, file: Fd },
     // TODO(port): arena lifetime — contents may be arena-owned, plugin-owned,
-    // or &'static (runtime). Using &'static as Phase-A placeholder.
+    // or &'static (runtime). Using &'static as a placeholder.
     Contents(&'static [u8]),
 }
 
@@ -284,8 +284,8 @@ impl ParseTask {
             tree_shaking: false,
             is_entry_point: false,
             // TODO(port): Zig struct-field defaults; Rust has no per-field
-            // default syntax. Consider impl Default for ParseTask in Phase B
-            // and use `..Default::default()` here.
+            // default syntax. Consider impl Default for ParseTask and use
+            // `..Default::default()` here.
         }
     }
 
@@ -488,7 +488,7 @@ export var __callDispose = (stack, error, hasError) => {
 
 // ══════════════════════════════════════════════════════════════════════════
 // Per-file parse worker — `getAST`/`getCodeForParseTask`/`runFromThreadPool`.
-// Un-gated B-2: struct/FFI surface and `get_runtime_source` are real. Bodies
+// The struct/FFI surface and `get_runtime_source` are real. Bodies
 // that touch the still-gated `crate::ThreadPool` Worker module or the opaque
 // `JSBundlerPlugin`/`FileMap` forward-decls remain ``-gated
 // per-function below with explicit `// blocked_on:` notes; they un-gate by
@@ -532,8 +532,8 @@ pub mod parse_worker {
         };
         // PERF(port): Zig built one comptime string per Target variant via
         // `inline else`. Here we use `const_format::concatcp!` per arm; the match
-        // itself is runtime but each arm yields a &'static str. Profile in Phase B
-        // if the extra match matters (it shouldn't — called once).
+        // itself is runtime but each arm yields a &'static str. Profile if the
+        // extra match matters (it shouldn't — called once).
 
         let parse_task = ParseTask {
             // TODO(port): Zig used `undefined` for ctx; using None.
@@ -1710,7 +1710,7 @@ pub mod parse_worker {
     // These structs are passed by-pointer to **third-party** native plugins via
     // `packages/bun-native-bundler-plugin-api/bundler_plugin.h`, so layout drift
     // is a silent ABI break for every plugin in the wild. Literals are the 64-bit
-    // C layout; Phase-B codegen will replace them with probed constants.
+    // C layout; TODO(port): replace with codegen-probed constants.
     bun_core::assert_ffi_layout!(
         OnBeforeParseArguments, 64, 8;
         struct_size @ 0, context @ 8, path_ptr @ 16, path_len @ 24,
@@ -1843,8 +1843,8 @@ pub mod parse_worker {
         #[cfg(debug_assertions)]
         pub check: u32, // Value to ensure OnBeforeParseResult is wrapped in this struct
         // TODO(port): zig used `if (debug) u32 else u0`; in release this field
-        // must be zero-sized to keep extern layout matching headers. Phase B:
-        // verify with static_assert against bun.c.
+        // must be zero-sized to keep extern layout matching headers. Verify
+        // with static_assert against bun.c.
         pub result: OnBeforeParseResult,
     }
 
@@ -2484,7 +2484,7 @@ pub mod parse_worker {
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         // PORT NOTE: Zig stores a `*const StringSet` (shared); Rust models it as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
-        // CLI-supplied flag set). PERF(port): Phase B should retype
+        // CLI-supplied flag set). PERF(port): retype
         // `RuntimeFeatures.bundler_feature_flags` to `Option<&'a StringSet>` so
         // this clone disappears.
         opts.features.bundler_feature_flags = topts

@@ -673,7 +673,7 @@ pub fn basename(
         return Ok(path_ptr);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
 
     let mut suffix_zslice: Option<bun_core::ZigStringSlice> = None;
@@ -890,7 +890,7 @@ pub fn dirname(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1135,7 +1135,7 @@ pub fn extname(
         return Ok(path_ptr);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     extname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1309,7 +1309,7 @@ pub fn format(
         Default::default(),
     )?;
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
 
     let mut root: &[u8] = b"";
     let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
@@ -2488,7 +2488,7 @@ pub fn parse(
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     parse_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }

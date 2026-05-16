@@ -76,7 +76,7 @@ impl HandleOom for AllocError {
 // Rust error enums are nominal, not sets — there is no set subtraction. For
 // the catch-all `bun_core::Error` we compare against the interned tag and
 // return the same type. Per-crate `thiserror` enums that carry an
-// `OutOfMemory` variant should add their own `HandleOom` impl in Phase B.
+// `OutOfMemory` variant should add their own `HandleOom` impl.
 impl<T> HandleOom for Result<T, Error> {
     type Output = Result<T, Error>;
     fn handle_oom(self) -> Result<T, Error> {

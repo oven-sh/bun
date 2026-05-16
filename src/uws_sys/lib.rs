@@ -341,7 +341,7 @@ impl WindowsNamedPipe {
 
 // ───────────────────────────── module map ────────────────────────────────────
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
-// PascalCase Phase-A drafts kept on disk.
+// PascalCase source files on disk.
 
 #[path = "App.rs"]
 pub mod app;

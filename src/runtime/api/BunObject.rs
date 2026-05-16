@@ -256,8 +256,8 @@ pub mod bun_object {
     // `BunObject_lazyPropCb_<name>`. In Rust, the `#[bun_jsc::host_fn]`
     // attribute on the underlying fn emits the JSC-ABI shim; the export name
     // is set with `#[unsafe(no_mangle)]` on the shim. The two `macro_rules!`
-    // below expand the static export tables; Phase B should verify the shim
-    // ABI matches `LazyPropertyCallback` for the property variants.
+    // below expand the static export tables; verify the shim ABI matches
+    // `LazyPropertyCallback` for the property variants.
 
     // Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`),
     // so the full `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`
@@ -487,7 +487,7 @@ pub fn braces(
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
 
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
@@ -1705,7 +1705,7 @@ pub extern "C" fn Bun__escapeHTML8(
     debug_assert!(len > 0);
     // SAFETY: caller passes a valid [ptr, len) byte slice.
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    // PERF(port): was stack-fallback (256 bytes) — profile in Phase B
+    // PERF(port): was stack-fallback (256 bytes) — profile if hot
 
     use bun_core::immutable::escape_html::{Escaped, escape_html_for_latin1_input};
     let escaped = match escape_html_for_latin1_input(input_slice) {
@@ -2869,7 +2869,7 @@ pub mod JSZstd {
         let max_size = bun_zstd::compress_bound(input.len());
         let mut output = vec![0u8; max_size];
         // TODO(port): allocator.alloc(u8, n) — Zig left this uninitialized.
-        // PERF(port): use Box::new_uninit_slice — profile in Phase B.
+        // PERF(port): use Box::new_uninit_slice — profile if hot.
 
         // Perform compression with context
         let compressed_size = match bun_zstd::compress(&mut output, input, Some(level)) {
@@ -2939,7 +2939,7 @@ pub mod JSZstd {
                 // TODO(port): allocator.alloc(u8, n) — Zig left this uninitialized
                 // and surfaced OOM as an error. Rust's global allocator aborts on
                 // OOM, so the explicit "Out of memory" path is unreachable here.
-                // Phase B: route through a fallible bun_alloc helper.
+                // Could route through a fallible bun_alloc helper.
                 self.output = vec![0u8; max_size];
 
                 // Perform compression

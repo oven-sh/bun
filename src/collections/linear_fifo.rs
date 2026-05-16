@@ -32,9 +32,8 @@ pub enum LinearFifoBufferType {
 /// Backing-storage abstraction replacing Zig's `comptime buffer_type` switch.
 /// `POWERS_OF_TWO` mirrors the Zig `powers_of_two` const inside the returned
 /// struct; `DYNAMIC` mirrors `buffer_type == .Dynamic`.
-// TODO(port): the Zig fn returns structurally different layouts per variant;
-// trait+assoc-consts is the closest stable-Rust encoding. Phase B: confirm all
-// in-tree callers are covered by the three impls below.
+// PORT NOTE: the Zig fn returns structurally different layouts per variant;
+// trait+assoc-consts is the closest stable-Rust encoding.
 pub trait LinearFifoBuffer<T> {
     const POWERS_OF_TWO: bool;
     const DYNAMIC: bool;
@@ -114,8 +113,8 @@ fn poison<T>(slice: &mut [T], n: usize) {
 /// `buffer_type == .Static` — inline `[T; N]` storage.
 // TODO(port): Zig leaves the array `undefined`; we use MaybeUninit and expose
 // it as &[T] via pointer cast. Sound only for `T` whose any-bit-pattern is
-// valid (in-tree users are byte buffers). Phase B: bound `T: Copy` or rework
-// accessors to MaybeUninit if a non-POD T appears.
+// valid (in-tree users are byte buffers). If a non-POD T appears, bound `T: Copy`
+// or rework accessors to MaybeUninit.
 pub struct StaticBuffer<T, const N: usize>([MaybeUninit<T>; N]);
 
 impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
@@ -204,7 +203,7 @@ pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
 
 // TODO(port): Reader/Writer std.Io adapters. Zig exposes
 // `pub const Reader = std.Io.GenericReader(*Self, error{}, readFn)` and a
-// matching Writer. Phase B: impl `bun_io::Read`/`bun_io::Write` (and
+// matching Writer. Could impl `bun_io::Read`/`bun_io::Write` (and
 // `core::fmt::Write`) on `LinearFifo<u8, B>`.
 
 impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
@@ -732,8 +731,8 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     /// Pump data from a reader into a writer
     /// stops when reader returns 0 bytes (EOF)
     /// Buffer size must be set before calling; a buffer length of 0 is invalid.
-    // TODO(port): `src_reader: anytype, dest_writer: *std.Io.Writer`. Phase B:
-    // bind to `bun_io::Read`/`bun_io::Write` (or whatever the byte-stream traits
+    // TODO(port): `src_reader: anytype, dest_writer: *std.Io.Writer`. Could bind
+    // to `bun_io::Read`/`bun_io::Write` (or whatever the byte-stream traits
     // land as). Stubbed with generic bounds matching the called methods.
     pub fn pump<R, W, E>(&mut self, mut src_reader: R, dest_writer: &mut W) -> Result<(), E>
     where
@@ -877,7 +876,7 @@ mod tests {
 
     // `inline for ([_]type{u1,u8,u16,u64}) |T|` × `inline for (buffer types)`
     // — expanded for one representative element type; the rest are mechanical.
-    // TODO(port): macro-generate the full T×buffer_type matrix in Phase B.
+    // TODO(port): macro-generate the full T×buffer_type matrix.
     #[test]
     fn linear_fifo_generic_u8_static() {
         let mut fifo: LinearFifo<u8, StaticBuffer<u8, 32>> = LinearFifo::init();

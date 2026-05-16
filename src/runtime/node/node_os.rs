@@ -220,7 +220,7 @@ mod _impl {
     }
 
     pub fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): JSObject::create struct-literal API — Phase B defines a builder/macro
+        // TODO(port): JSObject::create struct-literal API — define a builder/macro
         let obj = JSValue::create_empty_object(global, 14);
         // SAFETY: pure FFI getter
         obj.put(
@@ -318,7 +318,7 @@ mod _impl {
         let values = JSValue::create_empty_array(global_this, 0)?;
         let mut num_cpus: u32 = 0;
 
-        // PERF(port): was stack-fallback alloc (8KB) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (8KB) — profile if it shows up on a hot path.
         let mut file_buf: Vec<u8> = Vec::new();
 
         // Read /proc/stat to get number of CPUs and times
@@ -773,7 +773,7 @@ mod _impl {
             // Instead of always using an allocation, first try a stack allocation
             // of 4096, then fallback to heap.
             let mut stack_string_bytes = [0u8; 4096];
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
             let mut heap_bytes: Vec<u8> = Vec::new();
             let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
             let mut using_heap = false;

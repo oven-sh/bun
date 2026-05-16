@@ -479,7 +479,7 @@ impl Route {
             // PORT NOTE: Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
             // `StringArrayHashMap`; Rust `StringMap` exposes only put/insert. Same
             // result, slightly more hash work.
-            // PERF(port): was bulk reIndex — profile in Phase B.
+            // PERF(port): was bulk reIndex — profile if hot.
             for (k, v) in define.keys.iter().zip(define.values.iter()) {
                 config.define.put(k, v)?;
             }

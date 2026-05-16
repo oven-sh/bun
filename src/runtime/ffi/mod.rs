@@ -1,7 +1,7 @@
 //! Port of `src/runtime/ffi/FFI.zig` — `Bun.FFI` / `bun:ffi`.
 //!
-//! B-2 second-pass: `ABIType` (CType) enum, `FFI`/`Function`/`Step`/`Compiled`
-//! structs, formatters, dlopen data path, and the JSC host-fn entry points
+//! `ABIType` (CType) enum, `FFI`/`Function`/`Step`/`Compiled` structs,
+//! formatters, dlopen data path, and the JSC host-fn entry points
 //! (`open`/`close`/`compile`/`generate_symbols`) are real. TinyCC compile
 //! bodies (`CompileC`, `Function::compile` relocate path) and the remaining
 //! host-fns (`cc`/`linkSymbols`/`callback`) stay gated on `bun_tcc_sys::State`
@@ -20,10 +20,10 @@ use crate::jsc::{JSGlobalObject, JSValue};
 mod host_fns;
 pub use host_fns::{generate_symbol_for_function, generate_symbols};
 
-// ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
+// ─── FFI.zig / FFIObject.zig port modules ────────────────────────────────────
 
 #[path = "ffi_body.rs"]
-mod ffi_body; // full Phase-A draft of FFI.zig
+mod ffi_body; // port of FFI.zig
 
 /// `js2native` codegen resolves `$zig(ffi.zig, Bun__FFI__cc)` to
 /// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.zig` basename.
@@ -179,7 +179,7 @@ impl Drop for JitWriteUnprotected {
 /// Do not pass in user-defined functions (including JSFunctions).
 pub(crate) fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
     let _guard = JitWriteUnprotected::new();
-    // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+    // PERF(port): was @call(bun.callmod_inline, ...) — profile if it shows up on a hot path.
     func()
 }
 

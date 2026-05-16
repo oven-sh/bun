@@ -444,7 +444,7 @@ impl LauncherMode {
     // associate a return type with a const value. We unify on `LauncherRet` below; the
     // public wrappers (`try_startup_from_bun_js`, `read_without_launch`, `main`) narrow it.
 
-    // PERF(port): comptime mode/reason demoted to runtime args — profile in Phase B
+    // PERF(port): comptime mode/reason demoted to runtime args — profile if it shows up on a hot path.
     #[cold]
     #[inline(never)]
     fn fail(self, reason: FailReason) -> LauncherRet {
@@ -1339,7 +1339,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // PERF(port): Zig used `inline for (.{ 0, 1 })` to unroll this loop with comptime
     // `attempt_number`. We use a runtime loop; the body is large enough that unrolling is
-    // unlikely to matter — profile in Phase B.
+    // unlikely to matter — profile if it shows up on a hot path.
     for attempt_number in [0u32, 1] {
         'iteration: {
             if DBG {

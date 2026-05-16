@@ -60,7 +60,7 @@ impl Signature {
         let mut name: Vec<u8> = Vec::with_capacity(query.len());
 
         name.extend_from_slice(query);
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
 
         // (errdefer { fields.deinit(); name.deinit(); } — handled by Drop on `?`)
 

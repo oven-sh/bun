@@ -1039,7 +1039,7 @@ pub use bun_errno::uv_e as UV_E;
 // module which re-exports the errno stub and layers libc on top.
 
 /// `Maybe(T)` — Zig's `union(enum) { result: T, err: Error }`. In Rust this is
-/// just `Result<T, Error>`; keep the alias so Phase-A drafts type-check.
+/// just `Result<T, Error>`; keep the alias so ported call sites type-check.
 pub type Maybe<T> = core::result::Result<T, Error>;
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -4435,7 +4435,7 @@ pub type PlatformIoVec = libc::iovec;
 #[cfg(windows)]
 pub type PlatformIoVec = bun_libuv_sys::uv_buf_t;
 // Zig spells these `PlatformIOVec` / `PlatformIOVecConst`; provide both
-// casings so phase-A drafts (`sys_uv.rs`) compile without churn.
+// casings so ported call sites (`sys_uv.rs`) compile without churn.
 pub use PlatformIoVec as PlatformIOVec;
 pub use PlatformIoVecConst as PlatformIOVecConst;
 
@@ -8807,7 +8807,7 @@ pub fn renameat_z(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()>
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
 }
-/// Alias: `bun_install` Phase-A drafts spelled this `RenameOptions`.
+/// Alias: `bun_install` call sites spell this `RenameOptions`.
 pub type RenameOptions = RenameatConcurrentlyOptions;
 
 /// sys.zig:4296 — `moveFileZSlowMaybe`. Thin wrapper kept for source parity

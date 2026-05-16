@@ -111,7 +111,7 @@ pub type NewParser<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> =
 // ─── Conditional field types (Zig: `if (only_scan_imports_and_do_not_visit) *T else T`) ───
 // Zig switched the field type at comptime. Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
-// TODO(port): revisit with associated types / GATs in Phase B.
+// TODO(port): revisit with associated types / GATs.
 pub enum ImportRecordList<'a> {
     Owned(BumpVec<'a, ImportRecord>),
     Borrowed(&'a mut Vec<ImportRecord>),
@@ -585,7 +585,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub const_values: bun_ast::ast_result::ConstValuesMap,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot.
     pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // TODO(b2-blocked): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
     pub binary_expression_simplify_stack: ListManaged<'a, ()>,
@@ -2110,7 +2110,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Sym: GenerateImportSymbols,
     {
         // TODO(port): `imports: anytype` + `symbols: anytype` — modeled via a helper trait;
-        // Phase B should verify shapes match the two call sites (RuntimeImports vs map).
+        // verify shapes match the two call sites (RuntimeImports vs map).
         let arena = self.arena;
         let imports = imports.as_ref();
         let import_record_i =
@@ -3216,12 +3216,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$")?;
         }
 
-        // blocked_on: `options::ServerComponents` is a Phase-A stub struct
-        // (parser.rs:195) — Zig has a 5-variant enum (None / ClientSide /
-        // WrapExportsForClientReference / WrapAnonServerFunctions /
-        // WrapExportsForServerReference). The two switches below un-gate once
-        // that enum is ported into options::JSX or bundler::options.
-
         {
             match self.options.features.server_components {
                 options::ServerComponents::None | options::ServerComponents::ClientSide => {}
@@ -3254,7 +3248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
             }
-        } // end 
+        }
 
         if self.options.features.hot_module_reloading {
             self.hmr_api_ref =
@@ -3912,7 +3906,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub fn mark_type_script_only(&self) {
         // TODO(port): Zig used @compileError; const-generic specialization can't express
-        // a compile error in Rust. Phase B may move TS-only methods behind a trait.
+        // a compile error in Rust. Could move TS-only methods behind a trait.
         if !TYPESCRIPT {
             unreachable!();
         }
@@ -5101,11 +5095,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         path: fs::Path<'a>,
     ) -> u32 {
         let index = self.import_records.len();
-        // Phase-A: `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
+        // `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
         // lifetime params yet). The parser-supplied path borrows arena-owned 'a bytes
         // which outlive the import_records list (both dropped with the parser arena),
-        // so the lifetime extension is sound here. Round-E threads `'a` through
-        // `bun_ast::ImportRecord` and removes this erasure.
+        // so the lifetime extension is sound here. TODO(refactor): thread `'a` through
+        // `bun_ast::ImportRecord` and remove this erasure.
         // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
         let path: fs::Path<'static> = unsafe { path.into_static() };
         // No `impl Default for ImportRecord` (range/path/kind have no Zig defaults) —
@@ -5332,7 +5326,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
             let mut already_declared = RefMap::default();
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if hot.
 
             for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
@@ -7283,7 +7277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // Helper extracted from lower_class to keep that fn readable.
     // TODO(port): this condenses the Zig per-kind metadata switch (lines 5024-5105).
-    // Phase B should diff against Zig to verify exact arg ordering for get/set.
+    // Diff against Zig to verify exact arg ordering for get/set.
     #[cold]
     #[inline(never)]
     fn emit_decorator_metadata_for_prop(
@@ -9031,11 +9025,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// `P::init` — UN-GATED. Body compiles standalone (verified `cargo check`):
-// the Binding2ExprWrapper / ExpressionTransposer self-referential helpers were
-// the only blockers and are now seeded with arena-unit placeholders inside the
-// struct literal (Phase B wires the real `*P` back-pointer). `Parser::_parse`
-// is blocked on this being callable — DO NOT re-gate.
+// The Binding2ExprWrapper / ExpressionTransposer self-referential helpers are
+// seeded with arena-unit placeholders inside the struct literal.
+// TODO(refactor): wire the real `*P` back-pointer.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Construct a `P` in place at `out` (matching Zig's `init(..., this: *P) !void`).
     ///
@@ -9731,8 +9723,8 @@ impl LowerUsingDeclarationsContext {
 }
 
 // ─── Helper trait for generate_import_stmt's `symbols: anytype` param ───
-// TODO(port): two call shapes exist (RuntimeImports and a string→Ref map). Phase B
-// should impl this for both and verify the alias_name() RuntimeImports special case.
+// TODO(port): two call shapes exist (RuntimeImports and a string→Ref map). Impl
+// this for both and verify the alias_name() RuntimeImports special case.
 pub trait GenerateImportSymbols {
     type Key;
     fn get(&self, key: &Self::Key) -> Option<Ref>;

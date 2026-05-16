@@ -53,7 +53,7 @@ impl Default for MySQLStatement {
             columns_received: 0,
             // TODO(port): Signature has no Zig default; callers must supply it. This Default
             // impl exists only to mirror Zig's per-field defaults — prefer a `new(signature)`
-            // constructor in Phase B.
+            // constructor.
             signature: Signature::default(),
             status: Status::Parsing,
             error_response: ErrorPacket::default(),
@@ -173,7 +173,7 @@ impl MySQLStatement {
     }
 
     // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
-    // here to avoid moving out of `self`; callers in Phase B may need `.clone()` if they require
+    // here to avoid moving out of `self`; callers may need `.clone()` if they require
     // an owned copy.
     pub fn structure(
         &mut self,

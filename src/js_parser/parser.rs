@@ -904,7 +904,7 @@ pub struct VisitArgsOpts<'a> {
 /// Generic transposer over `if` expressions.
 ///
 /// `visitor` is a comptime fn pointer in Zig; here we store it as a plain
-/// `fn` pointer. // PERF(port): was comptime monomorphization — profile in Phase B
+/// `fn` pointer. // PERF(port): was comptime monomorphization
 pub struct ExpressionTransposer<'a, Context, State: Copy> {
     pub context: &'a mut Context,
     visitor: fn(&mut Context, Expr, State) -> Expr,
@@ -1968,7 +1968,7 @@ impl<'a> ParseStatementOptions<'a> {
 // TODO(port): `Prefill` holds mutable global AST node singletons (`pub var` in
 // Zig). Rust forbids non-`Sync` mutable statics without `unsafe`; several of
 // these contain raw pointers (e_string -> &E.String) and one (`ActivateIndex`)
-// has an `undefined` field. Phase B should decide between `static mut` +
+// has an `undefined` field. TODO(refactor): decide between `static mut` +
 // `unsafe`, `LazyLock`, or eliminating the globals entirely. The byte-array
 // constants are safe and ported as `pub const`.
 pub mod prefill {
@@ -2223,7 +2223,7 @@ pub fn new_lazy_export_ast<'bump>(
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
     source: &bun_ast::Source,
-    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
+    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
     new_lazy_export_ast_impl(
         bump,
@@ -2244,7 +2244,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
     source: &bun_ast::Source,
-    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
+    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
     symbols: js_ast::symbol::List,
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
     let mut temp_log = bun_ast::Log::init();

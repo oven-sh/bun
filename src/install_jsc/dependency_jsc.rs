@@ -153,8 +153,8 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     if arguments.len() == 1 {
         return crate::update_request_jsc::from_js(global, arguments[0]);
     }
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile in Phase B
+    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if hot
+    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile if hot
 
     let alias_value: JSValue = if !arguments.is_empty() {
         arguments[0]

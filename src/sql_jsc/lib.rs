@@ -8,11 +8,11 @@
 #![warn(unused_must_use)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2: top-level `` gates removed; module tree wired with
-// explicit `#[path]` attrs (Phase-A draft files use PascalCase basenames).
-// Heavy leaf modules remain individually gated with `// TODO(b2-blocked):`
-// markers naming the lower-tier symbol they need. Un-gate one-by-one as
-// `bun_jsc` / `bun_string` / `bun_runtime` grow real method surfaces.
+// Module tree wired with explicit `#[path]` attrs (files use PascalCase
+// basenames, mirroring the Zig sources). Heavy leaf modules remain
+// individually gated with `// TODO(b2-blocked):` markers naming the
+// lower-tier symbol they need. Un-gate one-by-one as `bun_jsc` /
+// `bun_string` / `bun_runtime` grow real method surfaces.
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(b2-blocked): bun_jsc fails to compile (concurrent B-2 work — `Counters`

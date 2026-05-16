@@ -90,7 +90,7 @@ impl EnvPath {
 
         if !self.buf.is_empty() {
             self.buf.reserve(trimmed.len() + 1);
-            // PERF(port): was appendAssumeCapacity / appendSliceAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity / appendSliceAssumeCapacity.
             self.buf.push(DELIMITER);
             self.buf.extend_from_slice(trimmed);
         } else {

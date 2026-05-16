@@ -1209,7 +1209,7 @@ impl fmt::Display for ElapsedFormatter {
         const FAST: u64 = NS_PER_MS * 10;
         const SLOW: u64 = NS_PER_MS * 8_000;
         let ms = self.duration_ns as f64 / NS_PER_MS as f64;
-        // PERF(port): was comptime bool dispatch on `colors` — profile in Phase B
+        // PERF(port): was comptime bool dispatch on `colors` — profile if hot.
         match self.duration_ns {
             0..=FAST => {
                 if self.colors {
@@ -1523,7 +1523,7 @@ pub struct ScopedLogger {
     lock: Mutex<()>,
     out_set: AtomicBool,
     // TODO(port): per-scope buffered writer (`buffer: [4096]u8` + adapter). For now route
-    // through `scoped_writer()` directly; Phase B can reintroduce per-scope buffering.
+    // through `scoped_writer()` directly; could reintroduce per-scope buffering.
 }
 
 impl ScopedLogger {
@@ -1618,7 +1618,7 @@ impl ScopedLogger {
         let _lock = self.lock.lock();
 
         let mut out = scoped_writer();
-        // PERF(port): was comptime bool dispatch on use_ansi — profile in Phase B.
+        // PERF(port): was comptime bool dispatch on use_ansi — profile if hot.
         // The colored/plain selection now happens at the `scoped_log!` call site
         // (single arg evaluation) via `_scoped_use_ansi()`.
         let result = out.write_fmt(args);
@@ -1643,7 +1643,9 @@ impl ScopedLogger {
 #[macro_export]
 macro_rules! declare_scope {
     ($name:ident, hidden) => {
-        #[allow(non_upper_case_globals)]
+        // `unreachable_pub`: the generated static must stay `pub` for callers
+        // in downstream crates; allow it at every expansion site.
+        #[allow(non_upper_case_globals, unreachable_pub)]
         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
             // TODO(port): lowercase tagname at compile time (Zig did std.ascii.toLower)
             stringify!($name),
@@ -1651,7 +1653,7 @@ macro_rules! declare_scope {
         );
     };
     ($name:ident, visible) => {
-        #[allow(non_upper_case_globals)]
+        #[allow(non_upper_case_globals, unreachable_pub)]
         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
             stringify!($name),
             $crate::output::Visibility::Visible,
@@ -2560,8 +2562,8 @@ macro_rules! debug_warn {
 /// The Zig original switched on `@typeInfo` of `error_name`. The Rust port accepts anything
 /// implementing `ErrName` (impl'd for `&[u8]`, `&str`, `bun_core::Error`, `bun_sys::Error`,
 /// and any `#[derive(strum::IntoStaticStr)]` enum).
-// TODO(port): the comptime-literal fast path (is_comptime_name) is dropped — Phase B can
-// recover it with a proc-macro overload that detects string literals.
+// TODO(port): the comptime-literal fast path (is_comptime_name) is dropped —
+// could be recovered with a proc-macro overload that detects string literals.
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // Zig concatenates `fmt` into the prettyErrorln template, whose trailing-\n
     // check then sees the caller's newline. Here `fmt` is rendered into a `{}`

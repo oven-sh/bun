@@ -10,7 +10,7 @@
 // that does heavy comptime work: sorts kvs by (len, bytes), builds a `len_indexes` table,
 // then every lookup is an `inline while` over lengths × `inline for` over same-length keys
 // with `eqlComptime` (length-known SIMD compare). Rust cannot replicate the per-callsite
-// monomorphization without a proc-macro. Phase A models this as a const-constructed struct
+// monomorphization without a proc-macro, so this models it as a const-constructed struct
 // holding the precomputed tables plus a `comptime_string_map!` macro that callers use.
 // Runtime loops replace `inline for`/`inline while`; each is tagged `PERF(port)`.
 //
@@ -156,7 +156,7 @@ where
 
     // PORT NOTE: `comptime len: usize` → runtime `len: usize`. The Zig used the comptime
     // value to compute `end` at comptime and `inline for` the range; we loop at runtime.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
+    // PERF(port): was comptime monomorphization — profile if hot.
     pub fn get_with_length(&self, str: &[K], len: usize) -> Option<V> {
         let core::ops::Range { start, end } = self.len_bucket(len);
 
@@ -164,8 +164,8 @@ where
         // But only so long as the keys are a sorted list.
         for i in start..end {
             // PERF(port): Zig used `strings.eqlComptimeCheckLenWithType(K, str, kvs[i].key, false)`
-            // (length-known SIMD compare). Plain slice == here; Phase B may swap to
-            // `bun_core::strings::eql_comptime_check_len_with_type`.
+            // (length-known SIMD compare). Plain slice == here; could swap to
+            // `bun_core::strings::eql_comptime_check_len_with_type` if hot.
             if str == self.kvs[i].key {
                 return Some(self.kvs[i].value);
             }
@@ -187,7 +187,7 @@ where
 
         // This benchmarked faster for both small and large lists of strings than using a big switch statement
         // But only so long as the keys are a sorted list.
-        // PERF(port): was `inline for` — profile in Phase B.
+        // PERF(port): was `inline for` — profile if hot.
         for i in start..end {
             if eqls(str, self.kvs[i].key) {
                 return Some(self.kvs[i].value);
@@ -286,7 +286,7 @@ where
     where
         V: PartialEq,
     {
-        // PERF(port): was `inline for` — profile in Phase B.
+        // PERF(port): was `inline for` — profile if hot.
         for kv in &self.kvs {
             if kv.value == value {
                 return Some(kv.key);
@@ -343,7 +343,7 @@ where
         }
 
         // PERF(port): Zig built a `[i]u8` stack buffer per comptime length; we use a
-        // bounded stack buffer sized to max_len. Profile in Phase B.
+        // bounded stack buffer sized to max_len. Profile if it shows up on a hot path.
         // TODO(port): if max_len can exceed a small bound at any call site, revisit.
         let mut buf = [0u8; 256];
         debug_assert!(length <= buf.len());
@@ -365,7 +365,7 @@ where
 // TODO(port): proc-macro — Zig sorted + built len_indexes at comptime. A `macro_rules!`
 // cannot sort; either (a) require callers pre-sort and compute LEN_TABLE, (b) use a
 // proc-macro, or (c) lazy-init via `once_cell::Lazy` + `ComptimeStringMapWithKeyType::new`.
-// Phase A picks (c) for correctness; Phase B may upgrade to a proc-macro for true const.
+// Currently uses (c) for correctness; could upgrade to a proc-macro for true const.
 #[macro_export]
 macro_rules! comptime_string_map {
     ($V:ty, [ $( ($key:expr, $val:expr) ),* $(,)? ]) => {{
@@ -570,7 +570,7 @@ mod tests {
 
     // PORT NOTE: `TestEnum2` + its 39-entry `map`/`official` table existed only as a
     // benchmark fixture against `std.ComptimeStringMap` (no `test` block references it).
-    // Omitted; Phase B can re-add as a criterion bench if needed.
+    // Omitted; can re-add as a criterion bench if needed.
 }
 
 // ported from: src/collections/comptime_string_map.zig

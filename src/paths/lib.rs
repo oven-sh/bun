@@ -46,7 +46,8 @@ pub mod strings {
     pub use super::string_paths::from_w_path as from_wpath;
     pub use super::string_paths::to_w_path_normalized as to_wpath_normalized;
     pub use super::string_paths::{
-        remove_leading_dot_slash, starts_with_windows_drive_letter_t, without_trailing_slash,
+        basename, is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
+        starts_with_windows_drive_letter_t, without_trailing_slash,
     };
 }
 
@@ -858,7 +859,7 @@ pub mod fs {
     }
 
     impl<'a> Path<'a> {
-        /// Erase the borrow lifetime — Phase-A storage types
+        /// Erase the borrow lifetime — some storage types
         /// (`ImportRecord.path`, `Graph.input_files`) are pinned to
         /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
         ///

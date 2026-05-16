@@ -72,7 +72,7 @@ pub enum ResponseKind {
 }
 
 impl ResponseKind {
-    // PERF(port): was comptime monomorphization — profile in Phase B
+    // PERF(port): was comptime monomorphization — profile if hot.
     pub const fn from(ssl: bool, http3: bool) -> ResponseKind {
         if http3 {
             ResponseKind::H3
@@ -1116,7 +1116,7 @@ pub mod ssl_wrapper {
             // always handle the handshake first
             if self.update_handshake_state() {
                 // shared stack buffer for reading and writing
-                // PERF(port): 64KiB on-stack array — was Zig stack array; verify Rust stack-size headroom in Phase B.
+                // PERF(port): 64KiB on-stack array — was Zig stack array; verify Rust stack-size headroom.
                 let mut buffer = [0u8; BUFFER_SIZE];
                 // drain the input BIO first
                 self.handle_writing(&mut buffer);
@@ -1260,7 +1260,7 @@ pub type us_bun_socket_context_options_t = SocketContext::BunSocketContextOption
 /// one `#[repr(u8)]` enum. Source of truth: `src/uws_sys/SocketKind.zig`.
 pub use bun_uws_sys::SocketKind;
 
-/// Alias used by some Phase-A ports (`websocket_client`, `sql_jsc`) that named
+/// Alias used by some callers (`websocket_client`, `sql_jsc`) that named
 /// the dispatch tag `DispatchKind`. Same enum.
 pub type DispatchKind = SocketKind;
 
@@ -1275,7 +1275,7 @@ pub type CloseKind = CloseCode;
 // ═══════════════════════════════════════════════════════════════════════════
 // Re-exported from `bun_uws_sys::socket` — that is the ONE canonical port of
 // `socket.zig`. Do NOT add a parallel `InternalSocket` / `NewSocketHandler`
-// here again; the Phase-A "thin placeholder" that grew full bodies has been
+// here again; an earlier "thin placeholder" that grew full bodies has been
 // deleted.
 pub use bun_uws_sys::socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,

@@ -499,12 +499,12 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
 }
 
 // TODO(port): `comptime params: []const Param(Id)` as a type parameter has no
-// stable-Rust equivalent. B-2 carries `params` at runtime; a Phase-B proc-macro
-// can restore the per-table monomorphization.
+// stable-Rust equivalent. `params` is carried at runtime; a proc-macro could
+// restore the per-table monomorphization.
 pub struct Args<Id: 'static> {
     // PORT NOTE: Zig stored `arena: bun.ArenaAllocator` here and `deinit` freed it.
     // Non-AST crate → arena removed; `ComptimeClap` owns its allocations.
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot.
     pub clap: ComptimeClap<Id>,
     pub exe_arg: Option<&'static [u8]>,
 }
@@ -875,7 +875,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
     // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
     // `@compileError` on overflow, plus uses `inline for` + comptime string
     // concat (`space_buf[..n] ++ desc_text`). None of that is const-evaluable
-    // in Rust over a slice param. Runtime equivalent below; Phase B can macro-gen.
+    // in Rust over a slice param. Runtime equivalent below; could macro-gen.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
 
@@ -887,7 +887,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
         "a parameter is too long to be nicely printed in `bun --help`"
     );
 
-    // PERF(port): was `inline for` + comptime string concat — profile in Phase B
+    // PERF(port): was `inline for` + comptime string concat — profile if hot.
     for param in params {
         if !(param.names.short.is_none() && param.names.long.is_none()) {
             let desc_text = get_help_simple(param);

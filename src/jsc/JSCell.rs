@@ -38,7 +38,7 @@ impl JSCell {
     pub fn get_type(&self) -> u8 {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
         // TODO(port): Zig wraps the extern result in @enumFromInt but the fn return type is `u8`;
-        // likely intended to return `JSType` — verify in Phase B.
+        // likely intended to return `JSType` — verify.
         JSC__JSCell__getType(self)
     }
 

@@ -61,7 +61,7 @@ impl Signature {
         let mut fields: Vec<Param> = Vec::new();
         let mut name: Vec<u8> = Vec::with_capacity(query.len());
 
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
         name.extend_from_slice(query);
 
         // errdefer { fields.deinit(); name.deinit(); } — deleted: `Vec` drops on `?`.

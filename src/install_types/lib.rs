@@ -22,14 +22,9 @@ pub use resolver_hooks::{
     TruncatedPackageNameHash, URI, VersionSlice, VersionedURL, VersionedURLType, WakeHandler,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 RECONCILED: Phase-A drafts of ExternalString / SlicedString /
-// SemverString duplicated the canonical defs that were MOVE-IN'd to
-// `bun_semver` (see src/semver/lib.rs `MOVE-IN` blocks — same .zig ground
-// truth). The drafts are dead duplicates; the public surface of this crate
-// re-exports the single canonical impl so `install_types::SemverString::*`
-// and `bun_semver::string::*` name the same types.
-// ──────────────────────────────────────────────────────────────────────────
+// The canonical ExternalString / SlicedString / SemverString definitions live
+// in `bun_semver` (see src/semver/lib.rs); this crate re-exports them so
+// `install_types::SemverString::*` and `bun_semver::string::*` name the same types.
 
 pub mod ExternalString {
     pub use bun_semver::ExternalString;

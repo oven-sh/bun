@@ -550,8 +550,8 @@ impl FilePoll {
         }
     }
 
-    // TODO(port): Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
-    // Phase B: callers normalize to EventLoopCtx before calling.
+    // PORT NOTE: Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
+    // Callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;

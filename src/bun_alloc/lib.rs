@@ -114,7 +114,7 @@ pub struct StdAllocator {
     pub ptr: *mut core::ffi::c_void,
     pub vtable: &'static AllocatorVTable,
 }
-/// Legacy alias — Phase-A drafts spell it `crate::VTable`.
+/// Legacy alias for `AllocatorVTable`.
 pub type VTable = AllocatorVTable;
 
 // SAFETY: `ptr` is an opaque tag/context handle (Zig: `*anyopaque`); the
@@ -1347,8 +1347,8 @@ impl String {
 
     /// Zig `eqlComptime` — compare against a (typically literal) byte slice.
     /// PERF(port): Zig dispatched to SIMD `bun.strings.eqlComptime*`; this T0
-    /// version uses scalar `==` / widening compare. Phase B re-routes to
-    /// `bun_core::strings` via inlining once tier ordering settles.
+    /// version uses scalar `==` / widening compare. Re-route to
+    /// `bun_core::strings` via inlining if it shows up on a hot path.
     pub fn eql_comptime(&self, other: &[u8]) -> bool {
         let zs = self.to_zig_string();
         if zs.is_16bit() {
@@ -2016,7 +2016,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(port): const-generic arithmetic (`[ValueType; COUNT]` inside a generic struct) requires
-// `feature(generic_const_exprs)` on stable Rust. Phase B may pin COUNT per instantiation site
+// `feature(generic_const_exprs)` on stable Rust. Pin COUNT per instantiation site
 // or use a heap `Box<[ValueType]>` with debug_assert on len.
 
 pub struct OverflowListBlock<ValueType, const COUNT: usize> {
@@ -2153,7 +2153,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 /// taking space in the object file. We don't want to spend 1-2 MB on these structs.
 ///
 /// TODO(port): const-generic arithmetic (`COUNT = _COUNT * 2`) and per-monomorphization
-/// a raw mutable INSTANCE static are not expressible on stable Rust. Phase B: instantiate per use-site
+/// a raw mutable INSTANCE static are not expressible on stable Rust. Instantiate per use-site
 /// via `macro_rules!` or pin concrete `COUNT` constants.
 ///
 /// `#[repr(C)]` with the small mutated scalars (`mutex`, `head`, `used`,
@@ -2186,8 +2186,8 @@ const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// Fixed overflow-block capacity for `BSSStringList` / `BSSMapInner`.
 /// Zig uses `count / 4`; stable Rust cannot express const-generic arithmetic
-/// (`generic_const_exprs`), so use a nonzero stand-in until Phase B threads the
-/// per-instantiation value through. A value of 0 here would make
+/// (`generic_const_exprs`), so use a nonzero stand-in until the
+/// per-instantiation value is threaded through. A value of 0 here would make
 /// `OverflowListBlock::is_full` always true and `at_index`'s `idx % COUNT` panic.
 pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 64;
 
@@ -2297,8 +2297,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     }
 
     // Zig `deinit` → `impl Drop for BSSList` below (PORTING.md: never expose `pub fn deinit`).
-    // The `instance.destroy()` + `loaded = false` half is singleton teardown — Phase B static
-    // wrapper owns that; Drop only frees the heap-allocated head chain.
+    // The `instance.destroy()` + `loaded = false` half is singleton teardown — the
+    // `bss_list!` singleton wrapper owns that; Drop only frees the heap-allocated head chain.
 
     pub fn is_overflowing(instance: &Self) -> bool {
         instance.used as usize >= COUNT
@@ -2431,7 +2431,6 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
         // The inline `self.tail` is not Boxed and must not be Box-dropped; the
         // `prev: Option<Box<..>>` chain stops at `None` before reaching it
         // (see `append_overflow_uninit`). Singleton `loaded = false` reset belongs to the
-        // Phase-B static wrapper, not here.
         if let Some(head) = self.head.take() {
             let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
             if !core::ptr::eq(head.as_ptr().cast_const(), tail_ptr) {
@@ -2569,7 +2568,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         bss_heap_init(Self::init_at)
     }
 
-    // Zig `deinit`: just frees `instance`. Handled by dropping the singleton Box in Phase B.
+    // Zig `deinit`: just frees `instance`. Singleton is process-lifetime; never freed.
 
     #[inline]
     pub fn is_overflowing(instance: &Self) -> bool {
@@ -3071,7 +3070,7 @@ pub struct BSSMap<
     // TODO(port): Zig declares this as `OverflowList([]u8, count / 4)` but then calls
     // `.items[...]` and `.append(allocator, slice)` on it — those are `std.ArrayListUnmanaged`
     // methods, NOT `OverflowList` methods. Likely dead code or a latent bug upstream.
-    // Port as `Vec<&'static [u8]>` to match the *called* API; revisit in Phase B.
+    // Ported as `Vec<&'static [u8]>` to match the *called* API.
     pub key_list_overflow: Vec<&'static [u8]>,
 }
 
@@ -3131,12 +3130,12 @@ impl<
     }
 
     pub fn get(&mut self, key: &[u8]) -> Option<&mut ValueType> {
-        // PERF(port): Zig uses @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): Zig uses @call(bun.callmod_inline, ...) — profile if hot.
         self.map_mut().get(key)
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
-        // PERF(port): Zig uses @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): Zig uses @call(bun.callmod_inline, ...) — profile if hot.
         self.map_mut().at_index(index)
     }
 

@@ -10,7 +10,7 @@ pub type CallbackSetterFn = extern "C" fn(JSValue, JSValue);
 // Zig: `fn CallbackWrapper(comptime Getter, comptime Setter) type { return struct { ... } }`
 // Rust const generics cannot carry function pointers, so the getter/setter are stored as
 // runtime fields instead of monomorphized type parameters.
-// PERF(port): was comptime monomorphization (Getter/Setter were comptime fn ptrs) — profile in Phase B
+// PERF(port): was comptime monomorphization (Getter/Setter were comptime fn ptrs) — profile if hot.
 #[derive(Copy, Clone)]
 pub struct CallbackWrapper {
     get_fn: CallbackGetterFn,

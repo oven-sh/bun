@@ -65,10 +65,10 @@ pub use bun_options_types::schema::api::CssInJsBehavior;
 pub use bun_paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
-// renamer — Phase-A draft in `renamer.rs`. The five former leak sites
+// renamer — defined in `renamer.rs`. The five former leak sites
 // have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
 // renamed-name strings are arena-owned and typed `*const [u8]` (PORTING.md §Allocators).
-// Phase B threads the AST `'bump` lifetime to replace the raw pointers.
+// TODO(refactor): thread the AST `'bump` lifetime through Renamer to replace the raw pointers.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "renamer.rs"]
 pub mod renamer;
@@ -1619,17 +1619,8 @@ impl TopLevel {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Printer (NewPrinter) — the impl body is the bulk of this crate and touches
-// nearly every bun_js_parser AST node type. `bun_js_parser` now links, but the
-// per-node API surface (op tables, FnFlags, BindingData dispatch, EString
-// `.data()` accessor, ImportRecord flag fields) does not yet match the shapes
-// the Phase-A draft assumed (~300 mismatches). Re-gated until those land.
+// nearly every bun_js_parser AST node type.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_ast::g::FnFlags
-// TODO(b2-blocked): bun_ast::binding::Data
-// TODO(b2-blocked): bun_ast::op::{TABLE::get_ptr_const, Code::is_prefix}
-// TODO(b2-blocked): bun_ast::e::EString::data
-// TODO(b2-blocked): bun_ast::ImportRecordFlags field-style accessors (contains_import_star/wrap_with_to_esm/handles_import_errors)
-// TODO(b2-blocked): bun_ast::ImportRecord::module_id
 pub mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
@@ -1642,7 +1633,7 @@ pub mod __gated_printer {
     use js_ast::{b as B, e as E, g as G, op as Op, s as S};
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Phase-B local helpers — bridge gaps between Phase-A draft and the real
+    // Local helpers — bridge gaps between the printer and the
     // lower-tier crate API surface without editing those crates.
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -1721,7 +1712,7 @@ pub mod __gated_printer {
     /// code in the JavaScript parser for details.
     pub struct BinaryExpressionVisitor<'ast> {
         // Inputs
-        // PORT NOTE: Zig stored `*const E.Binary`; Phase A keeps the StoreRef so the
+        // PORT NOTE: Zig stored `*const E.Binary`; we keep a StoreRef so the
         // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
         pub e: js_ast::StoreRef<E::Binary>,
         _phantom: core::marker::PhantomData<&'ast ()>,
@@ -2744,8 +2735,8 @@ pub mod __gated_printer {
         /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
         /// `Source::contents` buffer — both are kept alive for `'a` by the
         /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
-        /// Phase-A ARENA convention (matching `slice_of` for AST fields).
-        /// // PORT NOTE: reshaped for borrowck — Phase B threads `'bump` through Renamer.
+        /// parser's ARENA convention (matching `slice_of` for AST fields).
+        /// PORT NOTE: reshaped for borrowck — TODO(refactor): thread `'bump` through Renamer.
         #[inline]
         fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
             let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
@@ -5512,7 +5503,7 @@ pub mod __gated_printer {
                     // PORT NOTE: Zig wraps `s.items` in an ArrayListUnmanaged and uses swapRemove
                     // in-place. `ClauseItem` isn't `Clone`, so build a Vec of arena borrows
                     // instead and swap-remove the borrows.
-                    // TODO(port): lifetime — Zig mutates `s.items` in place; Phase B may write back.
+                    // TODO(port): lifetime — Zig mutates `s.items` in place; consider writing back.
                     let mut array: Vec<&js_ast::ClauseItem> = slice_of(s.items).iter().collect();
                     {
                         let mut i: usize = 0;
@@ -7017,7 +7008,7 @@ pub mod __gated_printer {
             };
             // Spec js_printer.zig:5454-5460 caches `line_offset_tables.items(.byte_offset_to_start_of_line)`
             // into `line_offset_table_byte_offset_list`. The Rust `Builder` field is `&'static [u32]`
-            // pending Phase-B lifetime threading, so instead of caching a self-borrow here,
+            // pending lifetime threading, so instead of caching a self-borrow here,
             // `Builder::add_source_mapping` derives the slice on demand from `line_offset_tables`
             // via `ListExt::items_byte_offset_to_start_of_line()` (see Chunk.rs).
             let _ = GENERATE_SOURCE_MAP;
@@ -8297,7 +8288,7 @@ pub fn print_with_writer_and_platform<
     );
     printer.was_lazy_export = ast.has_lazy_export;
     // PORT NOTE: `Printer::init` already moved `opts.module_info` (it's a field of
-    // `Options`); the Phase-A draft re-assigned it post-construction, which is a
+    // `Options`); re-assigning it post-construction (as Zig does) would be a
     // use-after-move in Rust. The field already lives on `printer.options.module_info`
     // and `printer.module_info` was set to `None` by `init`, so mirror Zig by
     // taking it back out of `printer.options`.

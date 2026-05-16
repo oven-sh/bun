@@ -39,7 +39,8 @@ struct SrcAscii {
 
 /// Zig: `packed struct(u8) { char: u7, escaped: bool = false }`.
 // PERF(port): widened `char` to u32 so ascii/unicode share one `InputChar` shape and
-// `ShellCharIter<const E>` needs no type-level branching on `E`. Phase B may split.
+// `ShellCharIter<const E>` needs no type-level branching on `E`. Could split per
+// encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
 pub struct InputChar {
     pub char: u32,
@@ -178,8 +179,8 @@ pub enum ShellCharIterState {
 
 // PERF(port): Zig selected `Src` at comptime via `switch (encoding)`. Rust const
 // generics can't pick a field type from an enum value without an aux trait, so we
-// store both arms in a small enum and branch at runtime. Phase B may split into
-// three `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
+// store both arms in a small enum and branch at runtime. Could split into three
+// `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
 // shows the branch matters.
 enum ShellSrc {
     Ascii(SrcAscii),
@@ -414,11 +415,9 @@ pub enum Token {
     Eof,
 }
 
-// TODO(b2-blocked): bun_core::SmolStr — missing `Clone` impl. Zig copied the
-// union by value (bitwise SmolStr copy with shared heap backing). Until the
-// lower-tier crate provides `Clone`, deep-copy via `from_slice` so the parser
-// can own its token. PERF(port): extra alloc on heap-backed SmolStr — profile
-// in Phase B once SmolStr grows Clone.
+// PORT NOTE: Zig copied the union by value (bitwise SmolStr copy with shared
+// heap backing). The Rust port deep-copies via `from_slice` so the parser can
+// own its token. PERF(port): extra alloc on heap-backed SmolStr — profile if hot.
 impl Clone for Token {
     fn clone(&self) -> Self {
         match self {
@@ -662,8 +661,8 @@ pub fn expand(
 // writes `bubble_up` backrefs (raw pointers) into child Groups and re-enters the
 // parent through them; raw-pointer access is used throughout to avoid creating
 // overlapping `&mut` borrows. Mirrors Zig pointer semantics 1:1.
-// TODO(port): audit aliasing soundness in Phase B (no long-lived `&mut` is held
-// across recursion, only raw derefs).
+// TODO(port): audit aliasing soundness (no long-lived `&mut` is held across
+// recursion, only raw derefs).
 unsafe fn expand_nested(
     root: *mut ast::Group,
     out: &mut [Vec<u8>],
@@ -710,7 +709,7 @@ unsafe fn expand_nested(
                     let length = out[usize::from(out_key)].len();
                     // PORT NOTE: reshaped for borrowck — snapshot prefix once; Zig re-sliced
                     // out[out_key].items[0..length] each iteration (same bytes).
-                    // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                    // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
                     let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
@@ -760,7 +759,7 @@ unsafe fn expand_nested(
                 ast::Atom::Expansion(expansion) => {
                     let length = out[usize::from(out_key)].len();
                     // PORT NOTE: reshaped for borrowck — see above.
-                    // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                    // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
                     let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
@@ -832,7 +831,7 @@ fn expand_flat(
 
                 let starting_len = out[usize::from(out_key)].len();
                 // PORT NOTE: reshaped for borrowck — snapshot prefix once.
-                // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
                 let prefix: Vec<u8> = out[usize::from(out_key)][..starting_len].to_vec();
                 for (i, variant) in variants.iter().enumerate() {
                     let new_key = if i == 0 {
@@ -917,7 +916,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
-        // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
         let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
         while !self.r#match(TokenTag::Eof) {
             match self.parse_atom()? {
@@ -961,7 +960,7 @@ impl<'a> Parser<'a> {
             if self.r#match(TokenTag::Eof) {
                 break;
             }
-            // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile in Phase B
+            // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
             let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
             let mut close = false;
             while !self.r#match(TokenTag::Eof) {
@@ -1044,7 +1043,7 @@ impl<'a> Parser<'a> {
     #[allow(dead_code)]
     fn match_any2(&mut self, toktags: &[TokenTag]) -> Option<Token> {
         let peeked = self.peek().clone();
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for &tag in toktags {
             if peeked.tag() == tag {
                 let _ = self.advance();
@@ -1056,7 +1055,7 @@ impl<'a> Parser<'a> {
 
     fn match_any(&mut self, toktags: &[TokenTag]) -> bool {
         let peeked = self.peek().tag();
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for &tag in toktags {
             if peeked == tag {
                 let _ = self.advance();
@@ -1218,9 +1217,6 @@ fn build_expansion_table(
 
 pub type Lexer = NewLexer<{ Encoding::Ascii }>;
 
-// TODO(port): `ShellCharIter<ENCODING>` associated items `CodepointType` / `InputChar`
-// require either a trait or inherent associated types. Phase B: define a
-// `CharIter` trait in `bun_shell` exposing `type Codepoint; type InputChar; fn eat; fn read_char;`.
 type Chars<const E: Encoding> = ShellCharIter<E>;
 
 pub struct LexerOutput {
@@ -1414,8 +1410,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         *tok = Token::Text(tok_text);
     }
 
-    // TODO(port): `char` parameter type is `Chars<ENCODING>::CodepointType` —
-    // u8 for ascii, u32 for wtf8/wtf16. Phase B: thread the associated type.
     fn append_char(
         &mut self,
         char: <Chars<ENCODING> as CharIter>::CodepointType,

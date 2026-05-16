@@ -37,10 +37,8 @@ use bun_options_types::schema::api;
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
 // aliases are wired by `#[bun_jsc::JsClass]` codegen — see PORTING.md §JSC types.
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `JsCell` (= `UnsafeCell` projector). The codegen
-// shim still emits `this: &mut JSTranspiler` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `JsCell` is
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
+// interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
 // `#[repr(transparent)]`, so field offsets are unchanged.
 #[bun_jsc::JsClass(name = "Transpiler")]
 #[derive(bun_ptr::RefCounted)]
@@ -54,14 +52,14 @@ pub struct JSTranspiler {
     pub buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     pub log_level: bun_ast::Level,
     // TODO(port): non-AST crate keeps an arena field for bulk-freeing config strings.
-    // Consider replacing with per-field Box ownership in Phase B.
+    // Consider replacing with per-field Box ownership.
     // Boxed so its address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
     // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`.
     // TODO(port): LIFETIMES.tsv classifies the consumer (`TransformTask.js_instance`) as
     // `Arc<JSTranspiler>`, but `bun.ptr.RefCount` is single-thread intrusive and `*JSTranspiler`
-    // crosses FFI as `m_ctx`. Reconcile in Phase B (likely IntrusiveRc, not Arc).
+    // crosses FFI as `m_ctx`. Reconcile (likely IntrusiveRc, not Arc).
     pub ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -220,7 +218,7 @@ impl Config {
                         )));
                     }
 
-                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                    // PERF(port): was appendAssumeCapacity — profile if hot.
                     names.push(prop.to_owned_slice().into());
                     let mut val = ZigString::init(b"");
                     property_value.to_zig_string(&mut val, global)?;
@@ -229,7 +227,7 @@ impl Config {
                     }
                     let mut buf = Vec::new();
                     write!(&mut buf, "{}", val).expect("unreachable");
-                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                    // PERF(port): was appendAssumeCapacity — profile if hot.
                     values.push(buf.into_boxed_slice());
                 }
 
@@ -545,7 +543,7 @@ impl Config {
                             // can drop normally at end of scope.
                             let name_slice = &buf[start..start + name_len];
                             if name_len > 0 {
-                                // PERF(port): was putAssumeCapacity — profile in Phase B
+                                // PERF(port): was putAssumeCapacity — profile if hot.
                                 replacements.put_assume_capacity(
                                     name_slice,
                                     bun_ast::runtime::ReplaceableExport::Delete,
@@ -574,7 +572,7 @@ impl Config {
                     // We cannot set the exception before `?` because it could be
                     // a double free with the errdefer.
                     // TODO(port): the Zig `defer if (globalThis.hasException()) { free keys; clear }`
-                    // is a conditional cleanup at scope exit. Model with scopeguard in Phase B
+                    // is a conditional cleanup at scope exit. Model with scopeguard
                     // (captures &mut replacements + &global; borrowck conflict with the loop
                     // below — needs restructuring). Keys are Box<[u8]> in Rust, so dropping
                     // `replacements` on `?` already frees them; only the explicit
@@ -596,7 +594,7 @@ impl Config {
                             )));
                         }
 
-                        // PERF(port): was getOrPutAssumeCapacity — profile in Phase B.
+                        // PERF(port): was getOrPutAssumeCapacity — profile if hot.
                         // PORT NOTE: reshaped — `StringArrayHashMap::get_or_put` is gated on
                         // `V: Default` upstream and `ReplaceableExport` has no Default. Compute
                         // the value first, then `put` (which upserts without needing a default
@@ -772,7 +770,7 @@ impl<'a> TransformTask<'a> {
         let name = self.loader.stdin_name();
         let source = bun_ast::Source::init_path_string(name, self.input_code.slice());
 
-        // PERF(port): was MimallocArena bulk-free — profile in Phase B.
+        // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
         // defer arena.deinit() → Drop
 
@@ -953,8 +951,8 @@ fn export_replacement_value(
         write!(&mut buf, "{}", zig_str).expect("unreachable");
         // Zig allocPrint'd into the caller's arena. Bump-allocate so the bytes
         // live as long as the JSTranspiler arena that owns the resulting Expr;
-        // `E::EString::init` erases the borrow to `'static` per the Phase-A
-        // `Str` convention (see ast/E.rs).
+        // `E::EString::init` erases the borrow to `'static` per the AST
+        // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(&buf);
         return Ok(Some(Expr::init(
             bun_ast::E::EString::init(data),
@@ -979,7 +977,7 @@ impl JSTranspiler {
         // assigns it later. Rust cannot leave a non-POD field uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
         // stack first, then move both into the Box.
-        // TODO(port): in-place init — if Phase B needs the Box allocated up-front (e.g. stable
+        // TODO(port): in-place init — if the Box must be allocated up-front (e.g. stable
         // address for resolver backrefs), switch the field to `MaybeUninit<Transpiler>`.
         let mut config = Config {
             log: bun_ast::Log::init(),
@@ -1323,7 +1321,7 @@ impl JSTranspiler {
             return Ok(JSValue::ZERO);
         }
 
-        // PERF(port): was MimallocArena bulk-free — profile in Phase B
+        // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop
@@ -1455,7 +1453,7 @@ impl JSTranspiler {
             ));
         };
 
-        // PERF(port): was MimallocArena bulk-free — profile in Phase B
+        // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
         let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
@@ -1591,7 +1589,7 @@ fn named_exports_to_js(
         return JSValue::create_empty_array(global, 0);
     }
 
-    // PERF(port): was stack-fallback allocator — profile in Phase B
+    // PERF(port): was stack-fallback allocator — profile if hot.
     // PORT NOTE: Zig sorted the map in-place via `StringArrayByIndexSorter` then iterated.
     // `StringArrayHashMap` in Rust has no in-place sort, so collect the keys, sort them
     // lexicographically (matching `strings.order`), then emit `BunString`s in that order.
@@ -1700,7 +1698,7 @@ impl JSTranspiler {
             )));
         }
 
-        // PERF(port): was MimallocArena bulk-free — profile in Phase B
+        // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
         // defer log.deinit() → Drop

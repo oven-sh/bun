@@ -154,7 +154,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             .children
             .append_assume_capacity(NonNull::new(scope).expect("bump alloc non-null").into());
         self.scopes.push(self.current_scope);
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
         self.current_scope = scope;
         Ok(scope)
     }
@@ -269,7 +269,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
         self.stmts.reserve(1);
         self.stmts.push(self.new_stmt(data));
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
         Ok(())
     }
 

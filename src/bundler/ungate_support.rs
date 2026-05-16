@@ -1,6 +1,6 @@
-//! B-2 un-gate support — types and crate aliases extracted from `bundle_v2`
-//! so `Chunk.rs` / `LinkerContext.rs` / `ParseTask.rs` / `Graph.rs` can
-//! compile against real surfaces.
+//! Types and crate aliases extracted from `bundle_v2` so `Chunk.rs` /
+//! `LinkerContext.rs` / `ParseTask.rs` / `Graph.rs` can compile against real
+//! surfaces.
 //!
 //! These are pure value types with no T6 deps. `bundle_v2.rs` re-exports the
 //! whole set from here (its draft duplicates were collapsed in DEDUP D059);
@@ -17,11 +17,11 @@ use bun_core::strings;
 use crate::{Index, IndexInt, options};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Crate-name shims for Phase-A draft modules. These map the names the draft
-// bodies use (`bun_str`, `bun_fs`, `bun_node_fallbacks`, `bun_output`,
+// Crate-name shims for the original draft modules. These map the names the
+// draft bodies use (`bun_str`, `bun_fs`, `bun_node_fallbacks`, `bun_output`,
 // `bun_css`) onto the real crates / re-export modules so `use crate::…`
-// resolves. The Phase-A drafts wrote bare extern-crate paths; un-gated
-// modules import from here via `use crate::ungate_support::… as …`.
+// resolves. The drafts wrote bare extern-crate paths; modules import from
+// here via `use crate::ungate_support::… as …`.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_core as bun_str;
 /// `bun_output` is a thin re-export crate over `bun_core` that isn't a
@@ -469,7 +469,7 @@ pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
 }
 
 /// `js_ast::renamer` — re-exported here so `Chunk.rs` can name it without
-/// pulling `bun_js_printer` into its `use` set (the Phase-A draft used a
+/// pulling `bun_js_printer` into its `use` set (the original draft used a
 /// non-existent `bun_renamer` crate).
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
@@ -587,14 +587,14 @@ pub(crate) use bun_ast::UseDirective;
 pub use bun_js_printer::MangledProps;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gate surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.
+// Value-type surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.
 // Real value-type defs extracted from the gated `bundle_v2.rs` draft body
-// (JSMeta, EntryPoint, ImportData, ExportData, …) so the freshly un-gated
-// modules can name them at `crate::*`. Once `bundle_v2.rs` un-gates its draft
-// body these collapse to re-exports.
+// (JSMeta, EntryPoint, ImportData, ExportData, …) so those modules can name
+// them at `crate::*`. Once `bundle_v2.rs` un-gates its draft body these
+// collapse to re-exports.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.logger` — alias used by Phase-A drafts as `crate::bun_ast::Source`.
+/// `bun.logger` — alias used by the original drafts as `crate::bun_ast::Source`.
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
 ///
@@ -603,8 +603,8 @@ pub use bun_js_printer::MangledProps;
 /// slices). The bundler owns those arenas for the entire link (see
 /// `LinkerGraph.bump: *const Arena` "stays `'static`-ish" note); `JSAst` is
 /// stored in a `MultiArrayList` SoA inside `LinkerGraph`/`Graph`, neither of
-/// which carries a lifetime parameter yet. Pin to `'static` until Phase B
-/// threads `'bump` through `Chunk`/`LinkerGraph`/`LinkerContext`.
+/// which carries a lifetime parameter yet. Pin to `'static` until `'bump`
+/// is threaded through `Chunk`/`LinkerGraph`/`LinkerContext`.
 pub type JSAst = crate::BundledAst<'static>;
 pub(crate) use bun_ast::{Part, Ref, Symbol};
 
@@ -711,10 +711,10 @@ pub mod js_meta {
     pub type ResolvedExports = StringArrayHashMap<ExportData>;
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
-    /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Field-style access
-    /// (`flags.is_async_or_has_async_dependency = true`) is what the Phase-A
-    /// drafts wrote, so this is a plain struct of bools + `wrap` for now;
-    /// pack into a u8 once callers move to setters. PERF(port).
+    /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Callers use
+    /// field-style access (`flags.is_async_or_has_async_dependency = true`),
+    /// so this is a plain struct of bools + `wrap` for now; pack into a u8
+    /// once callers move to setters. PERF(port).
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
         pub is_async_or_has_async_dependency: bool,
@@ -771,7 +771,7 @@ pub use js_meta::{
 };
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gate surface for `bundle_v2.rs::on_parse_task_complete`.
+// Surface for `bundle_v2.rs::on_parse_task_complete`.
 // `` now emits `InputFileColumns` with the full
 // `items_<field>()` / `items_<field>_mut()` set; this alias keeps the old
 // ambiguity (same trait, two names).

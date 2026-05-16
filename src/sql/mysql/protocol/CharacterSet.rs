@@ -2,7 +2,7 @@ use strum::{FromRepr, IntoStaticStr};
 
 // TODO(port): Zig source is a non-exhaustive `enum(u8)` (trailing `_`), meaning it may
 // legally hold any u8 value not listed below. A Rust `#[repr(u8)] enum` makes that UB.
-// If callers ever construct this from an arbitrary wire byte, Phase B must either add an
+// If callers ever construct this from an arbitrary wire byte, either add an
 // `Unknown(u8)` path at the construction site or switch to `#[repr(transparent)] struct(u8)`
 // with associated consts.
 #[allow(non_camel_case_types)]

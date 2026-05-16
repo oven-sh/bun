@@ -154,8 +154,8 @@ impl ObjectRopeExt for E::Object {
 // ──────────────────────────────────────────────────────────────────────────
 //
 // TODO(port): `HashMapPool` is private and unreferenced in this file (dead code
-// in the Zig source). Ported for structural fidelity; verify and delete in
-// Phase B if truly unused.
+// in the Zig source). Ported for structural fidelity; verify and delete if
+// truly unused.
 mod hash_map_pool {
     use super::*;
     use bun_collections::identity_context::IdentityContext;

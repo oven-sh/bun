@@ -27,7 +27,7 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // in `bun_runtime`; the linker resolves them. No `AtomicPtr`, no registration.
 //
 // PERF(port): was inline switch — `__bun_js_timer_epoch` sits on the
-// heap-compare path. Phase B should denormalize `epoch` into `EventLoopTimer`
+// heap-compare path. Consider denormalizing `epoch` into `EventLoopTimer`
 // to drop the cross-crate call if profiling shows it matters.
 unsafe extern "Rust" {
     /// Runtime owns the tag→variant `match`; `vm` is an erased
@@ -212,7 +212,7 @@ pub enum Tag {
 impl Tag {
     // TODO(port): Zig `pub fn Type(comptime T: Tag) type` returns a type at comptime.
     // Rust has no value→type mapping. All call sites (`jsTimerInternalsFlags`, `fire`)
-    // have been manually expanded above. If a generic mapping is needed in Phase B,
+    // have been manually expanded above. If a generic mapping is ever needed,
     // consider a trait `TagType<const T: Tag> { type Out; }` with per-variant impls.
 
     pub fn allow_fake_timers(self) -> bool {

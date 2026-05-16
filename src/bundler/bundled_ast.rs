@@ -16,7 +16,7 @@ pub use bun_css::BundlerStyleSheet;
 /// Arena-owned handle to a parsed CSS stylesheet (Zig: `*bun.css.BundlerStyleSheet`).
 ///
 /// The pointee lives in a per-file `Bump` whose ownership is held by
-/// `Graph.heap` (PORT_NOTES_PLAN B-1: bumps are `Pin<Box<Bump>>` owned by the
+/// `Graph.heap` (bumps are `Pin<Box<Bump>>` owned by the
 /// graph and outlive every `BundledAst` row by struct drop order). No `'arena`
 /// lifetime is threaded — N files imply N distinct per-worker bumps with no
 /// single common lifetime — so the invariant is enforced by drop order, not
@@ -35,7 +35,6 @@ use bun_core::strings;
 use bun_ast::ast_result::{self, Ast};
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
-// TODO(port): verify exact module paths for Ast/Part/Symbol associated `List` types in Phase B.
 
 pub type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
 pub type ConstValuesMap = bun_ast::ast_result::ConstValuesMap;
@@ -161,7 +160,7 @@ bitflags::bitflags! {
 
 impl<'arena> BundledAst<'arena> {
     // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
-    // because `init` is not const-evaluable. Phase B: consider a `static` via `OnceLock` or make
+    // because `init` is not const-evaluable. Consider a `static` via `OnceLock` or make
     // `init`/`Ast::empty` const fn if feasible.
     pub fn empty() -> Self {
         Self::init(Ast::empty())
@@ -242,8 +241,6 @@ impl<'arena> BundledAst<'arena> {
                 None
             },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
-            // TODO(port): Ast has many more fields with defaults; Phase B should use
-            // `..Ast::default()` or equivalent functional-update once Ast's Rust shape is fixed.
             ..Ast::default()
         }
     }

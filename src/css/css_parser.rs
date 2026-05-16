@@ -1,8 +1,8 @@
 //! CSS parser — port of `src/css/css_parser.zig`.
 //!
 //! This is an AST crate (see PORTING.md §Allocators): allocations are
-//! arena-backed in the Zig original. Phase A keeps `&'bump Bump` threading
-//! where it matters and drops `Allocator` params elsewhere.
+//! arena-backed in the Zig original. The Rust port keeps `&'bump Bump`
+//! threading where it matters and drops `Allocator` params elsewhere.
 
 use bun_alloc::ArenaVecExt as _;
 use core::fmt;
@@ -419,7 +419,7 @@ pub trait DeriveValueType {
 #[cold]
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) {
     // PERF(port): was SmallList<BlockType, 16> + appendAssumeCapacity — Vec is
-    // fine for the cold path; profile in Phase B.
+    // fine for the cold path.
     let mut stack: Vec<BlockType> = Vec::with_capacity(16);
     stack.push(block_type);
 
@@ -1594,7 +1594,7 @@ mod rule_parsers {
             let parse_declarations =
                 <NestedRuleParser<'_, T> as RuleBodyItemParser>::parse_declarations(&nested_parser);
             // TODO: think about memory management
-            // PERF(port): was arena bulk-free — profile in Phase B
+            // PERF(port): was arena bulk-free — profile if hot.
             let mut errors: Vec<ParseError<ParserError>> = Vec::new();
             let mut iter = RuleBodyParser::new(input, &mut nested_parser);
 
@@ -1829,7 +1829,7 @@ mod rule_parsers {
                         let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
                         let mut parser = RuleBodyParser::new(input, &mut decl_parser);
                         // todo_stuff.think_mem_mgmt
-                        // PERF(port): was arena bulk-free — profile in Phase B
+                        // PERF(port): was arena bulk-free — profile if hot.
                         let mut properties: Vec<css_rules::font_face::FontFaceProperty> =
                             Vec::new();
                         while let Some(result) = parser.next() {
@@ -1929,7 +1929,7 @@ mod rule_parsers {
                         let mut parser = css_rules::keyframes::KeyframesListParser;
                         let mut iter = RuleBodyParser::new(input, &mut parser);
                         // todo_stuff.think_mem_mgmt
-                        // PERF(port): was arena bulk-free — profile in Phase B
+                        // PERF(port): was arena bulk-free — profile if hot.
                         let mut keyframes: Vec<css_rules::keyframes::Keyframe> = Vec::new();
                         while let Some(result) = iter.next() {
                             if let Ok(keyframe) = result {
@@ -2474,7 +2474,7 @@ impl PropertyUsage {
 }
 
 // TODO(port): Zig: `std.bit_set.ArrayBitSet(usize, ceilPow2(EnumFields(PropertyIdTag).len))`.
-// Phase B computes the variant count via `strum::EnumCount`.
+// Compute the variant count via `strum::EnumCount` instead of hardcoding 1024.
 pub type PropertyBitset = ArrayBitSet<1024, { num_masks_for(1024) }>;
 
 pub fn fill_property_bit_set(
@@ -2529,8 +2529,8 @@ pub fn fill_property_bit_set(
 pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
     pub rules: CssRuleList<AtRule>,
-    // PERF(port): was arena bulk-free — profile in Phase B (sources /
-    // source_map_urls / license_comments were ArrayList fed input.arena()).
+    // PERF(port): was arena bulk-free (sources / source_map_urls /
+    // license_comments were ArrayList fed input.arena()) — profile if hot.
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO(port): lifetime — arena
@@ -2804,9 +2804,9 @@ mod stylesheet_impl {
             // parser hands back is currently detached to `'static` (matching the
             // crate-wide erasure on `DeclarationBlock<'static>`/`Token` payloads).
             // The caller owns the arena (matching Zig's `arena: Allocator`
-            // parameter) so the storage outlives the returned `StyleSheet`; Phase B
-            // re-threads the lifetime through `CssRuleList<'bump, R>` and drops the
-            // `'static` bound on `arena`.
+            // parameter) so the storage outlives the returned `StyleSheet`.
+            // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
+            // and drop the `'static` bound on `arena`.
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
@@ -2827,7 +2827,7 @@ mod stylesheet_impl {
                 Some(&mut parser_extra),
             );
 
-            // PERF(port): was arena bulk-free — profile in Phase B
+            // PERF(port): was arena bulk-free — profile if hot.
             let mut license_comments: Vec<&'static [u8]> = Vec::new();
             let mut state = parser.state();
             while let Ok(token) = parser.next_including_whitespace_and_comments() {
@@ -2990,7 +2990,7 @@ mod stylesheet_impl {
                 }
             }
             out.v.reserve(count as usize);
-            // PERF(port): was ensureUnusedCapacity — profile in Phase B
+            // PERF(port): was ensureUnusedCapacity — profile if hot.
             let mut saw_imports = false;
             for rule in self.rules.v.iter_mut() {
                 match rule {
@@ -3466,8 +3466,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `name` is a slice into the parser source / arena, both of
         // which outlive the symbol table (`ParserExtra` is consumed into
         // `StylesheetExtra` alongside the same arena). Detach the borrow so it
-        // satisfies `Symbol.original_name: &'static [u8]` (Phase-A lifetime
-        // erasure — see PORTING.md §Lifetimes).
+        // satisfies `Symbol.original_name: &'static [u8]` (the parser's
+        // crate-wide lifetime erasure — see PORTING.md §Lifetimes).
         let name_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
 
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
@@ -3511,8 +3511,8 @@ impl<'a> Parser<'a> {
             let idx = u32::try_from(import_records.len()).unwrap();
             // SAFETY: `url` borrows the parser source / arena which outlives
             // every `ImportRecord` produced by this parse. `bun.fs.Path` in
-            // the Zig original stores the same borrowed slice; Phase-A
-            // erases the lifetime to 'static (see PORTING.md §Lifetimes).
+            // the Zig original stores the same borrowed slice; the lifetime
+            // is erased to 'static (see PORTING.md §Lifetimes).
             let url_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
@@ -4489,8 +4489,8 @@ const REPLACEMENT_CHAR_UNICODE: [u8; 3] = [0xEF, 0xBF, 0xBD];
 /// UTF-8 encoding of U+0FFD — used by `serializer` where Zig called
 /// `bun.strings.encodeUTF8Comptime(0xFFD)` (css_parser.zig:6747, :6937). The
 /// Zig literal is `0xFFD` (sic — likely a typo for `0xFFFD`), but the spec is
-/// ground truth: encode 0x0FFD → [0xE0, 0xBF, 0xBD] to byte-match. Phase B
-/// should confirm whether the spec itself needs fixing to 0xFFFD.
+/// ground truth: encode 0x0FFD → [0xE0, 0xBF, 0xBD] to byte-match.
+/// TODO(port): confirm whether the spec itself needs fixing to 0xFFFD.
 // TODO(port): verify upstream — Zig wrote 0xFFD, comment says "replacement
 // character" which is U+FFFD. Byte-matching the spec (0x0FFD) for now.
 const REPLACEMENT_CHAR_UTF8: &[u8] = &[0xE0, 0xBF, 0xBD];
@@ -5546,8 +5546,8 @@ impl<'a> Tokenizer<'a> {
     #[inline]
     pub fn slice_from(&self, start: usize) -> &'static [u8] {
         // SAFETY: see `src_str` — slice borrows `self.src: &'a [u8]` which the
-        // returned `Token` never outlives. `'static` is the Phase-A
-        // placeholder for the not-yet-threaded `'bump`/`'input` lifetime.
+        // returned `Token` never outlives. `'static` is a placeholder for the
+        // not-yet-threaded `'bump`/`'input` lifetime.
         unsafe { src_str(&self.src[start..self.position]) }
     }
 }
@@ -5634,7 +5634,7 @@ impl TokenKind {
     pub fn to_string(self) -> &'static str {
         // TODO(port): Zig switch had stale variant names (close_bracket, hash,
         // string) and pattern-matched `delim` payload — which TokenKind has
-        // none of. Preserved best-effort; Phase B revisits.
+        // none of. Preserved best-effort.
         match self {
             TokenKind::AtKeyword => "@-keyword",
             TokenKind::BadString => "bad string token",
@@ -5673,15 +5673,15 @@ impl TokenKind {
 // Data layout hoisted at crate root (lib.rs) so error.rs can name `Token`
 // without the parser hub. Behavior impls (kind/is_parse_error/to_css_generic)
 // live here. TODO: make strings be allocated in string pool.
-// TODO(port): lifetime — every &[u8] payload borrows the arena/source. Phase
-// A uses `&'static [u8]` placeholder; Phase B threads `<'a>`.
+// TODO(port): lifetime — every &[u8] payload borrows the arena/source. Uses
+// `&'static [u8]` placeholder; thread `<'a>` once payload lifetimes settle.
 pub use crate::Token;
 
 impl Token {
     // blocked_on: generics::CssEql/CssHash blanket impls for Token payload set
     pub fn eql(lhs: &Token, rhs: &Token) -> bool {
         // TODO(port): Zig used implementEql (comptime field-walk).
-        // Phase B: derive PartialEq once payload lifetimes settle.
+        // Derive PartialEq once payload lifetimes settle.
         generic::implement_eql(lhs, rhs)
     }
 
@@ -5935,8 +5935,8 @@ impl Token {
 // is `Token::to_css_generic` above; switch lib.rs's impl to delegate once
 // dependents stop relying on the simple form.
 // TODO(port): Zig `format` had subtle differences from `to_css_generic`
-// (quoted_string→serialize_string, idhash→serialize_identifier). Phase B
-// specializes.
+// (quoted_string→serialize_string, idhash→serialize_identifier). Specialize
+// if it matters for diagnostics.
 
 /// Byte-writer trait for `serializer` and `to_css_generic` (replaces Zig
 /// `anytype` writer). Aliased to the canonical `bun_io::Write`; the associated

@@ -116,7 +116,7 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
             unsafe { pthread_jit_write_protect_np(true as c_int) };
         }
     }
-    // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+    // PERF(port): was @call(bun.callmod_inline, ...) — profile if it shows up on a hot path.
     func()
 }
 
@@ -535,7 +535,7 @@ impl CompileC {
             // "-show-sdk-path"], stdout = .buffer, ... })` to auto-detect the
             // active SDK root. The Rust `bun::spawn_sync` helper isn't ported
             // yet (see install/repository.rs TODO), so use std::process as a
-            // Phase-A shim — semantics match: inherit env, ignore stdin/stderr,
+            // shim — semantics match: inherit env, ignore stdin/stderr,
             // capture stdout, treat any spawn/exit failure as "not found"
             // (Zig: `catch return` / `if (process.result.isOK())`).
             // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
@@ -2588,7 +2588,7 @@ pub enum Step {
 
 pub struct Compiled {
     pub ptr: *mut c_void,
-    // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef in Phase B
+    // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef.
     pub js_function: JSValue,
     // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().

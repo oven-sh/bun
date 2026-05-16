@@ -78,7 +78,7 @@ impl Array {
     };
 
     /// Zig: `pub fn push(this: *Array, arena, item) !void`.
-    /// Phase A `Vec::append` uses the global arena; `_bump` is kept
+    /// `Vec::append` uses the global arena; `_bump` is kept
     /// for call-site shape parity and the eventual bump-arena Vec.
     pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
         VecExt::append(&mut self.items, item);
@@ -98,7 +98,7 @@ impl Array {
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
-        // PERF(port): Zig allocated in arena; Phase-A Vec uses global arena.
+        // PERF(port): Zig allocated in arena; this Vec uses the global arena.
         // `Expr.data` is an enum (validity invariant), so the Zig
         // `expandToCapacity` + index-walk pattern would form `&mut [Expr]`
         // over invalid bit patterns. Push into reserved capacity instead —
@@ -685,13 +685,12 @@ pub enum JSXSpecialProp {
 }
 impl JSXSpecialProp {
     // PERF(port): Zig used `ComptimeStringMap` (length-prefix lookup, all
-    // resolved at comptime). Phase A reached for `phf::Map`, which on every
-    // JSX prop name computes a full SipHash + index + slice compare even
-    // though the overwhelming majority of inputs (`className`, `onClick`,
-    // `style`, ...) miss. With only 4 keys at 3 distinct lengths, a
-    // length-gated `match` rejects almost every miss on a single `usize`
-    // compare and never hashes. See clap::find_param (12577e958d71) for the
-    // same pattern.
+    // resolved at comptime). A `phf::Map` here would compute a full SipHash +
+    // index + slice compare on every JSX prop name even though the
+    // overwhelming majority of inputs (`className`, `onClick`, `style`, ...)
+    // miss. With only 4 keys at 3 distinct lengths, a length-gated `match`
+    // rejects almost every miss on a single `usize` compare and never hashes.
+    // See clap::find_param (12577e958d71) for the same pattern.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
         match s.len() {
@@ -709,7 +708,7 @@ impl JSXSpecialProp {
 
 // `Missing` re-exported from `crate::E` above.
 // TODO(port): `Missing::json_stringify` — Zig std.json protocol; orphan rules
-// prevent an inherent impl here now that the type lives at T2. Phase B picks a
+// prevent an inherent impl here now that the type lives at T2. Pick a
 // serde strategy (extension trait or move the method down).
 
 #[derive(Clone, Copy)]
@@ -895,7 +894,7 @@ impl Default for Object {
 
 /// used in TOML parser to merge properties.
 ///
-/// Phase A keeps node types lifetime-free, so `next` is a raw `*mut Rope`
+/// Node types are lifetime-free, so `next` is a raw `*mut Rope`
 /// into the bump arena (Zig: `next: ?*Rope`). Segments are bulk-freed at
 /// arena reset.
 pub struct Rope {
@@ -1575,7 +1574,7 @@ impl EString {
     }
 
     /// Zig `string(arena)` — return UTF-8 bytes, transcoding if UTF-16.
-    /// Phase A: transcode allocates via global arena then copies into
+    /// The transcode allocates via the global arena then copies into
     /// `bump` (Zig used the passed arena directly).
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
@@ -1816,7 +1815,7 @@ impl EString {
         }
     }
 
-    // TODO(port): jsonStringify — Zig std.json protocol; Phase B picks a serde strategy.
+    // TODO(port): jsonStringify — Zig std.json protocol; pick a serde strategy.
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
         let _ = writer;
         let mut buf = [0u8; 4096];

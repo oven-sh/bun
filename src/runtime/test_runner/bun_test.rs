@@ -1354,7 +1354,7 @@ pub enum RefDataValue {
     Start,
     Collection {
         // LIFETIMES.tsv: BORROW_PARAM &'a DescribeScope — but stored across async
-        // boundaries (promise .then); falling back to UNKNOWN-class NonNull until Phase B.
+        // boundaries (promise .then); falling back to UNKNOWN-class NonNull.
         // TODO(port): lifetime
         active_scope: core::ptr::NonNull<DescribeScope>,
     },

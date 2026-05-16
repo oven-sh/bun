@@ -216,7 +216,7 @@ impl Crypto {
     // DOMJIT fast path — non-standard signature (typed-array args unwrapped by codegen).
     // TODO(port): Zig return type is bare `JSValue` but the error branch returns
     // `ERR(..).throw()` (a `bun.JSError`). Mirroring as JsResult<JSValue> here; verify
-    // DOMJIT shim expectations in Phase B.
+    // DOMJIT shim expectations.
     pub fn timing_safe_equal_without_type_checks(
         &self,
         global: &JSGlobalObject,

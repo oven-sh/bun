@@ -53,7 +53,7 @@ pub struct InternalState<'a> {
 
 // PORT NOTE: was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
 // HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
-// = true`) directly; restore packing in Phase B if size matters.
+// = true`) directly; restore packing if size ever matters.
 #[derive(Clone, Copy)]
 pub struct InternalStateFlags {
     pub allow_keepalive: bool,

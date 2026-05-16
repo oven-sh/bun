@@ -1274,12 +1274,21 @@ impl UpdateInteractiveCommand {
         };
 
         // Set raw mode — RAII guard restores the original terminal mode on Drop.
+        //
+        // `ENABLE_PROCESSED_INPUT` is intentionally unset so the Windows console
+        // delivers Ctrl+C as byte `\x03` rather than terminating the process via
+        // the default console ctrl handler. If the console killed the process,
+        // it would bypass the `scopeguard::defer!` in `process_multi_select`
+        // that re-shows the cursor and disables mouse tracking, leaving the
+        // terminal in a broken state. The byte-3 path in the input loop below
+        // takes the graceful-cancel branch instead.
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
+                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+                unset: bun_sys::windows::ENABLE_LINE_INPUT
+                    | bun_sys::windows::ENABLE_ECHO_INPUT
                     | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
             });
 
         #[cfg(unix)]
@@ -1289,6 +1298,11 @@ impl UpdateInteractiveCommand {
             Ok(r) => r,
             Err(err) => {
                 if err == bun_core::err!("EndOfStream") {
+                    // Drop the raw-mode guard BEFORE `Global::exit`, which does
+                    // not unwind. The `scopeguard::defer!` inside
+                    // `process_multi_select` already restored the cursor and
+                    // disabled mouse tracking; this restores the console mode.
+                    drop(_restore);
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);

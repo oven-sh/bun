@@ -1124,7 +1124,8 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(destination_dir_.fd(), entry.path, sys::UMASK_MKDIR_MODE);
+                        let _ =
+                            sys::mkdirat(destination_dir_.fd(), entry.path, sys::UMASK_MKDIR_MODE);
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();

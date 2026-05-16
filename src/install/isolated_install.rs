@@ -1750,7 +1750,9 @@ pub fn install_isolated_packages(
                         .assume_ok();
 
                     // 1
-                    if sys::mkdirat(Fd::cwd(), rename_path.slice_z(), sys::UMASK_MKDIR_MODE).is_err() {
+                    if sys::mkdirat(Fd::cwd(), rename_path.slice_z(), sys::UMASK_MKDIR_MODE)
+                        .is_err()
+                    {
                         break 'is_new_bun_modules true;
                     }
 
@@ -1864,12 +1866,16 @@ pub fn install_isolated_packages(
                     }
 
                     // 2
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), node_modules_path, sys::UMASK_MKDIR_MODE) {
+                    if let Err(err) =
+                        sys::mkdirat(Fd::cwd(), node_modules_path, sys::UMASK_MKDIR_MODE)
+                    {
                         Output::err(err, "failed to create './node_modules'", format_args!(""));
                         Global::exit(1);
                     }
 
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, sys::UMASK_MKDIR_MODE) {
+                    if let Err(err) =
+                        sys::mkdirat(Fd::cwd(), bun_modules_path, sys::UMASK_MKDIR_MODE)
+                    {
                         Output::err(
                             err,
                             "failed to create './node_modules/.bun'",

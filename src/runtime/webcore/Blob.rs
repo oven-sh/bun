@@ -386,7 +386,7 @@ pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usiz
 
 #[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
-    // TODO(b2-blocked): bun_core::FormData (gated module)
+    // TODO(port): bun_core::FormData (gated module)
 
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
@@ -636,7 +636,6 @@ impl BlobExt for Blob {
     /// the proto entry covers Blob/BunFile/S3File in one place; the actual
     /// construction is `Image::from_blob_js` so Blob.rs doesn't grow image
     /// knowledge.
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn do_image(_this: &Self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         Image::from_blob_js(global, cf.this(), cf.argument(0))
     }
@@ -1134,7 +1133,6 @@ impl BlobExt for Blob {
         }
         Ok(())
     }
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_stream(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let this_value = callframe.this();
         if let Some(cached) = bun_jsc::generated::JSBlob::stream_get_cached(this_value) {
@@ -1170,7 +1168,6 @@ impl BlobExt for Blob {
 
         Ok(stream)
     }
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_text_clone(global_this)?)
     }
@@ -1188,7 +1185,6 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Transfer))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_json_share(global_this)?)
     }
@@ -1214,7 +1210,6 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Clone))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_array_buffer_clone(global_this)?)
     }
@@ -1224,7 +1219,6 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Clone))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_bytes_clone(global_this)?)
     }
@@ -1237,7 +1231,6 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Transfer))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         Ok(JSPromise::wrap(global_this, |g| {
@@ -1267,7 +1260,6 @@ impl BlobExt for Blob {
         };
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -1350,7 +1342,6 @@ impl BlobExt for Blob {
         )
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -1367,7 +1358,6 @@ impl BlobExt for Blob {
     }
 
     // This mostly means 'can it be read?'
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_exists(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         if self.is_s3() {
             return crate::webcore::s3_file::S3BlobStatTask::exists(global_this, self);
@@ -1700,7 +1690,6 @@ impl BlobExt for Blob {
         ))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
         // Zig indexes the fixed-size buffer (`arguments.ptr[0]`), not the
@@ -2008,7 +1997,6 @@ impl BlobExt for Blob {
     }
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let mut arguments_ = callframe.arguments_old::<3>();
         // PORT NOTE: index the full fixed-3 array (Zig writes args[2] regardless of len).
@@ -2116,7 +2104,6 @@ impl BlobExt for Blob {
         self.store().map(|s| s.mime_type.clone())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
@@ -2140,7 +2127,6 @@ impl BlobExt for Blob {
     }
 
     // TODO: Move this to a separate `File` object or BunFile
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match self.get_name_string() {
             Some(name) => name.to_js(global_this)?,
@@ -2148,7 +2134,6 @@ impl BlobExt for Blob {
         })
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)]
     fn set_name(
         &self,
         js_this: JSValue,
@@ -2190,7 +2175,6 @@ impl BlobExt for Blob {
     }
 
     // TODO: Move this to a separate `File` object or BunFile
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
@@ -2239,7 +2223,6 @@ impl BlobExt for Blob {
 
         self.size.get()
     }
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {
         // TODO: make this async for files
         let tag = match self.store.get() {
@@ -2302,7 +2285,6 @@ impl BlobExt for Blob {
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     fn get_size(&self, _: &JSGlobalObject) -> JSValue {
         if self.size.get() == MAX_SIZE {
             if self.is_s3() {
@@ -2413,7 +2395,6 @@ impl BlobExt for Blob {
             store::DataTag::S3 => (self.offset.get(), 0),
         }
     }
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
         let mut blob: Blob;
         let arguments = callframe.arguments_old::<2>();
@@ -5133,7 +5114,6 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
 }
 
 /// `Bun.write(destination, input, options?)`
-// TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     // SAFETY: `bun_vm()` returns a live VM pointer for the calling JS context.
@@ -5518,7 +5498,6 @@ pub fn jsdom_file_construct_(
 // `calculate_estimated_byte_size` / `estimated_size`: canonical impls live
 // later in this file (near `dupe`/`to_js`). Duplicates removed here.
 
-// TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn construct_bun_file(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
@@ -5600,7 +5579,6 @@ pub fn construct_bun_file(
 // getStream / toStreamWithOffset / lifetimeWrap / accessor host fns
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn to_stream_with_offset(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -5804,7 +5782,6 @@ impl Drop for FileStreamWrapper {
     }
 }
 
-// TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn on_file_stream_resolve_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -5822,7 +5799,6 @@ pub fn on_file_stream_resolve_request_stream(
     Ok(JSValue::UNDEFINED)
 }
 
-// TODO(b2-blocked): #[bun_jsc::host_fn]
 pub fn on_file_stream_reject_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -5884,7 +5860,7 @@ bun_jsc::jsc_host_abi! {
 
 // TODO(port): @export of jsc::to_js_host_fn wrappers under
 // "Bun__FileStreamWrapper__onResolveRequestStream" / "...Reject..." names.
-// The // TODO(b2-blocked): #[bun_jsc::host_fn] attribute should support a `link_name = "..."` arg.
+// The `#[bun_jsc::host_fn]` attribute should support a `link_name = "..."` arg.
 
 // ──────────────────────────────────────────────────────────────────────────
 // getSliceFrom / getSlice / type/name/lastModified/size getters
@@ -6284,7 +6260,7 @@ impl Any {
 }
 
 // ─── Any: JSC-integration (to_js/from_js paths) ──────────────────────────────
-// TODO(b2-blocked): bun_jsc::* — Any::{to_action_value,to_promise,wrap,
+// TODO(port): bun_jsc::* — Any::{to_action_value,to_promise,wrap,
 // to_json,to_string,to_array_buffer*,to_blob,to_uint8_array*} call into
 // JSValue/ZigString JSC methods and Blob JSC impls gated above.
 
@@ -6624,7 +6600,7 @@ impl Internal {
         self.bytes.capacity()
     }
 
-    // TODO(b2-blocked): bun_jsc::* — ZigString::to_external_u16/to_js_object.
+    // TODO(port): bun_jsc::* — ZigString::to_external_u16/to_js_object.
 
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
@@ -6661,7 +6637,7 @@ impl Internal {
         }
     }
 
-    // TODO(b2-blocked): bun_jsc::* — ZigString::to_json_object.
+    // TODO(port): bun_jsc::* — ZigString::to_json_object.
 
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
         let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
@@ -6760,7 +6736,7 @@ impl Inline {
         Self::internal_init(data, true)
     }
 
-    // TODO(b2-blocked): bun_jsc::* — ZigString::to_js.
+    // TODO(port): bun_jsc::* — ZigString::to_js.
 
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
         if self.len == 0 {

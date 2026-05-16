@@ -11,7 +11,6 @@
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(adt_const_params, allocator_api)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 
 // PORTING.md crate map says `bun.String`/`bun.strings` → `bun_str`, but the
 // workspace crate is named `bun_string`. Alias once here so draft modules that
@@ -25,7 +24,7 @@ pub mod jsc {
     pub use bun_jsc::*;
 }
 
-// ─── un-gated in B-2 (heavy submodules re-gated inside each file) ────────
+// ─── runtime submodules ──────────────────────────────────────────────────
 pub mod allocators; // moved from bun_alloc (tier-0 → bun_core/sys/runtime back-edge)
 pub mod crypto;
 pub mod ffi;

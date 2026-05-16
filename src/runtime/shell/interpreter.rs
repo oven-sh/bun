@@ -240,7 +240,7 @@ pub type Pipe = [Fd; 2];
 /// Stand-in for the shell's `SmolList<T, N>` (inline small-vec). The real
 /// implementation lives in `shell_body.rs` (gated); state nodes only need
 /// `push`/`len`/indexing, which `Vec` provides.
-// TODO(b2-blocked): replace with shell_body::SmolList once parser un-gates.
+// TODO(port): replace with shell_body::SmolList once parser un-gates.
 pub type SmolList<T, const N: usize> = Vec<T>;
 
 #[repr(u8)]

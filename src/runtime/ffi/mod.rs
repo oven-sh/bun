@@ -37,7 +37,7 @@ pub mod ffi {
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;
 
-// TODO(b2-blocked): bun_tcc_sys::State (compile/relocate/add_symbol/define_symbol)
+// TODO(port): bun_tcc_sys::State (compile/relocate/add_symbol/define_symbol)
 pub mod ffi_object {}
 
 // ─── DOMCall slowpath C-ABI exports ──────────────────────────────────────────

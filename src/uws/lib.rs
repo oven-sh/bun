@@ -183,8 +183,8 @@ pub fn get_default_ciphers() -> &'static ZStr {
 // Ground truth: src/runtime/socket/ssl_wrapper.zig
 // Requested by: http_jsc
 // ═══════════════════════════════════════════════════════════════════════════
-// B-2: module un-gated. `bun_boringssl_sys` is currently empty (bindgen not yet
-// run), so every fn body that calls a BoringSSL symbol is re-gated below; the
+// `bun_boringssl_sys` is currently empty (bindgen not yet run), so every fn
+// body that calls a BoringSSL symbol is re-gated below; the
 // type/struct surface compiles against opaque `SSL`/`SSL_CTX` from
 // `bun_boringssl::c`. `init_from_options` additionally needs
 // `bun_uws_sys::socket_context::BunSocketContextOptions` (gated in lower tier).

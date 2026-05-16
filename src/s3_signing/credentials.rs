@@ -32,7 +32,7 @@ fn pico_header_empty() -> PicoHeader {
     PicoHeader::ZERO
 }
 
-// TODO(b2-blocked): bun_picohttp::Header::new — fields are private; constructing via
+// TODO(port): bun_picohttp::Header::new — fields are private; constructing via
 // repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
 #[inline]
 fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {

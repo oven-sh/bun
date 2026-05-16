@@ -129,7 +129,7 @@ impl Default for BlockHeader {
 /// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
 // TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
 // three; could be `enum { Js(JsError), StackOverflow }` instead.
-// TODO(b1): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
+// TODO(port): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
 pub type Error = ParserError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +144,7 @@ bun_core::oom_from_alloc!(ParserError);
 
 impl From<ParserError> for bun_core::Error {
     fn from(_e: ParserError) -> Self {
-        // TODO(b1): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
+        // TODO(port): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
         bun_core::err!(ParserError)
     }
 }

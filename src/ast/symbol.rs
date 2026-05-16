@@ -641,7 +641,7 @@ impl Map {
     }
 
     pub fn follow_all(&mut self) {
-        // TODO(b2-blocked): bun_perf::trace("Symbols.followAll") — RAII guard
+        // TODO(port): bun_perf::trace("Symbols.followAll") — RAII guard
         // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
         // mutate `link` in place; `follow()` only takes `&self` and only touches
         // `link`, so the nested shared borrows coexist.

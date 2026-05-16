@@ -39,7 +39,7 @@ impl Default for FallbackEntryPoint {
 }
 
 impl FallbackEntryPoint {
-    // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
+    // TODO(port): crate::options::Framework / ClientCssInJs — `options`
     // module is still gated; body also touched `bun_resolver::fs` (see
     // PORTING.md §Forbidden) before un-gating.
     pub fn generate<TranspilerType>(
@@ -421,7 +421,7 @@ impl MacroEntryPoint {
         (bun_wyhash::hash(specifier) as u32) as i32
     }
 
-    // TODO(b2-blocked): bun_ast::Macro + bun_resolver::fs::PathName —
+    // TODO(port): bun_ast::Macro + bun_resolver::fs::PathName —
     // see `generate_id`.
     pub fn generate(
         entry: &mut MacroEntryPoint,

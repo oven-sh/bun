@@ -63,7 +63,7 @@ impl Default for Array {
         }
     }
 }
-// TODO(b2-ast-round-C): Array methods call `Vec::init_capacity(bump, n)`
+// TODO(port): Array methods call `Vec::init_capacity(bump, n)`
 // (signature mismatch: Vec takes only `n`; AST-crate variant with bump
 // arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
 // Live subset of `Array` accessors needed by downstream crates (round-E unblock).
@@ -1608,10 +1608,9 @@ impl EString {
     }
 }
 
-// ── live EString surface (B-2 un-gate) ─────────────────────────────────────
-// Ordering / equality / const-literal / rope-mutation helpers extracted from
-// the round-C draft below. `string_z`/`to_zig_string` remain gated on
-// `bun_core::ZStr` arena constructors.
+// ── EString surface ────────────────────────────────────────────────────────
+// Ordering / equality / const-literal / rope-mutation helpers.
+// `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
     pub const CLASS: EString = EString::from_static(b"class");
     pub const EMPTY: EString = EString::from_static(b"");

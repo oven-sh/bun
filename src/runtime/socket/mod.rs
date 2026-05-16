@@ -70,8 +70,8 @@ pub mod ssl_config;
 pub use ssl_config::{SSLConfig, SSLConfigFromJs};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
-// These were previously stub-defined inline here for the B-2 struct/state
-// un-gate; now that the real submodules compile, re-export instead so
+// These were previously stub-defined inline here; now that the real
+// submodules compile, re-export instead so
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
 pub use handlers::{Handlers, SocketConfig};

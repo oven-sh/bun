@@ -18,7 +18,7 @@
 // prefer `phf::phf_map!` directly when they only need `.get()`/`.has()`. This struct exists
 // for the call sites that need `get_with_eql` / `get_any_case` / `index_of` / `get_key`.
 
-// TODO(b0): `strings` arrives in bun_core via move-in (was bun_core::strings — same-tier cycle).
+// TODO(port): `strings` arrives in bun_core via move-in (was bun_core::strings — same-tier cycle).
 use bun_core::strings;
 
 #[derive(Copy, Clone)]
@@ -69,7 +69,7 @@ impl<T> HasLength for &[T] {
         (*self).len()
     }
 }
-// TODO(b0): `String` arrives in bun_alloc via move-in (was bun_core::String — same-tier cycle).
+// TODO(port): `String` arrives in bun_alloc via move-in (was bun_core::String — same-tier cycle).
 impl HasLength for &bun_alloc::String {
     #[inline]
     fn length(&self) -> usize {
@@ -303,7 +303,7 @@ where
 {
     // PORT NOTE: Zig `fromString` calls `bun.String.eqlComptime`, which compares against
     // `[]const u8` — effectively u8-only. Lives in the K=u8 impl, not the generic one.
-    // TODO(b0): `String` arrives in bun_alloc via move-in (was bun_core::String).
+    // TODO(port): `String` arrives in bun_alloc via move-in (was bun_core::String).
     pub fn from_string(&self, str: &bun_alloc::String) -> Option<V> {
         self.get_with_eql(str, bun_alloc::String::eql_comptime)
     }

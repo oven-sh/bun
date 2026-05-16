@@ -175,7 +175,7 @@ impl MutableString {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }
 
-        // TODO(b0): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
+        // TODO(port): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
         use crate::string::lexer as js_lexer;
         use crate::string::lexer_tables as js_lexer_tables;
 

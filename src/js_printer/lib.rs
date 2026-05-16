@@ -1,14 +1,12 @@
 //! JavaScript printer — translates the AST back to source text.
 //! Port of src/js_printer/js_printer.zig.
 //!
-//! B-2 UN-GATED. The `Printer<'a, W, ...>` struct and its full method surface
-//! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …) now
-//! compile against the real `bun_ast::{e,s,b,g,op,expr,stmt}`
-//! types. The top-level `print` / `print_with_writer{,_and_platform}` /
-//! `print_common_js` / `get_source_map_builder` driver fns are live at crate
-//! root (the `__gated_entry_points` wrapper has been flattened). Remaining
-//! `` islands are leaf optimizations blocked on lower-tier surface
-//! (see TODO(b2-blocked) markers below): the template-inlining fold, the
+//! The `Printer<'a, W, ...>` struct and its full method surface
+//! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …)
+//! compile against `bun_ast::{e,s,b,g,op,expr,stmt}`. The top-level
+//! `print` / `print_with_writer{,_and_platform}` / `print_common_js` /
+//! `get_source_map_builder` driver fns live at crate root. Remaining gaps
+//! (see TODO(port) markers below): the template-inlining fold, the
 //! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map
 //! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
 
@@ -1162,9 +1160,9 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // SourceMapHandler / Options — gated on bun_sourcemap::Chunk::Builder and the
 // real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_sourcemap::Chunk::Builder
-// TODO(b2-blocked): bun_ast::runtime::Runtime::Imports
-// TODO(b2-blocked): bun_ast::Ast::CommonJSNamedExports
+// TODO(port): bun_sourcemap::Chunk::Builder
+// TODO(port): bun_ast::runtime::Runtime::Imports
+// TODO(port): bun_ast::Ast::CommonJSNamedExports
 pub struct SourceMapHandler<'a> {
     pub ctx: NonNull<()>,
     pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> Result<(), bun_core::Error>,
@@ -1235,7 +1233,7 @@ pub struct Options<'a> {
     // TODO(port): source_map_allocator was Option<Allocator>; arena-backed in some callers
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,
-    // TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior — local stand-in.
+    // TODO(port): bun_options_types::schema::api::CssInJsBehavior — local stand-in.
     pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
@@ -3067,7 +3065,7 @@ pub mod __gated_printer {
         }
 
         pub fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
-            // TODO(b2-blocked): bun_core::wtf8_validate_slice — debug-only assert dropped.
+            // TODO(port): bun_core::wtf8_validate_slice — debug-only assert dropped.
 
             let quote = if !IS_JSON {
                 best_quote_char_for_string(str, allow_backtick)
@@ -6740,7 +6738,7 @@ pub mod __gated_printer {
             };
             self.print_decls(keyword, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
-            // TODO(b2-blocked): bun_ast::runtime::Imports::__export — the
+            // TODO(port): bun_ast::runtime::Imports::__export — the
             // full `runtime.rs` is ``-gated upstream; the active
             // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
 
@@ -7805,7 +7803,7 @@ impl GenerateSourceMap {
 // `print_ast` is live (borrowck reshape: `opts` re-reads routed through
 // `printer.options`, `*mut Symbol` for `must_not_be_renamed`, raw-ptr
 // `Scope.parent` backref). `print_json` remains individually re-gated on
-// lower-tier surface (see TODO(b2-blocked) markers inline).
+// lower-tier surface (see TODO(port) markers inline).
 // ───────────────────────────────────────────────────────────────────────────
 use self::__gated_printer::{Printer, slice_of};
 use js_ast::Ast;

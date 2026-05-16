@@ -587,7 +587,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     // PERF(port): was stack-fallback alloc — profile if hot.
     pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
-    // TODO(b2-blocked): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
+    // TODO(port): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
     pub binary_expression_simplify_stack: ListManaged<'a, ()>,
 
     /// We build up enough information about the TypeScript namespace hierarchy to
@@ -892,7 +892,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // stay individually ` // blocked_on:` below.
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub const ALLOW_MACROS: bool = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */;
+    pub const ALLOW_MACROS: bool = true /* TODO(port): feature_flag::IS_MACRO_ENABLED */;
 
     /// use this instead of checking p.source.index
     /// because when not bundling, p.source.index is `0`
@@ -3969,7 +3969,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, bun_core::Error> {
-        let is_macro = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */ && (path.is_macro || crate::Macro::is_macro_path(path.text));
+        let is_macro = true /* TODO(port): feature_flag::IS_MACRO_ENABLED */ && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
@@ -9106,7 +9106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `bun_paths::fs::Path` view over the same `text`. `pretty`
                 // is irrelevant once `node_modules/` is found in `text`; when
                 // it isn't, the result won't match any `unwrap_commonjs_packages`
-                // entry anyway. // TODO(b2-blocked): unify bun_paths::fs::Path<'static> → bun_paths::fs::Path
+                // entry anyway. // TODO(port): unify bun_paths::fs::Path<'static> → bun_paths::fs::Path
                 let path_view = fs::Path {
                     text: source.path.text,
                     pretty: source.path.text,

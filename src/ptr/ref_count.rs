@@ -280,7 +280,7 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() + 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -314,7 +314,7 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() - 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();

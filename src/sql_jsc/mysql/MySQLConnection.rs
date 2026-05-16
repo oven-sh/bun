@@ -938,7 +938,7 @@ impl MySQLConnection {
             // the `&mut MySQLStatement` borrow immediately so `request` /
             // `&mut self` are unconstrained inside the match arms (no raw-ptr
             // downgrade needed for a single Copy field read).
-            // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
+            // TODO(port): MySQLStatement intrusive ref_/deref_ (bun_ptr).
             // Skipped here; the queue's ref on `request` keeps the statement
             // alive for the duration of this call.
             match statement.status {
@@ -959,7 +959,7 @@ impl MySQLConnection {
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     self.queue.mark_current_request_as_finished(request);
-                    // TODO(b2-blocked): ErrorPacket is not Clone in bun_sql; the
+                    // TODO(port): ErrorPacket is not Clone in bun_sql; the
                     // Zig passes statement.error_response by value (struct copy).
                     // Send a default packet as a placeholder until ErrorPacket
                     // grows Clone or a borrowed-variant overload lands.

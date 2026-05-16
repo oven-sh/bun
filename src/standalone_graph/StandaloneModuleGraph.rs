@@ -21,7 +21,7 @@ use bun_paths::{self as path, OSPathBuffer, PathBuffer, SEP_STR, WPathBuffer, st
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
-// TODO(b2-blocked): bun_webcore::Blob — `cached_blob` is only ever set from
+// TODO(port): bun_webcore::Blob — `cached_blob` is only ever set from
 // `bun_runtime` (higher tier); model as opaque erased pointer here.
 bun_opaque::opaque_ffi! {
     /// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
@@ -697,7 +697,7 @@ pub fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
 ) -> Result<Vec<u8>, BunError> {
-    // TODO(b2-blocked): bun_perf::PerfEvent::StandaloneModuleGraph_serialize — generated
+    // TODO(port): bun_perf::PerfEvent::StandaloneModuleGraph_serialize — generated
     // enum is still a `_Stub` placeholder; restore the trace call once the generator emits
     // real variants.
     // let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraph_serialize);

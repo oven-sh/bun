@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ulonglong, c_void};
 
-// TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
+// TODO(port): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_core;
 use bun_core::String as BunString;
@@ -33,7 +33,7 @@ pub fn freemem() -> u64 {
 // `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
 // `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
 // CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
-// TODO(b2-blocked): un-gate once bun_jsc + bun_sys::posix syscall surface land.
+// TODO(port): un-gate once bun_jsc + bun_sys::posix syscall surface land.
 
 mod _impl {
     use super::*;

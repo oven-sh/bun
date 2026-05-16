@@ -349,7 +349,7 @@ impl JSMySQLConnection {
         });
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn] — free-fn shim emitted inside an
+    // TODO(port): #[bun_jsc::host_fn] — free-fn shim emitted inside an
     // `impl` block tries to call `constructor()` unqualified; re-enable once the
     // proc-macro emits `Self::constructor` for receiverless impl items.
     pub fn constructor(
@@ -470,7 +470,6 @@ impl JSMySQLConnection {
         self.poll_ref.with_mut(|p| p.unref(ctx));
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLConnection__createInstance")]
     // — same proc-macro limitation as `constructor` above.
     pub fn create_instance(
         global_object: &JSGlobalObject,
@@ -689,18 +688,18 @@ impl JSMySQLConnection {
 
     bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_close(
         this: &Self,
         _global_object: &JSGlobalObject,

@@ -12,7 +12,7 @@
 
 use core::hash::Hash;
 
-// TODO(b0): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
+// TODO(port): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
 // bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
 // MapLike/ArrayLike for its own types.
 
@@ -301,7 +301,7 @@ impl<T> ArrayLike for Vec<T> {
     }
 }
 
-// TODO(b0): ArrayLike impls for Vec<T> and MultiArrayList<T> arrive via
+// TODO(port): ArrayLike impls for Vec<T> and MultiArrayList<T> arrive via
 // move-in pass in bun_collections.
 
 // ════════════════════════════════════════════════════════════════════════════

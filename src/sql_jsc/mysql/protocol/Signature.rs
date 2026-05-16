@@ -36,7 +36,7 @@ impl Signature {
         // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
         // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
         // into a temp Vec until that lands.
-        // TODO(b2-blocked): bun_wyhash::Wyhash (streaming std-compatible API)
+        // TODO(port): bun_wyhash::Wyhash (streaming std-compatible API)
         const BYTES_PER_PARAM: usize = 1 /* FieldType */ + 2 /* ColumnFlags */;
         let mut buf: Vec<u8> =
             Vec::with_capacity(self.name.len() + self.fields.len() * BYTES_PER_PARAM);

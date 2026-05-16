@@ -337,7 +337,7 @@ impl PosixBufferedReader {
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
                 self.handle.close(None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {
-                    // TODO(b2-blocked): bun_core::debug_warn — macro form is
+                    // TODO(port): bun_core::debug_warn — macro form is
                     // broken (concat! into $fmt:literal); use the fn for now.
                     bun_core::output::debug_warn(&format_args!(
                         "error reading from memfd\n{}",

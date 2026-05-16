@@ -495,7 +495,7 @@ pub mod posix_spawn {
     pub type Actions = bun_spawn::Actions;
     #[cfg(unix)]
     pub type Attr = bun_spawn::Attr;
-    // TODO(b2-blocked): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
+    // TODO(port): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
 

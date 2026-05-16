@@ -2415,7 +2415,7 @@ impl PosixToWinNormalizer {
     ) -> Result<&'a mut ZStr, bun_core::Error> {
         Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
     }
-    // TODO(b2-windows): on posix `_raw_bytes` is `()`; the Zig version still
+    // TODO(windows): on posix `_raw_bytes` is `()`; the Zig version still
     // null-terminates into a buffer. Callers on posix should use
     // `resolve_cwd_with_external_buf_z` with an explicit PathBuffer.
 

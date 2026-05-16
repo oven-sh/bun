@@ -26,7 +26,7 @@ use std::borrow::Cow;
 #[allow(unused_imports)]
 use bun_core::Output;
 
-// TODO(b1): swap to `bun_core::StringBuilder` once `clone_with_builder` is
+// TODO(port): swap to `bun_core::StringBuilder` once `clone_with_builder` is
 // reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
 // breaks the `'static` slice pass-through this stub fakes).
 #[derive(Default)]
@@ -427,7 +427,7 @@ impl fmt::Debug for Ref {
     }
 }
 
-// TODO(b0-move-in): bun_paths must define `PathContentsPair` (TYPE_ONLY from bun_resolver::fs).
+// TODO(port): bun_paths must define `PathContentsPair` (TYPE_ONLY from bun_resolver::fs).
 // Local mirror so init_file / init_recycled_file resolve until paths' move-in lands.
 // `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
 // `Source::init_recycled_file` (transpiler.zig:852).
@@ -438,7 +438,7 @@ pub struct PathContentsPair {
     pub path: bun_paths::fs::Path<'static>,
     pub contents: &'static [u8],
 }
-// TODO(b2-blocked): bun_schema::api — `to_api` methods gated behind .
+// TODO(port): bun_schema::api — `to_api` methods gated behind .
 #[allow(unused_imports)]
 use bun_core::strings;
 
@@ -1223,7 +1223,7 @@ impl BabyString {
     }
 
     pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
-        // TODO(b1): bun_core::index_of missing — inline bstr fallback.
+        // TODO(port): bun_core::index_of missing — inline bstr fallback.
         let off = bstr::ByteSlice::find(parent, text).expect("unreachable");
         BabyString::new(off as u16, text.len() as u16) // @truncate
     }
@@ -1460,7 +1460,7 @@ impl Default for Range {
 
 /// Was `bun_js_parser::lexer::rangeOfIdentifier`.
 /// Moved into logger to break logger→js_parser. Mirrors lexer.zig:3113-3148.
-/// TODO(b0-move-in): full Unicode `isIdentifierStart/Continue` tables — currently
+/// TODO(port): full Unicode `isIdentifierStart/Continue` tables — currently
 /// ASCII + `#`/`\` only; non-ASCII identifiers get a Range with len up to the
 /// first non-ASCII byte (only affects error-highlight width, not correctness).
 pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {

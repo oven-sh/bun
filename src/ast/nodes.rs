@@ -1288,7 +1288,7 @@ pub fn printmem(args: fmt::Arguments<'_>) {
     Output::flush();
 }
 
-// TODO(b1): `thiserror` not in this crate's deps; hand-roll Display/Error.
+// TODO(port): `thiserror` not in this crate's deps; hand-roll Display/Error.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ToJSError {
     #[strum(serialize = "Cannot convert argument type to JS")]

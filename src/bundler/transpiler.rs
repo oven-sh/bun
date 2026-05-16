@@ -144,7 +144,7 @@ pub struct Transpiler<'a> {
     pub router: Option<Router<'a>>,
     pub source_map: options::SourceMapOption,
 
-    // B-2 un-gated: real `crate::linker::Linker` so
+    // `crate::linker::Linker` so
     // `ModuleLoader::transpile_source_code` (jsc_hooks.rs) can call
     // `transpiler.linker.link()` / read `import_counter`. Back-pointers wired
     // by `configure_linker` below; `set_log` keeps `linker.log` in sync.
@@ -630,7 +630,7 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// B-2 un-gated: `configure_linker*` / `run_env_loader` — unblocks
+// `configure_linker*` / `run_env_loader` — used by
 // `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
 // `bun_install::configure_env_for_run`, `JSBundleCompletionTask`,
 // `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
@@ -791,7 +791,7 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// B-2 un-gated: `ParseResult` / `AlreadyBundled` / `ParseOptions` +
+// `ParseResult` / `AlreadyBundled` / `ParseOptions` +
 // `Transpiler::parse*` — real types so `ModuleLoader::transpile_source_code`
 // (jsc_hooks.rs) and `AsyncModule` / `JSTranspiler` can name them. The body
 // of `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
@@ -865,7 +865,7 @@ pub struct ParseResult {
     // SoA `len()`/column accessors aren't reachable. Use AoS `Vec` for now;
     // `is_pending_import` only scans `import_record_id`, so the layout
     // difference is observable only as a SoA→AoS perf delta.
-    // TODO(b3): switch back to `MultiArrayList<PendingResolution>` once the
+    // TODO(port): switch back to `MultiArrayList<PendingResolution>` once the
     // derive lands upstream in `bun_resolver`.
     pub pending_imports: Vec<resolver::PendingResolution>,
 
@@ -1054,7 +1054,7 @@ fn init_file_system(
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
 ///
-/// TODO(b3): drop this once `bun_options_types::BundleOptions` exists and both
+/// TODO(port): drop this once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type
 /// directly and Zig's `bundle_options` value can flow through unchanged
 /// (transpiler.zig:209 passes the same `options` to both struct fields).
@@ -1168,9 +1168,9 @@ pub(crate) fn resolver_bundle_options_subset(
 impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:Transpiler.init`.
     ///
-    /// Un-gated B-2 so [`init_runtime_state`](../runtime/jsc_hooks.rs)
-    /// (spec `VirtualMachine.zig:1241`) can write `vm.transpiler`. Both
-    /// lower-tier constructors are now live:
+    /// [`init_runtime_state`](../runtime/jsc_hooks.rs)
+    /// (spec `VirtualMachine.zig:1241`) writes `vm.transpiler`. Both
+    /// lower-tier constructors:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver` (its `mod options` is now
     ///     `pub` so this crate can build the FORWARD_DECL subset)
@@ -2278,7 +2278,7 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// B-2 un-gated: `Transpiler::print` / `print_with_source_map` — final step of
+// `Transpiler::print` / `print_with_source_map` — final step of
 // `ModuleLoader::transpile_source_code` (jsc_hooks.rs spec :525-539). The
 // `bun_js_printer` entry points (`print_ast` / `print_common_js` / `Options` /
 // `SourceMapHandler` / `Format` / `WriterTrait`) are now real types; un-gate

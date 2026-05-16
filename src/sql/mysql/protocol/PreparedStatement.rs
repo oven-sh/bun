@@ -79,7 +79,7 @@ pub struct Execute<'a> {
 /// which the jsc-side caller fills in. TODO(refactor): replace this with a trait
 /// or move `Execute` itself up-tier (matches the Query::Execute precedent of
 /// taking `&mut [Data]`).
-// TODO(b2-blocked): bun_sql_jsc::mysql::mysql_value::Value
+// TODO(port): bun_sql_jsc::mysql::mysql_value::Value
 pub struct ExecuteParams<'a> {
     pub len: usize,
     pub ctx: *mut core::ffi::c_void,

@@ -72,7 +72,7 @@ pub use draft::*;
 // Local shim for `bun_debug` (no such crate exists yet). These are
 // std.debug.* placeholders the Zig side leaned on; the Rust port will replace
 // them with a real debug-info backend in a later pass.
-// TODO(b2-blocked): bun_debug::SelfInfo / SourceLocation / TtyConfig / capture_stack_trace
+// TODO(port): bun_debug::SelfInfo / SourceLocation / TtyConfig / capture_stack_trace
 // ──────────────────────────────────────────────────────────────────────────
 pub mod debug {
     use super::draft::StackTrace;
@@ -387,7 +387,7 @@ pub mod debug {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Byte-writer trait — D101: deduped to canonical `bun_io::Write`.
-// The local stub (TODO(b2-blocked)) predated `bun_io` compiling; it carried a
+// The local stub (TODO(port)) predated `bun_io` compiling; it carried a
 // `core::fmt::Write` supertrait so `write!(…)` returned `fmt::Result`. The
 // canonical trait instead provides its own `write_fmt` returning
 // `Result<(), bun_core::Error>`, so `write!` on `impl Write` now yields the
@@ -522,7 +522,7 @@ mod draft {
         Ok(())
     }
 
-    // TODO(b0): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
+    // TODO(port): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
     // Only the two bits the crash handler needs — main-thread check and the
     // one-byte command tag for the trace URL — land here as plain globals that
     // `bun_runtime` populates at startup.
@@ -967,7 +967,7 @@ mod draft {
                                 abort();
                             }
                         } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
-                            // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function — using
+                            // TODO(port): bun_analytics::Features::unsupported_uv_function — using
                             // the threadlocal as a stand-in for the global counter check.
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                 .with(|c| c.get())
@@ -1056,7 +1056,7 @@ mod draft {
                         } else {
                             #[cfg(windows)]
                             {
-                                // TODO(b2-blocked): bun_sys::windows::GetThreadDescription / PWSTR / HRESULT_CODE
+                                // TODO(port): bun_sys::windows::GetThreadDescription / PWSTR / HRESULT_CODE
                                 {
                                     let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
                                     // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
@@ -1220,7 +1220,7 @@ mod draft {
                                 format_args!("{}", bstr::BStr::new(native_plugin_name)),
                             )).is_err() { abort(); }
                             } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
-                                // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function
+                                // TODO(port): bun_analytics::Features::unsupported_uv_function
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                     .with(|c| c.get())
                                     .map(|p| {
@@ -2093,7 +2093,7 @@ mod draft {
         {
             let cpu_features = CPUFeatures::get();
 
-            // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
+            // TODO(port): bun_analytics::GenerateHeader::GeneratePlatform
             {
                 let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -2209,7 +2209,7 @@ mod draft {
             }
         }
 
-        // TODO(b2-blocked): bun_analytics::Features::formatter
+        // TODO(port): bun_analytics::Features::formatter
         {
             write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?;
         }
@@ -2786,7 +2786,7 @@ mod draft {
         }
 
         // Honor DO_NOT_TRACK
-        // TODO(b2-blocked): bun_analytics::is_enabled
+        // TODO(port): bun_analytics::is_enabled
         if env_var::DO_NOT_TRACK::get() == Some(true) {
             return false;
         }
@@ -2814,8 +2814,8 @@ mod draft {
         }
         #[cfg(windows)]
         {
-            // TODO(b2-blocked): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
-            // TODO(b2-blocked): bun_core::w! / strings::convert_utf8_to_utf16_in_buffer
+            // TODO(port): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
+            // TODO(port): bun_core::w! / strings::convert_utf8_to_utf16_in_buffer
             use bun_sys::windows;
             let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
             let mut startup_info = windows::STARTUPINFOW {
@@ -3807,7 +3807,7 @@ mod draft {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
-        // TODO(b2-blocked): bun_analytics::Features::increment_unsupported_uv_function
+        // TODO(port): bun_analytics::Features::increment_unsupported_uv_function
         UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();

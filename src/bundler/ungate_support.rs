@@ -39,7 +39,7 @@ pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// drafts that pass string literals would all be dead names. Shim a
 /// string-taking `trace` here that routes through `_Stub` so call sites stay
 /// 1:1 with the `.zig` literals.
-/// TODO(b1): drop once `scripts/generate-perf-trace-events.sh` emits Rust.
+/// TODO(port): drop once `scripts/generate-perf-trace-events.sh` emits Rust.
 pub mod perf {
     pub use bun_perf::{Ctx, PerfEvent};
 

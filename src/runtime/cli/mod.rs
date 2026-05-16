@@ -1,10 +1,8 @@
 //! Port of src/runtime/cli/cli.zig — CLI entry point + command dispatch.
 //!
-//! B-2 round 2: un-gate the help path. `Command::which()` + `HelpCommand`
-//! + `print_version_and_exit` are real and compile against lower-tier crates.
-//! `Command::start()` (full dispatch) and per-command exec bodies stay gated
-//! behind `` — they need `bun_jsc`, `bun_bun_js`, transpiler,
-//! and the not-yet-un-gated sibling `*_command.rs` modules.
+//! `Command::which()` + `HelpCommand` + `print_version_and_exit` compile
+//! against lower-tier crates. `Command::start()` (full dispatch) and
+//! per-command exec bodies live in the sibling `*_command.rs` modules.
 
 use core::cell::Cell;
 
@@ -222,14 +220,14 @@ pub mod colon_list_type;
 pub mod shell_completions;
 #[path = "which_npm_client.rs"]
 pub mod which_npm_client;
-// TODO(b2-blocked): list-of-yarn-commands.rs has duplicate phf_set! keys.
+// TODO(port): list-of-yarn-commands.rs has duplicate phf_set! keys.
 #[path = "discord_command.rs"]
 pub mod discord_command;
 #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
 
 // ─── open (minimal open_url; full Editor/EditorContext stays gated) ──────────
-// TODO(b2-blocked): full `open.rs` (Editor detection/spawn) needs
+// TODO(port): full `open.rs` (Editor detection/spawn) needs
 // `crate::process::spawn_sync`, `bun_threading::spawn_detached`,
 // `bun_resolver::fs::FileSystem` — none of which are wired on this path yet.
 // `bun discord` only needs `open_url`, so provide a thin print-fallback impl
@@ -582,7 +580,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
-        // TODO(b2-blocked): MainPanicHandler wiring.
+        // TODO(port): MainPanicHandler wiring.
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -1183,7 +1181,7 @@ pub mod command {
         #[cfg(windows)]
         {
             if ctx.debug.hot_reload == HotReload::Watch {
-                // TODO(b2-blocked): bun_sys::windows::is_watcher_child /
+                // TODO(port): bun_sys::windows::is_watcher_child /
                 // become_watcher_manager — Windows watcher hand-off path.
 
                 {
@@ -1468,12 +1466,12 @@ pub mod command {
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
         // PORT NOTE: Zig's AutoCommand arm swallows
         // `error.MissingEntryPoint` from `Command.init` and prints
-        // help. `bun_core::Error` has no variant table yet (B-1 stub
+        // help. `bun_core::Error` has no variant table yet (stub
         // — `err!()` collapses to `Error::TODO`), so a name-match
         // would alias every error. Propagate for now; the empty-
         // positionals fallthrough below covers the common "no args"
         // help path anyway.
-        // TODO(b2): restore `MissingEntryPoint → HelpCommand::exec()`
+        // TODO(port): restore `MissingEntryPoint → HelpCommand::exec()`
         // once `bun_core::Error` interns names.
         let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
@@ -1564,7 +1562,7 @@ pub mod command {
         let writer = Output::writer();
         let _ = writer.write_all(shell.completions());
         Output::flush();
-        // TODO(b2-blocked): tty path → write into shell completions dir
+        // TODO(port): tty path → write into shell completions dir
         // (InstallCompletionsCommand::exec).
         Global::exit(0);
     }

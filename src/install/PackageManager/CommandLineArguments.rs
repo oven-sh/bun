@@ -17,7 +17,7 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
 use bun_paths::{self as Path, PathBuffer};
-// TODO(b0): PackageManagerCommand arrives from move-in
+// TODO(port): PackageManagerCommand arrives from move-in
 // (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
 use crate::package_manager_real::PackageManagerCommand;
 

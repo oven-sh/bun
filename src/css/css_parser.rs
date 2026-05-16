@@ -15,11 +15,8 @@ use bun_core::strings;
 
 // ───────────────────────────── re-exports ─────────────────────────────
 //
-// B-2 un-gate: the Zig css_parser hub re-exports the entire crate surface.
-// Un-gated modules re-export for real; still-gated hubs (rules/, properties/,
-// selectors/, declaration, media_query, context) are shimmed below so the
-// Parser/Tokenizer core compiles standalone. Shims become `pub use` lines as
-// each module un-gates.
+// The Zig css_parser hub re-exports the entire crate surface. The Rust port
+// keeps that shape: cross-module re-exports + parser core live here.
 
 /// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
@@ -53,13 +50,11 @@ pub use crate::values::{
     ident::{CustomIdent, CustomIdentList, DashedIdent, Ident},
 };
 
-// ── cross-module re-exports (B-2 round 5: un-gated) ──────────────────────
-// rules/, selectors/, media_query, declaration, context, properties hubs now
-// compile for real (data-layout level). Re-export their surface so the
-// rule-parser layer below can name `CssRule`/`SelectorList`/`DeclarationBlock`
-// directly. Leaf rule modules (keyframes, page, container, ...) remain
-// `gated_rule!`-stubbed inside rules/mod.rs — `gated_shims` below carries the
-// handful of types `AtRulePrelude` references that those stubs don't yet
+// ── cross-module re-exports ──────────────────────────────────────────────
+// Re-export the hub surfaces (rules/, selectors/, media_query, declaration,
+// context, properties) so the rule-parser layer below can name
+// `CssRule`/`SelectorList`/`DeclarationBlock` directly. `gated_shims` below
+// carries the handful of types `AtRulePrelude` references that those hubs don't yet
 // expose.
 pub use crate::context::PropertyHandlerContext;
 pub use crate::declaration::{self, DeclarationBlock, DeclarationHandler, DeclarationList};
@@ -982,10 +977,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
 // ───────────────────────────── AtRulePrelude ─────────────────────────────
 //
-// B-2 round 5: un-gated. Variant payload types are now real (rules/ +
-// selectors/ + media_query/ hubs compile). The few leaf-module payload types
-// not yet exposed by `rules/mod.rs` (KeyframesName, PageSelector,
-// ContainerName, ContainerCondition) come from `gated_shims` above.
+// The few leaf-module payload types not yet exposed by `rules/mod.rs`
+// (KeyframesName, PageSelector, ContainerName, ContainerCondition) come from
+// `gated_shims` above.
 
 pub enum AtRulePrelude<T> {
     FontFace,
@@ -2519,12 +2513,9 @@ pub fn fill_property_bit_set(
 
 // ───────────────────────────── StyleSheet ─────────────────────────────
 //
-// B-2 round 5: struct un-gated. `CssRuleList`/`LayerName`/`ParserOptions` are
-// real. The behavior surface (`parse`/`minify`/`to_css`/`pluck_imports`) stays
-// gated below — it bottoms out on `rule_parsers` impl bodies (gated),
-// `CssRuleList::{minify,to_css}` (gated in rules/mod.rs),
-// `DeclarationHandler` per-property fields (gated), and `Printer::new`
-// signature reshape.
+// `CssRuleList`/`LayerName`/`ParserOptions` carry the type surface; the
+// behavior surface (`parse`/`minify`/`to_css`/`pluck_imports`) lives in
+// `stylesheet_impl` below.
 
 pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
@@ -2567,9 +2558,8 @@ impl<AtRule> StyleSheet<AtRule> {
 }
 
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
-// B-2 round 6: un-gated. Method *signatures* are real so cross-crate dependents
-// (`bun_css_jsc::testing_impl`) type-check; method *bodies* are ported with
-// `// PORT NOTE:` borrowck reshapes where Zig aliased pointers.
+// Method *bodies* are ported with `// PORT NOTE:` borrowck reshapes where Zig
+// aliased pointers.
 mod stylesheet_impl {
     use super::*;
 
@@ -3185,8 +3175,8 @@ impl StyleAttribute {
 
 // ───────────────────────────── RuleBodyParser ─────────────────────────────
 //
-// B-2 round 5: un-gated. `RuleBodyItemParser`/`DeclarationParser` traits are
-// hoisted above; this is pure trait-generic over `P`.
+// `RuleBodyItemParser`/`DeclarationParser` traits are hoisted above; this is
+// pure trait-generic over `P`.
 
 pub struct RuleBodyParser<'i, 't, P: RuleBodyItemParser> {
     pub input: &'i mut Parser<'t>,

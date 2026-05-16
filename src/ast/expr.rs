@@ -255,7 +255,7 @@ impl Expr {
         }
     }
 
-    // TODO(b2-ast-round-C): gated on `EString::string_z` (E.rs:1666 block) which
+    // TODO(port): gated on `EString::string_z` (E.rs:1666 block) which
     // needs `bun_core::ZStr` bump-arena constructors. Only caller
     // (`get_string_cloned_z`) is likewise gated.
 
@@ -283,7 +283,7 @@ impl Expr {
 }
 
 // Expr — property/object/string accessor methods.
-// TODO(b2-ast-round-C): these call into `E::Object::as_property` / `EString`
+// TODO(port): these call into `E::Object::as_property` / `EString`
 // methods that need `bun_core::utf16_eql_string`/`to_utf8_alloc` (track-A
 // blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
 // the parser round once those land.
@@ -2313,7 +2313,7 @@ impl Data {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
-// TODO(b2-ast-round-C): these reference `Vec::deep_clone`/`E::*::Clone`
+// TODO(port): these reference `Vec::deep_clone`/`E::*::Clone`
 // surfaces, `bun_core::write_any_to_hasher`, and parser-state types that land
 // with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
 // only these method bodies wait. The round-B verify gate covers what's live.

@@ -1,10 +1,7 @@
-// ─── B-2 round 8: parse / to_css / ComponentParser / Interpolate un-gated ──
 // Full `CssColor::parse` / `to_css` surface, `ComponentParser` /
 // `RelativeComponentParser`, the `Colorspace` / `Interpolate` traits,
-// `color-mix()`, and the 47-variant `SystemColor` are now real. The
-// `From<Src> for Dst` lattice + `ColorGamut`/`map_gamut` were un-gated in
-// round 7 and remain at the bottom of the file. The former
-// `gated_full_impl` reference module has been folded into the outer scope.
+// `color-mix()`, and the 47-variant `SystemColor`. The `From<Src> for Dst`
+// lattice + `ColorGamut`/`map_gamut` are at the bottom of the file.
 
 use crate::PrintErr;
 use crate::compat::Feature;

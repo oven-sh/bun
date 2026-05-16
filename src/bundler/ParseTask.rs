@@ -2018,7 +2018,7 @@ pub mod parse_worker {
     impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
         pub fn run(
             &mut self,
-            // TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
+            // TODO(port): jsc::api arrives from move-in (TYPE_ONLY → bundler)
             plugin: &bundler::JSBundlerPlugin,
             from_plugin: &mut bool,
         ) -> core::result::Result<CacheEntry, AnyError> {

@@ -3,7 +3,7 @@
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
 // Pieces that transitively need the JS-AST (`Expr`/`E::Object`/`Rope`) or the
-// schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(b2-blocked):`
+// schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(port):`
 // markers pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
@@ -223,12 +223,12 @@ pub enum ScopeError {
 // Remaining gates are blocked on schema/API types only:
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_api::BunInstall
-// TODO(b2-blocked): bun_api::NpmRegistry
-// TODO(b2-blocked): bun_api::NpmRegistryMap
-// TODO(b2-blocked): bun_api::npm_registry::Parser
-// TODO(b2-blocked): bun_api::Ca
-// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
+// TODO(port): bun_api::BunInstall
+// TODO(port): bun_api::NpmRegistry
+// TODO(port): bun_api::NpmRegistryMap
+// TODO(port): bun_api::npm_registry::Parser
+// TODO(port): bun_api::Ca
+// TODO(port): bun_install_types::NodeLinker::PnpmMatcher::from_expr
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
@@ -306,7 +306,7 @@ mod draft {
 
     impl<'a> Parser<'a> {
         pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
-            // TODO(b2-blocked): bun_ast::Source<'bump> — `Source::init_path_string`
+            // TODO(port): bun_ast::Source<'bump> — `Source::init_path_string`
             // currently takes `Str = &'static [u8]`; once the lower tier threads a
             // lifetime through `Source`, pass `path`/`src` directly. They outlive
             // the `Parser` and its `Source`/`Expr` tree (arena-freed in lockstep),

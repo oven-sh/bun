@@ -347,7 +347,7 @@ pub mod path_buffer_pool;
 // (done). 46× E0106 remain — TLS-buf-returning wrappers need `'static` lifetime
 // or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
 // compile; the convenience wrappers don't yet. Gate the module; expose Platform.
-// TODO(b2): annotate the 46 TLS-wrapper return lifetimes as `'static` (matches
+// TODO(port): annotate the 46 TLS-wrapper return lifetimes as `'static` (matches
 // Zig "valid until next call" semantics).
 pub mod resolve_path;
 pub use resolve_path::{Platform, PlatformT, platform};

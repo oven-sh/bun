@@ -379,7 +379,7 @@ impl Diagnostic {
         };
 
         let name = bstr::BStr::new(name);
-        // TODO(b2-blocked): bun_core::err! — `from_name` is a tier-0 stub returning a
+        // TODO(port): bun_core::err! — `from_name` is a tier-0 stub returning a
         // sentinel, so these equality checks all collapse. Restore once the interning
         // table lands; meanwhile the `else` arm covers all cases.
         if err == bun_core::err!("DoesntTakeValue") {

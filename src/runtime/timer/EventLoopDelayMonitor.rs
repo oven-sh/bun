@@ -127,7 +127,7 @@ pub extern "C" fn Timer_enableEventLoopDelayMonitoring(
 ) {
     // SAFETY: vm is a valid non-null pointer passed from C++.
     let vm = unsafe { &mut *vm };
-    // PORT NOTE (b2-cycle): `vm.timer` is `()` — recover `All` via runtime_state().
+    // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` — recover `All` via runtime_state().
     let state = crate::jsc_hooks::runtime_state();
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`; single
     // JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).

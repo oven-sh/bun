@@ -123,7 +123,7 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
 // pick `IntegerBitSet<N>` or `ArrayBitSet<N>` directly; this alias resolves to
 // the array form (always correct, possibly one word larger than needed for
 // N <= 64).
-pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(b2): callers needing >64 bits use ArrayBitSet<SIZE, {num_masks_for(SIZE)}> directly
+pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>; // TODO(port): callers needing >64 bits use ArrayBitSet<SIZE, {num_masks_for(SIZE)}> directly
 
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 
@@ -1510,7 +1510,7 @@ impl AutoBitSet {
     }
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
-        // TODO(b0): `strings` arrives in bun_core via move-in (was bun_core::strings).
+        // TODO(port): `strings` arrives in bun_core via move-in (was bun_core::strings).
         self.raw_bytes() == b.raw_bytes()
     }
 

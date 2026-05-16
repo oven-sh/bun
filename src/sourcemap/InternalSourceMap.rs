@@ -87,7 +87,7 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
+use crate::Ordinal; // TODO(port): bun_core::Ordinal — local shim
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 

@@ -205,9 +205,8 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    // PORT NOTE: generic over `V2` because `bundle_v2.rs` currently carries two
-    // `BundleV2` definitions (the canonical one + `_the gated draft block (now dissolved)::BundleV2`)
-    // during the phased port, and both call `ThreadPool::init`. The backref is
+    // PORT NOTE: generic over `V2` because both `BundleV2` callers go through
+    // `ThreadPool::init`. The backref is
     // stored as a type-erased raw pointer (`.cast()`) regardless, so the
     // monomorphised body is identical. Collapses to `&BundleV2<'_>` once the
     // draft module is dropped.

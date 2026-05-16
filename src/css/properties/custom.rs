@@ -3,7 +3,6 @@
 //! Ported from `src/css/properties/custom.zig`.
 use bun_collections::VecExt;
 //
-// ─── B-2 round 9 status ────────────────────────────────────────────────────
 // `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
@@ -1459,7 +1458,6 @@ impl UnparsedProperty {
         Ok(UnparsedProperty { property_id, value })
     }
 
-    // un-gated B-2 round 10: PropertyId::{prefix, with_prefix} + deep_clone are real now.
     pub fn get_prefixed(
         &self,
         bump: &Arena,
@@ -1475,7 +1473,6 @@ impl UnparsedProperty {
     }
 
     /// Returns a new UnparsedProperty with the same value and the given property id.
-    // un-gated B-2 round 10: TokenList::deep_clone is real (arena-threaded).
     pub fn with_property_id(
         &self,
         bump: &Arena,

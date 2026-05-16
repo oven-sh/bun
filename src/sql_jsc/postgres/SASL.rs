@@ -135,7 +135,7 @@ impl SASL {
     pub fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
         use bun_sha_hmac::SHA256;
         let mut sha_digest = [0u8; SHA256::DIGEST];
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData::boring_engine
+        // TODO(port): bun_jsc::VirtualMachine::get / RareData::boring_engine
         // Zig passes `jsc.VirtualMachine.get().rareData().boringEngine()` here;
         // `None` falls through to BoringSSL's default engine, which is
         // functionally equivalent for SHA256. Swap once bun_jsc compiles.

@@ -8,7 +8,7 @@ use bun_sql::postgres::protocol::notice_response::NoticeResponse;
 /// Zig `switch (msg) { inline else => |m| ... }` — every `FieldMessage` variant
 /// carries a single `bun.String` payload. `bun_sql::FieldMessage` doesn't (yet)
 /// expose a `payload()` accessor, so match locally.
-// TODO(b2-blocked): bun_sql::postgres::protocol::field_message::FieldMessage::payload
+// TODO(port): bun_sql::postgres::protocol::field_message::FieldMessage::payload
 // — once landed, replace this whole match with `msg.payload()`.
 pub(crate) fn field_message_payload(msg: &FieldMessage) -> &bun_core::String {
     match msg {

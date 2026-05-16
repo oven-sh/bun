@@ -242,7 +242,7 @@ impl CharacterSet {
     /// this Rust enum is exhaustive, so unknown discriminants fall back to
     /// `DEFAULT` via the strum-generated `from_repr` exhaustive match (no
     /// hand-maintained range list, no `transmute`).
-    /// TODO(b2): switch to `#[repr(transparent)] struct(u8)` newtype to keep
+    /// TODO(port): switch to `#[repr(transparent)] struct(u8)` newtype to keep
     /// the unknown value (matching Zig semantics) instead of falling back.
     pub const fn from_raw(b: u8) -> Self {
         match Self::from_repr(b) {

@@ -1106,7 +1106,7 @@ impl JSValkeyClient {
             i64::from(next_timeout_ms),
         );
         // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
-        // `bun_core::Timespec`; convert by fields until B-2 unifies them.
+        // `bun_core::Timespec`; convert by fields until they are unified.
         timer.with_mut(|t| {
             t.next = Timer::Timespec {
                 sec: now.sec,

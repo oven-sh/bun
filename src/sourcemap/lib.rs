@@ -809,7 +809,7 @@ pub mod SavedSourceMap {
     }
 }
 
-// ── SerializedSourceMap (lifted from the gated draft block (now dissolved)) ──────────────────────
+// ── SerializedSourceMap ──────────────────────────────────────────────────
 //
 // Source-map serialization for `bun build --compile` standalone executables.
 // The bundler writes this blob; the runtime mmaps it and hands a
@@ -947,7 +947,7 @@ pub mod SerializedSourceMap {
     }
 }
 
-// ── SourceMapPieces impl (lifted from the gated draft block (now dissolved)) ─────────────────────
+// ── SourceMapPieces impl ─────────────────────────────────────────────────
 
 impl SourceMapPieces {
     pub fn init() -> SourceMapPieces {

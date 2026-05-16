@@ -8,7 +8,7 @@
 #![warn(unused_must_use)]
 //! Low-level FFI bindings for uSockets / uWebSockets as used by Bun.
 //!
-//! B-2: un-gated module bodies. Each `*.rs` file is mapped to a snake_case
+//! Each `*.rs` file is mapped to a snake_case
 //! module name (the names downstream `bun_uws` expects). Crate-root re-exports
 //! flatten the common handle types.
 

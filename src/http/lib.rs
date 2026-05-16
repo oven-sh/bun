@@ -124,8 +124,8 @@ pub const extremely_verbose: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
-// PORT NOTE: extracted from the gated `the gated draft block (now dissolved)` block so `InternalState`
-// can name it. The `picohttp::Response<'static>` borrows into `owned_buf`.
+// PORT NOTE: hoisted so `InternalState` can name it.
+// The `picohttp::Response<'static>` borrows into `owned_buf`.
 pub struct HTTPResponseMetadata {
     // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
     // outlives-holder invariant for the self-referential borrow.
@@ -162,12 +162,10 @@ impl Drop for HTTPResponseMetadata {
         self.response.status = b"";
     }
 }
-// TODO(b1): bun_http_types re-exports — verify these resolve in B-2.
 pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
 
 // ═══════════════════════════════════════════════════════════════════════
-// B-2: extracted from `the gated draft block (now dissolved)` — standalone items with no deps on
-// the still-gated HTTPClient/HTTPContext/ssl_* surfaces.
+// Standalone items with no deps on HTTPClient/HTTPContext/ssl_*.
 // ═══════════════════════════════════════════════════════════════════════
 
 use bun_core::MutableString;
@@ -554,8 +552,8 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 }
 
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
-// Extracted from `the gated draft block (now dissolved)`. The heavy `impl HTTPClient` (socket
-// dispatch / state machine) remains gated below until the missing
+// The heavy `impl HTTPClient` (socket dispatch / state machine) remains
+// gated below until the missing
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
@@ -885,7 +883,7 @@ pub use scratch::temp_hostname;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
 // PORT NOTE: Zig used `boringssl.SSL.AlpnOffer`; bun_boringssl doesn't yet
-// expose one, so define it locally and TODO(b2) wire through to
+// expose one, so define it locally and TODO(port) wire through to
 // `configure_http_client_with_alpn` once that lands.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AlpnOffer {

@@ -811,7 +811,7 @@ impl<'a> Parser<'a> {
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if true
-        /* TODO(b2-blocked): feature_flag */
+        /* TODO(port): feature_flag */
         {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
@@ -877,7 +877,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        // TODO(b2-blocked): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
+        // TODO(port): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
         // — see lifetime note at top of fn.
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
@@ -1573,7 +1573,7 @@ impl<'a> Parser<'a> {
             //    export * as ns from './foo'
             //
             if false
-            /* TODO(b2-blocked): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
+            /* TODO(port): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
             {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
@@ -2231,7 +2231,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if true
-        /* TODO(b2-blocked): feature_flag */
+        /* TODO(port): feature_flag */
         {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {

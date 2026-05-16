@@ -1048,8 +1048,6 @@ macro_rules! flush_standard_property_helper {
     }};
 }
 
-// PORT NOTE: un-gated B-2 round 15 — flex::{BoxPack,FlexPack,BoxAlign,FlexAlign,
-// FlexItemAlign,FlexLinePack}::from_standard + prefixes::Feature::is_flex_2009 are real now.
 macro_rules! flush_legacy_property {
     // variant with both 2009 and 2012
     ($dest:expr, $context:expr, $feature:expr, $key:expr, prop_2009: ($ty2009:ty, $variant2009:ident), prop_2012: ($ty2012:ty, $variant2012:ident)) => {{

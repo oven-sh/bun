@@ -10,8 +10,7 @@ use crate::PrintErr;
 pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
-// `CssModule` is un-gated (B-2). `reference_dashed` is un-gated; its
-// `dest.importRecord()` lookup is hoisted to the caller (see PORT NOTE on
+// `reference_dashed`'s `dest.importRecord()` lookup is hoisted to the caller (see PORT NOTE on
 // the method) to satisfy Rust borrowck (caller holds `&mut dest.css_module`).
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {

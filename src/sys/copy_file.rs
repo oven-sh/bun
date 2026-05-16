@@ -488,7 +488,7 @@ fn kernel_at_least(major: u32, minor: u32) -> bool {
     (v.major, v.minor, v.patch) >= (major, minor, 0)
 }
 
-/// Map a raw `copy_file`-path errno to `bun_core::Error` (kept for B-1 callers).
+/// Map a raw `copy_file`-path errno to `bun_core::Error`.
 #[inline]
 pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error {
     e.into()

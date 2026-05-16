@@ -52,7 +52,7 @@ pub fn report_error_or_terminate(
     if ex.is_termination_exception() {
         return Err(JsTerminated::JSTerminated);
     }
-    // TODO(b2): `global.report_uncaught_exception(ex.as_exception(vm))` —
+    // TODO(port): `global.report_uncaught_exception(ex.as_exception(vm))` —
     // `JSValue::as_exception` / `JSGlobalObject::report_uncaught_exception`
     // surface lands when JSGlobalObject.rs un-gates.
     let _ = (global, ex);

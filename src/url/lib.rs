@@ -30,7 +30,7 @@ pub mod route_param {
         pub name: &'a [u8],
         pub value: &'a [u8],
     }
-    // TODO(b2-blocked): bun_collections::MultiArrayList — derive(MultiArrayElement)
+    // TODO(port): bun_collections::MultiArrayList — derive(MultiArrayElement)
     // proc-macro not yet available. Using Vec; SoA layout is a perf concern only.
     pub type List<'a> = Vec<Param<'a>>;
 }
@@ -910,7 +910,7 @@ pub struct Param {
 // scans. bun_collections::MultiArrayList exists but requires `MultiArrayElement`
 // (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
 // revisit once `` lands.
-// TODO(b2-blocked): bun_collections::MultiArrayList derive
+// TODO(port): bun_collections::MultiArrayList derive
 pub type ParamList = Vec<Param>;
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
@@ -1483,7 +1483,7 @@ impl PercentEncoding {
     }
 }
 
-// TODO(b0): FormData re-export removed — bun_runtime (T6) is upward.
+// TODO(port): FormData re-export removed — bun_runtime (T6) is upward.
 // Callers should import from bun_runtime::webcore::form_data
 // directly (or move-in pass relocates FormData here if it belongs at T2).
 // pub use bun_runtime::webcore::form_data::FormData;

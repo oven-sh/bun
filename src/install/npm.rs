@@ -216,7 +216,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     Ok(username.to_vec())
 }
 
-// TODO(b2): body gated — picohttp::Response field shape drift
+// TODO(port): body gated — picohttp::Response field shape drift
 
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
@@ -522,7 +522,7 @@ pub mod registry {
         }
     }
 
-    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+    // TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
     pub type Map = HashMap<u64, Scope>;
 
     pub enum PackageVersionResponse {
@@ -841,7 +841,7 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    // TODO(b2): bun_io::DiscardingWriter — counting writer not exposed yet
+    // TODO(port): bun_io::DiscardingWriter — counting writer not exposed yet
 
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
@@ -1908,7 +1908,7 @@ impl PackageManifest {
     }
 }
 
-// TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+// TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
 
 use bun_install_types::DependencyGroup;

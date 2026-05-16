@@ -2701,7 +2701,7 @@ impl TestCommand {
             // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
             // `enable_hot_module_reloading`; non-null because
             // `is_watcher_enabled()` checked it. The `c_void` type is a
-            // b2-cycle erasure (see field comment in VirtualMachine.rs); the
+            // jsc/runtime crate-cycle erasure (see field comment in VirtualMachine.rs); the
             // cast recovers the concrete type.
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };

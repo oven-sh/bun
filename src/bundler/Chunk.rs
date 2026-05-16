@@ -648,11 +648,10 @@ impl IntermediateOutput {
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
-        // B-2 second pass: un-gated. `Graph.input_files` SoA accessors are now
-        // real (`Graph::InputFileColumns`); `LinkerGraph.files` SoA
-        // (`items_entry_point_chunk_index`) lands with the LinkerGraph un-gate.
-        // `bun_paths` / `bun_core::fmt::count` / `bun_alloc::alloc_slice`
-        // surfaces are tracked upstream.
+        // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
+        // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
+        // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
+        // `bun_alloc::alloc_slice` surfaces are tracked upstream.
         // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =

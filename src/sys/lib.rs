@@ -8,8 +8,8 @@
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers (port of `src/sys/sys.zig`).
 
-// RESOLVED (B-2 round 7): `Fd` struct + pure-data accessors hoisted to
-// `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
+// `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
+// (canonical T0). `fd.rs` is `pub trait FdExt` over that.
 #![warn(unreachable_pub)]
 
 // `bun_str` is the historical Zig namespace name; keep a public alias to
@@ -122,7 +122,7 @@ impl core::fmt::Display for SystemError {
 }
 pub mod walker_skippable;
 // `copy_file.rs` — full ioctl_ficlone / copy_file_range / sendfile / r-w-loop
-// state machine (port of `src/sys/copy_file.zig`). Un-gated B-2: raw kernel
+// state machine (port of `src/sys/copy_file.zig`). Raw kernel
 // thunks live in `crate::linux`, errno tags use the prefixed `E::E*` form,
 // kernel-version probe goes through `bun_core::linux_kernel_version()`.
 #[path = "copy_file.rs"]
@@ -2602,7 +2602,7 @@ mod posix_impl {
         Ok(unsafe { libc::strlen(p) })
     }
 
-    // ── B-2 round 9: link/perm/time/access group (sys.zig:406-3973 posix arms) ──
+    // ── link/perm/time/access group (sys.zig:406-3973 posix arms) ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
         check_p!(
             unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
@@ -2897,7 +2897,7 @@ mod posix_impl {
         Ok(&buf.0[..len])
     }
 
-    // ── B-2 round 9: fcntl/dup/pipe/io group ──
+    // ── fcntl/dup/pipe/io group ──
     pub type FcntlInt = isize;
     pub fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
         // sys.zig:959-971 — `errnoSysFd(result, .fcntl, fd)`: attach the fd to the error.
@@ -2956,7 +2956,7 @@ mod posix_impl {
         safe_libc::umask(mode as libc::mode_t) as Mode
     }
 
-    // ── B-2 round 9: socket primitives (recv/send/socketpair) ──
+    // ── socket primitives (recv/send/socketpair) ──
     // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
     // sys.zig exposes for shell/pipe IPC.
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
@@ -3134,7 +3134,7 @@ mod posix_impl {
             .map_err(|e| Error::from_code_int(e, Tag::pidfd_open))
     }
 
-    // ── B-2 round 9: macOS clonefile / copyfile ──
+    // ── macOS clonefile / copyfile ──
     #[cfg(target_os = "macos")]
     mod darwin_copy {
         use super::*;
@@ -3211,7 +3211,7 @@ mod posix_impl {
         fcopyfile_ as fcopyfile,
     };
 
-    // ── B-2 round 9: mmap/munmap ──
+    // ── mmap/munmap ──
     pub fn mmap(
         addr: *mut u8,
         len: usize,
@@ -4527,7 +4527,7 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
     #[cfg(not(unix))]
     {
-        // TODO(b2-windows): route through `uv_fs_write` with `uv_buf_t[]`.
+        // TODO(windows): route through `uv_fs_write` with `uv_buf_t[]`.
         let _ = (fd, vecs);
         Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
     }
@@ -4730,7 +4730,7 @@ impl std::io::Read for FileReader {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — additional surface unblocked for dependents.
+// Additional surface unblocked for dependents.
 // Symbols are real posix wrappers (sys.zig posix arms 1:1); Windows arms route
 // through the libuv/kernel32 layer in `windows_impl` above.
 // ──────────────────────────────────────────────────────────────────────────
@@ -9174,7 +9174,7 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
 }
 #[cfg(not(unix))]
 fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
-    // TODO(b2-windows): GetConsoleScreenBufferInfo.
+    // TODO(windows): GetConsoleScreenBufferInfo.
     None
 }
 

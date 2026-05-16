@@ -3191,7 +3191,7 @@ impl core::fmt::Display for PrintHandle<Fd> {
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
-// TODO(b2-blocked): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
+// TODO(port): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
 // bun_http_types::wtf::write_http_date — gated until those land.
 
 // ported from: src/resolver/fs.zig

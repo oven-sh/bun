@@ -179,7 +179,7 @@ pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
     { <J as JsonOptionsT>::GUESS_INDENTATION },
 >;
 
-// TODO(b1): `thiserror` not in this crate's deps; hand-roll Display/Error.
+// TODO(port): `thiserror` not in this crate's deps; hand-roll Display/Error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
     UTF8Fail,

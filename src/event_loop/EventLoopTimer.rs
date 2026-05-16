@@ -9,8 +9,8 @@ use Timespec as timespec;
 pub use bun_core::Timespec;
 
 // Re-export so higher tiers see the *same* type they pass to
-// `bun_io::heap::Intrusive<EventLoopTimer, _>` (was a zero-sized local stub
-// in B-1, which made the real pairing-heap unusable — orphan rule blocked
+// `bun_io::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
+// would make the real pairing-heap unusable — orphan rule blocks
 // `impl HeapNode for EventLoopTimer` anywhere but here).
 pub use bun_io::heap::IntrusiveField;
 

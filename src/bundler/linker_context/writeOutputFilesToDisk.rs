@@ -22,7 +22,7 @@ use crate::output_file::{
 };
 use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
-// TODO(b0): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
+// TODO(port): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
     write_file_with_path_buffer,
@@ -510,7 +510,7 @@ pub fn write_output_files_to_disk(
                 }
             }),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                // TODO(b0-genuine): `bake_types::Framework` is missing
+                // TODO(port): `bake_types::Framework` is missing
                 // `server_components`; once it lands, restore the
                 // `if fw.server_components.is_some() { 3 } else { 1 }` branch.
                 let offset: u32 = if c.framework.is_some() { 1 } else { 1 };

@@ -161,7 +161,7 @@ impl PerMessageDeflate {
             params,
             compress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
             decompress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
-            // TODO(b2-blocked): bun_jsc::rare_data::WebSocketDeflateRareData —
+            // TODO(port): bun_jsc::rare_data::WebSocketDeflateRareData —
             // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
             // placeholder in bun_jsc; the real type is `self::RareData` (this
             // module), which bun_jsc cannot import without a dep cycle. Until a

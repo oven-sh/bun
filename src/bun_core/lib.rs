@@ -9,7 +9,6 @@
     clippy::all
 )]
 #![warn(unused_must_use, unreachable_pub)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 
 pub mod Global;
 pub mod atomic_cell;
@@ -604,7 +603,6 @@ pub mod vec {
     }
 }
 
-// ── B-2 gate ── remaining heavy modules ────────────────────────────────────
 #[path = "Progress.rs"]
 pub mod Progress;
 pub mod fmt;
@@ -2622,7 +2620,7 @@ pub mod strings {
     pub use crate::strings_impl::{index_of_any, index_of_any_t};
 }
 
-// bun_alloc stubs Global.rs expects (real consts deferred to B-2 ungate of bun_alloc::basic)
+// bun_alloc stubs Global.rs expects (real consts pending bun_alloc::basic)
 pub const USE_MIMALLOC: bool = true;
 pub mod debug_allocator_data {
     #[inline]

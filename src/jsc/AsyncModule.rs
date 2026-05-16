@@ -1,7 +1,7 @@
 //! Port of `src/jsc/AsyncModule.zig`.
 //!
-//! B-2 un-gate: real `AsyncModule` / `Queue` / `InitOpts` types compile against
-//! the `lib.rs` stub surface so `ModuleLoader` can re-export them and
+//! `AsyncModule` / `Queue` / `InitOpts` types compile against
+//! the `lib.rs` surface so `ModuleLoader` can re-export them and
 //! `VirtualMachine.modules` can widen from `()` → `Queue`. `fulfill()` and the
 //! `Bun__onFulfillAsyncModule` extern are real (called from
 //! `RuntimeTranspilerStore::run_from_js_thread`). The package-manager-driven

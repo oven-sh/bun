@@ -130,7 +130,7 @@ impl HTMLBundle {
     // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
+    // TODO(port): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
     pub fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }

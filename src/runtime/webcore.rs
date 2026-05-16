@@ -82,7 +82,7 @@ pub mod jsc {
 // `bun_s3_signing::X` are the *same* type (avoids
 // `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
 // Remaining names without a real definition stay as opaque unit structs.
-// TODO(b2-blocked): bun_s3 — replace with real crate once it exists.
+// TODO(port): bun_s3 — replace with real crate once it exists.
 pub mod s3_stub {
     macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
         #[derive(Debug, Default)] pub struct $n;
@@ -321,7 +321,7 @@ bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
 // is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
 // opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
-// TODO(b2-blocked): bun_jsc::fetch_headers — swap to `pub use bun_jsc::fetch_headers::FetchHeaders;`.
+// TODO(port): bun_jsc::fetch_headers — swap to `pub use bun_jsc::fetch_headers::FetchHeaders;`.
 pub use crate::jsc::FetchHeaders;
 
 #[path = "webcore/EncodingLabel.rs"]
@@ -381,7 +381,7 @@ pub mod s3 {
     pub use super::multipart_options_impl::MultiPartUploadOptions;
     // Forward the credential / enum stubs so `crate::webcore::s3::{ACL, ...}`
     // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
-    // TODO(b2-blocked): replace with real bun_s3 types once that crate exists.
+    // TODO(port): replace with real bun_s3 types once that crate exists.
     pub use super::s3_stub::{
         ACL, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3DownloadStreamWrapper,
         S3HttpSimpleTask, S3ListObjectsOptions, S3ListObjectsResult, S3SimpleRequestResult,

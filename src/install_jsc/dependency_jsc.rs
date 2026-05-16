@@ -7,7 +7,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Local helper: `bun_semver::String` → JS string. Mirrors
 /// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
-/// types (concurrent B-2), so its `JSGlobalObject`/`JSValue` are not the
+/// types, so its `JSGlobalObject`/`JSValue` are not the
 /// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
 fn semver_string_to_js(

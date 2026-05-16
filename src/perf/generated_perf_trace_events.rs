@@ -2,7 +2,7 @@
 // (source: src/perf/generated_perf_trace_events.zig — defines #[repr(i32)] enum PerfEvent)
 // TODO(port): teach the generator to emit Rust; do not hand-maintain this file.
 
-// TODO(b1): stub until generator emits real variants — variants are added
+// TODO(port): stub until generator emits real variants — variants are added
 // piecemeal as call sites un-gate.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug)]

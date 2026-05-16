@@ -130,7 +130,7 @@ impl ColumnDefinition41 {
         // any byte. Rust `#[repr(u8)] enum` is exhaustive, so unknown bytes go through
         // `from_raw`'s match and error here instead. This diverges from Zig (which keeps
         // the value) but is sound; if a new server sends an unknown type, we fail loudly
-        // rather than carry an invalid discriminant. TODO(b2): switch FieldType to a
+        // rather than carry an invalid discriminant. TODO(port): switch FieldType to a
         // `#[repr(transparent)] struct(u8)` newtype to match Zig's non-exhaustive
         // semantics exactly.
         let type_byte = reader.int::<u8>()?;

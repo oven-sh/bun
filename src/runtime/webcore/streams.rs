@@ -898,7 +898,7 @@ impl StreamResult {
                 ab.to_js(global_this)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
-                // TODO(b2-blocked): JSValue::create_uninitialized_uint8_array — falls
+                // TODO(port): JSValue::create_uninitialized_uint8_array — falls
                 // back to ArrayBuffer::create (copies) until the no-init path lands.
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, temp.slice())
             }
@@ -1237,7 +1237,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     }
 }
 
-// TODO(b2-blocked): full impl depends on `bun_uws::Response<SSL>`
+// TODO(port): full impl depends on `bun_uws::Response<SSL>`
 // const-generic dispatch (the body casts `res` to `*mut uws::Response` without
 // the SSL/H3 parameter), `bun_event_loop::AutoFlusher` free-fns (the local
 // `crate::webcore::AutoFlusher` is a fieldless stub), and `ByteListPool::Node`
@@ -2478,7 +2478,7 @@ impl BufferAction {
         self.tag
     }
 
-    // TODO(b2-blocked): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
+    // TODO(port): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
     // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
     // `AnyPromise::from(*mut JSPromise)` adapter exists.
 

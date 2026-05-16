@@ -215,7 +215,7 @@ pub enum RequestBodyBuffer {
     // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
     Heap(Option<Box<HeapRequestBodyBuffer>>),
     // PERF(port): was std.heap.StackFallbackAllocator(32KB) — inline stack buffer with heap fallback.
-    // TODO(b2-blocked): bun_alloc::StackFallbackAllocator<REQUEST_BODY_SEND_STACK_BUFFER_SIZE>
+    // TODO(port): bun_alloc::StackFallbackAllocator<REQUEST_BODY_SEND_STACK_BUFFER_SIZE>
     Stack(Box<[u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]>),
 }
 
@@ -1050,7 +1050,7 @@ use core::cell::Cell;
 // above uses the raw `*mut uws::Loop` directly so the rest of the thread
 // machinery compiles; the actual event-loop drive stays gated until the tier
 // boundary is resolved.
-// TODO(b2-blocked): MiniEventLoop is in bun_event_loop (not in bun_http deps).
+// TODO(port): MiniEventLoop is in bun_event_loop (not in bun_http deps).
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod _event_loop_draft {

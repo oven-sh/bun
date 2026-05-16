@@ -2,9 +2,8 @@
 //!
 //! Ported from `src/css/properties/font.zig`.
 //
-// ─── B-2 round 9 status ────────────────────────────────────────────────────
-// Module un-gated from `gated_prop!` so the *data types* (FontWeight /
-// AbsoluteFontWeight / FontSize / AbsoluteFontSize / RelativeFontSize /
+// Data types: FontWeight / AbsoluteFontWeight / FontSize /
+// AbsoluteFontSize / RelativeFontSize /
 // FontStretch / FontStretchKeyword / FontFamily / GenericFontFamily /
 // FontStyle / FontVariantCaps / LineHeight / Font / VerticalAlign /
 // VerticalAlignKeyword / FontProperty / FontHandler) are real and referenced

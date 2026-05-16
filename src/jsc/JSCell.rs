@@ -47,7 +47,7 @@ impl JSCell {
     }
 
     pub fn get_getter_setter(&self) -> &GetterSetter {
-        // TODO(b2-blocked): bun_jsc::JSValue::is_getter_setter (debug_assert dropped while JSValue.rs gated)
+        // TODO(port): bun_jsc::JSValue::is_getter_setter (debug_assert dropped while JSValue.rs gated)
         // Caller-asserted invariant — this cell's JSType is GetterSetter.
         // `GetterSetter` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null-ZST deref proof (`self` is non-null).
@@ -55,7 +55,7 @@ impl JSCell {
     }
 
     pub fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
-        // TODO(b2-blocked): bun_jsc::JSValue::is_custom_getter_setter (debug_assert dropped while JSValue.rs gated)
+        // TODO(port): bun_jsc::JSValue::is_custom_getter_setter (debug_assert dropped while JSValue.rs gated)
         // Caller-asserted invariant — this cell's JSType is CustomGetterSetter.
         // `CustomGetterSetter` is an `opaque_ffi!` ZST handle; see `get_getter_setter`.
         CustomGetterSetter::opaque_ref(

@@ -192,7 +192,7 @@ pub struct UTF8Fallback;
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
 // TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
 
-// TODO(b2-blocked): `bun_core::strings::{is_all_ascii, replace_latin1_with_utf8,
+// TODO(port): `bun_core::strings::{is_all_ascii, replace_latin1_with_utf8,
 // copy_utf16_into_utf8_impl, to_utf8_alloc}` + `Vec::<u8>::from_*` constructors
 // are not yet exported with these exact names. Body gated; signatures kept.
 
@@ -1197,7 +1197,7 @@ pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
     ((ptr as usize as u64 & ADDR_MASK) | (SUBPROCESS_TAG << ADDR_BITS)) as usize
 }
 
-// TODO(b2-blocked): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
+// TODO(port): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
@@ -1215,7 +1215,7 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         return;
     }
     if ptr.is_valid() {
-        // TODO(b2-blocked): `Subprocess<'_>` cannot implement `UnionMember` (lifetime
+        // TODO(port): `Subprocess<'_>` cannot implement `UnionMember` (lifetime
         // param), so it isn't part of `DestructorPtr`'s type list yet — cast the raw
         // pointer directly until the second variant is restored.
         //

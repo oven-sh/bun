@@ -17,7 +17,7 @@ pub struct Async {
     pub io: IO,
     pub state: AsyncState,
     pub event_loop: EventLoopHandle,
-    // TODO(b2-blocked): bun_jsc::EventLoopTask — concurrent_task field
+    // TODO(port): bun_jsc::EventLoopTask — concurrent_task field
 }
 
 #[derive(strum::IntoStaticStr)]
@@ -142,7 +142,7 @@ impl Async {
     }
 
     fn enqueue_self(_interp: &Interpreter, _this: NodeId) {
-        // TODO(b2-blocked): bun_jsc::EventLoopHandle/EventLoopTask — schedule
+        // TODO(port): bun_jsc::EventLoopHandle/EventLoopTask — schedule
         // `run_from_main_thread` on the JS or mini event loop.
     }
 

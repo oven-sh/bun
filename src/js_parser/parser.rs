@@ -35,7 +35,7 @@ pub mod options {
     // re-exported here so the `options::Loader`/`options::Target` spelling used
     // throughout `P.rs`/`Parser.rs` keeps resolving without per-site churn.
     pub(crate) use bun_ast::Loader;
-    // TODO(b2-blocked): bun_options_types::{ServerComponents, OutputFormat,
+    // TODO(port): bun_options_types::{ServerComponents, OutputFormat,
     // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
     pub use bun_options_types::bundle_enums::ModuleType;
     // D042: canonical `JSX::{Pragma, Runtime, ImportSource, Defaults, ...}`
@@ -636,7 +636,7 @@ pub use js_ast::Op::Level;
 pub use crate::lexer as js_lexer;
 pub use js_lexer::T;
 
-// TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
+// TODO(port): defines arrives from move-in (was bun_bundler::defines → js_parser)
 use crate::defines::Define;
 
 // ──────────────────────────────────────────────────────────────────────────

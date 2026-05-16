@@ -44,7 +44,7 @@ pub mod install_stubs {
         pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
     }
 }
-// TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque
+// TODO(port): bun_bundler::options::{Framework, RouteConfig} — local opaque
 // FORWARD_DECL: legacy `options::Framework` and friends. The Zig
 // `package_json.zig:loadFramework*` block references `options.Framework`, which
 // no longer exists in `options.zig` (removed upstream); the loaders have no
@@ -139,7 +139,7 @@ pub mod options {
     }
 }
 use bun_options_types::schema::api;
-// TODO(b2-blocked): bun_collections::StringMap (array-backed string→string map)
+// TODO(port): bun_collections::StringMap (array-backed string→string map)
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
 use bun_glob as glob;
@@ -483,7 +483,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     }
 }
 
-// TODO(b2-blocked): bun_bundler::options + bun_ast::Expr full API + bun_install + bun_schema
+// TODO(port): bun_bundler::options + bun_ast::Expr full API + bun_install + bun_schema
 // — framework/define loaders stay gated until bun_bundler::options lands.
 
 impl PackageJSON {
@@ -1474,7 +1474,7 @@ impl PackageJSON {
             }
         }
 
-        // TODO(b2-blocked): bun_install::{Dependency, Architecture, OperatingSystem,
+        // TODO(port): bun_install::{Dependency, Architecture, OperatingSystem,
         // lockfile::Package::DependencyGroup, PackageManager}. The whole
         // dependencies/os/cpu block is install-tier.
 
@@ -1723,7 +1723,7 @@ impl PackageJSON {
     }
 }
 
-// TODO(b2-blocked): `self.hash` field referenced in Zig but not declared on
+// TODO(port): `self.hash` field referenced in Zig but not declared on
 // PackageJSON; gate until the field lands.
 
 impl PackageJSON {
@@ -1812,7 +1812,7 @@ impl<'a> Visitor<'a> {
                 // EntryDataMapList is a Vec<MapEntry> placeholder until
                 // bun_collections::MultiArrayList lands. Push whole entries instead of
                 // writing through three parallel column slices.
-                // TODO(b2-blocked): bun_collections::MultiArrayList column accessors
+                // TODO(port): bun_collections::MultiArrayList column accessors
                 let mut map_data: EntryDataMapList = Vec::with_capacity(prop_len);
                 let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(prop_len);
                 let mut is_conditional_sugar = false;
@@ -1945,7 +1945,7 @@ pub struct EntryDataMap {
     pub list: EntryDataMapList,
 }
 
-// TODO(b2-blocked): bun_collections::MultiArrayList<MapEntry> — needs MultiArrayElement derive +
+// TODO(port): bun_collections::MultiArrayList<MapEntry> — needs MultiArrayElement derive +
 // per-field column accessors. Using Vec<MapEntry> as a placeholder shape.
 pub type EntryDataMapList = Vec<MapEntry>;
 
@@ -1965,14 +1965,14 @@ pub enum MapEntryField {
 
 impl Entry {
     pub fn keys_start_with_dot(&self) -> bool {
-        // TODO(b2-blocked): bun_collections::MultiArrayList column accessor; Vec placeholder.
+        // TODO(port): bun_collections::MultiArrayList column accessor; Vec placeholder.
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
 
     pub fn value_for_key(&self, key_: &[u8]) -> Option<Entry> {
         match &self.data {
             EntryData::Map(m) => {
-                // TODO(b2-blocked): bun_collections::MultiArrayList column accessor; Vec placeholder.
+                // TODO(port): bun_collections::MultiArrayList column accessor; Vec placeholder.
                 for entry in m.list.iter() {
                     if strings::eql(&entry.key, key_) {
                         return Some(entry.value.clone());
@@ -2269,7 +2269,7 @@ enum ReverseKind {
     Prefix,
 }
 
-// ── Local string helpers (TODO(b2-blocked): bun_core::{replacement_size, replace}) ──
+// ── Local string helpers (TODO(port): bun_core::{replacement_size, replace}) ──
 // Minimal local impls so the ESModule resolution algorithm compiles; replace with the
 // canonical bun_core versions once they land. Recorded in blocked_on.
 use bun_core::trim_right;

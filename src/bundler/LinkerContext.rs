@@ -17,7 +17,7 @@ use bun_sourcemap::{
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use bun_ast::{ImportKind, ImportRecord};
 use bun_threading::{self as sync, WaitGroup, thread_pool as ThreadPoolLib};
-// TODO(b0): bake_types arrives from move-in (TYPE_ONLY → bundler)
+// TODO(port): bake_types arrives from move-in (TYPE_ONLY → bundler)
 use crate::bake_types as bake;
 use crate::bun_css as css;
 
@@ -440,7 +440,7 @@ impl<'a> LinkerContext<'a> {
     pub fn check_for_memory_corruption(&self) {
         // For this to work, you need mimalloc's debug build enabled.
         //    make mimalloc-debug
-        // TODO(b3): `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
+        // TODO(port): `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
         // once `Graph.heap: MimallocArena`.
     }
 }
@@ -461,7 +461,7 @@ use crate::ungate_support::{CompileResultForSourceMapColumns as _, EntryPointCol
 use bun_ast::SideEffects as _GraphSideEffects;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
-// TODO(b2-blocked): method bodies depend on `LinkerGraph` SoA accessors
+// TODO(port): method bodies depend on `LinkerGraph` SoA accessors
 // (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
 // `crate::thread_pool::Worker`, `generic_path_with_pretty_initialized`, and the gated
 // `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
@@ -1471,7 +1471,7 @@ impl SourceMapDataTask {
     }
 }
 
-// TODO(b2-blocked): see SourceMapDataTask above.
+// TODO(port): see SourceMapDataTask above.
 
 impl SourceMapData {
     /// Runs concurrently across the worker pool (one task per `source_index`).
@@ -1741,7 +1741,7 @@ struct SubstituteChunkFinalPathResult {
     shifts: Box<[SourceMapShifts]>,
 }
 
-// TODO(b2-blocked): scan/tree-shake/link method bodies. These reach into
+// TODO(port): scan/tree-shake/link method bodies. These reach into
 // `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
 // gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
 // and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
@@ -2186,7 +2186,7 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: `Options.arena` / `source_map_allocator` were removed in
         // the Rust port (printer uses global mimalloc + the explicit `bump`
         // argument to `print_with_writer`). The dev-server source-map-arena
-        // selection is folded into TODO(b3) until arena threading lands.
+        // selection is folded into TODO(port) until arena threading lands.
         let _ = self.dev_server.is_some()
             && parse_graph.input_files.items_loader()[source_index.get() as usize]
                 .is_javascript_like();
@@ -4290,7 +4290,7 @@ impl InsideWrapperPrefix {
     }
 }
 
-// TODO(b2-blocked): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
+// TODO(port): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
 // — bun_js_parser AST builder surface not yet stable.
 
 impl InsideWrapperPrefix {

@@ -1,4 +1,4 @@
-// TODO(b1): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
+// TODO(port): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
 /// Offset into the input document.

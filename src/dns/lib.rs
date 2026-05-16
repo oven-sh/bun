@@ -164,7 +164,7 @@ impl Options {
 
 // TODO(port): FromJSError types are only consumed by the *_jsc extension fns;
 // consider moving these to bun_runtime::dns_jsc.
-// TODO(b1): thiserror not in deps — dropped Error derive
+// TODO(port): thiserror not in deps — dropped Error derive
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum OptionsFromJsError {
     //     #[error("InvalidFamily")]

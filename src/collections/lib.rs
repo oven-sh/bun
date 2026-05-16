@@ -27,7 +27,7 @@ pub use bun_core::bounded_array;
 pub mod identity_context;
 pub mod linear_fifo;
 
-// TODO(b2-large): heavy nightly-feature usage (adt_const_params for enum-typed
+// TODO(port): heavy nightly-feature usage (adt_const_params for enum-typed
 // const generics, generic_const_exprs, inherent assoc types). Rewrite to
 // stable: enum const params → const usize/bool, inherent assoc → free aliases.
 pub mod bit_set;

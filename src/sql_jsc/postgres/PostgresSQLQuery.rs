@@ -32,7 +32,6 @@ bun_core::declare_scope!(Postgres, visible);
 pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 pub use js::to_js;
 
-// TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
@@ -369,7 +368,6 @@ impl PostgresSQLQuery {
         );
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -386,7 +384,6 @@ impl PostgresSQLQuery {
 
     // comptime { @export(&jsc.toJSHostFn(call), .{ .name = "PostgresSQLQuery__createInstance" }); }
     // TODO(port): proc-macro emits the PostgresSQLQuery__createInstance export; verify codegen name.
-    // TODO(b2-blocked): #[crate::jsc::host_fn(export = "PostgresSQLQuery__createInstance")] proc-macro attr
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let mut args =
@@ -464,7 +461,6 @@ impl PostgresSQLQuery {
         let _ = (global_this, value);
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn do_done(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -475,7 +471,6 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn set_pending_value_from_js(
         _this: &Self,
         global_object: &JSGlobalObject,
@@ -487,7 +482,6 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn set_mode_from_js(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -514,7 +508,6 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     //
     // Takes `*mut Self` (the JSCell m_ctx payload, i.e. the original `heap::alloc`
     // pointer) rather than `&Self`: `connection.requests.write_item(this_ptr)` below
@@ -931,7 +924,6 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn do_cancel(
         this: &Self,
         global_object: &JSGlobalObject,

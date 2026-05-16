@@ -96,9 +96,8 @@ bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` for the two fields that `reload`/`match`
-// mutate. The codegen shim still emits `this: &mut FileSystemRouter` until
-// Phase 1 lands — `&mut T` reborrows to `&T` so the impls compile against
-// either.
+// mutate. The codegen shim may still emit `this: &mut FileSystemRouter` —
+// `&mut T` reborrows to `&T` so the impls compile against either.
 #[bun_jsc::JsClass]
 pub struct FileSystemRouter {
     // BACKREF — interned `RefString`s live in the VM cache and outlive this
@@ -108,7 +107,7 @@ pub struct FileSystemRouter {
     // PORT NOTE: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
     pub router: JsCell<Router::Router<'static>>,
     // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
-    // kept as boxed arena per LIFETIMES.tsv (OWNED). Phase B: confirm bumpalo vs ArenaAllocator.
+    // kept as boxed arena per LIFETIMES.tsv (OWNED). TODO(port): confirm bumpalo vs ArenaAllocator.
     pub arena: JsCell<Box<ArenaAllocator>>,
     // PORT NOTE: dropped `std.mem.Allocator param` field — it was always `arena.arena()`.
     pub asset_prefix: Option<BackRef<RefString>>,
@@ -243,7 +242,7 @@ impl FileSystemRouter {
             let vm_ptr = VirtualMachine::get_mut_ptr();
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                &raw mut log,
+                core::ptr::NonNull::from(&mut log),
             )
         };
 
@@ -462,7 +461,7 @@ impl FileSystemRouter {
         let _restore_log = unsafe {
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                &raw mut log,
+                core::ptr::NonNull::from(&mut log),
             )
         };
 

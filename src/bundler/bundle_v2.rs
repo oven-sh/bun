@@ -1,9 +1,7 @@
 // ══════════════════════════════════════════════════════════════════════════
-// B-2 un-gated header — real `BundleV2` struct definition.
-// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep, so
-// `Transpiler` (which embeds `Resolver`) is referenceable here. Method bodies
-// remain in the gated `bv2_impl` module below until `LinkerContext`,
-// `ParseTask`, `ThreadPool`, and the JSBundler/api TYPE_ONLY split land.
+// `BundleV2` struct definition. `bun_resolver` is a direct dep, so
+// `Transpiler` (which embeds `Resolver`) is referenceable here. Most method
+// bodies live in the `bv2_impl` module below.
 // ══════════════════════════════════════════════════════════════════════════
 
 use crate::mal_prelude::*;
@@ -52,7 +50,7 @@ use crate::ungate_support::{EventLoop, UseDirective};
 use crate::{Index, IndexInt, LinkerContext};
 use bun_ast::SideEffects;
 
-// ── re-exports for the B-1 inline `pub mod bundle_v2 { … }` shim surface ──
+// ── re-exports so callers can reference these via `bundle_v2::…` ──
 /// `BundleThread` (BundleThread.zig) — owns the worker pool + completion
 /// queue for `BundleV2`. Re-exported so callers reference `bundle_v2::BundleThread`.
 pub use crate::BundleThread::BundleThread;
@@ -103,8 +101,8 @@ pub struct BundleV2<'a> {
     /// When Bun Bake is used, the resolved framework is passed here.
     pub framework: Option<bake::Framework>,
     pub graph: Graph,
-    // Real `LinkerContext<'a>` (un-gated B-2). Borrows the same arena lifetime
-    // as `transpiler` (Zig stored both as raw pointers into the bundler heap).
+    // `LinkerContext<'a>` borrows the same arena lifetime as `transpiler`
+    // (Zig stored both as raw pointers into the bundler heap).
     pub linker: LinkerContext<'a>,
     // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
     // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
@@ -152,16 +150,6 @@ pub struct BundleV2<'a> {
     /// deduplication is free.
     pub requested_exports: ArrayHashMap<u32, RequestedExports>,
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gated impl: lifecycle entry points (`init` skeleton, scan-counter
-// machinery, `on_parse_task_complete`, `deinit_without_freeing_arena`). Method
-// bodies are real where lower-tier surfaces exist; sub-regions that touch
-// still-gated modules (`ThreadPool`, full `dispatch::DevServerVTable`,
-// `ServerComponentParseTask`, `Watcher`) are ``-gated inline so
-// the call shape is preserved verbatim and un-gates by deletion once those
-// land. See `bv2_impl` below for the full reference bodies.
-// ──────────────────────────────────────────────────────────────────────────
 
 bun_core::declare_scope!(Bundle, visible);
 bun_core::declare_scope!(scan_counter, visible);
@@ -300,10 +288,7 @@ impl<'a> BundleV2<'a> {
     // removed — canonical bodies live in the later impl blocks below.
 }
 // ══════════════════════════════════════════════════════════════════════════
-// Phase-A draft body — gated until lower-tier crate surfaces solidify.
-// (`bun_fs`/`bun_str`/`bun_node_fallbacks` crate aliases, full `dispatch`
-// vtable slot set, `api::JSBundler` TYPE_ONLY split, `LinkerContext`,
-// `ParseTask`, `ThreadPool`, OUT_DIR codegen for HmrRuntime embeds.)
+// `BundleV2` method bodies + supporting types.
 // ══════════════════════════════════════════════════════════════════════════
 
 pub mod bv2_impl {
@@ -610,7 +595,7 @@ pub mod bv2_impl {
 
         /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.
         /// `bun_ast::Source` is not `const`-constructible (owns a `fs::Path`), so these
-        /// are lazy statics. PERF(port): was `pub const` — verify in Phase B.
+        /// are lazy statics. PERF(port): was `pub const` in Zig.
         pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
             std::sync::LazyLock::new(|| {
                 let mut s = bun_ast::Source::default();
@@ -1489,18 +1474,23 @@ pub mod bv2_impl {
             /// `BundleV2` (Zig: `Watcher.enableHotModuleReloading(this, null)` in
             /// `BundleV2.init` — bundle_v2.zig:994). The bundler can't name the
             /// reloader generic (T6), so this is a definer-prefixed extern hook.
-            fn __bun_jsc_enable_hot_module_reloading_for_bundler(bv2: *mut ());
+            /// `'static` matches the impl side: the only caller (`bun build
+            /// --watch`) leaks the CLI arena, so the pointee is process-lifetime.
+            fn __bun_jsc_enable_hot_module_reloading_for_bundler(
+                bv2: core::ptr::NonNull<super::BundleV2<'static>>,
+            );
         }
 
         /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
         #[inline]
         pub fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
             // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
-            // Not `safe fn`: the callee re-types the erased `*mut ()` as
-            // `*mut BundleV2<'static>` and dereferences it, so `bv2` must point to
-            // a live `BundleV2` whose backing allocation outlives the watcher
-            // (sole caller is `BundleV2::init` with the leaked CLI arena).
-            unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2.cast()) }
+            // Not `safe fn`: the callee dereferences `bv2`, so it must point to a
+            // live `BundleV2` whose backing allocation outlives the watcher (sole
+            // caller is `BundleV2::init` with the leaked CLI arena — `'static`).
+            let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
+                .expect("BundleV2 watcher: bv2 is non-null");
+            unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }
         }
 
         /// Bytecode generation entry point for the linker. Mirrors the Zig
@@ -1588,7 +1578,7 @@ pub mod bv2_impl {
     ///     case the returned reference is valid only for the bundle pass and the
     ///     consuming `Path` must not outlive it.
     /// All call sites in this file satisfy one of these; this is the documented
-    /// Phase-A ARENA convention (PORTING.md §Type Mapping: arena-owned struct
+    /// arena-erasure convention (PORTING.md §Type Mapping: arena-owned struct
     /// fields use erased lifetimes).
     #[inline(always)]
     pub(crate) unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
@@ -2897,7 +2887,7 @@ pub mod bv2_impl {
                 this.transpiler.options.ignore_dce_annotations;
             // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
             // owned by the `'a`-lifetime `Transpiler` which outlives `this.linker`;
-            // `LinkerOptions` stores `&'static [u8]` as a Phase-A lifetime erasure
+            // `LinkerOptions` stores `&'static [u8]` as an arena-erased lifetime
             // (see `interned_slice` contract — these are bundle-pass-interned).
             this.linker.options.banner = unsafe { interned_slice(&this.transpiler.options.banner) };
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
@@ -5413,7 +5403,7 @@ pub mod bv2_impl {
                 // SAFETY: `alloc_slice_copy` returns into the bundler arena which outlives
                 // this function. Erase the `&self` lifetime via `*const` so the borrow on
                 // `self.arena()` does not extend across the `&mut self` calls below
-                // (Phase-A arena-erasure convention; see also `path.pretty` ~L4770).
+                // (arena-erasure convention; see also `path.pretty` ~L4770).
                 break 'reachable_files unsafe {
                     &*std::ptr::from_ref::<[Index]>(self.arena().alloc_slice_copy(&js_files))
                 };
@@ -5970,7 +5960,7 @@ pub mod bv2_impl {
 
                 if let Some(fw) = &self.framework {
                     if fw.server_components.is_some() {
-                        // PERF(port): was comptime bool dispatch — profile in Phase B
+                        // PERF(port): was comptime bool dispatch — profile if hot.
                         let is_server = ctx.target.is_server_side();
                         let src = if is_server {
                             &bake::SERVER_VIRTUAL_SOURCE
@@ -6848,7 +6838,7 @@ pub mod bv2_impl {
             js_parser_options.bundle = true;
 
             // SAFETY: `alloc_str` returns a `&mut str` into the bundler arena, which
-            // outlives this AST. `E::EString.data` is `&'static [u8]` per the Phase-A
+            // outlives this AST. `E::EString.data` is `&'static [u8]` per the
             // arena-erasure convention. See `interned_slice` contract.
             let unique_key: &'static [u8] = unsafe {
                 interned_slice(
@@ -7598,7 +7588,7 @@ pub mod bv2_impl {
     }
 
     impl ExternalFreeFunctionAllocator {
-        // TODO(port): std.mem.Allocator vtable equivalent — Phase B will define bun_alloc::Allocator trait impl
+        // TODO(refactor): could implement `bun_alloc::Allocator` instead of the manual vtable.
 
         pub fn create(
             free_callback: unsafe extern "C" fn(*mut c_void),

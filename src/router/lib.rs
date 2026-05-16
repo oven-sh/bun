@@ -784,7 +784,7 @@ impl<'a> RouteLoader<'a> {
                 index_id = Some(i);
             }
 
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if hot
             // SAFETY: `Route::parse` interned every PathString field via
             // `DirnameStore::append{,_lower_case}` (process-lifetime arena).
             let (filepath, match_name, public_path) = unsafe {
@@ -1142,8 +1142,8 @@ impl Route {
 
                     // PORT NOTE: DirnameStore::append returns `&'static [u8]` (process-
                     // lifetime arena), so rebinding here drops the borrow on
-                    // `route_file_buf` and removes the need for the Phase-A
-                    // lifetime transmutes that were below.
+                    // `route_file_buf` and avoids needing lifetime transmutes
+                    // below.
                     let dirname_store = FileSystem::instance().dirname_store();
                     let public_path: &'static [u8] =
                         dirname_store.append(public_path).expect("unreachable");
@@ -1353,7 +1353,7 @@ pub mod Sorter {
             Ordering::Equal => match a.kind {
                 // static + dynamic are sorted alphabetically
                 pattern::Tag::Static | pattern::Tag::Dynamic => {
-                    // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+                    // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot
                     sort_by_name_string(a_name, b_name)
                 }
                 // catch all and optional catch all must appear below dynamic
@@ -1382,9 +1382,8 @@ pub mod Sorter {
     }
 }
 
-// TODO(port): `impl Route { pub use Sorter }` is not valid Rust; Phase B should make
-// `Sorter` an inherent module on `Route` via a wrapper type or move callers to `crate::Sorter`.
-// B-1: callers use `crate::Sorter` directly.
+// PORT NOTE: Zig nested `Sorter` under `Route`; Rust has no `impl Route { pub use Sorter }`
+// equivalent, so callers use `crate::Sorter` directly.
 
 struct RouteBufs {
     route_file_buf: PathBuffer,
@@ -1509,8 +1508,9 @@ impl<'a> Match<'a> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Traits introduced to replace Zig's `comptime T: type` duck-typing
-// (Resolver, Server, RequestContext). Phase B should colocate these with
-// the canonical types in bun_resolver / bun_runtime.
+// (Resolver, Server, RequestContext).
+// TODO(refactor): colocate these with the canonical types in
+// bun_resolver / bun_runtime.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait ResolverLike {
@@ -2171,7 +2171,11 @@ mod tests {
             };
 
             // var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
+                core::ptr::NonNull::from(&mut log),
+                fs,
+                opts,
+            ));
 
             // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
             let root_dir = resolver
@@ -2232,7 +2236,11 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
+                core::ptr::NonNull::from(&mut log),
+                fs,
+                opts,
+            ));
 
             // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
             let root_dir = resolver

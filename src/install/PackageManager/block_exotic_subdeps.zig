@@ -97,15 +97,25 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             // attacker-controlled.
             //
             // We only trust the override's literal when the resolver's own
-            // lookup would have hit: `enqueueDependencyWithMainAndSuccessFn`
-            // keys overrides off `hash(realname())`, and for a freshly-parsed
-            // `.git`/`.github`/`.tarball` dep `realname()` is empty until
-            // `runTasks` backfills `package_name` after the fetch. If the
-            // backfill+re-enqueue ran, the final resolution has `tag = .npm`
-            // (or similar non-exotic). If we reach this function and
-            // `dep_res_tag` is still `.git`/`.github`/`.{local,remote}_tarball`,
-            // the override never took effect — show the parent's actual
-            // literal (the git URL, say) instead of the unapplied override.
+            // lookup would have hit. `enqueueDependencyWithMainAndSuccessFn`
+            // keys overrides off `hash(realname())` via a `switch
+            // (dep.version.tag)` (the **specifier** tag, not the resolution
+            // tag) — for `.git` / `.github` / `.tarball` specifiers,
+            // `realname()` is the `package_name` which `parseWithTag`
+            // leaves empty until `runTasks` backfills it after the fetch,
+            // so `overrides.get(hash(""))` misses. For every other
+            // specifier tag the lookup hits (either via `dep.name_hash`
+            // directly or via a `hash(realname())` whose `realname()`
+            // equals the name), so the override **is** applied. Keying on
+            // the specifier tag here matters for overrides whose *target*
+            // is exotic: a parent that wrote `"foo": "file:../bad"` with
+            // a root override of `{foo: "git+https://..."}` has
+            // `dep.version.tag == .folder` but `dep_res_tag == .git`;
+            // gating on `dep_res_tag` would incorrectly suppress the
+            // applied override literal. It also matters for an
+            // override-to-`catalog:` target — `classify`'s catalog
+            // short-circuit only fires when `literal_raw` is `"catalog:"`,
+            // which requires propagating the override.
             //
             // `OverrideMap.get()` returns `?Dependency.Version` **by value**,
             // and for inline Semver.String payloads (≤8 bytes) `.slice()`
@@ -115,8 +125,8 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             // pointer via `|*ovr|` so the slice points into the named
             // `overridden` local and stays valid through `classify` and the
             // error-print below.
-            const override_applied = switch (dep_res_tag) {
-                .git, .github, .local_tarball, .remote_tarball => false,
+            const override_applied = switch (dep.version.tag) {
+                .git, .github, .tarball => false,
                 else => true,
             };
             const overridden = if (override_applied) manager.lockfile.overrides.get(dep.name_hash) else null;

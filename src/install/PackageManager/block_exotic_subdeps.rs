@@ -45,7 +45,7 @@
 
 use bstr::BStr;
 use bun_collections::ArrayHashMap;
-use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{Output, fmt as bun_fmt, strings};
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::{DependencyID, PackageID, PackageManager, invalid_package_id};
 
@@ -112,21 +112,27 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
             // attacker-controlled.
             //
             // We only trust the override's literal when the resolver's own
-            // lookup would have hit: `PackageManagerEnqueue::enqueue_dep*`
-            // keys overrides off `hash(realname())`, and for a freshly-parsed
-            // `.git`/`.github`/`.tarball` dep `realname()` is empty until
-            // `runTasks` backfills `package_name` after the fetch. If the
-            // backfill+re-enqueue ran, the final resolution has `tag = .npm`
-            // (or similar non-exotic). If we reach this function and
-            // `dep_res_tag` is still `.git`/`.github`/`.{local,remote}_tarball`,
-            // the override never took effect — show the parent's actual
-            // literal (the git URL, say) instead of the unapplied override.
+            // lookup would have hit. `PackageManagerEnqueue` keys overrides
+            // off `hash(realname())` via a `match dep.version.tag` (the
+            // **specifier** tag, not the resolution tag) — for `.Git` /
+            // `.Github` / `.Tarball` specifiers, `realname()` is the
+            // `package_name` which `parse_with_tag` leaves empty until
+            // `runTasks` backfills it after the fetch, so
+            // `overrides.get(hash(""))` misses. For every other specifier
+            // tag the lookup hits (either via `dep.name_hash` directly or
+            // via a `hash(realname())` whose `realname()` equals the name),
+            // so the override **is** applied. Keying on the specifier tag
+            // here matters for overrides whose *target* is exotic: e.g. a
+            // parent that wrote `"foo": "file:../bad"` with a root override
+            // of `{foo: "git+https://..."}` has `dep.version.tag == .folder`
+            // but `dep_res_tag == .git`; gating on `dep_res_tag` would
+            // incorrectly suppress the applied override literal. It also
+            // matters for an override-to-`catalog:` target — `classify`'s
+            // catalog short-circuit only fires when `literal_raw` is
+            // `"catalog:"`, which requires propagating the override.
             let override_applied = !matches!(
-                dep_res_tag,
-                ResolutionTag::Git
-                    | ResolutionTag::Github
-                    | ResolutionTag::LocalTarball
-                    | ResolutionTag::RemoteTarball,
+                dep.version.tag,
+                dependency::Tag::Git | dependency::Tag::Github | dependency::Tag::Tarball,
             );
             let overridden = if override_applied {
                 manager.lockfile.overrides.get(dep.name_hash)
@@ -190,12 +196,12 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
 /// exotic per this policy, or `None` if it's allowed.
 #[inline]
 fn classify(res_tag: ResolutionTag, literal_raw: &[u8]) -> Option<&'static str> {
-    // Mirror the resolver's leading-whitespace trim (see `Dependency::parse`
-    // which does `trim_ascii_start` before calling `infer()` on the
-    // specifier). If we re-infer on the raw string instead, a published
-    // spec like `" workspace:*"` falls through `infer()`'s match to
-    // `.dist_tag` → looks non-exotic.
-    let literal = trim_ascii_start(literal_raw);
+    // Mirror the resolver's leading-whitespace trim — `Dependency::parse`
+    // calls `strings::trim_left(dependency, b" \t\n\r")` before handing the
+    // specifier to `infer()`. If we re-infer on the raw string instead, a
+    // published spec like `" workspace:*"` falls through `infer()`'s match
+    // to `.dist_tag` → looks non-exotic.
+    let literal = strings::trim_left(literal_raw, b" \t\n\r");
     let literal_tag = dependency::Tag::infer(literal);
 
     // `catalog:` references are defined by the root user, not the
@@ -256,13 +262,4 @@ fn classify(res_tag: ResolutionTag, literal_raw: &[u8]) -> Option<&'static str> 
         // newtype) — treat as exotic; better to false-positive than to miss.
         _ => Some("unknown"),
     }
-}
-
-#[inline]
-fn trim_ascii_start(s: &[u8]) -> &[u8] {
-    let mut i = 0;
-    while i < s.len() && matches!(s[i], b' ' | b'\t' | b'\n' | b'\r') {
-        i += 1;
-    }
-    &s[i..]
 }

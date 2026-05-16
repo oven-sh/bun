@@ -1162,6 +1162,10 @@ impl Enable {
     pub fn global_virtual_store(&self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
+    #[inline]
+    pub fn block_exotic_subdeps(&self) -> bool {
+        self.contains(Enable::BLOCK_EXOTIC_SUBDEPS)
+    }
 }
 
 // ported from: src/install/PackageManager/PackageManagerOptions.zig

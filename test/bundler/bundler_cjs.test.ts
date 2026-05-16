@@ -652,7 +652,6 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         const m1 = require('./m.js');
-        require('./m.js').bump;  // no-op; just imports the ns helper
         const { bump } = require('./ns.js');
         bump();
         const m2 = require('./m.js');

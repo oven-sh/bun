@@ -1641,9 +1641,7 @@ impl<'a> Resolver<'a> {
                     // normalize `path.text` the same way — bypassing that
                     // call was the bug that dropped every matched file on
                     // Windows. See #30320.
-                    PJSideEffects::Map(_)
-                    | PJSideEffects::Glob(_)
-                    | PJSideEffects::Mixed(_) => {
+                    PJSideEffects::Map(_) | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_) => {
                         if existing.side_effects.has_side_effects(path.text()) {
                             SideEffects::HasSideEffects
                         } else {

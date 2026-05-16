@@ -1128,18 +1128,29 @@ impl<'a> LinkerContext<'a> {
                 // buffer instead (drops at scope exit — same lifetime as the
                 // arena slice).
                 //
-                // LEAK NOTE: an LSan trace attributes a sourcemap leak to the
-                // `relative_alloc` line below. The `Box<[u8]>` it returns
-                // (`rel_path_storage`) drops at scope exit, the `MutableString`
-                // is consumed by `to_default_owned`, and `StringJoiner` has a
-                // `Drop` impl that frees owned nodes — none of these locals
-                // strand. The bytes that *do* escape this fn live in the
-                // returned `SourceMapPieces` (`prefix`/`mappings`/`suffix`
-                // `Vec<u8>`s assigned into `chunk.output_source_map`); the
-                // attribution to this line is most likely an inlining artifact.
-                // If the leak reproduces, audit `chunk.output_source_map`'s
-                // lifetime in `generateChunksInParallel.rs` /
-                // `bundle_v2.rs`, not this fn.
+                // LEAK NOTE: an LSan trace attributes a sourcemap leak (4096 b
+                // x 24) to the `relative_alloc` line below. None of the locals
+                // here strand: the `Box<[u8]>` it returns (`rel_path_storage`)
+                // drops at scope exit, the `MutableString` is consumed by
+                // `to_default_owned`, and `StringJoiner` has a `Drop` impl that
+                // frees owned nodes. The bytes that *do* escape this fn live in
+                // the returned `SourceMapPieces` (`prefix`/`mappings`/`suffix`
+                // `Vec<u8>`s assigned into `chunk.output_source_map`), which are
+                // owned by `Chunk` and drop with it.
+                //
+                // The actual leaked allocations are the per-thread `PathBuffer`
+                // scratch buffers in `bun_paths::resolve_path` — three
+                // `thread_local! Cell<*mut PathBuffer>` slots
+                // (`RELATIVE_TO_COMMON_PATH_BUF`, `RELATIVE_FROM_BUF`,
+                // `RELATIVE_TO_BUF`) lazily filled by `lazy_path_buf` via
+                // `Box::new(PathBuffer::ZEROED)` -> `heap::into_raw`, with no
+                // TLS destructor. 4096 = `MAX_PATH_BYTES` on Linux; 24 = 8
+                // worker threads x 3 buffers. LSan attributes them here because
+                // `lazy_path_buf` is `#[inline]` and `relative_alloc` is the
+                // first non-inlined caller. This is intentional process-lifetime
+                // scratch (a false positive); if it ever needs to be silenced,
+                // add a TLS destructor or LSan suppression in
+                // `src/paths/resolve_path.rs`, not here.
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
                     rel_path_storage =

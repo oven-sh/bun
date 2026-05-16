@@ -28,6 +28,14 @@ function countRenderedLines(frame: string): number {
 
 async function runFilter(cwd: string, rows: number, cols = 80, extraArgs: string[] = []) {
   const chunks: Uint8Array[] = [];
+  // `proc.exited` and the PTY master-fd `data` callback are driven by
+  // independent poll events with no ordering guarantee between them. If
+  // `terminal.close()` runs before the kernel-buffered Final frame is
+  // dispatched, the assertion on `frames[frames.length - 1]` would see a
+  // stale Live frame. The terminal `exit:` callback fires on PTY EOF —
+  // after all buffered data has been delivered to `data` — so awaiting it
+  // pins the chunks before we close.
+  const { promise: eof, resolve: resolveEof } = Promise.withResolvers<void>();
   const proc = Bun.spawn([bunExe(), ...extraArgs, "--filter", "*", "build"], {
     cwd,
     env: { ...bunEnv, TERM: "xterm-256color", FORCE_COLOR: "1" },
@@ -37,9 +45,11 @@ async function runFilter(cwd: string, rows: number, cols = 80, extraArgs: string
       data: (_terminal, data) => {
         chunks.push(data);
       },
+      exit: () => resolveEof(),
     },
   });
   const exitCode = await proc.exited;
+  await eof;
   proc.terminal!.close();
   return { output: Buffer.concat(chunks).toString(), exitCode };
 }

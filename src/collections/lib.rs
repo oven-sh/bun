@@ -27,7 +27,7 @@ pub use bun_core::bounded_array;
 pub mod identity_context;
 pub mod linear_fifo;
 
-// TODO(port): heavy nightly-feature usage (adt_const_params for enum-typed
+// TODO(b2-large): heavy nightly-feature usage (adt_const_params for enum-typed
 // const generics, generic_const_exprs, inherent assoc types). Rewrite to
 // stable: enum const params → const usize/bool, inherent assoc → free aliases.
 pub mod bit_set;
@@ -514,8 +514,8 @@ pub mod hash_map {
 
 pub mod array_list;
 // TODO(port): per PORTING.md the managed/unmanaged ArrayList split collapses to
-// `Vec<T>` (global mimalloc) outside AST crates; most of these aliases can be
-// dropped once callers are migrated.
+// `Vec<T>` (global mimalloc) outside AST crates; Phase B may drop most of these
+// aliases once callers are migrated.
 pub use array_list::ArrayList; // any `std.mem.Allocator`
 pub use array_list::ArrayListAligned;
 pub use array_list::ArrayListAlignedDefault;

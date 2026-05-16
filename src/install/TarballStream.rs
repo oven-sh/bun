@@ -1387,7 +1387,7 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
 // current index (vendor/zig/lib/std/mem.zig) before returning
 // `buffer[index..]`, so for `"package/index.js"` the result is `"index.js"`
 // (no leading `/`).
-// TODO(port): hoist into bun_str or bun_paths if reused elsewhere.
+// TODO(port): Phase B — hoist into bun_str or bun_paths if reused elsewhere.
 fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
     while i < s.len() && s[i] == ('/' as OSPathChar) {
@@ -1402,8 +1402,8 @@ fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     &s[i..]
 }
 
-// Resolution::Tag is the real npm/git/tarball discriminant; Data/Status live
-// on PackageManagerTask.
+// Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
+// discriminant; Data/Status live on PackageManagerTask.
 use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 use crate::resolution::Tag as ResolutionTag;
 

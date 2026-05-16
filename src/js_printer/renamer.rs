@@ -665,7 +665,7 @@ impl NumberRenamer {
         let mut root = NumberScope::default();
         root.name_counts = root_names;
 
-        // TODO(port): bun_core::env_var::BUN_DUMP_SYMBOLS — typed accessor
+        // TODO(b2-blocked): bun_core::env_var::BUN_DUMP_SYMBOLS — typed accessor
         // not yet declared upstream; debug-only `symbols.dump()` call elided.
 
         // PORT NOTE: Zig @memset(sliceAsBytes(names), 0) — Vec::default() is already zeroed.

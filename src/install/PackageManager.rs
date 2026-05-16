@@ -66,7 +66,7 @@ impl LazyBool<fn(&PackageManager) -> bool> {
 // `bun_runtime::api::bun::process` and *reads* the same flag.
 use bun_spawn::process::WaiterThread;
 
-// TODO(port): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
+// TODO(b0): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
 use crate::RunCommand;
 
 /// `Command::Context` shim — Zig's `Command.Context` (= `*ContextData`) lives in

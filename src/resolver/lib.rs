@@ -39,9 +39,9 @@ pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;
 
-// ── public surface ────────────────────────────────────────────────────────
-// Real types live in the body below; the header re-exports them so
-// dependents see consistent paths.
+// ── B-2 un-gated surface ──────────────────────────────────────────────────
+// Real types now live in `__phase_a_body` below; the header re-exports them so
+// dependents see the same paths as the old stub surface.
 
 /// Re-export real `GlobalCache`.
 pub use bun_options_types::global_cache::GlobalCache;
@@ -89,8 +89,8 @@ pub use __phase_a_body::{
 pub use ::bun_install_types::resolver_hooks as install_types;
 
 /// Minimal real subset of `src/resolver/fs.zig` so `bun_resolver::fs::X` paths
-/// resolve for downstream crates. Full draft remains in
-/// `fs.rs` until bun_alloc::BSSStringList / bun_output land.
+/// resolve for downstream crates during B-2. Full Phase-A draft remains in
+/// `fs.rs` (gated) until bun_alloc::BSSStringList / bun_output land.
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::io::Write as _;

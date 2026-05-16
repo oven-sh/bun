@@ -8,19 +8,19 @@
 #![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────
-// Crate aliases — many modules in this crate use the porting-doc crate names;
-// map them to the real workspace crates here so module bodies stay diff-minimal.
+// Crate aliases — Phase-A drafts use the porting-doc crate names; map them
+// to the real workspace crates here so module bodies stay diff-minimal.
 // ──────────────────────────────────────────────────────────────────────────
-// Self-alias so modules written against `bun_install::…` resolve without
-// rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
+// Self-alias so Phase-A drafts written against `bun_install::…` resolve
+// without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
 use bun_collections::VecExt;
 extern crate bun_core as bun_str;
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
-// `bun_output::declare_scope!` / `scoped_log!` → the macros live at the
-// `bun_core` crate root (#[macro_export]); alias the crate so the
-// `bun_output::` path resolves in install modules that still use it.
+// `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
+// live at `bun_core` crate root (#[macro_export]); alias the crate so the
+// `bun_output::` path resolves in un-gated install modules.
 extern crate bun_analytics as analytics;
 extern crate bun_core as bun_output;
 // `bun_simdutf` → real crate is `bun_simdutf_sys`.
@@ -228,7 +228,7 @@ pub mod package_manager {
     pub use crate::package_manager_real::security_scanner;
 }
 
-/// `crate::install::…` shim — several modules (bin.rs, repository.rs,
+/// `crate::install::…` shim — Phase-A drafts (bin.rs, repository.rs,
 /// migration.rs, resolvers/folder_resolver.rs) were written against a
 /// `bun_install::install` submodule path mirroring `install.zig`. The crate
 /// root *is* that file now, so re-export everything under both names.
@@ -1076,7 +1076,7 @@ pub use bun_install_types::{
     DependencyID, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
     TruncatedPackageNameHash,
 };
-// Some modules still use the Zig field-style lowercase names; alias both spellings.
+// Phase-A drafts use the Zig field-style lowercase names; alias both spellings.
 pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;

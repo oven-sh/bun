@@ -24,7 +24,7 @@ use bun_dotenv as dot_env;
 /// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
 /// // TODO(port): lifetime — Task lives in an intrusive cross-thread queue
 /// (`next`, `package_manager` BACKREF). A `&'a mut NetworkTask` cannot soundly
-/// cross that boundary; should likely be demoted to `*mut NetworkTask`.
+/// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
 pub struct Task<'a> {
     pub tag: Tag,
     pub request: Request<'a>,
@@ -620,7 +620,7 @@ pub enum Status {
 // zeroed-`uninit()` union storage.
 
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
-/// // TODO(refactor): consider folding `Tag` + `Request` + `Data` into a
+/// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a
 /// single Rust `enum` (one discriminant instead of tag + 2 untagged unions).
 pub union Data {
     pub package_manifest: ManuallyDrop<npm::PackageManifest>,
@@ -643,13 +643,13 @@ pub union Request<'a> {
 pub struct PackageManifestRequest<'a> {
     pub name: StringOrTinyString,
     // BORROW_PARAM per LIFETIMES.tsv
-    // TODO(port): lifetime — see note on `Task<'a>`; likely should be `*mut NetworkTask`.
+    // TODO(port): lifetime — see note on `Task<'a>`; likely `*mut NetworkTask` in Phase B.
     pub network: &'a mut NetworkTask,
 }
 
 pub struct ExtractRequest<'a> {
     // BORROW_PARAM per LIFETIMES.tsv
-    // TODO(port): lifetime — see note on `Task<'a>`; likely should be `*mut NetworkTask`.
+    // TODO(port): lifetime — see note on `Task<'a>`; likely `*mut NetworkTask` in Phase B.
     pub network: &'a mut NetworkTask,
     pub tarball: ExtractTarball,
 }

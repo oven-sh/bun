@@ -182,7 +182,7 @@ pub struct RequestContext<
     pub range: RangeRequest::Raw,
 
     pub request_body_readable_stream_ref: readable_stream::Strong,
-    // TODO(port): `WebCore::body::value::HiveRef` — webcore gates the
+    // TODO(b2-blocked): `WebCore::body::value::HiveRef` — webcore gates the
     // HiveArray pool. Raw ptr to the pooled `Body::Value` slot until that lands.
     pub request_body: Option<NonNull<body::Value>>,
     pub request_body_buf: Vec<u8>,
@@ -1027,7 +1027,7 @@ where
         }
     }
 
-    // TODO(port): `Api::FallbackMessageContainer` + `Fallback::render_backend`
+    // TODO(b2-blocked): `Api::FallbackMessageContainer` + `Fallback::render_backend`
     // (bun_options_types::schema::api / bun_ast::runtime) — debug-only HTML
     // error page. Production hits `render_production_error` instead.
 
@@ -2792,7 +2792,7 @@ where
             req.render_metadata();
         }
 
-        // TODO(port): DEBUG_MODE dev-server HTML fallback page — gated on
+        // TODO(b2-blocked): DEBUG_MODE dev-server HTML fallback page — gated on
         // `Api::FallbackMessageContainer`/`Fallback::render_backend`.
 
         if DEBUG_MODE {
@@ -3183,7 +3183,7 @@ where
         // SAFETY: BACKREF
         let server = &*server;
         let global_this = server.global_this();
-        // TODO(port): DEBUG_MODE branch renders the HTML fallback page via
+        // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
         // `Api::JsException` + `render_default_error`; gated until bun_schema/
         // bun_js_parser surfaces are in. Falls through to the production path.
 

@@ -961,7 +961,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Zig passes `store_fd = ctx.debug.hot_reload != .none` to `init`;
         // `InitOptions` lacks the field so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
-        // PORT NOTE: `vm.dns_result_order` is a `u8` until the jsc/runtime crate cycle is broken and widens
+        // PORT NOTE: `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is the
         // exact `@intFromEnum` Zig would have done.
         vm.dns_result_order =
@@ -1103,7 +1103,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             });
         }
         // PORT NOTE: `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
-        // the jsc/runtime crate cycle is broken and widens it to `cli::HotReload`); `Run::start` re-reads it
+        // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
         // from `self.ctx` to drive the hot-reloader enable.
         vm.hot_reload = ctx.debug.hot_reload as u8;
 
@@ -1172,7 +1172,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
             // PORT NOTE: `Options::dns_result_order` is `u8` until the
-            // the jsc/runtime crate cycle is broken and widens it to `bun_dns::Order`; the enum is
+            // b2-cycle widens it to `bun_dns::Order`; the enum is
             // `#[repr(u8)]` so `as u8` matches Zig's `@intFromEnum`.
             dns_result_order: bun_dns::Order::from_string_or_die(
                 &ctx.runtime_options.dns_result_order,

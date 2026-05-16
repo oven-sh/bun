@@ -379,86 +379,83 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
   // gives. This is the Linux-observable half of #30890; on Windows the
   // same handler catches CTRL_BREAK_EVENT / CTRL_CLOSE_EVENT which
   // ENABLE_PROCESSED_INPUT clearing does not cover.
-  test.skipIf(process.platform === "win32")(
-    "SIGINT kills the prompt cleanly with cursor restored",
-    async () => {
-      using dir = tempDir("update-interactive-sigint", {
-        "package.json": JSON.stringify({
-          name: "test-project",
-          version: "1.0.0",
-          dependencies: {
-            "is-even": "0.1.0",
-          },
-        }),
-      });
-
-      await using installProc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(await installProc.exited).toBe(0);
-
-      const decoder = new TextDecoder();
-      let output = "";
-      let sawPrompt = false;
-      const promptReady = Promise.withResolvers<void>();
-
-      await using terminal = new Bun.Terminal({
-        cols: 120,
-        rows: 30,
-        data(_t, chunk: Uint8Array) {
-          output += decoder.decode(chunk, { stream: true });
-          if (!sawPrompt && output.includes("\x1b[?25l")) {
-            sawPrompt = true;
-            promptReady.resolve();
-          }
+  test.skipIf(process.platform === "win32")("SIGINT kills the prompt cleanly with cursor restored", async () => {
+    using dir = tempDir("update-interactive-sigint", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "is-even": "0.1.0",
         },
-      });
+      }),
+    });
 
-      const proc = Bun.spawn({
-        cmd: [bunExe(), "update", "--interactive"],
-        cwd: String(dir),
-        env: { ...bunEnv, FORCE_COLOR: "1" },
-        terminal,
-      });
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
 
-      try {
-        // Wait for the prompt to render (and thus install the signal
-        // handler) before sending SIGINT. Race against proc.exited so we
-        // don't hang if the subprocess dies before rendering.
-        await Promise.race([promptReady.promise, proc.exited]);
+    const decoder = new TextDecoder();
+    let output = "";
+    let sawPrompt = false;
+    const promptReady = Promise.withResolvers<void>();
 
-        proc.kill("SIGINT");
-        const exitCode = await proc.exited;
-        output += decoder.decode();
-
-        if (!output.includes("\x1b[?25h")) {
-          console.log("Missing cursor restore after SIGINT. Output hex tail:");
-          console.log(Buffer.from(output).toString("hex").slice(-400));
+    await using terminal = new Bun.Terminal({
+      cols: 120,
+      rows: 30,
+      data(_t, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (!sawPrompt && output.includes("\x1b[?25l")) {
+          sawPrompt = true;
+          promptReady.resolve();
         }
+      },
+    });
 
-        // The signal handler MUST emit the cursor-restore before exiting.
-        // Without the handler, the default SIGINT action kills the process
-        // with the cursor still hidden.
-        expect(output).toContain("\x1b[?25h");
-        // And disable the mouse tracking the prompt had enabled.
-        expect(output).toContain("\x1b[?1000l");
-        expect(output).toContain("\x1b[?1006l");
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: String(dir),
+      env: { ...bunEnv, FORCE_COLOR: "1" },
+      terminal,
+    });
 
-        // package.json must be untouched — the signal kills the process
-        // before any update work runs.
-        const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
-        expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+    try {
+      // Wait for the prompt to render (and thus install the signal
+      // handler) before sending SIGINT. Race against proc.exited so we
+      // don't hang if the subprocess dies before rendering.
+      await Promise.race([promptReady.promise, proc.exited]);
 
-        // Conventional 128 + SIGINT(2). Last so output diagnostics show
-        // first on failure.
-        expect(exitCode).toBe(130);
-      } finally {
-        proc.kill();
+      proc.kill("SIGINT");
+      const exitCode = await proc.exited;
+      output += decoder.decode();
+
+      if (!output.includes("\x1b[?25h")) {
+        console.log("Missing cursor restore after SIGINT. Output hex tail:");
+        console.log(Buffer.from(output).toString("hex").slice(-400));
       }
-    },
-  );
+
+      // The signal handler MUST emit the cursor-restore before exiting.
+      // Without the handler, the default SIGINT action kills the process
+      // with the cursor still hidden.
+      expect(output).toContain("\x1b[?25h");
+      // And disable the mouse tracking the prompt had enabled.
+      expect(output).toContain("\x1b[?1000l");
+      expect(output).toContain("\x1b[?1006l");
+
+      // package.json must be untouched — the signal kills the process
+      // before any update work runs.
+      const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
+      expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+
+      // Conventional 128 + SIGINT(2). Last so output diagnostics show
+      // first on failure.
+      expect(exitCode).toBe(130);
+    } finally {
+      proc.kill();
+    }
+  });
 });

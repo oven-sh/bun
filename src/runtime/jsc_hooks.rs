@@ -5169,4 +5169,19 @@ pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys:
     bun_core::heap::into_raw(store).cast()
 }
 
+/// Releases both refs from [`__bun_stdio_blob_store_new`]'s `+2` (one owner ref + one
+/// dead immortality sentinel). Live retained `StoreRef`s keep their own `+1`, so safe.
+#[unsafe(no_mangle)]
+pub fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
+    use bun_jsc::webcore_types::store::Store;
+    let Some(this) = core::ptr::NonNull::new(ptr.cast::<Store>()) else {
+        return;
+    };
+    // SAFETY: ptr is a live `Box<Store>` raw from the ctor; releasing its +2.
+    unsafe {
+        Store::deref(this);
+        Store::deref(this);
+    }
+}
+
 // ported from: src/jsc/VirtualMachine.zig

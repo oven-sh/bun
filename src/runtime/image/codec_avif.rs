@@ -171,18 +171,18 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         return Err(codecs::Error::DecodeFailed);
     }
 
-    // Fallible alloc — match jpeg/png/webp: ~1 GiB ceiling via `max_pixels`
-    // enforced by the shim already, but a hostile 16k×16k input still asks
-    // for a 1 GiB RGBA. Let the OOM propagate instead of aborting.
+    // Fallible alloc — ~1 GiB ceiling via `max_pixels` is enforced by the
+    // shim already, but a hostile 16k×16k input still asks for a 1 GiB
+    // RGBA. `vec![0u8; n]` aborts on OOM, so split into a fallible reserve
+    // + zero-fill resize: same observable bytes as the sibling codecs
+    // (see `codec_jpeg.rs`'s PERF(port) note about zero-init), but OOM
+    // propagates instead of aborting the process.
     let pixels = usize::try_from(w).expect("int cast") * usize::try_from(h).expect("int cast") * 4;
     let mut out: Vec<u8> = Vec::new();
     if out.try_reserve_exact(pixels).is_err() {
         return Err(codecs::Error::OutOfMemory);
     }
-    // SAFETY: `try_reserve_exact` guarantees capacity ≥ pixels and the Vec
-    // is empty; set_len is safe because the shim will fill every byte on
-    // success (and we discard the Vec on error before observing contents).
-    unsafe { out.set_len(pixels) };
+    out.resize(pixels, 0);
 
     let mut w2: u32 = 0;
     let mut h2: u32 = 0;

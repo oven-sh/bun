@@ -501,9 +501,12 @@ void bun_avif_free_output(uint8_t* data)
 
 #else
 
-// Non-Linux (or Android): stub so the link succeeds. The Rust wrapper only
-// references these from inside `#[cfg(target_os = "linux")]` so they're
-// dead code on other targets, but the symbols still need definitions.
+// Non-Linux (or Android): `pub mod codec_avif` in mod.rs is gated on
+// `#[cfg(target_os = "linux")]`, so the Rust-side `extern "C"` block is
+// never compiled on other targets and nothing references these symbols.
+// Kept as belt-and-braces in case the module cfg gate is ever relaxed
+// — unlike the sibling image_coregraphics_shim / image_wic_shim stubs,
+// these are NOT currently link-required.
 #include <cstddef>
 #include <cstdint>
 extern "C" int32_t bun_avif_probe(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*) { return 1; }

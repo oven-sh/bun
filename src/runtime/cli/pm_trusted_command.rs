@@ -7,8 +7,8 @@ use bun_core::strings;
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
     LoadResult, Lockfile,
+    package::PackageColumns as _,
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
-    package::{PackageColumns as _},
     tree,
 };
 use bun_install::package_manager_real::{

@@ -5629,7 +5629,7 @@ impl NodeFS {
     }
 
     pub fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::fstatx(args.fd, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(Stats::init(&result, args.big_int)),
@@ -5765,7 +5765,7 @@ impl NodeFS {
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
@@ -7778,9 +7778,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory) {
                 let mut errno: E = map_anyerror_to_errno(err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
@@ -7816,9 +7814,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File) {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force {
                         return Ok(());
@@ -7889,7 +7885,7 @@ impl NodeFS {
                 )));
             }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),

@@ -559,12 +559,16 @@ pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
 use bun_bundler::transpiler::PluginRunner;
 
 // PORT NOTE: `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71)
-// has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_node_file_hook`
+// has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_file_to_buf`
 // per PORTING.md §Forbidden ("dep-cycle: MOVE the code to the right crate") —
 // the body reaches into `bun_standalone_graph` + `bun_sys::Tmpfile` +
-// `node::fs`, none of which are `bun_jsc` deps. Both Zig callers
-// (`Bun__resolveEmbeddedNodeFile` above, and the `.sqlite` arm of
-// `transpileSourceCode`) now live in `bun_runtime`.
+// `node::fs`, none of which are `bun_jsc` deps. Three Zig callers live in
+// `bun_runtime`:
+//   - `Bun__resolveEmbeddedNodeFile` above (extname `"node"`, goes through
+//     `LoaderHooks::resolve_embedded_node_file` to bridge the crate gap).
+//   - The `.sqlite` arm of `transpileSourceCode`.
+//   - `ffi_body::FFI::open` (extname `"so"`/`"dylib"`/`"dll"`; same-crate
+//     call to `resolve_embedded_file_to_buf`, no hook needed).
 
 /// Spec ModuleLoader.zig:73-83.
 #[unsafe(no_mangle)]

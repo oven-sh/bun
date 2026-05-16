@@ -562,12 +562,12 @@ fn validate_elf64_le(data: &[u8]) -> Result<(), ElfError> {
 /// can run on macOS/Windows, in which case the host's linker layout is
 /// irrelevant and we want to normalize for portability (#24742).
 fn host_uses_nix_store_interpreter() -> bool {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         return false;
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         static COMPUTED: AtomicU8 = AtomicU8::new(0); // 0 unknown, 1 no, 2 yes
 

@@ -38,6 +38,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
+import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -284,6 +285,13 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   };
 
   const ctx: Ctx = { n, cfg, sources, o, dirStamp };
+
+  // Configure-time write (not a ninja edge — it's a constant manifest like
+  // depVersionsHeader). Pushed into rustInputs so the cargo edge implicit-deps
+  // on it; bun_core/build.rs emits the matching `rerun-if-changed`.
+  const buildOptionsRs = generateBuildOptionsRs(cfg);
+  o.all.push(buildOptionsRs);
+  o.rustInputs.push(buildOptionsRs);
 
   emitBunError(ctx);
   emitStringMaps(ctx);

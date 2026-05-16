@@ -15,9 +15,9 @@ pub mod Global;
 pub mod atomic_cell;
 pub mod hint;
 pub mod result;
+pub mod thread_id;
 pub mod tty;
 pub mod util;
-pub mod thread_id;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
@@ -316,7 +316,11 @@ pub mod path_sep {
 
     #[inline(always)]
     pub fn is_sep_native_t<T: PathByte>(c: T) -> bool {
-        if cfg!(windows) { is_sep_any_t(c) } else { is_sep_posix_t(c) }
+        if cfg!(windows) {
+            is_sep_any_t(c)
+        } else {
+            is_sep_posix_t(c)
+        }
     }
 
     /// Host-OS-native absolute-path predicate (Zig: `std.fs.path.isAbsolute`).
@@ -653,97 +657,12 @@ impl ErrnoNames {
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
 pub use bun_core_macros::{EnumTag, pretty_fmt};
 
-/// Stand-in for Zig's `@import("build_options")`. Real values are emitted by
-/// `build.rs` via `env!()` in Phase C (link). Placeholder values let env.rs
-/// const-evaluate cleanly.
+/// Stand-in for Zig's `@import("build_options")`. Values are written at
+/// configure time by `scripts/build/buildOptionsRs.ts` from the resolved
+/// `Config` and `include!()`'d here; `build.rs` exports `BUN_CODEGEN_DIR`
+/// and fingerprints the file so a sha/version change recompiles this crate.
 pub mod build_options {
-    /// `option_env!` with a fallback literal — same shape as Zig's
-    /// `b.option(...) orelse default` in build.zig.
-    macro_rules! build_opt {
-        ($name:literal, $default:expr) => {
-            match option_env!($name) {
-                Some(v) => v,
-                None => $default,
-            }
-        };
-    }
-    macro_rules! build_opt_bool {
-        ($name:literal, $default:expr) => {
-            match option_env!($name) {
-                Some(v) => matches!(v.as_bytes(), b"true" | b"1"),
-                None => $default,
-            }
-        };
-    }
-
-    /// `true` for the `release-assertions` profile (Zig: ReleaseSafe).
-    pub const RELEASE_SAFE: bool = build_opt_bool!("BUN_RELEASE_SAFE", false);
-    pub const REPORTED_NODEJS_VERSION: &str = build_opt!("BUN_REPORTED_NODEJS_VERSION", "24.0.0");
-    pub const BASELINE: bool = build_opt_bool!("BUN_BASELINE", false);
-    pub const SHA: &str = build_opt!("BUN_GIT_SHA", "0000000000000000000000000000000000000000");
-    pub const IS_CANARY: bool = build_opt_bool!("BUN_IS_CANARY", false);
-    pub const CANARY_REVISION: &str = build_opt!("BUN_CANARY_REVISION", "0");
-    /// Repo root. Zig's build.zig passes `b.pathFromRoot(".")` (already
-    /// normalized, native separators) — there is *no* fallback in the spec.
-    /// `scripts/build/rust.ts` exports `BUN_BASE_PATH` for every build.
-    ///
-    /// The POSIX fallback derives it from this crate's manifest dir
-    /// (`<repo>/src/bun_core`) so a bare `cargo check` still works for
-    /// `runtime_embed_file!` (which goes through `PathBuf`, so the OS resolves
-    /// `..`). On Windows that fallback is *wrong*: `CARGO_MANIFEST_DIR` is
-    /// backslash-separated and concatenating `/../..` yields a mixed-separator,
-    /// unnormalized path that crash_handler's byte-wise `starts_with` (which
-    /// appends `SEP_STR` and compares against debug-info file paths) can never
-    /// match — so require the env var there, matching the Zig contract.
-    pub const BASE_PATH: &[u8] = match option_env!("BUN_BASE_PATH") {
-        Some(v) => v.as_bytes(),
-        // The fallback is correct on POSIX. On Windows it is mixed-separator
-        // + unnormalized and crash_handler's byte-wise `starts_with` will
-        // never match it — but real Windows builds always go through
-        // `scripts/build/rust.ts` (which sets the env var). Kept so that bare
-        // `cargo check --target *-windows-*` from a non-Windows host compiles.
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../..").as_bytes(),
-    };
-    pub const ENABLE_LOGS: bool = cfg!(debug_assertions);
-    pub const ENABLE_ASAN: bool = cfg!(bun_asan);
-    pub const ENABLE_FUZZILLI: bool = false;
-    /// Whether `libtcc.a` is built and linked. Mirrors `cfg.tinycc` in
-    /// `scripts/build/config.ts`: TinyCC is disabled on Windows/aarch64
-    /// (TinyCC has no aarch64-pe-coff backend), Android, and FreeBSD (the
-    /// vendored fork doesn't support those targets and the dep is skipped).
-    /// Has to be a *compile-time* `false` on those targets — `ffi_body.rs`
-    /// gates its `bun_tcc_sys::*` calls behind `if !ENABLE_TINYCC { return }`,
-    /// and rustc only DCEs the `tcc_*` extern refs when the const folds; a
-    /// runtime check would still leave undefined symbols at link.
-    pub const ENABLE_TINYCC: bool = !cfg!(any(
-        all(windows, target_arch = "aarch64"),
-        target_os = "android",
-        target_os = "freebsd",
-    ));
-    /// `<build>/codegen`. `scripts/build/rust.ts` exports `BUN_CODEGEN_DIR` to
-    /// every crate's rustc env. POSIX fallback for bare `cargo check`; on
-    /// Windows the `/../../` fallback is mixed-separator + unnormalized (see
-    /// `BASE_PATH` above), so require the env var there.
-    pub const CODEGEN_PATH: &[u8] = match option_env!("BUN_CODEGEN_DIR") {
-        Some(v) => v.as_bytes(),
-        // See BASE_PATH note re: Windows fallback being mixed-separator. Real
-        // Windows builds set the env var; this only fires for cross-target
-        // `cargo check`.
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../build/debug/codegen").as_bytes(),
-    };
-    /// `cfg.version` from package.json, split by `scripts/build/rust.ts`.
-    pub const VERSION: crate::Version = crate::Version {
-        major: crate::const_parse_u32(build_opt!("BUN_VERSION_MAJOR", "1").as_bytes()),
-        minor: crate::const_parse_u32(build_opt!("BUN_VERSION_MINOR", "3").as_bytes()),
-        patch: crate::const_parse_u32(build_opt!("BUN_VERSION_PATCH", "0").as_bytes()),
-    };
-    /// Zig: `build_options.fallback_html_version` — hex-string hash of the
-    /// fallback HTML bundle, injected by the build system. Placeholder until
-    /// Phase C wires the real value via `env!()` in `build.rs`.
-    pub const FALLBACK_HTML_VERSION: &str = match option_env!("BUN_FALLBACK_HTML_VERSION") {
-        Some(v) => v,
-        None => "0000000000000000",
-    };
+    include!(concat!(env!("BUN_CODEGEN_DIR"), "/build_options.rs"));
 }
 
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
@@ -1266,7 +1185,7 @@ macro_rules! err {
     // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
     (from $e:expr) => { $crate::Error::intern(<&'static str>::from(&$e)) };
     (@__cached $name:expr) => {{
-        #[cfg_attr(target_os = "linux", unsafe(link_section = ".bun_err"))]
+        #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".bun_err"))]
         static __E: ::core::sync::atomic::AtomicU16 = ::core::sync::atomic::AtomicU16::new(0);
         let __v = __E.load(::core::sync::atomic::Ordering::Relaxed);
         if __v != 0 {
@@ -1381,10 +1300,10 @@ pub use crate::fmt::{
     digit_count_i64, digit_count_u64, double, fast_digit_count, fmt_os_path, fmt_path, fmt_path_u8,
     fmt_path_u16, format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper,
     hex_char_lower, hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u8, hex_u16,
-    hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii, parse_f32,
-    parse_f64, parse_hex4, parse_hex_prefix, parse_hex_to_int, parse_int as parse_int_radix,
-    parse_num, print_int, quote, raw, s, size, size_f64, size_i64, truncated_hash32,
-    truncated_hash32_bytes, utf16,
+    hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii,
+    parse_f32, parse_f64, parse_hex_prefix, parse_hex_to_int, parse_hex4,
+    parse_int as parse_int_radix, parse_num, print_int, quote, raw, s, size, size_f64, size_i64,
+    truncated_hash32, truncated_hash32_bytes, utf16,
 };
 
 /// Surrogate/transcode primitives + scalar-fallback string helpers that
@@ -2665,8 +2584,8 @@ pub(crate) mod strings_impl {
         &s[..e]
     }
 }
-pub use strings_impl::*;
 pub use crate::string::immutable::convert_utf8_to_utf16_in_buffer;
+pub use strings_impl::*;
 
 /// Back-compat alias: `bun_core::strings::X` → `bun_core::X`. The full
 /// `bun.strings` namespace is `bun_core::immutable` (formerly

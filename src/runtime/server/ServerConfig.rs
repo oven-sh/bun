@@ -57,8 +57,8 @@ pub struct ServerConfig {
     pub id: Box<[u8]>,
     pub allow_hot: bool,
     pub ipv6_only: bool,
-    pub h3: bool,
-    pub h1: bool,
+    pub http3: bool,
+    pub http1: bool,
 
     pub is_node_http: bool,
     pub had_routes_object: bool,
@@ -91,8 +91,8 @@ impl Default for ServerConfig {
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
-            h3: false,
-            h1: true,
+            http3: false,
+            http1: true,
             is_node_http: false,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -282,7 +282,7 @@ impl ServerConfig {
         // Rust cannot alias owned Vec/Box/Strong; instead move every owning
         // field into `that` and leave the Copy scalars in place on `self` —
         // matching Zig's observable post-state for `self` (idle_timeout,
-        // development, reuse_port, h1/h3, etc. retained; resources gone) and
+        // development, reuse_port, http1/http3, etc. retained; resources gone) and
         // ensuring the assignment-drop of the residual `self` is a no-op.
         let mut that = ServerConfig {
             address: core::mem::take(&mut self.address),
@@ -305,8 +305,8 @@ impl ServerConfig {
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
-            h3: self.h3,
-            h1: self.h1,
+            http3: self.http3,
+            http1: self.http1,
             is_node_http: self.is_node_http,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
@@ -1265,14 +1265,14 @@ impl ServerConfig {
         }
 
         if let Some(v) = arg.get(global, "http3")? {
-            args.h3 = v.to_boolean();
+            args.http3 = v.to_boolean();
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
 
         if let Some(v) = arg.get(global, "http1")? {
-            args.h1 = v.to_boolean();
+            args.http1 = v.to_boolean();
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1409,18 +1409,18 @@ impl ServerConfig {
             }
         }
 
-        if args.h3 {
+        if args.http3 {
             if args.ssl_config.is_none() {
                 return Err(
                     global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
                 );
             }
-        } else if !args.h1 {
+        } else if !args.http1 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 without enabling http3"
             )));
         }
-        if !args.h1 && matches!(args.address, Address::Unix(_)) {
+        if !args.http1 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));

@@ -22,6 +22,7 @@
 //   else                                   → usize
 #[cfg(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -43,6 +44,7 @@ pub type ThreadId = u64;
 
 #[cfg(not(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -62,6 +64,7 @@ pub type ThreadId = usize;
 // Width-matched alias so `CriticalSection` can `compare_exchange` on it directly.
 #[cfg(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -83,6 +86,7 @@ pub type AtomicThreadId = core::sync::atomic::AtomicU64;
 
 #[cfg(not(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -110,7 +114,7 @@ pub const INVALID: ThreadId = ThreadId::MAX;
 /// debuggers/tracers report; falls back to `pthread_self()` as a `usize` on unknown targets.
 #[inline]
 pub fn current() -> ThreadId {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Zig: `LinuxThreadImpl.getCurrentId()` → `linux.gettid()`.
         // SAFETY: `gettid` takes no arguments and cannot fail.
@@ -179,6 +183,7 @@ pub fn current() -> ThreadId {
     }
     #[cfg(not(any(
         target_os = "linux",
+        target_os = "android",
         target_os = "freebsd",
         target_os = "netbsd",
         target_os = "openbsd",

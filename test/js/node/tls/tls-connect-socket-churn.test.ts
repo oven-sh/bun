@@ -4,12 +4,12 @@
 // clients via the memoised SecureContext), and RSS must stay flat.
 //
 // Regression for #12117 / #24118 / #29887.
-import { test, expect } from "bun:test";
-import tls from "node:tls";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { tls as tlsCerts, isASAN, isDebug } from "harness";
+import { isASAN, isDebug, tls as tlsCerts } from "harness";
 
 test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () => {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, sock => {

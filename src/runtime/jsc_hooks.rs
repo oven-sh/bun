@@ -1784,14 +1784,10 @@ fn console_print_runtime_object_inner<const C: bool>(
     if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
         let internals = &timer.internals;
         let id = internals.id;
-        formatter.add_for_new_line(
-            "Timeout(# ) ".len() + bun_core::fmt::digit_count(id.max(0)),
-        );
+        formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
         let mut w = AsFmt::new(writer_);
         if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
-            formatter.add_for_new_line(
-                "repeats ".len() + bun_core::fmt::digit_count(id.max(0)),
-            );
+            formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id.max(0)));
             let _ = write!(
                 w,
                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1822,9 +1818,7 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
         let id = immediate.internals.id;
-        formatter.add_for_new_line(
-            "Immediate(# ) ".len() + bun_core::fmt::digit_count(id.max(0)),
-        );
+        formatter.add_for_new_line("Immediate(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
         let mut w = AsFmt::new(writer_);
         let _ = write!(
             w,
@@ -4463,29 +4457,27 @@ unsafe fn transpile_virtual_module(
     }
 }
 
-/// `LoaderHooks::resolve_embedded_node_file` body — port of
-/// `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71) for the
-/// `process.dlopen()`-on-a-compiled-executable path. Extracts an embedded
-/// `.node` addon from the standalone module graph to a real on-disk temp file
-/// and writes the resulting path back into `*in_out_str`
-/// (`bun.String.cloneUTF8(result)`).
+/// Core of `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71):
+/// finds an embedded file in the standalone module graph, materializes it to
+/// a real on-disk temp file with `extname`, and writes the resulting absolute
+/// path into `out_buf`. Returns the number of bytes written.
 ///
-/// # Safety
-/// `vm` is the live per-thread VM; `in_out_str` is a valid in/out
-/// `bun.String*` (C++ ABI, BunProcess.cpp). Caller (`Bun__resolveEmbeddedNodeFile`
-/// in `bun_jsc::module_loader`) has already checked
-/// `vm.standalone_module_graph.is_some()`.
-unsafe fn resolve_embedded_node_file_hook(
-    vm: *mut VirtualMachine,
-    in_out_str: *mut bun_core::String,
-) -> bool {
-    // Spec ModuleLoader.zig:1334-1337 — `in_out_str.toUTF8()` + `path_buffer_pool.get()`.
-    // SAFETY: per fn contract — `in_out_str` is a valid `bun.String*`.
-    let input_path_utf8 = unsafe { &*in_out_str }.to_utf8();
-    let input_path = input_path_utf8.slice();
+/// Called from two paths:
+///   - `resolve_embedded_node_file_hook` (`process.dlopen()` on a compiled
+///     executable; extname = `"node"`).
+///   - `bun:ffi` `dlopen()` on an embedded `with { type: "file" }` shared
+///     library (`ffi_body::FFI::open`; extname = `"so"` / `"dylib"` / `"dll"`).
+///
+/// Returns `None` when the path is empty, not present in the graph, or any
+/// filesystem step fails.
+pub(crate) fn resolve_embedded_file_to_buf(
+    input_path: &[u8],
+    extname: &[u8],
+    out_buf: &mut [u8],
+) -> Option<usize> {
     // Spec ModuleLoader.zig:34 — `if (input_path.len == 0) return null`.
     if input_path.is_empty() {
-        return false;
+        return None;
     }
 
     // Spec ModuleLoader.zig:35-36 — `vm.standalone_module_graph orelse return
@@ -4496,39 +4488,28 @@ unsafe fn resolve_embedded_node_file_hook(
     // read-only (instant UB under Stacked Borrows). Reach the concrete graph
     // via `Graph::get()` which hands out the `UnsafeCell` `*mut` (same path
     // as `load_standalone_sourcemap` / `node_fs`).
-    let _ = vm;
-    let Some(graph) = bun_standalone_graph::Graph::get() else {
-        return false;
-    };
+    let graph = bun_standalone_graph::Graph::get()?;
     // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
     // process-lifetime singleton; this hook runs on the JS thread and `find`
     // is read-only over the post-init `files` table.
-    let Some(file) = (unsafe { &mut *graph }).find(input_path) else {
-        return false;
-    };
+    let file = (unsafe { &mut *graph }).find(input_path)?;
     let file_name: &[u8] = file.name;
     let file_contents: &[u8] = file.contents.as_bytes();
 
-    // Spec ModuleLoader.zig:43-45 — `tmpname("node", buf, bun.hash(file.name))`.
+    // Spec ModuleLoader.zig:43-45 — `tmpname(extname, buf, bun.hash(file.name))`.
     let mut tmpname_buf = bun_paths::path_buffer_pool::get();
-    let Ok(tmpfilename) =
-        Fs::FileSystem::tmpname(b"node", &mut tmpname_buf[..], bun_wyhash::hash(file_name))
-    else {
-        return false;
-    };
+    let tmpfilename =
+        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name))
+            .ok()?;
 
     // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
     // SAFETY: `FileSystem::instance()` returns the process-global singleton
     // pointer (initialized at startup).
-    let Ok(tmpdir) = (unsafe { &mut *Fs::FileSystem::instance() }).tmpdir() else {
-        return false;
-    };
+    let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() }).tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
 
     // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.
-    let Ok(tmpfile) = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename) else {
-        return false;
-    };
+    let tmpfile = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename).ok()?;
     let tmpfile_fd = tmpfile.fd;
     scopeguard::defer! {
         let _ = bun_sys::close(tmpfile_fd);
@@ -4552,21 +4533,51 @@ unsafe fn resolve_embedded_node_file_hook(
     )
     .is_err()
     {
-        return false;
+        return None;
     }
 
     // Spec ModuleLoader.zig:69 — `joinAbsStringBuf(RealFS.tmpdirPath(),
-    // path_buf, &.{tmpfilename}, .auto)`.
-    let mut path_buf = bun_paths::path_buffer_pool::get();
+    // path_buf, &.{tmpfilename}, .auto)`. `join_abs_string_buf` writes into
+    // `out_buf` and returns a slice pointing into it; capture the length so
+    // the caller knows how many bytes are live.
     let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
         Fs::RealFS::tmpdir_path(),
-        &mut path_buf[..],
+        out_buf,
         &[tmpfilename.as_bytes()],
     );
+    Some(result.len())
+}
+
+/// `LoaderHooks::resolve_embedded_node_file` body — port of
+/// `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71) for the
+/// `process.dlopen()`-on-a-compiled-executable path. Delegates to
+/// [`resolve_embedded_file_to_buf`] with `extname = "node"` and writes the
+/// resulting on-disk path back into `*in_out_str`
+/// (`bun.String.cloneUTF8(result)`).
+///
+/// # Safety
+/// `vm` is the live per-thread VM; `in_out_str` is a valid in/out
+/// `bun.String*` (C++ ABI, BunProcess.cpp). Caller (`Bun__resolveEmbeddedNodeFile`
+/// in `bun_jsc::module_loader`) has already checked
+/// `vm.standalone_module_graph.is_some()`.
+unsafe fn resolve_embedded_node_file_hook(
+    vm: *mut VirtualMachine,
+    in_out_str: *mut bun_core::String,
+) -> bool {
+    // Spec ModuleLoader.zig:1334-1337 — `in_out_str.toUTF8()` + `path_buffer_pool.get()`.
+    // SAFETY: per fn contract — `in_out_str` is a valid `bun.String*`.
+    let input_path_utf8 = unsafe { &*in_out_str }.to_utf8();
+    let input_path = input_path_utf8.slice();
+    let _ = vm;
+
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let Some(len) = resolve_embedded_file_to_buf(input_path, b"node", &mut path_buf[..]) else {
+        return false;
+    };
 
     // Spec ModuleLoader.zig:1339-1340 — `in_out_str.* = bun.String.cloneUTF8(result)`.
     // SAFETY: per fn contract.
-    unsafe { *in_out_str = bun_core::String::clone_utf8(result) };
+    unsafe { *in_out_str = bun_core::String::clone_utf8(&path_buf[..len]) };
     true
 }
 

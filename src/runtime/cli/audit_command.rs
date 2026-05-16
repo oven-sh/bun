@@ -7,7 +7,7 @@ use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};

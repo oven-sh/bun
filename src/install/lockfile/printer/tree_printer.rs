@@ -11,7 +11,7 @@ use bun_install::{
 };
 // PORT NOTE: Zig `slice.items(.field)` → trait-provided `items_<field>()`
 // accessors on `MultiArrayList<Package>` / its `Slice`.
-use crate::lockfile_real::package::{PackageColumns as _};
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
 use bun_sys::{Dir as SysDir, Fd};
 

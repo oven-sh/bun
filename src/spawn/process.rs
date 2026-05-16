@@ -47,7 +47,7 @@ pub mod spawn_sys {
     // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
     // no-op since Win32 handles default to non-inheritable). Gated so the
     // re-export resolves without `bun_sys` having to ship Windows stubs.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
     #[cfg(unix)]
     pub use bun_sys::{can_use_memfd, set_close_on_exec};
@@ -92,7 +92,7 @@ pub use bun_spawn_sys::{
 /// inherently once-per-process — keep `EV_ONESHOT` there so the kernel
 /// auto-removes the filter.
 #[cfg(unix)]
-const PROCESS_POLL_ONE_SHOT: bool = !cfg!(target_os = "linux");
+const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "android"));
 
 pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
@@ -265,9 +265,9 @@ impl Process {
         bun_core::heap::into_raw(Box::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: posix.pidfd.unwrap_or(0),
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             pidfd: (),
             event_loop,
             sync: sync_,
@@ -422,9 +422,9 @@ impl Process {
                 return Ok(());
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             let watchfd = self.pidfd;
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let watchfd = self.pid;
 
             let poll: *mut FilePoll = if matches!(self.poller, Poller::Fd(_)) {
@@ -622,7 +622,7 @@ impl Process {
             }
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use bun_sys::FdExt as _;
             if self.pidfd != Fd::INVALID.native() && self.pidfd > 0 {
@@ -1002,9 +1002,9 @@ pub mod waiter_thread_posix {
 
     pub struct WaiterThreadPosix {
         pub started: AtomicU32,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub eventfd: Fd,
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub eventfd: (),
         pub js_process: ProcessQueue,
     }
@@ -1277,9 +1277,9 @@ pub mod waiter_thread_posix {
     unsafe impl Sync for Instance {}
     static INSTANCE: Instance = Instance(core::cell::UnsafeCell::new(WaiterThreadPosix {
         started: AtomicU32::new(0),
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         eventfd: Fd::INVALID,
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         eventfd: (),
         js_process: ProcessQueue::new(),
     }));
@@ -1322,7 +1322,7 @@ pub mod waiter_thread_posix {
 
             init().unwrap_or_else(|_| panic!("Failed to start WaiterThread"));
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
                 // SAFETY: write(2) is async-signal-safe; eventfd valid after init().
@@ -1339,7 +1339,7 @@ pub mod waiter_thread_posix {
                 return;
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // SAFETY: sigaction with a valid handler.
                 unsafe {
@@ -1365,7 +1365,7 @@ pub mod waiter_thread_posix {
             return Ok(());
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // All by-value `c_uint`/`c_int` args; the kernel validates flags
             // and returns -1/errno on failure — no memory-safety preconditions,
@@ -1391,7 +1391,7 @@ pub mod waiter_thread_posix {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     extern "C" fn wakeup(_: c_int) {
         let one: [u8; 8] = (1usize).to_ne_bytes();
         // eventfd is write-once in init() before this handler is installed.
@@ -1415,7 +1415,7 @@ pub mod waiter_thread_posix {
             // in `append()` (interior mutability via `active: UnsafeCell`).
             this.js_process.loop_();
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // `eventfd` is written once in `init()` before this thread is
                 // spawned; read-only thereafter.
@@ -1435,7 +1435,7 @@ pub mod waiter_thread_posix {
                 // SAFETY: valid pollfd array.
                 let _ = unsafe { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             {
                 // SAFETY: sigwait with a valid (empty) mask.
                 unsafe {
@@ -3048,15 +3048,15 @@ mod spawn_process_body {
             // subreaper-adopted orphans (ppid==us) apart from `Bun.spawn` siblings
             // (also ppid==us). Typically empty — `bun run`/`bunx` have no JS VM —
             // but spawnSync can run inside a live VM (ffi.zig xcrun probe).
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut siblings_buf = [0 as libc::pid_t; 64];
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             let siblings: &[libc::pid_t] = if no_orphans {
                 ParentDeathWatchdog::snapshot_children(&mut siblings_buf)
             } else {
                 &siblings_buf[0..0]
             };
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if no_orphans {
                 // Subreaper: arm *before* spawn so a fast-daemonizing script can't
                 // reparent its grandchild to init in the gap. Process-wide and
@@ -3069,7 +3069,7 @@ mod spawn_process_body {
                 // SAFETY: prctl
                 let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             scopeguard::defer! {
                 if no_orphans {
                     // Kill subreaper-adopted setsid daemons (ppid==us, not in the
@@ -3169,7 +3169,7 @@ mod spawn_process_body {
                     if pgid_pushed {
                         ParentDeathWatchdog::pop_sync_pgid();
                     }
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     {
                         // One last reap for anything we adopted as subreaper before
                         // the disarm defer above drops it (LIFO: this runs first).
@@ -3224,7 +3224,7 @@ mod spawn_process_body {
             // that are read *after* the wait, so falling through to the memfd block
             // below is required.
             let status: Status = 'blk: {
-                if no_orphans && (cfg!(target_os = "linux") || cfg!(target_os = "macos")) {
+                if no_orphans && (cfg!(any(target_os = "linux", target_os = "android")) || cfg!(target_os = "macos")) {
                     let ppid = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
                     #[cfg(target_os = "macos")]
                     let r: Option<Maybe<Status>> = wait_mac_kqueue(
@@ -3236,7 +3236,7 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
@@ -3245,7 +3245,7 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+                    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
                     let r: Option<Maybe<Status>> = {
                         let _ = ppid;
                         None
@@ -3307,7 +3307,7 @@ mod spawn_process_body {
                 reap_child(process.pid)
             };
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 for (idx, &memfd) in process.memfds[1..].iter().enumerate() {
                     if memfd {
@@ -3355,7 +3355,7 @@ mod spawn_process_body {
                 }
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if let Some(pidfd) = process.pidfd {
                 Fd::from_native(pidfd).close();
             }
@@ -3622,7 +3622,7 @@ mod spawn_process_body {
             }
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,

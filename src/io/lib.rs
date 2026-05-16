@@ -2300,11 +2300,11 @@ pub mod closer {
     // ── Windows ──────────────────────────────────────────────────────────────
 
     #[cfg(windows)]
+    use crate::IntrusiveUvFs as _;
+    #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
-    #[cfg(windows)]
-    use crate::IntrusiveUvFs as _;
 
     #[cfg(windows)]
     #[repr(C)]

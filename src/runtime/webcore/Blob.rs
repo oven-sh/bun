@@ -2531,7 +2531,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         was_string: bool,
     ) -> Result<Blob, bun_alloc::AllocError> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::should_use(bytes_) {
                 if let Ok(result) =
@@ -2970,7 +2970,7 @@ impl BlobExt for Blob {
                     }
                 }
 
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     use crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator;
                     // If we can use a copy-on-write clone of the buffer, do so.

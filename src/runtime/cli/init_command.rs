@@ -259,6 +259,11 @@ impl InitCommand {
 
     /// `Choices` must implement `RadioChoice` (Zig: enum with `fmt` method).
     pub fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
+        // Install a signal / console-ctrl handler that restores the cursor
+        // if the process dies mid-prompt. See `crate::cli::prompt_signal`
+        // for the full rationale — shared with `bun update --interactive`.
+        let _signal_guard = crate::cli::prompt_signal::install();
+
         // Set raw mode to read single characters without echo.
         //
         // `ENABLE_PROCESSED_INPUT` is intentionally unset on Windows so the

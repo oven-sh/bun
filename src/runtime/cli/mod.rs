@@ -390,6 +390,8 @@ pub mod scan_command;
 pub mod unlink_command;
 #[path = "update_command.rs"]
 pub mod update_command;
+#[path = "prompt_signal.rs"]
+pub(crate) mod prompt_signal;
 #[path = "update_interactive_command.rs"]
 pub mod update_interactive_command;
 #[path = "why_command.rs"]

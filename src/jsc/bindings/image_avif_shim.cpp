@@ -261,7 +261,7 @@ extern "C" {
 // same knobs. Both of libavif's pre-parse limits fire inside
 // `avifDecoderParse` *before* w/h are exposed, so if they trip the
 // rejection comes through as DecodeFailed — masking the shim's own pixel-
-// count check. We want the rejection outcome to come from codecs.guard
+// count check. We want the rejection outcome to come from codecs::guard
 // (ERR_IMAGE_TOO_MANY_PIXELS, matching jpeg/png/webp), so:
 //
 //   • `imageDimensionLimit` (default 32768 per side) → set to 0 to

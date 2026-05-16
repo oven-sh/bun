@@ -462,4 +462,57 @@ blockExoticSubdeps = true
     expect(stderr).toContain("inner");
     expect(exitCode).not.toBe(0);
   });
+
+  test("does NOT block a transitive 'catalog:' reference even when the root catalog target is exotic", async () => {
+    // Regression for the classify() layering: `enqueueDependencyWithMainAndSuccessFn`
+    // dereferences `catalog:` specifiers INLINE against the root's catalog,
+    // so the child package's final `Resolution.Tag` ends up being the
+    // target's tag (e.g. `.folder` for `file:./shared`) rather than
+    // `.workspace` or a dedicated catalog variant. A version of classify()
+    // that only honored the `.catalog => null` carve-out inside the
+    // `.workspace` branch would false-positive here because `dep_res_tag`
+    // would already be `.folder`, hitting the catch-all exotic folder arm.
+    //
+    // Root user's catalog entry is the single source of truth — the
+    // transitive package only wrote `"shared": "catalog:"`, which is not
+    // attacker-controlled.
+    using dir = tempDir("block-exotic-catalog-exotic-target", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "parent-pkg": "file:./parent-pkg" },
+        workspaces: {
+          catalog: { shared: "file:./shared" },
+        },
+      }),
+      "bunfig.toml": `[install]
+blockExoticSubdeps = true
+`,
+      // parent-pkg is a folder dep at the root (allowed) whose transitive
+      // uses a `catalog:` reference. Without the fix, the effective
+      // resolution is `.folder` (inline-dereferenced from root catalog)
+      // and it would be blocked as "folder source".
+      "parent-pkg/package.json": JSON.stringify({
+        name: "parent-pkg",
+        version: "1.0.0",
+        dependencies: { shared: "catalog:" },
+      }),
+      "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: envForDir(String(dir)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // The transitive wrote `catalog:`, root defined the catalog entry.
+    // Root-authored indirection is not attacker-controlled → no block.
+    expect(stderr).not.toContain("blockExoticSubdeps");
+    expect(exitCode).toBe(0);
+  });
 });

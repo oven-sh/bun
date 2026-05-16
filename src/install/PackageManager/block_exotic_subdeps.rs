@@ -11,23 +11,31 @@
 //! restricted.
 //!
 //! The check is layered:
-//!   1. The child package's **Resolution.Tag** decides most cases. Tags
-//!      like `.git` / `.github` / `.local_tarball` / `.remote_tarball` /
-//!      `.symlink` / `.single_file_module` / `.folder` are never reachable
-//!      via `linkWorkspacePackages` redirection or any other implicit path
-//!      (`Package.rs`'s `parse_dependency` only rewrites `.npm` /
-//!      `.dist_tag` to `.workspace`, never to `.folder` or the
-//!      URL-family tags) — they're always the parent's explicit choice and
-//!      are always exotic.
+//!   0. Before anything else we re-infer the parent's trimmed literal. If it
+//!      reads as `catalog:`, the effective source is whatever the **root**
+//!      user's catalog entry resolves to — root-authored, not exotic — and
+//!      we skip. This has to run before the resolution switch because
+//!      `PackageManagerEnqueue::enqueue_dependency*` dereferences `catalog:`
+//!      inline, so the resolution ends up carrying the target's tag
+//!      (`.folder` / `.git` / `.workspace` / ...), not a dedicated catalog
+//!      variant; without this short-circuit a root catalog pointing at e.g.
+//!      `file:./shared` would false-positive.
+//!   1. The child package's **Resolution.Tag** decides the bulk of the
+//!      remaining cases. Tags like `.git` / `.github` / `.local_tarball` /
+//!      `.remote_tarball` / `.symlink` / `.single_file_module` / `.folder`
+//!      are never reachable via `linkWorkspacePackages` redirection or any
+//!      other implicit path (`Package.rs`'s `parse_dependency` only
+//!      rewrites `.npm` / `.dist_tag` to `.workspace`, never to `.folder`
+//!      or the URL-family tags) — they're always the parent's explicit
+//!      choice and are always exotic.
 //!   2. Only `.workspace` is ambiguous: `linkWorkspacePackages` (default
 //!      true) can rewrite a transitive registry semver like `^2.0.0` to a
 //!      local workspace package when the names match. For that one case we
-//!      fall back to re-inferring the tag from the **literal specifier**
-//!      the parent's `package.json` actually wrote (after mirroring the
-//!      resolver's `trim_ascii_start()` — see `Dependency::parse`; without
-//!      trimming, an attacker-controlled leading-whitespace byte could
-//!      smuggle an exotic spec past the check because `infer()`'s match
-//!      has no arm for whitespace).
+//!      re-inspect the **literal specifier** the parent's `package.json`
+//!      actually wrote (trimmed as above; without trimming, an
+//!      attacker-controlled leading-whitespace byte could smuggle an
+//!      exotic spec past the check because `infer()`'s match has no arm
+//!      for whitespace).
 //!
 //! When the root user has an `overrides`/`resolutions` entry for a given
 //! dependency name, the override's literal takes priority: overrides are the
@@ -154,6 +162,27 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
 /// exotic per this policy, or `None` if it's allowed.
 #[inline]
 fn classify(res_tag: ResolutionTag, literal_raw: &[u8]) -> Option<&'static str> {
+    // Mirror the resolver's leading-whitespace trim (see `Dependency::parse`
+    // which does `trim_ascii_start` before calling `infer()` on the
+    // specifier). If we re-infer on the raw string instead, a published
+    // spec like `" workspace:*"` falls through `infer()`'s match to
+    // `.dist_tag` → looks non-exotic.
+    let literal = trim_ascii_start(literal_raw);
+    let literal_tag = dependency::Tag::infer(literal);
+
+    // `catalog:` references are defined by the root user, not the
+    // transitive package, so they can't smuggle in an arbitrary source.
+    // We short-circuit on the *literal* before the resolution switch:
+    // `PackageManagerEnqueue::enqueue_dependency*` dereferences a `catalog:`
+    // specifier inline against the root's catalog, so `dep_res_tag` ends up
+    // being the target's tag (`.folder` / `.git` / `.workspace` / ...), not
+    // a dedicated catalog variant. Re-inferring the parent's stored literal
+    // is the only signal that tells us the parent wrote `catalog:` rather
+    // than the target's source directly.
+    if literal_tag == dependency::Tag::Catalog {
+        return None;
+    }
+
     match res_tag {
         // Uninitialized / root / npm resolutions are never exotic.
         ResolutionTag::Uninitialized | ResolutionTag::Root | ResolutionTag::Npm => None,
@@ -179,33 +208,21 @@ fn classify(res_tag: ResolutionTag, literal_raw: &[u8]) -> Option<&'static str> 
         // redirecting a transitive plain-semver dep to a local workspace
         // package. Consult the parent's literal specifier to tell the two
         // cases apart.
-        ResolutionTag::Workspace => {
-            // Mirror the resolver's leading-whitespace trim (see
-            // `Dependency::parse` which does `trim_ascii_start` before
-            // calling `infer()` on the specifier). If we re-infer on the
-            // raw string instead, a published spec like `" workspace:*"`
-            // falls through `infer()`'s match to `.dist_tag` → looks
-            // non-exotic.
-            let literal = trim_ascii_start(literal_raw);
-            let literal_tag = dependency::Tag::infer(literal);
-            match literal_tag {
-                // Parent wrote plain npm semver; `linkWorkspacePackages`
-                // redirected it. Not the parent's doing, not exotic.
-                dependency::Tag::Uninitialized
-                | dependency::Tag::Npm
-                | dependency::Tag::DistTag => None,
-                // `catalog:` references are defined by the root user, not
-                // the transitive package, so they can't smuggle in an
-                // arbitrary source.
-                dependency::Tag::Catalog => None,
-                dependency::Tag::Folder => Some("folder"),
-                dependency::Tag::Symlink => Some("symlink"),
-                dependency::Tag::Workspace => Some("workspace"),
-                dependency::Tag::Git => Some("git"),
-                dependency::Tag::Github => Some("github"),
-                dependency::Tag::Tarball => Some("tarball"),
-            }
-        }
+        ResolutionTag::Workspace => match literal_tag {
+            // Parent wrote plain npm semver; `linkWorkspacePackages`
+            // redirected it. Not the parent's doing, not exotic.
+            dependency::Tag::Uninitialized
+            | dependency::Tag::Npm
+            | dependency::Tag::DistTag => None,
+            // `.catalog` handled above the switch — unreachable here.
+            dependency::Tag::Catalog => None,
+            dependency::Tag::Folder => Some("folder"),
+            dependency::Tag::Symlink => Some("symlink"),
+            dependency::Tag::Workspace => Some("workspace"),
+            dependency::Tag::Git => Some("git"),
+            dependency::Tag::Github => Some("github"),
+            dependency::Tag::Tarball => Some("tarball"),
+        },
 
         // Any other non-named resolution tag (the enum is open via the u8
         // newtype) — treat as exotic; better to false-positive than to miss.

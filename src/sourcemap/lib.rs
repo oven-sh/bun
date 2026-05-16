@@ -19,6 +19,8 @@ use bun_collections::VecExt;
 // ── sibling modules ───────────────────────────────────────────────────────
 #[path = "Chunk.rs"]
 pub mod chunk;
+#[path = "InputSourceMap.rs"]
+pub mod input_source_map;
 #[path = "InternalSourceMap.rs"]
 pub mod internal_source_map;
 #[path = "LineOffsetTable.rs"]
@@ -27,8 +29,6 @@ pub mod line_offset_table;
 pub mod mapping;
 #[path = "ParsedSourceMap.rs"]
 pub mod parsed_source_map;
-#[path = "InputSourceMap.rs"]
-pub mod input_source_map;
 
 pub use input_source_map::InputSourceMap;
 

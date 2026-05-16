@@ -2675,15 +2675,15 @@ pub mod parse_worker {
         //   - loader can have source maps (js/ts/jsx/tsx; skip binary/asset)
         //   - non-empty contents (the scanner would find nothing)
         // Malformed payloads return `None` and fall back cleanly.
-        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> =
-            if topts.source_map != options::SourceMapOption::None
-                && loader.can_have_source_map()
-                && !source.contents.is_empty()
-            {
-                bun_sourcemap::InputSourceMap::parse_from_source(&source.contents)
-            } else {
-                None
-            };
+        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if topts.source_map
+            != options::SourceMapOption::None
+            && loader.can_have_source_map()
+            && !source.contents.is_empty()
+        {
+            bun_sourcemap::InputSourceMap::parse_from_source(&source.contents)
+        } else {
+            None
+        };
 
         Ok(Success {
             ast,

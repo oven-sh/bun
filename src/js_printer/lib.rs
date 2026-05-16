@@ -7848,10 +7848,10 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     // lifetime to `'static` for the `Builder` field — the borrow lives in
     // `Graph::input_files[i].input_source_map`, which outlives every
     // `add_source_mapping` call (see field docs).
-    let input_source_map: Option<&'static crate::SourceMap::InputSourceMap> =
-        opts.input_source_map.take().map(|r| unsafe {
-            &*(r as *const _)
-        });
+    let input_source_map: Option<&'static crate::SourceMap::InputSourceMap> = opts
+        .input_source_map
+        .take()
+        .map(|r| unsafe { &*(r as *const _) });
     let mut builder = SourceMap::chunk::Builder {
         source_map: SourceMap::chunk::SourceMapFormat::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped

@@ -154,6 +154,23 @@ macro_rules! impl_timer_object {
                 // `m_ctx` payload of the codegen'd JSCell wrapper. Ownership
                 // transfers to the wrapper via `to_js_ptr`; freed by
                 // `deref → deinit → heap::take`.
+                //
+                // LEAK(LSan): the GC finalizer *is* wired (`finalize: true` in
+                // `node.classes.ts` → `${T}Class__finalize` → `Self::finalize`
+                // below), but a still-active timer at process exit holds two
+                // refs that never drop:
+                //   1. the `RefCount::init()` ref handed to the JS wrapper
+                //      (released only when GC sweeps the wrapper), and
+                //   2. the `internals.reschedule()` `ref_()` taken when the
+                //      timer enters `All.timers` (released on fire or cancel).
+                // The wrapper is also pinned via `internals.this_value`
+                // (`JsRef::Strong`), so `BUN_DESTRUCT_VM_ON_EXIT=1` GC alone
+                // cannot collect it — it would only release ref (1).
+                // Proper fix: a VM-teardown pass that drains `All.timers`,
+                // calls `internals.cancel()` (downgrades the strong, drops ref
+                // (2)) and lets the final GC sweep release ref (1). That hook
+                // belongs in `RuntimeState`/`VirtualMachine` teardown — see
+                // `deinit_runtime_state` in `src/runtime/jsc_hooks.rs`.
                 let payload: *mut Self =
                     ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
                 // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`

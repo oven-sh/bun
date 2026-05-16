@@ -1686,6 +1686,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             vm.enqueue_task(bun_event_loop::Task::init(task));
         }
 
+        // LEAK(LSan): if the process exits before the next tick drains the task
+        // queue, this `Box<AnyTask>` (and the `App.close` task above) strands.
+        // This cannot be a synchronous deinit:
+        //   - `App.close()` runs uWS callbacks that may finalize JS objects, and
+        //     `schedule_deinit` itself can be re-entered from a finalizer — a
+        //     sync `Self::deinit(self)` here would free `self` out from under
+        //     the active finalizer's `&mut`. Zig had the same two-task split.
+        // Proper fix: have `VirtualMachine` drain or free unrun queued tasks on
+        // `destroy()` (BUN_DESTRUCT_VM_ON_EXIT=1). That lives in
+        // `src/event_loop/` / `src/jsc/VirtualMachine.rs`, not here.
         let task = bun_core::heap::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
             ctx: core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast()),
             callback: |ctx: *mut core::ffi::c_void| {

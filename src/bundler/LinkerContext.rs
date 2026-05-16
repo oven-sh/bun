@@ -1127,6 +1127,19 @@ impl<'a> LinkerContext<'a> {
                 // worker arena; we keep the relative path in a local owned
                 // buffer instead (drops at scope exit — same lifetime as the
                 // arena slice).
+                //
+                // LEAK NOTE: an LSan trace attributes a sourcemap leak to the
+                // `relative_alloc` line below. The `Box<[u8]>` it returns
+                // (`rel_path_storage`) drops at scope exit, the `MutableString`
+                // is consumed by `to_default_owned`, and `StringJoiner` has a
+                // `Drop` impl that frees owned nodes — none of these locals
+                // strand. The bytes that *do* escape this fn live in the
+                // returned `SourceMapPieces` (`prefix`/`mappings`/`suffix`
+                // `Vec<u8>`s assigned into `chunk.output_source_map`); the
+                // attribution to this line is most likely an inlining artifact.
+                // If the leak reproduces, audit `chunk.output_source_map`'s
+                // lifetime in `generateChunksInParallel.rs` /
+                // `bundle_v2.rs`, not this fn.
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
                     rel_path_storage =

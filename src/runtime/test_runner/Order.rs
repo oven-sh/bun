@@ -141,8 +141,20 @@ impl Order {
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
                     // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
-                    // TODO(port): ownership — heap::alloc leaks without the arena; Phase B must
-                    // decide whether test_runner keeps an arena or tracks these for cleanup.
+                    // LEAK(LSan): the `Box<ExecutionEntry>` allocated below is `into_raw`'d into the
+                    // sequence linked list and never reclaimed. It cannot be freed here:
+                    //   - `Order` is dropped right after `Execution::load_from_order` mem-takes
+                    //     `self.sequences`, but `ExecutionSequence::{first_entry,active_entry,...}`
+                    //     keep dangling raw pointers into these clones for the whole Execution
+                    //     phase (bun_test.rs Phase::Execution).
+                    //   - The clone is a `ptr::read` bitwise copy of a `DescribeScope`-owned entry,
+                    //     so running `ExecutionEntry::Drop` would double-free the original's
+                    //     `Strong`/`Box` fields. Only the *Box header* allocation may be reclaimed
+                    //     (wrap in `ManuallyDrop` before `Box::from_raw`).
+                    // Proper fix: thread these clones through `Execution::load_from_order` into
+                    // a `Vec<Box<ManuallyDrop<ExecutionEntry>>>` on `Execution` and free them on
+                    // `Execution::Drop` (after the test run) — matching the Zig arena lifetime.
+                    // That requires changes in Execution.rs / bun_test.rs.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];

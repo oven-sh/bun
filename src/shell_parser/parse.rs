@@ -4561,6 +4561,18 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         &self.items
     }
 
+    // LEAK(LSan): the `Vec<T>` allocated here strands when the owning
+    // `SmolList` is stored inside an arena-allocated AST node (e.g.
+    // `ast::If::{cond,then,else_parts}` is `&'arena If<'arena>`). The
+    // `MimallocArena` reset bulk-frees the AST nodes without running `Drop`,
+    // so the global-heap `Vec` backing buffer is never reclaimed. (When the
+    // `SmolList` lives on the stack or in a non-arena field, `Vec::Drop` runs
+    // normally and there is no leak.)
+    // Proper fix: parameterize `SmolList<'a, T, N>` and back the `Heap`
+    // variant with `bun_alloc::ArenaVec<'a, T>` so the buffer is reclaimed by
+    // `arena.reset()`. That requires threading `&'bump Bump` through
+    // `append`/`promote`/`init_with_slice` and updating the un-lifetimed
+    // re-export consumers in `src/runtime/shell/states/If.rs`.
     pub fn promote(&mut self, n: usize, new: T) -> Vec<T> {
         let mut list = Vec::<T>::init_capacity(n);
         // SAFETY: moving INLINED_MAX initialized elements out

@@ -32,11 +32,9 @@ pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 pub mod index;
 
 // ─── back-compat aliases ─────────────────────────────────────────────────────
-// Earlier passes mounted the bodies under `*_body` to keep the inline stub
-// modules compiling alongside them. The stubs are now dissolved; keep the
-// `*_body` names as aliases so sibling files (`valkey.rs` imports
-// `super::js_valkey_body`, `js_valkey.rs` imports `super::valkey_command_body`)
-// don't churn.
+// Sibling files were written against `*_body` module names (`valkey.rs`
+// imports `super::js_valkey_body`, `js_valkey.rs` imports
+// `super::valkey_command_body`); keep the aliases so they don't need to churn.
 pub use self::js_valkey as js_valkey_body;
 pub use self::valkey as valkey_body;
 

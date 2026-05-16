@@ -725,8 +725,7 @@ impl TimerObjectInternals {
 
     /// Spec TimerObjectInternals.zig `reschedule` — re-insert the parent's
     /// `EventLoopTimer` into the heap at `now + interval`. Called from
-    /// `init()` (gated draft), `do_refresh()` (gated draft), and
-    /// `convert_to_interval()` above.
+    /// `init()`, `do_refresh()`, and `convert_to_interval()` above.
     ///
     /// PORT NOTE (jsc/runtime crate cycle): `vm.timer` resolved via `runtime_state()`.
     pub fn reschedule(

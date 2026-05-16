@@ -310,7 +310,7 @@ impl<'a> Options<'a> {
     }
 }
 
-// ── live `Parser::init` (round-E unblock) ─────────────────────────────────
+// ── live `Parser::init` ───────────────────────────────────────────────────
 // Zig held two aliasing `*Log` pointers (parser + lexer). Rust models this as
 // `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
 // Stacked-Borrows tag is invalidated when accesses interleave.

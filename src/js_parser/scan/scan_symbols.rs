@@ -10,7 +10,7 @@ use bun_ast::{Ref, Scope};
 // `impl<const ...> P<...> { }` block — multiple impl blocks on the same type across files in one
 // crate are allowed.
 //
-// adt_const_params: round-C lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
+// adt_const_params: lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn find_symbol(

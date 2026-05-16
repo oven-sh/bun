@@ -53,7 +53,7 @@ type Map<K, V> = HashMap<K, V>;
 
 /// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
 /// (which Zig wrote as `comptime P: type`) can take any instantiation. Only the
-/// surface those helpers actually touch is exposed; round-D widens this as the
+/// surface those helpers actually touch is exposed; widen this as the
 /// parse_* / visit_* sibling files un-gate.
 pub trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
@@ -63,10 +63,10 @@ pub trait ParserLike<'a> {
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error>;
 }
-// Round-C: trait + impl defined so round-B Expr methods can bound on it. Method
-// bodies forward to the (currently-gated) inherent impls; until those un-gate
-// in round-D, calling through ParserLike panics — which is fine since no live
-// code does so yet (callers are in parse_*/visit_* which are also gated).
+// Trait + impl defined so Expr methods can bound on it. Method bodies forward
+// to the (currently-gated) inherent impls; until those un-gate, calling through
+// ParserLike panics — which is fine since no live code does so yet (callers are
+// in parse_*/visit_* which are also gated).
 impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
@@ -587,7 +587,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     // PERF(port): was stack-fallback alloc — profile if hot.
     pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
-    // TODO(port): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
+    // TODO(port): SideEffects::BinaryExpressionSimplifyVisitor (SideEffects.rs)
     pub binary_expression_simplify_stack: ListManaged<'a, ()>,
 
     /// We build up enough information about the TypeScript namespace hierarchy to
@@ -718,10 +718,11 @@ pub type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Round-C: associated consts kept live (cheap, used by ParserLike + Parser.rs).
+// Associated consts kept live (cheap, used by ParserLike + Parser.rs).
 // The full method-body impl block below is gated wholesale — 600+ type errors
-// from method bodies referencing not-yet-real Expr/Symbol/Log surface; round-D
-// un-gates method-groups (scope mgmt → allocate → error reporting → predicates).
+// from method bodies referencing not-yet-real Expr/Symbol/Log surface; un-gate
+// method-groups (scope mgmt → allocate → error reporting → predicates) as
+// that surface lands.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
@@ -1357,7 +1358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ─── Parser.rs `_parse` calls these names (commonjs as one word); other ───
     // ─── visit modules call the `_common_js_` two-word forms above. Keep    ───
-    // ─── both spellings until round-E reconciles call sites.               ───
+    // ─── both spellings until call sites are reconciled.                   ───
     #[inline]
     pub fn should_unwrap_commonjs_to_esm(&self) -> bool {
         self.should_unwrap_common_js_to_esm()
@@ -1602,7 +1603,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // s() lives in the round-C live block above (deduped).
+    // s() lives in the impl block above (deduped).
 
     fn compute_character_frequency(&mut self) -> Option<js_ast::CharFreq> {
         if !self.options.features.minify_identifiers || self.is_source_runtime() {
@@ -1662,7 +1663,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(freq)
     }
 
-    // new_expr() lives in the round-C live block above (deduped). The
+    // new_expr() lives in the impl block above (deduped). The
     // SCAN_ONLY require("...") sniff branch is restored there once
     // IntoExprData::as_e_call() lands.
 
@@ -3705,7 +3706,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // from expression to binding should be written to "invalidLog" instead. That
     // way we can potentially keep this as an expression if it turns out it's not
     // needed as a binding after all.
-    // round-D: needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
+    // TODO(port): needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
     fn convert_expr_to_binding(
         &mut self,
         expr: ExprNodeIndex,
@@ -3853,7 +3854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
+    // TODO(port): heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn convert_expr_to_binding_and_initializer(
         &mut self,
         _expr: &mut ExprNodeIndex,
@@ -5067,7 +5068,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // load_name_from_ref() lives in the round-C live block above (deduped).
+    // load_name_from_ref() lives in the impl block above (deduped).
 
     #[inline]
     pub fn add_import_record(
@@ -6611,7 +6612,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // ─── round-G: helpers extracted from the gated round-D/E impl block ───
+    // ─── helpers extracted from the gated impl block below ───
     // These are leaf utilities (no parse_*/visit_* deps) that block
     // handle_identifier / jsx_import / record_usage_of_runtime_require.
 
@@ -6723,7 +6724,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr { data: value, loc }
     }
 
-    // `parts` is `&[Box<[u8]>]` to match the active round-C `DotDefine.parts:
+    // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
     pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
@@ -6849,7 +6850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Standard decorator lowering path (for both JS and TS files)
                 if s_class.class.should_lower_standard_decorators {
                     // PORT NOTE: Zig `lowerStandardDecoratorsStmt` returns `[]Stmt`; the
-                    // round-E Rust stub takes an out-param Vec instead. Wrap to keep
+                    // Rust stub takes an out-param Vec instead. Wrap to keep
                     // this function's `[]Stmt` contract.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
                     self.lower_standard_decorators_stmt(stmt, &mut out);
@@ -8319,12 +8320,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Round-G un-gate: P::to_ast — final assembly P→Ast.
-// Split out of the round-D/E gated block above so the parser entry point
+// P::to_ast — final assembly P→Ast.
+// Split out of the gated block above so the parser entry point
 // (`Parser::parse` → `to_ast`) typechecks. Heavy sub-calls that are still
-// round-E (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
-// `apply_repl_transforms`) are wired to their real signatures and un-gated in
-// their own rounds. `compute_character_frequency` is fully un-gated
+// gated (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
+// `apply_repl_transforms`) are wired to their real signatures and un-gated
+// independently. `compute_character_frequency` is fully un-gated
 // (lexer.all_comments + CharFreq.scan live).
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn to_ast(

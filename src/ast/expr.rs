@@ -176,9 +176,9 @@ impl Default for Query {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ── live Expr accessor surface (round-E unblock) ───────────────────────────
+// ── live Expr accessor surface ─────────────────────────────────────────────
 // Subset of the gated impl below; bodies adapted to the live `E::Object` /
-// `E::EString` surface added this round. The full set/get_path/rope helpers
+// `E::EString` surface in `e.rs`. The full set/get_path/rope helpers
 // stay gated.
 impl Expr {
     #[inline]
@@ -778,7 +778,7 @@ struct Serializable {
     loc: Loc,
 }
 
-// `is_missing` lives in the `init`/`allocate` impl block below (round-A hoist).
+// `is_missing` lives in the `init`/`allocate` impl block below.
 impl Expr {
     /// The goal of this function is to "rotate" the AST if it's possible to use the
     /// left-associative property of the operator to avoid unnecessary parentheses.
@@ -1180,7 +1180,7 @@ impl Expr {
         }
     }
 
-    // Trivial predicates kept live (round-A `is_missing` callers in G.rs/B.rs).
+    // Trivial predicates with `is_missing` callers in G.rs/B.rs.
     #[inline]
     pub fn is_missing(&self) -> bool {
         matches!(self.data, Data::EMissing(_))
@@ -1487,7 +1487,7 @@ impl Expr {
         }
     }
 
-    // `assign` lives in the `init`/`allocate` impl block above (round-A hoist).
+    // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
     pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
@@ -2316,7 +2316,7 @@ impl Data {
 // TODO(port): these reference `Vec::deep_clone`/`E::*::Clone`
 // surfaces, `bun_core::write_any_to_hasher`, and parser-state types that land
 // with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
-// only these method bodies wait. The round-B verify gate covers what's live.
+// only these method bodies wait.
 
 impl Data {
     /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
@@ -3126,7 +3126,7 @@ impl Equality {
 }
 
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
-// ZST trait per the round-A `PlatformT` pattern; callers use
+// ZST trait, same pattern as `bun_paths::resolve_path::PlatformT`; callers use
 // `Data::eql::<P, LooseEql>(...)` / `<P, StrictEql>`.
 pub trait EqlKindT: Copy {
     const STRICT: bool;

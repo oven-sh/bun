@@ -3305,9 +3305,10 @@ impl<
 //     global mimalloc.
 //   - AST crates: thread `&'bump bumpalo::Bump` (= `Arena`) directly.
 //
-// The trait below is kept ONLY as an empty marker so downstream gated drafts
-// that say `&dyn bun_alloc::Allocator` still parse. Do not implement it; do not
-// add methods. Callers should be rewritten to drop the param entirely.
+// The trait below is kept ONLY as an empty marker so downstream code that
+// still says `&dyn bun_alloc::Allocator` continues to parse. Do not implement
+// it; do not add methods. Callers should be rewritten to drop the param
+// entirely.
 
 /// Marker trait standing in for Zig `std.mem.Allocator`. See module note.
 ///

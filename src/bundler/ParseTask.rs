@@ -600,9 +600,9 @@ pub mod parse_worker {
     // getEmptyCSSAST / getEmptyAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    // blocked_on: `js_parser::new_lazy_export_ast` body (parser.rs round-D gate —
-    // `Parser::to_lazy_export_ast`); `bun_css::BundlerStyleSheet` (gated upstream);
-    // `Expr::init` overload set for arbitrary `E::*` defaults.
+    // blocked_on: `js_parser::new_lazy_export_ast` body
+    // (`Parser::to_lazy_export_ast`); `bun_css::BundlerStyleSheet` (gated
+    // upstream); `Expr::init` overload set for arbitrary `E::*` defaults.
 
     // PORT NOTE: `transpiler: *mut Transpiler` (raw, Zig `*Transpiler`). Callers
     // (`get_ast`, `run_with_source_code`) may also hold a raw pointer to
@@ -711,7 +711,7 @@ pub mod parse_worker {
     //   - `bun_css::BundlerStyleSheet::parse_bundler` (gated upstream);
     //   - `crate::HTMLScanner` (gated module);
     //   - `bun_core::fmt::bytes_to_hex_lower` Display adaptor;
-    //   - `js_parser::new_lazy_export_ast` body (round-D).
+    //   - `js_parser::new_lazy_export_ast` body.
     // The signature now names the real `ParserOptions`; body un-gates in lockstep
     // with the above.
 

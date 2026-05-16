@@ -17,8 +17,7 @@
 //! `#[bun_jsc::host_fn]` shim-name bridge for associated fns,
 //! `bun_bundler::Transpiler` mutable field access via `bun_vm()`,
 //! `bun_resolver::Resolver::get_package_manager`, `bun_ini::load_npmrc` real
-//! signature) and tagged `// TODO(port): bun_X::Y` — see Track-A
-//! blocked_on report.
+//! signature) and tagged `// TODO(port): bun_X::Y`.
 //!
 //! NOTE: `cargo check -p bun_install_jsc` is currently hard-blocked on
 //! transitive lower-tier compile failures in `bun_css` / `bun_http` /

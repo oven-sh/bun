@@ -66,7 +66,7 @@ impl Default for Array {
 // TODO(port): Array methods call `Vec::init_capacity(bump, n)`
 // (signature mismatch: Vec takes only `n`; AST-crate variant with bump
 // arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
-// Live subset of `Array` accessors needed by downstream crates (round-E unblock).
+// Live subset of `Array` accessors needed by downstream crates.
 impl Array {
     pub const EMPTY: Array = Array {
         items: bun_alloc::AstAlloc::vec(),
@@ -952,7 +952,7 @@ pub struct RopeQuery<'a> {
     pub rope: &'a Rope,
 }
 
-// ── live Object accessor surface (round-E unblock) ─────────────────────────
+// ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
 // `set_rope`/`get_or_put_array`/sort helpers stay in the gated impl below.
 impl Object {
@@ -1487,7 +1487,7 @@ impl EString {
     }
 }
 
-// ── live EString accessor surface (round-E unblock) ────────────────────────
+// ── live EString accessor surface ──────────────────────────────────────────
 // Subset of the gated impl below adapted to the current `bun_core` API
 // (`eql_long::<CHECK_LEN>`, no bump-arena `to_utf8_alloc`). Heavy
 // transcode/rope-clone paths stay gated.

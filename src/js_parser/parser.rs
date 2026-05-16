@@ -313,7 +313,7 @@ pub mod Runtime {
         /// - Assigns functions to context for persistence
         pub repl_mode: bool,
 
-        // ── round-C/D vestigial bool stubs not present in Zig `Runtime.Features`. ──
+        // ── Vestigial bool stubs not present in Zig `Runtime.Features`. ──────────
         // Retained until their last reader (parseJSXElement.rs et al.) is ported to
         // the real predicate; they default false and are otherwise inert.
         pub jsx_optimization_inline: bool,

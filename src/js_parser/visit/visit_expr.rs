@@ -2282,7 +2282,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // When we see a hook call, we need to hash it, and then mark a flag so that if
         // it is assigned to a variable, that variable also get's hashed.
         //
-        // PORT NOTE: round-C `Runtime::Features.server_components` is a `bool` stub; the
+        // PORT NOTE: `Runtime::Features.server_components` is a `bool` stub; the
         // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
         // `true` as server-side until the enum lands.
         if p.options.features.react_fast_refresh

@@ -33,10 +33,10 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
 
 impl<'a> ImportScanner<'a> {
     // TODO(port): narrow error set
-    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
+    // PORT NOTE: `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
     // TODO(port): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
-    //   `P != AstBuilder` check). Round-E only handles the parser P; AstBuilder path
-    //   needs a `ParserLike` trait or a separate monomorphization.
+    //   `P != AstBuilder` check). Only the parser P is handled here; the AstBuilder
+    //   path needs a `ParserLike` trait or a separate monomorphization.
     pub fn scan<
         'p,
         const TYPESCRIPT: bool,

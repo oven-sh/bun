@@ -1839,9 +1839,11 @@ impl Expect {
     /// [`Self::mock_prologue`], for matchers that need the received value but
     /// are NOT a pure unary predicate and NOT a mock-function matcher.
     ///
-    /// Returns `(guard, received_value, not)`. The guard derefs to `&Expect`
-    /// and runs `post_match` on drop; `not` is `flags.not()` snapshotted once.
-    /// Callers that don't need `not` until later destructure as `(this, v, _)`.
+    /// Returns [`MatcherStart::Ready(guard, received_value, not)`] in the
+    /// common case — the guard derefs to `&Expect` and runs `post_match` on
+    /// drop, and `not` is `flags.not()` snapshotted once — or
+    /// [`MatcherStart::Deferred`] when `.resolves`/`.rejects` was used on a
+    /// still-pending promise. Callers unwrap with [`ready_matcher!`].
     #[inline]
     pub fn matcher_prelude<'a>(
         &'a self,
@@ -3362,9 +3364,12 @@ pub mod mock {
         /// `.rejects`), bumps the assertion counter, fetches the requested
         /// mock-backed array, and emits the kind-appropriate "not a mock" error.
         ///
-        /// Returns the [`PostMatchGuard`] (so `post_match` runs when the caller
-        /// drops it), the `mock.calls` / `mock.results` JSArray, and the raw
-        /// received value (some matchers print it again on later error paths).
+        /// Returns [`MockStart::Ready(guard, arr, value)`] — the
+        /// [`PostMatchGuard`] (so `post_match` runs when the caller drops it),
+        /// the `mock.calls` / `mock.results` JSArray, and the raw received
+        /// value (some matchers print it again on later error paths) — or
+        /// [`MockStart::Deferred`] when `.resolves`/`.rejects` was used on a
+        /// still-pending promise. Callers unwrap with [`ready_mock!`].
         pub fn mock_prologue<'a>(
             &'a self,
             global: &'a JSGlobalObject,

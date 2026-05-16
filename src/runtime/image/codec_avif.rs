@@ -79,8 +79,9 @@ fn map_encode_err(rc: i32) -> codecs::Error {
     }
 }
 
-/// RAII wrapper that frees a libc-malloc'd ICC buffer on drop unless
-/// `take()` is called first. Null-safe.
+/// RAII wrapper that frees a libc-malloc'd ICC buffer on drop. Null-safe.
+/// `into_owned()` copies the bytes into a `Vec<u8>` before `Drop` fires,
+/// so callers never have to call `libc::free` directly.
 struct IccBuf {
     ptr: *mut u8,
     size: usize,
@@ -204,7 +205,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         AVIF_OK => {}
         // At this call site `max_pixels` is the phase-1 alloc bound, not
         // the user's `maxPixels` — TooManyPixels firing here means a
-        // hostile larger-swap, which `pinForTask`'s invariant (and the
+        // hostile larger-swap, which `pin_for_task`'s invariant (and the
         // sibling codec_jpeg/codec_webp) surface as DecodeFailed. Remap.
         AVIF_TOO_MANY_PIXELS => return Err(codecs::Error::DecodeFailed),
         _ => return Err(map_decode_err(rc)),

@@ -165,6 +165,16 @@ str = """\\
   expect(result.str).toBe("helloworld");
 });
 
+// TOML v1.0.0 ABNF: `mlb-escaped-nl = escape ws newline *( wschar / newline )`
+// — trailing spaces/tabs between the backslash and the newline are part of
+// the line-ending continuation.
+it("TOML multi-line basic string allows whitespace between backslash and newline", () => {
+  const toml = "str = \"\"\"hello\\   \n   world\"\"\"";
+
+  const result = Bun.TOML.parse(toml);
+  expect(result.str).toBe("helloworld");
+});
+
 it("TOML multi-line strings without leading newline are unchanged", () => {
   const toml = `
 str1 = """no leading newline"""

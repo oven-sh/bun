@@ -66,8 +66,9 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     }
 
     /// `pub(crate)` — toggling occupancy from outside `HiveArray` while a
-    /// `HiveSlot` for the same index is alive would let a re-`claim()` alias
-    /// it. Use [`HiveArray::claim`]/[`put`](HiveArray::put)/[`take_at`](HiveArray::take_at).
+    /// `HiveSlot`/`HiveBox` for the same index is alive would let a
+    /// re-`claim()` alias it. Use [`HiveArray::claim`]/[`alloc`](HiveArray::alloc)/
+    /// [`put`](HiveArray::put)/[`box_at`](HiveArray::box_at).
     #[inline]
     pub(crate) fn set(&self, index: usize) {
         debug_assert!(index < CAPACITY);
@@ -251,21 +252,25 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     }
 
     /// Recover a [`HiveBox`] for a slot previously allocated via [`alloc`](Self::alloc)
-    /// whose [`index()`](HiveBox::index) was stored externally (e.g. in a callback
-    /// context). For pools that track occupancy by index instead of pointer.
+    /// whose [`index()`](HiveBox::index) was stored across a callback. `None`
+    /// if `index` is out of bounds or the slot is free — a stale index is
+    /// `None`, not UB.
     ///
-    /// # Safety
-    /// `index` must be occupied (`used` bit set) with a fully-initialized `T`,
-    /// and no other live access path ([`HiveSlot`], [`HiveBox`], `*mut T` from
-    /// [`ptr_at`](Self::ptr_at)) to the same slot may exist.
+    /// `set()`/`unset()` are `pub(crate)` and `alloc()` writes before setting
+    /// the bit, so an occupied slot is always initialized. Calling `box_at`
+    /// twice for the same index without dropping the first box aliases the
+    /// slot — same footgun class as `mem::forget(MutexGuard)` deadlocks; the
+    /// runtime check catches stale/OOB indices, not double-recovery.
     #[inline]
-    pub unsafe fn box_at(&self, index: usize) -> HiveBox<'_, T, CAPACITY> {
-        debug_assert!(self.used.is_set(index));
-        HiveBox {
-            // SAFETY: `ptr_at` asserts `index < CAPACITY` and never returns null.
+    pub fn box_at(&self, index: usize) -> Option<HiveBox<'_, T, CAPACITY>> {
+        if index >= CAPACITY || !self.used.is_set(index) {
+            return None;
+        }
+        Some(HiveBox {
+            // SAFETY: `index < CAPACITY` (checked above); `ptr_at` is in-bounds.
             slot: unsafe { NonNull::new_unchecked(self.ptr_at(index)) },
             owner: self,
-        }
+        })
     }
 
     /// Claim a slot and return a raw pointer to its **uninitialized** storage.
@@ -1450,13 +1455,16 @@ mod tests {
         // Hand the boxes back without running Drop (the index is the token).
         core::mem::forget(b0);
         core::mem::forget(b1);
-        // SAFETY: slots `i0`/`i1` were just alloc'd, no other access path exists.
-        let v1 = unsafe { pool.box_at(i1) }.into_inner();
-        let v0 = unsafe { pool.box_at(i0) }.into_inner();
+        let v1 = pool.box_at(i1).unwrap().into_inner();
+        let v0 = pool.box_at(i0).unwrap().into_inner();
         assert_eq!(v0.v, 10);
         assert_eq!(v1.v, 20);
         assert!(!pool.used.is_set(i0));
         assert!(!pool.used.is_set(i1));
+        // Stale index: bit was unset by `into_inner()`, second recovery is `None`.
+        assert!(pool.box_at(i0).is_none());
+        // OOB index: runtime check, not UB.
+        assert!(pool.box_at(999).is_none());
     }
 }
 

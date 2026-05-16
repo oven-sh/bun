@@ -357,8 +357,9 @@ pub fn ParseStmt(
                         try p.lexer.expectContextualKeyword("from");
                         // `export { type Foo } from "p" with { ... }` erases to nothing
                         // (checked below at `clauses.len == 0 and had_type_only_exports`),
-                        // so suppress the unsupported-attribute error for that shape.
-                        const parsedPath = if ((comptime is_typescript_enabled) and export_clause.clauses.len == 0 and export_clause.had_type_only_exports)
+                        // and so does any `export { ... } from` inside a `declare module`
+                        // body — suppress the unsupported-attribute error for both shapes.
+                        const parsedPath = if (((comptime is_typescript_enabled) and export_clause.clauses.len == 0 and export_clause.had_type_only_exports) or opts.is_typescript_declare)
                             try p.parseTypeOnlyPath()
                         else
                             try p.parsePath();

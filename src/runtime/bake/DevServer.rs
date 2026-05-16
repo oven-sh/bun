@@ -3806,6 +3806,19 @@ pub fn finalize_bundle(
     // without re-borrowing `result.chunks` (already split).
     let chunks_ptr: *mut bundler::chunk::Chunk = result.chunks.as_mut_ptr();
     let chunks_len = result.chunks.len();
+    // The chunks live in `bv2.graph.heap` (an arena), which the outer defer
+    // bulk-frees via `drop(heap)` without running element Drops. Run them here
+    // (LIFO: this fires before the outer defer) so per-chunk heap fields —
+    // renamer, compile_results, source maps — don't strand.
+    scopeguard::defer! {
+        // SAFETY: `chunks_ptr/len` snapshot the arena slice before any
+        // `split_at_mut`; all sub-borrows expire before this guard runs.
+        unsafe {
+            ::core::ptr::drop_in_place(::core::ptr::slice_from_raw_parts_mut(
+                chunks_ptr, chunks_len,
+            ));
+        }
+    };
     let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
     let js_chunk = &mut js_chunk_slice[0];
     let (css_chunks_mut, html_rest) = rest_chunks.split_at_mut(n_css);

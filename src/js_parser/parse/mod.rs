@@ -1310,6 +1310,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+        self.parse_path_inner(false)
+    }
+
+    /// For TypeScript type-only imports (`import type X from "p" with { ... }`).
+    /// The whole import gets erased, so we must not emit a hard parse error
+    /// for unsupported attribute keys — TS 5.3+'s `resolution-mode` lives
+    /// in exactly this shape.
+    pub fn parse_type_only_path(&mut self) -> Result<ParsedPath<'a>, Error> {
+        self.parse_path_inner(true)
+    }
+
+    fn parse_path_inner(&mut self, is_type_only: bool) -> Result<ParsedPath<'a>, Error> {
         let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {
@@ -1350,6 +1362,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_seen_embed_true = false;
 
             while p.lexer.token != T::TCloseBrace {
+                let key_range = p.lexer.range();
+                // SAFETY: `unsupported_key` is filled from either `p.lexer.identifier`
+                // (arena-owned for 'a) or an E::String slice8() (also arena-owned for 'a).
+                let mut unsupported_key: Option<&'a [u8]> = None;
                 let supported_attribute: Option<SupportedAttribute> = 'brk: {
                     // Parse the key
                     if p.lexer.is_identifier_or_keyword() {
@@ -1363,6 +1379,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.lexer.identifier == b"bunBakeGraph" {
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
+                        unsupported_key = Some(p.lexer.identifier);
                     } else if p.lexer.token == T::TStringLiteral {
                         let estr = p.lexer.to_utf8_e_string()?;
                         let string_literal_text = estr.slice8();
@@ -1375,6 +1392,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if string_literal_text == b"bunBakeGraph" {
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
+                        unsupported_key = Some(unsafe {
+                            bun_collections::detach_lifetime(string_literal_text)
+                        });
                     } else {
                         p.lexer.expect(T::TIdentifier)?;
                     }
@@ -1388,6 +1408,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect(T::TStringLiteral)?;
                 let estr = p.lexer.to_utf8_e_string()?;
                 let string_literal_text = estr.slice8();
+
+                // Suppress the "unsupported attribute" error for TypeScript
+                // type-only imports (e.g. `import type X from "p" with {
+                // "resolution-mode": "require" }`) — the whole import gets
+                // erased, and TS 5.3+ uses attributes like `resolution-mode`
+                // that are meaningful to the type checker only.
+                if let Some(key) = unsupported_key {
+                    if !is_type_only {
+                        p.log().add_range_error_fmt(
+                            Some(p.source),
+                            key_range,
+                            format_args!(
+                                "Import attribute \"{}\" with value \"{}\" is not supported",
+                                bstr::BStr::new(key),
+                                bstr::BStr::new(string_literal_text),
+                            ),
+                        );
+                    }
+                }
+
                 if let Some(attr) = supported_attribute {
                     match attr {
                         SupportedAttribute::Type => {

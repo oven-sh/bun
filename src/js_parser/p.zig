@@ -96,6 +96,7 @@ pub fn NewParser_(
         pub const parsePropertyBinding = parse_zig.parsePropertyBinding;
         pub const parseAndDeclareDecls = parse_zig.parseAndDeclareDecls;
         pub const parsePath = parse_zig.parsePath;
+        pub const parseTypeOnlyPath = parse_zig.parseTypeOnlyPath;
         pub const parseStmtsUpTo = parse_zig.parseStmtsUpTo;
         pub const parseAsyncPrefixExpr = parse_zig.parseAsyncPrefixExpr;
         pub const parseTypeScriptDecorators = parse_zig.parseTypeScriptDecorators;

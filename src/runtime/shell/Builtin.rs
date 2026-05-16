@@ -740,6 +740,25 @@ impl Builtin {
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
                     }
+                } else if matches!(
+                    crate::webcore::ReadableStream::from_js(jsval, global),
+                    Ok(Some(_))
+                ) {
+                    if redirect.stdin() {
+                        // Builtins read stdin synchronously from a buffer/blob; piping an
+                        // async ReadableStream into a builtin would require buffering the
+                        // whole stream first. Reject with a clear error instead of crashing.
+                        let _ = global.throw_invalid_arguments(format_args!(
+                            "ReadableStream cannot be redirected to a builtin command ('{}'). \
+                             Use an external command or buffer the stream first",
+                            kind.as_str()
+                        ));
+                    } else {
+                        let _ = global.throw_invalid_arguments(format_args!(
+                            "ReadableStream can only be redirected to stdin"
+                        ));
+                    }
+                    return Some(Yield::failed());
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
                 {

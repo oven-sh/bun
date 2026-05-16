@@ -1172,6 +1172,26 @@ impl Drop for DevServer {
             ));
         }
 
+        // The transpilers are `MaybeUninit<Transpiler>` so the auto field drop
+        // never reaches `BundleOptions` heap fields. When `!separate_ssr_graph`
+        // (see `init`), `ssr_transpiler` is a bitwise alias of
+        // `server_transpiler` — dropping both would double-free.
+        let separate_ssr_graph = self
+            .framework
+            .server_components
+            .as_ref()
+            .is_some_and(|sc| sc.separate_ssr_graph);
+        // SAFETY: all three are written exactly once in `init()` before
+        // `assume_init`; `ssr_transpiler` is only an independent allocation
+        // when `separate_ssr_graph`.
+        unsafe {
+            self.server_transpiler.assume_init_drop();
+            self.client_transpiler.assume_init_drop();
+            if separate_ssr_graph {
+                self.ssr_transpiler.assume_init_drop();
+            }
+        }
+
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.
     }

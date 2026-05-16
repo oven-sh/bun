@@ -786,7 +786,7 @@ pub fn upload_stream(
         // types per arm. Manual unroll once both have a `.pending` accessor.
         ReadableStreamPtr::Bytes(_) => {
             // BACKREF: see `Source::bytes()` — payload live while the
-            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
+            // ReadableStream JS wrapper is rooted. `pending` is `JsCell`.
             let stream = readable_stream.ptr.bytes().expect("matched Bytes");
             if matches!(
                 stream.pending.get().result,
@@ -814,7 +814,7 @@ pub fn upload_stream(
         }
         ReadableStreamPtr::File(_) => {
             // BACKREF: see `Source::file()` — payload live while the
-            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
+            // ReadableStream JS wrapper is rooted. `pending` is `JsCell`.
             let stream = readable_stream.ptr.file().expect("matched File");
             if matches!(
                 stream.pending.get().result,
@@ -1146,7 +1146,7 @@ pub fn readable_stream(
 
             if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
                 // BACKREF: see `Source::bytes()` — payload live while the
-                // readable stream is rooted. R-2: `&` — `on_data` re-enters JS.
+                // readable stream is rooted. `&` — `on_data` re-enters JS.
                 if let Some(bytes) = readable.ptr.bytes() {
                     if let Some(err) = request_err {
                         bytes.on_data(crate::webcore::streams::StreamResult::Err(
@@ -1181,7 +1181,7 @@ pub fn readable_stream(
         fn clear_stream_cancel_handler(&mut self) {
             if let Some(readable) = self.readable_stream_ref.get(&self.global) {
                 // BACKREF: see `Source::bytes()` — payload live while the
-                // readable stream is rooted. R-2: shared deref + `Cell::set`.
+                // readable stream is rooted. Shared deref + `Cell::set`.
                 if let Some(bytes) = readable.ptr.bytes() {
                     let source = bytes.parent_const();
                     source.cancel_handler.set(None);

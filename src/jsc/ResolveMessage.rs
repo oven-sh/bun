@@ -9,7 +9,7 @@ use crate::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
 };
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
+// Host-fn re-entrancy: every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated
 // post-wrap (by `VirtualMachine::print_error_like_object` via the JSCell ptr),
 // so it gets `Cell<bool>`.

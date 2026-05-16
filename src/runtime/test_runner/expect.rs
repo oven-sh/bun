@@ -48,7 +48,7 @@ pub trait FlagsGetCached {
 
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the only
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; the only
 // field mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
 // chaining getters) is `Cell`-wrapped so the codegen shim can hand out a shared
 // `&*m_ctx` borrow without aliasing UB. `parent` and `custom_label` are
@@ -210,7 +210,7 @@ impl Flags {
 }
 
 impl Expect {
-    /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
+    /// Helper: read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
     pub fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
         let mut v = self.flags.get();
@@ -342,7 +342,7 @@ impl Expect {
 
     // PORT NOTE: `host_fn(getter)` shim passes `(&Self, &JSGlobalObject)` only,
     // but these getters also need `this_value` (returned to JS for chaining).
-    // The shim is omitted (codegen owns the actual link name). R-2: mutation
+    // The shim is omitted (codegen owns the actual link name). Mutation
     // of `flags` goes through `Cell` so the receiver is `&Self`.
     pub fn get_not(this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         this.update_flags(|f| f.set_not(!f.not()));
@@ -1584,7 +1584,7 @@ impl Expect {
             return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn);
         };
         // SAFETY: from_js returned a non-null live m_ctx pointer owned by the JS wrapper.
-        // R-2: deref as shared (`&*`) — `process_promise` below may re-enter JS (await on a
+        // Deref as shared (`&*`) — `process_promise` below may re-enter JS (await on a
         // thenable's user-defined `then`), which can call another matcher on this same
         // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
         let expect = unsafe { &*expect_ptr };
@@ -1801,7 +1801,7 @@ impl Expect {
 /// RAII guard returned by [`Expect::post_match_guard`]. Holds an `&Expect` for the
 /// duration of a matcher body and runs `post_match` on drop — the Rust shape of Zig's
 /// `defer this.postMatch(globalThis)` shared by every `expect().toX()` matcher.
-/// R-2: shared borrow only (no `DerefMut`); all `Expect` methods reachable from a
+/// Shared borrow only (no `DerefMut`); all `Expect` methods reachable from a
 /// matcher body take `&self`.
 pub struct PostMatchGuard<'a> {
     expect: &'a Expect,
@@ -1990,7 +1990,7 @@ impl ExpectStatic {
 pub trait AsymmetricMatcherClass {
     fn invoke(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue>;
     fn from_js_ptr(value: JSValue) -> Option<*mut Self>;
-    /// R-2: each asymmetric-matcher payload exposes its `Cell<Flags>` so
+    /// Each asymmetric-matcher payload exposes its `Cell<Flags>` so
     /// `ExpectStatic::create_asymmetric_matcher_with_flags` can patch it
     /// post-construction without forming `&mut Self`.
     fn flags_cell(&self) -> &Cell<Flags>;
@@ -2582,7 +2582,7 @@ impl ExpectArrayContaining {
 ///
 /// Reference: `AsymmetricMatcher` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 /// (but only created for *custom* matchers, as built-ins have their own classes)
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The only
+// Host-fn re-entrancy: every JS-exposed method takes `&self`. The only
 // field, `flags`, is set once at construction (`create()`) and never written
 // thereafter, so it stays a bare `Flags` (no `Cell` needed). Both host-fns
 // call into user JS (`execute_impl` → `execute_custom_matcher`, `custom_print`

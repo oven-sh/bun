@@ -410,7 +410,7 @@ fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
 }
 
 impl Glob {
-    // R-2 (host-fn re-entrancy): all JS-exposed methods take `&self`. `Glob`'s
+    // Host-fn re-entrancy: all JS-exposed methods take `&self`. `Glob`'s
     // fields are read-only after construction (`pattern`) or already atomic
     // (`has_pending_activity`), so no `Cell`/`JsCell` wrapping is needed — the
     // `&mut self` receivers were vestigial. The codegen shim still emits

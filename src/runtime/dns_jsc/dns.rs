@@ -71,7 +71,7 @@ type Sockaddr = netc::sockaddr;
 /// `bun_jsc → bun_runtime` dependency cycle; this function owns the lazy init
 /// and the cast back to `*mut GlobalData`.
 ///
-/// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
+/// Returns `&Resolver` (shared). All Resolver mutation routes through
 /// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
 /// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
@@ -3608,7 +3608,7 @@ type PollType = FilePoll;
 
 type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). c-ares
 // completion callbacks re-enter this Resolver (e.g. `request_completed`,
 // `drain_pending_*`) while a `&self` borrow is live in `on_dns_poll` /
@@ -3725,7 +3725,7 @@ pub trait HasPendingCacheKey {
     /// `field` is the runtime tag of the comptime field name (some request types are reachable
     /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
     ///
-    /// R-2: takes `&Resolver` and projects `&mut` via the field's `JsCell`.
+    /// Takes `&Resolver` and projects `&mut` via the field's `JsCell`.
     /// Callers hold the borrow only for a short, non-reentrant window
     /// (slot read/claim/unset).
     #[allow(clippy::mut_from_ref)]
@@ -4006,7 +4006,7 @@ impl Resolver {
         }
     }
 
-    // ─── R-2 interior-mutability helpers ────────────────────────────────────
+    // ─── Interior-mutability helpers ────────────────────────────────────────
 
     /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `IntrusiveRc`
     /// ctx slots and `Self::deref`. Callbacks deref it as `&*const` (shared) —
@@ -4029,7 +4029,7 @@ impl Resolver {
             nsec: now.nsec,
         };
         let uws_loop = vm.uws_loop();
-        // R-2: `&self` carries no `noalias`, and every field touched below is
+        // `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
         // `&Resolver` from their stored ctx without aliasing UB.
@@ -4159,7 +4159,7 @@ impl Resolver {
 
     /// Dispatch to the GetAddrInfo PendingCache by field enum.
     ///
-    /// R-2: returns `&mut` from `&self` via `JsCell::get_mut`. Callers hold
+    /// Returns `&mut` from `&self` via `JsCell::get_mut`. Callers hold
     /// the borrow only for the duration of a slot read/claim/unset and never
     /// across a re-entrant call (the c-ares callback path that re-enters the
     /// resolver runs *after* the borrow is dropped).
@@ -4195,7 +4195,7 @@ impl Resolver {
                 // SAFETY: the matched arm guarantees `self.$f` *is*
                 // `JsCell<HiveArray<PendingCacheKey<T>, 32>>` for this `T::CACHE_FIELD`;
                 // the cast is an identity transmute (same layout, same lifetime).
-                // R-2: `JsCell::as_ptr` projects `&mut` from `&self`; caller
+                // `JsCell::as_ptr` projects `&mut` from `&self`; caller
                 // holds the borrow only for a short, non-reentrant window
                 // (see `pending_host_cache` doc).
                 unsafe {
@@ -4734,7 +4734,7 @@ impl Resolver {
     /// libuv (`on_dns_poll_uv`) instead, and the only caller
     /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
     ///
-    /// R-2: `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
+    /// `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
     /// synchronously fires c-ares completion callbacks which re-enter this
     /// Resolver via a fresh `&Resolver` (e.g. `request_completed`,
     /// `drain_pending_*`, `ref_`/`deref`). With every mutable field

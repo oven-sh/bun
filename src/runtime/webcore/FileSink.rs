@@ -27,7 +27,7 @@ bun_core::declare_scope!(FileSink, visible);
 // FileSink
 // ───────────────────────────────────────────────────────────────────────────
 
-// R-2 (`&mut self` host-fn re-entrancy → noalias UB): JS-reachable host-fns
+// Host-fn re-entrancy (`&mut self` → noalias UB): JS-reachable host-fns
 // take `&self` and mutate via `Cell`/`JsCell`. Init-time / `finalize` paths
 // keep `&mut self` for write+dealloc provenance (they reach `FileSink::deref`
 // which may `heap::take`) — those derive `&mut self` from the codegen shim's
@@ -681,7 +681,7 @@ impl FileSink {
 
         // PORT NOTE: reshaped for borrowck — Zig passed `self` + a closure that
         // mutated `self.force_sync`. Split into a local capture and apply after.
-        // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
+        // Out-params for `bun_io::open_for_writing` are local then `Cell::set`.
         let mut force_sync_out = self.force_sync.get();
         let mut pollable_out = self.pollable.get();
         let mut is_socket_out = self.is_socket.get();

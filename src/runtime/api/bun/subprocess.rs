@@ -108,7 +108,7 @@ pub use bun_spawn::process::StdioKind;
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
 // hooks are hand-expanded below for `Subprocess<'_>`.
 //
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Host-fn bodies re-enter
 // JS (`run_callback`, promise resolve, getters that materialise streams) and a
 // live `&mut Self` across those calls would alias the fresh `&mut Self` the
@@ -240,7 +240,7 @@ impl<'a> Subprocess<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn process_mut(&self) -> &mut Process {
-        // SAFETY: see `process()` — Zig `*Process` semantics. R-2: `&self`
+        // SAFETY: see `process()` — Zig `*Process` semantics. `&self`
         // (interior-mutability) so callers don't need `&mut Subprocess`;
         // `Process` lives in a separate allocation (BackRef) so the returned
         // `&mut` never aliases `*self`. Single JS-mutator thread.
@@ -283,7 +283,7 @@ impl<'a> Subprocess<'a> {
     #[inline]
     pub fn deref(&self) {
         // SAFETY: `&self` → live `*const Self`; destructor handles the Box.
-        // R-2: `&self` so callers can `defer self.deref()` without holding a
+        // `&self` so callers can `defer self.deref()` without holding a
         // unique borrow across re-entrant JS.
         unsafe { RefCount::<Self>::deref(self.as_ctx_ptr()) }
     }
@@ -905,7 +905,7 @@ impl Subprocess<'_> {
 
         // defer this.deref();
         // defer this.disconnectIPC(true);
-        // R-2: now that both take `&self`, scopeguard would no longer alias —
+        // Now that both take `&self`, scopeguard would no longer alias —
         // kept explicit at the tail for now (no early returns in this body).
 
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
@@ -1479,7 +1479,7 @@ pub mod testing_apis {
             return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
         };
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
-        // R-2: deref as shared (`&*const`) — fields are interior-mutable.
+        // Deref as shared (`&*const`) — fields are interior-mutable.
         let subprocess = unsafe { &*subprocess_ptr };
         let kind_str = kind_value.to_bun_string(global_this)?;
         // defer kind_str.deref() — bun_core::String Drop handles deref.

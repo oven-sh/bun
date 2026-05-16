@@ -33,7 +33,7 @@ use super::path_watcher;
 use super::win_watcher as path_watcher;
 
 // TODO: make this a top-level struct
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `&mut Self`
 // carried LLVM `noalias`, so a host-fn that re-entered JS while holding it let
 // the optimiser cache `self.closed` etc. across the FFI call — the `*mut Self`
@@ -157,7 +157,7 @@ impl FSWatchTaskPosix {
     fn ctx(&self) -> &FSWatcher {
         // BACKREF — `ctx` is the live owning FSWatcher (set right after
         // boxing in `init`); FSWatcher outlives all its tasks.
-        // R-2: `ParentRef: Deref<Target=FSWatcher>` yields `&FSWatcher`; all
+        // `ParentRef: Deref<Target=FSWatcher>` yields `&FSWatcher`; all
         // FSWatcher host-fns take `&self` (Cell/JsCell-backed).
         self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
@@ -404,7 +404,7 @@ impl FSWatchTaskWindows {
         // `onPathUpdateWindows` and the posix `enqueue()` path).
         // SAFETY: ParentRef — `ctx` is the live owning FSWatcher set at
         // construction; FSWatcher outlives every task it enqueues.
-        // R-2: `ref_task` takes `&self`; ParentRef Derefs to `&FSWatcher`.
+        // `ref_task` takes `&self`; ParentRef Derefs to `&FSWatcher`.
         if !ctx.expect("FSWatchTask.ctx unset").ref_task() {
             return;
         }
@@ -426,7 +426,7 @@ impl FSWatchTaskWindows {
     /// this runs on JS Context Thread
     pub fn run(&mut self) {
         // BACKREF — `self.ctx` is the live owning FSWatcher (set at
-        // construction), outliving every task it enqueues. R-2: all FSWatcher
+        // construction), outliving every task it enqueues. All FSWatcher
         // methods below take `&self`, so a single `&FSWatcher` held across the
         // match is sound (aliased shared borrows are fine; the old `*mut Self`
         // re-derive dance is no longer needed). `ParentRef` Derefs to `&T`.
@@ -496,7 +496,7 @@ impl FSWatcher {
     ///
     /// Centralises the set-once `Option<*mut c_void> → &FSWatcher` deref so the
     /// three watcher-backend callbacks (`on_path_update_*`, `on_update_end`)
-    /// stay safe at the call site. R-2: deref as shared — all `FSWatcher`
+    /// stay safe at the call site. Deref as shared — all `FSWatcher`
     /// mutation goes through `Cell`/`JsCell`.
     #[inline]
     fn from_ctx<'a>(ctx: Option<*mut c_void>) -> &'a FSWatcher {
@@ -714,7 +714,7 @@ impl<'a> Arguments<'a> {
 }
 
 impl AbortListener for FSWatcher {
-    // R-2: trait sig is fixed at `&mut self`; body just reborrows as `&self`
+    // Trait sig is fixed at `&mut self`; body just reborrows as `&self`
     // (auto-deref) and calls the interior-mutable `emit_abort`.
     fn on_abort(&mut self, reason: JSValue) {
         (*self).emit_abort(reason);
@@ -738,7 +738,7 @@ impl FSWatcher {
     /// JS-thread only.
     pub unsafe fn init_js(this: *mut Self, listener: JSValue) {
         // SAFETY: caller contract — `this` is uniquely owned and live.
-        // R-2: deref as shared; mutation goes through `Cell`/`JsCell`.
+        // Deref as shared; mutation goes through `Cell`/`JsCell`.
         let this_ref = unsafe { &*this };
         if this_ref.persistent.get() {
             let vm_ctx = this_ref.vm_ctx();
@@ -780,7 +780,7 @@ impl FSWatcher {
         }
     }
 
-    /// R-2: `&self` + `Cell<bool>` for `closed` makes the old `*mut Self`
+    /// `&self` + `Cell<bool>` for `closed` makes the old `*mut Self`
     /// re-derive dance unnecessary. `listener.call_with_global_this(...)`
     /// re-enters JS, which can call `watcher.close()` on this same object via
     /// the wrapper's `m_ptr` — setting `closed = true` and `detach()`-ing.
@@ -821,7 +821,7 @@ impl FSWatcher {
         self.close();
     }
 
-    /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
+    /// See `emit_abort` — `&self` + `Cell` so the trailing `close()`
     /// observes a re-entrant `watcher.close()` from inside the listener.
     pub fn emit_error(&self, err: bun_sys::Error) {
         if self.closed.get() {
@@ -930,7 +930,7 @@ impl FSWatcher {
     // this can be called from Watcher Thread or JS Context Thread
     pub fn ref_task(&self) -> bool {
         let _guard = self.mutex.lock_guard();
-        // R-2: `closed: Cell<bool>` is `!Sync`, but `FSWatcher` itself is
+        // `closed: Cell<bool>` is `!Sync`, but `FSWatcher` itself is
         // `!Sync` (raw-pointer fields, no `unsafe impl Sync`); cross-thread
         // access goes through `*mut FSWatcher` in `FSWatchTask.ctx` exactly as
         // before. The mutex serialises this read against the JS-thread
@@ -1073,7 +1073,7 @@ impl FSWatcher {
             pending_activity_count: AtomicU32::new(1),
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
-        // R-2: deref as shared; mutation goes through `JsCell`.
+        // Deref as shared; mutation goes through `JsCell`.
         let ctx_ref = unsafe { &*ctx };
         // SAFETY: `ctx` is the heap-stable Box address; write provenance.
         ctx_ref

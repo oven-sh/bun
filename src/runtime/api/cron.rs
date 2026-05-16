@@ -1311,7 +1311,7 @@ impl Drop for CronRemoveJob {
 // CronJob — in-process callback-style cron (Bun.cron(expr, cb))
 // ============================================================================
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `on_timer_fire`
 // calls `cb.call()` which re-enters JS; that JS may call `stop()`/`ref()`/
 // `unref()` on this same wrapper, so a `noalias` `&mut Self` held across the
@@ -1408,7 +1408,7 @@ impl CronJob {
     /// callers.
     ///
     /// Only valid while the caller holds at least one intrusive ref (timer
-    /// heap, list entry, `pending_ref`, or a `ref_guard`). R-2: shared borrow
+    /// heap, list entry, `pending_ref`, or a `ref_guard`). Shared borrow
     /// only — every field is `Cell`/`JsCell`/read-only-after-construction, so
     /// re-entrant JS forming a fresh `&Self` aliases soundly.
     #[inline]
@@ -1589,7 +1589,7 @@ impl CronJob {
         // Timer heap holds the entry; `this` is live until the guard drops.
         let _guard = Self::ref_guard(this);
         // Bracket-ref above keeps `this` alive across scheduleNext →
-        // finishDeferredStop. R-2: shared (`&*`) — `cb.call()` re-enters JS,
+        // finishDeferredStop. Shared (`&*`) — `cb.call()` re-enters JS,
         // which may call `stop()`/`ref()`/`unref()` on this same wrapper; a
         // `noalias` `&mut Self` here would be Stacked-Borrows UB. All mutation
         // is interior (`Cell`/`JsCell`).
@@ -1718,7 +1718,7 @@ impl CronJob {
     #[bun_jsc::host_fn(method)]
     pub fn stop(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the per-thread singleton.
-        // R-2: `self_stop` may `deref()` and free `self`; route through the
+        // `self_stop` may `deref()` and free `self`; route through the
         // `*mut Self` ctx pointer (interior mutation only — see `as_ctx_ptr`).
         Self::self_stop(self.as_ctx_ptr(), self.global.bun_vm());
         Ok(frame.this())
@@ -1782,7 +1782,7 @@ impl CronJob {
             pending_ref: Cell::new(false),
             in_fire: Cell::new(false),
         }));
-        // SAFETY: just allocated; unique. R-2: shared deref — all mutation is
+        // SAFETY: just allocated; unique. Shared deref — all mutation is
         // interior.
         let job_ref = unsafe { &*job };
 

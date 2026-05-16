@@ -29,7 +29,7 @@ mod _impl {
         unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
     }
 
-    // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+    // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
     // `host_fn_this` shim still passes `&mut NativeZstd` — `&mut T` auto-reborrows
     // to `&T` so the impls below compile against either.

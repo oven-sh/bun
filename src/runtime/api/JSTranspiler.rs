@@ -1179,7 +1179,7 @@ impl Drop for TranspilerStateGuard {
 }
 
 impl JSTranspiler {
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+    // ─── Interior-mutability helpers ─────────────────────────────────────────
 
     /// `self`'s address as `*mut Self` for `IntrusiveRc::init_ref` and similar
     /// FFI ctx slots that spell the parameter `*mut`. The only mutation through
@@ -1207,8 +1207,8 @@ impl JSTranspiler {
     /// borrow's lifetime. `Transpiler::parse` may re-enter JS via macros; if
     /// that JS calls back into a `JSTranspiler` host-fn on *this same instance*
     /// the inner `Transpiler` is re-borrowed — a pre-existing spec-level hazard
-    /// (Zig holds a raw `*Transpiler` across the same call) that R-2's
-    /// outer-struct fix does not address. The R-2 invariant this upholds is
+    /// (Zig holds a raw `*Transpiler` across the same call) that the noalias-re-entry migration's
+    /// outer-struct fix does not address. The noalias re-entry invariant this upholds is
     /// that no `noalias &mut JSTranspiler` is live across that re-entry.
     #[inline]
     unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {

@@ -26,7 +26,7 @@ impl Buffered {
     }
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (all written fields are `Copy`).
 #[bun_jsc::JsClass]
 pub struct TextDecoder {

@@ -22,7 +22,7 @@ bun_core::declare_scope!(FileReader, visible);
 // Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
 // readable; TODO(refactor): replace with a proper raw-slice wrapper (BACKREF lifetime).
 
-// R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
+// Host-fn re-entrancy: every JS-exposed / vtable-reachable method takes
 // `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
 // Copy). The `SourceContext` trait and `BufferedReaderParent` shims still
 // hand in `&mut Self` / `*mut Self` until those layers are migrated — `&mut T`
@@ -282,7 +282,7 @@ impl Lazy {
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
 //
-// R-2: every mutated field on `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-
+// Every mutated field on `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-
 // backed, so materializing `&FileReader` via `(&*this)` does not assert Unique
 // over any byte the caller may have borrowed (SharedReadWrite root); the
 // inherent impls re-derive any reader access through `reader()`
@@ -330,7 +330,7 @@ impl FileReader {
     // `Source`; the Zig writes `this.* = FileReader{...}` then reads `parent()`. Note the
     // Zig struct literal omits `event_loop` (no default) — likely dead code or relies on
     // a quirk; preserved as-is.
-    // R-2: kept `&mut self` — init-time constructor that runs before any
+    // Kept `&mut self` — init-time constructor that runs before any
     // host-fn could re-enter; `*self =` requires unique access.
     pub fn setup(&mut self, fd: Fd) {
         *self = FileReader {
@@ -353,7 +353,7 @@ impl FileReader {
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
         let mut file_type = FileType::File;
-        // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
+        // Move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `StoreRef`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
@@ -607,7 +607,7 @@ impl FileReader {
         let reader_buffer: *mut Vec<u8> = self.reader().buffer();
 
         if !self.read_inside_on_pull.get().is_none() {
-            // R-2: `with_mut` projects `&mut ReadDuringJSOnPullResult` from
+            // `with_mut` projects `&mut ReadDuringJSOnPullResult` from
             // `&self`; `self.buffered` is a disjoint `JsCell` so nested access
             // inside the closure is sound.
             self.read_inside_on_pull.with_mut(|riop| match riop {
@@ -1065,7 +1065,7 @@ impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
-    // R-2: trait sigs are still `&mut self` (shared with ByteBlobLoader/
+    // Trait sigs are still `&mut self` (shared with ByteBlobLoader/
     // ByteStream — separate migration); the inherent impls take `&self`, so
     // these forward via auto-deref. The `&mut` here is what the codegen shim
     // currently emits; once `NewSource` is celled the trait flips to `&self`

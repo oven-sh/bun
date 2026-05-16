@@ -30,7 +30,7 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // from this crate's local `crate::jsc::*` mirror types until `crate::jsc`
 // becomes `pub use bun_jsc as jsc;` (see lib.rs TODO). Re-enable then.
 //
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
@@ -149,7 +149,7 @@ impl JSMySQLQuery {
             )),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
-        // until handed to the JS wrapper. R-2: every field is interior-mutable,
+        // until handed to the JS wrapper. Every field is interior-mutable,
         // so a shared `ParentRef` deref is sufficient even for the writes below.
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
 
@@ -183,7 +183,7 @@ impl JSMySQLQuery {
         }
         // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the backing
         // JSC wrapper is rooted by `arguments[0]` for this frame, satisfying the
-        // `ParentRef` outlives-holder invariant. R-2: shared `&` only — every
+        // `ParentRef` outlives-holder invariant. Shared `&` only — every
         // `MySQLConnection` method reached below is `&self` post-migration.
         let Some(connection) = js_mysql_connection::from_js_ref(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
@@ -273,7 +273,7 @@ impl JSMySQLQuery {
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
-        // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
+        // `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, move |s| {
             if s.this_value.get().is_not_empty() && is_last_result {
@@ -368,7 +368,7 @@ impl JSMySQLQuery {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
-        // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
+        // `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, |s| {
             if s.this_value.get().is_not_empty() {
@@ -441,7 +441,7 @@ impl JSMySQLQuery {
         }
         let global_object: &JSGlobalObject = self.global_object();
         self.this_value.with_mut(|v| v.upgrade(global_object));
-        // R-2: errdefer rollback — `&Self` is `Copy`; the guard captures it by
+        // Errdefer rollback — `&Self` is `Copy`; the guard captures it by
         // value, mutation is `JsCell`-backed, and `into_inner` disarms on the
         // success path below.
         let errguard = scopeguard::guard(self, |s| {
@@ -451,14 +451,14 @@ impl JSMySQLQuery {
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
         let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
-        // R-2: `JsCell::with_mut` scopes the `&mut MySQLQuery` to the closure
+        // `JsCell::with_mut` scopes the `&mut MySQLQuery` to the closure
         // body. `run_query` may run user JS (binding getters), which could
         // re-enter another host-fn on this `JSMySQLQuery`; that re-entrant call
         // would form a fresh `&Self` — sound, since the noalias attribute is
         // suppressed by the `UnsafeCell` in `JsCell`. A re-entrant `with_mut`
         // on `self.query` would still alias; `set_mode_from_js` is the only
         // such path and is not reachable from a binding getter in well-formed
-        // SQL usage. This mirrors the pre-R-2 behaviour but with the *outer*
+        // SQL usage. This mirrors the previous `&mut self` behaviour but with the *outer*
         // `&mut self` UB structurally eliminated.
         if let Err(err) = self
             .query

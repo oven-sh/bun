@@ -489,7 +489,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        // R-2 noalias mitigation — see `run_callback` above.
+        // noalias re-entry mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
         unsafe { (*this).enter() };

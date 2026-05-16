@@ -54,7 +54,7 @@ where
         return Ok(JSValue::ZERO);
     }
 
-    // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
+    // `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
     let mut result = this
@@ -139,7 +139,7 @@ where
     run_sync::<R, A, F>
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed binding takes `&self`; the
+// Host-fn re-entrancy: every JS-exposed binding takes `&self`; the
 // single mutable field `node_fs` is wrapped in `JsCell` so the
 // `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
 // projected through interior mutability instead of `&mut Binding`. The
@@ -231,7 +231,7 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
+        // Blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         match this.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
@@ -283,7 +283,7 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
+        // `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match this
             .node_fs
@@ -421,7 +421,7 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
     let module = Binding::new(Binding::default());
 
     let vm = global.bun_vm_ptr();
-    // R-2: init-time write before the JS wrapper exists; `with_mut` here is
+    // Init-time write before the JS wrapper exists; `with_mut` here is
     // trivially un-aliased (sole owner of the fresh `Box`).
     module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
 

@@ -74,7 +74,7 @@ mod _impl {
 
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
     // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
-    // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+    // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]

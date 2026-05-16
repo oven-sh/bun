@@ -41,7 +41,7 @@ use bun_core::time::NS_PER_MS;
 // `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
 // `bun_jsc::{JSGlobalObject, CallFrame, JSValue}`, so the types are identical;
 // switching to the derive is a mechanical follow-up, not a layering blocker.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
 // to `&T` so the impls below compile against either.
@@ -159,7 +159,7 @@ impl JSMySQLConnection {
 impl HasAutoFlush for JSMySQLConnection {
     fn on_auto_flush(this: *mut Self) -> bool {
         // `this` is the live `*mut JSMySQLConnection` registered with the
-        // deferred-task queue; the queue runs on the JS thread. R-2: deref as
+        // deferred-task queue; the queue runs on the JS thread. Deref as
         // shared — `on_auto_flush` body takes `&self`. `ParentRef` (lifetime-
         // erased `&T`) centralises the backref deref under its own invariant.
         ParentRef::from(core::ptr::NonNull::new(this).expect("auto-flush ctx non-null"))
@@ -168,7 +168,7 @@ impl HasAutoFlush for JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
-    // ─── R-2 interior-mutability helpers ────────────────────────────────────
+    // ─── Interior-mutability helpers ────────────────────────────────────────
 
     /// Mutable projection of the inner protocol connection through `&self`.
     ///
@@ -180,7 +180,7 @@ impl JSMySQLConnection {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
-        // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
+        // SAFETY: single-JS-thread invariant (see `JsCell` docs). The
         // `&mut` is fresh per call site; reentrancy through
         // `MySQLConnection::get_js_connection()` forms a shared
         // `&JSMySQLConnection` only.
@@ -621,7 +621,7 @@ impl JSMySQLConnection {
             )),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. `ParentRef` wraps
-        // the freshly-boxed allocation as a lifetime-erased `&Self` (R-2: every
+        // the freshly-boxed allocation as a lifetime-erased `&Self` (every
         // field is interior-mutable, so shared access suffices for the writes
         // below); we hold the only reference.
         let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
@@ -707,7 +707,7 @@ impl JSMySQLConnection {
     ) -> JsResult<JSValue> {
         this.stop_timers();
 
-        // Zig `defer this.updateReferenceType();` — R-2: `&Self` is `Copy`, so
+        // Zig `defer this.updateReferenceType();` — `&Self` is `Copy`, so
         // the scopeguard closure captures a shared reborrow and the body's
         // `connection_mut()` borrow is non-overlapping.
         scopeguard::defer! {
@@ -795,7 +795,7 @@ impl JSMySQLConnection {
         let _ref = self.ref_guard();
         scopeguard::defer! {
             // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
-            // yields a fresh `&Self` per access (R-2: every callee is `&self`).
+            // yields a fresh `&Self` per access (every callee is `&self`).
             if p.vm().is_shutting_down() {
                 p.connection_mut().close();
             } else {
@@ -1104,7 +1104,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
         scopeguard::defer! {
             // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
-            // yields a fresh `&JSMySQLConnection` per access (R-2: every
+            // yields a fresh `&JSMySQLConnection` per access (every
             // callee is `&self`).
             // reset the connection timeout after we're done processing the data
             p.reset_connection_timeout();

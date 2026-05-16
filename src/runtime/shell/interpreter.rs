@@ -202,7 +202,7 @@ macro_rules! node_accessors {
                 #[track_caller]
                 #[allow(clippy::mut_from_ref)]
                 pub fn $get_mut(&self, id: NodeId) -> &mut $ty {
-                    // SAFETY: R-2 single-JS-thread invariant — see `nodes_mut`.
+                    // SAFETY: single-JS-thread invariant — see `nodes_mut`.
                     match unsafe { &mut self.nodes.get_mut()[id.idx()] } {
                         Node::$variant(v) => v,
                         other => panic!(
@@ -289,7 +289,7 @@ pub const STDERR_NO: usize = 2;
 
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
-// R-2 (host-fn re-entrancy): every JS-exposed method — and the entire
+// Host-fn re-entrancy: every JS-exposed method — and the entire
 // state-machine dispatch reachable from `run_from_js` — takes `&self`.
 // Per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy) makes
 // the noalias-based `&mut self` caching miscompile structurally impossible:
@@ -879,7 +879,7 @@ macro_rules! shell_state_dispatch {
 }
 
 impl Interpreter {
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+    // ─── Interior-mutability helpers ─────────────────────────────────────────
 
     /// `&self` → `*mut Self` for ctx slots. Kept inherent (NOT via the
     /// `bun_ptr::AsCtxPtr` blanket trait) so `Box<Interpreter>` callers
@@ -901,7 +901,7 @@ impl Interpreter {
     /// Mutable projection of the node arena from `&self`.
     ///
     /// # Safety
-    /// R-2 single-JS-thread invariant: the state machine never holds two
+    /// single-JS-thread invariant: the state machine never holds two
     /// `&mut` into `nodes` simultaneously (borrowck previously enforced this
     /// via `&mut Interpreter`; that discipline is preserved at every call
     /// site). Do **not** hold the returned borrow across any call that may
@@ -1306,7 +1306,7 @@ impl Interpreter {
         // unconditionally. Paired with the increment in `run_from_js`; harmless
         // wrap on the mini path (flag is only read from the JS GC
         // `hasPendingActivity()` hook).
-        // R-2: `&self` lets the guard borrow the atomic directly — no raw-ptr
+        // `&self` lets the guard borrow the atomic directly — no raw-ptr
         // dance needed (the previous reshape existed only for `&mut self`).
         struct DecrOnDrop<'a>(&'a AtomicU32);
         impl Drop for DecrOnDrop<'_> {
@@ -3169,7 +3169,7 @@ pub fn create_shell_interpreter(
 
     let parsed_shell_script = ParsedShellScript::from_js(parsed_shell_script_js)
         .ok_or_else(|| global.throw(format_args!("shell: expected a ParsedShellScript")))?;
-    // SAFETY: from_js returned a live wrapper-owned heap pointer. R-2: deref as
+    // SAFETY: from_js returned a live wrapper-owned heap pointer. Deref as
     // shared (`&*const`) — `ParsedShellScript`'s methods/fields are `&self` +
     // interior-mutable, so no `&mut` is required (and forming one here would
     // alias if JS re-enters another host fn on the same wrapper).

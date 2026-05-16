@@ -143,7 +143,7 @@ pub type HTMLBundleRoute = Route;
 /// HTMLBundle.Route can only be used on one server, but is also
 /// reference-counted because a server can have multiple instances of the same
 /// html file on multiple endpoints.
-// R-2 (host-fn re-entrancy): every uws/event-loop-reachable method takes
+// Host-fn re-entrancy: every uws/event-loop-reachable method takes
 // `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell`
 // (non-Copy). `*mut Route` is recovered from uws userdata and the
 // `JSBundleCompletionTask` backref while a prior `&Route` may still be on the
@@ -272,7 +272,7 @@ impl Route {
         // bumps the count and derefs on every exit path.
         let _keep_alive = unsafe { bun_ptr::ScopedRef::new(this) };
         // SAFETY: held alive by `_keep_alive`; single-threaded (uws JS-thread
-        // callback). R-2: deref as shared (`&*`) — every method below takes
+        // callback). Deref as shared (`&*`) — every method below takes
         // `&self`; mutation goes through `Cell`/`JsCell`.
         let route = unsafe { &*this };
 
@@ -289,7 +289,7 @@ impl Route {
                 match req {
                     AnyRequest::H1(h1) => {
                         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                        // R-2: pass the raw `this` (not `route: &Route`) so
+                        // Pass the raw `this` (not `route: &Route`) so
                         // DevServer's `*mut Route` userdata path doesn't alias
                         // a live shared borrow.
                         bun_core::handle_oom(dev.respond_for_html_bundle(
@@ -307,7 +307,7 @@ impl Route {
             }
 
             // Simpler development workflow which rebundles on every request.
-            // R-2: swap the state out *before* running its destructor so no
+            // Swap the state out *before* running its destructor so no
             // `&mut State` borrow into `route.state` is live across the
             // `StaticRoute::deref_` / `JSBundleCompletionTask::deref` calls.
             if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
@@ -720,7 +720,7 @@ impl Route {
     }
 
     pub fn resume_pending_responses(&self) {
-        // R-2: `JsCell::replace` moves the Vec out so the per-response loop
+        // `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.
         let pending = self.pending_responses.replace(Vec::new());
@@ -831,10 +831,10 @@ impl PendingResponse {
 
         // PORT NOTE: reshaped for borrowck — Zig accessed this.route.pending_responses through
         // raw ptr; mutate via raw ptr (single-threaded).
-        // SAFETY: single-threaded; Route is alive (we hold a ref). R-2: deref as
+        // SAFETY: single-threaded; Route is alive (we hold a ref). Deref as
         // shared (`&*`); `pending_responses` is `JsCell`-wrapped.
         let route = unsafe { &*route_ptr };
-        // R-2: scope the `&mut Vec` to the find+remove only — `RefCount::deref`
+        // Scope the `&mut Vec` to the find+remove only — `RefCount::deref`
         // can run `Route::drop` (which `get()`s `pending_responses`) and must
         // not overlap a live `with_mut` borrow.
         let removed = route.pending_responses.with_mut(|v| {

@@ -377,7 +377,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// See [`parent_event_loop`](Self::parent_event_loop) for the encapsulated
     /// type invariant. `on_error` may re-enter via the parent's intrusive
     /// `writer` field; callers that read `self` afterwards must launder
-    /// (R-2 noalias) — this accessor does not.
+    /// (noalias re-entry) — this accessor does not.
     #[inline]
     fn parent_on_error(&self, err: sys::Error) {
         // SAFETY: type invariant — set-once parent backref outlives writer.
@@ -716,7 +716,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     /// `unsafe { Parent::on_write(self.parent(), ..) }` blocks (one per
     /// `WriteResult` arm) into one. `on_write` may re-enter via the parent's
     /// intrusive `writer` field; callers that read `self` afterwards must
-    /// launder (R-2 noalias) — the existing laundered sites in `_on_write` /
+    /// launder (noalias re-entry) — the existing laundered sites in `_on_write` /
     /// `register_poll` keep their raw-pointer dispatch and do **not** route
     /// through this accessor.
     #[inline]
@@ -1552,7 +1552,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by
     /// [`set_parent`](BaseWindowsPipeWriter::set_parent) before any write path
     /// is reached, and the writer is an intrusive field of `*parent` so the
-    /// pointee strictly outlives `self`. Takes the R-2 `*mut Self` so the field
+    /// pointee strictly outlives `self`. Takes the `*mut Self` so the field
     /// read completes before dispatch and no Rust borrow of `*this` is live
     /// across the (re-entrant) `Parent::on_error` call. Collapses the two
     /// identical dispatch blocks in `on_write_complete` /
@@ -2052,7 +2052,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// pointee strictly outlives `self`. Unlike a `&self` accessor (which would
     /// place a `readonly`/SB-protector on `*self` for the duration of the
     /// re-entrant `Parent::on_error` call — see the `parent_on_error` note on
-    /// [`WindowsBufferedWriter`]), this takes the R-2 `*mut Self`: the field
+    /// [`WindowsBufferedWriter`]), this takes the `*mut Self`: the field
     /// read completes before dispatch, so no Rust borrow of `*this` is live
     /// across the (re-entrant) call. Collapses the five identical
     /// `Parent::on_error(Self::r(this).parent(), err)` dispatch blocks in

@@ -4779,7 +4779,7 @@ impl VirtualMachine {
 
         if value.js_type() == jsc::JSType::DOMWrapper {
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
-            // R-2: shared borrow — `logged` is `Cell<bool>`.
+            // Shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
                 if !build_error.logged.get() {
                     if self.had_errors {

@@ -220,11 +220,11 @@ impl Offsets {
     }
 }
 
-// R-2 (host-fn re-entrancy): the JS-exposed `close()` method takes `&self`;
+// Host-fn re-entrancy: the JS-exposed `close()` method takes `&self`;
 // per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 // `close()` does not itself re-enter JS, but routing mutation through
 // `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
-// shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
+// shim materialises from `m_ctx`, which is the systemic guarantee.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>, // TODO(port): std.DynLib equivalent

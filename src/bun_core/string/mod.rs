@@ -2734,7 +2734,7 @@ pub use wtf::parse_double;
 ///
 /// Unlike `Cell<String>`, [`set`] derefs the previous value and [`replace`]
 /// returns an [`OwnedString`] — so the only way to leak a refcount is to
-/// `mem::forget` the cell or its `replace` result. The R-2 `&self` migrations
+/// `mem::forget` the cell or its `replace` result. The `&self` migrations
 /// introduced `Cell<String>::set(..)` calls that silently leaked the old +1.
 ///
 /// [`get`] returns a bitwise `String` copy with **borrow** semantics (no ref

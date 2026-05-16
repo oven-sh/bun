@@ -254,7 +254,7 @@ pub mod ssl_wrapper {
     /// snake_case→CamelCase rewriter (e.g. `http_jsc`).
     pub type SslWrapper<T> = SSLWrapper<T>;
 
-    /// `Cell`-backed bitfield so the R-2 noalias-laundered self-backref (see
+    /// `Cell`-backed bitfield so the noalias-laundered self-backref (see
     /// [`SSLWrapper::r`]) can read AND write flags through a shared `&Self`
     /// borrow — collapses the `unsafe { (*this).flags.set_X(..) }` pattern in
     /// `shutdown` / `update_handshake_state` / `handle_writing` into safe

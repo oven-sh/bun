@@ -30,7 +30,7 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 /// `__fromJSDirect` / `__create` externs into a `JsClass` impl plus an
 /// inherent `to_js_ptr(*mut Self, &JSGlobalObject)`; `noConstructor: true`
 /// in `server.classes.ts` means no `${T}__getConstructor` is exported.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct NodeHTTPResponse {
@@ -248,7 +248,7 @@ fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
 // `Fn(*mut U, ...)` (capture-less); adapt to `&self` method bodies.
 fn on_timeout_shim(this: *mut NodeHTTPResponse, resp: uws::AnyResponse) {
     // SAFETY: registered with `self`'s address; live while callback is armed.
-    // R-2: deref as shared (`&*const`) — bodies take `&self`.
+    // Deref as shared (`&*const`) — bodies take `&self`.
     unsafe { (*this.cast_const()).on_timeout(resp) }
 }
 fn on_data_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
@@ -264,7 +264,7 @@ fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) 
     unsafe { (*this.cast_const()).on_drain(off, resp) }
 }
 
-// R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
+// `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
 // longer implemented here — the deferred-task registration is inlined in
 // `register_auto_flush` / `unregister_auto_flush` below so the whole path is
 // `&self`. The `DeferredRepeatingTask` trampoline that the trait would have
@@ -311,7 +311,7 @@ pub mod js {
 }
 
 impl NodeHTTPResponse {
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+    // ─── Interior-mutability helpers ─────────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
@@ -412,7 +412,7 @@ impl NodeHTTPResponse {
         let mut sec_websocket_protocol_str: Option<ZigStringSlice> = None;
         let mut sec_websocket_extensions_str: Option<ZigStringSlice> = None;
 
-        // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow lives until
+        // `JsCell::get()` projects `&UpgradeCTX`; the borrow lives until
         // the explicit `drop`s below (no `with_mut` on this cell overlaps).
         let upgrade_context: &UpgradeCTX = self.upgrade_context.get();
 
@@ -1075,7 +1075,7 @@ pub fn node_http_request_on_resolve(
     scoped_log!(NodeHTTPResponse, "onResolve");
     let arguments = callframe.arguments_old::<2>();
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
+    // Deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     this.promise.with_mut(|p| p.deinit());
     // defer this.deref(); — moved to tail.
@@ -1111,7 +1111,7 @@ pub fn node_http_request_on_reject(
     let arguments = callframe.arguments_old::<2>();
     let err = arguments.ptr[0];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
+    // Deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     this.promise.with_mut(|p| p.deinit());
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
@@ -1362,7 +1362,7 @@ impl NodeHTTPResponse {
             });
         }
 
-        // PORT NOTE: re-read raw_response at each use site (R-2: methods that
+        // PORT NOTE: re-read raw_response at each use site (methods that
         // re-enter may clear it).
         let state = self.raw_response.get().unwrap().state();
         if !state.is_response_pending() {
@@ -1718,7 +1718,7 @@ impl NodeHTTPResponse {
         false
     }
 
-    // R-2: inlined `AutoFlusher::register_deferred_microtask_with_type_unchecked`
+    // Inlined `AutoFlusher::register_deferred_microtask_with_type_unchecked`
     // — that helper now takes `&T`, but this type has its own
     // `on_auto_flush_trampoline` (extra `self.ref_()`) so the inline body
     // stays.

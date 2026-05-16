@@ -653,7 +653,7 @@ unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
 pub trait AsCtxPtr {
     /// `self`'s address as `*mut Self` for deferred-task / scopeguard /
     /// `ref_guard` ctx slots. The closures/trampolines deref it as shared
-    /// (`&*p`) — every method they reach is `&self` post-R-2, so no write
+    /// (`&*p`) — every method they reach is `&self`, so no write
     /// provenance is required; the `*mut` spelling is purely to match the
     /// existing `DerefOnDrop` / `HasAutoFlush` / `RefCount` ABI.
     #[inline(always)]

@@ -910,7 +910,7 @@ impl IOWriter {
             return;
         };
         // SAFETY: interp outlives every IOWriter (it owns the IO struct that
-        // holds the Arc). Single-threaded; R-2: `Interpreter::run` takes
+        // holds the Arc). Single-threaded; `Interpreter::run` takes
         // `&self` now — `ParentRef: Deref<Target=Interpreter>` yields the
         // shared borrow without `assume_mut()`.
         y.run(&interp);

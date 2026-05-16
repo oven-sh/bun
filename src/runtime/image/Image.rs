@@ -56,7 +56,7 @@ fn format_name(f: codecs::Format) -> &'static str {
 // did via `js.sourceJSSetCached`.
 pub use crate::generated_classes::js_Image as js;
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 #[bun_jsc::JsClass]
@@ -433,7 +433,7 @@ fn source_from_js(
 // ───────────────────────────── chainable ops ────────────────────────────────
 
 impl Image {
-    /// R-2 helper: read-modify-write the `Cell<Pipeline>` in one shot so each
+    /// Helper: read-modify-write the `Cell<Pipeline>` in one shot so each
     /// chainable setter stays a single field-write under `&self`.
     #[inline]
     fn update_pipeline(&self, f: impl FnOnce(&mut Pipeline)) {
@@ -1298,7 +1298,7 @@ impl<'a> BlobReadChain<'a> {
     fn on_read_bytes_impl(self: Box<Self>, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
-        // bump in `start()`; we are on the JS thread. R-2: shared deref —
+        // bump in `start()`; we are on the JS thread. Shared deref —
         // mutation goes through `Cell`/`JsCell`.
         let image = unsafe { &*self.image };
         let mut outer = self.outer;
@@ -1718,7 +1718,7 @@ impl<'a> PipelineTask<'a> {
         mem::take(&mut self.input).release();
         let global = self.global;
         // SAFETY: BACKREF; JS thread; wrapper kept alive by `this_ref` Strong.
-        // R-2: shared deref — mutation goes through `Cell`.
+        // Shared deref — mutation goes through `Cell`.
         let image = unsafe { &*self.image };
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `self.image.*` there would race the synchronous getters.
@@ -2032,7 +2032,7 @@ impl<'a> Drop for PipelineTask<'a> {
         // `self.deliver.deinit()` — `Strong` Drop on the `WriteDest` arm.
         // SAFETY: `image` is a BACKREF kept alive by the wrapper's Strong
         // `this_ref` while pending_tasks > 0; we are on the JS thread.
-        // R-2: shared deref — mutation goes through `Cell`/`JsCell`.
+        // Shared deref — mutation goes through `Cell`/`JsCell`.
         let image = unsafe { &*self.image };
         image.pending_tasks.set(image.pending_tasks.get() - 1);
         if image.pending_tasks.get() == 0 {

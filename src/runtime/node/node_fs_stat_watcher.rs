@@ -190,7 +190,7 @@ impl StatWatcherScheduler {
 
     pub fn append(this: *mut Self, watcher: *mut StatWatcher) {
         // BACKREF — `watcher` is a live ref-counted StatWatcher (we ref() it
-        // below). R-2: shared `&` only — all field access goes through
+        // below). Shared `&` only — all field access goes through
         // Cell/Atomic. `ParentRef` Deref collapses the per-site raw deref.
         let w = ParentRef::from(NonNull::new(watcher).expect("append: watcher"));
         log!("append new watcher {}", bstr::BStr::new(w.path.as_bytes()));
@@ -355,7 +355,7 @@ impl StatWatcherScheduler {
             }
             // BACKREF — `watcher` is a live `*mut StatWatcher` from the intrusive
             // queue; alive because we hold a ref on it (taken in `append`).
-            // R-2: shared `&` only — `restat()` may enqueue a main-thread task
+            // Shared `&` only — `restat()` may enqueue a main-thread task
             // that derefs the same `StatWatcher` concurrently; aliased `&` is
             // sound where `&mut` would not be. `ParentRef` Deref gives that `&`.
             let w = ParentRef::from(NonNull::new(watcher).expect("work_pool_callback: watcher"));
@@ -396,7 +396,7 @@ impl StatWatcherScheduler {
 
 // TODO: make this a top-level struct
 //
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `closed` is
 // `AtomicBool` because it is genuinely cross-thread (written by `close()` on
 // the JS thread, read by the work-pool callback). `last_check` is `Cell`
@@ -590,7 +590,7 @@ impl StatWatcher {
     fn deinit(this: *mut StatWatcher) {
         log!("deinit {:x}", this as usize);
 
-        // BACKREF — last ref; exclusive access. R-2: all field mutation goes
+        // BACKREF — last ref; exclusive access. All field mutation goes
         // through Cell/JsCell/Atomic so shared `&` suffices; `ParentRef` Deref
         // collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: watcher"));
@@ -674,7 +674,7 @@ impl StatWatcher {
         log!("Finalize\n");
         // Refcounted: hand ownership back to the raw refcount FIRST so a panic
         // in the work below leaks instead of UAF-ing the scheduler's alias.
-        // R-2: do NOT form `&mut Self` — the work-pool thread may concurrently
+        // Do NOT form `&mut Self` — the work-pool thread may concurrently
         // hold `&*watcher` (see `work_pool_callback`); `Box::into_raw` then
         // `&*ptr` keeps the access shared.
         let this_ptr: *mut Self = bun_core::heap::into_raw(self);
@@ -694,7 +694,7 @@ impl StatWatcher {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
-        // InitialStatTask::create_and_schedule). R-2: all field access via
+        // InitialStatTask::create_and_schedule). All field access via
         // Cell/JsCell/Atomic; `ParentRef` Deref gives safe `&Self`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("initial_stat_success: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
@@ -726,7 +726,7 @@ impl StatWatcher {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
-        // InitialStatTask::create_and_schedule). R-2: `cb.call()` below
+        // InitialStatTask::create_and_schedule). `cb.call()` below
         // re-enters JS, which may call `do_close()` → fresh `&Self` from
         // m_ctx; aliased `&` is sound, aliased `&mut` is not. `ParentRef`
         // Deref gives that shared `&`.
@@ -800,7 +800,7 @@ impl StatWatcher {
         }
 
         self.set_last_stat(&res);
-        // R-2: derive the ctx pointer from `&self` — the callback derefs it as
+        // Derive the ctx pointer from `&self` — the callback derefs it as
         // shared (`&*const`), so no write provenance is required.
         let this_ptr: *mut StatWatcher = self.as_ctx_ptr();
         Self::ref_(this_ptr); // Ensure it stays alive long enough to receive the callback.
@@ -816,7 +816,7 @@ impl StatWatcher {
     ) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
-        // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
+        // BACKREF — `this` is alive (ref'd in restat()). `cb.call()`
         // below re-enters JS, which may call `do_close()` → fresh `&Self` from
         // m_ctx; aliased `&` is sound, aliased `&mut` is not (and the
         // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
@@ -894,7 +894,7 @@ impl StatWatcher {
         // path we own the only reference (sole-owner contract for `deinit`).
         let guard = scopeguard::guard(this_ptr, |p| Self::deinit(p));
         // BACKREF — `this_ptr` just leaked from Box; alive until deref drops
-        // it. R-2: all field mutation goes through Cell/JsCell so shared `&`
+        // it. All field mutation goes through Cell/JsCell so shared `&`
         // suffices (and `to_js_ptr` below creates the JS wrapper, after which
         // the codegen shim may form its own `&Self`). `ParentRef` Deref gives
         // that shared `&`.
@@ -1066,7 +1066,7 @@ impl InitialStatTask {
         // `enqueue_task_concurrent` take `&self` (mutation goes through
         // `Guarded`/atomics). The main thread may concurrently run
         // `close()`/`finalize()` after `init()` returns the watcher to JS;
-        // both also deref as shared (R-2), so aliased `&` is sound.
+        // both also deref as shared, so aliased `&` is sound.
         // `ParentRef` Deref gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("run_owned: watcher"));
 

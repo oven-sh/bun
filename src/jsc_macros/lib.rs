@@ -215,7 +215,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
             },
             quote! { ::bun_jsc::JSValue },
             quote! {
-                // SAFETY: see `Method`. `&self` getters get `&*` (R-2); `&mut
+                // SAFETY: see `Method`. `&self` getters get `&*`; `&mut
                 // self` getters that lazily mutate keep `&mut *`.
                 #this_reborrow
                 let __g = unsafe { &*__global };

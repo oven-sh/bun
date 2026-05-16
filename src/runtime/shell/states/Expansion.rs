@@ -123,7 +123,7 @@ impl Expansion {
         loop {
             // Split-borrow: `me` from `nodes`, `vm_args_utf8` from its own
             // field, so `expand_simple_no_io` can expand `$N` without aliasing.
-            // R-2: both are `JsCell`-backed; `as_ptr()`/`node_mut()` project
+            // Both are `JsCell`-backed; `as_ptr()`/`node_mut()` project
             // disjoint `&mut` from `&Interpreter`.
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;

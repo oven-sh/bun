@@ -197,7 +197,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
         if let Some(byte_stream) = stream.ptr.bytes() {
             // BACKREF: see `Source::bytes()` — payload owned by `stream`.
-            // R-2: all touched ByteStream methods/fields are `&self`/interior-mutable.
+            // All touched ByteStream methods/fields are `&self`/interior-mutable.
             // if pipe is empty, we can pipe
             if byte_stream.pipe.get().is_empty() {
                 // equivalent to onStart to get the highWaterMark
@@ -528,7 +528,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let global_object = global_object.get();
         if let Some(stream_) = self.stream.get(global_object) {
             // BACKREF: see `Source::bytes()` — live while `self.stream` Strong
-            // holds it. R-2: `pipe` is `JsCell<Pipe>`; shared deref + `.set()`.
+            // holds it. `pipe` is `JsCell<Pipe>`; shared deref + `.set()`.
             if let Some(bytes) = stream_.ptr.bytes() {
                 bytes.pipe.set(Pipe::default());
             }

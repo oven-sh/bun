@@ -127,7 +127,7 @@ use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 #[derive(Debug, Default)]
 pub struct AutoFlusher {
     /// `Cell` so register/unregister can be called from `&self` callbacks
-    /// (R-2 §provenance — see `FileSink::on_write`).
+    /// (see `FileSink::on_write`).
     pub registered: core::cell::Cell<bool>,
 }
 
@@ -229,7 +229,7 @@ impl AutoFlusher {
 impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
-        // R-2: `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
+        // `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
         self.auto_flusher.get()
     }
     fn on_auto_flush(this: *mut Self) -> bool {

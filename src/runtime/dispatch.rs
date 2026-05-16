@@ -213,7 +213,7 @@ pub fn run_task(
         };
     }
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
-    /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
+    /// allocation provenance) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
         ($T:ty) => {{
             // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
@@ -727,7 +727,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup)
         }),
         poll_tag::DNS_RESOLVER => {
-            // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
+            // Deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
             // `Channel::process` re-enters the resolver via c-ares callbacks.
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
             let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
@@ -987,7 +987,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c)
                 .on_timeout())
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        // Shared deref — `check_timeouts` re-enters via `ares_process_fd`.
         EventLoopTimerTag::DNSResolver => {
             timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
                 (&*c.cast_const()).check_timeouts(&*now, &*vm)

@@ -16,7 +16,7 @@ use super::{EnvMap, EnvStr, Interpreter};
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
 // `#[bun_jsc::JsClass]` derive in Rust — do not hand-port them.
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ParsedShellScript {

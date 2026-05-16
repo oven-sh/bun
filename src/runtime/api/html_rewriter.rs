@@ -1394,7 +1394,7 @@ where
     // pointer we registered with lol-html; it lives in LOLHTMLContext for the
     // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
     // JS, which may re-enter another `handler_callback` on the same handler
-    // (R-2); aliased `&H` is sound, aliased `&mut H` is not.
+    //; aliased `&H` is sound, aliased `&mut H` is not.
     let this = unsafe { &*this };
     let global = this.global();
     // PORT NOTE: spec (html_rewriter.zig:938,954,969,972) re-derives
@@ -1641,7 +1641,7 @@ fn html_string_value(
 pub struct TextChunk {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    // `Cell` so host-fns take `&self` (re-entry-safe).
     pub text_chunk: Cell<*mut lolhtml_sys::TextChunk>,
 }
 
@@ -1708,7 +1708,7 @@ impl_wrapper_like!(TextChunk, lolhtml::TextChunk);
 pub struct DocType {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    // `Cell` so host-fns take `&self` (re-entry-safe).
     pub doctype: Cell<*mut lolhtml_sys::DocType>,
 }
 
@@ -1793,7 +1793,7 @@ impl_wrapper_like!(DocType, lolhtml::DocType);
 pub struct DocEnd {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    // `Cell` so host-fns take `&self` (re-entry-safe).
     pub doc_end: Cell<*mut lolhtml_sys::DocEnd>,
 }
 
@@ -1825,7 +1825,7 @@ impl_wrapper_like!(DocEnd, lolhtml::DocEnd);
 pub struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    // `Cell` so host-fns take `&self` (re-entry-safe).
     pub comment: Cell<*mut lolhtml_sys::Comment>,
 }
 
@@ -1899,7 +1899,7 @@ impl_wrapper_like!(Comment, lolhtml::Comment);
 pub struct EndTag {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    // `Cell` so host-fns take `&self` (re-entry-safe).
     pub end_tag: Cell<*mut lolhtml_sys::EndTag>,
 }
 
@@ -1994,7 +1994,7 @@ impl_wrapper_like!(EndTag, lolhtml::EndTag);
 pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    // `Cell` so host-fns take `&self` (re-entry-safe).
     pub iterator: Cell<*mut lolhtml_sys::AttributeIterator>,
 }
 
@@ -2096,13 +2096,13 @@ impl AttributeIterator {
 pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
-    // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
+    // `Cell` so host-fns take `&self` (re-entry-safe).
     pub element: Cell<*mut lolhtml_sys::Element>,
     /// AttributeIterator instances created by `getAttributes()` that borrow
     /// from `element`. They must be detached in `invalidate()` when the
     /// handler returns so that JS cannot dereference the freed lol-html
     /// attribute buffer.
-    /// R-2: `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
+    /// `JsCell` (non-Copy `Vec`) — pushed/drained from `&self` host-fns
     /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
     /// overlap a re-entrant access.
@@ -2140,7 +2140,7 @@ impl Element {
     /// the handler is returning, or because `setAttribute` / `removeAttribute`
     /// is about to mutate the `Vec<Attribute>` the iterators borrow from.
     fn detach_attribute_iterators(&self) {
-        // R-2: take the Vec out of the cell, drain on the stack — no `&mut`
+        // Take the Vec out of the cell, drain on the stack — no `&mut`
         // projection of `self` is held across `detach()`/`deref()` (which do
         // not re-enter JS, but defence-in-depth keeps the JsCell borrow zero-len).
         let iters = self.attribute_iterators.replace(Vec::new());
@@ -2446,7 +2446,7 @@ impl Element {
         // without detaching it would be a use-after-free.
         // SAFETY: attr_iter is a fresh heap::alloc allocation (refcount==1).
         unsafe { (*attr_iter).ref_() };
-        // R-2: `with_mut` — closure does not call into JS (push only).
+        // `with_mut` — closure does not call into JS (push only).
         self.attribute_iterators.with_mut(|v| v.push(attr_iter));
         // SAFETY: attr_iter is live (refcount==2 now); ownership is shared with
         // the GC wrapper via the intrusive refcount (`finalize` → `deref`).

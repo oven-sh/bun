@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
-// R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
+// `sharedThis`: every JS-facing host-fn takes `&self`; the only field
 // mutated post-construction (`logged`, flipped by `VirtualMachine::print_error_*`)
 // is `Cell<bool>` so re-entrant JS cannot stack two `&mut` to the same `m_ctx`.
 pub struct BuildMessage {

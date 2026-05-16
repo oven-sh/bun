@@ -1942,7 +1942,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        // `Blob::get_size` is `&self` post-R-2 (lazy size caches are
+        // `Blob::get_size` is `&self` (lazy size caches are
         // Cell-backed inside `Blob`), so a shared borrow is sound here.
         this.blob.get_size(global_object)
     }

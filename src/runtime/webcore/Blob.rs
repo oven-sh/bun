@@ -3529,7 +3529,7 @@ impl BlobExt for Blob {
         // if cfg!(debug_assertions) { debug_assert!(self.is_heap_allocated()); }
         self.calculate_estimated_byte_size();
 
-        // R-2: `&self` receiver, but the FFI shims take `*mut Blob` (the
+        // `&self` receiver, but the FFI shims take `*mut Blob` (the
         // heap-allocated `m_ctx` pointer). `self` *is* that allocation (caller
         // contract), so the const→mut cast is the original `Blob::new` provenance.
         let this = std::ptr::from_ref::<Blob>(self).cast_mut();

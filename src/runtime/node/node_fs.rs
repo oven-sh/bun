@@ -775,7 +775,7 @@ mod _async_tasks {
                     let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
                     } else {
-                        // SAFETY (R-2): single-JS-thread `JsCell` projection of the
+                        // SAFETY (noalias re-entry): single-JS-thread `JsCell` projection of the
                         // scratch path buffer; the borrow is held only across the
                         // libuv enqueue below (which copies `path` internally) and
                         // never across a JS re-entry point.
@@ -955,7 +955,7 @@ mod _async_tasks {
                 }
                 NodeFSFunctionEnum::Statfs => {
                     let args: &args::StatFS = args_as!(args::StatFS);
-                    // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
+                    // SAFETY (noalias re-entry): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
                     let path = args
                         .path

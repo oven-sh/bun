@@ -244,7 +244,7 @@ extern "C" fn select_alpn_callback(
 // set of `${Name}__fromJS`/`__create` externs, but this type maps to TWO
 // codegen classes (`JSTCPSocket` / `JSTLSSocket`). The codegen accessors are
 // hand-dispatched per-monomorphisation in the `impl` block below instead.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut NewSocket` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either. With every
@@ -329,7 +329,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `to_js`/`from_js`/`from_js_direct`. `dataSetCached`/`dataGetCached` are
     // emitted as `Self::data_set_cached` / `Self::data_get_cached`.
 
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+    // ─── Interior-mutability helpers ─────────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
@@ -356,7 +356,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is sound for that access.
         unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
     }
-    // R-2: takes `&self` — every mutated field is `UnsafeCell`-backed so the
+    // Takes `&self` — every mutated field is `UnsafeCell`-backed so the
     // `*mut Self` formed for `RefCount::deref` (and onward into
     // `deinit_and_destroy`) writes only through interior-mutable storage. The
     // codegen host-fn shim still hands us a `&mut Self`-derived borrow whose
@@ -729,7 +729,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// slot holds the unique heap allocation); JS-thread only.
     pub unsafe fn on_writable(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 — every field is
+        // SAFETY (whole body): per fn contract; every field is
         // `Cell`/`JsCell`, so a single shared reborrow is sufficient and no
         // borrow spans `callback.call`.
         let this: &Self = unsafe { &*this };
@@ -783,7 +783,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_timeout(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY (whole body): per fn contract; shared reborrow.
         let this: &Self = unsafe { &*this };
         if this.socket.get().is_detached() {
             return;
@@ -853,7 +853,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn handle_connect_error(this: *mut Self, errno: c_int) -> JsResult<()> {
-        // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
+        // SAFETY (whole body): per fn contract; shared reborrow, all
         // mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         let handlers = this.get_handlers();
@@ -1155,7 +1155,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_open(this: *mut Self, socket: SocketHandler<SSL>) {
-        // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
+        // SAFETY (whole body): per fn contract; shared reborrow, all
         // mutated fields are `Cell`/`JsCell`.
         let this_ptr = this;
         let this: &Self = unsafe { &*this };
@@ -1326,7 +1326,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_end(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY (whole body): per fn contract; shared reborrow.
         let this: &Self = unsafe { &*this };
         if this.socket.get().is_detached() {
             return;
@@ -1380,7 +1380,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY (whole body): per fn contract; shared reborrow.
         let this: &Self = unsafe { &*this };
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
         this.socket.set(s);
@@ -1494,7 +1494,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY (whole body): per fn contract; shared reborrow.
         let this: &Self = unsafe { &*this };
         let handlers = this.get_handlers();
         log!(
@@ -1625,7 +1625,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_data(this: *mut Self, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY (whole body): per fn contract; shared reborrow.
         let this: &Self = unsafe { &*this };
         this.socket.set(s);
         if this.socket.get().is_detached() {
@@ -2152,7 +2152,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = self
                 .buffered_data_for_node_net
                 .with_mut(|b| b.append_slice(buffer.slice()));
-            // R-2: `write_maybe_corked` takes `&self` and does not touch
+            // `write_maybe_corked` takes `&self` and does not touch
             // `buffered_data_for_node_net`, so a `JsCell::get()` projection
             // is valid for the duration of the call.
             let rc = self.write_maybe_corked(self.buffered_data_for_node_net.get().slice());
@@ -2410,7 +2410,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     fn internal_flush(&self) {
-        // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
+        // Every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
         // mitigated ASM-verified PROVEN_CACHED stale loads of
         // `bytes_written`/`flags`/`buffered_data_for_node_net` across the

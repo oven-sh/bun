@@ -58,7 +58,7 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 /// `extern "C" fn(..., *mut CryptoHasher)` shims — C++ never reads this layout
 /// (it round-trips `m_ctx` as `void*`).
 ///
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&CryptoHasher` (not
+/// `sharedThis`: every JS-facing host-fn takes `&CryptoHasher` (not
 /// `&mut`). The discriminant is fixed at construction; only the payload mutates,
 /// so each variant payload is wrapped in [`JsCell`] (UnsafeCell projector,
 /// single-JS-thread). The codegen shim still emits `this: &mut CryptoHasher` —
@@ -599,7 +599,7 @@ impl CryptoHasher {
                 }
             }
             CryptoHasher::Hmac(inner) => {
-                // R-2: check None first via shared `.get()`, then mutate via
+                // Check None first via shared `.get()`, then mutate via
                 // `with_mut`. No JS re-entry between the check and the write
                 // (HMAC_Update is a pure FFI call), so the `unwrap` is sound.
                 if inner.get().is_none() {
@@ -633,7 +633,7 @@ impl CryptoHasher {
                     .expect("OOM"),
             )),
             CryptoHasher::Hmac(inner) => 'brk: {
-                // R-2: `HMAC::copy` takes `&mut self` (writes nothing — Zig
+                // `HMAC::copy` takes `&mut self` (writes nothing — Zig
                 // legacy signature). Project a short `&mut` via `with_mut`;
                 // no JS re-entry inside (HMAC_CTX_copy is a pure FFI call).
                 let copy_result = inner.with_mut(|opt| opt.as_mut().map(|h| h.copy()));
@@ -758,7 +758,7 @@ impl CryptoHasher {
                 break 'brk Ok(hmac.r#final(output_digest_slice));
             }
             CryptoHasher::Evp(inner) => {
-                // R-2: `with_mut` scopes the `&mut EVP` to the FFI call; the
+                // `with_mut` scopes the `&mut EVP` to the FFI call; the
                 // returned `&'a mut [u8]` borrows `output_digest_slice` (not
                 // `self`), so it escapes the closure cleanly.
                 let engine = boring_engine(global);
@@ -1185,7 +1185,7 @@ impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 // The per-monomorphization `JsClass` impl + extern shims live in
 // `build/*/codegen/generated_classes.rs` (one block per `pub type` alias below);
 // `#[repr(C)]` here only silences the `improper_ctypes` lint on those externs.
-// R-2 (`sharedThis`): every JS-facing host-fn takes `&StaticCryptoHasher<H>`.
+// `sharedThis`: every JS-facing host-fn takes `&StaticCryptoHasher<H>`.
 // `hashing` is mutated by `update`/`final_` → `JsCell<H>`; `digested` is a
 // Copy flag → `Cell<bool>`.
 #[repr(C)]

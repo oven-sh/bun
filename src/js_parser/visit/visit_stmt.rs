@@ -56,7 +56,7 @@ fn visit_stmt_slice<'a, const TS: bool, const SO: bool>(
 // `StmtNodeList = StoreSlice<Stmt>` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
 // adopts the existing backing storage; bumpalo Vec cannot, so we copy. The arena
 // reclaims both at end-of-parse.
-// PERF(port): was fromOwnedSlice (no copy) — profile in Phase B.
+// PERF(port): was fromOwnedSlice (no copy) — profile if hot.
 #[inline]
 fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
     bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)

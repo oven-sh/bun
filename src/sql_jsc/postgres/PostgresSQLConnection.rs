@@ -82,7 +82,6 @@ impl jsc::JsClass for PostgresSQLConnection {
 // `crate::jsc::verify_error_to_js`.
 use crate::jsc::verify_error_to_js;
 
-// TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `&mut self`
@@ -1051,7 +1050,6 @@ impl PostgresSQLConnection {
         unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
     pub fn constructor(
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -1082,7 +1080,6 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-// TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
@@ -1453,7 +1450,6 @@ impl PostgresSQLConnection {
         after = |this: &Self| this.update_has_pending_activity(),
     );
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
@@ -1465,7 +1461,6 @@ impl PostgresSQLConnection {
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn do_close(
         this: &Self,
         _global_object: &JSGlobalObject,
@@ -2451,7 +2446,7 @@ impl PostgresSQLConnection {
                 };
 
                 let mut stack_buf = [DataCell::SQLDataCell::default(); 70];
-                // PERF(port): was stack-fallback alloc — profile in Phase B
+                // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                 let max_inline = jsc::JSObject::max_inline_capacity() as usize;
                 let mut heap_cells: Vec<DataCell::SQLDataCell>;
                 let mut free_cells = false;
@@ -3077,7 +3072,6 @@ impl PostgresSQLConnection {
         }
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(getter)] proc-macro attr
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.status.get() == Status::Connected)
     }

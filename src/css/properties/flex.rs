@@ -80,7 +80,7 @@ pub struct FlexFlow {
 
 // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow", PropertyFieldMap);
 // TODO(port): PropertyFieldMap / VendorPrefixMap are comptime shorthand metadata consumed by
-// css::DefineShorthand reflection. Port as part of the shorthand derive in Phase B.
+// css::DefineShorthand reflection. Port as part of the shorthand derive.
 //   PropertyFieldMap = { direction: PropertyIdTag::FlexDirection, wrap: PropertyIdTag::FlexWrap }
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
@@ -291,7 +291,6 @@ pub enum BoxAlign {
     Stretch,
 }
 
-// un-gated B-2 round 9: align payload shapes are real now —{AlignItems,SelfPosition} payload shapes
 impl BoxAlign {
     pub fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
         use css::css_properties::align::SelfPosition;
@@ -330,7 +329,6 @@ pub enum BoxPack {
     Justify,
 }
 
-// un-gated B-2 round 9: align payload shapes are real now —{JustifyContent,ContentPosition} payload shapes
 impl BoxPack {
     pub fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -396,7 +394,6 @@ pub enum FlexPack {
     Distribute,
 }
 
-// un-gated B-2 round 9: align payload shapes are real now —{JustifyContent,ContentDistribution} payload shapes
 impl FlexPack {
     pub fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -444,7 +441,6 @@ pub enum FlexItemAlign {
     Stretch,
 }
 
-// un-gated B-2 round 9: align payload shapes are real now —{AlignSelf,SelfPosition} payload shapes
 impl FlexItemAlign {
     pub fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
         use css::css_properties::align::SelfPosition;
@@ -488,7 +484,6 @@ pub enum FlexLinePack {
     Stretch,
 }
 
-// un-gated B-2 round 9: align payload shapes are real now —{AlignContent,ContentDistribution} payload shapes
 impl FlexLinePack {
     pub fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -879,7 +874,7 @@ impl FlexHandler {
         // TODO(port): single_property! macro encodes Zig's comptime `prop_2009`/`prop_2012` branches.
         // The Zig version gates the entire 2009 block on `comptime prop_2009 != null`; here the macro
         // arms with `prop_2009 = None` pass a no-op closure, so the `prefix.contains(NONE)` check
-        // still runs but has no effect. Phase B should verify this matches behavior exactly.
+        // still runs but has no effect. Verify this matches behavior exactly.
 
         single_property!(
             FlexDirection,

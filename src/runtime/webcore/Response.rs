@@ -412,7 +412,7 @@ impl Response {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* + bun_core::form_data — to_js, JsRef::try_get/
+// TODO(port): bun_jsc::* + bun_core::form_data — to_js, JsRef::try_get/
 // init_weak, js::gc::stream, ReadableStream::from_js, BodyValue::estimated_size,
 // JSValue methods. Everything below until `Init` is JSC integration.
 
@@ -494,7 +494,7 @@ impl Response {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — host_fn, callframe.arguments_old, JSValue::as_.
+// TODO(port): bun_jsc::* — host_fn, callframe.arguments_old, JSValue::as_.
 
 mod _jsc_host_fns {
     use super::*;
@@ -610,13 +610,11 @@ impl Response {
 
     // PORT NOTE: Zig `getURL` (JS getter). The Zig `getUrl` accessor became `url()`
     // above; codegen calls this exact name.
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         this.url.get().to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.init.get().status_code < 200 {
             return Ok(global_this.common_strings().error());
@@ -625,25 +623,21 @@ impl Response {
         Ok(global_this.common_strings().default())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
         this.init.get().status_text.to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
         JSValue::from(this.redirected.get())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_ok(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
         JSValue::from(this.is_ok())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
         JSValue::js_number(this.init.get().status_code as f64)
@@ -673,7 +667,6 @@ impl Response {
         Ok(init.headers.as_mut().unwrap())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
@@ -698,7 +691,7 @@ impl Response {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — write_format ConsoleFormatter, do_clone/
+// TODO(port): bun_jsc::* — write_format ConsoleFormatter, do_clone/
 // constructor/from_js paths (need codegen js::gc::stream slots, JsClass downcast,
 // Body::extract).
 
@@ -842,7 +835,6 @@ impl Response {
         Ok(())
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn do_clone(
         this: &Self,
         global_this: &JSGlobalObject,
@@ -951,7 +943,6 @@ impl Response {
         Self::unref(this);
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_json(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1092,7 +1083,6 @@ impl Response {
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_redirect(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1174,7 +1164,6 @@ impl Response {
         Ok(response)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_error(
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -1197,7 +1186,7 @@ impl Response {
     }
 
     // TODO(port): codegen — constructor signature includes js_this (the pre-allocated
-    // JS wrapper). The // TODO(b2-blocked): #[bun_jsc::host_fn] macro needs a `constructor` variant that
+    // JS wrapper). The `#[bun_jsc::host_fn]` macro needs a `constructor` variant that
     // passes the wrapper through.
     pub fn constructor(
         global_this: &JSGlobalObject,
@@ -1291,8 +1280,7 @@ impl Response {
             if arguments[0].is_undefined_or_null() {
                 break 'brk Body::new(BodyValue::Null);
             }
-            // PORT NOTE: `Body::extract` is a free fn in `body::_jsc_gated`,
-            // re-exported as `body::extract`.
+            // PORT NOTE: `Body::extract` is a free fn re-exported as `body::extract`.
             super::body::extract(global_this, arguments[0])?
         };
         // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the

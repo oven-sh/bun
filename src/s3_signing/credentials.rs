@@ -32,7 +32,7 @@ fn pico_header_empty() -> PicoHeader {
     PicoHeader::ZERO
 }
 
-// TODO(b2-blocked): bun_picohttp::Header::new — fields are private; constructing via
+// TODO(port): bun_picohttp::Header::new — fields are private; constructing via
 // repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
 #[inline]
 fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
@@ -974,8 +974,8 @@ fn get_amz_date() -> DateResult {
     // Date.now() ISO string via JS removed; uses libc gmtime_r
 
     // Create UTC timestamp
-    // TODO(port): Zig used std.time.milliTimestamp() + std.time.epoch helpers. Replace with
-    // bun_core::time equivalents in Phase B; using std::time here is OK (not banned).
+    // TODO(port): Zig used std.time.milliTimestamp() + std.time.epoch helpers. Could move to
+    // bun_core::time equivalents; using std::time here is OK (not banned).
     let secs: u64 = u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1341,8 +1341,8 @@ pub struct S3CredentialsWithOptions {
 
 /// Headers must be in alphabetical order per AWS Signature V4 spec.
 // TODO(port): Zig `packed struct(u7)` (all-bool fields). Kept as a plain struct for
-// readability of `key.field` accesses in SignedHeaders/CanonicalRequest; bitflags!/
-// `#[repr(transparent)] u8` deferred to Phase B. `bits()` below preserves the u7 layout.
+// readability of `key.field` accesses in SignedHeaders/CanonicalRequest; could move to
+// bitflags!/`#[repr(transparent)] u8`. `bits()` below preserves the u7 layout.
 #[derive(Clone, Copy, Default)]
 pub struct SignedHeadersKey {
     pub content_disposition: bool,
@@ -1372,7 +1372,7 @@ struct SignedHeaders;
 impl SignedHeaders {
     // PERF(port): Zig builds a comptime [128]&'static str table via string concatenation.
     // Rust cannot concat &str in a const loop, so we build at runtime into a caller buffer.
-    // Phase B may switch to a build.rs-generated static table if profiling shows this matters.
+    // Could switch to a build.rs-generated static table if profiling shows this matters.
     fn get(key: SignedHeadersKey, buf: &mut [u8; 256]) -> &[u8] {
         let mut n = 0usize;
         macro_rules! push {
@@ -1419,7 +1419,7 @@ struct CanonicalRequest;
 impl CanonicalRequest {
     // PERF(port): Zig generates 128 monomorphized format strings and dispatches via
     // `switch (bits) { inline 0..127 => |idx| ... }`. We build the canonical request at
-    // runtime with conditional writes. Same output bytes; profile in Phase B.
+    // runtime with conditional writes. Same output bytes; profile if hot.
     pub(crate) fn format<'b>(
         buf: &'b mut [u8],
         key: SignedHeadersKey,

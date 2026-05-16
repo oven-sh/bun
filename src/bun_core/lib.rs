@@ -9,7 +9,6 @@
     clippy::all
 )]
 #![warn(unused_must_use, unreachable_pub)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 
 pub mod Global;
 pub mod atomic_cell;
@@ -113,7 +112,7 @@ pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
 /// fields. Same contract as `bun_ptr::BackRef`: the slice memory is owned
 /// elsewhere (parent struct, leaked `Box`, interned string) and remains valid
 /// for the holder's full lifetime. Stores a fat raw pointer (`*const [T]`,
-/// `usize` len) so it is a byte-for-byte drop-in for the Phase-A `*const [T]`
+/// `usize` len) so it is a byte-for-byte drop-in for the raw `*const [T]`
 /// fields it replaces.
 #[repr(transparent)]
 pub struct RawSlice<T>(*const [T]);
@@ -604,7 +603,6 @@ pub mod vec {
     }
 }
 
-// ── B-2 gate ── remaining heavy modules ────────────────────────────────────
 #[path = "Progress.rs"]
 pub mod Progress;
 pub mod fmt;
@@ -686,8 +684,8 @@ pub use util::*;
 //
 // Port of Zig's parent-from-field intrinsic. Intrusive data structures (task
 // queues, timer heaps, linked lists) hand callbacks a `*mut Field` and expect
-// the callee to walk back to the owning `*mut Parent`. Phase-A open-coded this
-// at ~150 sites as `ptr.cast::<u8>().sub(offset_of!(P, f)).cast::<P>()`; the
+// the callee to walk back to the owning `*mut Parent`. Earlier ports open-coded
+// this at ~150 sites as `ptr.cast::<u8>().sub(offset_of!(P, f)).cast::<P>()`; the
 // helpers below are the single canonical spelling. Re-exported from `bun_ptr`.
 
 /// Recover `*mut P` from a pointer to one of its fields.
@@ -724,7 +722,7 @@ pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> 
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
 /// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
-/// an `extern "C" fn` thunk. Phase-A open-coded this as
+/// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
 /// makes the pattern grep-able, attaches a uniform safety contract, and
 /// debug-asserts the non-null precondition the C side guarantees.
@@ -872,7 +870,7 @@ macro_rules! impl_field_parent {
 /// Declares that `Self` embeds exactly one intrusive `F` field at byte
 /// [`OFFSET`](IntrusiveField::OFFSET). This is the single Rust analogue of
 /// Zig's `@fieldParentPtr` builtin: every per-module `const X_OFFSET: usize`
-/// trait the Phase-A port grew (`TASK_OFFSET`, `MIXIN_OFFSET`,
+/// trait the port grew (`TASK_OFFSET`, `MIXIN_OFFSET`,
 /// `CHANNEL_OFFSET`, `LazyBool<_, const OFFSET>`, `from_task`, …) is the same
 /// `(Parent, Field, OFFSET)` triple plus [`container_of`] arithmetic — this
 /// trait is exactly that triple, with both directions provided.
@@ -1248,7 +1246,6 @@ pub mod time {
 pub mod schema {
     pub mod api {
         pub use crate::util::StringPointer;
-        // Remaining schema types re-exported from bun_api in Phase B-2.
     }
 }
 
@@ -2156,7 +2153,7 @@ pub(crate) mod strings_impl {
     const AF_INET6: core::ffi::c_int = 23; // ws2def.h
 
     /// Zig: `bun.strings.isIPAddress` — `ares_inet_pton(AF_INET || AF_INET6) > 0`.
-    pub fn is_ip_address(input: &[u8]) -> bool {
+    pub(crate) fn is_ip_address(input: &[u8]) -> bool {
         let mut buf = [0u8; 512];
         if input.len() >= buf.len() {
             return false;
@@ -2623,7 +2620,7 @@ pub mod strings {
     pub use crate::strings_impl::{index_of_any, index_of_any_t};
 }
 
-// bun_alloc stubs Global.rs expects (real consts deferred to B-2 ungate of bun_alloc::basic)
+// bun_alloc stubs Global.rs expects (real consts pending bun_alloc::basic)
 pub const USE_MIMALLOC: bool = true;
 pub mod debug_allocator_data {
     #[inline]
@@ -3183,7 +3180,7 @@ pub mod asan {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// PHASE-C: glibc-compat / link wraps. Zig: src/workaround_missing_symbols.zig.
+// glibc-compat / link wraps. Zig: src/workaround_missing_symbols.zig.
 // build.ninja links with `-Wl,--wrap=gettid` so libc/std references land here.
 // ────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
@@ -3206,7 +3203,7 @@ pub fn get_total_memory_size() -> usize {
     Bun__ramSize()
 }
 
-/// PHASE-C: stack capture for `Global::StoredTrace` / `bun_crash_handler`.
+/// Stack capture for `Global::StoredTrace` / `bun_crash_handler`.
 /// Zig used `std.debug.captureStackTrace`; route through libc `backtrace()`.
 ///
 /// Only platforms whose libc actually exports `backtrace()` go through it:

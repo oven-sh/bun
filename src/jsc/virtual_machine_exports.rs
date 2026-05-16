@@ -42,7 +42,7 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
-    // PORT NOTE: Zig `std.time.Timer.read()`; the Phase-B field is `Instant`.
+    // PORT NOTE: Zig `std.time.Timer.read()`; the Rust field is `Instant`.
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 
@@ -283,7 +283,7 @@ pub fn add_bake_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings.put_bake_source_provider(
         opaque_source_provider.cast::<BakeSourceProvider>(),
@@ -297,7 +297,7 @@ pub fn add_dev_server_source_provider(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings.put_dev_server_source_provider(
         opaque_source_provider.cast::<DevServerSourceProvider>(),
@@ -311,7 +311,7 @@ pub fn remove_dev_server_source_provider(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
@@ -323,7 +323,7 @@ pub fn add_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .put_zig_source_provider(opaque_source_provider, slice.slice());
@@ -335,7 +335,7 @@ pub fn remove_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .remove_zig_source_provider(opaque_source_provider, slice.slice());

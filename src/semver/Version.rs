@@ -994,8 +994,8 @@ pub struct Tag {
     pub build: ExternalString,
 }
 
-// TODO(port): unused module-level static in Zig (`var multi_tag_warn = false;`).
-// Kept as a note; remove if confirmed dead in Phase B.
+// PORT NOTE: unused module-level static in Zig (`var multi_tag_warn = false;`).
+// Kept as a note; remove if confirmed dead.
 #[allow(dead_code)]
 static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // TODO: support multiple tags

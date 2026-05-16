@@ -139,7 +139,7 @@ impl HTMLRewriter {
     }
 
     // TODO(port): opaque FFI handle freed via C — cannot impl Drop on zero-sized opaque marker.
-    // Phase B: consider an owning newtype `OwnedRewriter(NonNull<HTMLRewriter>)` with Drop.
+    // Consider an owning newtype `OwnedRewriter(NonNull<HTMLRewriter>)` with Drop.
     pub unsafe fn destroy(this: *mut HTMLRewriter) {
         auto_disable();
         // SAFETY: caller guarantees `this` was returned by lol_html_rewriter_build and not yet freed
@@ -1240,7 +1240,7 @@ pub type DocTypeHandlerCallback<U> = fn(&mut DocType, &mut U) -> bool;
 // Rust: monomorphized extern "C" trampoline per <Container, UserDataType>.
 // TODO(port): Zig took the callback as a comptime fn-value (multiple callbacks per type possible).
 // Rust trait dispatch allows one callback per (UserDataType, Container) pair. If callers need
-// multiple, Phase B can add a const-generic fn-pointer wrapper or distinct ZST marker types.
+// multiple, add a const-generic fn-pointer wrapper or distinct ZST marker types.
 pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Container>>(
     this: *mut Container,
     user_data: *mut c_void,

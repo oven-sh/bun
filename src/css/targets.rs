@@ -138,11 +138,8 @@ impl Targets {
 
     pub fn should_compile_same(&self, compat_feature: css::compat::Feature) -> bool {
         // PERF(port): was comptime enum param — demoted to runtime (const-generic
-        // would need #[derive(ConstParamTy)] on compat::Feature; revisit in Phase B).
+        // would need #[derive(ConstParamTy)] on compat::Feature).
         // Zig: comptime construct a Features with @field(feature, @tagName(compat_feature)) = true.
-        // TODO(port): comptime reflection — requires a mapping from compat::Feature variant
-        // name to the same-named Features bitflag. Phase B should add
-        // `Features::from_compat(compat::Feature) -> Features` (or a const-generic).
         let target_feature: Features = Features::from_compat(compat_feature);
         self.should_compile(compat_feature, target_feature)
     }

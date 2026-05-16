@@ -229,8 +229,7 @@ pub mod posix {
     /// duplicate. Resolves to the per-OS `SystemErrno` via the glob re-export
     /// above. TODO(port): Zig's `E` uses unprefixed variant names (`PERM`,
     /// `NOENT`); `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on
-    /// `E::PERM` must migrate to `E::EPERM` (or this becomes a distinct enum
-    /// in Phase B).
+    /// `E::PERM` must migrate to `E::EPERM` (or this becomes a distinct enum).
     pub type E = crate::SystemErrno;
 
     /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).

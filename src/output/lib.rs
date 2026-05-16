@@ -1,10 +1,10 @@
 //! `bun_output` — thin facade over `bun_core::output`.
 //!
-//! Phase-A drafts followed PORTING.md §211 and reference scoped logging as
-//! `bun_output::declare_scope!` / `bun_output::scoped_log!`. The actual
-//! implementation lives in `bun_core` (see `src/bun_core/output.rs`); this
-//! crate re-exports it so downstream crates can depend on `bun_output`
-//! without pulling all of `bun_core` into their public surface.
+//! Downstream crates reference scoped logging as `bun_output::declare_scope!` /
+//! `bun_output::scoped_log!`. The actual implementation lives in `bun_core`
+//! (see `src/bun_core/output.rs`); this crate re-exports it so downstream
+//! crates can depend on `bun_output` without pulling all of `bun_core` into
+//! their public surface.
 //!
 //! `$crate` inside the re-exported `macro_rules!` bodies still resolves to
 //! `bun_core`, so the expansion paths (`$crate::output::ScopedLogger`,

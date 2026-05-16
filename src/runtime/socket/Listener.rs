@@ -63,8 +63,8 @@ use crate::generated_classes::js_Listener;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Listener` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either.
+// shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
     pub handlers: JsCell<Handlers>,

@@ -98,7 +98,7 @@ pub fn run_as_coordinator(
         return Ok(false);
     }
 
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
+    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
 
     // Owned path bytes (Zig: `[:0]const u8` from allocPrintSentinel — the
     // sentinel was for C interop only, `.len` excluded it). ZStr is a borrow
@@ -527,7 +527,7 @@ pub struct WorkerCommands {
     pub vm: *mut VirtualMachine,
     // TODO(port): Channel(WorkerCommands, "channel") — second comptime arg is
     // the field name for intrusive container_of recovery; encode via offset_of
-    // or trait impl in Phase B.
+    // or a trait impl.
     pub channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.

@@ -5,23 +5,6 @@
 
 #![allow(unused, nonstandard_style, unexpected_cfgs, static_mut_refs)]
 #![warn(unused_must_use)]
-// ═══════════════════════════════════════════════════════════════════════
-// B-1 GATE-AND-STUB
-// All Phase-A draft bodies are preserved below behind ``.
-// Un-gating happens in B-2.
-// ═══════════════════════════════════════════════════════════════════════
-
-// ── sub-modules (un-gated in B-2; remaining gates need higher-tier deps) ──
-// TODO(b2-blocked): AsyncHTTP/HTTPContext/HTTPThread/ProxyTunnel are mutually
-// recursive (HTTPClient ↔ HTTPContext ↔ HTTPThread ↔ AsyncHTTP ↔ ProxyTunnel ↔
-// h2_client/h3_client) and must land together with the `the gated draft block (now dissolved)` block
-// below. ssl_config + ssl_wrapper are now resolved (un-gated this pass);
-// remaining lower-tier blockers are method bodies on
-// bun_uws::NewSocketHandler (connect/adopt/ext/write/…) and
-// bun_uws::quic::{Stream,Context,Header,PendingConnect} (h3 only).
-// PORT NOTE: `h2_client`/`h3_client` are now un-gated as thin shells (atomics
-// + constants only); their heavy submodules (Stream/ClientSession/…) remain
-// gated inside H2Client.rs/H3Client.rs until the cluster above lands.
 #![warn(unreachable_pub)]
 #[path = "AsyncHTTP.rs"]
 pub mod async_http;
@@ -93,7 +76,7 @@ pub use bun_uws::ssl_wrapper;
 pub use bun_uws::ssl_wrapper::SSLWrapper;
 
 // ── naming aliases ──
-// Phase-A drafts used both `HTTPClient`/`HttpClient` and the Zig type-factory
+// Submodules use both `HTTPClient`/`HttpClient` and the Zig type-factory
 // name `NewHTTPContext`; alias all spellings to the canonical types so submodules
 // resolve without churn.
 pub use h2_client as h2;
@@ -141,8 +124,8 @@ pub const extremely_verbose: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
-// PORT NOTE: extracted from the gated `the gated draft block (now dissolved)` block so `InternalState`
-// can name it. The `picohttp::Response<'static>` borrows into `owned_buf`.
+// PORT NOTE: hoisted so `InternalState` can name it.
+// The `picohttp::Response<'static>` borrows into `owned_buf`.
 pub struct HTTPResponseMetadata {
     // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
     // outlives-holder invariant for the self-referential borrow.
@@ -179,12 +162,10 @@ impl Drop for HTTPResponseMetadata {
         self.response.status = b"";
     }
 }
-// TODO(b1): bun_http_types re-exports — verify these resolve in B-2.
 pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
 
 // ═══════════════════════════════════════════════════════════════════════
-// B-2: extracted from `the gated draft block (now dissolved)` — standalone items with no deps on
-// the still-gated HTTPClient/HTTPContext/ssl_* surfaces.
+// Standalone items with no deps on HTTPClient/HTTPContext/ssl_*.
 // ═══════════════════════════════════════════════════════════════════════
 
 use bun_core::MutableString;
@@ -201,9 +182,9 @@ pub enum HTTPUpgradeState {
 }
 
 // PORT NOTE: was `packed struct(u32)` with mixed bool + 2-bit enum fields.
-// Kept as a plain struct since it never crosses FFI; restore packing in Phase B
+// Kept as a plain struct since it never crosses FFI; restore packing
 // if the 32-byte vs 4-byte size difference shows up in profiling.
-// PERF(port): was packed struct(u32) — profile in Phase B.
+// PERF(port): was packed struct(u32) — profile if hot.
 #[derive(Clone, Copy)]
 pub struct Flags {
     pub disable_timeout: bool,
@@ -327,7 +308,7 @@ const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
 
 #[inline]
 pub fn cleanup(_force: bool) {
-    // PERF(port): was MimallocArena bulk-free — profile in Phase B
+    // PERF(port): was MimallocArena bulk-free — profile if hot.
 }
 
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
@@ -571,8 +552,8 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 }
 
 // ───────────────────────────── HTTPClient struct ─────────────────────────────
-// Extracted from `the gated draft block (now dissolved)`. The heavy `impl HTTPClient` (socket
-// dispatch / state machine) remains gated below until the missing
+// The heavy `impl HTTPClient` (socket dispatch / state machine) remains
+// gated below until the missing
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
@@ -585,8 +566,8 @@ use core::ptr::NonNull;
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
 // `if_modified_since`, `hostname`, and the borrowed `HTTPRequestBody::Bytes`
-// payload — to the caller's storage. Phase-A erased these to `'static` and
-// lifetime-erased at every call site; threading the lifetime removes that hazard.
+// payload — to the caller's storage. The original port erased these to `'static`
+// and lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
 // lifetime-erased `HTTPClient<'static>` form via [`HTTPClient::as_erased_ptr`].
 pub struct HTTPClient<'a> {
@@ -902,7 +883,7 @@ pub use scratch::temp_hostname;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
 // PORT NOTE: Zig used `boringssl.SSL.AlpnOffer`; bun_boringssl doesn't yet
-// expose one, so define it locally and TODO(b2) wire through to
+// expose one, so define it locally and TODO(port) wire through to
 // `configure_http_client_with_alpn` once that lands.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AlpnOffer {
@@ -1993,8 +1974,8 @@ impl<'a> HTTPClient<'a> {
     /// Returns the SSL context for this client - either the custom context
     /// (for mTLS/custom TLS) or the default global context.
     pub fn get_ssl_ctx<const IS_SSL: bool>(&self) -> *mut GenHttpContext<IS_SSL> {
-        // TODO(port): returns raw ptr because the global/Arc lifetimes differ;
-        // Phase B should unify behind a borrow.
+        // TODO(refactor): returns raw ptr because the global/Arc lifetimes differ;
+        // unify behind a borrow.
         if IS_SSL {
             if let Some(ctx) = self.custom_ssl_ctx.as_ref() {
                 return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
@@ -2103,8 +2084,8 @@ impl<'a> HTTPClient<'a> {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
                         // TODO(port): lifetime — borrows self.header_buf
                         // SAFETY: header_str() returns a slice into self.header_buf which outlives
-                        // this client; lifetime is erased here only because Phase A forbids struct
-                        // lifetime params. The borrow is valid for the life of `self`.
+                        // this client; lifetime is erased here only because we don't yet thread
+                        // struct lifetime params. The borrow is valid for the life of `self`.
                         self.if_modified_since =
                             unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
                     }
@@ -2917,7 +2898,7 @@ impl<'a> HTTPClient<'a> {
                     // `proxy_tunnel::raw_as_mut` INVARIANT).
                     let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(socket);
-                    // PERF(port): was stack-fallback alloc (16KB) — profile in Phase B
+                    // PERF(port): was stack-fallback alloc (16KB) — profile if hot.
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
 
@@ -4404,7 +4385,7 @@ impl<'a> HTTPClient<'a> {
                         let mut is_same_origin = true;
 
                         {
-                            // PERF(port): was ArenaAllocator + stackFallback(4096) — profile in Phase B
+                            // PERF(port): was ArenaAllocator + stackFallback(4096) — profile if hot.
                             if let Some(i) = strings::index_of(location, b"://") {
                                 let mut string_builder = StringBuilder::default();
 

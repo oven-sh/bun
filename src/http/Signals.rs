@@ -46,7 +46,7 @@ impl Signals {
     }
 
     // PERF(port): was `comptime field: std.meta.FieldEnum(Signals)` + `@field` reflection —
-    // demoted to a runtime match; profile in Phase B.
+    // demoted to a runtime match; profile if it shows up on a hot path.
     pub fn get(self, field: Field) -> bool {
         // Zig .monotonic == LLVM monotonic == Rust Relaxed
         self.slot(field).is_some_and(|a| a.load(Ordering::Relaxed))

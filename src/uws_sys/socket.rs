@@ -3,7 +3,7 @@
 //!
 //! THIS IS THE ONE CANONICAL PORT of `src/uws_sys/socket.zig`. `bun_uws`
 //! re-exports everything here; do NOT add a parallel `InternalSocket` /
-//! `NewSocketHandler` in `bun_uws` again — the Phase-A "thin placeholder"
+//! `NewSocketHandler` in `bun_uws` again — the earlier "thin placeholder"
 //! that grew full bodies there has been deleted.
 //!
 //! Shape: `InternalSocket` is a `Copy` tagged raw pointer (Zig passed

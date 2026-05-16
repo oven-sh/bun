@@ -2,10 +2,10 @@
 //!
 //! NOTE on arena slices: this is the AST crate. Nearly every `[]const u8` /
 //! `[]T` struct field in the Zig points into either the source text or the
-//! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, Phase A
-//! does **not** add lifetime params to structs; arena-owned slices are typed
-//! as `StoreSlice<T>` / `StoreStr` here. Phase B threads a crate-wide
-//! `'bump` and rewrites these to `&'bump [T]` / `&'bump mut [T]`.
+//! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, lifetime
+//! params are not added to AST structs; arena-owned slices are typed as
+//! `StoreSlice<T>` / `StoreStr` here. TODO(refactor): thread a crate-wide
+//! `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
 // `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
 // eight `const bool` slots (Zig: `NewLexer(comptime json_options)`). Field

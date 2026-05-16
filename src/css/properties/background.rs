@@ -355,8 +355,8 @@ pub struct BackgroundPosition {
 }
 
 impl BackgroundPosition {
-    // TODO(port): PropertyFieldMap — Zig comptime struct mapping fields → PropertyIdTag.
-    // Port as associated consts or a trait impl in Phase B.
+    // PORT NOTE: PropertyFieldMap — Zig comptime struct mapping fields → PropertyIdTag.
+    // Encoded here as associated consts.
     pub const PROPERTY_FIELD_MAP_X: PropertyIdTag = PropertyIdTag::BackgroundPositionX;
     pub const PROPERTY_FIELD_MAP_Y: PropertyIdTag = PropertyIdTag::BackgroundPositionY;
 
@@ -465,9 +465,6 @@ crate::css_eql_partialeq!(
 ///
 /// See [BackgroundRepeat](BackgroundRepeat).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-
-// TODO(port): css.DefineEnumProperty provides eql/hash/parse/to_css/deep_clone via reflection.
-// Phase B: implement as a derive macro or trait that maps kebab-case names.
 pub enum BackgroundRepeatKeyword {
     /// The image is repeated in this direction.
     Repeat,
@@ -628,9 +625,9 @@ pub struct BackgroundHandler {
     pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(port): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.arena`
-    // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; thread `'bump` on
-    // BackgroundHandler in Phase B.
+    // TODO(perf): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.arena`
+    // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; threading `'bump`
+    // through BackgroundHandler would avoid the heap alloc.
     pub decls: Vec<Property>,
     pub flushed_properties: BackgroundProperty,
     pub has_any: bool,
@@ -638,8 +635,8 @@ pub struct BackgroundHandler {
 
 // PORT NOTE: the Zig uses comptime field-name strings + @field for `flushHelper` /
 // `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
-// these helpers are expanded into small per-field macros below. Phase B may want a
-// derive macro instead.
+// these helpers are expanded into small per-field macros below. A derive macro
+// could replace them.
 
 macro_rules! init_small_list_helper {
     ($this:expr, $field:ident, $length:expr) => {{
@@ -963,7 +960,7 @@ impl BackgroundHandler {
                 // by-value into `backgrounds` above, so clearing prevents double-free.
                 // In Rust we cloned, so the originals will Drop normally; no explicit clear
                 // needed for correctness. Leaving as-is.
-                // PERF(port): was arena bulk-free / move-then-clear — profile in Phase B
+                // PERF(port): was arena bulk-free / move-then-clear — profile if hot.
 
                 if self.flushed_properties.is_empty() {
                     let mut fallbacks =

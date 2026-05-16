@@ -29,7 +29,7 @@ pub struct Graph {
     pub heap: ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
-    // PERF(port): arena-fed ArrayList (self.heap) — self-referential, revisit in Phase B
+    // PERF(port): Zig fed this ArrayList from `self.heap` (self-referential arena).
     pub entry_points: Vec<Index>,
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub entry_point_original_names: IndexStringMap,
@@ -38,7 +38,7 @@ pub struct Graph {
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
     // PORT NOTE: BundledAst<'arena> borrows from self.heap (sibling-field self-ref);
-    // 'static here is a placeholder — Phase-B lifetime threading via raw ptr or Ouroboros.
+    // 'static here is a placeholder. TODO(refactor): thread the lifetime via raw ptr or Ouroboros.
     pub ast: MultiArrayList<JSAst<'static>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
@@ -80,7 +80,7 @@ pub struct Graph {
     /// pre-allocations without re-iterating the file listing.
     pub css_file_count: usize,
 
-    // PERF(port): arena-fed ArrayList (self.heap) — self-referential, revisit in Phase B
+    // PERF(port): Zig fed this ArrayList from `self.heap` (self-referential arena).
     pub additional_output_files: Vec<options::OutputFile>,
 
     pub kit_referenced_server_data: bool,

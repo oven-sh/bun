@@ -29,7 +29,7 @@ pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), 
     {
         // TODO(port): std.process.hasEnvVarConstant("JSON") + std.json.Stringify
         // have no direct equivalent here; wire up bun_core::env_var + a JSON
-        // serializer for Lockfile in Phase B if this debug path is still wanted.
+        // serializer for Lockfile if this debug path is still wanted.
         let _ = &this.lockfile;
     }
 
@@ -62,7 +62,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
     // PERF(port): Zig was raw `allocator.alloc(Dependency.Version, resolutions_buffer.len)` of
     // uninit memory + cursor slicing. We push into a pre-reserved Vec instead — set_len would
-    // drop uninit tail elements (and index-assign would drop uninit old values). Profile in Phase B.
+    // drop uninit tail elements (and index-assign would drop uninit old values). Profile if hot.
     let mut all_requested_versions_buf: Vec<dependency::Version> =
         Vec::with_capacity(resolutions_buffer.len());
 
@@ -94,7 +94,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
             let dependency_versions = &mut all_requested_versions_buf[requested_version_start..];
             if dependency_versions.len() > 1 {
-                // PERF(port): was std.sort.insertion — profile in Phase B
+                // PERF(port): was std.sort.insertion — profile if it shows up on a hot path.
                 dependency_versions.sort_by(|a, b| {
                     if dependency::Version::is_less_than_with_tag(string_buf, a, b) {
                         Ordering::Less

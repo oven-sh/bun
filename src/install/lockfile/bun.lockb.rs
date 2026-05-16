@@ -25,7 +25,7 @@ use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageN
 use bun_semver::{self as semver, String as SemverString};
 
 // TODO(port): z_allocator is a zeroing allocator (bun.z_allocator). In Rust,
-// the equivalent is a wrapper that zeroes allocations. Phase B: provide
+// the equivalent is a wrapper that zeroes allocations. Provide
 // `bun_alloc::ZAllocator` or ensure padding bytes are zeroed via
 // `#[derive(zeroize)]` / explicit zeroing on the serialized structs.
 

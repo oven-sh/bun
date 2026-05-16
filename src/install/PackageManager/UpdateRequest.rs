@@ -24,7 +24,7 @@ pub struct UpdateRequest {
     /// lockfile buffer's lifetime cannot be expressed as `'static` without UB
     /// lifetime extension (PORTING.md §Forbidden patterns), and threading a
     /// real `<'a>` through every `&mut [UpdateRequest]` in the install
-    /// pipeline is the Phase-B reshape. ARENA-class field per the PORTING.md
+    /// pipeline is a larger reshape. ARENA-class field per the PORTING.md
     /// type map: `[]const u8` struct-field, never freed, points into a buffer
     /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
     /// invariant; see `version_buf()`).

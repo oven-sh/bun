@@ -2,9 +2,9 @@
 #![allow(unused, dead_code, clippy::all)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
-// Phase D: libarchive FFI surface is fully wired. Thin `extern "C"` wrappers
-// over the C library live in `mod lib` below; higher-level extraction logic
-// (`Archiver`, `BufferReadStream`) sits on top and uses `bun_sys` for I/O.
+// Thin `extern "C"` wrappers over the libarchive C library live in `mod lib`
+// below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
+// on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_void};
@@ -1063,7 +1063,7 @@ pub enum Seek {
 pub struct BufferReadStream {
     // TODO(port): lifetime — `buf` is borrowed for the stream's lifetime (callers
     // construct on stack, init, defer deinit). Stored as raw fat ptr to avoid
-    // a struct lifetime param in Phase A.
+    // a struct lifetime param.
     buf: *const [u8],
     pos: usize,
 
@@ -1078,7 +1078,7 @@ impl BufferReadStream {
     ///
     /// # Safety
     /// `buf` is type-erased to a raw `*const [u8]` (no lifetime parameter on
-    /// `BufferReadStream` — see field comment / Phase-B TODO). The caller
+    /// `BufferReadStream` — see field comment). The caller
     /// **must** guarantee that the slice `buf` points to remains valid and
     /// unmoved for the entire lifetime of the returned `BufferReadStream`
     /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
@@ -1531,7 +1531,7 @@ impl Archiver {
 
                     // TODO(port): std.mem.tokenizeScalar + .rest() — approximated by
                     // skipping DEPTH_TO_SKIP separator-delimited tokens then taking the
-                    // remainder. Phase B: verify edge cases (leading/trailing seps).
+                    // remainder. TODO: verify edge cases (leading/trailing seps).
                     let mut remaining = pathname_bytes;
                     let mut depth_i = 0usize;
                     while depth_i < DEPTH_TO_SKIP {
@@ -2164,7 +2164,7 @@ impl Archiver {
         options: ExtractOptions,
     ) -> Result<u32, bun_core::Error> {
         // TODO(port): `options` was `comptime` in Zig — not used in a type position,
-        // so demoted to runtime. // PERF(port): was comptime monomorphization — profile in Phase B
+        // so demoted to runtime. // PERF(port): was comptime monomorphization
         // TODO(port): narrow error set
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();

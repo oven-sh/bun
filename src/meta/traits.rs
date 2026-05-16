@@ -12,8 +12,8 @@
 //! See PORTING.md §"Comptime reflection".
 
 // TODO(port): every predicate here relied on `@typeInfo`. The trait-based encoding below
-// is a reshape, not a 1:1 translation. Phase B must audit each call site of
-// `bun.meta.is*` and confirm the trait bound (or specialization) matches the Zig branch.
+// is a reshape, not a 1:1 translation. Audit each call site of `bun.meta.is*` and
+// confirm the trait bound (or specialization) matches the Zig branch.
 
 // ──────────────────────────────────────────────────────────────────────────────
 // isZigString

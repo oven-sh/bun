@@ -2,7 +2,7 @@
 //!
 //! Spec: src/runtime/bake/DevServer/HotReloadEvent.zig
 //!
-//! DISSOLVED — the Phase-A draft that lived here duplicated `HotReloadEvent`
+//! DISSOLVED — the original draft that lived here duplicated `HotReloadEvent`
 //! (struct + `init_empty`/`reset`/`is_empty`/`append_file`/`append_dir`/
 //! `process_file_list`/`run`) against `dev_server/mod.rs`. The duplicate
 //! carried four spec divergences:

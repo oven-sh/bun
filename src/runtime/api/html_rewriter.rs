@@ -25,9 +25,9 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
-// surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft
-// referenced both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw
-// opaque handles); they resolve to the same module, so alias both names.
+// surface lives directly in `bun_lolhtml_sys::lol_html`. Code below references
+// both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw opaque
+// handles); they resolve to the same module, so alias both names.
 use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
 use crate::webcore::{self, Blob, Body, Response};
@@ -351,7 +351,7 @@ impl HTMLRewriter {
         // TODO(port): Zig calls context.deref() here explicitly; with Rc the
         // drop happens when HTMLRewriter is dropped. If finalize_without_destroy
         // is called without immediate drop, we'd want to swap context to a
-        // fresh Rc. Phase B: verify call sites.
+        // fresh Rc. Verify call sites.
     }
 
     pub fn begin_transform(
@@ -511,7 +511,7 @@ pub struct HTMLRewriterLoader {
     pub failed: bool,
     // TODO(port): lifetime — Zig `Sink` stores `*anyopaque` (no borrow). Rust
     // `Sink<'a>` borrows its handler; the destination handler outlives this
-    // loader (set in `setup()`), so use `'static` as the Phase-A erasure.
+    // loader (set in `setup()`), so the lifetime is erased to `'static` here.
     pub output: webcore::Sink<'static>,
     pub signal: Signal,
     pub backpressure: LinearFifo<u8, DynamicBuffer<u8>>,
@@ -1408,8 +1408,8 @@ where
     let vm = || -> &mut VirtualMachine { global.bun_vm().as_mut() };
 
     // Use a TopExceptionScope to properly handle exceptions from the JavaScript
-    // callback (html_rewriter.zig:920-922). The Phase-A draft replaced this with
-    // a post-hoc `try_take_exception()`, but that is *not* equivalent under
+    // callback (html_rewriter.zig:920-922). A post-hoc `try_take_exception()`
+    // is *not* equivalent under
     // `BUN_JSC_validateExceptionChecks=1`: `JSGlobalObject__tryTakeException`
     // constructs a fresh `TopExceptionScope` whose ctor calls
     // `verifyExceptionCheckNeedIsSatisfied`, asserting if the preceding
@@ -1905,7 +1905,7 @@ pub struct EndTag {
 
 pub struct EndTagHandler {
     // TODO(port): bare JSValue heap field kept alive via JSC gcProtect —
-    // evaluate bun_jsc::Strong in Phase B (see DocumentHandler note).
+    // evaluate bun_jsc::Strong (see DocumentHandler note).
     pub callback: Option<JSValue>,
     pub global: GlobalRef, // JSC_BORROW
 }

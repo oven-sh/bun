@@ -294,8 +294,8 @@ impl DependencyExt for Dependency {
         is_remote_tarball(dep)
     }
 
-    /// Stub-compat: B-1 stub exposed `Dependency::parse` as an associated fn;
-    /// real port has it as a free fn. Delegate so downstream callers
+    /// Compat: dependents call `Dependency::parse` as an associated fn;
+    /// the actual implementation is a free fn. Delegate so downstream callers
     /// (`bun_install_jsc`) keep type-checking.
     ///
     /// `alias_hash`, `log`, and `manager` accept either bare values or
@@ -474,9 +474,9 @@ pub fn is_remote_tarball(dependency: &[u8]) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Stub-compat aliases: B-1 stub exposed `dependency::version::Tag`,
+// Compat aliases: dependents reference `dependency::version::Tag`,
 // `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
-// submodule. Real Zig nests `Tag` under `Dependency.Version`, but Phase-A
+// submodule. The Zig nests `Tag` under `Dependency.Version`, but here it's
 // flattened to top-level — keep both paths so dependents type-check.
 // ──────────────────────────────────────────────────────────────────────────
 pub use Tag as VersionTag;
@@ -770,7 +770,7 @@ impl VersionExt for Version {
 // ──────────────────────────────────────────────────────────────────────────
 
 // PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
-// in the Phase-A draft; rewritten as a length-gated match (cf. 12577e958d71
+// in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
 // clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
 // compare rejects almost every miss before touching bytes, and hits resolve in
 // ≤3 slice compares with no hashing or static-init overhead.
@@ -838,7 +838,7 @@ impl TagExt for Tag {
             return Tag::Folder;
         }
 
-        // PERF(port): was stack-fallback allocator (1024B); now uses global mimalloc — profile in Phase B
+        // PERF(port): was stack-fallback allocator (1024B); now uses global mimalloc — profile if it shows up on a hot path.
 
         match dependency[0] {
             // =1

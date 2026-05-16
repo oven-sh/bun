@@ -172,9 +172,9 @@ impl<const SSL: bool> App<SSL> {
     // `.always_inline`.
     //
     // Rust cannot accept a `fn` as a const-generic parameter, so the type-safe
-    // shim cannot be monomorphized here without a macro. Phase A exposes the raw
+    // shim cannot be monomorphized here without a macro. We expose the raw
     // C handler type directly; callers supply their own `extern "C" fn` (or a
-    // Phase-B `route_handler!` macro generates one). The shape of that shim is:
+    // future `route_handler!` macro generates one). The shape of that shim is:
     //
     //   extern "C" fn handle<U, const SSL: bool>(
     //       res: *mut uws_res,
@@ -186,7 +186,7 @@ impl<const SSL: bool> App<SSL> {
     //   }
     //
     // TODO(port): proc-macro or trait-based comptime handler dispatch (RouteHandler).
-    // PERF(port): was @call(.always_inline) on the user handler — profile in Phase B.
+    // PERF(port): was @call(.always_inline) on the user handler — profile if hot.
     // ─────────────────────────────────────────────────────────────────────
 
     uws_app_route_methods! {
@@ -252,7 +252,7 @@ impl<const SSL: bool> App<SSL> {
         user_data: *mut c_void,
     ) {
         // TODO(port): Zig generated a type-safe Wrapper.handle per (UserData, handler) at
-        // comptime, casting user_data and ListenSocket. Phase B: macro-generate the shim.
+        // comptime, casting user_data and ListenSocket. Macro-generate the shim.
         // PERF(port): was @call(.always_inline) on the user handler.
         c::uws_app_listen(
             Self::SSL_FLAG,
@@ -269,7 +269,7 @@ impl<const SSL: bool> App<SSL> {
         user_data: *mut c_void,
     ) {
         // TODO(port): Zig wrapped the C callback to slice raw_packet[0..max(len,0)] and pass
-        // a typed UserData. Phase B: macro-generate the shim; for now callers slice manually.
+        // a typed UserData. Macro-generate the shim; for now callers slice manually.
         // PERF(port): was @call(.always_inline) on the user handler.
         c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
@@ -281,7 +281,7 @@ impl<const SSL: bool> App<SSL> {
         config: c::uws_app_listen_config_t,
     ) {
         // TODO(port): Zig generated a type-safe Wrapper.handle per (UserData, handler) at
-        // comptime. Phase B: macro-generate the shim.
+        // comptime. Macro-generate the shim.
         // PERF(port): was @call(.always_inline) on the user handler.
         // SAFETY: self is a valid app; config.host (if non-null) is NUL-terminated and outlives the call.
         unsafe {
@@ -305,7 +305,7 @@ impl<const SSL: bool> App<SSL> {
         flags: i32,
     ) {
         // TODO(port): Zig generated a type-safe Wrapper.handle per (UserData, handler) at
-        // comptime (ignoring domain/flags args, casting socket). Phase B: macro-generate.
+        // comptime (ignoring domain/flags args, casting socket). Macro-generate the shim.
         // PERF(port): was @call(.always_inline) on the user handler.
         // SAFETY: self is a valid app; domain_name is NUL-terminated.
         unsafe {
@@ -458,7 +458,7 @@ impl<const SSL: bool> App<SSL> {
     // TODO(port): Zig exposed `Response` and `WebSocket` as nested associated types
     // (App<SSL>::Response). Rust inherent associated types are unstable; callers use
     // `crate::response::Response<{SSL as i32}>` / `crate::web_socket::WebSocket<{SSL as i32}>`
-    // directly until Phase B picks a stable encoding (trait assoc type or type alias).
+    // directly until a stable encoding (trait assoc type or type alias) is picked.
 }
 
 /// Opaque listen socket handle, parameterized by SSL to match `App<SSL>`.

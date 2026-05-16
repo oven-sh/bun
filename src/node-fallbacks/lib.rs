@@ -6,4 +6,3 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.

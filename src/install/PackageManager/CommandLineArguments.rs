@@ -17,7 +17,7 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
 use bun_paths::{self as Path, PathBuffer};
-// TODO(b0): PackageManagerCommand arrives from move-in
+// TODO(port): PackageManagerCommand arrives from move-in
 // (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
 use crate::package_manager_real::PackageManagerCommand;
 
@@ -353,7 +353,7 @@ static WHY_PARAMS: &[ParamType] = concat_params![
 
 // NOTE: `string` (= `[]const u8`) fields here are slices into process argv (owned by `clap::Args`
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
-// per PORTING.md (no `deinit`, never `allocator.free`d). Phase B may want to thread an explicit
+// per PORTING.md (no `deinit`, never `allocator.free`d). TODO(refactor): thread an explicit
 // lifetime if `clap::Args` ever becomes scoped.
 //
 // `Clone` mirrors Zig value-copy semantics — `updatePackageJSONAndInstall`
@@ -975,7 +975,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
     // TODO(port): narrow error set
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, bun_core::Error> {
-        // PERF(port): was comptime monomorphization on `subcommand` — profile in Phase B
+        // PERF(port): was comptime monomorphization on `subcommand` — profile if hot
         Output::set_is_verbose(Output::is_verbose());
 
         let params: &'static [ParamType] = match subcommand {

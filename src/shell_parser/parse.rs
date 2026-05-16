@@ -19,9 +19,8 @@ use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
 use bun_core::{self as bun_str, String as BunString, immutable as strings};
 
-// PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). The
-// Phase-A draft referenced it as `CodepointCursor`; alias here so the body
-// reads identically to the Zig source.
+// PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). Aliased
+// as `CodepointCursor` so the body reads identically to the Zig source.
 type CodepointCursor = strings::Cursor;
 
 /// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
@@ -916,7 +915,7 @@ pub mod ast {
         pub script: Script<'arena>,
         pub quoted: bool,
     }
-    // TODO(port): Script contains &'arena mut — Clone is wrong; revisit in Phase B.
+    // TODO(port): Script contains &'arena mut — Clone is wrong; revisit.
 
     impl<'arena> CmdSubst<'arena> {
         pub fn memory_cost(&self) -> usize {
@@ -1744,7 +1743,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn parse_atom(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
-        // PERF(port): was stack-fallback (1 SimpleAtom) — profile in Phase B
+        // PERF(port): was stack-fallback (1 SimpleAtom) — profile if hot.
         let mut atoms = bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
         let mut has_brace_open = false;
         let mut has_brace_close = false;
@@ -2040,7 +2039,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn match_any_comptime(&mut self, toktags: &[TokenTag]) -> bool {
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if hot.
         let peeked = self.peek().tag();
         for &tag in toktags {
             if peeked == tag {
@@ -2084,7 +2083,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn peek_any_comptime_ifclausetok(&self, toktags: &[IfClauseTok]) -> bool {
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if hot.
         self.peek_any_ifclausetok(toktags)
     }
 
@@ -2340,8 +2339,8 @@ impl TextRange {
 
 impl Token {
     pub fn as_human_readable(self, strpool: &[u8]) -> &[u8] {
-        // TODO(port): Zig builds varargv_strings as a 10x[2]u8 stack array; in Rust we'd need
-        // a thread_local or to return Cow. For Phase A use static lookup.
+        // PORT NOTE: Zig builds varargv_strings as a 10x[2]u8 stack array; in Rust we'd need
+        // a thread_local or to return Cow. Use a static lookup instead.
         const VARARGV_STRINGS: [&[u8]; 10] = [
             b"$0", b"$1", b"$2", b"$3", b"$4", b"$5", b"$6", b"$7", b"$8", b"$9",
         ];
@@ -3950,7 +3949,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
 /// Unified InputChar — Zig had two layouts (packed u8 for ascii, struct for unicode).
 /// In Rust we use one struct; CodepointType is u32 in both (ascii values fit in u7).
-// TODO(port): if the packed-u8 layout matters for perf, specialize via const generic in Phase B.
+// TODO(perf): if the packed-u8 layout matters for perf, specialize via const generic.
 #[derive(Clone, Copy)]
 pub struct InputChar {
     pub char: u32,
@@ -4705,7 +4704,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         SmolList::Heap(heap)
     }
 
-    // TODO(port): jsonStringify — wire up serde or custom JSON writer in Phase B.
+    // TODO(port): jsonStringify — wire up serde or a custom JSON writer.
 
     #[inline]
     pub fn len(&self) -> usize {

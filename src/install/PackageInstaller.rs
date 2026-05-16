@@ -768,10 +768,10 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub fn install_available_packages<const FORCE: bool>(&mut self, log_level: Options::LogLevel) {
-        // TODO(port): defer save/restore of self.node_modules / self.current_tree_id.
+        // TODO(refactor): defer save/restore of self.node_modules / self.current_tree_id.
         // Zig does a struct-copy of NodeModulesFolder (ptr+len+cap) and restores on scope
         // exit. In Rust this needs `core::mem::take` + scopeguard, but scopeguard cannot
-        // capture `&mut self` alongside the loop body's `&mut self`. Phase B: hoist into
+        // capture `&mut self` alongside the loop body's `&mut self`. Could hoist into
         // a helper that takes the saved values by move and restores after the loop.
         let prev_node_modules = core::mem::take(&mut self.node_modules);
         let prev_tree_id = self.current_tree_id;

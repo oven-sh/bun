@@ -1,20 +1,14 @@
 //! Port of src/runtime/cli/cli.zig — CLI entry point + command dispatch.
 //!
-//! B-2 round 2: un-gate the help path. `Command::which()` + `HelpCommand`
-//! + `print_version_and_exit` are real and compile against lower-tier crates.
-//! `Command::start()` (full dispatch) and per-command exec bodies stay gated
-//! behind `` — they need `bun_jsc`, `bun_bun_js`, transpiler,
-//! and the not-yet-un-gated sibling `*_command.rs` modules.
-//!
-//! (Phase-A draft `cli_body.rs` has been folded in and deleted.)
+//! `Command::which()` + `HelpCommand` + `print_version_and_exit` compile
+//! against lower-tier crates. `Command::start()` (full dispatch) and
+//! per-command exec bodies live in the sibling `*_command.rs` modules.
 
 use core::cell::Cell;
 
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
-
-// (Phase-A draft `cli_body.rs` removed — mod.rs is canonical.)
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ci_info.rs"]
@@ -226,14 +220,14 @@ pub mod colon_list_type;
 pub mod shell_completions;
 #[path = "which_npm_client.rs"]
 pub mod which_npm_client;
-// TODO(b2-blocked): list-of-yarn-commands.rs has duplicate phf_set! keys.
+// TODO(port): list-of-yarn-commands.rs has duplicate phf_set! keys.
 #[path = "discord_command.rs"]
 pub mod discord_command;
 #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
 
 // ─── open (minimal open_url; full Editor/EditorContext stays gated) ──────────
-// TODO(b2-blocked): full `open.rs` (Editor detection/spawn) needs
+// TODO(port): full `open.rs` (Editor detection/spawn) needs
 // `crate::process::spawn_sync`, `bun_threading::spawn_detached`,
 // `bun_resolver::fs::FileSystem` — none of which are wired on this path yet.
 // `bun discord` only needs `open_url`, so provide a thin print-fallback impl
@@ -281,8 +275,7 @@ pub mod install_completions_command;
 #[path = "package_manager_command.rs"]
 pub mod package_manager_command;
 
-// ─── B-2 round 2: newly un-gated (thin surface, heavy bodies re-gated inside) ─
-// phase-d: surfaced for `crate::test_runner::{bun_test,jest,Execution}` which
+// Surfaced for `crate::test_runner::{bun_test,jest,Execution}` which
 // need `CommandLineReporter`. This is the sole live mount of the file.
 #[path = "test_command.rs"]
 pub mod test_command;
@@ -587,7 +580,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
-        // TODO(b2-blocked): MainPanicHandler wiring.
+        // TODO(port): MainPanicHandler wiring.
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -719,7 +712,7 @@ pub mod help_command {
 
     // PORT NOTE: Zig had `comptime reason: Reason` → const generic. Tag/Reason
     // lack `ConstParamTy` in lower-tier crates, so demoted to a runtime arg.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
+    // PERF(port): was comptime monomorphization — profile if hot.
     pub fn print_with_reason(reason: Reason, show_all_flags: bool) {
         let mut rand = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
@@ -870,15 +863,9 @@ pub mod command {
     // Canonical home: src/runtime/cli/mod.rs, inside `pub mod command { ... }`
     // (crate path `bun_runtime::cli::command::{is_bun_x, is_node, which}`).
     //
-    // These ARE the live impls already invoked from `command::start()` at
-    // mod.rs:1139 and read via `IS_BUNX_EXE` at mod.rs:1421. The Phase-A draft
-    // copies in cli_body.rs are dead (private `mod cli_body;`, zero external
-    // refs) and are removed wholesale by this dedup.
-    //
-    // One semantic back-port from the dead copy / Zig spec (cli.zig:411):
-    // the `is_node` branch of `which()` must clear
+    // PORT NOTE (cli.zig:411): the `is_node` branch of `which()` must clear
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
-    // stays silent on unknown flags. The live mod.rs copy had dropped this line.
+    // stays silent on unknown flags.
     // ──────────────────
     pub fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
@@ -1015,7 +1002,7 @@ pub mod command {
         let x = RootCommandMatcher::r#match(first_arg_name);
         // PERF(port): Zig's `switch` over RootCommandMatcher cases compiles to a
         // jump table on the packed u96; Rust `if x == const` is a chain of
-        // compares — profile in Phase B.
+        // compares — profile if it shows up on a hot path.
         if x == RootCommandMatcher::case(b"init") {
             return Tag::InitCommand;
         }
@@ -1194,7 +1181,7 @@ pub mod command {
         #[cfg(windows)]
         {
             if ctx.debug.hot_reload == HotReload::Watch {
-                // TODO(b2-blocked): bun_sys::windows::is_watcher_child /
+                // TODO(port): bun_sys::windows::is_watcher_child /
                 // become_watcher_manager — Windows watcher hand-off path.
 
                 {
@@ -1285,7 +1272,7 @@ pub mod command {
         //    user code (it returned via `boot_standalone`).
         //  * the version check is exact-argv-shape (`len == 2`) so it cannot
         //    intercept `bun <bin> --version`, where the flag belongs to
-        //    `<bin>` (the bug the old Phase-C argv-scan shim had — see the
+        //    `<bin>` (the bug the old argv-scan shim had — see the
         //    NOTE below). The empty-eval check is likewise exact-shape, so it
         //    matches Zig's post-parse `eval.script.len == 0 &&
         //    positionals.len == 0` fall-through to `HelpCommand.exec`.
@@ -1341,7 +1328,7 @@ pub mod command {
 
         let tag = which();
 
-        // NOTE: a Phase-C shim used to scan all of `argv` here for
+        // NOTE: an earlier shim used to scan all of `argv` here for
         // `--version`/`--help`/`--revision` and short-circuit, because
         // `Arguments::parse` was gated. That shim is removed now that
         // `arguments::parse` (called via `init` → `create_context_data`) is
@@ -1479,12 +1466,12 @@ pub mod command {
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
         // PORT NOTE: Zig's AutoCommand arm swallows
         // `error.MissingEntryPoint` from `Command.init` and prints
-        // help. `bun_core::Error` has no variant table yet (B-1 stub
+        // help. `bun_core::Error` has no variant table yet (stub
         // — `err!()` collapses to `Error::TODO`), so a name-match
         // would alias every error. Propagate for now; the empty-
         // positionals fallthrough below covers the common "no args"
         // help path anyway.
-        // TODO(b2): restore `MissingEntryPoint → HelpCommand::exec()`
+        // TODO(port): restore `MissingEntryPoint → HelpCommand::exec()`
         // once `bun_core::Error` interns names.
         let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
@@ -1575,7 +1562,7 @@ pub mod command {
         let writer = Output::writer();
         let _ = writer.write_all(shell.completions());
         Output::flush();
-        // TODO(b2-blocked): tty path → write into shell completions dir
+        // TODO(port): tty path → write into shell completions dir
         // (InstallCompletionsCommand::exec).
         Global::exit(0);
     }
@@ -2040,7 +2027,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // PORT NOTE: every help block here must pass its template as a *string
         // literal* to `pretty!()` so the `pretty_fmt!` proc-macro can rewrite
         // the `<tag>` markers at compile time. Passing a `const &str` through
-        // `{}` (as the original Phase-A draft did) prints the raw markup.
+        // `{}` prints the raw markup.
         match cmd {
             Tag::AutoCommand | Tag::HelpCommand => {
                 HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, show_all_flags);

@@ -14,7 +14,7 @@ use crate::JSValue;
 // the canary free).
 // TODO(port): release builds have no ref_count, so a caller that does the final
 // `unref()` and then lets Drop fire would double-unprotect — audit call sites
-// in Phase B (Zig contract: ref/unref pairs are balanced, deinit is the release).
+// (Zig contract: ref/unref pairs are balanced, deinit is the release).
 
 // `enable_safety = bun.Environment.ci_assert`
 // TODO(port): map `Environment.ci_assert` to the correct cfg; using debug_assertions as proxy.

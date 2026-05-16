@@ -280,7 +280,7 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() + 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -314,7 +314,7 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() - 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -869,8 +869,8 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// This is the inverse of `leak()` / `into_raw()`.
     ///
     /// Std-conventional alias for [`take_ref`] (matches `Arc::from_raw` /
-    /// `Rc::from_raw` semantics) so Phase-A drafts that reached for the
-    /// idiomatic Rust name compile without churn.
+    /// `Rc::from_raw` semantics) so call sites that reach for the idiomatic
+    /// Rust name compile without churn.
     ///
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must own one ref.
@@ -1296,7 +1296,7 @@ fn return_address() -> usize {
 fn offset_of_ref_count<T: RefCounted, Rc>() -> usize {
     // TODO(port): Zig used `@fieldParentPtr(field_name, count)`. Without the
     // field name as a const, compute via the trait: feed a dangling aligned T
-    // and diff pointers. Phase B: derive macro emits `offset_of!(T, ref_count)`.
+    // and diff pointers. The derive macro could emit `offset_of!(T, ref_count)`.
     let _ = core::mem::size_of::<Rc>();
     0
 }

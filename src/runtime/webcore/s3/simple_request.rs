@@ -23,11 +23,10 @@ use crate::webcore::s3::list_objects;
 
 // PORT NOTE: result/options structs below carry borrowed slices that are valid only for the
 // duration of the callback invocation (Zig comments say "not owned and need to be copied if used
-// after this callback"). They get an explicit `<'a>` even though PORTING.md's []const u8 row says
-// "never put a lifetime param on a struct in Phase A" — these are ephemeral stack-only callback
-// payloads (never heap-stored), which falls under LIFETIMES.tsv class BORROW_PARAM (struct gets
-// `<'a>`). Phase B may swap to raw `*const [u8]` if borrowck reshaping proves cleaner.
-// TODO(port): revisit <'a> vs raw-ptr for callback payload structs in Phase B
+// after this callback"). They take an explicit `<'a>` because they are ephemeral stack-only
+// callback payloads (never heap-stored) — the borrow lifetime accurately models ownership.
+// TODO(port): revisit `<'a>` vs raw `*const [u8]` for callback payload structs if borrowck
+// reshaping proves cleaner.
 
 #[derive(Default)]
 pub struct S3StatSuccess<'a> {

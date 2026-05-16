@@ -138,7 +138,7 @@ impl<C: WriterContext> NewWriterWrap<C> {
 /// `is_wrapped`, otherwise wraps it via `NewWriterWrap`. Rust cannot branch on a
 /// type-level decl, so callers that already hold a `NewWriterWrap<C>` should use
 /// it directly; this alias covers the wrapping case.
-// TODO(port): @hasDecl(Context, "is_wrapped") short-circuit — Phase B: ensure no
+// TODO(refactor): @hasDecl(Context, "is_wrapped") short-circuit — ensure no
 // caller double-wraps; if needed, model via a `MySQLWriter` trait with a blanket
 // impl for `NewWriterWrap<C>`.
 pub type NewWriter<C> = NewWriterWrap<C>;

@@ -1082,7 +1082,7 @@ impl UDPSocket {
         callframe: &CallFrame,
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
-        // PERF(port): was comptime monomorphization — profile in Phase B.
+        // PERF(port): was comptime monomorphization — profile if hot.
         if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -1201,7 +1201,7 @@ impl UDPSocket {
 
         let len = if connected { array_len } else { array_len / 3 };
 
-        // PERF(port): was arena bulk-free — profile in Phase B.
+        // PERF(port): was arena bulk-free — profile if hot.
         let mut payload_vals: Vec<JSValue> = Vec::with_capacity(len);
         payload_vals.resize(len, JSValue::ZERO);
         let mut payloads: Vec<*const u8> = vec![core::ptr::null(); len];

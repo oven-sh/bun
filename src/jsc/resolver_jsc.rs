@@ -37,7 +37,7 @@ pub extern "C" fn node_module_paths_js_value(
     global: &JSGlobalObject,
     use_dirname: bool,
 ) -> JSValue {
-    // PERF(port): was ArenaAllocator + stackFallback(1024) bulk-free — profile in Phase B
+    // PERF(port): was ArenaAllocator + stackFallback(1024) bulk-free — profile if hot.
     let mut list: Vec<BunString> = Vec::new();
 
     let sliced = in_str.to_utf8();

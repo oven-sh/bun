@@ -186,7 +186,7 @@ impl WorkPool {
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
         // PERF(port): `function` was a comptime param in Zig (monomorphized into the
-        // callback); stored as a runtime field here — profile in Phase B.
+        // callback); stored as a runtime field here — profile if it shows up on a hot path.
         #[repr(C)]
         struct TaskType<C> {
             task: Task,

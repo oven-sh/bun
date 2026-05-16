@@ -1441,7 +1441,7 @@ pub extern "C" fn napi_is_arraybuffer(
 }
 
 unsafe extern "C" {
-    // TODO(port): Zig signature has `data: [*]const u8`; N-API spec says `void**` out-param — verify in Phase B which is the source of truth.
+    // TODO(port): Zig signature has `data: [*]const u8`; N-API spec says `void**` out-param — verify which is the source of truth.
     pub fn napi_create_arraybuffer(
         env: napi_env,
         byte_length: usize,
@@ -3804,7 +3804,7 @@ pub fn fix_dead_code_elimination() {
 
     // uv_functions_to_export
     // TODO(port): Zig iterates std.meta.declarations(uv_functions_to_export) — Rust has no
-    // reflection over extern blocks. Phase B should script-generate this black_box list from
+    // reflection over extern blocks. Script-generate this black_box list from
     // the `uv_functions_to_export` module above, or rely on `#[used]` static fn-ptr arrays.
     #[cfg(unix)]
     {

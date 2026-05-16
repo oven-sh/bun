@@ -364,7 +364,7 @@ impl Editor {
         spawned.argc = i;
         // TODO(port): std.process.Child is banned (PORTING.md: no std::process).
         // Zig stored `std.process.Child.init(args_buf[0..i], default_allocator)` here and
-        // spawned a detached std.Thread to run it. Phase B should replace with
+        // spawned a detached std.Thread to run it. TODO(port): replace with
         // crate::process::spawn (async) or a bun_threading worker that owns
         // SpawnedEditorContext and calls bun.spawnSync.
         let spawned_ptr = bun_core::heap::into_raw(spawned);
@@ -471,7 +471,7 @@ pub struct SpawnedEditorContext {
     pub file_path_buf: [u8; 1024 + MAX_PATH_BYTES],
     pub buf: [(*const u8, usize); 10],
     pub argc: usize,
-    // TODO(port): was `std.process.Child` — replace with bun spawn handle in Phase B.
+    // TODO(port): was `std.process.Child` — replace with a bun spawn handle.
 }
 
 impl Default for SpawnedEditorContext {

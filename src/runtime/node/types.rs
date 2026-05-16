@@ -649,11 +649,10 @@ pub enum Encoding {
 }
 
 // PORT NOTE: Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
-// `inMapCaseInsensitive`). Phase A originally lowered this to a `phf::Map`,
-// but with only 13 short keys spread across 7 distinct lengths (max 4 keys at
-// len==6) a length-gated byte match beats phf's hash+probe — see
-// `Encoding::from` below. The case-insensitive entry points lowercase into a
-// stack buffer first.
+// `inMapCaseInsensitive`). With only 13 short keys spread across 7 distinct
+// lengths (max 4 keys at len==6) a length-gated byte match beats a
+// `phf::Map`'s hash+probe — see `Encoding::from` below. The case-insensitive
+// entry points lowercase into a stack buffer first.
 
 impl From<Encoding> for bun_core::NodeEncoding {
     fn from(e: Encoding) -> Self {
@@ -869,7 +868,7 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
-            // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
+            // PERF(port): was comptime monomorphization (`inline else`) — profile if it shows up on a hot path
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
@@ -930,8 +929,8 @@ pub struct CallbackTask<Result> {
 }
 
 // PORT NOTE: Zig uses an untagged `union` discriminated by `success: bool`.
-// Represented here as a Rust enum; callers must keep `success` in sync or
-// drop the `success` field entirely in Phase B.
+// Represented here as a Rust enum; callers must keep `success` in sync.
+// TODO(refactor): drop the redundant `success` field entirely.
 pub enum CallbackTaskOption<Result> {
     Err(bun_sys::SystemError),
     Result(Result),
@@ -1037,7 +1036,7 @@ pub trait PathOrFdExt {
 impl PathLikeExt for PathLike {
     // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
     // Rust const-generics can't change return mutability; we always return `&ZStr`.
-    // The single force=true caller (if any) needs `&mut ZStr` — handle in Phase B.
+    // The single force=true caller (if any) needs `&mut ZStr` — handle if it comes up.
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
         buf: &'a mut PathBuffer,
@@ -1621,7 +1620,7 @@ impl FileSystemFlags {
             }
 
             let flags: Option<i32> = 'brk: {
-                // PERF(port): was comptime bool dispatch (`inline else`) — profile in Phase B
+                // PERF(port): was comptime bool dispatch (`inline else`) — profile if it shows up on a hot path
                 if str.is_16bit() {
                     let chars = str.utf16_slice_aligned();
                     if (chars[0] as u8).is_ascii_digit() {
@@ -1715,10 +1714,10 @@ impl FileSystemFlags {
 }
 
 // PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-// Phase A lowered this to a 44-entry `phf::Map`, but the keys are tiny (1..=3
-// bytes) and cluster heavily by length (6/22/16). phf's hash+probe is dominated
-// by the SipHash of the input slice; a length-gated byte match rejects on a
-// single `usize` compare and lowers the inner arms to 1-2 register compares.
+// A 44-entry `phf::Map` would work, but the keys are tiny (1..=3 bytes) and
+// cluster heavily by length (6/22/16). phf's hash+probe is dominated by the
+// SipHash of the input slice; a length-gated byte match rejects on a single
+// `usize` compare and lowers the inner arms to 1-2 register compares.
 // Same pattern as `clap::find_param` (12577e958d71).
 //
 // 2-level dispatch: `len` → `(b0, b1)` tuple. The original 44 keys are 22

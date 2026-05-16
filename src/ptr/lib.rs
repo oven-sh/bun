@@ -13,9 +13,6 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-// B-1: gate Phase-A draft bodies (E0658 nightly features, missing imports);
-// expose stable-surface stubs. Full bodies preserved on disk for B-2.
-
 // Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
 #![warn(unreachable_pub)]
 pub use std::borrow::Cow;
@@ -52,7 +49,8 @@ pub mod raw_ref_count;
 pub mod weak_ptr;
 
 pub mod tagged_pointer;
-// Compat aliases — Phase-A draft used short names; downstream uses long ones.
+// Compat aliases — `tagged_pointer` exports short names; some downstream code
+// uses the long ones.
 pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPointerUnion};
 
 pub mod ref_count;
@@ -67,7 +65,7 @@ pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCou
 
 pub mod parent_ref;
 pub use parent_ref::{Anchored, LiveMarker, ParentRef};
-// Compat aliases for Phase-A drafts that used pointer-typedef stubs.
+// Compat aliases for callers that use the pointer-typedef names.
 pub type IntrusiveRc<T> = RefPtr<T>;
 pub type IntrusiveArc<T> = RefPtr<T>;
 
@@ -95,9 +93,10 @@ pub mod meta; // small, used by other crates
 // BackRef<T> / RawSlice<T> — runtime back-reference / borrowed-slice wrappers.
 //
 // Runtime structs frequently hold a non-owning pointer back to their owner
-// (Zig: `*Parent`, `*const VirtualMachine`, `[]const u8`). Phase-A modeled
-// these as raw `*mut T` / `*const [T]` and open-coded `unsafe { &*self.field }`
-// at every read site. These two wrappers centralise that pattern under the
+// (Zig: `*Parent`, `*const VirtualMachine`, `[]const u8`). The original port
+// modeled these as raw `*mut T` / `*const [T]` and open-coded
+// `unsafe { &*self.field }` at every read site. These two wrappers centralise
+// that pattern under the
 // `StoreRef`/`StoreSlice` contract from the parser, but for the *runtime*
 // lifetime invariant: the pointee strictly outlives the holder by construction
 // (owner creates child, child stores `BackRef` to owner; owner is destroyed
@@ -245,7 +244,7 @@ pub unsafe fn detach_lifetime<'a, T>(s: &[T]) -> &'a [T] {
 /// [`detach_lifetime`]).
 ///
 /// Replaces the open-coded `unsafe { &*std::ptr::from_ref::<T>(x) }` /
-/// `unsafe { &*(&raw const x) }` lifetime-laundering idiom that the Phase-A
+/// `unsafe { &*(&raw const x) }` lifetime-laundering idiom that the original
 /// port scattered everywhere a Zig `*const T` was held across a sibling
 /// `&mut self` reborrow (arena handles, SoA columns, self-referential views).
 /// Centralising it here makes the call sites grep-able and the safety
@@ -361,7 +360,7 @@ pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
 // ─────────────────────────────────────────────────────────────────────────────
 // Interned — process-lifetime byte-slice proof type.
 //
-// The Phase-A port widened ~100 borrowed `&[u8]` to `&'static [u8]` via
+// The original port widened ~100 borrowed `&[u8]` to `&'static [u8]` via
 // open-coded `unsafe { &*ptr::from_ref(s) }`. Audit splits them into:
 //
 //   • Population A (~80) — bytes live in a process-lifetime store
@@ -518,7 +517,7 @@ impl core::fmt::Debug for Interned {
 // ThisPtr<T> — callback-dispatch self-pointer
 //
 // uSockets / C++ FFI dispatch hands every socket-event handler a raw
-// `*mut Self` recovered from the userdata slot. The Phase-A port open-coded
+// `*mut Self` recovered from the userdata slot. The original port open-coded
 // `unsafe { (*this).field }` / `unsafe { (&*this).ref_() }` /
 // `scopeguard::guard(this, |p| unsafe { Self::deref(p) })` at ~90 call sites
 // across the websocket-client family. `ThisPtr` centralises that pattern under

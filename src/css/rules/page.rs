@@ -11,8 +11,8 @@ use super::ArrayList;
 pub struct PageSelector {
     /// An optional named page type.
     // PORT NOTE: arena-owned slice borrowed from parser input; `&'static` per
-    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note. Phase B
-    // re-threads `'bump`.
+    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note.
+    // TODO(port): re-thread `'bump`.
     pub name: Option<&'static [u8]>,
     /// A list of page pseudo classes.
     pub pseudo_classes: ArrayList<PagePseudoClass>,

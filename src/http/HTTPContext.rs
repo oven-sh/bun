@@ -11,7 +11,7 @@ use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::{self, Error, FeatureFlags};
-// TODO(b0): SSLConfig arrives from move-in
+// TODO(port): SSLConfig arrives from move-in
 // (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::{self, SSLConfig};
 use bun_core::strings;
@@ -515,7 +515,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub fn init_with_client_config(&mut self, client: &mut HTTPClient) -> Result<(), InitError> {
         // TODO(port): `if (!comptime ssl) @compileError("ssl only")` — Rust
         // cannot @compileError on a const-generic bool branch without nightly;
-        // debug_assert until Phase B splits impls.
+        // debug_assert until the SSL/non-SSL impls are split.
         debug_assert!(SSL, "ssl only");
         let opts = client
             .tls_props

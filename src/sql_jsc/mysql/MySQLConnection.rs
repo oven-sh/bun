@@ -46,7 +46,6 @@ pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 // `my_sql_connection::Status::Connected` without naming `bun_sql`.
 pub use bun_sql::mysql::connection_state::ConnectionState as Status;
 
-// TODO(port): jsc.API.ServerConfig.SSLConfig — confirm crate path in Phase B
 use crate::jsc::api::server_config::SSLConfig;
 
 bun_core::define_scoped_log!(debug, MySQLConnection, visible);
@@ -75,12 +74,12 @@ pub struct MySQLConnection {
     auth_state: AuthState,
 
     auth_data: Vec<u8>,
-    // TODO(port): in Zig, database/user/password/options are sub-slices into options_buf
+    // TODO(perf): in Zig, database/user/password/options are sub-slices into options_buf
     // (single backing allocation; only options_buf is freed in cleanup()). Per the
     // `[]const u8 struct field → look at deinit` rule, only options_buf should be
-    // Box<[u8]>; the others should be ranges/raw `*const [u8]` into it. Phase B:
-    // restore the single-buffer layout and revert init()'s database/username/password/
-    // options params from Box<[u8]> back to &[u8] (1 caller-side alloc, not 5).
+    // Box<[u8]>; the others should be ranges/raw `*const [u8]` into it. Restore the
+    // single-buffer layout and revert init()'s database/username/password/options
+    // params from Box<[u8]> back to &[u8] (1 caller-side alloc, not 5).
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,
@@ -939,7 +938,7 @@ impl MySQLConnection {
             // the `&mut MySQLStatement` borrow immediately so `request` /
             // `&mut self` are unconstrained inside the match arms (no raw-ptr
             // downgrade needed for a single Copy field read).
-            // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
+            // TODO(port): MySQLStatement intrusive ref_/deref_ (bun_ptr).
             // Skipped here; the queue's ref on `request` keeps the statement
             // alive for the duration of this call.
             match statement.status {
@@ -960,7 +959,7 @@ impl MySQLConnection {
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     self.queue.mark_current_request_as_finished(request);
-                    // TODO(b2-blocked): ErrorPacket is not Clone in bun_sql; the
+                    // TODO(port): ErrorPacket is not Clone in bun_sql; the
                     // Zig passes statement.error_response by value (struct copy).
                     // Send a default packet as a placeholder until ErrorPacket
                     // grows Clone or a borrowed-variant overload lands.

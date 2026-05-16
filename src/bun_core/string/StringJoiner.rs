@@ -9,7 +9,7 @@ use bun_alloc::AllocError;
 
 // PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
 // node and duplicated-string allocations.
-// PERF(port): Zig recommended a stack-fallback allocator here — profile in Phase B.
+// PERF(port): Zig recommended a stack-fallback allocator here — profile if it shows up on a hot path.
 pub struct StringJoiner {
     /// Total length of all nodes
     pub len: usize,
@@ -43,8 +43,8 @@ pub struct Node {
     /// this joiner (via `push_cloned`) and is freed on node drop; when `false`, `slice`
     /// is borrowed and the caller guarantees it outlives `done()`.
     owns_slice: bool,
-    // TODO(port): lifetime — borrowed slices must outlive `done()`; Phase A forbids
-    // struct lifetime params so this is stored as a typed raw fat pointer.
+    // TODO(port): lifetime — borrowed slices must outlive `done()`; the port avoids
+    // struct lifetime params, so this is stored as a typed raw fat pointer.
     // `RawSlice` (one encapsulated unsafe in `.slice()`) replaces the open-coded
     // raw deref at every read site; the backing storage outlives the node by
     // either ownership (`owns_slice`) or caller contract.

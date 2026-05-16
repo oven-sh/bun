@@ -534,7 +534,14 @@ class LambdaServer implements Server {
       };
     }
     if (!isHttpEvent(event.event)) {
-      return response.text();
+      const text = await response.text();
+      const status = response?.status ?? 200;
+      if (status >= 400) {
+        // Handle non-HTTP error.
+        // In this scenario, we need to throw an error for AWS to handle.
+        throw new Error(text);
+      }
+      return text;
     }
     return formatResponse(response);
   }

@@ -3,6 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+// https://github.com/oven-sh/bun/issues/30887
+//
 // Under `--parallel` / `--isolate`, `bun test` reads transpiled preloads from
 // the isolation source provider cache. That path dropped the `has_tla` flag
 // on the cached module record, so JSC treated TLA preloads as having none

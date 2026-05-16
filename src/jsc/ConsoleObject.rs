@@ -4787,20 +4787,21 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length_value = value
-                .get(self.global_this, "size")?
-                .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_to_i32(self.global_this)?;
+            let is_weak = value.js_type() == jsc::JSType::WeakMap;
+            let length = if is_weak {
+                0
+            } else {
+                value
+                    .get(self.global_this, "size")?
+                    .unwrap_or_else(|| JSValue::js_number_from_int32(0))
+                    .coerce_to_i32(self.global_this)?
+            };
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
-            let map_name = if value.js_type() == jsc::JSType::WeakMap {
-                "WeakMap"
-            } else {
-                "Map"
-            };
+            let map_name = if is_weak { "WeakMap" } else { "Map" };
 
             if length == 0 {
                 let _ = write!(writer_, "{map_name} {{}}");
@@ -4929,20 +4930,21 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length_value = value
-                .get(self.global_this, "size")?
-                .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = length_value.coerce_to_i32(self.global_this)?;
+            let is_weak = value.js_type() == jsc::JSType::WeakSet;
+            let length = if is_weak {
+                0
+            } else {
+                value
+                    .get(self.global_this, "size")?
+                    .unwrap_or_else(|| JSValue::js_number_from_int32(0))
+                    .coerce_to_i32(self.global_this)?
+            };
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
-            let set_name = if value.js_type() == jsc::JSType::WeakSet {
-                "WeakSet"
-            } else {
-                "Set"
-            };
+            let set_name = if is_weak { "WeakSet" } else { "Set" };
 
             if length == 0 {
                 let _ = write!(writer_, "{set_name} {{}}");

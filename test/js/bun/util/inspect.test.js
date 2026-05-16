@@ -772,3 +772,44 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("WeakMap/WeakSet with user-added size property", () => {
+  it("Bun.inspect does not attempt to iterate", () => {
+    const wm = new WeakMap();
+    wm.size = 2;
+    expect(Bun.inspect(wm)).toBe("WeakMap {}");
+
+    const ws = new WeakSet();
+    ws.size = 2;
+    expect(Bun.inspect(ws)).toBe("WeakSet {}");
+
+    expect(Bun.inspect(new WeakMap())).toBe("WeakMap {}");
+    expect(Bun.inspect(new WeakSet())).toBe("WeakSet {}");
+  });
+
+  it("Bun.inspect does not invoke a .size getter", () => {
+    for (const Ctor of [WeakMap, WeakSet]) {
+      const w = new Ctor();
+      let called = false;
+      Object.defineProperty(w, "size", {
+        get() {
+          called = true;
+          throw new Error("should not be called");
+        },
+      });
+      expect(Bun.inspect(w)).toBe(`${Ctor.name} {}`);
+      expect(called).toBe(false);
+    }
+  });
+
+  it("jest diff formatting does not crash", () => {
+    const wm = new WeakMap();
+    wm.size = 2;
+    const ws = new WeakSet();
+    ws.size = 2;
+    expect(() => expect(wm).toMatchObject([0, 0])).toThrow(/toMatchObject/);
+    expect(() => expect(ws).toMatchObject([0, 0])).toThrow(/toMatchObject/);
+    expect(() => expect(wm).toEqual(new Map())).toThrow(/toEqual/);
+    expect(() => expect(ws).toEqual(new Set())).toThrow(/toEqual/);
+  });
+});

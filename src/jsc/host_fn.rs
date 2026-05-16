@@ -507,15 +507,14 @@ pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
 // `_shared` siblings — `&T` receiver instead of `&mut T`.
 //
 // Emitted by `generate-classes.ts` when a `.classes.ts` definition sets
-// `sharedThis: true` (R-2 noalias re-entrancy). `&mut T` carries LLVM
-// `noalias`, so a host-fn that re-enters JS while holding `&mut self` lets
-// the optimiser cache `*self` fields across the FFI call — proven miscompile
-// in `NodeHTTPResponse::cork` (b818e70e1c57). `&T` is `readonly`, not
-// `noalias`; aliased shared borrows are sound, and the user impl uses
-// `Cell`/`JsCell` for any field it mutates.
+// `sharedThis: true`. `&mut T` carries LLVM `noalias`, so a host-fn that
+// re-enters JS while holding `&mut self` lets the optimiser cache `*self`
+// fields across the FFI call — a proven miscompile in `NodeHTTPResponse::cork`.
+// `&T` is `readonly`, not `noalias`; aliased shared borrows are sound, and the
+// user impl uses `Cell`/`JsCell` for any field it mutates.
 //
-// The `&mut` originals above are kept until every type has migrated
-// (Phase 3 of `R-2-design.md` deletes them and drops the `_shared` suffix).
+// The `&mut` originals above are kept until every type has migrated; once
+// they're all on `sharedThis`, delete them and drop the `_shared` suffix.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Prototype method (`sharedThis`): `fn(&self, &JSGlobalObject, &CallFrame) -> R`.

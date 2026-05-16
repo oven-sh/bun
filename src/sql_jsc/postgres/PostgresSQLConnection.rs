@@ -1526,13 +1526,13 @@ impl PostgresSQLConnection {
     }
 
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
-        // R-2: `&self` carries no `noalias`; every field accessed below is
+        // `&self` carries no `noalias`; every field accessed below is
         // `Cell`/`JsCell`-backed, so re-entrant JS callbacks (promise reject →
         // user `.catch()` → new query enqueue) that mutate `self.requests`
-        // through a fresh `&Self` from `m_ctx` are sound. The previous
-        // black_box launder (b818e70e1c57-style) is no longer needed.
-        // The connection is kept alive by the caller's `ref_and_close` ref
-        // bracket for the duration of this loop, so re-entry never frees `*self`.
+        // through a fresh `&Self` from `m_ctx` are sound — no `black_box`
+        // launder is needed. The connection is kept alive by the caller's
+        // `ref_and_close` ref bracket for the duration of this loop, so
+        // re-entry never frees `*self`.
         while self.requests.get().readable_length() > 0 {
             let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
             // Queue invariant: every stored pointer is non-null and live

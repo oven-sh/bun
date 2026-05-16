@@ -6,9 +6,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 // Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
 // openForWriting / PipeReader / PipeWriter compile on POSIX. `source` and the
-// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only). See
-// TODO(port) notes for remaining shims (`bun_sys::syslog`, `bun_sys::Error::oom`,
-// `bun_core::debug_warn`).
+// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only).
 // ════════════════════════════════════════════════════════════════════════════
 
 #![allow(dead_code, unused_variables, unused_imports, unused_mut, clippy::all)]

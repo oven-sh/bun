@@ -6743,9 +6743,6 @@ pub mod __gated_printer {
             };
             self.print_decls(keyword, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
-            // TODO(port): bun_ast::runtime::Imports::__export — the
-            // full `runtime.rs` is ``-gated upstream; the active
-            // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
 
             if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
                 // PORT NOTE: Zig stored `?GeneratedSymbol`; the Rust `runtime::Imports`

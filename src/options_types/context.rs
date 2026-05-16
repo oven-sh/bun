@@ -424,9 +424,9 @@ pub struct TestOptions {
     pub test_filter_pattern: Option<Box<[u8]>>,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `test_filter_regex()`.
-    // FORWARD_DECL(b0): erased bun_jsc::RegularExpression to break the T3→T6
-    // back-edge. High tier owns construction/destruction; this field only
-    // stores the pointer. LIFETIMES.tsv says OWNED, so the high-tier setter is
+    // Erased `bun_jsc::RegularExpression` to avoid a `bun_options_types` →
+    // `bun_jsc` dependency edge. The higher-tier crate owns construction and
+    // destruction; this field only stores the pointer, and the setter is
     // responsible for freeing any previous value.
     pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,

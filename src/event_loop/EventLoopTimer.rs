@@ -135,7 +135,7 @@ impl EventLoopTimer {
     /// If self was created by set{Immediate,Timeout,Interval}, return its
     /// JS-timer epoch (used for stable ordering of equal-deadline timers).
     ///
-    /// PORT NOTE (b0): Zig `jsTimerInternalsFlags` did `@fieldParentPtr` into
+    /// PORT NOTE: Zig `jsTimerInternalsFlags` did `@fieldParentPtr` into
     /// `TimeoutObject`/`ImmediateObject`/`AbortSignalTimeout` (all tier-6
     /// runtime types). The container_of dispatch lives in
     /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
@@ -153,7 +153,7 @@ impl EventLoopTimer {
 
     /// Fire the timer's callback.
     ///
-    /// PORT NOTE (b0): the `match self.tag { … container_of … }` body was
+    /// PORT NOTE: the `match self.tag { … container_of … }` body was
     /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
     /// PostgresSQLConnection, …). That match lives in
     /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is

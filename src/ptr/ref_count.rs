@@ -16,7 +16,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_core::StoredTrace;
 use bun_core::ThreadLock;
 
-// PORT NOTE(b0): was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
+// PORT NOTE: was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
 // Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
 // which is acceptable for leak reports.
 use std::collections::HashMap;
@@ -1099,7 +1099,7 @@ pub struct DebugData<Count> {
 
 #[cfg(debug_assertions)]
 impl<Count: CountLoad> DebugData<Count> {
-    // PORT NOTE(b0): was `pub const EMPTY` — std HashMap::new() is non-const.
+    // PORT NOTE: was `pub const EMPTY` — std HashMap::new() is non-const.
     pub fn empty() -> Self {
         Self {
             magic: MAGIC_VALID,

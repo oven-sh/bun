@@ -1,14 +1,10 @@
 //! Timer subsystem: setTimeout/setInterval/setImmediate scheduling and the
 //! event-loop timer heap.
 //!
-//! Structs + state machines are real. JS-facing method bodies
-//! (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.) remain
-//! ``-gated on `bun_jsc` (commented out in Cargo.toml).
-//! `All::insert`/`remove`/`update`/`get_timeout`/`drain_timers` — the surface
-//! `EventLoop::auto_tick` blocks on — are real.
-//!
-//! Full earlier drafts are preserved gated under ` mod *_draft`
-//! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
+//! Structs + state machines and `All::insert`/`remove`/`update`/`get_timeout`/
+//! `drain_timers` — the surface `EventLoop::auto_tick` blocks on — live here.
+//! JS-facing method bodies (`set_timeout`/`clear_timer`/
+//! `warn_invalid_countdown`/etc.) live in `Timer.rs`.
 
 use core::mem::offset_of;
 
@@ -875,7 +871,7 @@ impl All {
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written.
     ///
-    /// PORT NOTE (b2): `vm` is erased per §Dispatch (the caller is in
+    /// PORT NOTE: `vm` is erased (the caller is in
     /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
     /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
     /// passed in pre-computed until the cycle is broken.
@@ -1126,16 +1122,10 @@ impl All {
     }
 }
 
-// ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────
+// ─── JS-facing surface ───────────────────────────────────────────────────────
 // `set_timeout`/`set_interval`/`set_immediate`/`sleep`/`clear_*` and the
-// host_fn export thunks all need `JSGlobalObject::bun_vm()`,
+// host_fn export thunks live in `Timer.rs`; they need `JSGlobalObject::bun_vm()`,
 // `JSValue::to_number()`, `bun_core::String::transfer_to_js()`, etc.
-// Kept gated until `bun_jsc.workspace = true` is re-enabled.
-
-// TODO(port): JS-facing surface (`set_timeout`/`set_interval`/...) lives in
-// `Timer.rs` and is wired via `#[cfg(feature = "jsc")]` once `bun_jsc` is
-// re-enabled. The placeholder `include!` was non-compilable; removed.
-impl All {}
 
 // ─── enums / value types ─────────────────────────────────────────────────────
 

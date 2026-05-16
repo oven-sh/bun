@@ -1843,13 +1843,13 @@ impl NodeHTTPResponse {
         let mut result: JSValue = JSValue::ZERO;
         let mut is_exception: bool = false;
 
-        // R-2: this method takes `&self`, so the `noalias` miscompile
-        // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
-        // `noalias`, so re-entrant writes through other `&self` views are
-        // sound. No `black_box` launder is needed; it was a hard optimization
-        // barrier on the node:http hot path (`cork` runs on every `res.end()`)
-        // that forced `self` to memory and blocked inlining/regalloc of the
-        // cork prologue, with no equivalent in upstream Zig.
+        // This method takes `&self`, so the `noalias` miscompile is
+        // structurally impossible — `&T` is `readonly`, not `noalias`, so
+        // re-entrant writes through other `&self` views are sound. No
+        // `black_box` launder is needed; it was a hard optimization barrier on
+        // the node:http hot path (`cork` runs on every `res.end()`) that
+        // forced `self` to memory and blocked inlining/regalloc of the cork
+        // prologue, with no equivalent in upstream Zig.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
         // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
         // alive across re-entry.

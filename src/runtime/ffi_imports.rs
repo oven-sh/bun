@@ -1,6 +1,6 @@
 //! Consolidated `unsafe extern "C" { … }` import surface for `bun_runtime`.
 //!
-//! Phase-f goal: one `extern "C"` block per crate instead of the ~308
+//! Goal: one `extern "C"` block per crate instead of the ~308
 //! scattered across `src/runtime/**/*.rs` (each with its own
 //! `#[allow(improper_ctypes)]` and a slightly different spelling of the same
 //! C++ symbol). The generator at `src/codegen/generate-host-exports.ts` emits

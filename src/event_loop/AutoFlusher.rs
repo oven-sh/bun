@@ -38,7 +38,7 @@ pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
     trampoline::<T>
 }
 
-// PORT NOTE (b0): Zig passed `*jsc.VirtualMachine` and reached
+// PORT NOTE: Zig passed `*jsc.VirtualMachine` and reached
 // `vm.event_loop().deferred_tasks`. To break the event_loop→jsc upward edge,
 // callers now pass the `DeferredTaskQueue` directly (it lives in this crate).
 // Higher-tier call sites do `&mut vm.event_loop().deferred_tasks` themselves.

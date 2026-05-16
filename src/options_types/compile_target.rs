@@ -62,21 +62,18 @@ pub enum Libc {
 
 impl Libc {
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub fn npm_name(self) -> &'static [u8] {
+    pub const fn npm_name(self) -> &'static str {
         match self {
-            Libc::Default => b"",
-            Libc::Musl => b"-musl",
-            Libc::Android => b"-android",
+            Libc::Default => "",
+            Libc::Musl => "-musl",
+            Libc::Android => "-android",
         }
     }
 }
 
 impl fmt::Display for Libc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            // SAFETY: npm_name() returns ASCII literals
-            unsafe { core::str::from_utf8_unchecked(self.npm_name()) },
-        )
+        f.write_str(self.npm_name())
     }
 }
 
@@ -179,14 +176,14 @@ impl CompileTarget {
             cursor.write_all(b"/@oven/bun-")?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
-            cursor.write_all(arch)?;
-            cursor.write_all(libc)?;
+            cursor.write_all(arch.as_bytes())?;
+            cursor.write_all(libc.as_bytes())?;
             cursor.write_all(baseline)?;
             cursor.write_all(b"/-/bun-")?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
-            cursor.write_all(arch)?;
-            cursor.write_all(libc)?;
+            cursor.write_all(arch.as_bytes())?;
+            cursor.write_all(libc.as_bytes())?;
             cursor.write_all(baseline)?;
             write!(
                 cursor,
@@ -501,7 +498,7 @@ impl fmt::Display for CompileTarget {
             f,
             "bun-{}-{}{}{}-v{}.{}.{}",
             self.os.npm_name(),
-            bstr::BStr::new(self.arch.npm_name()),
+            self.arch.npm_name(),
             self.libc,
             BaselineFormatter {
                 baseline: self.baseline

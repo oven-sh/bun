@@ -218,9 +218,7 @@ mod prompt_signal {
     }
 
     #[cfg(windows)]
-    unsafe extern "system" fn handler(
-        ctrl: bun_sys::windows::DWORD,
-    ) -> bun_sys::windows::BOOL {
+    unsafe extern "system" fn handler(ctrl: bun_sys::windows::DWORD) -> bun_sys::windows::BOOL {
         use bun_sys::windows;
         match ctrl {
             windows::CTRL_C_EVENT | windows::CTRL_BREAK_EVENT | windows::CTRL_CLOSE_EVENT => {
@@ -310,10 +308,7 @@ mod prompt_signal {
             // the input loop). This handler picks up the other cases that
             // route: Ctrl+Break from a parent process, console-close
             // events, and SIGINT/SIGTERM sent by other Bun subsystems.
-            let _ = bun_sys::c::SetConsoleCtrlHandler(
-                Some(handler),
-                bun_sys::windows::TRUE,
-            );
+            let _ = bun_sys::c::SetConsoleCtrlHandler(Some(handler), bun_sys::windows::TRUE);
         }
         Guard(())
     }
@@ -339,10 +334,7 @@ mod prompt_signal {
         }
         #[cfg(windows)]
         {
-            let _ = bun_sys::c::SetConsoleCtrlHandler(
-                Some(handler),
-                bun_sys::windows::FALSE,
-            );
+            let _ = bun_sys::c::SetConsoleCtrlHandler(Some(handler), bun_sys::windows::FALSE);
         }
     }
 }

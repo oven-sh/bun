@@ -263,13 +263,18 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     }
   });
 
-  // PTY variant of the above. On Windows this uses a real ConPTY, which is
-  // the only configuration where the original bug (ENABLE_PROCESSED_INPUT
-  // swallowing Ctrl+C into a signal before the cursor-restore defer can
-  // run) actually reproduces — piped stdin on Windows bypasses console mode
-  // flags entirely. On POSIX this is the same "raw-mode TTY delivers byte 3
-  // directly" path the piped test above already covers, so both platforms
-  // are exercised.
+  // PTY variant that exercises the raw-mode TTY byte-3 path end-to-end on
+  // both platforms. NOTE: this does NOT reproduce the original #30890
+  // console-ctrl-handler kill path — `terminal-platform-gaps.test.ts:184`
+  // documents that Windows ConPTY does not translate a written `\x03` into
+  // `CTRL_C_EVENT`; conhost forwards byte `0x03` to the child's input
+  // buffer, so even with the pre-fix `ENABLE_PROCESSED_INPUT` flag the
+  // child would have taken the same byte-3 graceful-cancel branch. That
+  // original bug only fires on a real keyboard press in a real Windows
+  // console host, which can't be automated here. The test still guards the
+  // byte-3 cleanup path (scopeguard defer → cursor restore → "Cancelled"
+  // → clean exit) against regressions on both platforms; the SIGINT test
+  // below is what fails pre-fix on Linux.
   test("Ctrl+C through a real PTY restores the cursor and exits cleanly", async () => {
     using dir = tempDir("update-interactive-ctrlc-pty", {
       "package.json": JSON.stringify({
@@ -293,32 +298,30 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     const decoder = new TextDecoder();
     let output = "";
     let sawPrompt = false;
-    let sawRestore = false;
+    let sawCancelled = false;
     const promptReady = Promise.withResolvers<void>();
-    // Resolved inside data() when the cursor-restore sequence arrives. We
-    // MUST wait on this and not on proc.exited alone: on Windows ConPTY the
-    // child-exit IOCP and the final pipe-data IOCP are independent, so
-    // proc.exited can resolve before the final bytes have been delivered to
-    // data(). See the note in terminal-platform-gaps.test.ts. The exit()
-    // callback also does not fire on child exit for an externally-created
-    // Bun.Terminal (same file documents this), so we can't use that either.
-    const cursorRestored = Promise.withResolvers<void>();
+    // Resolved inside data() when "Cancelled" arrives. Key on the LAST
+    // thing the child writes (not the earlier `\x1b[?25h`): the Rust code
+    // flushes the cursor-restore, then prints "Cancelled" in a separate
+    // prettyln that hits conhost as a separate write. On Windows ConPTY
+    // those arrive as independent IOCP completions, and proc.exited races
+    // the final data IOCP (see terminal-platform-gaps.test.ts:56-59). The
+    // exit() callback is not an alternative — it does not fire on child
+    // exit for an externally-created Bun.Terminal (same file, L322-335).
+    const cancelledSeen = Promise.withResolvers<void>();
 
     await using terminal = new Bun.Terminal({
       cols: 120,
       rows: 30,
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
-        // The multi-select prompt emits `\x1b[?25l` (hide cursor) once it
-        // starts drawing the package list; at that point it is definitely
-        // listening for input.
         if (!sawPrompt && output.includes("\x1b[?25l")) {
           sawPrompt = true;
           promptReady.resolve();
         }
-        if (!sawRestore && output.includes("\x1b[?25h")) {
-          sawRestore = true;
-          cursorRestored.resolve();
+        if (!sawCancelled && output.includes("Cancelled")) {
+          sawCancelled = true;
+          cancelledSeen.resolve();
         }
       },
     });
@@ -331,20 +334,15 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
 
     try {
-      // Wait for the prompt to render before sending Ctrl+C, otherwise
-      // we may write the byte before the raw-mode guard is installed and
-      // the shell would still be line-buffered. Race against proc.exited
-      // so we don't hang if the subprocess dies before rendering.
+      // Wait for the prompt to render before writing; race against
+      // proc.exited so a hypothetical pre-prompt crash surfaces as an
+      // assertion failure instead of a timeout.
       await Promise.race([promptReady.promise, proc.exited]);
       terminal.write("\x03");
 
-      // Wait for the cursor-restore bytes to reach the PTY master read
-      // callback, OR for the subprocess to exit. If the fix regresses on
-      // Windows (ENABLE_PROCESSED_INPUT reintroduced, ExitProcess path
-      // taken), the child dies without emitting `\x1b[?25h`, cursorRestored
-      // never fires, and proc.exited wins the race — the assertion below
-      // then fails with a diagnostic instead of the test timing out.
-      await Promise.race([cursorRestored.promise, proc.exited]);
+      // Wait for the final "Cancelled" chunk to arrive before asserting —
+      // everything we care about has been flushed by then.
+      await Promise.race([cancelledSeen.promise, proc.exited]);
       const exitCode = await proc.exited;
       output += decoder.decode();
 
@@ -355,6 +353,9 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       // The cursor-restore sequence must be present — this is the whole
       // point of the issue.
       expect(output).toContain("\x1b[?25h");
+      // And the mouse-tracking modes the prompt enabled must be disabled.
+      expect(output).toContain("\x1b[?1000l");
+      expect(output).toContain("\x1b[?1006l");
       expect(output).toContain("Cancelled");
 
       // package.json must be untouched.

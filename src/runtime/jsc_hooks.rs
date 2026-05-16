@@ -742,14 +742,6 @@ unsafe fn load_preloads(
                 // live protected JSC heap cell.
                 unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
             }
-        } // end 
-        // PORT NOTE: non-watcher fallback while the HMR loop above is gated.
-        {
-            // SAFETY: `el` is the live per-thread event loop.
-            unsafe { (*(*vm).event_loop()).perform_gc() };
-            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
-            // live protected JSC heap cell.
-            unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
@@ -3356,20 +3348,13 @@ fn get_hardcoded_module(
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
-            {
-                return Some(OwnedResolvedSource::new(ResolvedSource {
-                    source_code: bun_core::String::init(bun_ast::runtime::Runtime::source_code()),
-                    // +1 each: ~SourceProvider() derefs both.
-                    specifier: specifier.dupe_ref(),
-                    source_url: specifier.dupe_ref(),
-                    ..ResolvedSource::default()
-                }));
-            }
-            // Fail closed: until `Runtime::source_code()` un-gates, returning
-            // a default-zeroed `ResolvedSource` here would hand C++ a garbage
-            // `.tag`. Spec returns a populated source; `None` falls through to
-            // `FetchBuiltinResult::NotFound` → coherent error instead.
-            None
+            Some(OwnedResolvedSource::new(ResolvedSource {
+                source_code: bun_core::String::init(bun_ast::runtime::Runtime::source_code()),
+                // +1 each: ~SourceProvider() derefs both.
+                specifier: specifier.dupe_ref(),
+                source_url: specifier.dupe_ref(),
+                ..ResolvedSource::default()
+            }))
         }
         // Zig: `inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier)`
         // — every other `HardcodedModule` is served straight out of the

@@ -356,12 +356,24 @@ impl<'a> TOML<'a> {
         let head: *mut Rope = rope;
         let mut rope: *mut Rope = rope;
 
+        // Hard cap on dotted-key segments. The rope is consumed by `set_rope`,
+        // `get_or_put_array`, and `get_or_put_object`, each of which recurses
+        // once per `rope.next` link with no stack guard of their own.
+        const MAX_DOTTED_KEY_SEGMENTS: usize = 512;
+        let mut segments: usize = 1;
+
         while self.lexer.token == T::t_dot {
             self.lexer.next()?;
 
             let Some(seg) = self.parse_key_segment()? else {
                 break;
             };
+            segments += 1;
+            if segments > MAX_DOTTED_KEY_SEGMENTS {
+                self.lexer
+                    .add_default_error(b"Dotted key has too many segments")?;
+                return Err(bun_core::err!("SyntaxError"));
+            }
             // SAFETY: `rope` points into `bump` and is live for this call; we are
             // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
             // PORT NOTE: reshaped for borrowck

@@ -526,6 +526,48 @@ impl BunxCommand {
         }
     }
 
+    /// Refuse to execute a binary resolved from inside the bunx cache unless
+    /// it is owned by the current user.
+    ///
+    /// The bunx cache lives under the world-writable temp dir at a predictable
+    /// path. Another local user could pre-create that path. Bun's bin linker
+    /// creates `.bin/<name>` entries as *symlinks* on Unix
+    /// (`Linker::create_symlink`), so a regular-file-only check would mark every
+    /// legitimate cache hit as untrusted and reinstall on every invocation.
+    /// Accept either a symlink or a regular file owned by the current uid; for
+    /// symlinks, also follow once and require the target to be a uid-owned
+    /// regular file so an attacker-planted, uid-matching link can't redirect
+    /// execution outside the cache.
+    ///
+    /// On non-Unix targets there is no comparable shared world-writable temp
+    /// dir / uid model, so the check is a no-op there.
+    #[cfg(unix)]
+    fn is_trusted_cached_binary(destination: &ZStr, uid: libc::uid_t) -> bool {
+        let lstat_ok = |st: &bun_sys::Stat| {
+            let kind = st.st_mode & libc::S_IFMT;
+            st.st_uid == uid && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
+        };
+        let stat_ok = |st: &bun_sys::Stat| {
+            st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+        };
+        match bun_sys::lstat(destination) {
+            Ok(st) if lstat_ok(&st) => {
+                if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+                    matches!(bun_sys::stat(destination), Ok(target) if stat_ok(&target))
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_cached_binary(_destination: &ZStr, _uid: u32) -> bool {
+        true
+    }
+
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
@@ -923,6 +965,19 @@ impl BunxCommand {
                     // If this directory was installed by bunx, we want to perform cache invalidation on it
                     // this way running `bunx hello` will update hello automatically to the latest version
                     if strings::has_prefix(out, bunx_cache_dir) {
+                        // Refuse to execute a cached binary that wasn't created by the
+                        // current user (another local user could have pre-created the
+                        // path); fall through to a fresh install instead. See
+                        // `is_trusted_cached_binary` for the full rationale.
+                        if !Self::is_trusted_cached_binary(destination, uid) {
+                            bun_output::scoped_log!(
+                                bunx,
+                                "refusing untrusted cached binary: {}",
+                                BStr::new(out)
+                            );
+                            do_cache_bust = true;
+                            break 'try_run_existing;
+                        }
                         let is_stale: bool = 'is_stale: {
                             #[cfg(windows)]
                             {
@@ -1078,6 +1133,22 @@ impl BunxCommand {
                                 };
                                 if let Some(destination) = dest_or_cache2 {
                                     let out: &[u8] = destination.as_bytes();
+                                    // Same hardening as the first cache probe: this path
+                                    // resolves the package's *real* bin name (which may
+                                    // differ from the package name), so it is just as
+                                    // reachable for a binary planted by another local user
+                                    // in the world-writable bunx cache.
+                                    if strings::has_prefix(out, bunx_cache_dir)
+                                        && !Self::is_trusted_cached_binary(destination, uid)
+                                    {
+                                        bun_output::scoped_log!(
+                                            bunx,
+                                            "refusing untrusted cached binary: {}",
+                                            BStr::new(out)
+                                        );
+                                        do_cache_bust = true;
+                                        break 'try_run_existing;
+                                    }
                                     let stored = fs.dirname_store.append_slice(out)?;
                                     Run::run_binary(
                                         ctx,
@@ -1325,17 +1396,29 @@ impl BunxCommand {
             absolute_in_cache_dir,
         ) {
             let out: &[u8] = destination.as_bytes();
-            let stored = fs.dirname_store.append_slice(out)?;
-            Run::run_binary(
-                ctx,
-                stored,
-                destination,
-                top_level_dir,
-                env_loader,
-                passthrough,
-                None,
-            )?;
-            // run_binary is noreturn
+            // The install we just ran should have created this symlink as the
+            // current user, but the cache lives in a world-writable temp dir; an
+            // attacker can race the install and plant a uid-mismatched entry.
+            // Bail out to the generic error rather than execute it.
+            if Self::is_trusted_cached_binary(destination, uid) {
+                let stored = fs.dirname_store.append_slice(out)?;
+                Run::run_binary(
+                    ctx,
+                    stored,
+                    destination,
+                    top_level_dir,
+                    env_loader,
+                    passthrough,
+                    None,
+                )?;
+                // run_binary is noreturn
+            } else {
+                bun_output::scoped_log!(
+                    bunx,
+                    "refusing untrusted cached binary: {}",
+                    BStr::new(out)
+                );
+            }
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -1376,17 +1459,26 @@ impl BunxCommand {
                         absolute_in_cache_dir,
                     ) {
                         let out: &[u8] = destination.as_bytes();
-                        let stored = fs.dirname_store.append_slice(out)?;
-                        Run::run_binary(
-                            ctx,
-                            stored,
-                            destination,
-                            top_level_dir,
-                            env_loader,
-                            passthrough,
-                            None,
-                        )?;
-                        // run_binary is noreturn
+                        // Same TOCTOU hardening as the post-install probe above.
+                        if Self::is_trusted_cached_binary(destination, uid) {
+                            let stored = fs.dirname_store.append_slice(out)?;
+                            Run::run_binary(
+                                ctx,
+                                stored,
+                                destination,
+                                top_level_dir,
+                                env_loader,
+                                passthrough,
+                                None,
+                            )?;
+                            // run_binary is noreturn
+                        } else {
+                            bun_output::scoped_log!(
+                                bunx,
+                                "refusing untrusted cached binary: {}",
+                                BStr::new(out)
+                            );
+                        }
                     }
                 }
             }

@@ -2716,13 +2716,44 @@ impl PostgresSQLConnection {
                         debug!("SASLContinue");
 
                         let iteration_count = cont.iteration_count().map_err(pg_err)?;
+                        // RFC 7677 §4: SCRAM-SHA-256 requires a minimum of 4096
+                        // iterations. Cap the upper bound to avoid a CPU-burn DoS
+                        // from a malicious/MITM'd server sending i ≈ u32::MAX.
+                        if !(4096..=10_000_000).contains(&iteration_count) {
+                            debug!(
+                                "SASLContinue iteration count out of range: {}",
+                                iteration_count
+                            );
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
 
-                        let server_salt_decoded_base64 = bun_base64::decode_alloc(cont.s.slice())
+                        // Bound the *encoded* length before allocating: a
+                        // malicious/MITM'd server can otherwise force an
+                        // arbitrarily large decode_alloc here. 1024 decoded
+                        // bytes ≈ 1368 base64 chars; round up generously.
+                        let server_salt_b64 = cont.s.slice();
+                        if server_salt_b64.is_empty() || server_salt_b64.len() > 2048 {
+                            debug!(
+                                "SASLContinue encoded salt length out of range: {}",
+                                server_salt_b64.len()
+                            );
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
+                        let server_salt_decoded_base64 = bun_base64::decode_alloc(server_salt_b64)
                             .map_err(|e| match e {
                             bun_base64::DecodeAllocError::DecodingFailed => {
                                 AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
                             }
                         })?;
+                        if server_salt_decoded_base64.is_empty()
+                            || server_salt_decoded_base64.len() > 1024
+                        {
+                            debug!(
+                                "SASLContinue salt length out of range: {}",
+                                server_salt_decoded_base64.len()
+                            );
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
                         sasl.compute_salted_password(
                             &server_salt_decoded_base64,
                             iteration_count,

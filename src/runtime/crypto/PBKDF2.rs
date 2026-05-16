@@ -162,6 +162,7 @@ impl PBKDF2 {
                 match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
+                        other if other.md().is_none() => break 'invalid,
                         other => break 'brk other,
                     },
                     None => break 'invalid,

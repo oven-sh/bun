@@ -429,6 +429,12 @@ impl S3Credentials {
                     if bucket.is_empty() {
                         return Err(SignError::InvalidEndpoint);
                     }
+                    // The bucket is interpolated into the host; a `/` (or `\`,
+                    // which encode_uri_component normalizes to `/`) would let a
+                    // crafted bucket redirect the signed request to another host.
+                    if bucket.contains(&b'/') {
+                        return Err(SignError::InvalidEndpoint);
+                    }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
                     let mut v = Vec::new();
                     write!(
@@ -862,6 +868,9 @@ impl S3Credentials {
             || content_disposition.is_some_and(contains_newline_or_cr)
             || content_encoding.is_some_and(contains_newline_or_cr)
             || session_token.is_some_and(contains_newline_or_cr)
+            || contains_newline_or_cr(region)
+            || contains_newline_or_cr(&self.access_key_id)
+            || contains_newline_or_cr(&host)
         {
             return Err(SignError::InvalidHeaderValue);
         }

@@ -1,5 +1,3 @@
-use core::slice;
-
 use bun_core::String as BunString;
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::{
@@ -243,8 +241,9 @@ impl Crypto {
 
         // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array;
         // `JSUint8Array::slice()` needs `&mut self`, so reconstruct the slices here).
-        let a = unsafe { slice::from_raw_parts(a_ptr, len) };
-        let b = unsafe { slice::from_raw_parts(b_ptr, len) };
+        // `ffi::slice` tolerates `(null, 0)` for detached/empty arrays.
+        let a = unsafe { bun_core::ffi::slice(a_ptr, len) };
+        let b = unsafe { bun_core::ffi::slice(b_ptr, len) };
         JSValue::from(bun_boringssl_sys::constant_time_eq(a, b))
     }
 

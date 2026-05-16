@@ -892,16 +892,31 @@ impl<const SSL: bool> NewSocket<SSL> {
         // moved to a guard so all early-returns run them. The outer
         // `_outer_deref` above owns the final `deref()`; LIFO drop order
         // (cleanup → _outer_deref) mirrors Zig's three defers exactly.
-        let cleanup = scopeguard::guard((this.as_ctx_ptr(), needs_deref), |(p, nd)| {
-            // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
-            unsafe {
-                // Zig defer order (reverse-declaration): needs_deref → markInactive.
-                if nd {
-                    (*p).deref();
+        //
+        // The deferred `mark_inactive()` is gated on the `Handlers` pointer
+        // captured before the user callback runs: `onConnectError` can
+        // synchronously re-enter `connect()` and — via `do_connect()`'s
+        // `UnixOrHost::Fd` branch — reach `on_open()`/`mark_active()` for a
+        // *fresh* `Handlers` allocation before this guard drops. Without the
+        // gate the deferred `mark_inactive()` would tear down that newly
+        // activated connection. When no reconnect happened the socket never
+        // opened, so `IS_ACTIVE` is unset and the call is a no-op either way.
+        let pre_callback_handlers = handlers.as_ptr();
+        let cleanup = scopeguard::guard(
+            (this.as_ctx_ptr(), needs_deref, pre_callback_handlers),
+            |(p, nd, h)| {
+                // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
+                unsafe {
+                    // Zig defer order (reverse-declaration): needs_deref → markInactive.
+                    if nd {
+                        (*p).deref();
+                    }
+                    if (*p).handlers.get().map(|n| n.as_ptr()) == Some(h) {
+                        (*p).mark_inactive();
+                    }
                 }
-                (*p).mark_inactive();
-            }
-        });
+            },
+        );
 
         if vm.is_shutting_down() {
             drop(cleanup);
@@ -944,21 +959,33 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
+        let captured_handlers = handlers.as_ptr();
         let scope = Handlers::enter_ref(handlers);
         // PORT NOTE: `let _ = guard` would drop *immediately* (end of
         // statement, not end of scope) and run `scope.exit()` before the
         // user's onConnectError callback. Bind to a named `_`-prefixed
         // local so it lives to end of scope like Zig's `defer`.
-        let _scope_guard = scopeguard::guard((this.as_ctx_ptr(), scope), |(p, mut sc)| {
-            if sc.exit() {
-                // Connection never opened (`is_active == false`), so the
-                // scope's decrement is what brings client handlers to zero
-                // and frees them. Null the field so a retry via
-                // `connectInner` doesn't double-free.
-                // SAFETY: `p` is the live `*mut Self`.
-                unsafe { (*p).handlers.set(None) };
-            }
-        });
+        let _scope_guard =
+            scopeguard::guard((this.as_ctx_ptr(), scope, captured_handlers), |(p, mut sc, h)| {
+                if sc.exit() {
+                    // Connection never opened (`is_active == false`), so the
+                    // scope's decrement is what brings client handlers to zero
+                    // and frees them. Null the field so a retry via
+                    // `connectInner` doesn't double-free — but only if the
+                    // cell still points at the Handlers `exit()` just freed:
+                    // the `connectError` callback may have synchronously
+                    // re-entered `connect()` (node:net `autoSelectFamily`
+                    // retries) which already repointed the cell at a fresh
+                    // allocation, and nulling it here would orphan the new
+                    // Handlers and make the retry's `on_open` panic.
+                    // SAFETY: `p` is the live `*mut Self`.
+                    unsafe {
+                        if (*p).handlers.get().map(|n| n.as_ptr()) == Some(h) {
+                            (*p).handlers.set(None);
+                        }
+                    }
+                }
+            });
 
         if callback.is_empty() {
             // Connection failed before open; allow the wrapper to be GC'd
@@ -1491,10 +1518,49 @@ impl<const SSL: bool> NewSocket<SSL> {
             unsafe { Self::on_close(raw, socket, err, reason).ok() };
         }
         // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
-        let cleanup = scopeguard::guard(this.as_ctx_ptr(), |p| {
+        // Capture the `Handlers` pointer that was paired with the
+        // `IS_ACTIVE` flag *before* the user's close callback runs. The
+        // callback may synchronously re-enter `Bun.connect({ socket: this })`
+        // (the documented MongoDB-driver reconnect path), which makes
+        // `connect_finish` repoint `self.handlers` at a fresh allocation
+        // while keeping the old one alive for the in-flight `Scope`. If the
+        // deferred `mark_inactive()` re-read the cell at that point it would
+        // (a) underflow the new `Handlers`' counter (created with
+        // `active_connections == 0`) and (b) leak the old one with its
+        // `protect()`'d JS callbacks orphaned at count 1.
+        let captured_handlers = handlers.as_ptr();
+        let cleanup = scopeguard::guard((this.as_ctx_ptr(), captured_handlers), |(p, h)| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
             unsafe {
-                (*p).mark_inactive();
+                let this_ref = &*p;
+                if this_ref.handlers.get().map(|n| n.as_ptr()) == Some(h) {
+                    // Normal close: the cell still points at the Handlers we
+                    // captured; do the full idle teardown.
+                    this_ref.mark_inactive();
+                } else if this_ref.flags.get().contains(Flags::IS_ACTIVE) {
+                    // The close callback synchronously reconnected. The
+                    // socket is not going idle — `connect_finish` already
+                    // re-upgraded `this_value` and re-armed `poll_ref` for
+                    // the in-flight connect — so skip the idle teardown.
+                    // Just clear `IS_ACTIVE` (the next `on_open` re-arms it
+                    // against the new Handlers) and release the lifecycle
+                    // ref `mark_active` took on the *captured* Handlers so
+                    // it can reach zero in `Scope::exit` instead of leaking.
+                    this_ref.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+                    let vm = VirtualMachine::get();
+                    // SAFETY: VM singleton is always live once initialized.
+                    if !(*vm).is_shutting_down() {
+                        // SAFETY: `h` is still live. The lifecycle ref
+                        // released here is the one `mark_active` took at
+                        // `on_open`, so `active_connections >= 1` until this
+                        // call. `connect_finish` saw a non-zero count and
+                        // therefore kept `h` allocated; `scope.exit()` (which
+                        // ran just before this guard dropped) decremented the
+                        // `enter_ref` ref but cannot have freed `h` while this
+                        // lifecycle ref is outstanding.
+                        let _ = Handlers::mark_inactive(h);
+                    }
+                }
                 (*p).deref();
             }
         });
@@ -1538,7 +1604,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(e)]);
         }
         if scope.exit() {
-            this.handlers.set(None);
+            // Only null if the cell still points at the Handlers `exit()`
+            // just freed — a synchronous reconnect from inside the close
+            // callback already repointed it at a fresh allocation, and
+            // nulling it here would orphan the new Handlers and make the
+            // pending `on_open`'s `get_handlers()` panic on `None`.
+            if this.handlers.get().map(|n| n.as_ptr()) == Some(captured_handlers) {
+                this.handlers.set(None);
+            }
         }
         drop(cleanup);
         Ok(())

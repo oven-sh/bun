@@ -680,9 +680,15 @@ impl VersionExt for Version {
         let slice = String {
             bytes: bytes[1..9].try_into().expect("infallible: size matches"),
         };
+        if !slice.is_inline() {
+            let ptr = slice.ptr();
+            if (ptr.off as usize).saturating_add(ptr.len as usize) > ctx.buffer.len() {
+                return Version::default();
+            }
+        }
         // bytes[0] was written by `to_external` from a valid `Tag`; decode by
-        // exhaustive match so a corrupt lockfile byte traps instead of
-        // producing an invalid discriminant.
+        // exhaustive match so a corrupt lockfile byte degrades to an
+        // uninitialized version (and a logged error) instead of aborting.
         let tag: Tag = match bytes[0] {
             0 => Tag::Uninitialized,
             1 => Tag::Npm,
@@ -694,7 +700,14 @@ impl VersionExt for Version {
             7 => Tag::Git,
             8 => Tag::Github,
             9 => Tag::Catalog,
-            n => unreachable!("invalid Dependency.Version.Tag {n}"),
+            n => {
+                ctx.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("Corrupt lockfile: invalid dependency version tag {n}"),
+                );
+                Tag::Uninitialized
+            }
         };
         let sliced = slice.sliced(ctx.buffer);
         parse_with_tag(

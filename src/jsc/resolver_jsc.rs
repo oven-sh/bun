@@ -230,8 +230,7 @@ pub mod side_effects_testing {
                 glob_list.push(normalized_pattern.into_boxed_slice());
                 has_globs = true;
             } else {
-                let _ =
-                    map.insert(StringHashMapUnownedKey::init(&normalized_pattern), ());
+                let _ = map.insert(StringHashMapUnownedKey::init(&normalized_pattern), ());
                 has_exact = true;
             }
         }

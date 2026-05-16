@@ -798,9 +798,8 @@ impl CreateCommand {
                 );
             }
 
-            let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!("gitignore"));
-            let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!(".npmignore"));
-            // `parent_dir` drops here, closing the fd.
+            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
         }
 
         let mut start_command: &[u8] = b"bun dev";
@@ -2293,7 +2292,7 @@ impl Example {
                                 // Zig: `folder.accessZ(path, .{ .mode = .read_only })` (std.fs.Dir.accessZ).
                                 // bun_sys exposes `faccessat` for F_OK only; use it as the existence
                                 // gate here. TODO(port): plumb R_OK once bun_sys grows an accessor.
-                                if !bun_sys::faccessat(folder.fd(), path).unwrap_or(false) {
+                                if !bun_sys::faccessat(&folder, path).unwrap_or(false) {
                                     continue 'loop_;
                                 }
 

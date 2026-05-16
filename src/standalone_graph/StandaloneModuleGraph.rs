@@ -1429,8 +1429,6 @@ pub fn inject(
             }
 
             // Write the modified ELF data back to the file
-            // `cloned_executable_fd` is still owned by the caller (and `cleanup`);
-            // borrow rather than wrap in an owning `File` (which would close it on Drop).
             let write_file = bun_sys::File::borrow(&cloned_executable_fd);
             if let Err(err) = write_file.write_all(&elf_file.data) {
                 Output::pretty_errorln(format_args!("Error writing ELF file: {}", err));

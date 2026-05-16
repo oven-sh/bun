@@ -4167,10 +4167,8 @@ pub mod args {
     impl Drop for ReadFile {
         fn drop(&mut self) {
             // Zig `deinit()`: release the AbortSignal ref taken in `from_js`.
-            // `path: PathOrFileDescriptor` releases via its inner `PathLike` Drop.
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
-                // `signal.unref()` — handled by `AbortSignalRef::Drop`.
             }
         }
     }
@@ -4257,10 +4255,8 @@ pub mod args {
     impl Drop for WriteFile {
         fn drop(&mut self) {
             // Zig `deinit()`: release the AbortSignal ref taken in `from_js`.
-            // `file`/`data` release via their own `Drop` (PathLike/StringOrBuffer).
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
-                // `signal.unref()` — handled by `AbortSignalRef::Drop`.
             }
         }
     }
@@ -9844,7 +9840,6 @@ pub fn zig_delete_tree(
         name: Vec::new(),
         name_is_borrowed: true,
         parent_dir: self_.fd,
-        // Hand off the fd: the stack item (via `close_all`) owns it from here.
         iter: DirIterator::WrappedIterator::init(initial_iterable_dir.into_raw()),
     });
 
@@ -9874,7 +9869,6 @@ pub fn zig_delete_tree(
                                     name: entry_name,
                                     name_is_borrowed: false,
                                     parent_dir: top_fd,
-                                    // Hand off: stack item owns the fd via `close_all`.
                                     iter: DirIterator::WrappedIterator::init(
                                         iterable_dir.into_raw(),
                                     ),
@@ -9983,7 +9977,6 @@ pub fn zig_delete_tree(
                 name: top.name,
                 name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
-                // Hand off: stack item owns the fd via `close_all`.
                 iter: DirIterator::WrappedIterator::init(iterable_dir.into_raw()),
             });
             continue 'process_stack;
@@ -10062,8 +10055,6 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                     if treat_as_dir {
                         match dt_open_dir(&dir, &entry_name) {
                             Ok(new_dir) => {
-                                // Reassignment drops (and thus closes) the old
-                                // grandparent `Dir`, if any.
                                 cleanup_dir_parent = Some(dir);
                                 dir = new_dir;
                                 let n = entry_name.len().min(dir_name_buf.len());
@@ -10111,8 +10102,6 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             } else {
                 &dir_name_buf[..dir_name_len]
             };
-            // `d` (and `dir`, already closed above) drop at the end of each
-            // arm below, so no explicit close is needed.
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(&d, dir_name) {
                     Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
@@ -10131,7 +10120,6 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 }
             }
         };
-        // `dir` and `cleanup_dir_parent` (if still owned) close on Drop here.
         return result;
     }
 }

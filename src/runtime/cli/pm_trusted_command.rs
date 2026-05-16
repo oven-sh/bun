@@ -364,8 +364,7 @@ impl TrustCommand {
                 }
                 Err(e) => return Err(e),
             };
-            // PORT NOTE: `defer node_modules_dir.close()` — `Dir` now owns the fd
-            // and closes on Drop at the end of each iteration. The Zig only opened
+            // PORT NOTE: Zig `defer node_modules_dir.close()`. The Zig only opened
             // it to detect ENOENT; nothing reads from it.
 
             for &dep_id in node_modules.dependencies {

@@ -811,10 +811,6 @@ impl InitCommand {
         'write_package_json: {
             // Zig: `var fd = bun.FD.fromStdFile(package_json_file orelse
             // try std.fs.cwd().createFileZ(...)); defer fd.close();`
-            //
-            // When `package_json_file` is `Some`, it already owns the fd and
-            // closes it on Drop — only the freshly-created `None` branch needs a
-            // close-on-drop guard for the new fd.
             let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
                 .as_ref()
             {

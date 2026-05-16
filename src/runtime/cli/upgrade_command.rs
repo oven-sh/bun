@@ -788,7 +788,7 @@ impl UpgradeCommand {
 
             {
                 if let Err(err) = zip_file.write_all(bytes) {
-                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                    let _ = sys::unlinkat(&save_dir, tmpname);
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> Failed to write to temp file {}",
                         bstr::BStr::new(err.name())
@@ -800,7 +800,7 @@ impl UpgradeCommand {
 
             {
                 scopeguard::defer! {
-                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                    let _ = sys::unlinkat(&save_dir, tmpname);
                 }
 
                 #[cfg(unix)]
@@ -812,7 +812,7 @@ impl UpgradeCommand {
                         filesystem.top_level_dir,
                         b"unzip",
                     ) else {
-                        let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                        let _ = sys::unlinkat(&save_dir, tmpname);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
                         ));
@@ -842,7 +842,7 @@ impl UpgradeCommand {
                     }) {
                         Ok(Ok(r)) => r,
                         Ok(Err(err)) => {
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 bstr::BStr::new(err.name())
@@ -850,7 +850,7 @@ impl UpgradeCommand {
                             Global::exit(1);
                         }
                         Err(err) => {
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 err.name()
@@ -866,7 +866,7 @@ impl UpgradeCommand {
                                 "<r><red>Unzip failed<r> (exit code: {})",
                                 e.code
                             ));
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                         other => {
@@ -874,7 +874,7 @@ impl UpgradeCommand {
                                 "<r><red>Unzip failed<r> ({})",
                                 other
                             ));
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                     }
@@ -1148,7 +1148,7 @@ impl UpgradeCommand {
 
             if use_canary {
                 // Check if the versions are the same
-                let target_stat = match sys::fstatat(target_dir.fd(), target_filename) {
+                let target_stat = match sys::fstatat(&target_dir, target_filename) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
@@ -1161,7 +1161,7 @@ impl UpgradeCommand {
                     }
                 };
 
-                let dest_stat = match sys::fstatat(save_dir.fd(), exe_z) {
+                let dest_stat = match sys::fstatat(&save_dir, exe_z) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);

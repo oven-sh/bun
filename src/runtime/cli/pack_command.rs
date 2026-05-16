@@ -526,8 +526,6 @@ fn iterate_included_project_tree(
     let _ = &mut ignores; // unused in this fn body in Zig too (declared but not read)
 
     let mut dirs: Vec<DirInfo> = Vec::new();
-    // Depth-1 entry borrows the caller's `root_dir`; the consuming loop below
-    // disarms `Dir::Drop` for depth==1 so the caller's handle isn't closed.
     dirs.push(DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1));
 
     let mut included_dirs: Vec<DirInfo> = Vec::new();
@@ -538,8 +536,7 @@ fn iterate_included_project_tree(
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         // Root (depth 1) is borrowed from the caller's `root_dir`; only close
-        // subdirs we opened. `Dir::Drop` covers the close — disarm it for the
-        // root entry so the caller's handle isn't double-closed.
+        // subdirs we opened.
         let dir = scopeguard::guard(dir, move |d| {
             if dir_depth == 1 {
                 let _ = d.into_raw();
@@ -756,7 +753,6 @@ fn add_entire_tree(
             if last.depth < dir_depth {
                 break;
             }
-            // last.deinit() handled by Drop
             ignores.pop();
         }
 
@@ -1319,8 +1315,6 @@ fn iterate_project_tree(
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         // Root (depth 1) is caller-owned; only close subdirs we opened.
-        // `Dir::Drop` covers the close — disarm it for the root entry so the
-        // caller's handle isn't double-closed.
         let dir = scopeguard::guard(dir, move |d| {
             if dir_depth == 1 {
                 let _ = d.into_raw();
@@ -2054,7 +2048,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     }
-    // defer if (!for_publish) free(package_name) — handled by Drop
     if package_name.is_empty() {
         return Err(PackError::InvalidPackageName);
     }
@@ -2352,7 +2345,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut pack_queue: PackQueue = new_pack_queue();
 
     let bins = get_package_bins(&json.root)?;
-    // defer free(bin.path) — handled by Drop on Vec<BinInfo>
 
     for bin in &bins {
         match bin.ty {
@@ -2446,8 +2438,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
             iterate_project_tree(
                 &mut pack_queue,
                 &bins,
-                // Depth-1 entry borrows `root_dir`; the consuming loop disarms
-                // `Dir::Drop` for depth==1 so the caller's handle stays open.
                 DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
                 log_level,
             )?;
@@ -3731,8 +3721,6 @@ impl Pattern {
     }
 }
 
-// deinit → Drop on CowString handles freeing
-
 // ───────────────────────────────────────────────────────────────────────────
 // IgnorePatterns
 // ───────────────────────────────────────────────────────────────────────────
@@ -3857,7 +3845,6 @@ impl IgnorePatterns {
             }
         };
         let _ = ignore_file.close();
-        // contents freed by Drop
 
         let mut has_rel_path = false;
 
@@ -3902,8 +3889,6 @@ impl IgnorePatterns {
         }))
     }
 }
-
-// deinit → Drop on Box<[Pattern]> + each Pattern's CowString
 
 // ───────────────────────────────────────────────────────────────────────────
 // printArchivedFilesAndPackages
@@ -4133,7 +4118,6 @@ pub mod bindings {
             }
         };
         let _ = tarball_file.close();
-        // tarball freed by Drop
 
         let mut sha1_digest: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
         let mut sha1 = sha::SHA1::init();

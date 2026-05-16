@@ -101,12 +101,14 @@ impl File {
     /// File.zig `openat` — accepts a non-sentinel `&[u8]` (Zig: `path: anytype`
     /// dispatches to `openatA` for non-sentinel slices). `&ZStr` callers
     /// deref-coerce to `&[u8]`.
-    pub fn openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        let dir = dir.as_fd();
         openat_a(dir, path, flags, mode).map(Self::from_fd)
     }
     /// snake_case alias (Zig: `File.openat`).
     #[inline]
-    pub fn open_at(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn open_at(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        let dir = dir.as_fd();
         Self::openat(dir, path, flags, mode)
     }
     /// File.zig `makeOpen` — `openat` against cwd, auto-creating parent
@@ -120,7 +122,8 @@ impl File {
     /// (errors from `makePath` are swallowed, matching `catch {}` in Zig) then
     /// retry the open once. If `path` has no dirname, the original error is
     /// returned.
-    pub fn make_openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        let dir = dir.as_fd();
         match openat_a(dir, path, flags, mode) {
             Ok(fd) => Ok(Self::from_fd(fd)),
             Err(err) => {
@@ -133,14 +136,16 @@ impl File {
         }
     }
     /// `std.fs.cwd().createFile(path, .{ .truncate })` replacement.
-    pub fn create(dir: Fd, path: &[u8], truncate: bool) -> Maybe<Self> {
+    pub fn create(dir: impl AsFd, path: &[u8], truncate: bool) -> Maybe<Self> {
+        let dir = dir.as_fd();
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | if truncate { O::TRUNC } else { 0 };
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
     /// `std.fs.cwd().createFileW(path, .{})` replacement (Windows wide-path).
     /// Default `.{}` in Zig means `.truncate = true, .read = false`.
     #[cfg(windows)]
-    pub fn create_w(dir: Fd, path: &[u16]) -> Maybe<Self> {
+    pub fn create_w(dir: impl AsFd, path: &[u16]) -> Maybe<Self> {
+        let dir = dir.as_fd();
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC;
         openat_windows(dir, path, flags, 0o666).map(Self::from_fd)
     }
@@ -149,11 +154,12 @@ impl File {
     /// Windows). Returns a `File` wrapper around the opened fd.
     #[inline]
     pub fn openat_os_path(
-        dir: Fd,
+        dir: impl AsFd,
         path: &bun_paths::OSPathSliceZ,
         flags: i32,
         mode: Mode,
     ) -> Maybe<File> {
+        let dir = dir.as_fd();
         openat_os_path(dir, path, flags, mode).map(|fd| File { handle: fd })
     }
 
@@ -371,7 +377,8 @@ impl File {
     // ── one-shot path helpers (open + io + close) ───────────────────────
     /// `bun.sys.File.readFrom` — open + read + close. Accepts `&[u8]` (Zig:
     /// `path: anytype`); `&ZStr` callers deref-coerce.
-    pub fn read_from(dir: Fd, path: &[u8]) -> Maybe<Vec<u8>> {
+    pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
+        let dir = dir.as_fd();
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
         // File.zig: closes the fd on the error path too (no leak on read
         // failure). `Drop` covers all paths.
@@ -381,9 +388,10 @@ impl File {
     /// the open `File` handle and the bytes. Caller owns the fd and must
     /// `close()` it. On read error the fd is closed before returning (no leak).
     pub fn read_file_from(
-        dir: Fd,
+        dir: impl AsFd,
         path: &[u8],
     ) -> core::result::Result<(Self, Vec<u8>), bun_core::Error> {
+        let dir = dir.as_fd();
         let f = Self::openat(dir, path, O::RDONLY, 0).map_err(Into::<bun_core::Error>::into)?;
         match f.read_to_end() {
             Ok(bytes) => Ok((f, bytes)),
@@ -400,10 +408,11 @@ impl File {
     /// (T1) must not depend on (PORTING.md §Forbidden: no fn-ptr hooks to
     /// break dep cycles). Callers pass `top_level_dir` explicitly instead.
     pub fn read_from_user_input(
-        dir: Fd,
+        dir: impl AsFd,
         top_level_dir: &[u8],
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
+        let dir = dir.as_fd();
         let mut buf = bun_paths::PathBuffer::default();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
             top_level_dir,
@@ -413,7 +422,8 @@ impl File {
         Self::read_from(dir, normalized.as_bytes())
     }
     /// `bun.sys.File.writeFile` — open + write + close.
-    pub fn write_file(dir: Fd, path: &ZStr, data: &[u8]) -> Maybe<()> {
+    pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {
+        let dir = dir.as_fd();
         // File.zig:141 — mode 0o664; `defer file.close()`. `Drop` covers all
         // paths.
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
@@ -422,7 +432,12 @@ impl File {
     /// Port of `bun.sys.File.writeFileWithPathBuffer` (File.zig) Windows arm —
     /// like [`write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
-    pub fn write_file_os_path(dir: Fd, path: &bun_paths::OSPathSliceZ, data: &[u8]) -> Maybe<()> {
+    pub fn write_file_os_path(
+        dir: impl AsFd,
+        path: &bun_paths::OSPathSliceZ,
+        data: &[u8],
+    ) -> Maybe<()> {
+        let dir = dir.as_fd();
         let file = File::openat_os_path(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         file.write_all(data)
     }

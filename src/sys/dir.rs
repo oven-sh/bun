@@ -310,7 +310,8 @@ pub const AT_REMOVEDIR: i32 = 0x200;
 
 /// sys.zig:2928 `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.
 #[inline]
-pub fn rmdirat(dirfd: Fd, path: &ZStr) -> Maybe<()> {
+pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
+    let dirfd = dirfd.as_fd();
     unlinkat_with_flags(dirfd, path, AT_REMOVEDIR)
 }
 

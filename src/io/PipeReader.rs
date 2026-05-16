@@ -1086,7 +1086,6 @@ impl PosixBufferedReader {
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // _buffer freed by Vec Drop.
         self.close_without_reporting();
     }
 }
@@ -1922,7 +1921,6 @@ impl WindowsBufferedReader {
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // _buffer freed by Vec Drop.
         // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
         // live uv handles registered with the loop. Let close_impl perform the
         // take + into_raw hand-off so the uv close callback reclaims them.

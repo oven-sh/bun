@@ -1146,7 +1146,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // too — fixed here since this path returns to the install loop without
             // exiting, so the HANDLE/fd would otherwise persist for the rest of
             // the install on every failed optional-dependency lifecycle script.
-            // `Dir::Drop` closes the handle at end of this block.
             let Ok(dir) = bun_sys::Dir::open(dirname) else {
                 break 'try_delete_dir;
             };

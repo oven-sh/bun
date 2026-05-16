@@ -125,7 +125,7 @@ pub struct TarballStream {
     /// cache. Lazily opened on the first drain so the HTTP thread never
     /// touches the filesystem.
     dest: Option<Fd>,
-    /// Owned copy of the temp-directory name; freed in `Drop`.
+    /// Owned copy of the temp-directory name.
     // Zig `[:0]const u8` field freed via `allocator.free`. `ZBox` is the
     // owned NUL-terminated counterpart of `&ZStr` (port of `dupeZ`).
     tmpname: ZBox,
@@ -656,9 +656,6 @@ impl TarballStream {
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
-        // `make_open_path` returns an owning `Dir`; `dest` stores a raw `Fd`
-        // closed manually in `Drop`/`close_output_file`, so take the raw fd
-        // with `into_raw()` instead of letting the `Dir` close it immediately.
         self.dest = Some(
             bun_sys::make_path::make_open_path(
                 Dir::borrow(&tarball.temp_dir),
@@ -848,9 +845,6 @@ impl TarballStream {
     /// `close_output_file` can perform the same trailing `ftruncate` the
     /// buffered path does after its block loop.
     fn write_data_block(&mut self, fd: Fd, block: lib::Block) -> Result<(), bun_core::Error> {
-        // `fd` is `self.out_fd` (closed by `close_output_file`/`Drop`); borrow
-        // a non-owning `File` view rather than constructing an owning one that
-        // would close `out_fd` when this stack frame returns.
         let file = bun_sys::File::borrow(&fd);
         let data = block.bytes;
         if data.is_empty() {
@@ -957,7 +951,6 @@ impl TarballStream {
                 // `populate_result` closes `dest` on the success path before the
                 // rename; the early-return failure paths leave it open, so close
                 // it here first — Windows can't remove an open directory.
-                // `Drop` null-checks so this is not a double-close.
                 if let Some(d) = (*this).dest.take() {
                     d.close();
                 }
@@ -1144,7 +1137,6 @@ impl Drop for TarballStream {
                 let _ = (*a).read_free();
             }
         }
-        // `tmpname`, `pending`, `reading` drop automatically.
     }
 }
 

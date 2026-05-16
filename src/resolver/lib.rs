@@ -1095,7 +1095,7 @@ pub mod fs {
         ) -> core::result::Result<DirEntry, bun_core::Error> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
-            // errdefer dir.deinit() — DirEntry: Drop frees `data` on `?`.
+            // errdefer dir.deinit()
 
             if store_fd {
                 FileSystem::set_max_fd(bun_sys::Fd::native(handle));
@@ -1192,7 +1192,7 @@ pub mod fs {
 
             crate::Resolver::assert_valid_cache_key(dir);
             let mut cache_result: Option<bun_alloc::Result> = None;
-            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();` — RAII guard.
+            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();`
             // `MutexGuard` stores a raw `*const Mutex` so it does not keep `&self`
             // borrowed across the body below.
             let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
@@ -1467,8 +1467,6 @@ pub mod fs {
                     let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
                         valid
                     } else if store_fd {
-                        // `into_raw()` (not `handle()`): `File` is now owning — peeking
-                        // `handle()` from a temporary would close the fd on drop.
                         bun_sys::open_file_absolute_z(
                             absolute_path_c,
                             bun_sys::OpenFlags::READ_ONLY,
@@ -2307,11 +2305,6 @@ pub mod cache {
                 // SAFETY: ctx/function pair was supplied together by the native plugin.
                 unsafe { func(self.external_free_function.ctx) };
             }
-            // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
-            // `allocator.free(entry.contents)`); `Arena`/`SharedBuffer`/
-            // `External`/`Empty` have trivial drops, so the shared-buffer and
-            // arena paths are correct no-ops instead of the UB `heap::take`
-            // they used to be.
             self.contents = Contents::Empty;
         }
 
@@ -2384,11 +2377,6 @@ pub mod cache {
                 bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
                     .map_err(bun_core::Error::from)?
             };
-            // `File` is now owning — its `Drop` closes unconditionally. Install the
-            // disarm guard immediately so an unwind between construction and use
-            // can't close a borrowed fd: when we should *not* close (cached fd
-            // belongs to the caller, or STORE_FILE_DESCRIPTORS keeps it alive),
-            // `into_raw()` disarms; otherwise let `Drop` close.
             let file_handle = scopeguard::guard(file_handle, move |fh| {
                 if !will_close {
                     let _ = fh.into_raw();
@@ -2509,12 +2497,6 @@ pub mod cache {
                     .map_err(bun_core::Error::from)?
             };
 
-            // `File` is now owning — its `Drop` closes unconditionally. Install the
-            // disarm guard immediately so an unwind between construction and use
-            // (e.g. in the `scoped_log!` formatting below) can't close a borrowed
-            // fd: when we should *not* close (caller-supplied fd, or
-            // STORE_FILE_DESCRIPTORS keeps it alive), `into_raw()` disarms;
-            // otherwise let `Drop` close.
             let file_handle = scopeguard::guard(file_handle, move |fh| {
                 if will_close {
                     bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());

@@ -131,7 +131,7 @@ pub fn do_patch_commit(
     } else {
         argument
     };
-    // `defer if (free_argument) manager.allocator.free(argument);` — handled by Drop of `argument_owned`
+    // `defer if (free_argument) manager.allocator.free(argument);`
 
     // Attempt to open the existing node_modules folder
     let root_node_modules: Dir = match sys::openat_os_path(
@@ -174,7 +174,7 @@ pub fn do_patch_commit(
                             Global::crash();
                         }
                     };
-                // `defer manager.allocator.free(package_json_source.contents);` — Drop of Source frees contents
+                // `defer manager.allocator.free(package_json_source.contents);`
 
                 initialize_store();
                 let log = manager.log_mut();
@@ -595,13 +595,12 @@ pub fn do_patch_commit(
 
         break 'brk contents;
     };
-    // `defer patchfile_contents.deinit();` — Drop
+    // `defer patchfile_contents.deinit();`
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
     let tempfile_name =
         bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
-    // Borrowed view of the once-cell `TemporaryDirectory` handle; do not close.
     let tmpdir = get_temporary_directory(manager).handle.fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());
@@ -618,7 +617,7 @@ pub fn do_patch_commit(
     } else {
         escaped_owned = None;
     }
-    // `defer if (deinit) manager.allocator.free(patch_filename);` — Drop of escaped_owned
+    // `defer if (deinit) manager.allocator.free(patch_filename);`
     let _ = &escaped_owned;
 
     let patches_dir: &[u8] = match &manager.options.patch_features {
@@ -802,7 +801,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     } else {
         argument
     };
-    // `defer if (free_argument) manager.allocator.free(argument);` — Drop of argument_owned
+    // `defer if (free_argument) manager.allocator.free(argument);`
 
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
@@ -821,7 +820,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                             Global::crash();
                         }
                     };
-                // `defer manager.allocator.free(package_json_source.contents);` — Drop
+                // `defer manager.allocator.free(package_json_source.contents);`
 
                 initialize_store();
                 let log = manager.log_mut();
@@ -1101,7 +1100,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     let native: &[u8] = module_folder;
 
     let mut p = bun_paths::Path::<u8>::from(native).unwrap();
-    // `defer path.deinit();` — Drop
+    // `defer path.deinit();`
     let mut components: usize = 1;
     for &c in native {
         if c == SEP {
@@ -1183,8 +1182,6 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
 }
 
 fn overwrite_package_in_node_modules_folder(
-    // Borrowed view; the descriptor is owned by `PackageManager::cache_directory_`
-    // (or is `Fd::cwd()` for folder/workspace resolutions).
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
@@ -1202,7 +1199,7 @@ fn overwrite_package_in_node_modules_folder(
         { bun_paths::path_options::PathSeparators::AUTO },
     >::from(node_modules_folder_path)
     .unwrap();
-    // `defer dest_subpath.deinit();` — Drop
+    // `defer dest_subpath.deinit();`
 
     let src_path: bun_paths::AbsPath<
         bun_paths::OSPathChar,
@@ -1229,7 +1226,7 @@ fn overwrite_package_in_node_modules_folder(
             break 'src_path bun_paths::AbsPath::init();
         }
     };
-    // `defer src_path.deinit();` — Drop
+    // `defer src_path.deinit();`
 
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(
         cache_dir_subpath,
@@ -1252,7 +1249,7 @@ fn overwrite_package_in_node_modules_folder(
         dest_subpath,
         ignore_directories,
     )?;
-    // `defer copier.deinit();` — Drop
+    // `defer copier.deinit();`
 
     copier.copy()?;
     Ok(())

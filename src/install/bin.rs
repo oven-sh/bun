@@ -614,8 +614,6 @@ impl<'a> NamesIterator<'a> {
             let joined_len = joined.len();
             self.buf[joined_len] = 0;
             let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
-            // `into_raw()` hands the fresh directory fd off to the iterator,
-            // which owns it until `dir.close()` below (or the caller drops it).
             let child_dir = sys::Dir::borrow(&dir)
                 .open_at(joined_)
                 .map_err(Error::from)?
@@ -966,7 +964,7 @@ impl<'a> Linker<'a> {
             content_to_free = Box::default();
             chunk
         };
-        let _ = &content_to_free; // freed on drop
+        let _ = &content_to_free;
 
         // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
         let Ok(original_stat) = sys::fstatat(Fd::cwd(), abs_target) else {

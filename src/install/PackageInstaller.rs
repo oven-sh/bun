@@ -148,8 +148,7 @@ impl NodeModulesFolder {
             Ok(d) => d,
             Err(_) => return false,
         };
-        // `Dir::Drop` closes `dir` after this `directory_exists_at` returns.
-        bun_sys::directory_exists_at(dir.fd(), file_path).unwrap_or(false)
+        bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
@@ -229,7 +228,6 @@ impl NodeModulesFolder {
 
         let dir = self.open_dir(root_node_modules_dir)?;
         let res = dir.open_file(file_path, bun_sys::O::RDONLY, 0);
-        // `Dir::Drop` closes `dir`.
         res.map_err(|e| e.to_zig_err())
     }
 
@@ -327,7 +325,6 @@ pub enum LazyPackageDestinationDir<'a> {
         /// Non-owning view; the owning `Dir` lives on `PackageInstaller`.
         root_node_modules_dir: Fd,
     },
-    /// Lazily-opened directory we own; closed by `close()`/`Drop`.
     Owned(Dir),
     Closed,
 }
@@ -356,8 +353,6 @@ impl<'a> LazyPackageDestinationDir<'a> {
     }
 
     pub fn close(&mut self) {
-        // `Owned(_)` drops here and closes (Dir::Drop already skips the cwd
-        // sentinel); the other variants are non-owning views or no-ops.
         *self = LazyPackageDestinationDir::Closed;
     }
 }
@@ -1666,8 +1661,6 @@ impl<'a> PackageInstaller<'a> {
                                 ..Default::default()
                             },
                         ) {
-                            // `into_raw()` disarms the `Dir` drop guard; the Zig spec
-                            // never closes this handle (it is recycled per-install).
                             Ok(d) => d.into_raw(),
                             Err(err) => {
                                 break 'result package_install::InstallResult::fail(

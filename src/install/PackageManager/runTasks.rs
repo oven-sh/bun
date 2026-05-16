@@ -955,7 +955,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
-            // Zig: `task.log.deinit();` — Drop handles via reset.
+            // Zig: `task.log.deinit();`
             task.log.reset();
         }
 
@@ -1199,8 +1199,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
-                        // `dependency_list` is a Drop type (frees on every path); only the
-                        // `on_resolve` side-effect needs the guard so it fires on `?` too.
                         scopeguard::defer! {
                             // SAFETY: `extract_ctx_ptr` is the function-scope provenance
                             // root for `extract_ctx`.
@@ -1298,7 +1296,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // forever on the entry's pending-task slot.
                         let mut drained_any = false;
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
-                            // Zig: defer waiters.deinit() — Drop at end of `if` scope.
+                            // Zig: defer waiters.deinit()
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
                             for waiter in waiters.iter() {
                                 let dep_id = match waiter {

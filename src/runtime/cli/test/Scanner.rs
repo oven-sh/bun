@@ -101,9 +101,6 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    // Zig `deinit` only freed `test_files` and `dirs_to_scan`; both are owned
-    // containers in Rust and drop automatically. No explicit Drop impl needed.
-
     /// Take the list of test files out of this scanner. Caller owns the returned
     /// allocation.
     pub fn take_found_test_files(&mut self) -> Result<Box<[PathString]>, AllocError> {
@@ -259,8 +256,7 @@ impl<'a> Scanner<'a> {
         // !had_handle`), but with `store_fd = true` it caches the fd on the
         // resolver `DirEntry` for re-use. The Zig spec (`Scanner.zig:103-106`,
         // no `defer child_dir.close()`) intentionally leaks the fd into the
-        // resolver cache. `into_raw()` mirrors that: disarm the `Dir` drop so
-        // the cached fd outlives this scope.
+        // resolver cache.
         let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]

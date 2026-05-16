@@ -162,8 +162,7 @@ pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     }
     let d = unsafe { ensure_cache_directory(this) };
     let fd = d.fd();
-    // SAFETY: as above; single writer. `d` owns the fd; storing it disarms its
-    // local drop, leaving `cache_directory_` as the sole owner.
+    // SAFETY: as above; single writer.
     unsafe { (*this).cache_directory_ = Some(d) };
     fd
 }
@@ -213,7 +212,6 @@ static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
     std::sync::OnceLock::new();
 
 fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirectory {
-    // Borrowed view; `cache_directory_` retains ownership of the descriptor.
     let cache_directory_fd = get_cache_directory(manager);
     let cache_directory = Dir::borrow(&cache_directory_fd);
     // The chosen tempdir must be on the same filesystem as the cache directory
@@ -404,7 +402,6 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
                     unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                    // PORT NOTE: allocator.free(this.cache_directory_path) — Box drop handles it
                     // SAFETY: see fn safety contract.
                     unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
                     continue;

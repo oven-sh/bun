@@ -332,10 +332,6 @@ impl Default for InstallDirState {
     }
 }
 
-// PORT NOTE: explicit `impl Drop for InstallDirState` removed — `Dir` is now an
-// owning RAII handle that closes on `Drop` (and skips `Fd::INVALID` sentinels),
-// so the field-level drops cover the previous manual closes.
-
 // ───────────────────────────── helpers ─────────────────────────────
 
 /// Zig: `node_fs_for_package_installer().mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false)`.
@@ -701,8 +697,6 @@ impl HardLinkWindowsInstallTask {
     }
 }
 
-// `deinit` for HardLinkWindowsInstallTask becomes Drop on Box (bytes freed automatically).
-
 // ───────────────────────────── UninstallTask ─────────────────────────────
 
 struct UninstallTask {
@@ -759,8 +753,6 @@ impl UninstallTask {
                 return;
             }
         };
-        // `Dir::Drop` closes `dir` at end of scope; the previous `CloseOnDrop` is redundant.
-
         if let Err(err) = dir.delete_tree(basename) {
             if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
                 Output::debug_warn(format_args!(
@@ -803,18 +795,15 @@ impl<'a> PackageInstall<'a> {
         let Ok(destination_dir) = self.node_modules.open_dir(root_node_modules_dir) else {
             return false;
         };
-        // `Dir::Drop` closes `destination_dir` (and skips the cwd sentinel), so
-        // the previous conditional scopeguard is redundant.
-
         #[cfg(unix)]
         {
-            if sys::fstatat(destination_dir.fd(), patch_tag_path).is_err() {
+            if sys::fstatat(&destination_dir, patch_tag_path).is_err() {
                 return false;
             }
         }
         #[cfg(not(unix))]
         {
-            match sys::openat(destination_dir.fd(), patch_tag_path, sys::O::RDONLY, 0) {
+            match sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0) {
                 Err(_) => return false,
                 Ok(fd) => fd.close(),
             }
@@ -852,8 +841,6 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
-        // bun_tag_file.bytes dropped at scope exit
-
         strings::eql_long(
             repo.resolved.slice(&self.lockfile.buffers.string_bytes),
             &bun_tag_file.bytes,
@@ -996,8 +983,6 @@ impl<'a> PackageInstall<'a> {
     ) -> bool {
         // Zig: `var body_pool = BodyPool.get(); var mutable = body_pool.data;
         //        defer { body_pool.data = mutable; BodyPool.release(body_pool); }`
-        // PoolGuard derefs straight to the pooled MutableString and releases on Drop,
-        // so the take/put-back dance is unnecessary here.
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
@@ -1014,7 +999,6 @@ impl<'a> PackageInstall<'a> {
         let source = &source;
 
         let mut log = bun_ast::Log::init();
-        // log dropped at scope exit
 
         initialize_store();
 
@@ -1094,8 +1078,6 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
         };
-        // `Dir::Drop` closes `cached_package_dir`; the previous `CloseOnDrop` is redundant.
-
         let mut walker_ = match walker_skippable::walk(
             cached_package_dir.fd(),
             &[] as &[&OSPathSlice],
@@ -1105,7 +1087,6 @@ impl<'a> PackageInstall<'a> {
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
         };
         walker_.resolve_unknown_entry_types = true;
-        // walker_ dropped at scope exit
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
@@ -1114,7 +1095,7 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(destination_dir_.fd(), entry.path, 0o755);
+                        let _ = sys::mkdirat(&destination_dir_, entry.path, 0o755);
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();
@@ -1161,8 +1142,6 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningDestDir, None)),
         };
-        // `Dir::Drop` closes `subdir`; the previous `CloseOnDrop` is redundant.
-
         self.file_count = match copy(&subdir, &mut walker_) {
             Ok(n) => n,
             Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
@@ -1183,7 +1162,7 @@ impl<'a> PackageInstall<'a> {
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir = ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
-                let _ = sys::mkdirat(destination_dir.fd(), subdir, 0o755);
+                let _ = sys::mkdirat(&destination_dir, subdir, 0o755);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
         }
@@ -1384,7 +1363,6 @@ impl<'a> PackageInstall<'a> {
         if res.is_fail() {
             return res;
         }
-        // state dropped at scope exit
 
         #[cfg(windows)]
         type WinSlice<'b> = &'b mut [u16];
@@ -1702,7 +1680,7 @@ impl<'a> PackageInstall<'a> {
                                 // (and the copyfile fallback in `install()`) actually fire.
                                 match err.get_errno() {
                                     sys::E::EEXIST => {
-                                        let _ = sys::unlinkat(destination_dir.fd(), entry.path);
+                                        let _ = sys::unlinkat(&destination_dir, entry.path);
                                         sys::linkat(
                                             entry.dir,
                                             entry.basename,
@@ -1896,7 +1874,7 @@ impl<'a> PackageInstall<'a> {
                                     return Err(err.into());
                                 }
 
-                                let _ = sys::unlinkat(destination_dir.fd(), entry.path);
+                                let _ = sys::unlinkat(&destination_dir, entry.path);
                                 sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
                             }
 
@@ -2330,9 +2308,6 @@ impl<'a> PackageInstall<'a> {
         }
         #[cfg(not(windows))]
         {
-            // Lazily-opened subdirectory we own (closed by `Dir::Drop` at the
-            // end of this block); `None` means we just use the caller's
-            // `destination_dir` borrow without taking ownership.
             let owned_dest_dir: Option<Dir> = if let Some(dir) = subdir {
                 Some(
                     match bun_sys::MakePath::make_open_path(
@@ -2489,7 +2464,6 @@ impl<'a> PackageInstall<'a> {
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
         let _tracer = bun_core::perf::trace("PackageInstaller.install");
-        // tracer.end() on Drop
 
         // If this fails, we don't care.
         // we'll catch it the next error

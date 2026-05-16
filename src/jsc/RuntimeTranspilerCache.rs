@@ -233,7 +233,7 @@ impl OutputCode {
 
     fn deinit(&mut self) {
         match core::mem::take(self) {
-            OutputCode::Utf8(_b) => {} // Box drops
+            OutputCode::Utf8(_b) => {}
             OutputCode::String(s) => s.deref(),
         }
     }
@@ -288,8 +288,7 @@ impl Entry {
         // Zig: `defer tmpfile.fd.close()`
         let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
-            // Zig: `errdefer if (!tmpfile.using_tmpfile) unlinkat(...)` — disarmed
-            // via `into_inner` on the success path below.
+            // Zig: `errdefer if (!tmpfile.using_tmpfile) unlinkat(...)`
             let errdefer = scopeguard::guard(tmpfile.using_tmpfile, |using_tmpfile| {
                 if !using_tmpfile {
                     let _ = sys::unlinkat(destination_dir, tmpfilename);
@@ -413,7 +412,6 @@ impl Entry {
                 position += i64::try_from(written).expect("int cast");
             }
 
-            // disarm errdefer (success path)
             let _ = scopeguard::ScopeGuard::into_inner(errdefer);
         }
 
@@ -823,7 +821,7 @@ impl RuntimeTranspilerCache {
         // defer order.
         let file = sys::File::from_fd(cache_fd);
         // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
-        // cache file. Disarmed via `into_inner` on the success path below.
+        // cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
             let _ = sys::unlink(p.slice_assume_z());
         });
@@ -855,7 +853,6 @@ impl RuntimeTranspilerCache {
 
         entry.load(&file)?;
 
-        // disarm errdefer (success path)
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
         Ok(entry)
     }
@@ -884,8 +881,7 @@ impl RuntimeTranspilerCache {
         // Zig: `else => .{ .string = source_code }` — by-value copy, **no**
         // `dupeRef()` and **no** matching `deref()`. `BunString` is `Copy` and
         // `OutputCode` has no `Drop`, so `*source_code` here is the same
-        // refcount-neutral borrow. (A previous revision did `dupe_ref()` +
-        // scopeguard `deref()`, which was balanced but redundant.)
+        // refcount-neutral borrow.
         let output_code: OutputCode = if source_code.is_utf8() {
             OutputCode::Utf8(Box::from(source_code.byte_slice()))
         } else {
@@ -909,10 +905,7 @@ impl RuntimeTranspilerCache {
                 // Zig: `std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true })`
                 let dir =
                     sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                // The raw fd escapes the block (handed to `_dir_guard` below),
-                // so disarm `Dir::Drop` with `into_raw()`. Zig: `errdefer
-                // dir.close()` (brk-scoped) — close explicitly on the
-                // `make_lib_uv_owned` error edge (Windows-only failure path).
+                // Zig: `errdefer dir.close()` (brk-scoped)
                 let dfd = dir.into_raw();
                 break 'brk match dfd.make_lib_uv_owned() {
                     Ok(f) => f,

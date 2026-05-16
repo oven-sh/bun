@@ -277,7 +277,6 @@ impl Fs {
             if rfs.need_to_close_files() {
                 _owned = Some(f);
             } else {
-                // The fd escapes via `Entry.fd`; disarm the drop guard.
                 let _ = f.into_raw();
                 _owned = None;
             }
@@ -400,7 +399,6 @@ impl Fs {
             if will_close {
                 _owned = Some(opened);
             } else {
-                // The fd escapes via `Entry.fd`; disarm the drop guard.
                 let _ = opened.into_raw();
                 _owned = None;
             }

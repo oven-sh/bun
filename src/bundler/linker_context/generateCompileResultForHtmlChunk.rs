@@ -7,7 +7,6 @@ use bstr::BStr;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
-use bun_collections::BoundedArray;
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_lolhtml_sys::lol_html as lol;
@@ -282,9 +281,11 @@ impl<'a> HTMLLoader<'a> {
         Ok(())
     }
 
-    fn get_head_tags(&self) -> BoundedArray<Vec<u8>, 2> {
+    // Returns `Vec<Vec<u8>>` (not `BoundedArray`) so the inner `Vec<u8>`s
+    // are dropped — `BoundedArray` is `[MaybeUninit<T>; N]` with no `Drop`.
+    fn get_head_tags(&self) -> Vec<Vec<u8>> {
         // PERF(port): was stack-fallback arena; now heap Vec<u8>
-        let mut array: BoundedArray<Vec<u8>, 2> = BoundedArray::default();
+        let mut array: Vec<Vec<u8>> = Vec::with_capacity(2);
         // `self.chunk` is a `BackRef` (safe `Deref`).
         let chunk: &Chunk = &self.chunk;
         // SAFETY: `chunks` raw pointer valid for the link step; sole live `&mut`.
@@ -299,8 +300,7 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(css_chunk.unique_key)
                 )
                 .unwrap();
-                // PERF(port): was assume_capacity
-                let _ = array.push(style_tag);
+                array.push(style_tag);
             }
         } else {
             // Put CSS before JS to reduce chances of flash of unstyled content
@@ -312,8 +312,7 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(css_chunk.unique_key)
                 )
                 .unwrap();
-                // PERF(port): was assume_capacity
-                let _ = array.push(link_tag);
+                array.push(link_tag);
             }
             if let Some(js_chunk) = chunk.get_js_chunk_for_html(chunks) {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
@@ -324,8 +323,7 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(js_chunk.unique_key)
                 )
                 .unwrap();
-                // PERF(port): was assume_capacity
-                let _ = array.push(script);
+                array.push(script);
             }
         }
         array

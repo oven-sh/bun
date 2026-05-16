@@ -4379,6 +4379,26 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         #[cold]
         pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            // Mirror Zig's `defer load.deinit()`. `Load` is arena-allocated, so
+            // `Drop` never runs when the arena resets — free the owned heap
+            // fields on every exit path (including the early `return` arms).
+            struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
+            impl Drop for LoadDeinitGuard {
+                fn drop(&mut self) {
+                    // SAFETY: `self.0` is the live `&mut Load` borrowed by
+                    // `on_load`; the guard drops before that borrow ends.
+                    unsafe {
+                        let l = &mut *self.0;
+                        drop(core::mem::take(&mut l.path));
+                        drop(core::mem::take(&mut l.namespace));
+                        drop(core::mem::replace(
+                            &mut l.value,
+                            jsc_api::JSBundler::LoadValue::Consumed,
+                        ));
+                    }
+                }
+            }
+            let _load_deinit = LoadDeinitGuard(std::ptr::from_mut(load));
             bun_core::scoped_log!(
                 Bundle,
                 "onLoad: ({}, {:?})",
@@ -4547,7 +4567,7 @@ pub mod bv2_impl {
                 jsc_api::JSBundler::LoadValue::Pending
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
             }
-            // load is dropped here (defer load.deinit())
+            // `_load_deinit` drops here (Zig: `defer load.deinit()`).
         }
     }
 

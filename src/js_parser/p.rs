@@ -8540,14 +8540,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
+                        // Clear the heap-backed map fields in the *source* slot
+                        // before compacting `part` into `parts[parts_end]`. The
+                        // multi-pass loop restarts at `begin = parts_end`, so
+                        // when `parts_end < idx` the abandoned source slot at
+                        // `idx` is re-scanned on the next pass — still holding
+                        // bitwise aliases of the maps now owned by the compacted
+                        // survivor at `parts_end`. If that re-scan filters the
+                        // slot, the filtered branch below would drop the aliased
+                        // maps and the survivor would dangle. Wiping them here
+                        // guarantees the compacted slot is the sole owner. When
+                        // `parts_end == idx` this is a no-op: the whole-`Part`
+                        // `ptr::write` immediately below restores them from
+                        // `part`.
+                        // SAFETY: `idx < parts.len()`. Field-only `ptr::write`
+                        // (no `Drop` of the old slot bits — `part` owns them).
+                        unsafe {
+                            let src = parts.as_mut_ptr().add(idx);
+                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
+                            core::ptr::write(
+                                &raw mut (*src).import_symbol_property_uses,
+                                Default::default(),
+                            );
+                        }
                         // SAFETY: bitwise overwrite matching Zig
                         // `parts.items[parts_end] = part;` — old slot value is not
                         // dropped (arena-owned; Zig never deinit'd it either).
                         unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
                         parts_end += 1;
                     } else {
-                        // Drop path: `parts[idx]` still owns this data; discard the
-                        // bitwise duplicate without running Drop.
+                        // Drop path: this part is filtered out and abandoned
+                        // by `set_len(parts_end)` (no Drop). Arena-backed
+                        // fields are fine to abandon, but `symbol_uses` /
+                        // `import_symbol_property_uses` are global-heap maps
+                        // — free them via the duplicate, then clear the alias
+                        // in `parts[idx]` so the multi-pass re-scan and final
+                        // `set_len` never observe freed handles. The kept
+                        // branch above wipes its source slot's map fields, so
+                        // a slot reaching here cannot alias any compacted
+                        // survivor's maps from a prior pass.
+                        drop(core::mem::take(&mut part.symbol_uses));
+                        drop(core::mem::take(&mut part.import_symbol_property_uses));
+                        // SAFETY: `idx < parts.len()`. Field-only `ptr::write`
+                        // (no `Drop` of the old slot bits — those just-freed
+                        // handles must not run `Drop` again).
+                        unsafe {
+                            let slot = parts.as_mut_ptr().add(idx);
+                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
+                            core::ptr::write(
+                                &raw mut (*slot).import_symbol_property_uses,
+                                Default::default(),
+                            );
+                        }
                         core::mem::forget(part);
                     }
                 }

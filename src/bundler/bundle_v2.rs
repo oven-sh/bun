@@ -4996,6 +4996,30 @@ pub mod bv2_impl {
                         for v in ast.items_ts_enums_mut() {
                             drop(core::mem::take(v));
                         }
+                        // `css: Option<StoreRef<BundlerStyleSheet>>` — the
+                        // `StyleSheet` is `bump.alloc()`'d in the worker arena
+                        // (`ParseTask.rs`), so the arena bulk-free won't run
+                        // its `Drop`. Its `sources: Vec<Box<[u8]>>`,
+                        // `source_map_urls`, `layer_names`, `local_scope`,
+                        // `composes`, `rules`, etc. are global-heap and
+                        // strand. `drop_in_place` while the arena pointer is
+                        // still live; the parse-side `graph.ast.css` row is a
+                        // bitwise alias of the linker-side row, and the macro
+                        // takes only one (linker if non-empty else parse), so
+                        // this is the unique drop. `CssChunk::asts` holds
+                        // shallow aliases of these stylesheets and `forget()`s
+                        // them in `Drop` (`Chunk.rs`), so no double-free there.
+                        for v in ast.items_css_mut() {
+                            if let Some(css_ref) = v.take() {
+                                // SAFETY: `css_ref` is a live arena pointer
+                                // (the worker arena outlives this teardown);
+                                // dropped exactly once — the macro takes only
+                                // one side (linker if non-empty else parse),
+                                // and the un-taken side's `MultiArrayList::Drop`
+                                // is slab-only (never runs element destructors).
+                                unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
+                            }
+                        }
                     }};
                 }
                 if self.linker.graph.ast.len() != 0 {

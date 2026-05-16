@@ -10,13 +10,11 @@ use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 // `BindgenArray::convert_from_extern` reuses C++-allocated buffers by adopting
 // them into `Vec<ZigType>` even when `align_of::<ZigType>() != align_of::<ExternType>()`.
 // That is only sound because mimalloc's `mi_free` ignores the allocation layout;
-// the Rust `GlobalAlloc::dealloc` contract would otherwise be violated. Pin the
-// invariant at compile time so a non-mimalloc build fails loudly here rather
-// than corrupting the heap at runtime.
-const _: () = assert!(
-    bun_alloc::USE_MIMALLOC,
-    "bindgen array reuse assumes mimalloc (layout-agnostic free)",
-);
+// the Rust `GlobalAlloc::dealloc` contract would otherwise be violated, and the
+// C++ side (`ExternVectorTraits.h`) always allocates with `MimallocMalloc::malloc`
+// (`mi_malloc`). When the global allocator is *not* mimalloc (ASAN installs
+// `std::alloc::System`), the runtime `bun_alloc::USE_MIMALLOC` check below skips
+// the reuse paths and the fallback frees the C++ buffer with `mi_free` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
 // The Zig file defines a family of "Bindgen*" comptime structs that all share
@@ -354,16 +352,23 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             return Self::ZigType::from_unmanaged(new_unmanaged);
         }
 
-        // Fallback: allocate fresh, convert, free old.
-        // PORT NOTE: Zig frees `unmanaged` with `raw_c_allocator` when `!use_mimalloc`,
-        // else with `default_allocator`. In Rust the global allocator IS mimalloc
-        // (per crate prereq) and `USE_MIMALLOC` is `const true`, so dropping the
-        // `Vec` is correct.
+        // Fallback: allocate fresh, convert, free old. `data` was `mi_malloc`'d by
+        // the C++ side regardless of the Rust global allocator, so free it with
+        // `mi_free` directly instead of letting `Vec::drop` route through the
+        // global allocator (which is `std::alloc::System` under ASAN, not mimalloc).
         let mut result = bun_core::handle_oom(Self::ZigType::init_capacity(length));
-        for item in unmanaged {
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
-            result.append_assume_capacity(Child::convert_from_extern(item));
+        let mut unmanaged = ManuallyDrop::new(unmanaged);
+        for item in unmanaged.iter_mut() {
+            // SAFETY: each slot `i < length` holds a C++-initialized `ExternType`;
+            // `ManuallyDrop` ensures it isn't read twice.
+            result.append_assume_capacity(Child::convert_from_extern(unsafe {
+                core::ptr::read(item)
+            }));
         }
+        // SAFETY: `data` is the live `mi_malloc`'d block handed over by C++
+        // `ExternVectorTraits::convertToExtern` (it never returns a null `data`
+        // here — the null case is handled at the top of this function).
+        unsafe { bun_alloc::mimalloc::mi_free(data.cast()) };
         result
     }
 }

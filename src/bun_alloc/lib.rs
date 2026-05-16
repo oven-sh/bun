@@ -284,8 +284,14 @@ macro_rules! arena_format {
 /// `typed_arena::Arena<T>` — typed slab with stable addresses (AST node Store).
 pub type TypedArena<T> = typed_arena::Arena<T>;
 
-/// `bun.use_mimalloc` — always true in Rust (mimalloc is the global allocator).
-pub const USE_MIMALLOC: bool = true;
+/// `bun.use_mimalloc` — `true` when [`Mimalloc`] is the `#[global_allocator]`.
+///
+/// ASAN builds (`--cfg=bun_asan`) install `std::alloc::System` instead, so the
+/// ASAN interceptor wraps every `Box`/`Vec` allocation directly. Code that
+/// assumes the global allocator routes to `mi_free` (layout-agnostic free,
+/// adopting C++ `mi_malloc`'d buffers into `Vec`, etc.) must gate on this.
+/// `MimallocArena` is unaffected — it always uses mimalloc heaps.
+pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //

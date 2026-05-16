@@ -48,8 +48,18 @@ use bun_core::output;
 
 /// mimalloc as the process allocator — matches Zig's `bun.default_allocator`
 /// and the `uv_replace_allocator(mi_*)` call in `main.zig` on Windows.
+#[cfg(not(bun_asan))]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
+
+/// Under ASAN, route the global allocator through the system allocator (libc
+/// malloc) so the ASAN interceptor sees every allocation directly — redzones,
+/// free quarantine, heap-origin tracking. Mirrors the Zig build's
+/// `use_mimalloc = false` + `fallback.zig` (`std.heap.c_allocator`) path.
+/// `MimallocArena` (the parser/AST bump arena) stays on mimalloc.
+#[cfg(bun_asan)]
+#[global_allocator]
+static ALLOC: std::alloc::System = std::alloc::System;
 
 /// ASAN runtime options override. Lives in the binary crate so it is a direct
 /// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive

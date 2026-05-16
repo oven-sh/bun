@@ -170,8 +170,11 @@ pub trait AccessorDirIter {
     /// # Safety
     /// The returned [`Self::Entry`] may borrow this iterator's internal scratch
     /// buffer (e.g. `SyscallDirIter` → `IteratorResult.name: PathString`). It
-    /// is invalidated by the next `next()` call and by this iterator's drop.
-    /// The caller must copy or consume each entry before advancing.
+    /// is invalidated by the next `next()` call and by this iterator's move
+    /// or drop (for impls with an inline scratch buffer — e.g.
+    /// `SyscallDirIter`'s `DirentBuf` = `[u8; 8192]` — the buffer relocates
+    /// on move, dangling any outstanding entry). The caller must copy or
+    /// consume each entry before advancing.
     unsafe fn next(&mut self) -> Maybe<Option<Self::Entry>>;
     fn iterate(dir: Self::Handle) -> Self;
     #[allow(unused_variables)]

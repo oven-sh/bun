@@ -804,6 +804,14 @@ pub mod dir_iterator {
         /// [`next`](Self::next) and by this iterator's move or drop. The
         /// caller must consume (e.g. `.slice_u8().to_vec()`) the name before
         /// either.
+        ///
+        /// Regression guard for oven-sh/bun#30719 — calling `next()` outside
+        /// an `unsafe { }` block is a compile error:
+        /// ```compile_fail
+        /// use bun_sys::Fd;
+        /// let mut it = bun_sys::iterate_dir(Fd::cwd());
+        /// let _ = it.next(); // E0133: call to unsafe function
+        /// ```
         #[inline]
         pub unsafe fn next(&mut self) -> Result<Option<IteratorResult>> {
             self.state.next(self.dir)

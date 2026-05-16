@@ -114,8 +114,10 @@ mod platform {
         /// # Safety
         /// The returned [`IteratorResult::name`] borrows the iterator's internal
         /// dirent scratch buffer (`self.buf`). It is invalidated by the next
-        /// call to [`next`](Self::next) and by this iterator's drop. The caller
-        /// must consume or `.slice().to_vec()`-copy the name before either.
+        /// call to [`next`](Self::next) and by this iterator's move or drop
+        /// (the inline `DirentBuf` = `[u8; 8192]` relocates on move, dangling
+        /// any outstanding name). The caller must consume or
+        /// `.slice().to_vec()`-copy the name before either.
         pub unsafe fn next(&mut self) -> Result {
             self.next_darwin()
         }
@@ -227,7 +229,8 @@ mod platform {
                 return Ok(Some(IteratorResult {
                     // SAFETY: `name` borrows the iterator's dirent scratch buffer.
                     // Streaming-iterator contract: the returned PathString is
-                    // valid until the next `next()` call or the iterator's drop.
+                    // valid until the next `next()` call or the iterator's
+                    // move or drop (inline `[u8; 8192]` relocates on move).
                     name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
@@ -270,8 +273,10 @@ mod platform {
         /// # Safety
         /// The returned [`IteratorResult::name`] borrows the iterator's internal
         /// dirent scratch buffer (`self.buf`). It is invalidated by the next
-        /// call to [`next`](Self::next) and by this iterator's drop. The caller
-        /// must consume or `.slice().to_vec()`-copy the name before either.
+        /// call to [`next`](Self::next) and by this iterator's move or drop
+        /// (the inline `DirentBuf` = `[u8; 8192]` relocates on move, dangling
+        /// any outstanding name). The caller must consume or
+        /// `.slice().to_vec()`-copy the name before either.
         pub unsafe fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
@@ -335,7 +340,8 @@ mod platform {
                 return Ok(Some(IteratorResult {
                     // SAFETY: `name` borrows the iterator's dirent scratch buffer.
                     // Streaming-iterator contract: the returned PathString is
-                    // valid until the next `next()` call or the iterator's drop.
+                    // valid until the next `next()` call or the iterator's
+                    // move or drop (inline `[u8; 8192]` relocates on move).
                     name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
@@ -372,8 +378,10 @@ mod platform {
         /// # Safety
         /// The returned [`IteratorResult::name`] borrows the iterator's internal
         /// dirent scratch buffer (`self.buf`). It is invalidated by the next
-        /// call to [`next`](Self::next) and by this iterator's drop. The caller
-        /// must consume or `.slice().to_vec()`-copy the name before either.
+        /// call to [`next`](Self::next) and by this iterator's move or drop
+        /// (the inline `DirentBuf` = `[u8; 8192]` relocates on move, dangling
+        /// any outstanding name). The caller must consume or
+        /// `.slice().to_vec()`-copy the name before either.
         pub unsafe fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
@@ -447,7 +455,8 @@ mod platform {
                 return Ok(Some(IteratorResult {
                     // SAFETY: `name` borrows the iterator's dirent scratch buffer.
                     // Streaming-iterator contract: the returned PathString is
-                    // valid until the next `next()` call or the iterator's drop.
+                    // valid until the next `next()` call or the iterator's
+                    // move or drop (inline `[u8; 8192]` relocates on move).
                     name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
@@ -588,8 +597,9 @@ mod platform {
         /// The returned [`IteratorResult::name`] / [`IteratorResultW::name`]
         /// borrows the iterator's internal dirent scratch buffer. It is
         /// invalidated by the next call to [`next`](Self::next) and by this
-        /// iterator's drop. The caller must consume or copy the name before
-        /// either.
+        /// iterator's move or drop (the inline `DirentBuf` = `[u8; 8192]`
+        /// relocates on move, dangling any outstanding name). The caller must
+        /// consume or copy the name before either.
         pub unsafe fn next(
             &mut self,
         ) -> sys::Result<Option<<Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::Entry>> {
@@ -801,8 +811,10 @@ mod platform {
         /// # Safety
         /// The returned [`IteratorResult::name`] borrows the iterator's internal
         /// dirent scratch buffer (`self.buf`). It is invalidated by the next
-        /// call to [`next`](Self::next) and by this iterator's drop. The caller
-        /// must consume or `.slice().to_vec()`-copy the name before either.
+        /// call to [`next`](Self::next) and by this iterator's move or drop
+        /// (the inline `DirentBuf` = `[u8; 8192]` relocates on move, dangling
+        /// any outstanding name). The caller must consume or
+        /// `.slice().to_vec()`-copy the name before either.
         pub unsafe fn next(&mut self) -> Result {
             // We intentinally use fd_readdir even when linked with libc,
             // since its implementation is exactly the same as below,
@@ -876,7 +888,8 @@ mod platform {
                 return Ok(Some(IteratorResult {
                     // SAFETY: `name` borrows the iterator's dirent scratch buffer.
                     // Streaming-iterator contract: the returned PathString is
-                    // valid until the next `next()` call or the iterator's drop.
+                    // valid until the next `next()` call or the iterator's
+                    // move or drop (inline `[u8; 8192]` relocates on move).
                     name: unsafe { PathString::init(name) },
                     kind: entry_kind,
                 }));
@@ -914,7 +927,16 @@ impl NewWrappedIterator<false> {
     /// # Safety
     /// Inherits the borrow contract of [`NewIterator::next`]: the returned
     /// name is invalidated by the next `next()` call (or this iterator's
-    /// drop). Copy it out before either.
+    /// move or drop — the inline `DirentBuf` relocates on move). Copy it
+    /// out before either.
+    ///
+    /// Regression guard for oven-sh/bun#30719 — calling `next()` outside
+    /// an `unsafe { }` block is a compile error:
+    /// ```compile_fail
+    /// use bun_sys::Fd;
+    /// let mut it = bun_runtime::node::dir_iterator::iterate::<false>(Fd::cwd());
+    /// let _ = it.next(); // E0133: call to unsafe function
+    /// ```
     #[inline]
     pub unsafe fn next(&mut self) -> Result {
         // SAFETY: caller upholds the same contract.
@@ -926,7 +948,8 @@ impl NewWrappedIterator<true> {
     /// # Safety
     /// Inherits the borrow contract of [`NewIterator::next`]: the returned
     /// name is invalidated by the next `next()` call (or this iterator's
-    /// drop). Copy it out before either.
+    /// move or drop — the inline `DirentBuf` relocates on move). Copy it
+    /// out before either.
     #[cfg(not(windows))]
     #[inline]
     pub unsafe fn next(&mut self) -> Result {
@@ -938,7 +961,8 @@ impl NewWrappedIterator<true> {
     /// # Safety
     /// Inherits the borrow contract of [`NewIterator::next`]: the returned
     /// name is invalidated by the next `next()` call (or this iterator's
-    /// drop). Copy it out before either.
+    /// move or drop — the inline `DirentBuf` relocates on move). Copy it
+    /// out before either.
     #[cfg(windows)]
     #[inline]
     pub unsafe fn next(&mut self) -> ResultW {

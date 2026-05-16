@@ -6,7 +6,7 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-// Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
+// Early drafts used `bun_str` as the crate name; aliased here for compat.
 #![warn(unreachable_pub)]
 extern crate bun_core as bun_str;
 

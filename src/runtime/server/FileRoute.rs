@@ -319,7 +319,7 @@ impl FileRoute {
         // PORT NOTE: clone the path so the borrow into `this.blob.store`
         // doesn't span the scopeguard creation (the guard's closure may free
         // `*this_ptr` on early-return drop). // PERF(port): was zero-copy
-        // slice — profile in Phase B.
+        // slice — profile if hot.
         let path_buf: Vec<u8> = match this.blob.store.get().as_ref().unwrap().get_path() {
             Some(p) => p.to_vec(),
             None => {

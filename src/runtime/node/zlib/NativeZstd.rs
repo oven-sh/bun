@@ -31,8 +31,8 @@ mod _impl {
 
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-    // `host_fn_this` shim still passes `&mut NativeZstd` until Phase 1 lands —
-    // `&mut T` auto-reborrows to `&T` so the impls below compile against either.
+    // `host_fn_this` shim still passes `&mut NativeZstd` — `&mut T` auto-reborrows
+    // to `&T` so the impls below compile against either.
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     pub struct NativeZstd {

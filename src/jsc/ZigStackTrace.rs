@@ -65,7 +65,7 @@ impl ZigStackTrace {
                 // `source_line_buf` and stored sub-slices in each `SourceLine`.
                 // The Rust `api::SourceLine.text` is `Box<[u8]>` (owns its bytes),
                 // so each line gets its own allocation instead.
-                // PERF(port): one alloc per line vs one shared buffer — profile in Phase B.
+                // PERF(port): one alloc per line vs one shared buffer — profile if hot.
                 source_lines_iter = self.source_line_iterator();
                 while let Some(source) = source_lines_iter.next() {
                     let text = source.text.slice();

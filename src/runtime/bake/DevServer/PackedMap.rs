@@ -3,7 +3,7 @@
 //!
 //! Spec: src/runtime/bake/DevServer/PackedMap.zig
 //!
-//! DISSOLVED — the Phase-A draft that lived here duplicated `PackedMap`,
+//! DISSOLVED — the original draft that lived here duplicated `PackedMap`,
 //! `Shared`, `LineCount`, and `EndState` against `dev_server/packed_map.rs`.
 //! Its sole consumer was the (also dissolved) `source_map_store_body` module
 //! via `use super::packed_map_body as packed_map`. This file is no longer

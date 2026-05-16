@@ -71,7 +71,7 @@ impl DeferredTaskQueue {
         // pointers, so copy the key out and remove by key — semantically
         // identical (keys are unique), just an extra hash per removal.
         // PERF(port): swap_remove(&K) re-hashes; restore swap_remove_at when
-        // bun_collections::ArrayHashMap grows it — profile in Phase B.
+        // bun_collections::ArrayHashMap grows it.
         let mut i: usize = 0;
         let mut last = self.map.len();
         while i < last {

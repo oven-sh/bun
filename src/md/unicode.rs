@@ -350,7 +350,7 @@ fn case_fold_from_map<const N: u8>(
     };
 
     // Copy the base codepoints from the data table.
-    // PERF(port): was `inline for` (compile-time unrolled) — profile in Phase B
+    // PERF(port): was `inline for` (compile-time unrolled) — profile if hot.
     for k in 0..(N as usize) {
         result.codepoints[k] = data[data_offset + k];
     }

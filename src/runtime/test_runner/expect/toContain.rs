@@ -30,7 +30,7 @@ impl Expect {
         let mut pass = false;
 
         // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig
-        // `*JSGlobalObject` / `*bool` fields and avoid a Phase-A struct lifetime param.
+        // `*JSGlobalObject` / `*bool` fields and avoid a struct lifetime param.
         struct ExpectedEntry {
             global: *const JSGlobalObject,
             expected: JSValue,
@@ -110,7 +110,7 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {
-            // PERF(port): was comptime getSignature — profile in Phase B (make get_signature const fn / const_format)
+            // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return this.throw(
                 global,
@@ -126,7 +126,7 @@ impl Expect {
             );
         }
 
-        // PERF(port): was comptime getSignature — profile in Phase B (make get_signature const fn / const_format)
+        // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
         let signature = get_signature("toContain", "<green>expected<r>", false);
         this.throw(
             global,

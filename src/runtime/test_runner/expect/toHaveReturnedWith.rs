@@ -127,7 +127,7 @@ pub fn to_have_returned_with(
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<r>` tags at comptime.
         // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,
@@ -149,7 +149,7 @@ pub fn to_have_returned_with(
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
         // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,

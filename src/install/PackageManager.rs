@@ -363,7 +363,7 @@ pub struct PackageManager {
     pub ast_arena: bun_alloc::Arena,
     // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM → `&'a mut bun_ast::Log`
     // (struct gets `<'a>`). Kept as raw ptr because PackageManager is a leaked singleton stored
-    // in a `static`; threading `<'a>` through the global holder is deferred to Phase B.
+    // in a `static`; threading `<'a>` through the global holder is a TODO(refactor).
     pub log: *mut bun_ast::Log,
     pub resolve_tasks: ResolveTaskQueue,
     pub timestamp_for_manifest_cache_control: u32,
@@ -813,7 +813,7 @@ mod holder {
     // Zig uses `var ptr: *PackageManager = undefined` then assigns via allocatePackageManager()
     // and later writes `manager.* = ...` in-place. OnceLock<Box<T>> can't express
     // allocate-then-fill (no `&mut` after set). Keep a raw ptr for now.
-    // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>> in Phase B.
+    // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>>.
     // PORTING.md §Global mutable state: ptr written once on main thread, read
     // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
     pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
@@ -2334,9 +2334,9 @@ pub fn init_with_runtime(
     log: &mut bun_ast::Log,
     // Spec PackageManager.zig:983 `bun_install: ?*Api.BunInstall` — used read-only
     // (PackageManagerOptions.zig:load lines 224-380 only ever reads `config.*`).
-    // Upstream storage is `Option<&api::BunInstall>` (options.rs) / `*const ()`
-    // (resolver opts); taking `&mut` here would force a const→mut provenance
-    // launder at the resolver call site.
+    // Upstream storage is `Option<NonNull<api::BunInstall>>` (bundler + resolver
+    // opts); taking `&mut` here would force a const→mut provenance launder at
+    // the resolver call site.
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,

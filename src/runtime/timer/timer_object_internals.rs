@@ -1,14 +1,12 @@
 //! `TimerObjectInternals` — fields shared by `TimeoutObject` / `ImmediateObject`.
 //!
-//! B-2 un-gate: struct + `Flags` packed-u32 state machine are real;
-//! `run_immediate_task()` + helpers (`event_loop_timer`/`ref_`/`deref_`/
-//! `set_enable_keeping_event_loop_alive`/`run`) un-gated for the
+//! Struct + `Flags` packed-u32 state machine. `run_immediate_task()` +
+//! helpers (`event_loop_timer`/`ref_`/`deref_`/
+//! `set_enable_keeping_event_loop_alive`/`run`) drive the
 //! `__bun_run_immediate_task` dispatch path. `fire()` + `reschedule()`/
-//! `should_reschedule_timer()`/`convert_to_interval()` un-gated for the
-//! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` un-gated for
-//! the `TimeoutObject::init` / `ImmediateObject::init` constructors.
-//! `cancel()`/`do_ref`/`do_unref`/`do_refresh`/`to_primitive` stay in the
-//! gated draft (`TimerObjectInternals.rs`).
+//! `should_reschedule_timer()`/`convert_to_interval()` drive the
+//! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` backs the
+//! `TimeoutObject::init` / `ImmediateObject::init` constructors.
 
 use core::mem::offset_of;
 
@@ -164,7 +162,7 @@ impl TimerObjectInternals {
 
     /// Spec TimerObjectInternals.zig `setEnableKeepingEventLoopAlive`.
     ///
-    /// PORT NOTE (b2-cycle): Zig reaches `vm.timer` (a value field of
+    /// PORT NOTE (jsc/runtime crate cycle): Zig reaches `vm.timer` (a value field of
     /// `VirtualMachine`); the low-tier `bun_jsc::VirtualMachine.timer` is `()`,
     /// so resolve `Timer::All` via the per-thread `RuntimeState` instead.
     fn set_enable_keeping_event_loop_alive(&self, vm: *mut VirtualMachine, enable: bool) {
@@ -260,7 +258,7 @@ impl TimerObjectInternals {
     /// reshaped to `-> Self` because the body needs the parent pointer to
     /// enqueue/reschedule before returning.
     ///
-    /// PORT NOTE (b2-cycle): `vm.timer.epoch` resolved via `runtime_state()`
+    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer.epoch` resolved via `runtime_state()`
     /// (low-tier `VirtualMachine.timer` is `()`).
     // TODO(port): in-place init — see ImmediateObject::init / TimeoutObject::init.
     pub fn init(
@@ -447,7 +445,7 @@ impl TimerObjectInternals {
     /// helper calls `(*this).foo()` materialise short-lived `&mut` scoped to
     /// each statement only — none span the JS call.
     ///
-    /// PORT NOTE (b2-cycle): `vm.timer` resolved via
+    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer` resolved via
     /// `crate::jsc_hooks::runtime_state()` — low-tier `VirtualMachine.timer`
     /// is `()` (see `set_enable_keeping_event_loop_alive`).
     ///
@@ -727,10 +725,9 @@ impl TimerObjectInternals {
 
     /// Spec TimerObjectInternals.zig `reschedule` — re-insert the parent's
     /// `EventLoopTimer` into the heap at `now + interval`. Called from
-    /// `init()` (gated draft), `do_refresh()` (gated draft), and
-    /// `convert_to_interval()` above.
+    /// `init()`, `do_refresh()`, and `convert_to_interval()` above.
     ///
-    /// PORT NOTE (b2-cycle): `vm.timer` resolved via `runtime_state()`.
+    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer` resolved via `runtime_state()`.
     pub fn reschedule(
         &self,
         timer: JSValue,
@@ -945,7 +942,7 @@ impl TimerObjectInternals {
     /// `id → *mut EventLoopTimer` entry in `All.maps` so `clearTimeout(+t)` /
     /// `clearImmediate(+t)` (numeric-id form) can resolve it.
     ///
-    /// PORT NOTE (b2-cycle): `vm.timer.maps` resolved via `runtime_state()`.
+    /// PORT NOTE (jsc/runtime crate cycle): `vm.timer.maps` resolved via `runtime_state()`.
     pub fn to_primitive(&self) -> JsResult<JSValue> {
         if !self.flags.get().has_accessed_primitive() {
             self.update_flags(|f| f.set_has_accessed_primitive(true));
@@ -996,7 +993,7 @@ impl TimerObjectInternals {
     /// PORT NOTE: takes `*mut VirtualMachine` (NOT `&mut`) — callers hand over
     /// `global.bun_vm()` (raw ptr) and the body forwards to
     /// `set_enable_keeping_event_loop_alive` which already uses the raw-ptr
-    /// contract. `vm.timer` resolved via `runtime_state()` (b2-cycle).
+    /// contract. `vm.timer` resolved via `runtime_state()` (jsc/runtime crate cycle).
     pub fn cancel(&self, vm: *mut VirtualMachine) {
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));

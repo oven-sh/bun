@@ -1,12 +1,11 @@
 //! Port of `src/jsc/ModuleLoader.zig`.
 //!
-//! B-2 un-gate: real `ModuleLoader` struct, `FetchFlags`, and the
-//! `HardcodedModule` re-export compile against the `lib.rs` stub surface.
+//! The `ModuleLoader` struct, `FetchFlags`, and the `HardcodedModule`
+//! re-export compile against the `lib.rs` stub surface.
 //! `transpile_source_code` / `fetch_builtin_module` / `resolve_embedded_file`
-//! and the `Bun__*` extern entry points are preserved verbatim from the
-//! Phase-A draft inside `` blocks below — every body reaches into
-//! `bun_runtime::node::fs` / `bun_transpiler` internals / gated bundler types
-//! (forward-dep cycle on `bun_jsc`).
+//! and the `Bun__*` extern entry points reach into `bun_runtime::node::fs` /
+//! `bun_transpiler` internals / gated bundler types (forward-dep cycle on
+//! `bun_jsc`).
 
 use core::ffi::c_void;
 
@@ -473,7 +472,7 @@ pub extern "C" fn Bun__fetchBuiltinModule(
 }
 
 /// `HardcodedModule.Alias.bun_aliases.get(str)` — linear scan over the
-/// `BUN_ALIASES` const tables (PERF(port): Phase B replaces with phf).
+/// `BUN_ALIASES` const tables (PERF(port): could replace with phf).
 #[inline]
 fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     for table in bun_resolve_builtins::HardcodedModule::BUN_ALIASES {

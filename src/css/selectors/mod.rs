@@ -3,8 +3,7 @@
 //! Hub for `selector.rs` (high-level API + downleveling) / `parser.rs`
 //! (Component / Selector / SelectorList grammar) / `builder.rs`.
 //!
-//! ─── B-2 round 5 status ──────────────────────────────────────────────────
-//! All three leaf files un-gated. `parser.rs` carries the full grammar
+//! `parser.rs` carries the full grammar
 //! (`GenericComponent`/`GenericSelector`/`GenericSelectorList`, `Combinator`,
 //! `PseudoClass`/`PseudoElement`, `attrs::*`, `NthSelectorData`/`NthType`/
 //! `NthOfSelectorData`, `SpecificityAndFlags`/`SelectorFlags`,

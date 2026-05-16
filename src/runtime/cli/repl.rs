@@ -88,7 +88,7 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 ///
 /// SAFETY: The Zig spec passes `*JSC.VirtualMachine` (mutable, freely-aliasing)
 /// everywhere; `VirtualMachine` is single-threaded per JS thread and the REPL
-/// is the sole driver of `tick()` / `wait_for_promise()` here. Phase-B port
+/// is the sole driver of `tick()` / `wait_for_promise()` here. The Rust port
 /// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
 #[inline]
 #[allow(invalid_reference_casting)]

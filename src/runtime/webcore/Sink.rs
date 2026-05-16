@@ -45,7 +45,7 @@ pub struct Sink<'a> {
 
 impl<'a> Sink<'a> {
     // TODO(port): `pending` uses @ptrFromInt(0xaaaaaaaa) as a sentinel non-null pointer
-    // and `vtable: undefined`. Cannot express as `&'a mut ()` safely; Phase B should
+    // and `vtable: undefined`. Cannot express as `&'a mut ()` safely; should
     // re-evaluate `ptr` field type (likely `NonNull<c_void>` for the vtable-erased
     // pattern) or provide `Sink::pending()` constructing with a dangling NonNull.
     pub fn pending() -> Sink<'static> {
@@ -192,7 +192,7 @@ pub struct UTF8Fallback;
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
 // TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
 
-// TODO(b2-blocked): `bun_core::strings::{is_all_ascii, replace_latin1_with_utf8,
+// TODO(port): `bun_core::strings::{is_all_ascii, replace_latin1_with_utf8,
 // copy_utf16_into_utf8_impl, to_utf8_alloc}` + `Vec::<u8>::from_*` constructors
 // are not yet exported with these exact names. Body gated; signatures kept.
 
@@ -229,7 +229,7 @@ impl UTF8Fallback {
         {
             // Zig: bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom }
             // TODO(port): allocation-failure handling — Rust Vec aborts on OOM (no unwind);
-            // Phase B should route through bun_alloc fallible alloc to preserve `.err = oom`.
+            // should route through bun_alloc fallible alloc to preserve `.err = oom`.
             let mut slice = vec![0u8; str_.len()];
             slice[..str_.len()].copy_from_slice(str_);
 
@@ -280,7 +280,7 @@ impl UTF8Fallback {
         {
             // TODO(port): allocation-failure handling — `bun_core::strings::to_utf8_alloc`
             // re-exports the bun_core variant which aborts on OOM (returns Vec<u8>, not
-            // Result). Phase B should route through a fallible allocator to preserve
+            // Result). Should route through a fallible allocator to preserve
             // `.err = oom`.
             let allocated = strings::to_utf8_alloc(str_);
             if input.is_done() {
@@ -809,7 +809,7 @@ pub trait JsSinkType: Sized {
 // layering exactly: the JSSink wrapper owns the JS-facing surface, the
 // SinkType owns the streaming logic.
 //
-// This is the SOLE implementation. The earlier Phase-B `macro_rules! js_sink`
+// This is the SOLE implementation. The earlier `macro_rules! js_sink`
 // reference port has been deleted — it was never instantiated, half its bodies
 // no longer type-checked against the current `bun_jsc` surface, and every fn
 // it defined is superseded by this generic `impl` + `decl_js_sink_externs!` /
@@ -1197,7 +1197,7 @@ pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
     ((ptr as usize as u64 & ADDR_MASK) | (SUBPROCESS_TAG << ADDR_BITS)) as usize
 }
 
-// TODO(b2-blocked): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
+// TODO(port): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
@@ -1215,7 +1215,7 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         return;
     }
     if ptr.is_valid() {
-        // TODO(b2-blocked): `Subprocess<'_>` cannot implement `UnionMember` (lifetime
+        // TODO(port): `Subprocess<'_>` cannot implement `UnionMember` (lifetime
         // param), so it isn't part of `DestructorPtr`'s type list yet — cast the raw
         // pointer directly until the second variant is restored.
         //

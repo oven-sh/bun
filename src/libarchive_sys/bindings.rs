@@ -794,7 +794,7 @@ impl Archive {
     pub fn write_zeros_to_file(sink: &ArchiveFileSink, count: usize) -> ArchiveResult {
         // Use uninit + memset instead of comptime zero-init to reduce binary size
         let mut zero_buf: [u8; 16 * 1024] = [0u8; 16 * 1024];
-        // PERF(port): Zig used `undefined` + @memset to avoid a 16KB zeroed static — profile in Phase B
+        // PERF(port): Zig used `undefined` + @memset to avoid a 16KB zeroed static — profile if it shows up on a hot path.
         let _ = &mut zero_buf;
         let mut remaining = count;
         while remaining > 0 {
@@ -2128,7 +2128,7 @@ impl GrowingBuffer {
     }
 }
 
-// TODO(port): platform-specific libc types — verify in Phase B.
+// TODO(port): platform-specific libc types — verify per-target.
 #[allow(non_camel_case_types)]
 type dev_t = u64;
 bun_opaque::opaque_ffi! {

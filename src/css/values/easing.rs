@@ -294,7 +294,7 @@ fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
 
 impl StepPosition {
     // TODO(port): Zig used `css.DeriveToCss(@This()).toCss` — reflection-derived serializer.
-    // Phase B: replace with `#[derive(ToCss)]` once the trait/derive exists.
+    // Replace with `#[derive(ToCss)]` once the trait/derive exists.
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_str(<&'static str>::from(*self))
     }

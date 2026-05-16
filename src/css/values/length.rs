@@ -365,7 +365,7 @@ impl LengthValue {
     }
 
     pub fn map(&self, map_fn: impl FnOnce(f32) -> f32) -> LengthValue {
-        // PERF(port): was comptime monomorphization (`comptime map_fn: *const fn`) — profile in Phase B
+        // PERF(port): was comptime monomorphization (`comptime map_fn: *const fn`).
         self.map_value(map_fn)
     }
 

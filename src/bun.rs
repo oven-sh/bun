@@ -323,8 +323,8 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
     // Header + payload allocated together so the type-erased free function can
     // recover the full allocation from the node pointer.
     // TODO(port): Zig used distinct `threadlocal var instance` per monomorphization.
-    // Rust can't declare a generic `thread_local!` directly; Phase B should use a
-    // macro to stamp out a per-type `thread_local!` static.
+    // Rust can't declare a generic `thread_local!` directly; use a macro to stamp
+    // out a per-type `thread_local!` static.
 
     #[inline]
     pub fn get() -> *mut T {
@@ -466,8 +466,8 @@ pub fn copy<T: Copy>(dest: &mut [T], src: &[T]) {
     memmove(output, input);
 }
 
-// TODO(port): `clone` uses @hasDecl reflection — replace with a `Clone`-bounded
-// helper or per-type impls. Phase B: trait bound `T: Clone`.
+// PORT NOTE: Zig `clone` used @hasDecl reflection; here the `Clone` trait bound
+// covers it.
 pub fn clone<T: Clone>(item: &T) -> T {
     item.clone()
 }
@@ -975,7 +975,7 @@ impl<T> DebugOnlyDisabler<T> {
     }
 }
 // TODO(port): DebugOnlyDisabler thread_local can't be generic-associated in
-// stable Rust — Phase B: macro_rules! to stamp per-type statics.
+// stable Rust — use a macro_rules! to stamp per-type statics.
 
 // FailingAllocator / failing_allocator — Rust has no equivalent vtable concept;
 // callers that needed "uninitialized pool" should use Option<&dyn Allocator>.
@@ -1354,7 +1354,7 @@ pub fn create<T>(t: T) -> Box<T> {
 /// Globally-allocate a value on the heap. Must free with `destroy` (or just drop the Box).
 #[inline]
 pub fn new<T>(init: T) -> Box<T> {
-    // PERF(port): heap_breakdown zone tagging — profile in Phase B
+    // PERF(port): heap_breakdown zone tagging — profile if it shows up on a hot path.
     if cfg!(debug_assertions) {
         bun_output::scoped_log!(alloc, "new({}) = <ptr>", core::any::type_name::<T>());
     }
@@ -1589,8 +1589,8 @@ pub fn unsafe_assert(condition: bool) {
 // ─── time ─────────────────────────────────────────────────────────────────────
 // `bun.timespec` is canonical in `bun_core::util::Timespec`. FakeTimers writes
 // `bun_core::mock_time` (FakeTimers.rs:65/87), so `Timespec::now(AllowMockedTime)`
-// already sees the fake clock — the `bun_jsc::Jest::...` path was a Phase-A stub
-// that never existed.
+// already sees the fake clock — the `bun_jsc::Jest::...` path from the Zig
+// original was never ported (it was a stub that never materialized).
 pub use bun_core::{Timespec as timespec, TimespecMockMode, timespec_mode, mock_time};
 
 #[inline]

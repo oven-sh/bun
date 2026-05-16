@@ -8,7 +8,7 @@ use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
 pub struct TestingAPIs;
 
 impl TestingAPIs {
-    // TODO(b2-blocked): bun_jsc::host_fn — proc-macro attribute not yet implemented.
+    // TODO(port): bun_jsc::host_fn — proc-macro attribute not yet implemented.
     pub fn from_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let vlq_str = frame.argument(0).to_bun_string(global)?;
         let vlq = vlq_str.to_utf8();

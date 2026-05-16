@@ -123,8 +123,8 @@ pub enum Representation {
 // PORT NOTE: reshaped for borrowck. The Zig stores `committish`/`project`/`user`
 // as `[]const u8` slices that alias into `_memory_buffer` (a single owned
 // allocation). Rust can't express that self-reference safely without lifetimes
-// on the struct (forbidden in Phase A). We store byte ranges into
-// `_memory_buffer` instead and expose slice accessors.
+// on the struct. We store byte ranges into `_memory_buffer` instead and expose
+// slice accessors.
 pub struct HostedGitInfo {
     committish: Option<Range<usize>>,
     project: Range<usize>,
@@ -703,7 +703,7 @@ impl<'a> UrlProtocolPair<'a> {
         // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
         // statistical distribution of URL lengths and found nothing.
         const _LONG_URL_THRESH: usize = 2048;
-        // PERF(port): was stack-fallback (std.heap.stackFallback) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback) — profile if it shows up on a hot path
 
         let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
@@ -1033,7 +1033,7 @@ impl HostProvider {
     ///
     /// The second parameter allows you to declare whether the given string includes the protocol:
     /// colon or not.
-    // PERF(port): was comptime monomorphization — profile in Phase B
+    // PERF(port): was comptime monomorphization — profile if it shows up on a hot path
     fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
         // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
         for provider in Self::ALL {
@@ -1078,7 +1078,7 @@ impl HostProvider {
     /// Given a URL, use the domain in the URL to find the appropriate host provider.
     fn from_url_domain(url: &JscUrl) -> Option<HostProvider> {
         const _MAX_HOSTNAME_LEN: usize = 253;
-        // PERF(port): was stack-fallback (FixedBufferAllocator) — profile in Phase B
+        // PERF(port): was stack-fallback (FixedBufferAllocator) — profile if it shows up on a hot path
 
         let hostname_str = OwnedString::new(url.hostname());
 
@@ -1857,8 +1857,8 @@ pub mod formatters {
 
 // PERF(port): was `std.enums.EnumArray(Self, Config).init(.{...})` (comptime
 // dense array indexed by enum). `enum_map::EnumMap` can't be const-initialized
-// with fn pointers, so this uses a `OnceLock` static — profile in Phase B and
-// flatten into a `match`-based accessor if it shows up.
+// with fn pointers, so this uses a `OnceLock` static — flatten into a
+// `match`-based accessor if it shows up on a hot path.
 fn configs() -> &'static EnumMap<HostProvider, Config> {
     use std::sync::OnceLock;
     static CONFIGS: OnceLock<EnumMap<HostProvider, Config>> = OnceLock::new();

@@ -12,7 +12,7 @@ use bun_simdutf_sys::simdutf;
 // TODO(port): the `append*` methods return `&[u8]` borrowing `self.ptr` while
 // also taking `&mut self`. Zig hands out aliasing slices freely; in Rust this
 // needs either an explicit `'a` on the builder, interior mutability (`Cell<usize>`
-// for len), or callers must use `StringPointer` offsets instead. Phase B decision.
+// for len), or callers must use `StringPointer` offsets instead.
 #[derive(Default)]
 pub struct StringBuilder {
     pub len: usize,

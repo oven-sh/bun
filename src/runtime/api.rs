@@ -214,7 +214,7 @@ pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
 pub use crate::api::yaml_object as YAMLObject;
 // `dns_jsc/mod.rs` IS the public surface (Resolver, Order, RecordType, internal::*);
-// the full Phase-A `dns.rs` draft is mounted privately as `dns_body` inside it.
+// the full `dns.rs` body is mounted privately as `dns_body` inside it.
 pub use crate::dns_jsc as dns;
 pub use crate::node::net::block_list as BlockList;
 pub use crate::node::zlib::native_brotli as NativeBrotli;

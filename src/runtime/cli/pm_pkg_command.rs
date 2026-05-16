@@ -531,7 +531,7 @@ impl PmPkgCommand {
                         }
 
                         current = arr.items.slice()[index];
-                        // TODO(port): Expr likely Copy via arena handle; verify in Phase B
+                        // TODO(port): Expr likely Copy via arena handle; verify.
                     } else {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(err!("NotFound"));

@@ -419,13 +419,13 @@ pub trait HashMapExt {
     fn get_or_put(
         &mut self,
         key: &[u8],
-    ) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error>;
+    ) -> core::result::Result<allocators::Result, bun_core::Error>;
     fn put(
         &mut self,
-        result: &mut crate::__phase_a_body::allocators::Result,
+        result: &mut allocators::Result,
         value: DirInfo,
     ) -> core::result::Result<*mut DirInfo, bun_core::Error>;
-    fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result);
+    fn mark_not_found(&mut self, result: allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
 }
@@ -434,14 +434,14 @@ impl HashMapExt for HashMap {
     fn get_or_put(
         &mut self,
         key: &[u8],
-    ) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
+    ) -> core::result::Result<allocators::Result, bun_core::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
     }
     #[inline]
     fn put(
         &mut self,
-        result: &mut crate::__phase_a_body::allocators::Result,
+        result: &mut allocators::Result,
         value: DirInfo,
     ) -> core::result::Result<*mut DirInfo, bun_core::Error> {
         // Spec bun_alloc.zig:615 `put(self: *Self, result: *Result, value) !*ValueType` —
@@ -458,7 +458,7 @@ impl HashMapExt for HashMap {
             .map_err(Into::into)
     }
     #[inline]
-    fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result) {
+    fn mark_not_found(&mut self, result: allocators::Result) {
         // Inherent `BSSMapInner::mark_not_found` (inherent > trait); not recursive.
         self.mark_not_found(result)
     }

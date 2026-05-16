@@ -35,7 +35,7 @@ pub enum ReaderTag {
 }
 
 /// Spec: IOReader.zig `Readers = SmolList(ChildPtr, 4)`.
-// PERF(port): was inline-4 small-vec — profile in Phase B.
+// PERF(port): was inline-4 small-vec — profile if hot.
 type Readers = Vec<ChildPtr>;
 
 // ──────────────────────────────────────────────────────────────────────────

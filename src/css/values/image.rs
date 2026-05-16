@@ -66,7 +66,7 @@ impl Image {
 
     pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile in Phase B
+            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
             _ => self.deep_clone(arena),
@@ -138,7 +138,7 @@ impl Image {
     pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
         match self {
             Image::Gradient(gradient) => {
-                // PERF(port): was arena bulk-free — profile in Phase B
+                // PERF(port): was arena bulk-free — profile if hot
                 Some(Image::Gradient(Box::new(
                     gradient.get_legacy_webkit(arena)?,
                 )))
@@ -222,7 +222,7 @@ impl Image {
 
     pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile in Phase B
+            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
         }
@@ -298,7 +298,7 @@ impl crate::small_list::ImageFallback for Image {
 /// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet {
     /// The image options to choose from.
-    // PERF(port): was ArrayListUnmanaged fed arena arena — profile in Phase B
+    // PERF(port): was ArrayListUnmanaged fed arena — profile if hot
     pub options: Vec<ImageSetOption>,
 
     /// The vendor prefix for the `image-set()` function.
@@ -308,7 +308,7 @@ pub struct ImageSet {
 impl ImageSet {
     pub fn parse(input: &mut css::Parser) -> Result<ImageSet> {
         let location = input.current_source_location();
-        // SAFETY: borrow detached (Phase-A `'static` placeholder, see
+        // SAFETY: borrow detached (`'static` placeholder, see
         // `css_parser::src_str`) so `input` is reusable below.
         let f: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_function()?) };
         let vendor_prefix = crate::match_ignore_ascii_case! { f, {
@@ -357,7 +357,7 @@ impl ImageSet {
     }
 
     pub fn eql(&self, other: &ImageSet) -> bool {
-        // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq in Phase B
+        // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq instead.
         self.vendor_prefix == other.vendor_prefix
             && self.options.len() == other.options.len()
             && self
@@ -368,7 +368,7 @@ impl ImageSet {
     }
 
     pub fn deep_clone(&self, arena: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone in Phase B
+        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSet {
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: self.vendor_prefix,
@@ -392,7 +392,7 @@ pub struct ImageSetOption {
     /// The resolution of the image.
     pub resolution: Resolution,
     /// The mime type of the image.
-    // TODO(port): arena-borrowed slice from tokenizer input; revisit ownership in Phase B
+    // TODO(port): arena-borrowed slice from tokenizer input; revisit ownership.
     pub file_type: Option<*const [u8]>,
 }
 
@@ -503,7 +503,7 @@ impl ImageSetOption {
         if let Some(file_type) = self.file_type {
             dest.write_str(" type(")?;
             // SAFETY: file_type points into the arena-owned parser input which outlives printing.
-            // TODO(port): replace raw slice with proper arena-lifetime borrow in Phase B.
+            // TODO(port): replace raw slice with proper arena-lifetime borrow.
             let file_type_slice = unsafe { crate::arena_str(file_type) };
             dest.serialize_string(file_type_slice)?;
             dest.write_char(b')')?;
@@ -513,7 +513,7 @@ impl ImageSetOption {
     }
 
     pub fn deep_clone(&self, arena: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone in Phase B
+        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSetOption {
             image: self.image.deep_clone(arena),
             resolution: self.resolution,
@@ -522,7 +522,7 @@ impl ImageSetOption {
     }
 
     pub fn eql(&self, rhs: &ImageSetOption) -> bool {
-        // TODO(port): was `css.implementEql(@This(), lhs, rhs)` — derive PartialEq in Phase B
+        // TODO(port): was `css.implementEql(@This(), lhs, rhs)` — derive PartialEq instead.
         self.image.eql(&rhs.image)
             && self.resolution == rhs.resolution
             && match (self.file_type, rhs.file_type) {

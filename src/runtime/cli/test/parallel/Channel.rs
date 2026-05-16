@@ -446,8 +446,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
                 } else {
                     // TODO(port): Zig left the field set if already closing;
-                    // with Box we cannot put it back without re-taking. Phase B
-                    // may need raw *mut uv::Pipe here.
+                    // with Box we cannot put it back without re-taking. May
+                    // need raw *mut uv::Pipe here.
                     self.backend.pipe = Some(p);
                 }
             }

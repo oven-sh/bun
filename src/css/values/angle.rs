@@ -238,7 +238,7 @@ impl Angle {
             (Angle::Turn(a), Angle::Turn(b)) => Angle::Turn(op_fn(ctx, *a, *b)),
             _ => Angle::Deg(op_fn(ctx, self.to_degrees(), other.to_degrees())),
         }
-        // PERF(port): was comptime monomorphization (fn-ptr arg) — profile in Phase B
+        // PERF(port): was comptime monomorphization (fn-ptr arg) — profile if it shows up on a hot path.
     }
 
     pub fn op_to<T, C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> T) -> T {
@@ -246,7 +246,7 @@ impl Angle {
         // TODO(port): upstream bug — Zig `opTo` computes `other_tag` from `this.*`, so mixed-variant
         // inputs read `other`'s raw f32 payload via the wrong arm. This port INTENTIONALLY DIVERGES:
         // we require both operands to share a variant, otherwise fall through to to_degrees().
-        // Revisit in Phase B and fix upstream.
+        // Revisit and fix upstream.
         match (self, other) {
             (Angle::Deg(a), Angle::Deg(b)) => op_fn(ctx, *a, *b),
             (Angle::Rad(a), Angle::Rad(b)) => op_fn(ctx, *a, *b),
@@ -254,7 +254,7 @@ impl Angle {
             (Angle::Turn(a), Angle::Turn(b)) => op_fn(ctx, *a, *b),
             _ => op_fn(ctx, self.to_degrees(), other.to_degrees()),
         }
-        // PERF(port): was comptime monomorphization (fn-ptr arg) — profile in Phase B
+        // PERF(port): was comptime monomorphization (fn-ptr arg) — profile if it shows up on a hot path.
     }
 
     pub fn sign(&self) -> f32 {

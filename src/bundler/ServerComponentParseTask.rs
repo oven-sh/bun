@@ -271,7 +271,7 @@ fn generate_client_reference_proxy(
         if ctx.transpiler().options.has_dev_server() {
             b.bump.alloc_slice_copy(data.other_source.path.pretty)
         } else {
-            // PERF(port): was arena allocPrint — profile in Phase B
+            // PERF(port): was arena allocPrint — profile if it shows up on a hot path
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);
             write!(
                 &mut buf,
@@ -294,7 +294,7 @@ fn generate_client_reference_proxy(
         // This error message is taken from
         // https://github.com/facebook/react/blob/c5b9375767e2c4102d7e5559d383523736f1c902/packages/react-server-dom-webpack/src/ReactFlightWebpackNodeLoader.js#L323-L354
         let err_msg_string: &[u8] = {
-            // PERF(port): was arena allocPrint — profile in Phase B
+            // PERF(port): was arena allocPrint — profile if it shows up on a hot path
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);
             if is_default {
                 write!(

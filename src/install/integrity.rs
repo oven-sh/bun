@@ -177,7 +177,7 @@ impl Integrity {
 
     #[inline]
     pub fn verify(&self, bytes: &[u8]) -> bool {
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
         Self::verify_by_tag(self.tag, bytes, &self.value)
     }
 

@@ -160,7 +160,6 @@ pub const S_IXOTH: i32 = posix::S::IXOTH as i32;
 pub const UV_FS_O_FILEMAP: i32 = 536870912;
 
 // TODO(port): verify constant types — Zig left these as comptime_int / inherited
-// from bun.O / std.posix.S; Phase B should align with bun_sys's actual repr
-// (u32 vs i32) once that crate lands.
+// from bun.O / std.posix.S; align with bun_sys's actual repr (u32 vs i32).
 
 // ported from: src/runtime/node/node_fs_constant.zig

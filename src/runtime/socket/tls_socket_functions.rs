@@ -731,7 +731,7 @@ pub fn export_keying_material(
     if args.len > 2 {
         let context_arg = args.ptr[2];
 
-        // PERF(port): was arena bulk-free — profile in Phase B
+        // PERF(port): was arena bulk-free.
         if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
@@ -932,7 +932,7 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
     }
 
     let session_arg = args.ptr[0];
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free.
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();

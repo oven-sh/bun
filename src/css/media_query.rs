@@ -1,19 +1,6 @@
 //! CSS [media queries](https://drafts.csswg.org/mediaqueries/).
 //!
 //! Ported from `src/css/media_query.zig`.
-//!
-//! ─── B-2 round 3 status ──────────────────────────────────────────────────
-//! Module un-gated. All data types (`MediaList`, `MediaQuery`,
-//! `MediaCondition`, `QueryFeature`, `MediaFeatureValue`, `MediaFeatureId`,
-//! `MediaFeatureName`, `MediaFeatureComparison`, `MediaFeatureType`,
-//! `Operator`, `Qualifier`, `MediaType`, `QueryConditionFlags`) compile for
-//! real so `rules::{media,import,custom_media}` and
-//! `css_parser::AtRulePrelude` can hold them. `to_css` and arena-aware
-//! `deep_clone` are real; the `rules::dc::{media_list,query_feature}`
-//! bridges now route through them. `QueryFeature::parse` and the
-//! `MediaFeatureName`/`MediaFeatureValue` leaf parsers are real — the
-//! `values::{length,number,resolution,ratio}` calc lattice has un-gated, so
-//! `@media`/`@container` parse end-to-end.
 
 use crate as css;
 use crate::css_properties::custom::EnvironmentVariable;
@@ -23,8 +10,8 @@ use crate::{Parser, PrintErr, Printer, Result};
 pub use crate::Error;
 
 // TODO(port): the CSS crate borrows strings from parser input with lifetime `'i`
-// (matching lightningcss). Phase A avoids struct lifetime params; Phase B should
-// thread `'i` through `MediaType::Custom`, `Ident`, `DashedIdent`, etc.
+// (matching lightningcss). This module avoids struct lifetime params; consider
+// threading `'i` through `MediaType::Custom`, `Ident`, `DashedIdent`, etc.
 
 // ───────────────────────── value-type imports ─────────────────────────
 // Real `values/` payloads — the calc lattice has un-gated, so the local
@@ -129,7 +116,7 @@ pub use crate::generics::ToCss;
 pub struct MediaList {
     /// The list of media queries.
     pub media_queries: Vec<MediaQuery>,
-    // PERF(port): was ArrayListUnmanaged backed by parser arena — profile in Phase B
+    // PERF(port): was ArrayListUnmanaged backed by parser arena — profile if it shows up on a hot path.
 }
 
 /// A [media query](https://drafts.csswg.org/mediaqueries/#media).
@@ -222,7 +209,7 @@ pub enum MediaCondition {
     Operation {
         operator: Operator,
         conditions: Vec<MediaCondition>,
-        // PERF(port): was ArrayListUnmanaged backed by parser arena — profile in Phase B
+        // PERF(port): was ArrayListUnmanaged backed by parser arena — profile if it shows up on a hot path.
     },
 }
 

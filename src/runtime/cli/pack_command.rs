@@ -386,7 +386,7 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     MissingPackageJSON,
     // The following two are only valid when FOR_PUBLISH == true.
     // TODO(port): Zig modeled this as a comptime-computed error set union; Rust
-    // const-generic enums cannot conditionally include variants. Phase B may
+    // const-generic enums cannot conditionally include variants. Could
     // split into two enums or gate construction.
     #[error("RestrictedUnscopedPackage")]
     RestrictedUnscopedPackage,
@@ -1718,7 +1718,7 @@ fn is_excluded<'a>(
 type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, bun_sys::File>;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Local shims / extension traits for upstream API gaps (Phase D)
+// Local shims / extension traits for upstream API gaps
 // ───────────────────────────────────────────────────────────────────────────
 
 use bun_libarchive::lib::Result as ArchiveResult;
@@ -1944,9 +1944,9 @@ fn manager_env<'a>(m: &'a PackageManager) -> &'a bun_dotenv::Loader<'static> {
 // pack()
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig used `comptime for_publish: bool` to vary the return type
+// TODO(refactor): Zig used `comptime for_publish: bool` to vary the return type
 // (`Publish.Context(true)` vs `void`). Rust const generics cannot vary return
-// type directly; using an associated-type-like Option for now. Phase B: split
+// type directly; using an associated-type-like Option for now. Could split
 // into `pack()` and `pack_for_publish()` or use a trait.
 pub type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
@@ -2401,7 +2401,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                         &bins,
                         &includes,
                         &excludes,
-                        root_dir, // TODO(port): borrowck — root_dir reused after this; Phase B pass &Dir
+                        root_dir, // TODO(port): borrowck — root_dir reused after this; could pass &Dir
                         log_level,
                     )?;
                     break 'iterate_project_tree;
@@ -2419,7 +2419,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &mut pack_queue,
                 &bins,
                 DirInfo(root_dir, Box::from(&b""[..]), 1),
-                // TODO(port): borrowck — root_dir reused after this; Phase B pass &Dir or dup fd
+                // TODO(port): borrowck — root_dir reused after this; could pass &Dir or dup fd
                 log_level,
             )?;
         }

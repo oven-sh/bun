@@ -203,7 +203,7 @@ const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 // Safe access helpers for unaligned views
 // TODO(port): Zig used `*align(1) const T`; Rust references require alignment.
 // These return raw pointers; callers must treat reads/writes as potentially unaligned.
-// Phase B: consider `#[repr(C, packed)]` on header structs or `ptr::read_unaligned`.
+// Consider `#[repr(C, packed)]` on header structs or `ptr::read_unaligned`.
 fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
     if off + size_of::<T>() > buf.len() {
         return Err(Error::OutOfBounds);

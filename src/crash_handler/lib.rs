@@ -18,12 +18,6 @@
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 UN-GATE
-// Phase-A draft compiles as `mod draft` and is re-exported. Function bodies
-// that depend on T0/T1 surface not yet available are individually re-gated
-// with `` and a `// TODO(b2-blocked): bun_X::Y` marker.
-// ──────────────────────────────────────────────────────────────────────────
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![allow(
@@ -78,7 +72,7 @@ pub use draft::*;
 // Local shim for `bun_debug` (no such crate exists yet). These are
 // std.debug.* placeholders the Zig side leaned on; the Rust port will replace
 // them with a real debug-info backend in a later pass.
-// TODO(b2-blocked): bun_debug::SelfInfo / SourceLocation / TtyConfig / capture_stack_trace
+// TODO(port): bun_debug::SelfInfo / SourceLocation / TtyConfig / capture_stack_trace
 // ──────────────────────────────────────────────────────────────────────────
 pub mod debug {
     use super::draft::StackTrace;
@@ -393,7 +387,7 @@ pub mod debug {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Byte-writer trait — D101: deduped to canonical `bun_io::Write`.
-// The local stub (TODO(b2-blocked)) predated `bun_io` compiling; it carried a
+// The local stub (TODO(port)) predated `bun_io` compiling; it carried a
 // `core::fmt::Write` supertrait so `write!(…)` returned `fmt::Result`. The
 // canonical trait instead provides its own `write_fmt` returning
 // `Result<(), bun_core::Error>`, so `write!` on `impl Write` now yields the
@@ -528,7 +522,7 @@ mod draft {
         Ok(())
     }
 
-    // TODO(b0): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
+    // TODO(port): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
     // Only the two bits the crash handler needs — main-thread check and the
     // one-byte command tag for the trace URL — land here as plain globals that
     // `bun_runtime` populates at startup.
@@ -628,7 +622,7 @@ mod draft {
     pub enum CrashReason {
         /// From @panic()
         Panic(&'static [u8]),
-        // TODO(port): lifetime — Zig holds a borrowed []const u8; using &'static here for Phase A.
+        // TODO(port): lifetime — Zig holds a borrowed []const u8; using &'static here as a placeholder.
         /// "reached unreachable code"
         Unreachable,
 
@@ -710,7 +704,7 @@ mod draft {
         Parse(&'static [u8]),
         Visit(&'static [u8]),
         Print(&'static [u8]),
-        // TODO(port): lifetime — these slices borrow caller-owned paths; &'static is a Phase A placeholder.
+        // TODO(port): lifetime — these slices borrow caller-owned paths; &'static is a placeholder.
         #[cfg(feature = "show_crash_trace")]
         BundleGenerateChunk(BundleGenerateChunk),
         #[cfg(not(feature = "show_crash_trace"))]
@@ -973,7 +967,7 @@ mod draft {
                                 abort();
                             }
                         } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
-                            // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function — using
+                            // TODO(port): bun_analytics::Features::unsupported_uv_function — using
                             // the threadlocal as a stand-in for the global counter check.
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                 .with(|c| c.get())
@@ -1062,7 +1056,7 @@ mod draft {
                         } else {
                             #[cfg(windows)]
                             {
-                                // TODO(b2-blocked): bun_sys::windows::GetThreadDescription / PWSTR / HRESULT_CODE
+                                // TODO(port): bun_sys::windows::GetThreadDescription / PWSTR / HRESULT_CODE
                                 {
                                     let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
                                     // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
@@ -1226,7 +1220,7 @@ mod draft {
                                 format_args!("{}", bstr::BStr::new(native_plugin_name)),
                             )).is_err() { abort(); }
                             } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
-                                // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function
+                                // TODO(port): bun_analytics::Features::unsupported_uv_function
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                     .with(|c| c.get())
                                     .map(|p| {
@@ -1766,7 +1760,12 @@ mod draft {
                     .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
             }
         }
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd"
+        ))]
         {
             reset_on_posix();
         }
@@ -2094,7 +2093,7 @@ mod draft {
         {
             let cpu_features = CPUFeatures::get();
 
-            // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
+            // TODO(port): bun_analytics::GenerateHeader::GeneratePlatform
             {
                 let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -2210,7 +2209,7 @@ mod draft {
             }
         }
 
-        // TODO(b2-blocked): bun_analytics::Features::formatter
+        // TODO(port): bun_analytics::Features::formatter
         {
             write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?;
         }
@@ -2787,7 +2786,7 @@ mod draft {
         }
 
         // Honor DO_NOT_TRACK
-        // TODO(b2-blocked): bun_analytics::is_enabled
+        // TODO(port): bun_analytics::is_enabled
         if env_var::DO_NOT_TRACK::get() == Some(true) {
             return false;
         }
@@ -2815,8 +2814,8 @@ mod draft {
         }
         #[cfg(windows)]
         {
-            // TODO(b2-blocked): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
-            // TODO(b2-blocked): bun_core::w! / strings::convert_utf8_to_utf16_in_buffer
+            // TODO(port): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
+            // TODO(port): bun_core::w! / strings::convert_utf8_to_utf16_in_buffer
             use bun_sys::windows;
             let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
             let mut startup_info = windows::STARTUPINFOW {
@@ -2907,7 +2906,12 @@ mod draft {
             let _ = spawn_result;
             let _ = url;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd"
+        ))]
         {
             let mut buf = bun_core::PathBuffer::default();
             let mut buf2 = bun_core::PathBuffer::default();
@@ -3085,8 +3089,8 @@ mod draft {
         err: bun_core::Error,
         maybe_trace: Option<&StackTrace>,
     ) {
-        // TODO(port): builtin.have_error_return_tracing — Rust has no error-return tracing.
-        // Phase B should decide whether to keep this entire mechanism or strip it.
+        // TODO(port): builtin.have_error_return_tracing — Rust has no error-return tracing;
+        // decide whether to keep this entire mechanism or strip it.
         if !debug::HAVE_ERROR_RETURN_TRACING {
             return;
         }
@@ -3226,7 +3230,7 @@ mod draft {
             ]
         };
         for &program in programs {
-            // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator in Phase A
+            // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator here.
             match spawn_symbolizer(program, trace) {
                 // try next program if this one wasn't found
                 Err(e) if e == bun_core::err!("FileNotFound") => continue,
@@ -3407,7 +3411,7 @@ mod draft {
         pub source_location: Option<SourceLocation>,
         pub symbol_name: Box<[u8]>,
         pub compile_unit_name: Box<[u8]>,
-        // TODO(port): Zig stores borrowed slices owned by debug_info; using Box<[u8]> for Phase A.
+        // TODO(port): Zig stores borrowed slices owned by debug_info; using Box<[u8]> here.
     }
 
     // PORT NOTE: Zig's `SourceAtAddress.deinit` only freed `source_location.file_name`;
@@ -3803,7 +3807,7 @@ mod draft {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
-        // TODO(b2-blocked): bun_analytics::Features::increment_unsupported_uv_function
+        // TODO(port): bun_analytics::Features::increment_unsupported_uv_function
         UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();

@@ -683,7 +683,7 @@ impl Execution {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (Phase B: reshape callee).
+                // both `&mut BunTest` and `&mut ExecutionSequence` (TODO(refactor): reshape callee).
                 test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,

@@ -18,14 +18,14 @@ declare_scope!(FormData, visible);
 
 pub struct FormData {
     pub fields: Map,
-    // TODO(port): lifetime — borrows into caller-owned input; Phase B may lift
+    // TODO(port): lifetime — borrows into caller-owned input; could lift
     // to `&'a [u8]` once borrowck threads through callers.
     pub buffer: *const [u8],
 }
 
 pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
 // PORT NOTE: Zig used `bun.Semver.String.ArrayHashContext` + store_hash=false;
-// `bun_collections::ArrayHashMap` is wyhash-keyed — Phase B confirm context match.
+// `bun_collections::ArrayHashMap` is wyhash-keyed — TODO(port): confirm context match.
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -40,7 +40,7 @@ pub trait AsyncFormDataExt {
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // TODO(port): `bun.JSTerminated!void` — mapped to `JsResult<()>`; Phase B
+    // TODO(port): `bun.JSTerminated!void` — mapped to `JsResult<()>`; could
     // narrow to a `Terminated`-only error set if one exists.
     fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
@@ -78,7 +78,7 @@ impl AsyncFormDataExt for AsyncFormData {
 /// Semver.String's inline storage treats as terminators.
 pub struct Field {
     // TODO(port): lifetime — borrows into caller-owned input buffer (binary
-    // body slice, never freed here); Phase B may lift to `&'a [u8]`.
+    // body slice, never freed here); could lift to `&'a [u8]`.
     pub value: *const [u8],
     pub filename: bun_semver::String,
     pub content_type: bun_semver::String,

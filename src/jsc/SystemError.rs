@@ -185,9 +185,9 @@ pub fn verify_error_to_js(
 
 impl fmt::Display for SystemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): bun.Output.prettyFmt is a comptime color-tag → ANSI transformer that
+        // PORT NOTE: bun.Output.prettyFmt is a comptime color-tag → ANSI transformer that
         // takes (fmt_str, comptime enable_colors) and returns a comptime-expanded format
-        // string. Phase B needs a `bun_core::pretty_fmt!` macro. The runtime bool → comptime
+        // string; `bun_core::pretty_fmt!` is the Rust equivalent. The runtime bool → comptime
         // dispatch (`switch (b) { inline else => |c| ... }`) is preserved as an if/else.
         if !self.path.is_empty() {
             // TODO: remove this hardcoding

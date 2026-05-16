@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan
-// TODO(port): `enable_asan` mapped to a cargo feature; verify Phase B wires this the same way.
+// TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
 /// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
@@ -22,7 +22,7 @@ pub trait HeapLabel {
 
 // TODO(port): blanket impl wants `bun.meta.typeBaseName(@typeName(T))` at compile
 // time. `core::any::type_name::<T>()` is not `const fn` and includes the full
-// module path. Phase B: either a proc-macro derive, or require every `T` used
+// module path. Either a proc-macro derive, or require every `T` used
 // with heap_breakdown to impl `HeapLabel` explicitly.
 fn heap_label<T: HeapLabel>() -> &'static str {
     T::HEAP_LABEL
@@ -44,7 +44,7 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
     // TODO(port): callers should prefer `named_allocator!("Name")` / `get_zone!` directly
     // so the OnceLock is per-name. This runtime path falls back to a process-global
     // map and is not zero-cost like the Zig comptime version.
-    // PERF(port): was comptime monomorphization — profile in Phase B
+    // PERF(port): was comptime monomorphization — profile if hot.
     //
     // Zig: `getZone("Bun__" ++ name)` — the "Bun__" prefix is applied HERE, not in
     // `getZone`/`get_zone_runtime`. PORTING.md §Forbidden: no `Box::leak` for
@@ -80,7 +80,7 @@ pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
 /// process-global map for callers that pass a non-literal name (or for
 /// `allocator<T>()`/`get_zone_t<T>()`, which cannot expand a per-T static on
 /// stable Rust without a proc-macro).
-// TODO(port): Phase B may replace with a `#[heap_label]` derive that expands
+// TODO(port): could be replaced with a `#[heap_label]` derive that expands
 // `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]
 pub fn get_zone(name: &[u8]) -> &'static Zone {
@@ -207,7 +207,7 @@ impl Zone {
     // `impl crate::Allocator for Zone` (see below); the raw vtable struct is a
     // Zig-ism and is not materialized here, so the `resize`/`free` vtable thunks
     // (and the `malloc_size` helper they used) are not ported.
-    // TODO(port): if Phase B's `bun_alloc::Allocator` is a literal vtable struct
+    // TODO(port): if `bun_alloc::Allocator` ever becomes a literal vtable struct
     // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`
     // along with the `resize`/`raw_free` thunks.
 

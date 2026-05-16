@@ -1,13 +1,9 @@
-//! Un-gated bodies for `FFI::{open, close}` and `Function::{compile,
+//! Bodies for `FFI::{open, close}` and `Function::{compile,
 //! print_source_code, print_callback_source_code}` plus the
 //! `generate_symbols` / `generate_symbol_for_function` helpers.
 //!
-//! These were previously preserved in the gated Phase-A draft `ffi_body.rs`
-//! pending `bun_jsc` method surface. The `bun_jsc` surface (`JSValue`,
-//! `JSGlobalObject`, `JSPropertyIterator`, `SystemError`, `host_fn`) is now
-//! real, so the JSC-dependent paths are wired here against the type
-//! identities already declared in `super` (`FFI`, `Function`, `ABIType`,
-//! `Step`, `Compiled`).
+//! The JSC-dependent paths are wired against the type identities declared in
+//! `super` (`FFI`, `Function`, `ABIType`, `Step`, `Compiled`).
 //!
 //! TinyCC compile/relocate (`bun_tcc_sys::State` method-ful API) remains
 //! gated; `Function::compile` therefore short-circuits with a `Step::Failed`
@@ -264,7 +260,7 @@ impl Function {
         self.print_source_code(&mut source_code)?;
         source_code.push(0);
 
-        // TODO(b2-blocked): bun_tcc_sys::State (compile/relocate/add_symbol/get_symbol)
+        // TODO(blocked): bun_tcc_sys::State (compile/relocate/add_symbol/get_symbol)
         //   — un-gate from `ffi_body.rs` once `bun_tcc_sys::tcc` is real.
         let _ = source_code;
         self.fail(b"TinyCC is not available in this build of Bun");

@@ -3791,8 +3791,22 @@ describe("malformed JSX followed by template literal (issue #30892)", () => {
     ["<y/```", "jsx"],
     ["<y/`${1}`", "jsx"],
     ["<y/``", "tsx"],
-  ])("reports a parse error for %j (%s loader) instead of panicking", (code, loader) => {
+  ])("surfaces the JSX parse diagnostic for %j (%s loader) instead of panicking", (code, loader) => {
     const transpiler = new Bun.Transpiler({ loader });
-    expect(() => transpiler.transformSync(code)).toThrow(/Expected|error/i);
+    let caught;
+    try {
+      transpiler.transformSync(code);
+    } catch (e) {
+      caught = e;
+    }
+    // Must throw (not panic, not return silently).
+    expect(caught).toBeDefined();
+    // The first diagnostic logged by JSX error recovery is the missing `>`
+    // after the self-closing `/`. Inputs that produce a single error throw
+    // that message directly; inputs that accumulate multiple errors throw
+    // a "Parse error" wrapper but still expose the JSX diagnostic in
+    // `err.errors[0].message`.
+    const firstMessage = caught.errors?.[0]?.message ?? caught.message;
+    expect(firstMessage).toBe('Expected ">" but found "`"');
   });
 });

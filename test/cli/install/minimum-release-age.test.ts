@@ -2851,58 +2851,55 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(exitCode).not.toBe(0);
     });
 
-    test.skipIf(isWindows)(
-      "warm cache bun.lock is cleared before age-gated install",
-      async () => {
-        // Regression: `--no-cache --force` to `bun add` is insufficient to
-        // force re-resolution under an active age gate when a `bun.lock`
-        // from a previous run survives in the bunx cache dir — `bun add`
-        // reuses the locked version even with `--force` for ranged
-        // specifiers like `pkg@^N`. The install path must wipe the tree
-        // before spawning `bun add` when an age gate is active.
-        //
-        // Seeds the warm cache (at a version-literal key) with a sentinel
-        // `bun.lock` and verifies the file is gone after the bunx
-        // invocation — the `delete_tree(bunx_cache_dir)` at the top of the
-        // install path ran. Uses `regular-package` (matched bin name, so
-        // the `'find` branch fires) and a range specifier so the final
-        // install step reaches `bun add` with `--no-cache --force`.
-        using dir = tempDir("bunx-min-age-lockfile", {});
-        using cacheDir = tempDir("bunx-min-age-cache-lockfile", {});
-        using tmp = tempDir("bunx-min-age-tmp-lockfile", {});
+    test.skipIf(isWindows)("warm cache bun.lock is cleared before age-gated install", async () => {
+      // Regression: `--no-cache --force` to `bun add` is insufficient to
+      // force re-resolution under an active age gate when a `bun.lock`
+      // from a previous run survives in the bunx cache dir — `bun add`
+      // reuses the locked version even with `--force` for ranged
+      // specifiers like `pkg@^N`. The install path must wipe the tree
+      // before spawning `bun add` when an age gate is active.
+      //
+      // Seeds the warm cache (at a version-literal key) with a sentinel
+      // `bun.lock` and verifies the file is gone after the bunx
+      // invocation — the `delete_tree(bunx_cache_dir)` at the top of the
+      // install path ran. Uses `regular-package` (matched bin name, so
+      // the `'find` branch fires) and a range specifier so the final
+      // install step reaches `bun add` with `--no-cache --force`.
+      using dir = tempDir("bunx-min-age-lockfile", {});
+      using cacheDir = tempDir("bunx-min-age-cache-lockfile", {});
+      using tmp = tempDir("bunx-min-age-tmp-lockfile", {});
 
-        const pkgName = "regular-package";
-        const uid = process.getuid?.() ?? 0;
+      const pkgName = "regular-package";
+      const uid = process.getuid?.() ?? 0;
 
-        const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@^2`);
-        const binDir = join(cacheRoot, "node_modules", ".bin");
-        mkdirSync(binDir, { recursive: true });
-        writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
-        const lockPath = join(cacheRoot, "bun.lock");
-        writeFileSync(lockPath, "SENTINEL_LOCKFILE_CONTENT_SHOULD_BE_WIPED");
-        const binPath = join(binDir, pkgName);
-        writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
-        chmodSync(binPath, 0o755);
+      const cacheRoot = join(String(tmp), `bunx-${uid}-${pkgName}@^2`);
+      const binDir = join(cacheRoot, "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(cacheRoot, "package.json"), JSON.stringify({}));
+      const lockPath = join(cacheRoot, "bun.lock");
+      writeFileSync(lockPath, "SENTINEL_LOCKFILE_CONTENT_SHOULD_BE_WIPED");
+      const binPath = join(binDir, pkgName);
+      writeFileSync(binPath, "#!/bin/sh\necho CACHE_BYPASS_BUG_REPRO\nexit 0\n");
+      chmodSync(binPath, 0o755);
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "x", "--minimum-release-age=3155760000", `${pkgName}@^2`],
-          cwd: String(dir),
-          env: bunxEnv(String(cacheDir), String(tmp)),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "x", "--minimum-release-age=3155760000", `${pkgName}@^2`],
+        cwd: String(dir),
+        env: bunxEnv(String(cacheDir), String(tmp)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        // Sentinel binary must not have run.
-        expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
-        // And the install step must have wiped the sentinel lockfile (the
-        // test doesn't care whether the wipe happened before or after the
-        // `bun add` failure, only that it happened at all).
-        if (existsSync(lockPath)) {
-          expect(readFileSync(lockPath, "utf8")).not.toContain("SENTINEL_LOCKFILE_CONTENT_SHOULD_BE_WIPED");
-        }
-        expect(exitCode).not.toBe(0);
-      },
-    );
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // Sentinel binary must not have run.
+      expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
+      // And the install step must have wiped the sentinel lockfile (the
+      // test doesn't care whether the wipe happened before or after the
+      // `bun add` failure, only that it happened at all).
+      if (existsSync(lockPath)) {
+        expect(readFileSync(lockPath, "utf8")).not.toContain("SENTINEL_LOCKFILE_CONTENT_SHOULD_BE_WIPED");
+      }
+      expect(exitCode).not.toBe(0);
+    });
   });
 });

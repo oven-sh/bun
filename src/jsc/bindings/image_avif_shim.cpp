@@ -3,8 +3,8 @@
 // function pointers so the binary has no hard dependency on libavif or its
 // codec plugins (dav1d for decode; aom/rav1e/SvtAv1Enc for encode). If the
 // user hasn't `apt install libavif16` (or equivalent), the first call
-// returns `AVIF_UNAVAILABLE` and codecs.zig surfaces
-// `error.UnsupportedOnPlatform` — the same failure mode we'd get with no
+// returns `AVIF_UNAVAILABLE` and codecs.rs surfaces
+// `Error::UnsupportedOnPlatform` — the same failure mode we'd get with no
 // static codec at all.
 //
 // Why dlopen instead of `-lavif -ldav1d -laom -...`: link-time dependencies
@@ -81,7 +81,7 @@ struct AvifImage {
     avifBool imageOwnsAlphaPlane;
     avifBool alphaPremultiplied;
     // ICC Profile — bun_avif_decode reads this post-parse and hands it to
-    // the Zig wrapper; bun_avif_encode uses the setter (avifImageSetProfileICC)
+    // the Rust wrapper; bun_avif_encode uses the setter (avifImageSetProfileICC)
     // instead of writing here directly so libavif copies the bytes under
     // its own allocator.
     AvifRwData icc;
@@ -247,8 +247,8 @@ const Syms* load()
 
 } // namespace
 
-// ── C ABI for Zig ──────────────────────────────────────────────────────────
-// Return codes mirror the CoreGraphics shim so codecs.zig's Error mapping is
+// ── C ABI for Rust ─────────────────────────────────────────────────────────
+// Return codes mirror the CoreGraphics shim so codecs.rs's Error mapping is
 // uniform across backends.
 constexpr int kAvifUnavailable = 1;
 constexpr int kAvifDecodeFailed = 2;
@@ -271,7 +271,7 @@ extern "C" {
 //     API explicitly documents that it can only be *reduced*, not
 //     raised; the header warns about uint32 arithmetic overflow at
 //     larger values. So for `maxPixels` opt-ins above 268MP the AVIF
-//     path still rejects with DecodeFailed — a known gap the Zig guard
+//     path still rejects with DecodeFailed — a known gap the Rust guard
 //     can't help with. In practice 268MP is ~16k × 16k, well above the
 //     input a Sharp-style web pipeline sees; users past that point are
 //     in "custom libavif build" territory anyway.
@@ -318,11 +318,11 @@ int32_t bun_avif_probe(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 // Full decode: fill `out` (w*h*4 bytes, caller-allocated) with straight-alpha
 // RGBA8 pixels, and write the source's ICC profile (from the `colr` box)
 // into a freshly `malloc`'d buffer at `*out_icc_ptr` with `*out_icc_size`
-// bytes — `NULL`/`0` when the container had no profile. The Zig wrapper
-// re-homes those bytes into bun.default_allocator and then calls `free()`
-// on the libavif-malloc'd source.
+// bytes — `NULL`/`0` when the container had no profile. The Rust wrapper
+// copies those bytes into a global-allocator `Vec<u8>` and then calls
+// `libc::free()` on the shim's buffer.
 //
-// Two-phase: the Zig side calls this twice — once with `out=nullptr` to
+// Two-phase: the Rust side calls this twice — once with `out=nullptr` to
 // read dims from the container (so it can allocate the RGBA buffer), then
 // once with `out=buf` to run the AV1 decode + YUV→RGB into that buffer.
 // The first call stops at `avifDecoderParse` (ispe-box cheap), the second
@@ -354,7 +354,7 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     uint64_t pixels = static_cast<uint64_t>(img->width) * img->height;
     if (pixels > max_pixels) return kAvifTooManyPixels;
 
-    // Phase 1: just return dims so Zig can allocate.
+    // Phase 1: just return dims so Rust can allocate.
     *out_w = img->width;
     *out_h = img->height;
     if (!out) return 0;
@@ -413,7 +413,7 @@ int32_t bun_avif_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
 // If libavif has no encoder registered (a decode-only build, e.g. Alpine's
 // minimal libavif without aom/rav1e/SvtAv1Enc), `avifEncoderWrite` returns
 // AVIF_RESULT_NO_CODEC_AVAILABLE and we surface EncodeFailed. The caller
-// (Zig codecs.encode → .avif arm) maps that through to
+// (Rust codecs.encode → .avif arm) maps that through to
 // `ERR_IMAGE_ENCODE_FAILED`, which is the right contract for "the codec
 // is present but can't encode this input".
 int32_t bun_avif_encode(const uint8_t* rgba, uint32_t w, uint32_t h,
@@ -501,9 +501,9 @@ void bun_avif_free_output(uint8_t* data)
 
 #else
 
-// Non-Linux (or Android): stub so the link succeeds. Zig only calls these
-// under `Environment.isLinux and !isAndroid` so they're dead code, but LTO
-// needs the definitions.
+// Non-Linux (or Android): stub so the link succeeds. The Rust wrapper only
+// references these from inside `#[cfg(target_os = "linux")]` so they're
+// dead code on other targets, but the symbols still need definitions.
 #include <cstddef>
 #include <cstdint>
 extern "C" int32_t bun_avif_probe(const uint8_t*, size_t, uint64_t, uint32_t*, uint32_t*) { return 1; }

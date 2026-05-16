@@ -9087,8 +9087,6 @@ pub fn write_file_with_path_buffer(
         }
     };
     let r = File::borrow(&fd).write_all(buffer);
-    // Caller-supplied fds (`PathOrFileDescriptor::Fd`) are caller-owned;
-    // freshly-opened ones are ours to close.
     if !matches!(args.file, PathOrFileDescriptor::Fd(_)) {
         let _ = close(fd);
     }
@@ -9291,3 +9289,48 @@ bun_core::link_impl_OutputSink! {
 // (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
 // `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`
 // directly. uws_sys already links libc; the cross-crate hook bought nothing.)
+
+#[cfg(test)]
+mod owned_handle_tests {
+    use super::*;
+
+    /// `renameat_concurrently_without_fallback` falls back to `delete_tree` +
+    /// retry when the destination exists. The `delete_tree` is run via a `Dir`
+    /// borrowed from the caller's `to_dir_fd`; if it took ownership instead,
+    /// `to_dir_fd` would be closed out from under the caller.
+    #[test]
+    fn renameat_concurrently_does_not_close_caller_fd() {
+        let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
+        tmp.extend_from_slice(b"/bun_sys_renameat_test");
+        // Set up: create a dir tree with `from/sub`, `to/sub`.
+        let _ = open_dir_at(Fd::cwd(), &tmp).map(close);
+        let _ = mkdir_recursive_at(Fd::cwd(), &tmp);
+        let root = open_dir_at(Fd::cwd(), &tmp).expect("open root");
+        let _ = mkdir_recursive_at(root, b"from/sub");
+        let _ = mkdir_recursive_at(root, b"to/sub");
+        let to_dir = open_dir_at(root, b"to").expect("open to");
+
+        // The dest `to/sub` exists, so the rename must `delete_tree` it first.
+        renameat_concurrently_a(
+            root,
+            b"from/sub",
+            to_dir,
+            b"sub",
+            RenameatConcurrentlyOptions {
+                move_fallback: true,
+            },
+        )
+        .expect("rename");
+
+        // The caller's `to_dir` must still be valid after the rename.
+        assert!(
+            fstat(to_dir).is_ok(),
+            "to_dir closed by renameat_concurrently"
+        );
+
+        // Cleanup.
+        let _ = close(to_dir);
+        let _ = close(root);
+        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+}

@@ -2403,8 +2403,6 @@ pub mod cache {
                 }
             };
 
-            // Caller-supplied fds stay open and always publish; freshly-opened
-            // ones publish only when they survive (escape into the cache).
             let will_close = cached_file_descriptor.is_none() && rfs.need_to_close_files();
             let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
             if publish_fd {
@@ -2499,9 +2497,6 @@ pub mod cache {
                     .map_err(bun_core::Error::from)?
             };
 
-            // Hold ownership of a freshly-opened fd through the read; on error
-            // `Drop` closes. Caller-supplied fds are borrowed (caller closes) —
-            // `into_raw()` immediately so dropping the unowned `File` is a no-op.
             let mut owned: Option<bun_sys::File> = None;
             let fd: Fd = if _file_handle.is_some() {
                 file_handle.into_raw()

@@ -2062,8 +2062,8 @@ impl RealFS {
     fn readdir<I: DirEntryIterator>(
         &mut self,
         store_fd: bool,
-        // Whether `handle`'s fd will outlive this call — false when the caller
-        // is about to close it (so a dead fd never escapes via `DirEntry.fd`).
+        // Whether `handle`'s fd outlives this call — gates `DirEntry.fd`
+        // publication so callers don't cache a dead fd.
         publish_fd: bool,
         prev_map: Option<&mut dir_entry::EntryMap>,
         dir_: &'static [u8],
@@ -2249,9 +2249,6 @@ impl RealFS {
 
         let had_handle = maybe_handle.is_some();
         // Zig: `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
-        // Hold ownership of a freshly-opened handle until `readdir` succeeds;
-        // disarm only on the success path where the fd escapes into the entry
-        // cache. Caller-supplied handles stay caller-owned.
         let mut _opened: Option<bun_sys::Dir> = None;
         let handle: &bun_sys::Dir = match maybe_handle {
             Some(h) => h,

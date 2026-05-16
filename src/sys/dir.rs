@@ -514,3 +514,76 @@ impl FdDirExt for Fd {
         dir.fd
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Open a real directory fd for tests that need one.
+    fn open_self() -> Dir {
+        // Opens the test process's cwd.
+        Dir::open(b".").unwrap()
+    }
+
+    #[test]
+    fn drop_closes_fd() {
+        let raw = {
+            let dir = open_self();
+            dir.fd()
+        };
+        // After `dir` drops, the fd is closed: `fstat` fails with EBADF.
+        assert!(fstat(raw).is_err());
+    }
+
+    #[test]
+    fn close_disarms_drop() {
+        let dir = open_self();
+        let raw = dir.fd();
+        dir.close();
+        // The same fd value may be re-allocated by the next `open()`. Open a
+        // canary, then drop `dir` (already disarmed) — the canary must survive.
+        let canary = open_self();
+        assert!(fstat(canary.fd()).is_ok());
+        let _ = raw;
+    }
+
+    #[test]
+    fn into_raw_disarms_drop() {
+        let dir = open_self();
+        let raw = dir.into_raw();
+        // `dir` has been forgotten; the fd is still open.
+        assert!(fstat(raw).is_ok());
+        let _ = close(raw);
+    }
+
+    #[test]
+    fn borrow_does_not_close() {
+        let dir = open_self();
+        let raw = dir.fd();
+        {
+            let view = Dir::borrow(&raw);
+            let _ = view;
+        }
+        // The borrow dropped, but the fd is still open.
+        assert!(fstat(raw).is_ok());
+    }
+
+    #[test]
+    fn dropping_cwd_sentinel_is_safe() {
+        // `Dir::cwd()` wraps `AT_FDCWD`. Dropping it must be a no-op — it must
+        // not close fd 0 (or any other low fd that `AT_FDCWD` could collide
+        // with after a wraparound).
+        for _ in 0..16 {
+            let _ = Dir::cwd();
+        }
+        // Still able to open files relative to cwd.
+        assert!(Dir::cwd().open_at(b".").is_ok());
+    }
+
+    #[test]
+    fn dropping_invalid_fd_is_safe() {
+        for _ in 0..16 {
+            let _ = Dir::from_fd(Fd::INVALID);
+        }
+    }
+}

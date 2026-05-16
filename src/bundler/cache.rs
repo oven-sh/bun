@@ -300,9 +300,6 @@ impl Fs {
             }
         };
 
-        // Caller-supplied fds always publish (the caller owns and keeps them
-        // open); freshly-opened ones publish only when they survive (they
-        // escape into the resolver cache).
         let will_close = cached_file_descriptor.is_none() && rfs.need_to_close_files();
         let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
         if publish_fd {

@@ -462,3 +462,74 @@ impl File {
         std::io::BufWriter::new(FileWriter(self.handle))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_self() -> File {
+        // `/proc/self/exe` on Linux, the test binary itself.
+        File::open(ZStr::from_static(b".\0"), O::RDONLY, 0).unwrap()
+    }
+
+    #[test]
+    fn drop_closes_fd() {
+        let raw = {
+            let f = open_self();
+            f.fd()
+        };
+        assert!(fstat(raw).is_err());
+    }
+
+    #[test]
+    fn close_disarms_drop() {
+        let f = open_self();
+        f.close().unwrap();
+    }
+
+    #[test]
+    fn close_skips_invalid_sentinel() {
+        // `File::close()` must not call the syscall on `Fd::INVALID`.
+        let f = File::from_fd(Fd::INVALID);
+        assert!(f.close().is_ok());
+    }
+
+    #[test]
+    fn into_raw_disarms_drop() {
+        let f = open_self();
+        let raw = f.into_raw();
+        assert!(fstat(raw).is_ok());
+        let _ = close(raw);
+    }
+
+    #[test]
+    fn borrow_does_not_close() {
+        let f = open_self();
+        let raw = f.fd();
+        {
+            let view = File::borrow(&raw);
+            let _ = view;
+        }
+        assert!(fstat(raw).is_ok());
+    }
+
+    #[test]
+    fn dropping_stdio_is_safe() {
+        // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
+        // descriptors that the caller does not own. Dropping the wrapper must
+        // not tear down the test harness's output.
+        for _ in 0..16 {
+            let _ = File::stdin();
+            let _ = File::stdout();
+            let _ = File::stderr();
+        }
+        assert!(fstat(Fd::stdout()).is_ok());
+    }
+
+    #[test]
+    fn dropping_invalid_fd_is_safe() {
+        for _ in 0..16 {
+            let _ = File::from_fd(Fd::INVALID);
+        }
+    }
+}

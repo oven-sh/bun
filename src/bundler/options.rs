@@ -39,7 +39,7 @@ use enum_map::{Enum, EnumMap};
 
 pub use crate::defines;
 pub use defines::Define;
-// B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
+// `Define::init` / `DefineData::{from_input,parse}` are extension-trait
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
 #[allow(unused_imports)]
@@ -1468,7 +1468,7 @@ pub struct BundleOptions<'a> {
     pub optimize_imports: Option<&'a StringSet>,
 }
 
-// B-3 UNIFIED: was a local dup of `bun_options_types::bundle_enums::ForceNodeEnv`
+// PORT NOTE: was a local dup of `bun_options_types::bundle_enums::ForceNodeEnv`
 // (resolver carried a second FORWARD_DECL copy). Canonical type now lives in
 // bun_options_types; re-exported here so `options::ForceNodeEnv` call sites in
 // bundle_v2.rs / transpiler.rs are unchanged.

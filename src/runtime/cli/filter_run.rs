@@ -497,9 +497,9 @@ impl<'a> State<'a> {
         #[cfg(windows)]
         {
             let handle = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE)?;
-            // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                unsafe { bun_core::ffi::zeroed_unchecked() };
+            // CONSOLE_SCREEN_BUFFER_INFO is #[repr(C)] POD with a Zeroable
+            // impl in bun_core::windows_sys, so the safe `zeroed()` applies.
+            let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
             // SAFETY: handle is valid; csbi is a valid out-ptr.
             if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
                 != sys::windows::FALSE

@@ -136,7 +136,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         let b = &mut vm.transpiler;
         // TODO(port): preload/argv are `Vec<Box<[u8]>>` on both sides; clone since
         // ctx outlives vm but Zig assigned slices directly (no ownership transfer).
-        // Phase B may change VM fields to borrow from ctx.
+        // Could change VM fields to borrow from ctx.
         vm.preload = ctx.preloads.clone();
         vm.argv = ctx.passthrough.clone();
         vm.arena = NonNull::new(&raw mut arena);
@@ -146,8 +146,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         // `Option<NonNull<_>>`, so no lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(NonNull::from);
         b.options.install = install_ptr;
-        b.resolver.opts.install =
-            install_ptr.map_or(core::ptr::null(), |p| p.as_ptr() as *const ());
+        b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install = ctx
             .debug

@@ -2007,11 +2007,13 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 /// with successive entries from `args`. `{{` / `}}` are emitted as literal
 /// braces. Unrecognised specs are passed through verbatim.
 ///
-/// The template is assumed to be valid UTF-8 (it originates from `&str` inputs
-/// via `pretty_fmt_runtime`, which only splits on single-byte ASCII markers
-/// and therefore preserves UTF-8 validity). Non-placeholder runs are emitted
-/// verbatim so multi-byte sequences like `↑` / `→` survive round-trip; any
-/// invalid bytes fall back to `U+FFFD` via `String::from_utf8_lossy`.
+/// The template is the output of `pretty_fmt_runtime`: ANSI escape bytes
+/// interleaved with verbatim runs of a `&str` input. Both halves are valid
+/// UTF-8 by construction (the runtime only splits on the ASCII markers
+/// `<`, `>`, `{`, `}`, `\\` — none of which ever appear inside a multi-byte
+/// UTF-8 sequence — and color codes are pure ASCII). Non-placeholder runs
+/// are flushed verbatim so multi-byte sequences like `↑` / `→` survive
+/// round-trip instead of being re-encoded byte-at-a-time as Latin-1.
 fn substitute_template(
     template: &[u8],
     args: &impl FmtTuple,
@@ -2022,18 +2024,18 @@ fn substitute_template(
     let mut run_start = 0usize;
     let mut argi = 0usize;
 
-    // Flush [run_start, end) as a UTF-8 string. Invalid bytes (which should
-    // not occur given our inputs) are replaced with U+FFFD rather than
-    // producing Latin-1 mojibake as the previous implementation did.
+    // Flush `t[run_start..end]` as `&str`.
+    //
+    // SAFETY: see function comment — `t` originates from `pretty_fmt_runtime`
+    // which is UTF-8 by construction, and every slice end-point is either `0`,
+    // `t.len()`, or just past one of the ASCII markers `<` / `>` / `{` / `}` /
+    // `\\`, so each run begins and ends on a UTF-8 char boundary. Same pattern
+    // as `PrettyBuf::as_ref` at the top of this file.
     fn flush(t: &[u8], run_start: usize, end: usize, f: &mut dyn fmt::Write) -> fmt::Result {
         if end <= run_start {
             return Ok(());
         }
-        let slice = &t[run_start..end];
-        match std::str::from_utf8(slice) {
-            Ok(s) => f.write_str(s),
-            Err(_) => f.write_str(&String::from_utf8_lossy(slice)),
-        }
+        f.write_str(unsafe { core::str::from_utf8_unchecked(&t[run_start..end]) })
     }
 
     while i < t.len() {

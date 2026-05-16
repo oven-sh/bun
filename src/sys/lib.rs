@@ -961,6 +961,15 @@ use core::ffi::{c_char, c_int, c_void};
 pub use bun_core::errno_to_zig_err;
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
 
+/// Mode passed to `mkdirat(2)` when creating install-owned directories.
+///
+/// POSIX applies the process umask on top of this, so the final permission
+/// is `0o777 & ~umask`. With the default umask of `0o022` this yields
+/// `0o755` (same as before), but `umask 0o002` yields `0o775` — letting
+/// multi-user setups work like they do with Node, npm, pnpm, and `mkdir(1)`
+/// (issue #29723).
+pub const UMASK_MKDIR_MODE: Mode = 0o777;
+
 // Raw Linux syscalls via rustix (linux_raw backend). Hot-path I/O on Linux
 // routes through here instead of glibc — see module doc. Android: same kernel,
 // same syscall ABI; `linux_syscall.rs` carries its own
@@ -2400,9 +2409,15 @@ mod posix_impl {
     }
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
     /// Port of std.fs.Dir.makePath (Zig std/fs/Dir.zig).
+    ///
+    /// Passes `UMASK_MKDIR_MODE` (0o777) so the kernel applies the process
+    /// umask to the final permissions, matching `mkdir(1)`, Node, npm, and
+    /// pnpm. Default umask `0o022` still yields `0o755`; `umask 0o002`
+    /// yields `0o775` — letting multi-user repos work with bun install
+    /// (issue #29723).
     #[inline]
     pub fn mkdir_recursive_at(dir: Fd, sub_path: &[u8]) -> Maybe<()> {
-        mkdir_recursive_at_mode(dir, sub_path, 0o755)
+        mkdir_recursive_at_mode(dir, sub_path, UMASK_MKDIR_MODE)
     }
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
     /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).

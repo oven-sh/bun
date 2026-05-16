@@ -2431,6 +2431,7 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
         // The inline `self.tail` is not Boxed and must not be Box-dropped; the
         // `prev: Option<Box<..>>` chain stops at `None` before reaching it
         // (see `append_overflow_uninit`). Singleton `loaded = false` reset belongs to the
+        // `bss_list!` singleton wrapper, not here.
         if let Some(head) = self.head.take() {
             let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
             if !core::ptr::eq(head.as_ptr().cast_const(), tail_ptr) {

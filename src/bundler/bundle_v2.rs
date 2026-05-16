@@ -3982,6 +3982,14 @@ pub mod bv2_impl {
             // Bounded leak: the next file change `execve()`s the process anyway.
             if enable_reloading {
                 core::mem::forget(this);
+            } else {
+                // Otherwise free the global-heap columns owned by the graph
+                // (`graph.ast` parts/symbols/import_records, `linker.graph.meta`,
+                // …). `MultiArrayList::drop` is slab-only and never runs element
+                // destructors, so without this every CLI `bun build` strands the
+                // parsed AST `Vec`s — same fix the `Bun.build()` runtime path
+                // already takes (`js_bundle_completion_task.rs`).
+                this.deinit_without_freeing_arena();
             }
 
             // Markdown is generated later in build_command.zig for CLI

@@ -1,9 +1,9 @@
 //! C-ABI allocator thunks: `extern "C" fn(opaque, …)` shims that route a
-//! C library's pluggable allocator hook into mimalloc (optionally tagged
-//! through a `heap_breakdown` malloc-zone).
+//! C library's pluggable allocator hook into the **default allocator**
+//! (mimalloc normally; `libc::malloc` under ASAN — see [`raw`]).
 //!
 //! Three foreign ABIs are covered — all share the "ignored opaque cookie +
-//! mimalloc backend" shape, only the parameter list differs:
+//! default-allocator backend" shape, only the parameter list differs:
 //!
 //! | ABI                              | alloc signature                          | free signature             |
 //! |----------------------------------|------------------------------------------|----------------------------|
@@ -16,45 +16,45 @@
 
 use core::ffi::{c_uint, c_void};
 
-use crate::mimalloc;
+use crate::default_alloc as raw;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plain mimalloc thunks (no heap-breakdown tagging)
+// Plain default-allocator thunks (no heap-breakdown tagging)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// zlib `alloc_func` → `mi_malloc(items * size)` (non-zeroing).
+/// zlib `alloc_func` → default allocator `malloc(items * size)` (non-zeroing).
 ///
 /// Panics-via-`unreachable!` on OOM (mirrors the original Zig thunk). The
-/// opaque cookie is ignored (never dereferenced) and `mi_malloc` is `safe fn`,
-/// so this thunk has no memory-safety preconditions; a safe fn item still
-/// coerces to the `Option<unsafe extern "C" fn>` field at the assignment site.
+/// opaque cookie is ignored (never dereferenced), so this thunk has no
+/// memory-safety preconditions; a safe fn item still coerces to the
+/// `Option<unsafe extern "C" fn>` field at the assignment site.
 pub extern "C" fn mi_malloc_items(_: *mut c_void, items: c_uint, size: c_uint) -> *mut c_void {
-    let p = mimalloc::mi_malloc((items * size) as usize);
+    let p = raw::malloc((items * size) as usize);
     if p.is_null() {
         unreachable!();
     }
     p
 }
 
-/// `(opaque, ptr)` → `mi_free(ptr)`. Frees the **second** argument; the first
-/// is the ignored opaque cookie. Matches both zlib `free_func` and brotli
-/// `brotli_free_func`.
+/// `(opaque, ptr)` → default allocator `free(ptr)`. Frees the **second**
+/// argument; the first is the ignored opaque cookie. Matches both zlib
+/// `free_func` and brotli `brotli_free_func`.
 pub unsafe extern "C" fn mi_free_opaque(_: *mut c_void, ptr: *mut c_void) {
-    // SAFETY: ptr was allocated by mimalloc (or is null, which mi_free accepts).
-    unsafe { mimalloc::mi_free(ptr) };
+    // SAFETY: ptr was allocated by the default allocator (or is null).
+    unsafe { raw::free(ptr) };
 }
 
-/// JSC `JSTypedArrayBytesDeallocator` → `mi_free(ctx)`. Frees the **second**
-/// argument (the deallocator context); `bytes` is ignored. Functionally
-/// identical to [`mi_free_opaque`] — distinct name kept so call sites read by
-/// intent (opaque-cookie vs. JSC bytes/ctx pair).
+/// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(ctx)`. Frees
+/// the **second** argument (the deallocator context); `bytes` is ignored.
+/// Functionally identical to [`mi_free_opaque`] — distinct name kept so call
+/// sites read by intent (opaque-cookie vs. JSC bytes/ctx pair).
 pub use mi_free_opaque as mi_free_ctx;
 
-/// JSC `JSTypedArrayBytesDeallocator` → `mi_free(bytes)`. Frees the **first**
-/// argument; `ctx` is ignored.
+/// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(bytes)`. Frees
+/// the **first** argument; `ctx` is ignored.
 pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
-    // SAFETY: bytes was allocated by mimalloc; mi_free is null-safe.
-    unsafe { mimalloc::mi_free(bytes) };
+    // SAFETY: bytes was allocated by the default allocator (or is null).
+    unsafe { raw::free(bytes) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 
 /// Expands a set of `extern "C"` allocator thunks bound to a named
 /// heap-breakdown zone. When `heap_breakdown::ENABLED` is false (release /
-/// non-macOS) the thunks fall straight through to mimalloc.
+/// non-macOS) the thunks fall straight through to the default allocator.
 ///
 /// Generated items:
 /// - `malloc_size(_, len: usize) -> *mut c_void` — brotli-shape, non-zeroing.
@@ -71,7 +71,7 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 /// - `calloc_items(_, items: c_uint, len: c_uint) -> *mut c_void` — zlib-shape,
 ///   zeroing. Safe `extern "C" fn` (same rationale).
 /// - `free(_, ptr: *mut c_void)` — paired with either alloc. `unsafe`
-///   (precondition: `ptr` was allocated by this zone / mimalloc).
+///   (precondition: `ptr` was allocated by this zone / the default allocator).
 ///
 /// Intended to be invoked inside a `mod XxxAllocator { … }` so call sites can
 /// keep referring to `XxxAllocator::alloc` / `::free` via a local `pub use`.
@@ -89,7 +89,7 @@ macro_rules! c_thunks_for_zone {
                     None => $crate::out_of_memory(),
                 };
             }
-            let p = $crate::mimalloc::mi_malloc(len);
+            let p = $crate::default_alloc::malloc(len);
             if p.is_null() {
                 $crate::out_of_memory();
             }
@@ -110,7 +110,7 @@ macro_rules! c_thunks_for_zone {
                     None => $crate::out_of_memory(),
                 };
             }
-            let p = $crate::mimalloc::mi_calloc(items as usize, len as usize);
+            let p = $crate::default_alloc::calloc(items as usize, len as usize);
             if p.is_null() {
                 $crate::out_of_memory();
             }
@@ -124,8 +124,8 @@ macro_rules! c_thunks_for_zone {
                 unsafe { $crate::get_zone!($name).malloc_zone_free(data) };
                 return;
             }
-            // SAFETY: data was allocated by mimalloc (or is null).
-            unsafe { $crate::mimalloc::mi_free(data) };
+            // SAFETY: data was allocated by the default allocator (or is null).
+            unsafe { $crate::default_alloc::free(data) };
         }
     };
 }

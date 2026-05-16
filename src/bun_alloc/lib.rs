@@ -324,6 +324,184 @@ pub mod maybe_owned;
 pub mod nullable_allocator;
 pub mod stack_fallback;
 
+/// Layout-agnostic raw alloc/free that **match the `#[global_allocator]`**.
+///
+/// Normally the global allocator is [`Mimalloc`], so these are
+/// `mi_malloc`/`mi_free`. Under ASAN (`cfg(bun_asan)`) the global allocator is
+/// `std::alloc::System` (libc malloc) so the ASAN interceptor sees every
+/// `Box`/`Vec` allocation — these route through `libc::malloc`/`free` to stay
+/// in agreement with it.
+///
+/// Use this module wherever a raw pointer crosses the `Vec`/`Box` ↔
+/// raw-pointer boundary without a `Layout`: JSC `ArrayBuffer` deallocator
+/// callbacks, C-library allocator hooks (zlib/brotli), `default_dupe`/
+/// `default_free` byte buffers. Going through `mi_*` directly there is wrong
+/// under ASAN because the buffer was allocated by `System`, not mimalloc.
+///
+/// **Not** for `MimallocArena` allocations — those always pair `mi_heap_malloc`
+/// with mimalloc's `mi_free` regardless of ASAN.
+pub mod default_alloc {
+    use core::ffi::c_void;
+
+    /// `mi_malloc(size)` (or `libc::malloc(size)` under ASAN). Returns null on OOM.
+    #[inline]
+    pub fn malloc(size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            // SAFETY: libc::malloc is sound for any size; returns null on failure.
+            unsafe { libc::malloc(size) }
+        } else {
+            crate::mimalloc::mi_malloc(size)
+        }
+    }
+
+    /// Zero-filled [`malloc`]. Returns null on OOM.
+    #[inline]
+    pub fn zalloc(size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            // SAFETY: libc::calloc is sound for any count/size; returns null on failure.
+            unsafe { libc::calloc(1, size) }
+        } else {
+            crate::mimalloc::mi_zalloc(size)
+        }
+    }
+
+    /// `mi_calloc(count, size)` (or `libc::calloc` under ASAN). Returns null on OOM.
+    #[inline]
+    pub fn calloc(count: usize, size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            // SAFETY: libc::calloc is sound for any count/size; returns null on failure.
+            unsafe { libc::calloc(count, size) }
+        } else {
+            crate::mimalloc::mi_calloc(count, size)
+        }
+    }
+
+    /// `mi_realloc(ptr, new_size)` (or `libc::realloc` under ASAN).
+    /// `min(old, new)` prefix bytes are preserved. Returns null on OOM.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
+    #[inline]
+    pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            // SAFETY: caller contract.
+            unsafe { libc::realloc(ptr, new_size) }
+        } else {
+            // SAFETY: caller contract.
+            unsafe { crate::mimalloc::mi_realloc(ptr, new_size) }
+        }
+    }
+
+    /// `mi_free(ptr)` (or `libc::free(ptr)` under ASAN). Null-safe.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
+    #[inline]
+    pub unsafe fn free(ptr: *mut c_void) {
+        if cfg!(bun_asan) {
+            // SAFETY: caller contract.
+            unsafe { libc::free(ptr) }
+        } else {
+            // SAFETY: caller contract.
+            unsafe { crate::mimalloc::mi_free(ptr) }
+        }
+    }
+
+    /// `mi_usable_size(ptr)` (or `malloc_usable_size` under ASAN). Null-safe
+    /// (returns 0). ASAN is Linux-only in CI; the libc helper here is the
+    /// glibc/musl spelling.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
+    #[inline]
+    pub unsafe fn usable_size(ptr: *const c_void) -> usize {
+        if ptr.is_null() {
+            return 0;
+        }
+        #[cfg(all(bun_asan, target_os = "linux"))]
+        // SAFETY: caller contract — `ptr` is a live default-allocator block.
+        return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
+        #[cfg(not(all(bun_asan, target_os = "linux")))]
+        // SAFETY: caller contract — `ptr` is a live mimalloc block.
+        return unsafe { crate::mimalloc::mi_usable_size(ptr) };
+    }
+
+    /// Alignment-aware [`malloc`]. Returns null on OOM. `align` must be a power of two.
+    #[inline]
+    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            if align <= crate::MAX_ALIGN_T {
+                // SAFETY: any size is valid; returns null on failure.
+                return unsafe { libc::malloc(size) };
+            }
+            let mut p: *mut c_void = core::ptr::null_mut();
+            // posix_memalign requires align ≥ sizeof(void*) and a power of two.
+            let align = align.max(core::mem::size_of::<*mut c_void>());
+            // SAFETY: `align` is a power-of-two ≥ sizeof(void*); `&mut p` is a
+            // valid out-param. posix_memalign leaves `p` untouched on failure.
+            if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
+                return core::ptr::null_mut();
+            }
+            p
+        } else {
+            crate::mimalloc::mi_malloc_auto_align(size, align)
+        }
+    }
+
+    /// Zero-filled [`malloc_aligned`]. Returns null on OOM.
+    #[inline]
+    pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            if align <= crate::MAX_ALIGN_T {
+                // SAFETY: any count/size is valid; returns null on failure.
+                return unsafe { libc::calloc(1, size) };
+            }
+            let p = malloc_aligned(size, align);
+            if !p.is_null() {
+                // SAFETY: `p` is a fresh writable allocation of `size` bytes.
+                unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
+            }
+            p
+        } else {
+            crate::mimalloc::mi_zalloc_auto_align(size, align)
+        }
+    }
+
+    /// Alignment-aware [`realloc`]. Returns null on OOM.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator with
+    /// the given `align`.
+    #[inline]
+    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            if align <= crate::MAX_ALIGN_T {
+                // SAFETY: caller contract; libc realloc preserves alignment ≤ max_align_t.
+                return unsafe { libc::realloc(ptr, new_size) };
+            }
+            // libc has no aligned-realloc; allocate + copy + free.
+            let new_ptr = malloc_aligned(new_size, align);
+            if new_ptr.is_null() {
+                return core::ptr::null_mut();
+            }
+            if !ptr.is_null() {
+                // SAFETY: `ptr` is a live default-allocator block per caller
+                // contract; `usable_size` reports its real size; `new_ptr` is
+                // a fresh writable allocation of `new_size` bytes.
+                unsafe {
+                    let copy = usable_size(ptr).min(new_size);
+                    core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), copy);
+                    libc::free(ptr);
+                }
+            }
+            new_ptr
+        } else {
+            // SAFETY: caller contract.
+            unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
+        }
+    }
+}
+
 pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use max_heap_allocator::MaxHeapAllocator;
 pub use maybe_owned::MaybeOwned;

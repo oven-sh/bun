@@ -64,10 +64,11 @@ pub fn static_(s: &'static [u8]) -> ZigString {
 /// must not be used by the caller after this returns.
 pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
     if len > BunString::max_length() {
-        // SAFETY: caller contract — `ptr` came from the global mimalloc
-        // allocator. `mi_free` accepts the raw block pointer regardless of
-        // element size.
-        unsafe { bun_alloc::mimalloc::mi_free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
+        // SAFETY: caller contract — `ptr` came from the default (global)
+        // allocator. `default_alloc::free` agrees with the
+        // `#[global_allocator]` and accepts the raw block pointer regardless
+        // of element size.
+        unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
         // TODO(port): Zig used `global.ERR(.STRING_TOO_LONG, msg).throw()`;
         // the codegen'd `ErrorCode::ERR_STRING_TOO_LONG` builder hasn't landed
         // yet, so throw a plain RangeError with the same message. Propagation
@@ -94,12 +95,15 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
     let s = unsafe { bun_core::ffi::slice(raw, len) };
     let ptr = ZigString::init(s).slice().as_ptr();
-    #[cfg(debug_assertions)]
+    // Probe only when the default allocator is mimalloc — under ASAN it's libc
+    // (`std::alloc::System`), so the buffer is not in mimalloc's heap region.
+    #[cfg(all(debug_assertions, not(bun_asan)))]
     // SAFETY: read-only heap-region probe.
     debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
     let _ = len;
-    // SAFETY: ptr was allocated by mimalloc; mi_free is size-agnostic.
-    unsafe { bun_alloc::mimalloc::mi_free(ptr.cast_mut().cast::<c_void>()) };
+    // SAFETY: ptr was allocated by the default allocator; `default_alloc::free`
+    // is layout-agnostic and agrees with the `#[global_allocator]`.
+    unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<c_void>()) };
 }
 
 #[unsafe(no_mangle)]
@@ -111,12 +115,14 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
         .as_ptr()
         .cast_mut()
         .cast::<c_void>();
-    #[cfg(debug_assertions)]
+    // Probe only when the default allocator is mimalloc — under ASAN it's libc
+    // (`std::alloc::System`), so the buffer is not in mimalloc's heap region.
+    #[cfg(all(debug_assertions, not(bun_asan)))]
     // SAFETY: read-only heap-region probe.
     debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
     // we must untag the string pointer
-    // SAFETY: untagged ptr was allocated by mimalloc.
-    unsafe { bun_alloc::mimalloc::mi_free(untagged) };
+    // SAFETY: untagged ptr was allocated by the default allocator.
+    unsafe { bun_alloc::default_alloc::free(untagged) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

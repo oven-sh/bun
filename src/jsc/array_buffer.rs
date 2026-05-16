@@ -920,12 +920,13 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw mimalloc ptr
-        // because the buffer is later freed via mi_free (MarkedArrayBuffer_deallocator).
+        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
+        // pointer because the buffer is later freed via the default allocator
+        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
         let buf: Box<[u8]> = Box::from(str);
         let len = buf.len();
         let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by global mimalloc.
+        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
         let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
@@ -966,8 +967,10 @@ impl MarkedArrayBuffer {
     pub fn destroy(&mut self) {
         if self.owns_buffer {
             self.owns_buffer = false;
-            // SAFETY: buffer.ptr was allocated via global mimalloc (heap::alloc / allocator.dupe).
-            unsafe { mimalloc::mi_free(self.buffer.ptr.cast()) };
+            // SAFETY: buffer.ptr was allocated by the default (global)
+            // allocator (heap::alloc / allocator.dupe). `default_alloc::free`
+            // agrees with the `#[global_allocator]`.
+            unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
         }
     }
 

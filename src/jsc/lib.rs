@@ -2017,9 +2017,11 @@ impl ZigStringJsc for bun_core::ZigString {
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
         if self.len > bun_core::String::max_length() {
-            // SAFETY: contract — bytes were allocated by the global mimalloc allocator.
+            // SAFETY: contract — bytes were allocated by the default (global)
+            // allocator. `default_alloc::free` agrees with the
+            // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
             unsafe {
-                bun_alloc::mimalloc::mi_free(
+                bun_alloc::default_alloc::free(
                     self.byte_slice()
                         .as_ptr()
                         .cast_mut()

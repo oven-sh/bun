@@ -69,6 +69,16 @@ pub struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub exit_status: Option<Status>,
+    /// Set when this process sends `.ready`; reset before each (re)spawn. A
+    /// reap with `inflight == None` and `!reached_ready` is a startup failure
+    /// (init crash before the IPC handshake) as opposed to a clean
+    /// post-shutdown exit.
+    pub reached_ready: bool,
+    /// Consecutive (re)spawns of this slot that exited before `.ready`. Reset
+    /// on `.ready`. `reap_worker`'s mid-file handling is keyed on `inflight`,
+    /// so pre-ready crashes bypass it; this per-slot counter bounds the
+    /// respawn loop so a worker that can never finish init doesn't spin.
+    pub startup_failures: u8,
     pub extra_fd_stdio: [Stdio; 1],
 }
 

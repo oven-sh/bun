@@ -66,6 +66,10 @@ pub struct Coordinator<'a> {
     pub windows_job: Option<*mut c_void>,
 }
 
+/// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
+/// stops respawning and the remaining files are aborted.
+const MAX_STARTUP_FAILURES: u8 = 2;
+
 impl<'a> Coordinator<'a> {
     fn is_done(&self) -> bool {
         (self.files_done as usize >= self.files.len() || self.bailed) && self.live_workers == 0
@@ -331,7 +335,11 @@ impl<'a> Coordinator<'a> {
 
     pub fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
         match kind {
-            frame::Kind::Ready => self.assign_work_or_retry(w),
+            frame::Kind::Ready => {
+                w.reached_ready = true;
+                w.startup_failures = 0;
+                self.assign_work_or_retry(w);
+            }
             frame::Kind::FileStart => {
                 let _ = rd.u32_();
             }
@@ -466,6 +474,11 @@ impl<'a> Coordinator<'a> {
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
         self.flush_captured(w);
+        // Process spawned but died before the IPC handshake — bad init,
+        // startup segfault, failed fd-3 adopt, etc. `inflight` is None so
+        // the mid-file handling below never fires; without the per-slot
+        // counter this slot would respawn forever.
+        let startup_failure = w.inflight.is_none() && !w.reached_ready;
         if let Some(idx) = w.inflight {
             self.break_dots();
             self.ensure_header(idx);
@@ -485,6 +498,48 @@ impl<'a> Coordinator<'a> {
             if panicked {
                 self.abort_on_worker_panic(idx, &status);
             }
+        } else if startup_failure {
+            w.startup_failures += 1;
+            // A fatal signal during init is a Bun bug just as much as one
+            // mid-file — abort the whole run so the panic stderr (already
+            // flushed via flush_captured) isn't buried.
+            if is_panic_status(&status) {
+                self.abort_on_worker_startup_panic(w, &status);
+            }
+        }
+
+        let can_respawn = !self.bailed
+            && w.startup_failures < MAX_STARTUP_FAILURES
+            && self.has_undispatched_files();
+
+        if startup_failure && !self.bailed {
+            // `can_respawn` is false either because the slot hit the cap or
+            // because there's no work left. Only the former warrants the red
+            // error; the latter is benign (another slot stole the range).
+            self.break_dots();
+            let mut buf = [0u8; 32];
+            let desc = bstr::BStr::new(describe_status(&mut buf, &status));
+            if can_respawn {
+                Output::pretty_error(format_args!(
+                    "<r><yellow>⟳<r> test worker {} exited during startup ({}), retrying\n",
+                    w.idx + 1,
+                    desc,
+                ));
+            } else if w.startup_failures >= MAX_STARTUP_FAILURES {
+                Output::pretty_error(format_args!(
+                    "<r><red>error<r>: test worker {} exited during startup ({}) {} times\n",
+                    w.idx + 1,
+                    desc,
+                    w.startup_failures,
+                ));
+            } else {
+                Output::pretty_error(format_args!(
+                    "<r><d>test worker {} exited during startup ({})<r>\n",
+                    w.idx + 1,
+                    desc,
+                ));
+            }
+            Output::flush();
         }
 
         if let Some(p) = w.process.take() {
@@ -496,12 +551,13 @@ impl<'a> Coordinator<'a> {
         }
 
         let mut respawned = false;
-        if !self.bailed && self.has_undispatched_files() {
+        if can_respawn {
             // TODO(port): explicit deinit of ipc/out/err — in Rust these become
             // Drop on assignment; verify no double-free with Default::default().
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
             w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
+            w.reached_ready = false;
             match w.start() {
                 Ok(()) => {
                     respawned = true;
@@ -603,6 +659,54 @@ impl<'a> Coordinator<'a> {
         }
         self.bailed = true;
         self.abort_queued_files(b"aborted: worker panicked");
+    }
+
+    /// `abort_on_worker_panic` for the pre-`.ready` case — no `file_idx` to
+    /// name because nothing was dispatched yet.
+    fn abort_on_worker_startup_panic(&mut self, w: &mut Worker, status: &SpawnStatus) {
+        self.break_dots();
+        let mut buf = [0u8; 32];
+        Output::pretty_error(format_args!(
+            concat!(
+                "\n<red>error<r>: test worker {} crashed with <b>{}<r> during startup.\n",
+                "This indicates a bug in Bun. Aborting.\n",
+            ),
+            w.idx + 1,
+            bstr::BStr::new(describe_status(&mut buf, status)),
+        ));
+        Output::flush();
+        // PORT NOTE: same aliasing caveat as abort_on_worker_panic — the
+        // caller's `w: &mut Worker` is live, so iterate via raw pointers.
+        let base: *mut Worker = self.workers.as_mut_ptr();
+        let n = self.spawned_count as usize;
+        for i in 0..n {
+            // SAFETY: `i < spawned_count <= workers.len()`; field reads
+            // through *mut so no `&mut Worker` aliases the caller's `w`.
+            let other = unsafe { base.add(i) };
+            if unsafe { !(*other).alive } {
+                continue;
+            }
+            if let Some(p) = unsafe { (*other).process } {
+                #[cfg(unix)]
+                {
+                    // SAFETY: `p` is the live intrusive-refcounted *mut Process;
+                    // FFI call; -pid targets the worker's process group.
+                    unsafe {
+                        let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    // SAFETY: `p` is the live intrusive-refcounted *mut Process.
+                    let _ = unsafe { (*p).kill(1) };
+                }
+            }
+        }
+        if self.bailed {
+            return;
+        }
+        self.bailed = true;
+        self.abort_queued_files(b"aborted: worker panicked during startup");
     }
 
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
